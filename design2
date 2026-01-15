@@ -1,0 +1,151 @@
+# 具体设计-firestore
+
+上次编辑时间: 2026年1月14日 22:36
+优先级: 最高
+描述: firestore的具体设计
+状态: 规划中
+
+## **目标**
+
+使用 **Firestore**（用于热/短期记忆）和 **BigQuery**（用于冷/长期分析记忆）构建 LLM 的后端记忆系统，并使用 **Python** 实现。
+
+## **设计方案：中断驱动的上下文系统**
+
+**目标**：后端不仅存储聊天记录，还需要根据某种逻辑“重组”发给模型的 Prompt，以最大化利用注意力机制 (Attention)。
+
+### **提案：中断驱动的上下文操作系统 (Interrupt-Driven Context OS)**
+
+基于您的“中断响应”与“OS 上下文切换”的隐喻，我们将系统逻辑重构为类似操作系统的调度器。
+
+**1. 核心比喻 (Metaphor)**
+
+- **User Input = IRQ (Interrupt Request)**: 用户每句话都是一个中断请求。
+- **Topic = Process (进程)**: 每个对话主题（"Python", "Docker", "闲聊"）都是一个独立的进程，拥有独立的内存空间（Context）。
+- **Backend = Scheduler (调度器)**: 负责判断当前应该运行哪个进程，并执行上下文切换 (Context Switch)。
+
+**2. 数据结构设计**
+
+**集合: `topic_threads`** (User 下的子集合)
+
+- `thread_id` (string): 唯一标识 (e.g., "thread_python")。
+- `title` (string): 主题名（宽泛的大类，如"Python"、"Docker"）。
+- `~~message_ids` (array)~~: 不再使用，改用messages表的`thread_id`字段查询。
+- `parent_thread_ids` (array): 父主题ID列表（用于交叉Topic）。
+- `child_thread_ids` (array): 子主题ID列表。
+- `last_active_at` (timestamp)
+- `summary_embedding` (vector): 主题摘要的向量表示（用于快速路由）。
+- `current_artifact` (map): **带索引的骨架结构**，见下方详细定义。
+
+**集合: `messages`**
+
+- `...` (原有属性)
+- `thread_id` (string): 归属的线程 ID。
+
+**Artifact 结构定义 (设计文档 + 嵌入索引)**
+
+Artifact本身就是**Markdown格式的设计文档**，索引作为元数据嵌入其中：
+
+```markdown
+current_artifact: "
+# Python学习笔记
+
+## 列表推导式 <!-- sources: msg_001, msg_002 -->
+基本语法是 `[expr for x in iterable if cond]`，可以带条件过滤。
+嵌套写法是 `[[... for y in row] for row in matrix]`。
+
+## 异步编程决策 <!-- sources: msg_015, msg_016 -->
+决定用asyncio而不是threading，因为我们的场景是IO密集型。
+主要用于并发请求多个API。
+
+### 具体实现 <!-- sources: msg_017, msg_018 -->
+使用 `asyncio.gather()` 来并发执行多个协程...
+"
+```
+
+- **设计文档即Artifact**：人类可读的Markdown，不是抽象的JSON
+- **嵌入索引**：`<!-- sources: msg_id1, msg_id2 -->` 注释指向原始对话
+- **按需加载**：解析文档时提取注释中的message_id，加载相关原始消息
+- **灵活层级**：Markdown标题自然形成层级结构，每个标题可独立索引
+
+**3. 中断响应工作流 (Interrupt Service Routine)**
+
+**3.1 潜意识路由层**
+
+使用轻量模型作为"LLM的潜意识"，负责快速路由判断：
+
+- **Cloudflare Embedding (免费)**：对用户输入做embedding，与现有topics的`summary_embedding`计算相似度
+- **Gemini-2.5-flash-lite (超低成本)**：精细判断，决定路由到哪个topic或是否新建
+
+**路由策略（两阶段）**：
+
+1. **粗筛**：Embedding找top-3候选topic
+2. **快速路径**：最高分远超阈值 → 直接路由，跳过LLM
+3. **慢速路径**：候选列表喂给flash-lite做最终决策（包括"新建topic"选项）
+
+**3.2 上下文构建**
+
+1. **路由命中**：确定目标topic
+2. **加载骨架**：读取`current_artifact`全文
+3. **定位相关节点**：flash-lite在骨架中找到与用户问题相关的sections
+4. **加载血肉**：根据`source_message_ids`加载对应的原始对话
+5. **构建Prompt**：骨架全文 + 相关原始对话 + 用户新问题
+
+**3.3 交叉Topic处理**
+
+场景：用户在讨论Python时突然说"我想用Docker部署这个"
+
+1. flash-lite检测到跨topic意图
+2. 创建新的交叉topic（如"Python+Docker部署"）
+3. 设置`parent_thread_ids: ["thread_python", "thread_docker"]`
+4. 新topic的artifact根据用户观点聚合两个子topic的相关内容
+5. 后续在这个交叉topic中继续对话
+
+**4. Artifact更新循环 (The Loop)**
+
+每轮对话后，主模型负责判断是否需要更新Artifact：
+
+1. **Reflect**: 这轮对话是否改变了对主题的认知？是否切换到新话题？
+2. **Update**: 如果认知改变，更新`current_artifact`，添加`<!-- sources: msg_xxx -->`指向本轮对话
+3. **Version**: 保存到`artifact_versions`子集合，便于溯源和纠错
+
+**5. 总结结构 (Final Schema)**
+
+**核心概念区分：**
+
+- **Sessions** = 会话窗口（短期），当前对话的容器
+- **Topic_threads** = 长期记忆（跨session），知识的积累和索引
+- **Messages** 同时属于两者：物理存储在session下，通过`thread_id`逻辑归属到topic
+
+```
+User
+├── sessions (Collection)           # 会话窗口
+│   ├── session_id
+│   ├── created_at, updated_at
+│   ├── current_thread_id            # 当前活跃的topic
+│   └── messages (Sub-collection)    # 本次会话的消息
+│       ├── role, content, timestamp
+│       └── thread_id                # → 指向topic_threads
+│
+└── topic_threads (Collection)      # 长期记忆
+    ├── thread_id, title
+    ├── current_artifact             # Markdown设计文档
+    ├── summary_embedding            # 用于路由的向量
+    ├── parent_thread_ids, child_thread_ids
+    └── artifact_versions (Sub-collection)
+```
+
+### 已确定的设计决策
+
+- [x]  **Topic粒度**：宽泛的大类（"Python"级别），不细分子话题
+- [x]  **Topic路由**：Embedding粗筛 + flash-lite精判（潜意识层）
+- [x]  **Artifact结构**：Markdown设计文档 + 嵌入索引注释
+- [x]  **Snapshot更新**：主模型负责，在回复时同步判断
+- [x]  **交叉Topic**：创建父topic聚合子topics
+- [x]  **消息归属查询**：不用`message_ids`数组，改用`thread_id`字段 + `timestamp`排序
+    - [x]  **Token管理**：初期不做限制，优先保证效果
+    - [x]  **冷热分离**：不在本次规划范围内
+- [x]  **Embedding存储**：Firestore直接存储 + 劁力搜索（初期简化）
+    - [x]  **Sessions与Topics关系**：Sessions=会话窗口，Topics=长期记忆，通过thread_id关联
+- [x]  **存储结构**：子集合方案（`sessions/{id}/messages`）
+- [x]  **并发处理**：通过`timestamp`排序解决
+- [x]  **可编辑性**：`is_excluded`字段支持排除消息
