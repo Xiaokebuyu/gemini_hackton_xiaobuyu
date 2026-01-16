@@ -2,7 +2,6 @@
 主题管理 API 路由
 """
 from fastapi import APIRouter, HTTPException
-from typing import List, Optional
 
 from app.services.firestore_service import FirestoreService
 from app.services.artifact_service import ArtifactService
@@ -14,25 +13,25 @@ firestore_service = FirestoreService()
 artifact_service = ArtifactService()
 
 
-@router.get("/topics/{user_id}")
-async def get_user_topics(user_id: str):
+@router.get("/sessions/{user_id}/{session_id}/topics")
+async def get_session_topics(user_id: str, session_id: str):
     """
-    获取用户的所有主题
+    获取会话内所有主题
     """
     try:
-        topics = await firestore_service.get_all_topics(user_id)
+        topics = await firestore_service.get_all_topics(user_id, session_id)
         
         return {
             "user_id": user_id,
+            "session_id": session_id,
             "topic_count": len(topics),
             "topics": [
                 {
                     "thread_id": topic.thread_id,
                     "title": topic.title,
-                    "last_active_at": topic.last_active_at.isoformat(),
+                    "summary": topic.summary,
+                    "created_at": topic.created_at.isoformat(),
                     "has_artifact": bool(topic.current_artifact),
-                    "parent_thread_ids": topic.parent_thread_ids,
-                    "child_thread_ids": topic.child_thread_ids
                 }
                 for topic in topics
             ]
@@ -42,13 +41,13 @@ async def get_user_topics(user_id: str):
         raise HTTPException(status_code=500, detail=f"获取主题失败: {str(e)}")
 
 
-@router.get("/topics/{user_id}/{thread_id}")
-async def get_topic_detail(user_id: str, thread_id: str):
+@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}")
+async def get_topic_detail(user_id: str, session_id: str, thread_id: str):
     """
     获取主题详细信息
     """
     try:
-        topic = await firestore_service.get_topic(user_id, thread_id)
+        topic = await firestore_service.get_topic(user_id, session_id, thread_id)
         
         if not topic:
             raise HTTPException(status_code=404, detail="主题不存在")
@@ -56,11 +55,9 @@ async def get_topic_detail(user_id: str, thread_id: str):
         return {
             "thread_id": topic.thread_id,
             "title": topic.title,
+            "summary": topic.summary,
             "current_artifact": topic.current_artifact,
-            "last_active_at": topic.last_active_at.isoformat(),
-            "parent_thread_ids": topic.parent_thread_ids,
-            "child_thread_ids": topic.child_thread_ids,
-            "has_embedding": topic.summary_embedding is not None
+            "created_at": topic.created_at.isoformat(),
         }
     
     except HTTPException:
@@ -69,13 +66,13 @@ async def get_topic_detail(user_id: str, thread_id: str):
         raise HTTPException(status_code=500, detail=f"获取主题详情失败: {str(e)}")
 
 
-@router.get("/topics/{user_id}/{thread_id}/artifact")
-async def get_topic_artifact(user_id: str, thread_id: str):
+@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}/artifact")
+async def get_topic_artifact(user_id: str, session_id: str, thread_id: str):
     """
     获取主题的 Artifact
     """
     try:
-        topic = await firestore_service.get_topic(user_id, thread_id)
+        topic = await firestore_service.get_topic(user_id, session_id, thread_id)
         
         if not topic:
             raise HTTPException(status_code=404, detail="主题不存在")
@@ -96,14 +93,15 @@ async def get_topic_artifact(user_id: str, thread_id: str):
         raise HTTPException(status_code=500, detail=f"获取 Artifact 失败: {str(e)}")
 
 
-@router.get("/topics/{user_id}/{thread_id}/versions")
-async def get_artifact_versions(user_id: str, thread_id: str, limit: int = 10):
+@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}/versions")
+async def get_artifact_versions(user_id: str, session_id: str, thread_id: str, limit: int = 10):
     """
     获取 Artifact 历史版本
     """
     try:
         versions = await firestore_service.get_artifact_versions(
             user_id,
+            session_id,
             thread_id,
             limit=limit
         )
@@ -126,14 +124,15 @@ async def get_artifact_versions(user_id: str, thread_id: str, limit: int = 10):
         raise HTTPException(status_code=500, detail=f"获取版本历史失败: {str(e)}")
 
 
-@router.get("/topics/{user_id}/{thread_id}/versions/{version_id}")
-async def get_artifact_version_detail(user_id: str, thread_id: str, version_id: str):
+@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}/versions/{version_id}")
+async def get_artifact_version_detail(user_id: str, session_id: str, thread_id: str, version_id: str):
     """
     获取特定版本的完整内容
     """
     try:
         versions = await firestore_service.get_artifact_versions(
             user_id,
+            session_id,
             thread_id,
             limit=100
         )

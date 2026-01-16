@@ -70,7 +70,7 @@ class RouterService:
         decision = await self.llm.route_decision(user_input, candidates)
         
         return await self._execute_routing_decision(user_id, user_input, decision)
-    
+
     async def _embedding_filter(
         self,
         user_embedding: List[float],

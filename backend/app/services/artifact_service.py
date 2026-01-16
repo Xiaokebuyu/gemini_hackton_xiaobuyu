@@ -2,18 +2,11 @@
 Artifact 管理服务
 """
 import re
-from typing import List, Dict, Any, Optional
-from app.services.firestore_service import FirestoreService
-from app.services.llm_service import LLMService
+from typing import List, Dict, Any, Optional, Tuple
 
 
 class ArtifactService:
     """Artifact 管理服务类"""
-    
-    def __init__(self):
-        """初始化服务"""
-        self.firestore = FirestoreService()
-        self.llm = LLMService()
     
     def parse_artifact_sources(self, artifact: str) -> Dict[str, List[str]]:
         """
@@ -24,40 +17,24 @@ class ArtifactService:
             
         Returns:
             Dict[str, List[str]]: {章节标题: [消息ID列表]}
-            
-        Example:
-            输入: "## 列表推导式 <!-- sources: msg_001, msg_002 -->"
-            返回: {"## 列表推导式": ["msg_001", "msg_002"]}
         """
-        sources_map = {}
-        
-        # 正则匹配: 标题行 + sources 注释
-        # 匹配格式: (#+) 标题内容 <!-- sources: msg_id1, msg_id2 -->
+        sources_map: Dict[str, List[str]] = {}
         pattern = r'(#{1,6}\s+[^\n]+?)\s*<!--\s*sources:\s*([^>]+?)\s*-->'
         
-        matches = re.finditer(pattern, artifact)
-        
-        for match in matches:
-            title = match.group(1).strip()  # 标题（包含 #）
-            sources_str = match.group(2).strip()  # 消息ID列表
-            
-            # 解析消息ID
+        for match in re.finditer(pattern, artifact):
+            title = match.group(1).strip()
+            sources_str = match.group(2).strip()
             message_ids = [
-                msg_id.strip() 
+                msg_id.strip()
                 for msg_id in sources_str.split(',')
                 if msg_id.strip()
             ]
-            
             if message_ids:
                 sources_map[title] = message_ids
         
         return sources_map
     
-    def extract_section_content(
-        self,
-        artifact: str,
-        section_title: str
-    ) -> Optional[str]:
+    def extract_section_content(self, artifact: str, section_title: str) -> Optional[str]:
         """
         提取指定章节的内容
         
@@ -72,26 +49,20 @@ class ArtifactService:
             return None
         
         lines = artifact.split('\n')
-        
-        # 提取标题级别
         title_match = re.match(r'^(#{1,6})\s+(.+)', section_title.strip())
         if not title_match:
             return None
         
         target_level = len(title_match.group(1))
         target_title = title_match.group(2).strip()
-        
-        # 查找章节起始位置
         start_idx = None
+        
         for i, line in enumerate(lines):
             line_match = re.match(r'^(#{1,6})\s+(.+)', line.strip())
             if line_match:
                 level = len(line_match.group(1))
                 title = line_match.group(2).strip()
-                
-                # 移除可能的注释
                 title = re.sub(r'\s*<!--.*?-->\s*$', '', title).strip()
-                
                 if level == target_level and title == target_title:
                     start_idx = i
                     break
@@ -99,7 +70,6 @@ class ArtifactService:
         if start_idx is None:
             return None
         
-        # 查找章节结束位置（下一个同级或更高级标题）
         end_idx = len(lines)
         for i in range(start_idx + 1, len(lines)):
             line_match = re.match(r'^(#{1,6})\s+', lines[i].strip())
@@ -109,185 +79,76 @@ class ArtifactService:
                     end_idx = i
                     break
         
-        # 提取内容
         section_lines = lines[start_idx:end_idx]
         return '\n'.join(section_lines)
     
-    async def find_relevant_sections(
-        self,
-        artifact: str,
-        user_query: str
-    ) -> List[str]:
+    def get_all_sections(self, artifact: str) -> List[Dict[str, Any]]:
         """
-        找到与用户问题相关的章节
+        获取 Artifact 中所有 section
         
-        Args:
-            artifact: Artifact 内容
-            user_query: 用户问题
-            
         Returns:
-            List[str]: 相关章节的标题列表
+            [
+                {"title": "## 列表推导式", "content": "...", "sources": ["msg_001"]},
+                ...
+            ]
         """
-        return await self.llm.find_relevant_sections(artifact, user_query)
-    
-    async def load_section_messages(
-        self,
-        user_id: str,
-        session_id: str,
-        artifact: str,
-        section_titles: List[str]
-    ) -> List[Any]:
-        """
-        加载指定章节关联的历史消息
+        if not artifact:
+            return []
         
-        Args:
-            user_id: 用户ID
-            session_id: 会话ID
-            artifact: Artifact 内容
-            section_titles: 章节标题列表
+        sections: List[Dict[str, Any]] = []
+        current_section: Optional[Dict[str, Any]] = None
+        
+        for line in artifact.splitlines():
+            header_match = re.match(r'^(#{1,6})\s+(.+)', line.strip())
+            if header_match:
+                level = len(header_match.group(1))
+                if level == 1:
+                    if current_section:
+                        current_section["content"] = "\n".join(current_section["content"]).strip()
+                        sections.append(current_section)
+                        current_section = None
+                    continue
+                if current_section:
+                    current_section["content"] = "\n".join(current_section["content"]).strip()
+                    sections.append(current_section)
+                title = header_match.group(0).strip()
+                title = re.sub(r'\s*<!--.*?-->\s*$', '', title).strip()
+                current_section = {"title": title, "content": []}
+                continue
             
-        Returns:
-            List[Message]: 消息列表
-        """
-        # 解析所有章节的源索引
+            if current_section is not None:
+                current_section["content"].append(line)
+        
+        if current_section:
+            current_section["content"] = "\n".join(current_section["content"]).strip()
+            sections.append(current_section)
+        
         sources_map = self.parse_artifact_sources(artifact)
+        for section in sections:
+            section["sources"] = sources_map.get(section["title"], [])
         
-        # 收集所有相关的消息ID
-        message_ids = set()
-        for title in section_titles:
-            if title in sources_map:
-                message_ids.update(sources_map[title])
-        
-        # 加载消息
-        messages = []
-        for msg_id in message_ids:
-            msg = await self.firestore.get_message_by_id(user_id, session_id, msg_id)
-            if msg:
-                messages.append(msg)
-        
-        # 按时间排序
-        messages.sort(key=lambda m: m.timestamp)
-        
-        return messages
+        return sections
     
-    async def should_update_artifact(
-        self,
-        current_artifact: str,
-        conversation: List[Dict[str, str]]
-    ) -> bool:
+    def find_section_by_keyword(
+        self, artifact: str, keyword: str
+    ) -> Optional[Tuple[str, List[str]]]:
         """
-        判断是否需要更新 Artifact
+        根据关键词查找匹配的 section
         
-        Args:
-            current_artifact: 当前 Artifact 内容
-            conversation: 最近的对话历史
-            
-        Returns:
-            bool: 是否需要更新
+        返回: (section_title, message_ids) 或 None
         """
-        result = await self.llm.check_should_update_artifact(
-            current_artifact,
-            conversation
-        )
+        if not artifact or not keyword:
+            return None
         
-        should_update = result.get('should_update', False)
-        reasoning = result.get('reasoning', '')
+        needle = keyword.lower()
+        sections = self.get_all_sections(artifact)
         
-        print(f"Artifact 更新判断: {should_update} - {reasoning}")
+        for section in sections:
+            title = section.get("title", "")
+            content = section.get("content", "")
+            if needle in title.lower() or needle in content.lower():
+                message_ids = section.get("sources", [])
+                if message_ids:
+                    return title, message_ids
         
-        return should_update
-    
-    async def update_artifact(
-        self,
-        user_id: str,
-        thread_id: str,
-        current_artifact: str,
-        conversation: List[Dict[str, str]],
-        message_ids: List[str]
-    ) -> str:
-        """
-        更新 Artifact 内容
-        
-        Args:
-            user_id: 用户ID
-            thread_id: 主题ID
-            current_artifact: 当前 Artifact
-            conversation: 对话历史
-            message_ids: 相关消息ID
-            
-        Returns:
-            str: 更新后的 Artifact
-        """
-        # 使用 LLM 更新 Artifact
-        updated_artifact = await self.llm.update_artifact(
-            current_artifact,
-            conversation,
-            message_ids
-        )
-        
-        # 保存到 Firestore
-        await self.firestore.update_artifact(user_id, thread_id, updated_artifact)
-        
-        # 保存版本历史
-        await self.firestore.save_artifact_version(
-            user_id,
-            thread_id,
-            updated_artifact,
-            message_ids
-        )
-        
-        print(f"Artifact 已更新: {thread_id}")
-        
-        return updated_artifact
-    
-    async def build_context_from_artifact(
-        self,
-        user_id: str,
-        session_id: str,
-        thread_id: str,
-        user_query: str
-    ) -> str:
-        """
-        从 Artifact 构建上下文
-        
-        Args:
-            user_id: 用户ID
-            session_id: 会话ID
-            thread_id: 主题ID
-            user_query: 用户问题
-            
-        Returns:
-            str: 构建的上下文文本
-        """
-        # 获取主题
-        topic = await self.firestore.get_topic(user_id, thread_id)
-        if not topic or not topic.current_artifact:
-            return ""
-        
-        artifact = topic.current_artifact
-        
-        # 找到相关章节
-        relevant_sections = await self.find_relevant_sections(artifact, user_query)
-        
-        if not relevant_sections:
-            # 如果没有找到相关章节，返回整个 Artifact
-            return f"## 相关知识\n\n{artifact}\n\n"
-        
-        # 构建上下文：Artifact 骨架 + 相关章节的详细内容
-        context = f"## 主题: {topic.title}\n\n"
-        context += f"### Artifact 概览\n\n{artifact}\n\n"
-        
-        # 加载相关章节的源消息
-        section_messages = await self.load_section_messages(
-            user_id,
-            session_id,
-            artifact,
-            relevant_sections
-        )
-        
-        if section_messages:
-            context += "### 相关历史对话\n\n"
-            for msg in section_messages:
-                context += f"**{msg.role.upper()}**: {msg.content}\n\n"
-        
-        return context
+        return None

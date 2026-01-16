@@ -2,22 +2,30 @@
 
 ## 测试文件
 
-### test_router.py
-路由系统测试，包括：
-- 首次对话创建新主题
-- 继续相同话题路由到现有主题
-- Embedding 相似度计算
+### _deprecated/test_router.py
+旧路由系统测试（已停用）
 
 ### test_artifact.py
 Artifact 管理测试，包括：
 - 解析 Artifact 源索引
 - 提取章节内容
 - Markdown 结构解析
+- 关键词章节定位
+
+### test_archive.py
+归档服务测试，包括：
+- 归档触发条件
+- 归档执行与消息标记
+
+### test_context_loop.py
+上下文循环测试，包括：
+- NEED_CONTEXT 标记解析
+- 根据关键词加载历史消息
 
 ### test_integration.py
 端到端集成测试，包括：
-- 完整对话流程
-- Artifact 更新流程
+- 归档与上下文构建
+- 上下文请求解析
 - 消息存储和检索
 
 ## 运行测试
@@ -33,8 +41,6 @@ pip install pytest pytest-asyncio
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=./firebase-credentials.json
 GEMINI_API_KEY=your_gemini_api_key
-CLOUDFLARE_ACCOUNT_ID=your_account_id
-CLOUDFLARE_API_TOKEN=your_api_token
 ```
 
 3. 确保 Firebase 凭证文件存在
@@ -49,11 +55,14 @@ pytest tests/ -v
 ### 运行特定测试文件
 
 ```bash
-# 路由测试
-pytest tests/test_router.py -v
-
 # Artifact 测试
 pytest tests/test_artifact.py -v
+
+# 归档测试
+pytest tests/test_archive.py -v
+
+# 上下文循环测试
+pytest tests/test_context_loop.py -v
 
 # 集成测试
 pytest tests/test_integration.py -v
@@ -74,27 +83,25 @@ pytest tests/ -v -s
 ## 测试覆盖范围
 
 ### 单元测试
-- ✓ Embedding 相似度计算
 - ✓ Artifact 源索引解析
 - ✓ 章节内容提取
 - ✓ Markdown 结构解析
+- ✓ 关键词章节定位
+- ✓ 上下文请求解析
 
 ### 集成测试
-- ✓ 完整对话流程
-- ✓ 路由决策
 - ✓ 消息持久化
-- ✓ Artifact 更新
+- ✓ 归档执行
 - ✓ 上下文构建
 
 ### 端到端测试
 - ✓ 会话创建
-- ✓ 消息路由
 - ✓ 主题管理
 - ✓ 数据持久化
 
 ## 注意事项
 
-1. **API 配额**: 集成测试会调用实际的 API（Gemini、Cloudflare），请注意 API 配额
+1. **API 配额**: 集成测试会调用实际的 API（Gemini），请注意 API 配额
 2. **Firebase 数据**: 测试会在 Firestore 中创建真实数据，建议使用测试环境
 3. **异步测试**: 所有涉及 I/O 的测试都使用 `pytest-asyncio` 标记为异步
 4. **测试隔离**: 每个测试使用不同的 user_id 来避免数据污染
@@ -117,8 +124,8 @@ http://localhost:8000/docs
 3. 测试流程：
    - 创建会话：POST /api/sessions/{user_id}/create
    - 发送消息：POST /api/chat
-   - 查看主题：GET /api/topics/{user_id}
-   - 查看 Artifact：GET /api/topics/{user_id}/{thread_id}/artifact
+   - 查看主题：GET /api/sessions/{user_id}/{session_id}/topics
+   - 查看 Artifact：GET /api/sessions/{user_id}/{session_id}/topics/{thread_id}/artifact
 
 ## 故障排查
 

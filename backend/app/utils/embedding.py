@@ -1,5 +1,8 @@
 """
 Embedding 工具函数
+当前状态: 热记忆阶段暂不使用
+未来用途: BigQuery 冷记忆的语义检索
+
 """
 import httpx
 import numpy as np

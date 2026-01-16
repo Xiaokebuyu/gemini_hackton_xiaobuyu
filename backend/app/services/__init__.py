@@ -3,14 +3,16 @@
 """
 from .firestore_service import FirestoreService
 from .llm_service import LLMService
-from .router_service import RouterService
 from .artifact_service import ArtifactService
 from .context_builder import ContextBuilder
+from .archive_service import ArchiveService
+from .context_loop import ContextLoop
 
 __all__ = [
     "FirestoreService",
     "LLMService",
-    "RouterService",
     "ArtifactService",
     "ContextBuilder",
+    "ArchiveService",
+    "ContextLoop",
 ]

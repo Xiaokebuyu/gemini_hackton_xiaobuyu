@@ -104,6 +104,40 @@ class TestArtifactService:
         )
         
         assert section is None
+    
+    def test_get_all_sections(self, artifact_service):
+        """测试：获取所有章节"""
+        artifact = """# Python学习笔记
+
+## 列表推导式 <!-- sources: msg_001, msg_002 -->
+基本语法是 `[expr for x in iterable]`
+
+## 异步编程 <!-- sources: msg_015 -->
+使用 asyncio 处理 IO 密集型任务
+"""
+        sections = artifact_service.get_all_sections(artifact)
+        
+        assert len(sections) == 2
+        assert sections[0]["title"] == "## 列表推导式"
+        assert sections[0]["sources"] == ["msg_001", "msg_002"]
+        assert "基本语法" in sections[0]["content"]
+    
+    def test_find_section_by_keyword(self, artifact_service):
+        """测试：根据关键词查找章节"""
+        artifact = """# Python学习笔记
+
+## 列表推导式 <!-- sources: msg_001, msg_002 -->
+基本语法是 `[expr for x in iterable]`
+
+## 异步编程 <!-- sources: msg_015 -->
+使用 asyncio 处理 IO 密集型任务
+"""
+        result = artifact_service.find_section_by_keyword(artifact, "列表推导式")
+        
+        assert result is not None
+        title, message_ids = result
+        assert title == "## 列表推导式"
+        assert message_ids == ["msg_001", "msg_002"]
 
 
 class TestArtifactParsing:

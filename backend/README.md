@@ -1,20 +1,20 @@
 # LLM 记忆系统后端
 
-基于 Firestore 的中断驱动上下文系统，实现 LLM 的长期记忆管理。
+基于 Firestore 的滑动窗口归档系统，实现 LLM 的长期记忆管理。
 
 ## 功能特性
 
-- **智能主题路由**: 使用 Embedding + LLM 两阶段路由策略
-- **Artifact 管理**: Markdown 格式的知识文档自动构建和更新
-- **上下文优化**: 根据对话主题动态加载相关历史记录
-- **交叉主题支持**: 自动识别和处理跨主题对话
+- **Session 内归档**: 会话内滑动窗口归档，控制上下文长度
+- **Artifact 管理**: Markdown 知识文档自动生成与合并
+- **上下文重构**: LLM 使用 [NEED_CONTEXT] 触发按需历史回溯
+- **可控上下文**: 活跃窗口 + Artifact 汇总，避免无限膨胀
 
 ## 技术栈
 
 - FastAPI (Web 框架)
 - Google Cloud Firestore (数据存储)
-- Gemini 2.5 Flash Lite (路由判断)
-- Cloudflare Workers AI (向量嵌入)
+- Gemini (对话与归档分析)
+- Cloudflare Workers AI (向量嵌入，预留)
 
 ## 快速开始
 
@@ -60,9 +60,11 @@ backend/
 │   │   └── message.py
 │   ├── services/            # 业务逻辑
 │   │   ├── firestore_service.py
-│   │   ├── router_service.py
 │   │   ├── artifact_service.py
-│   │   └── llm_service.py
+│   │   ├── llm_service.py
+│   │   ├── context_builder.py
+│   │   ├── archive_service.py
+│   │   └── context_loop.py
 │   ├── routers/             # API 路由
 │   │   ├── chat.py
 │   │   └── topics.py
@@ -91,28 +93,29 @@ backend/
 
 ### 主题管理
 
-**GET /api/topics/{user_id}**
+**GET /api/sessions/{user_id}/{session_id}/topics**
 
-获取用户的所有主题。
+获取会话内所有主题。
 
-**GET /api/topics/{user_id}/{thread_id}**
+**GET /api/sessions/{user_id}/{session_id}/topics/{thread_id}**
 
 获取特定主题的详细信息。
 
 ## 核心概念
 
 ### Session (会话)
-短期对话窗口，包含当前会话的所有消息。
+短期对话窗口，包含当前会话的所有消息与主题。
 
-### Topic Thread (主题线程)
-长期知识积累单元，跨会话持久化。每个主题包含一个 Artifact 文档。
+### Topic (主题)
+会话内的知识单元，每个主题包含一个 Artifact 文档。
 
 ### Artifact (知识文档)
-Markdown 格式的结构化知识文档，随对话自动更新，包含源消息索引。
+Markdown 格式的结构化知识文档，归档时生成，包含源消息索引。
 
-### 路由策略
-1. **粗筛**: 使用 Embedding 计算相似度，找到候选主题
-2. **精判**: 使用 Flash-Lite 做最终路由决策
+### 上下文策略
+1. **滑动窗口**: 最近 N 条未归档消息
+2. **归档摘要**: 通过 Artifact 汇总历史
+3. **按需回溯**: [NEED_CONTEXT] 触发加载原始消息
 
 ## 开发说明
 

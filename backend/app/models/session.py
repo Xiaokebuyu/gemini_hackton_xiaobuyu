@@ -2,13 +2,12 @@
 会话数据模型
 """
 from datetime import datetime
-from typing import Optional
 from pydantic import BaseModel, Field
 
 
 class SessionBase(BaseModel):
     """会话基础模型"""
-    current_thread_id: Optional[str] = None
+    pass
 
 
 class SessionCreate(SessionBase):

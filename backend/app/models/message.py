@@ -20,6 +20,7 @@ class MessageBase(BaseModel):
     content: str
     thread_id: Optional[str] = None
     is_excluded: bool = False
+    is_archived: bool = False
 
 
 class MessageCreate(MessageBase):

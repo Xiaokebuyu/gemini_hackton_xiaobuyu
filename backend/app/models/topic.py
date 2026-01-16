@@ -2,28 +2,26 @@
 主题线程数据模型
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 from pydantic import BaseModel, Field
 
 
 class TopicBase(BaseModel):
     """主题基础模型"""
     title: str
+    summary: str = ""
     current_artifact: str = ""
-    parent_thread_ids: List[str] = Field(default_factory=list)
-    child_thread_ids: List[str] = Field(default_factory=list)
 
 
 class TopicCreate(TopicBase):
     """创建主题请求"""
-    summary_embedding: Optional[List[float]] = None
+    pass
 
 
 class TopicThread(TopicBase):
     """主题完整模型"""
     thread_id: str
-    last_active_at: datetime = Field(default_factory=datetime.now)
-    summary_embedding: Optional[List[float]] = None
+    created_at: datetime = Field(default_factory=datetime.now)
     
     class Config:
         from_attributes = True

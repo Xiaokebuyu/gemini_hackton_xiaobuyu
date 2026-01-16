@@ -1,355 +1,365 @@
 """
-LLM 服务模块
+LLM 服务模块 - 支持 Gemini 3 思考功能
 """
 import json
+import re
 from typing import List, Dict, Any, Optional
-import google.generativeai as genai
+from dataclasses import dataclass, field
+from google import genai
+from google.genai import types
 from app.config import settings
 
 
+@dataclass
+class ThinkingMetadata:
+    """思考元数据"""
+    thinking_enabled: bool = False
+    thinking_level: str = "medium"
+    thoughts_summary: str = ""
+    thoughts_token_count: int = 0
+    output_token_count: int = 0
+    total_token_count: int = 0
+
+
+@dataclass
+class LLMResponse:
+    """LLM 响应结构"""
+    text: str
+    thinking: ThinkingMetadata = field(default_factory=ThinkingMetadata)
+    raw_response: Any = None
+
+
 class LLMService:
-    """LLM 服务类"""
+    """LLM 服务类 - 支持 Gemini 3 思考功能"""
     
     def __init__(self):
         """初始化 Gemini API"""
-        genai.configure(api_key=settings.gemini_api_key)
-        
-        # 配置模型
-        self.flash_model = genai.GenerativeModel(settings.gemini_flash_model)
-        self.main_model = genai.GenerativeModel(settings.gemini_main_model)
+        self.client = genai.Client(api_key=settings.gemini_api_key)
+        self.flash_model = settings.gemini_flash_model
+        self.main_model = settings.gemini_main_model
     
-    async def route_decision(
-        self,
-        user_input: str,
-        candidates: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """
-        使用 Flash-Lite 做路由决策
+    def _get_thinking_config(self, override_level: Optional[str] = None) -> types.ThinkingConfig:
+        """构建 Gemini 3 思考配置"""
+        if not settings.thinking_enabled:
+            return types.ThinkingConfig(
+                thinking_level="lowest",
+                include_thoughts=False
+            )
         
-        Args:
-            user_input: 用户输入
-            candidates: 候选主题列表，每个包含 {thread_id, title, similarity}
-            
-        Returns:
-            Dict: 路由决策结果
-                {
-                    "action": "route_existing" | "create_new" | "create_cross",
-                    "thread_id": str,      # action=route_existing时
-                    "title": str,          # action=create_new时
-                    "parent_ids": [str]    # action=create_cross时
-                }
-        """
-        # 构建 prompt
-        candidates_text = "\n".join([
-            f"{i+1}. [{c['thread_id']}] {c['title']} (相似度: {c.get('similarity', 0):.2f})"
-            for i, c in enumerate(candidates)
-        ])
-        
-        prompt = f"""你是一个对话主题路由专家。用户发来了新消息，你需要判断应该如何处理。
-
-用户消息: {user_input}
-
-现有主题候选:
-{candidates_text if candidates else "（无现有主题）"}
-
-请分析用户消息的意图，并做出以下决策之一:
-
-1. **route_existing**: 如果用户消息明确属于某个现有主题，返回该主题的 thread_id
-2. **create_new**: 如果这是一个全新的话题，返回建议的主题标题（宽泛的大类，如"Python编程"、"Docker部署"）
-3. **create_cross**: 如果用户消息涉及多个现有主题的交叉，返回父主题的 thread_id 列表和新主题标题
-
-请以 JSON 格式返回决策，格式如下:
-
-对于 route_existing:
-{{
-    "action": "route_existing",
-    "thread_id": "thread_xxx",
-    "reasoning": "简短说明为什么选择这个主题"
-}}
-
-对于 create_new:
-{{
-    "action": "create_new",
-    "title": "主题标题",
-    "reasoning": "简短说明为什么创建新主题"
-}}
-
-对于 create_cross:
-{{
-    "action": "create_cross",
-    "parent_ids": ["thread_xxx", "thread_yyy"],
-    "title": "交叉主题标题",
-    "reasoning": "简短说明为什么创建交叉主题"
-}}
-
-只返回 JSON，不要其他内容。"""
-
-        try:
-            response = self.flash_model.generate_content(prompt)
-            result_text = response.text.strip()
-            
-            # 移除可能的 markdown 代码块标记
-            if result_text.startswith("```json"):
-                result_text = result_text[7:]
-            if result_text.startswith("```"):
-                result_text = result_text[3:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-            
-            result = json.loads(result_text.strip())
-            return result
-            
-        except Exception as e:
-            # 如果解析失败，返回默认决策
-            print(f"路由决策失败: {str(e)}")
-            if candidates:
-                # 选择相似度最高的候选
-                best_candidate = max(candidates, key=lambda x: x.get('similarity', 0))
-                return {
-                    "action": "route_existing",
-                    "thread_id": best_candidate['thread_id'],
-                    "reasoning": "默认选择最相似的主题"
-                }
-            else:
-                # 创建新主题
-                return {
-                    "action": "create_new",
-                    "title": "新对话",
-                    "reasoning": "无现有主题，创建新主题"
-                }
+        level = override_level or settings.thinking_level
+        return types.ThinkingConfig(
+            thinking_level=level,
+            include_thoughts=settings.include_thoughts
+        )
     
-    async def find_relevant_sections(
-        self,
-        artifact: str,
-        user_query: str
-    ) -> List[str]:
-        """
-        在 Artifact 中找到与用户问题相关的章节
-        
-        Args:
-            artifact: Artifact 内容
-            user_query: 用户问题
-            
-        Returns:
-            List[str]: 相关章节的标题列表
-        """
-        if not artifact or artifact.strip() == "":
-            return []
-        
-        prompt = f"""分析以下知识文档，找出与用户问题最相关的章节。
-
-知识文档:
-{artifact}
-
-用户问题: {user_query}
-
-请返回相关章节的标题列表（Markdown 标题）。如果没有相关章节，返回空列表。
-
-以 JSON 数组格式返回，例如: ["## 章节1", "### 子章节2"]
-
-只返回 JSON 数组，不要其他内容。"""
-
-        try:
-            response = self.flash_model.generate_content(prompt)
-            result_text = response.text.strip()
-            
-            # 移除可能的 markdown 代码块标记
-            if result_text.startswith("```json"):
-                result_text = result_text[7:]
-            if result_text.startswith("```"):
-                result_text = result_text[3:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-            
-            sections = json.loads(result_text.strip())
-            return sections if isinstance(sections, list) else []
-            
-        except Exception as e:
-            print(f"章节查找失败: {str(e)}")
-            return []
+    def _strip_code_block(self, text: str) -> str:
+        """移除代码块标记"""
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+            cleaned = cleaned.rstrip("`").strip()
+        return cleaned
     
-    async def check_should_update_artifact(
-        self,
-        current_artifact: str,
-        conversation: List[Dict[str, str]]
-    ) -> Dict[str, Any]:
-        """
-        判断是否需要更新 Artifact
-        
-        Args:
-            current_artifact: 当前的 Artifact 内容
-            conversation: 最近的对话，格式 [{"role": "user/assistant", "content": "..."}]
-            
-        Returns:
-            Dict: {
-                "should_update": bool,
-                "reasoning": str
-            }
-        """
-        # 构建对话历史
-        conv_text = "\n".join([
-            f"{msg['role'].upper()}: {msg['content']}"
-            for msg in conversation[-4:]  # 只看最近4轮对话
-        ])
-        
-        prompt = f"""分析以下对话，判断是否包含值得记录到知识文档的新信息。
-
-当前知识文档:
-{current_artifact if current_artifact else "（空文档）"}
-
-最近对话:
-{conv_text}
-
-值得记录的信息包括:
-1. 新的知识点、概念或技术
-2. 重要的决策或选择
-3. 具体的实现方案或代码片段
-4. 问题的解决方法
-
-不值得记录的信息:
-1. 简单的问候或闲聊
-2. 已经在文档中记录过的内容
-3. 临时性的、不具有参考价值的内容
-
-请以 JSON 格式返回:
-{{
-    "should_update": true/false,
-    "reasoning": "简短说明原因"
-}}
-
-只返回 JSON，不要其他内容。"""
-
+    def _parse_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """解析 JSON"""
+        cleaned = self._strip_code_block(text)
         try:
-            response = self.flash_model.generate_content(prompt)
-            result_text = response.text.strip()
-            
-            # 移除可能的 markdown 代码块标记
-            if result_text.startswith("```json"):
-                result_text = result_text[7:]
-            if result_text.startswith("```"):
-                result_text = result_text[3:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-            
-            result = json.loads(result_text.strip())
-            return result
-            
-        except Exception as e:
-            print(f"Artifact 更新判断失败: {str(e)}")
-            return {"should_update": False, "reasoning": "判断失败"}
+            return json.loads(cleaned)
+        except Exception:
+            return None
     
-    async def update_artifact(
-        self,
-        current_artifact: str,
-        conversation: List[Dict[str, str]],
-        message_ids: List[str]
-    ) -> str:
-        """
-        更新 Artifact 内容
+    def _extract_response(self, response, level: str = None) -> LLMResponse:
+        """从响应中提取文本和思考摘要"""
+        answer_text = ""
+        thoughts_summary = ""
         
-        Args:
-            current_artifact: 当前的 Artifact 内容
-            conversation: 对话历史
-            message_ids: 对应的消息ID列表
-            
-        Returns:
-            str: 更新后的 Artifact 内容
-        """
-        # 构建对话历史
-        conv_text = "\n".join([
-            f"{msg['role'].upper()}: {msg['content']}"
-            for msg in conversation[-4:]
-        ])
+        if hasattr(response, 'candidates') and response.candidates:
+            for part in response.candidates[0].content.parts:
+                if not hasattr(part, 'text') or not part.text:
+                    continue
+                
+                if hasattr(part, 'thought') and part.thought:
+                    thoughts_summary += part.text
+                else:
+                    answer_text += part.text
         
-        # 构建消息ID索引
-        msg_ids_str = ", ".join(message_ids[-2:])  # 最近2条消息
+        thinking_meta = ThinkingMetadata(
+            thinking_enabled=settings.thinking_enabled,
+            thinking_level=level or settings.thinking_level,
+            thoughts_summary=thoughts_summary.strip(),
+        )
         
-        prompt = f"""你是知识文档管理专家。根据对话内容更新知识文档。
-
-当前文档:
-{current_artifact if current_artifact else "# 新主题\n\n"}
-
-最近对话:
-{conv_text}
-
-请更新文档，要求:
-1. 保持 Markdown 格式
-2. 在新增或修改的章节标题后添加索引注释: <!-- sources: {msg_ids_str} -->
-3. 保持文档的层次结构清晰
-4. 只添加有价值的信息，不要重复已有内容
-5. 使用清晰的标题组织内容
-
-返回完整的更新后文档。"""
-
-        try:
-            response = self.main_model.generate_content(prompt)
-            updated_artifact = response.text.strip()
-            
-            # 移除可能的 markdown 代码块标记
-            if updated_artifact.startswith("```markdown"):
-                updated_artifact = updated_artifact[11:]
-            if updated_artifact.startswith("```"):
-                updated_artifact = updated_artifact[3:]
-            if updated_artifact.endswith("```"):
-                updated_artifact = updated_artifact[:-3]
-            
-            return updated_artifact.strip()
-            
-        except Exception as e:
-            print(f"Artifact 更新失败: {str(e)}")
-            return current_artifact
+        if hasattr(response, 'usage_metadata'):
+            usage = response.usage_metadata
+            if hasattr(usage, 'thoughts_token_count'):
+                thinking_meta.thoughts_token_count = usage.thoughts_token_count or 0
+            if hasattr(usage, 'candidates_token_count'):
+                thinking_meta.output_token_count = usage.candidates_token_count or 0
+            if hasattr(usage, 'total_token_count'):
+                thinking_meta.total_token_count = usage.total_token_count or 0
+        
+        return LLMResponse(
+            text=answer_text.strip(),
+            thinking=thinking_meta,
+            raw_response=response
+        )
     
     async def generate_response(
-        self,
+        self, 
+        context: str, 
         user_query: str,
-        context: str,
-        conversation_history: List[Dict[str, str]]
-    ) -> str:
+        thinking_level: Optional[str] = None
+    ) -> LLMResponse:
         """
-        生成对用户问题的回复
+        生成回复（支持 Gemini 3 思考功能）
         
         Args:
+            context: 上下文内容
             user_query: 用户问题
-            context: 上下文（包含 Artifact 和相关历史）
-            conversation_history: 对话历史
+            thinking_level: 思考层级 (lowest/low/medium/high)
             
         Returns:
-            str: AI 回复
+            LLMResponse: 包含回复文本和思考元数据
         """
-        # 构建对话历史
-        history_text = "\n".join([
-            f"{msg['role'].upper()}: {msg['content']}"
-            for msg in conversation_history[-6:]  # 最近6轮对话
-        ])
-        
-        prompt = f"""你是一个有记忆的AI助手。你可以访问之前对话的知识积累。
+        prompt = f"""{context}
 
-相关知识背景:
-{context}
-
-最近对话历史:
-{history_text}
+---
 
 用户问题: {user_query}
 
-请基于上述背景和历史回答用户问题。如果知识背景中有相关信息，请引用它。保持回答简洁、准确。"""
-
+请基于上下文回答问题，保持简洁准确。"""
+        
         try:
-            response = self.main_model.generate_content(prompt)
-            return response.text.strip()
+            thinking_config = self._get_thinking_config(thinking_level)
+            
+            response = self.client.models.generate_content(
+                model=self.main_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            )
+            
+            return self._extract_response(response, thinking_level)
             
         except Exception as e:
-            return f"抱歉，生成回复时出错: {str(e)}"
+            error_msg = f"抱歉，生成回复时出错: {str(e)}"
+            return LLMResponse(
+                text=error_msg,
+                thinking=ThinkingMetadata(
+                    thinking_enabled=settings.thinking_enabled,
+                    thinking_level=thinking_level or settings.thinking_level
+                )
+            )
     
-    async def generate_topic_summary(self, title: str, initial_message: str) -> str:
+    async def generate_response_stream(
+        self, 
+        context: str, 
+        user_query: str,
+        thinking_level: Optional[str] = None
+    ):
         """
-        为新主题生成初始摘要
+        流式生成回复（支持思考功能）
         
-        Args:
-            title: 主题标题
-            initial_message: 初始消息
-            
-        Returns:
-            str: 主题摘要文本（用于生成 embedding）
+        Yields:
+            dict: 包含 type ('thought' 或 'answer') 和 text 的字典
         """
-        return f"{title}: {initial_message[:200]}"
+        prompt = f"""{context}
+
+---
+
+用户问题: {user_query}
+
+请基于上下文回答问题，保持简洁准确。"""
+        
+        try:
+            thinking_config = self._get_thinking_config(thinking_level)
+            
+            for chunk in self.client.models.generate_content_stream(
+                model=self.main_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            ):
+                if not hasattr(chunk, 'candidates') or not chunk.candidates:
+                    continue
+                    
+                for part in chunk.candidates[0].content.parts:
+                    if not hasattr(part, 'text') or not part.text:
+                        continue
+                    
+                    if hasattr(part, 'thought') and part.thought:
+                        yield {"type": "thought", "text": part.text}
+                    else:
+                        yield {"type": "answer", "text": part.text}
+                        
+        except Exception as e:
+            yield {"type": "error", "text": f"生成出错: {str(e)}"}
+    
+    async def analyze_messages_for_archive(
+        self, 
+        messages: List[Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """分析消息块，生成主题和 Artifact"""
+        messages_text = "\n".join(
+            [
+                f"{msg['role'].upper()}({msg['message_id']}): {msg['content']}"
+                for msg in messages
+            ]
+        )
+        
+        prompt = f"""你是归档助手，需要把一段对话整理成主题摘要和知识文档。
+
+对话内容:
+{messages_text}
+
+请输出 JSON，格式:
+{{
+  "title": "主题标题（宽泛大类）",
+  "summary": "简短摘要（用于合并判断）",
+  "artifact": "Markdown 文档"
+}}
+
+Artifact 要求:
+1. 使用 Markdown 标题组织内容
+2. 在新增或更新的章节标题后添加索引注释: <!-- sources: msg_xxx, msg_yyy -->
+3. 只引用本次对话中出现的 message_id
+4. 内容简洁、可用于后续检索
+
+只返回 JSON，不要其他内容。"""
+        
+        try:
+            thinking_config = types.ThinkingConfig(
+                thinking_level="low",
+                include_thoughts=False
+            )
+            
+            response = self.client.models.generate_content(
+                model=self.flash_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            )
+            
+            text = ""
+            if hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        if not (hasattr(part, 'thought') and part.thought):
+                            text += part.text
+            
+            result = self._parse_json(text)
+            if result:
+                return result
+                
+        except Exception as e:
+            print(f"归档分析失败: {str(e)}")
+        
+        return {
+            "title": "未分类主题",
+            "summary": "归档分析失败，暂未生成摘要",
+            "artifact": "# 未分类主题\n\n",
+        }
+    
+    async def should_merge_topics(
+        self,
+        existing_title: str,
+        existing_summary: str,
+        new_title: str,
+        new_summary: str,
+    ) -> bool:
+        """判断两个 Topic 是否应该合并"""
+        prompt = f"""判断两个主题是否应该合并为同一主题。
+
+现有主题:
+标题: {existing_title}
+摘要: {existing_summary}
+
+新主题:
+标题: {new_title}
+摘要: {new_summary}
+
+请以 JSON 返回:
+{{"should_merge": true/false, "reasoning": "简短说明"}}
+
+只返回 JSON，不要其他内容。"""
+        
+        try:
+            thinking_config = types.ThinkingConfig(
+                thinking_level="lowest",
+                include_thoughts=False
+            )
+            
+            response = self.client.models.generate_content(
+                model=self.flash_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            )
+            
+            text = ""
+            if hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        if not (hasattr(part, 'thought') and part.thought):
+                            text += part.text
+            
+            result = self._parse_json(text)
+            if isinstance(result, dict):
+                return bool(result.get("should_merge", False))
+                
+        except Exception as e:
+            print(f"主题合并判断失败: {str(e)}")
+        
+        return False
+    
+    async def merge_artifacts(
+        self, 
+        existing_artifact: str, 
+        new_artifact: str
+    ) -> str:
+        """合并两个 Artifact"""
+        prompt = f"""你是知识文档合并助手，请把两份 Artifact 合并为一份。
+
+现有 Artifact:
+{existing_artifact}
+
+新增 Artifact:
+{new_artifact}
+
+要求:
+1. 保持 Markdown 结构清晰
+2. 合并同类章节，避免重复
+3. 保留所有 <!-- sources: --> 索引
+
+返回合并后的完整 Markdown 文档。"""
+        
+        try:
+            thinking_config = types.ThinkingConfig(
+                thinking_level="low",
+                include_thoughts=False
+            )
+            
+            response = self.client.models.generate_content(
+                model=self.main_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            )
+            
+            text = ""
+            if hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        if not (hasattr(part, 'thought') and part.thought):
+                            text += part.text
+            
+            return self._strip_code_block(text)
+            
+        except Exception as e:
+            print(f"Artifact 合并失败: {str(e)}")
+            return existing_artifact

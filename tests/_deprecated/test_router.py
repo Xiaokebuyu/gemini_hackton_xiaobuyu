@@ -2,10 +2,12 @@
 路由系统测试
 """
 import pytest
-from app.services.router_service import RouterService
+
+pytest.skip("路由系统已弃用", allow_module_level=True)
+
+from app.services._deprecated.router_service import RouterService
 from app.services.firestore_service import FirestoreService
 from app.models import TopicCreate
-import asyncio
 
 
 class TestRouterService:
