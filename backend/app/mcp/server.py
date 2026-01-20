@@ -17,10 +17,11 @@ from .message_stream import MessageStream
 from .message_assembler import MessageAssembler
 from .truncate_archiver import TruncateArchiver
 from .topic_state import TopicStateManager
-from .tools import TOOLS, is_retrieval_tool
+TOOLS: List[Dict[str, Any]] = []
 
 from app.services.firestore_service import FirestoreService
 from app.services.llm_service import LLMService
+from app.services.embedding_service import EmbeddingService
 
 
 class ContextMCPServer:
@@ -48,13 +49,14 @@ class ContextMCPServer:
         """初始化 MCP Server"""
         self.firestore = FirestoreService()
         self.llm = LLMService()
+        self.embedding = EmbeddingService()
         
         # 每个会话的消息流
         self.streams: Dict[str, MessageStream] = {}
         
         # 共享的组装器和归档器
         self.assembler = MessageAssembler(self.firestore)
-        self.archiver = TruncateArchiver(self.firestore, self.llm)
+        self.archiver = TruncateArchiver(self.firestore, self.llm, self.embedding)
         
         # 每个会话的话题状态
         self.topic_states: Dict[str, TopicStateManager] = {}

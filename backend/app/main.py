@@ -4,7 +4,7 @@ FastAPI 应用入口
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings, validate_config
-from app.routers import chat_router, topics_router
+from app.routers import topics_router
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -23,7 +23,6 @@ app.add_middleware(
 )
 
 # 注册路由
-app.include_router(chat_router, prefix=settings.api_prefix, tags=["聊天"])
 app.include_router(topics_router, prefix=settings.api_prefix, tags=["主题"])
 
 

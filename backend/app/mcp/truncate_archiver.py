@@ -27,6 +27,7 @@ from .message_stream import MessageStream
 if TYPE_CHECKING:
     from app.services.firestore_service import FirestoreService
     from app.services.llm_service import LLMService
+    from app.services.embedding_service import EmbeddingService
 
 
 class TruncateArchiver:
@@ -48,7 +49,8 @@ class TruncateArchiver:
     def __init__(
         self, 
         firestore: "FirestoreService", 
-        llm: "LLMService"
+        llm: "LLMService",
+        embedding_service: Optional["EmbeddingService"] = None,
     ):
         """
         初始化归档组件
@@ -59,6 +61,7 @@ class TruncateArchiver:
         """
         self.firestore = firestore
         self.llm = llm
+        self.embedding_service = embedding_service
     
     # ========== 主流程 ==========
     
@@ -203,6 +206,11 @@ class TruncateArchiver:
                 insight_content
             )
         
+        # 生成 embedding（可选）
+        embedding = None
+        if self.embedding_service:
+            embedding = await self.embedding_service.embed_text(insight_content)
+
         # 创建新见解
         insight_id = self._generate_id("insight")
         await self.firestore.create_insight(
@@ -214,7 +222,8 @@ class TruncateArchiver:
             version=version,
             content=insight_content,
             source_message_ids=[m.message_id for m in messages],
-            evolution_note=evolution_note
+            evolution_note=evolution_note,
+            embedding=embedding,
         )
         
         return insight_id

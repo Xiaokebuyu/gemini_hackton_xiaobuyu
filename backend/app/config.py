@@ -23,8 +23,9 @@ class Settings(BaseModel):
     
     # Gemini API 配置
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_flash_model: str = "gemini-3-flash-preview"
-    gemini_main_model: str = "gemini-3-flash-preview"
+    gemini_flash_model: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash-lite")
+    gemini_main_model: str = os.getenv("GEMINI_MAIN_MODEL", "gemini-3-flash-preview")
+    gemini_embedding_model: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
     
     # Gemini 3 思考配置
     # thinking_level: 思考层级 - "lowest", "low", "medium", "high"
@@ -37,6 +38,15 @@ class Settings(BaseModel):
     archive_threshold: int = 40
     max_context_retry: int = 3
     context_request_pattern: str = r'\[NEED_CONTEXT:\s*(.+?)\]'
+
+    # MCP 记忆网关配置
+    memory_window_tokens: int = int(os.getenv("MEMORY_WINDOW_TOKENS", "120000"))
+    memory_insert_budget_tokens: int = int(os.getenv("MEMORY_INSERT_BUDGET_TOKENS", "20000"))
+    memory_max_threads: int = int(os.getenv("MEMORY_MAX_THREADS", "3"))
+    memory_max_raw_messages: int = int(os.getenv("MEMORY_MAX_RAW_MESSAGES", "12"))
+    memory_session_ttl_seconds: int = int(os.getenv("MEMORY_SESSION_TTL_SECONDS", "3600"))
+    memory_stream_load_limit: int = int(os.getenv("MEMORY_STREAM_LOAD_LIMIT", "2000"))
+    embedding_provider: Literal["gemini", "cloudflare"] = os.getenv("EMBEDDING_PROVIDER", "gemini")
     
     # 冷记忆配置（暂不启用）
     cloudflare_account_id: str = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")

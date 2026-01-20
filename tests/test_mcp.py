@@ -24,12 +24,6 @@ from app.mcp.models import (
 )
 from app.mcp.message_stream import MessageStream
 from app.mcp.topic_state import TopicStateManager, TopicStateData
-from app.mcp.tools import (
-    TOOLS,
-    get_tool_by_name,
-    get_all_tools,
-    is_retrieval_tool,
-)
 
 
 class TestAPIMessage:
@@ -288,43 +282,6 @@ class TestTopicStateManager:
         assert restored.get_current_topic_id() == "topic_001"
         assert restored.get_current_thread_id() == "thread_001"
 
-
-class TestTools:
-    """工具定义测试"""
-    
-    def test_tools_defined(self):
-        """测试工具已定义"""
-        assert len(TOOLS) > 0
-    
-    def test_get_tool_by_name(self):
-        """测试按名称获取工具"""
-        tool = get_tool_by_name("retrieve_thread_history")
-        
-        assert tool is not None
-        assert tool["name"] == "retrieve_thread_history"
-        assert "parameters" in tool
-    
-    def test_get_nonexistent_tool(self):
-        """测试获取不存在的工具"""
-        tool = get_tool_by_name("nonexistent_tool")
-        
-        assert tool == {}
-    
-    def test_is_retrieval_tool(self):
-        """测试检索工具判断"""
-        assert is_retrieval_tool("retrieve_thread_history") is True
-        assert is_retrieval_tool("get_insight_evolution") is True
-        assert is_retrieval_tool("list_topics") is False
-        assert is_retrieval_tool("search_topics") is False
-    
-    def test_get_all_tools(self):
-        """测试获取所有工具"""
-        tools = get_all_tools()
-        
-        assert len(tools) == len(TOOLS)
-        # 确保是副本
-        tools.append({"name": "test"})
-        assert len(TOOLS) == len(get_all_tools())
 
 
 class TestAssembledContext:

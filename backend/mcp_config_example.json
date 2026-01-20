@@ -24,13 +24,9 @@
       "支持历史内容的检索和搜索"
     ],
     "tools": [
-      "retrieve_thread_history - 检索话题历史",
-      "list_topics - 列出所有主题",
-      "get_insight_evolution - 查看见解演变",
-      "search_topics - 搜索话题",
-      "process_message - 处理对话消息",
-      "get_session_stats - 获取会话统计",
-      "clear_session - 清除会话数据"
+      "memory_request - 记忆网关入口（返回整理好的上下文片段）",
+      "session_snapshot - 会话快照（用于恢复上下文）",
+      "memory_commit - 写入消息并触发归档（编排器调用）"
     ],
     "resources": [
       "topics://{user_id}/{session_id} - 主题列表",

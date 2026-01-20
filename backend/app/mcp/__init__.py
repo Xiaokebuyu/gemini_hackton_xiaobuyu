@@ -26,8 +26,8 @@ from .message_stream import MessageStream
 from .truncate_archiver import TruncateArchiver
 from .message_assembler import MessageAssembler
 from .topic_state import TopicStateManager, TopicStateData
-from .tools import TOOLS, get_tool_by_name, get_all_tools, is_retrieval_tool
 from .server import ContextMCPServer, get_mcp_server
+from .memory_gateway import MemoryGateway
 
 # 标准 MCP 服务器（延迟导入，避免启动时依赖问题）
 def get_standard_mcp_server():
@@ -73,14 +73,10 @@ __all__ = [
     "TruncateArchiver",
     "MessageAssembler",
     "TopicStateManager",
-    # 工具定义
-    "TOOLS",
-    "get_tool_by_name",
-    "get_all_tools",
-    "is_retrieval_tool",
     # 内部 Server（用于 FastAPI 集成）
     "ContextMCPServer",
     "get_mcp_server",
+    "MemoryGateway",
     # 标准 MCP Server（用于独立运行或被 MCP 客户端连接）
     "get_standard_mcp_server",
     "run_mcp_server",

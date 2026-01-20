@@ -67,12 +67,44 @@ class FirestoreService:
             .document(session_id)
         )
         session_ref.update({"updated_at": datetime.now()})
+
+    async def update_session_state(
+        self,
+        user_id: str,
+        session_id: str,
+        state: dict,
+    ) -> None:
+        """更新会话状态扩展字段"""
+        session_ref = (
+            self.db.collection("users")
+            .document(user_id)
+            .collection("sessions")
+            .document(session_id)
+        )
+        session_ref.set(state, merge=True)
+
+    async def get_session_state(self, user_id: str, session_id: str) -> dict:
+        """获取会话状态扩展字段"""
+        session_ref = (
+            self.db.collection("users")
+            .document(user_id)
+            .collection("sessions")
+            .document(session_id)
+        )
+        doc = session_ref.get()
+        return doc.to_dict() if doc.exists else {}
     
     # ==================== Message 操作 ====================
     
-    async def add_message(self, user_id: str, session_id: str, message: MessageCreate) -> str:
+    async def add_message(
+        self,
+        user_id: str,
+        session_id: str,
+        message: MessageCreate,
+        message_id: Optional[str] = None,
+    ) -> str:
         """添加消息"""
-        message_id = f"msg_{uuid.uuid4().hex[:12]}"
+        message_id = message_id or f"msg_{uuid.uuid4().hex[:12]}"
         message_dict = {
             "message_id": message_id,
             "role": message.role.value,
@@ -80,6 +112,7 @@ class FirestoreService:
             "thread_id": message.thread_id,
             "is_excluded": message.is_excluded,
             "is_archived": message.is_archived,
+            "token_count": message.token_count,
             "timestamp": datetime.now(),
         }
         
@@ -107,6 +140,26 @@ class FirestoreService:
             .limit(limit)
         )
         
+        docs = messages_ref.stream()
+        return [Message(**doc.to_dict()) for doc in docs]
+
+    async def get_recent_messages(
+        self,
+        user_id: str,
+        session_id: str,
+        limit: int = 2000,
+    ) -> List[Message]:
+        """获取最近消息（按时间倒序）"""
+        messages_ref = (
+            self.db.collection("users")
+            .document(user_id)
+            .collection("sessions")
+            .document(session_id)
+            .collection("messages")
+            .order_by("timestamp", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+
         docs = messages_ref.stream()
         return [Message(**doc.to_dict()) for doc in docs]
     
@@ -639,6 +692,7 @@ class FirestoreService:
         content: str,
         source_message_ids: List[str],
         evolution_note: str = "",
+        embedding: Optional[List[float]] = None,
     ) -> str:
         """
         创建见解（Insight）
@@ -667,6 +721,8 @@ class FirestoreService:
             "retrieval_count": 0,
             "created_at": datetime.now(),
         }
+        if embedding:
+            insight_dict["embedding"] = embedding
         
         insight_ref = (
             self.db.collection("users")
@@ -681,7 +737,7 @@ class FirestoreService:
             .document(insight_id)
         )
         insight_ref.set(insight_dict)
-        
+
         return insight_id
     
     async def get_thread_insights(
@@ -739,6 +795,31 @@ class FirestoreService:
             return None
         
         return docs[0].to_dict()
+
+    async def update_insight_embedding(
+        self,
+        user_id: str,
+        session_id: str,
+        topic_id: str,
+        thread_id: str,
+        insight_id: str,
+        embedding: List[float],
+    ) -> None:
+        """更新见解 embedding"""
+        insight_ref = (
+            self.db.collection("users")
+            .document(user_id)
+            .collection("sessions")
+            .document(session_id)
+            .collection("topics")
+            .document(topic_id)
+            .collection("threads")
+            .document(thread_id)
+            .collection("insights")
+            .document(insight_id)
+        )
+
+        insight_ref.update({"embedding": embedding})
     
     async def increment_insight_retrieval_count(
         self,

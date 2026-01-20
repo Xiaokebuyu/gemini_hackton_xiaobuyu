@@ -31,14 +31,16 @@ class MessageStream:
     
     ACTIVE_WINDOW_TOKENS = 32000  # 活跃窗口大小：32k tokens
     
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, active_window_tokens: Optional[int] = None):
         """
         初始化消息流
         
         Args:
             session_id: 会话ID
+            active_window_tokens: 活跃窗口 token 上限
         """
         self.session_id = session_id
+        self.active_window_tokens = active_window_tokens or self.ACTIVE_WINDOW_TOKENS
         self._messages: List[APIMessage] = []
         self._total_tokens: int = 0
         self._archived_message_ids: set = set()  # 已归档的消息ID集合
@@ -143,7 +145,7 @@ class MessageStream:
         Returns:
             活跃窗口内的消息列表
         """
-        if self._total_tokens <= self.ACTIVE_WINDOW_TOKENS:
+        if self._total_tokens <= self.active_window_tokens:
             return self._messages.copy()
         
         result = []
@@ -151,7 +153,7 @@ class MessageStream:
         
         # 从最新消息往前遍历
         for msg in reversed(self._messages):
-            if accumulated + msg.token_count > self.ACTIVE_WINDOW_TOKENS:
+            if accumulated + msg.token_count > self.active_window_tokens:
                 break
             result.insert(0, msg)
             accumulated += msg.token_count
@@ -177,7 +179,7 @@ class MessageStream:
         Returns:
             溢出的消息列表
         """
-        if self._total_tokens <= self.ACTIVE_WINDOW_TOKENS:
+        if self._total_tokens <= self.active_window_tokens:
             return []
         
         active_window = self.get_active_window()
@@ -207,7 +209,7 @@ class MessageStream:
         Returns:
             True 如果总 token 数超过活跃窗口大小
         """
-        return self._total_tokens > self.ACTIVE_WINDOW_TOKENS
+        return self._total_tokens > self.active_window_tokens
     
     def get_overflow_tokens(self) -> int:
         """
@@ -216,7 +218,7 @@ class MessageStream:
         Returns:
             溢出的 token 数量
         """
-        return max(0, self._total_tokens - self.ACTIVE_WINDOW_TOKENS)
+        return max(0, self._total_tokens - self.active_window_tokens)
     
     # ========== 归档标记 ==========
     
@@ -252,6 +254,7 @@ class MessageStream:
         """
         return {
             "session_id": self.session_id,
+            "active_window_tokens": self.active_window_tokens,
             "messages": [msg.to_dict() for msg in self._messages],
             "total_tokens": self._total_tokens,
             "archived_message_ids": list(self._archived_message_ids),
@@ -268,7 +271,10 @@ class MessageStream:
         Returns:
             MessageStream 实例
         """
-        stream = cls(session_id=data["session_id"])
+        stream = cls(
+            session_id=data["session_id"],
+            active_window_tokens=data.get("active_window_tokens"),
+        )
         stream._messages = [
             APIMessage.from_dict(msg_data) 
             for msg_data in data.get("messages", [])
@@ -317,6 +323,7 @@ class MessageStream:
             "overflow_tokens": sum(msg.token_count for msg in overflow),
             "archived_count": len(self._archived_message_ids),
             "has_overflow": self.has_overflow(),
+            "active_window_limit": self.active_window_tokens,
         }
     
     # ========== 私有方法 ==========

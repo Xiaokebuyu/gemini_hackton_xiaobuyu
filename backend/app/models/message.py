@@ -21,6 +21,7 @@ class MessageBase(BaseModel):
     thread_id: Optional[str] = None
     is_excluded: bool = False
     is_archived: bool = False
+    token_count: int = 0
 
 
 class MessageCreate(MessageBase):

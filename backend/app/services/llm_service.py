@@ -67,6 +67,18 @@ class LLMService:
             return json.loads(cleaned)
         except Exception:
             return None
+
+    def parse_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """公开 JSON 解析"""
+        return self._parse_json(text)
+
+    async def generate_json(self, prompt: str) -> Optional[Dict[str, Any]]:
+        """生成 JSON 响应并解析"""
+        try:
+            result = await self.generate_simple(prompt)
+            return self._parse_json(result)
+        except Exception:
+            return None
     
     def _extract_response(self, response, level: str = None) -> LLMResponse:
         """从响应中提取文本和思考摘要"""
