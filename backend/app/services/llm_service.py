@@ -363,3 +363,252 @@ Artifact 要求:
         except Exception as e:
             print(f"Artifact 合并失败: {str(e)}")
             return existing_artifact
+    
+    # ==================== MCP 扩展方法 ====================
+    
+    async def generate_simple(self, prompt: str) -> str:
+        """
+        简单文本生成（不使用思考功能）
+        
+        Args:
+            prompt: 提示文本
+            
+        Returns:
+            生成的文本
+        """
+        try:
+            thinking_config = types.ThinkingConfig(
+                thinking_level="lowest",
+                include_thoughts=False
+            )
+            
+            response = self.client.models.generate_content(
+                model=self.flash_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            )
+            
+            text = ""
+            if hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        if not (hasattr(part, 'thought') and part.thought):
+                            text += part.text
+            
+            return text.strip()
+            
+        except Exception as e:
+            raise Exception(f"文本生成失败: {str(e)}")
+    
+    async def classify_for_archive(self, prompt: str) -> Dict[str, Any]:
+        """
+        MCP 归档分类
+        
+        使用 LLM 对消息进行主题-话题分类
+        
+        Args:
+            prompt: 分类提示（包含现有主题列表和待分类消息）
+            
+        Returns:
+            分类结果字典，包含：
+            - topic_id: 主题ID（可能为None表示新主题）
+            - topic_title: 主题标题
+            - thread_id: 话题ID（可能为None表示新话题）
+            - thread_title: 话题标题
+            - is_new_topic: 是否新主题
+            - is_new_thread: 是否新话题
+        """
+        try:
+            thinking_config = types.ThinkingConfig(
+                thinking_level="low",
+                include_thoughts=False
+            )
+            
+            response = self.client.models.generate_content(
+                model=self.flash_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config
+                )
+            )
+            
+            text = ""
+            if hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        if not (hasattr(part, 'thought') and part.thought):
+                            text += part.text
+            
+            result = self._parse_json(text)
+            if result:
+                return result
+            
+            # 解析失败，返回默认值
+            return self._default_classification_result()
+            
+        except Exception as e:
+            print(f"MCP 分类失败: {str(e)}")
+            return self._default_classification_result()
+    
+    def _default_classification_result(self) -> Dict[str, Any]:
+        """返回默认分类结果"""
+        return {
+            "topic_id": None,
+            "topic_title": "未分类",
+            "thread_id": None,
+            "thread_title": "通用讨论",
+            "is_new_topic": True,
+            "is_new_thread": True
+        }
+    
+    async def extract_insight(self, messages_text: str) -> str:
+        """
+        从消息中提取见解
+        
+        Args:
+            messages_text: 格式化的消息文本
+            
+        Returns:
+            提取的见解内容（Markdown格式）
+        """
+        prompt = f"""请从以下对话中提取关键见解和要点：
+
+{messages_text}
+
+请总结：
+1. 讨论的主要内容
+2. 达成的结论或理解
+3. 关键的知识点
+4. 用户的疑问或关注点
+
+请用简洁的 Markdown 格式输出，不超过 500 字。"""
+        
+        try:
+            return await self.generate_simple(prompt)
+        except Exception as e:
+            print(f"见解提取失败: {str(e)}")
+            return "见解提取失败"
+    
+    async def generate_evolution_note(
+        self, 
+        previous_content: str, 
+        new_content: str
+    ) -> str:
+        """
+        生成见解演变说明
+        
+        对比两个版本的理解，说明发生了什么变化
+        
+        Args:
+            previous_content: 上一版本的见解内容
+            new_content: 新版本的见解内容
+            
+        Returns:
+            演变说明文本
+        """
+        prompt = f"""请比较以下两个版本的理解，简要说明发生了什么变化：
+
+## 之前的理解
+{previous_content}
+
+## 现在的理解
+{new_content}
+
+请用一两句话说明用户理解的演变（如：深化了对XX的认识、纠正了之前的误解、扩展了XX方面的知识等）："""
+        
+        try:
+            result = await self.generate_simple(prompt)
+            return result.strip()[:200]  # 限制长度
+        except Exception as e:
+            print(f"演变说明生成失败: {str(e)}")
+            return "理解有所更新"
+    
+    async def generate_thread_summary(self, insights_text: str) -> str:
+        """
+        生成话题总结
+        
+        基于所有见解版本生成话题总结
+        
+        Args:
+            insights_text: 所有见解版本的文本
+            
+        Returns:
+            话题总结（简短）
+        """
+        prompt = f"""请基于以下见解版本，生成一个简短的话题总结（50字以内）：
+
+{insights_text}
+
+总结："""
+        
+        try:
+            result = await self.generate_simple(prompt)
+            return result.strip()[:100]  # 限制长度
+        except Exception as e:
+            print(f"话题总结生成失败: {str(e)}")
+            return "话题讨论"
+    
+    async def generate_with_tools(
+        self,
+        messages: List[Dict[str, str]],
+        tools: List[Dict[str, Any]],
+        thinking_level: Optional[str] = None
+    ) -> LLMResponse:
+        """
+        带工具调用的生成（用于 MCP）
+        
+        Args:
+            messages: API 格式的消息列表
+            tools: 工具定义列表
+            thinking_level: 思考层级
+            
+        Returns:
+            LLM 响应（可能包含工具调用）
+        """
+        try:
+            thinking_config = self._get_thinking_config(thinking_level)
+            
+            # 构建内容
+            contents = []
+            for msg in messages:
+                contents.append(types.Content(
+                    role=msg["role"] if msg["role"] != "assistant" else "model",
+                    parts=[types.Part(text=msg["content"])]
+                ))
+            
+            # 构建工具配置
+            tool_config = None
+            if tools:
+                function_declarations = []
+                for tool in tools:
+                    function_declarations.append(
+                        types.FunctionDeclaration(
+                            name=tool["name"],
+                            description=tool.get("description", ""),
+                            parameters=tool.get("parameters", {})
+                        )
+                    )
+                tool_config = types.Tool(function_declarations=function_declarations)
+            
+            response = self.client.models.generate_content(
+                model=self.main_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    thinking_config=thinking_config,
+                    tools=[tool_config] if tool_config else None
+                )
+            )
+            
+            return self._extract_response(response, thinking_level)
+            
+        except Exception as e:
+            error_msg = f"工具调用生成失败: {str(e)}"
+            return LLMResponse(
+                text=error_msg,
+                thinking=ThinkingMetadata(
+                    thinking_enabled=settings.thinking_enabled,
+                    thinking_level=thinking_level or settings.thinking_level
+                )
+            )
