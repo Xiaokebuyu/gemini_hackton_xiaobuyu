@@ -1,27 +1,21 @@
 """
-聊天 API 路由 - 支持 Gemini 3 思考功能
+聊天 API 路由 - 基于 MCP 上下文处理架构
 """
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Any
 import json
 
 from app.config import settings
 from app.services.firestore_service import FirestoreService
-from app.services.archive_service import ArchiveService
-from app.services.context_loop import ContextLoop
-from app.services.context_builder import ContextBuilder
 from app.services.llm_service import LLMService
-from app.models import MessageCreate, MessageRole
+from app.mcp import get_mcp_server, ContextMCPServer
 
 router = APIRouter()
 
 # 初始化服务
 firestore_service = FirestoreService()
-archive_service = ArchiveService()
-context_loop = ContextLoop()
-context_builder = ContextBuilder()
 llm_service = LLMService()
 
 
@@ -33,6 +27,22 @@ class ThinkingInfo(BaseModel):
     thoughts_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+
+
+class StreamStats(BaseModel):
+    """消息流统计"""
+    total_messages: int = 0
+    total_tokens: int = 0
+    active_window_messages: int = 0
+    active_window_tokens: int = 0
+    has_overflow: bool = False
+
+
+class TopicInfo(BaseModel):
+    """话题信息"""
+    current_topic_id: Optional[str] = None
+    current_thread_id: Optional[str] = None
+    retrieval_count: int = 0
 
 
 class ChatRequest(BaseModel):
@@ -49,31 +59,33 @@ class ChatResponse(BaseModel):
     """聊天响应"""
     session_id: str
     response: str
-    archived: bool
-    archive_topic: Optional[str]
-    context_loads: int
-    # 思考相关字段
     thinking: ThinkingInfo
+    topic_info: TopicInfo
+    stream_stats: Optional[StreamStats] = None
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    主对话接口（支持思考功能）
+    主对话接口（基于 MCP 架构）
     
     处理流程:
-    1. 创建或获取会话
-    2. 保存用户消息
-    3. 检查并执行归档
-    4. 运行上下文循环生成回复（带思考）
-    5. 保存助手消息
-    6. 返回响应（含思考摘要）
+    1. 获取 MCP Server 实例
+    2. 创建或获取会话
+    3. 使用 MCP Server 处理消息
+       - 自动管理消息流
+       - 自动组装上下文（不计入 32k）
+       - 异步执行归档
+    4. 返回响应
     """
     try:
         user_id = request.user_id
         message = request.message
         
-        # 1. 创建或获取会话
+        # 获取 MCP Server
+        mcp_server = get_mcp_server()
+        
+        # 确保会话存在
         if request.session_id:
             session = await firestore_service.get_session(user_id, request.session_id)
             if not session:
@@ -83,61 +95,45 @@ async def chat(request: ChatRequest):
             session = await firestore_service.create_session(user_id)
             session_id = session.session_id
         
-        # 2. 保存用户消息
-        user_message = MessageCreate(
-            role=MessageRole.USER,
-            content=message,
-            is_excluded=False,
-            is_archived=False,
-        )
-        await firestore_service.add_message(user_id, session_id, user_message)
-        
-        # 3. 检查并执行归档
-        archived = False
-        archive_topic = None
-        if await archive_service.check_should_archive(user_id, session_id):
-            thread_id = await archive_service.execute_archive(user_id, session_id)
-            if thread_id:
-                archived = True
-                topic = await firestore_service.get_topic(user_id, session_id, thread_id)
-                archive_topic = topic.title if topic else None
-        
-        # 4. 运行上下文循环生成回复（带思考）
-        result = await context_loop.run(
-            user_id, 
-            session_id, 
-            message,
+        # 使用 MCP Server 处理消息
+        result = await mcp_server.process_message(
+            user_id=user_id,
+            session_id=session_id,
+            user_message=message,
             thinking_level=request.thinking_level
         )
         
-        # 5. 保存助手回复
-        assistant_message = MessageCreate(
-            role=MessageRole.ASSISTANT,
-            content=result.response,
-            is_excluded=False,
-            is_archived=False,
-        )
-        await firestore_service.add_message(user_id, session_id, assistant_message)
-        await firestore_service.update_session_timestamp(user_id, session_id)
-        
-        # 6. 构建思考信息
+        # 构建响应
         thinking_info = ThinkingInfo(
-            enabled=result.thinking.thinking_enabled,
-            level=result.thinking.thinking_level,
-            summary=result.thinking.thoughts_summary,
-            thoughts_tokens=result.thinking.thoughts_token_count,
-            output_tokens=result.thinking.output_token_count,
-            total_tokens=result.thinking.total_token_count,
+            enabled=result["thinking"]["enabled"],
+            level=result["thinking"]["level"],
+            summary=result["thinking"]["summary"],
+            thoughts_tokens=result["thinking"]["tokens"],
         )
         
-        # 7. 返回响应
+        topic_info = TopicInfo(
+            current_topic_id=result["topic_info"]["current_topic_id"],
+            current_thread_id=result["topic_info"]["current_thread_id"],
+            retrieval_count=result["topic_info"]["retrieval_count"],
+        )
+        
+        stream_stats = None
+        if result.get("stream_stats"):
+            stats = result["stream_stats"]
+            stream_stats = StreamStats(
+                total_messages=stats.get("total_messages", 0),
+                total_tokens=stats.get("total_tokens", 0),
+                active_window_messages=stats.get("active_window_messages", 0),
+                active_window_tokens=stats.get("active_window_tokens", 0),
+                has_overflow=stats.get("has_overflow", False),
+            )
+        
         return ChatResponse(
             session_id=session_id,
-            response=result.response,
-            archived=archived,
-            archive_topic=archive_topic,
-            context_loads=result.retry_count,
+            response=result["response"],
             thinking=thinking_info,
+            topic_info=topic_info,
+            stream_stats=stream_stats,
         )
     
     except HTTPException:
@@ -152,10 +148,11 @@ async def chat(request: ChatRequest):
 @router.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
-    流式对话接口（支持思考功能）
+    流式对话接口（基于 MCP 架构）
     
     返回 Server-Sent Events 格式的流式响应
     事件类型:
+    - session: 会话信息
     - thought: 思考摘要片段
     - answer: 回答片段
     - done: 完成信号（包含元数据）
@@ -166,7 +163,10 @@ async def chat_stream(request: ChatRequest):
             user_id = request.user_id
             message = request.message
             
-            # 1. 创建或获取会话
+            # 获取 MCP Server
+            mcp_server = get_mcp_server()
+            
+            # 确保会话存在
             if request.session_id:
                 session = await firestore_service.get_session(user_id, request.session_id)
                 if not session:
@@ -180,34 +180,31 @@ async def chat_stream(request: ChatRequest):
             # 发送会话ID
             yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
             
-            # 2. 保存用户消息
-            user_message = MessageCreate(
-                role=MessageRole.USER,
-                content=message,
-                is_excluded=False,
-                is_archived=False,
+            # 获取消息流和组装上下文
+            stream = mcp_server._get_or_create_stream(session_id)
+            topic_state = mcp_server._get_or_create_topic_state(session_id)
+            
+            # 追加用户消息
+            stream.append_user_message(message)
+            
+            # 组装上下文
+            context = await mcp_server.assembler.assemble(
+                stream=stream,
+                user_id=user_id,
+                session_id=session_id,
+                retrieved_thread_id=topic_state.get_current_thread_id()
             )
-            await firestore_service.add_message(user_id, session_id, user_message)
             
-            # 3. 检查并执行归档
-            archived = False
-            archive_topic = None
-            if await archive_service.check_should_archive(user_id, session_id):
-                thread_id = await archive_service.execute_archive(user_id, session_id)
-                if thread_id:
-                    archived = True
-                    topic = await firestore_service.get_topic(user_id, session_id, thread_id)
-                    archive_topic = topic.title if topic else None
-            
-            # 4. 构建上下文
-            context = await context_builder.build(user_id, session_id)
-            
-            # 5. 流式生成回复
+            # 流式生成回复
             full_response = ""
             full_thoughts = ""
             
+            # 将组装的上下文转换为文本
+            api_messages = context.to_api_messages()
+            context_text = "\n".join([m["content"] for m in api_messages])
+            
             async for chunk in llm_service.generate_response_stream(
-                context, 
+                context_text, 
                 message,
                 thinking_level=request.thinking_level
             ):
@@ -220,24 +217,26 @@ async def chat_stream(request: ChatRequest):
                 elif chunk["type"] == "error":
                     yield f"data: {json.dumps({'type': 'error', 'text': chunk['text']})}\n\n"
             
-            # 6. 保存助手回复
+            # 保存助手回复
             if full_response:
-                assistant_message = MessageCreate(
-                    role=MessageRole.ASSISTANT,
-                    content=full_response,
-                    is_excluded=False,
-                    is_archived=False,
+                stream.append_assistant_message(full_response)
+                
+                # 异步执行归档
+                import asyncio
+                asyncio.create_task(
+                    mcp_server.archiver.process(stream, user_id, session_id)
                 )
-                await firestore_service.add_message(user_id, session_id, assistant_message)
-                await firestore_service.update_session_timestamp(user_id, session_id)
             
-            # 7. 发送完成信号
+            # 发送完成信号
             done_data = {
                 "type": "done",
                 "session_id": session_id,
-                "archived": archived,
-                "archive_topic": archive_topic,
                 "thinking_summary": full_thoughts,
+                "topic_info": {
+                    "current_topic_id": topic_state.get_current_topic_id(),
+                    "current_thread_id": topic_state.get_current_thread_id(),
+                },
+                "stream_stats": stream.get_stats(),
             }
             yield f"data: {json.dumps(done_data)}\n\n"
             
@@ -323,3 +322,73 @@ async def create_session(user_id: str):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建会话失败: {str(e)}")
+
+
+# ==================== MCP 专用端点 ====================
+
+@router.post("/mcp/tools/{tool_name}")
+async def execute_mcp_tool(
+    tool_name: str,
+    user_id: str,
+    session_id: str,
+    params: Dict[str, Any] = {}
+):
+    """
+    执行 MCP 工具
+    
+    可用工具:
+    - retrieve_thread_history: 检索话题历史
+    - list_topics: 列出所有主题和话题
+    - get_insight_evolution: 获取见解演变
+    - search_topics: 搜索话题
+    """
+    try:
+        mcp_server = get_mcp_server()
+        result = await mcp_server.execute_tool(
+            user_id=user_id,
+            session_id=session_id,
+            tool_name=tool_name,
+            params=params
+        )
+        
+        return {
+            "tool": tool_name,
+            "result": result
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"工具执行失败: {str(e)}")
+
+
+@router.get("/mcp/session/{user_id}/{session_id}/info")
+async def get_mcp_session_info(user_id: str, session_id: str):
+    """
+    获取 MCP 会话信息
+    
+    包含消息流统计和话题状态
+    """
+    try:
+        mcp_server = get_mcp_server()
+        info = mcp_server.get_session_info(session_id)
+        
+        return info
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取会话信息失败: {str(e)}")
+
+
+@router.delete("/mcp/session/{session_id}")
+async def clear_mcp_session(session_id: str):
+    """
+    清除 MCP 会话数据（消息流和话题状态）
+    
+    注意：这只清除内存中的状态，不影响 Firestore 中的数据
+    """
+    try:
+        mcp_server = get_mcp_server()
+        mcp_server.clear_session(session_id)
+        
+        return {"message": f"会话 {session_id} 已清除"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"清除会话失败: {str(e)}")

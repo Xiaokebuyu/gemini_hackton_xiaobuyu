@@ -1,22 +1,249 @@
 """
-主题管理 API 路由
+主题管理 API 路由 - 基于 MCP 架构
 """
 from fastapi import APIRouter, HTTPException
+from typing import List, Optional
 
 from app.services.firestore_service import FirestoreService
-from app.services.artifact_service import ArtifactService
+from app.mcp import get_mcp_server
 
 router = APIRouter()
 
 # 初始化服务
 firestore_service = FirestoreService()
-artifact_service = ArtifactService()
 
 
 @router.get("/sessions/{user_id}/{session_id}/topics")
 async def get_session_topics(user_id: str, session_id: str):
     """
-    获取会话内所有主题
+    获取会话内所有主题（MCP 新结构）
+    
+    返回主题列表，每个主题包含其下的话题
+    """
+    try:
+        topics = await firestore_service.get_all_mcp_topics(user_id, session_id)
+        
+        result = []
+        for topic in topics:
+            topic_id = topic.get("topic_id", "")
+            
+            # 获取主题下的话题
+            threads = await firestore_service.get_topic_threads(
+                user_id, session_id, topic_id
+            )
+            
+            result.append({
+                "topic_id": topic_id,
+                "title": topic.get("title", ""),
+                "summary": topic.get("summary", ""),
+                "created_at": topic.get("created_at"),
+                "threads": [
+                    {
+                        "thread_id": t.get("thread_id", ""),
+                        "title": t.get("title", ""),
+                        "summary": t.get("summary", ""),
+                        "created_at": t.get("created_at"),
+                    }
+                    for t in threads
+                ]
+            })
+        
+        return {
+            "user_id": user_id,
+            "session_id": session_id,
+            "topic_count": len(result),
+            "topics": result
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取主题失败: {str(e)}")
+
+
+@router.get("/sessions/{user_id}/{session_id}/topics/{topic_id}")
+async def get_topic_detail(user_id: str, session_id: str, topic_id: str):
+    """
+    获取主题详细信息
+    """
+    try:
+        topic = await firestore_service.get_mcp_topic(user_id, session_id, topic_id)
+        
+        if not topic:
+            raise HTTPException(status_code=404, detail="主题不存在")
+        
+        # 获取主题下的话题
+        threads = await firestore_service.get_topic_threads(
+            user_id, session_id, topic_id
+        )
+        
+        return {
+            "topic_id": topic.get("topic_id", ""),
+            "title": topic.get("title", ""),
+            "summary": topic.get("summary", ""),
+            "created_at": topic.get("created_at"),
+            "threads": [
+                {
+                    "thread_id": t.get("thread_id", ""),
+                    "title": t.get("title", ""),
+                    "summary": t.get("summary", ""),
+                }
+                for t in threads
+            ]
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取主题详情失败: {str(e)}")
+
+
+@router.get("/sessions/{user_id}/{session_id}/threads/{thread_id}")
+async def get_thread_detail(user_id: str, session_id: str, thread_id: str):
+    """
+    获取话题详细信息（包含所有见解版本）
+    """
+    try:
+        # 查找话题
+        thread = await firestore_service.find_thread_by_id(
+            user_id, session_id, thread_id
+        )
+        
+        if not thread:
+            raise HTTPException(status_code=404, detail="话题不存在")
+        
+        topic_id = thread.get("topic_id", "")
+        
+        # 获取见解版本
+        insights = await firestore_service.get_thread_insights(
+            user_id, session_id, topic_id, thread_id
+        )
+        
+        return {
+            "thread_id": thread_id,
+            "topic_id": topic_id,
+            "title": thread.get("title", ""),
+            "summary": thread.get("summary", ""),
+            "created_at": thread.get("created_at"),
+            "insight_count": len(insights),
+            "insights": [
+                {
+                    "insight_id": i.get("insight_id", ""),
+                    "version": i.get("version", 0),
+                    "content": i.get("content", ""),
+                    "evolution_note": i.get("evolution_note", ""),
+                    "retrieval_count": i.get("retrieval_count", 0),
+                    "created_at": i.get("created_at"),
+                    "source_message_ids": i.get("source_message_ids", []),
+                }
+                for i in insights
+            ]
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取话题详情失败: {str(e)}")
+
+
+@router.get("/sessions/{user_id}/{session_id}/threads/{thread_id}/insights")
+async def get_thread_insights(user_id: str, session_id: str, thread_id: str):
+    """
+    获取话题的所有见解版本
+    """
+    try:
+        # 查找话题
+        thread = await firestore_service.find_thread_by_id(
+            user_id, session_id, thread_id
+        )
+        
+        if not thread:
+            raise HTTPException(status_code=404, detail="话题不存在")
+        
+        topic_id = thread.get("topic_id", "")
+        
+        # 获取见解版本
+        insights = await firestore_service.get_thread_insights(
+            user_id, session_id, topic_id, thread_id
+        )
+        
+        return {
+            "thread_id": thread_id,
+            "thread_title": thread.get("title", ""),
+            "insight_count": len(insights),
+            "insights": [
+                {
+                    "insight_id": i.get("insight_id", ""),
+                    "version": i.get("version", 0),
+                    "content": i.get("content", ""),
+                    "evolution_note": i.get("evolution_note", ""),
+                    "retrieval_count": i.get("retrieval_count", 0),
+                    "created_at": i.get("created_at"),
+                }
+                for i in insights
+            ]
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取见解版本失败: {str(e)}")
+
+
+@router.get("/sessions/{user_id}/{session_id}/threads/{thread_id}/evolution")
+async def get_insight_evolution(user_id: str, session_id: str, thread_id: str):
+    """
+    获取话题的见解演变历程
+    
+    展示用户对某话题理解的变化过程
+    """
+    try:
+        mcp_server = get_mcp_server()
+        
+        result = await mcp_server.execute_tool(
+            user_id=user_id,
+            session_id=session_id,
+            tool_name="get_insight_evolution",
+            params={"thread_id": thread_id}
+        )
+        
+        return {
+            "thread_id": thread_id,
+            "evolution": result
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取见解演变失败: {str(e)}")
+
+
+@router.get("/sessions/{user_id}/{session_id}/search")
+async def search_topics(user_id: str, session_id: str, keyword: str):
+    """
+    搜索话题
+    """
+    try:
+        mcp_server = get_mcp_server()
+        
+        result = await mcp_server.execute_tool(
+            user_id=user_id,
+            session_id=session_id,
+            tool_name="search_topics",
+            params={"keyword": keyword}
+        )
+        
+        return {
+            "keyword": keyword,
+            "result": result
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+
+
+# ==================== 兼容旧 API（可选保留）====================
+
+@router.get("/sessions/{user_id}/{session_id}/topics-legacy")
+async def get_session_topics_legacy(user_id: str, session_id: str):
+    """
+    获取会话内所有主题（旧格式，兼容用）
     """
     try:
         topics = await firestore_service.get_all_topics(user_id, session_id)
@@ -39,122 +266,3 @@ async def get_session_topics(user_id: str, session_id: str):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取主题失败: {str(e)}")
-
-
-@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}")
-async def get_topic_detail(user_id: str, session_id: str, thread_id: str):
-    """
-    获取主题详细信息
-    """
-    try:
-        topic = await firestore_service.get_topic(user_id, session_id, thread_id)
-        
-        if not topic:
-            raise HTTPException(status_code=404, detail="主题不存在")
-        
-        return {
-            "thread_id": topic.thread_id,
-            "title": topic.title,
-            "summary": topic.summary,
-            "current_artifact": topic.current_artifact,
-            "created_at": topic.created_at.isoformat(),
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取主题详情失败: {str(e)}")
-
-
-@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}/artifact")
-async def get_topic_artifact(user_id: str, session_id: str, thread_id: str):
-    """
-    获取主题的 Artifact
-    """
-    try:
-        topic = await firestore_service.get_topic(user_id, session_id, thread_id)
-        
-        if not topic:
-            raise HTTPException(status_code=404, detail="主题不存在")
-        
-        # 解析 Artifact 源索引
-        sources_map = artifact_service.parse_artifact_sources(topic.current_artifact)
-        
-        return {
-            "thread_id": thread_id,
-            "title": topic.title,
-            "artifact": topic.current_artifact,
-            "sources_map": sources_map
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取 Artifact 失败: {str(e)}")
-
-
-@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}/versions")
-async def get_artifact_versions(user_id: str, session_id: str, thread_id: str, limit: int = 10):
-    """
-    获取 Artifact 历史版本
-    """
-    try:
-        versions = await firestore_service.get_artifact_versions(
-            user_id,
-            session_id,
-            thread_id,
-            limit=limit
-        )
-        
-        return {
-            "thread_id": thread_id,
-            "version_count": len(versions),
-            "versions": [
-                {
-                    "version_id": v.version_id,
-                    "created_at": v.created_at.isoformat(),
-                    "message_ids": v.message_ids,
-                    "content_preview": v.content[:200] + "..." if len(v.content) > 200 else v.content
-                }
-                for v in versions
-            ]
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取版本历史失败: {str(e)}")
-
-
-@router.get("/sessions/{user_id}/{session_id}/topics/{thread_id}/versions/{version_id}")
-async def get_artifact_version_detail(user_id: str, session_id: str, thread_id: str, version_id: str):
-    """
-    获取特定版本的完整内容
-    """
-    try:
-        versions = await firestore_service.get_artifact_versions(
-            user_id,
-            session_id,
-            thread_id,
-            limit=100
-        )
-        
-        # 查找指定版本
-        target_version = None
-        for v in versions:
-            if v.version_id == version_id:
-                target_version = v
-                break
-        
-        if not target_version:
-            raise HTTPException(status_code=404, detail="版本不存在")
-        
-        return {
-            "version_id": target_version.version_id,
-            "created_at": target_version.created_at.isoformat(),
-            "content": target_version.content,
-            "message_ids": target_version.message_ids
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取版本详情失败: {str(e)}")

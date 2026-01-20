@@ -1,127 +1,125 @@
 """
-端到端集成测试
+端到端集成测试 - 基于 MCP 架构
 """
 import pytest
 from app.config import settings
 from app.services.firestore_service import FirestoreService
-from app.services.archive_service import ArchiveService
-from app.services.context_builder import ContextBuilder
-from app.services.context_loop import ContextLoop
+from app.services.llm_service import LLMService
 from app.models import MessageCreate, MessageRole, TopicCreate
+from app.mcp import (
+    MessageStream,
+    MessageAssembler,
+    TruncateArchiver,
+    TopicStateManager,
+    get_mcp_server,
+)
 
 
-class TestEndToEnd:
-    """端到端测试"""
+class TestMCPEndToEnd:
+    """MCP 端到端测试"""
     
     @pytest.fixture
     def setup_services(self):
         """设置所有服务"""
         firestore = FirestoreService()
-        archive = ArchiveService()
-        context_builder = ContextBuilder()
-        context_loop = ContextLoop()
+        llm = LLMService()
         
         return {
             "firestore": firestore,
-            "archive": archive,
-            "context_builder": context_builder,
-            "context_loop": context_loop,
+            "llm": llm,
         }
     
     @pytest.mark.asyncio
-    async def test_archive_and_context_flow(self, setup_services):
-        """测试：归档 + 上下文构建"""
-        services = setup_services
-        user_id = "test_user_e2e_archive_001"
+    async def test_message_stream_basic(self, setup_services):
+        """测试：消息流基本功能"""
+        stream = MessageStream("test_session_001")
         
-        session = await services["firestore"].create_session(user_id)
-        session_id = session.session_id
+        # 添加消息
+        stream.append_user_message("你好")
+        stream.append_assistant_message("你好！有什么可以帮助你的吗？")
         
-        original_threshold = settings.archive_threshold
-        original_window = settings.active_window_size
-        settings.archive_threshold = 4
-        settings.active_window_size = 2
+        assert stream.message_count == 2
+        assert stream.total_tokens > 0
         
-        try:
-            for i in range(4):
-                role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
-                msg = MessageCreate(
-                    role=role,
-                    content=f"测试消息 {i}",
-                    is_archived=False,
-                )
-                await services["firestore"].add_message(user_id, session_id, msg)
-            
-            should_archive = await services["archive"].check_should_archive(
-                user_id, session_id
-            )
-            assert should_archive is True
-            
-            thread_id = await services["archive"].execute_archive(
-                user_id, session_id
-            )
-            assert thread_id is not None
-            
-            messages = await services["firestore"].get_messages_by_session(
-                user_id, session_id
-            )
-            archived_count = sum(1 for msg in messages if msg.is_archived)
-            assert archived_count > 0
-            
-            context_text = await services["context_builder"].build(
-                user_id, session_id
-            )
-            assert "知识文档" in context_text
-            assert "最近对话" in context_text
-        finally:
-            settings.archive_threshold = original_threshold
-            settings.active_window_size = original_window
+        # 获取活跃窗口
+        active = stream.get_active_window()
+        assert len(active) == 2
     
     @pytest.mark.asyncio
-    async def test_context_request_resolution(self, setup_services):
-        """测试：上下文请求解析"""
-        services = setup_services
-        user_id = "test_user_context_001"
+    async def test_topic_state_management(self, setup_services):
+        """测试：话题状态管理"""
+        state_manager = TopicStateManager()
         
-        session = await services["firestore"].create_session(user_id)
+        # 初始状态
+        assert not state_manager.is_active()
+        
+        # 模拟工具调用
+        switched = state_manager.on_tool_call(
+            "retrieve_thread_history",
+            {"thread_id": "thread_001"},
+            topic_id="topic_001"
+        )
+        
+        assert switched is True
+        assert state_manager.is_active()
+        assert state_manager.get_current_thread_id() == "thread_001"
+    
+    @pytest.mark.asyncio
+    async def test_firestore_thread_operations(self, setup_services):
+        """测试：Firestore 话题操作"""
+        firestore = setup_services["firestore"]
+        user_id = "test_user_mcp_001"
+        
+        # 创建会话
+        session = await firestore.create_session(user_id)
         session_id = session.session_id
         
-        msg1 = MessageCreate(
-            role=MessageRole.USER,
-            content="列表推导式怎么写？",
-            is_archived=False,
+        # 创建主题
+        topic_id = await firestore.create_mcp_topic(
+            user_id=user_id,
+            session_id=session_id,
+            topic_id="topic_test_001",
+            title="测试主题",
+            summary="这是一个测试主题"
         )
-        msg2 = MessageCreate(
-            role=MessageRole.ASSISTANT,
-            content="使用 [expr for x in iterable]",
-            is_archived=False,
+        assert topic_id == "topic_test_001"
+        
+        # 创建话题
+        thread_id = await firestore.create_thread(
+            user_id=user_id,
+            session_id=session_id,
+            topic_id=topic_id,
+            thread_id="thread_test_001",
+            title="测试话题",
+            summary="这是一个测试话题"
         )
+        assert thread_id == "thread_test_001"
         
-        msg1_id = await services["firestore"].add_message(user_id, session_id, msg1)
-        msg2_id = await services["firestore"].add_message(user_id, session_id, msg2)
-        
-        artifact = (
-            "# Python编程\n\n"
-            f"## 列表推导式 <!-- sources: {msg1_id}, {msg2_id} -->\n"
-            "基本语法说明\n"
+        # 创建见解
+        insight_id = await firestore.create_insight(
+            user_id=user_id,
+            session_id=session_id,
+            topic_id=topic_id,
+            thread_id=thread_id,
+            insight_id="insight_test_001",
+            version=1,
+            content="这是第一个见解内容",
+            source_message_ids=["msg_001", "msg_002"],
+            evolution_note=""
         )
+        assert insight_id == "insight_test_001"
         
-        thread_id = await services["firestore"].create_topic(
-            user_id,
-            session_id,
-            TopicCreate(
-                title="Python编程",
-                summary="记录列表推导式",
-                current_artifact=artifact,
-            ),
+        # 验证数据
+        topics = await firestore.get_all_mcp_topics(user_id, session_id)
+        assert len(topics) >= 1
+        
+        threads = await firestore.get_topic_threads(user_id, session_id, topic_id)
+        assert len(threads) >= 1
+        
+        insights = await firestore.get_thread_insights(
+            user_id, session_id, topic_id, thread_id
         )
-        assert thread_id is not None
-        
-        messages = await services["context_loop"].resolve_context_request(
-            user_id, session_id, "列表推导式"
-        )
-        
-        assert len(messages) == 2
+        assert len(insights) >= 1
 
 
 class TestDataPersistence:
@@ -168,17 +166,51 @@ class TestDataPersistence:
         assert len(subset) == 2
 
 
+class TestMCPServer:
+    """MCP Server 测试"""
+    
+    @pytest.mark.asyncio
+    async def test_get_mcp_server_singleton(self):
+        """测试：MCP Server 单例"""
+        server1 = get_mcp_server()
+        server2 = get_mcp_server()
+        
+        assert server1 is server2
+    
+    @pytest.mark.asyncio
+    async def test_mcp_server_session_management(self):
+        """测试：MCP Server 会话管理"""
+        server = get_mcp_server()
+        
+        # 获取会话信息（不存在的会话）
+        info = server.get_session_info("nonexistent_session")
+        assert info["has_stream"] is False
+        
+        # 创建消息流
+        stream = server._get_or_create_stream("test_session_002")
+        assert stream is not None
+        
+        # 再次获取会话信息
+        info = server.get_session_info("test_session_002")
+        assert info["has_stream"] is True
+        
+        # 清除会话
+        server.clear_session("test_session_002")
+        info = server.get_session_info("test_session_002")
+        assert info["has_stream"] is False
+
+
 def run_tests():
     """运行测试"""
     print("=" * 60)
-    print("运行集成测试")
+    print("运行 MCP 集成测试")
     print("=" * 60)
     print("\n这些测试需要：")
     print("1. 有效的 Firebase 配置")
     print("2. 有效的 Gemini API 密钥")
     print("\n建议使用 pytest 运行：")
-    print("  cd backend")
-    print("  pytest tests/test_integration.py -v -s")
+    print("  cd /home/xiaokebuyu/workplace/gemini-hackton")
+    print("  PYTHONPATH=backend pytest tests/test_integration.py -v -s")
     print("=" * 60)
 
 
