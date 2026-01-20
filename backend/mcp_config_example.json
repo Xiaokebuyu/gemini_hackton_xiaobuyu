@@ -1,0 +1,47 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-desktop/main/schemas/config.json",
+  "$comment": "这是 Claude Desktop 的 MCP 服务器配置示例，请复制到您的 claude_desktop_config.json 中",
+  
+  "mcpServers": {
+    "context-memory": {
+      "command": "python",
+      "args": [
+        "/path/to/gemini-hackton/backend/run_mcp_server.py"
+      ],
+      "env": {
+        "GOOGLE_APPLICATION_CREDENTIALS": "/path/to/firebase-credentials.json",
+        "GEMINI_API_KEY": "your-gemini-api-key"
+      }
+    }
+  },
+  
+  "$usage": {
+    "description": "Context Memory MCP Server - 提供智能对话记忆管理",
+    "features": [
+      "自动归档超出 32k token 窗口的对话",
+      "按 主题 → 话题 → 见解 三层结构组织记忆",
+      "追踪用户理解的演变过程",
+      "支持历史内容的检索和搜索"
+    ],
+    "tools": [
+      "retrieve_thread_history - 检索话题历史",
+      "list_topics - 列出所有主题",
+      "get_insight_evolution - 查看见解演变",
+      "search_topics - 搜索话题",
+      "process_message - 处理对话消息",
+      "get_session_stats - 获取会话统计",
+      "clear_session - 清除会话数据"
+    ],
+    "resources": [
+      "topics://{user_id}/{session_id} - 主题列表",
+      "topic://{user_id}/{session_id}/{topic_id} - 主题详情",
+      "thread://{user_id}/{session_id}/{thread_id} - 话题详情",
+      "insight://{user_id}/{session_id}/{thread_id}/{version} - 见解版本",
+      "session://{session_id}/stream - 会话消息流状态"
+    ],
+    "prompts": [
+      "memory_assistant_prompt - 记忆助手提示词",
+      "knowledge_tracker_prompt - 知识追踪助手提示词"
+    ]
+  }
+}
