@@ -74,6 +74,9 @@ Payload 示例（使用引擎结果）：
 }
 ```
 
+> 注意：`use_engine=true` 需要战斗在同一进程内完成（CombatEngine 状态保存在内存中）。
+> 若仅做流程测试，建议使用 `result_override`。
+
 Payload 示例（外部结果覆盖）：
 ```
 {
@@ -89,10 +92,10 @@ Payload 示例（外部结果覆盖）：
 
 ## CLI
 ```
-python -m app.tools.game_cli create --world demo_world --payload session.json
-python -m app.tools.game_cli scene --world demo_world --session sess_demo --payload scene.json
-python -m app.tools.game_cli combat-start --world demo_world --session sess_demo --payload combat_start.json
-python -m app.tools.game_cli combat-resolve --world demo_world --session sess_demo --payload combat_resolve.json
+python -m app.tools.game_cli create --world demo_world --payload examples/phase6/session.json
+python -m app.tools.game_cli scene --world demo_world --session sess_demo --payload examples/phase6/scene.json
+python -m app.tools.game_cli combat-start --world demo_world --session sess_demo --payload examples/phase6/combat_start.json
+python -m app.tools.game_cli combat-resolve --world demo_world --session sess_demo --payload examples/phase6/combat_resolve.json
 ```
 
 ## Phase 6b（待办：由你测试/跑通）

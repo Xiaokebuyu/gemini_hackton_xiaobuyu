@@ -2,7 +2,7 @@
 会话数据模型
 """
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class SessionBase(BaseModel):
@@ -21,5 +21,4 @@ class Session(SessionBase):
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

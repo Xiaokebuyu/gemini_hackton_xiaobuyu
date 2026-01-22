@@ -1,0 +1,4 @@
+{
+    "seed_nodes": ["person_gorn"],
+    "include_subgraph": true
+  }

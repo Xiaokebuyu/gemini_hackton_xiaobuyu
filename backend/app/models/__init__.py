@@ -6,6 +6,7 @@ from .topic import TopicThread, TopicCreate, ArtifactVersion
 from .message import Message, MessageCreate, MessageRole
 from .graph import MemoryNode, MemoryEdge, GraphData
 from .graph_schema import NodeType, RelationType
+from .activation import SpreadingActivationConfig
 from .flash import EventIngestRequest, EventIngestResponse, RecallRequest, RecallResponse
 from .pro import CharacterProfile, SceneContext, ProContextRequest, ProContextResponse
 from .event import (
@@ -48,6 +49,7 @@ __all__ = [
     "EventIngestResponse",
     "RecallRequest",
     "RecallResponse",
+    "SpreadingActivationConfig",
     "CharacterProfile",
     "SceneContext",
     "ProContextRequest",

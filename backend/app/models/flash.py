@@ -3,14 +3,16 @@ Flash service request/response models.
 """
 from datetime import datetime
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
+from app.models.activation import SpreadingActivationConfig
 from app.models.graph import GraphData, MemoryEdge, MemoryNode
-from app.services.spreading_activation import SpreadingActivationConfig
 
 
 class EventIngestRequest(BaseModel):
     """Event ingestion request."""
+    model_config = ConfigDict(populate_by_name=True)
+
     event_id: Optional[str] = None
     description: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
@@ -24,7 +26,7 @@ class EventIngestRequest(BaseModel):
     edges: List[MemoryEdge] = Field(default_factory=list)
     state_updates: Dict = Field(default_factory=dict)
     write_indexes: bool = False
-    validate: bool = False
+    validate_input: bool = Field(default=False, alias="validate")
     strict: bool = False
 
 

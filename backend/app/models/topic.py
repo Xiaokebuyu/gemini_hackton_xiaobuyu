@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class TopicBase(BaseModel):
@@ -23,8 +23,7 @@ class TopicThread(TopicBase):
     thread_id: str
     created_at: datetime = Field(default_factory=datetime.now)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ArtifactVersion(BaseModel):
@@ -34,5 +33,4 @@ class ArtifactVersion(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     message_ids: List[str] = Field(default_factory=list)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

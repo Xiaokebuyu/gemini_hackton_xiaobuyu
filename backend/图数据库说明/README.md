@@ -104,6 +104,13 @@ worlds/{world_id}/characters/{char_id}/edges/{edge_id}
 
 ## 使用示例
 
+### 示例文件
+示例 JSON 已整理到 `examples/`：
+- `examples/phase3/`：Flash 摄入/召回
+- `examples/phase4/`：Pro 档案/上下文
+- `examples/phase5/`：GM 事件分发
+- `examples/phase6/`：Game Loop 会话/战斗
+
 ### 运行 Demo
 ```
 python -m app.tools.graph_demo

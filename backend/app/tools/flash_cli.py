@@ -3,8 +3,8 @@ Flash CLI for manual ingest/recall.
 
 Run:
     cd backend
-    python -m app.tools.flash_cli ingest --world demo_world --character gorn --payload ingest.json
-    python -m app.tools.flash_cli recall --world demo_world --character gorn --payload recall.json
+    python -m app.tools.flash_cli ingest --world demo_world --character gorn --payload examples/phase3/ingest.json
+    python -m app.tools.flash_cli recall --world demo_world --character gorn --payload examples/phase3/recall.json
 """
 import argparse
 import asyncio

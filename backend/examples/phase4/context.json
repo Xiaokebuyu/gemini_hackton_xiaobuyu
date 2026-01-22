@@ -1,0 +1,14 @@
+{
+  "scene": {
+    "description": "The forge glows with heat and sparks.",
+    "location": "blackstone_town",
+    "present_characters": ["player", "gorn"],
+    "environment": "hot"
+  },
+  "recent_conversation": "Player: Can this furnace be fixed?",
+  "recall": {
+    "seed_nodes": ["person_gorn"],
+    "include_subgraph": true
+  },
+  "include_prompt": true
+}

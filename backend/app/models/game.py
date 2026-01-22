@@ -3,7 +3,7 @@ Game loop models.
 """
 from datetime import datetime
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class SceneState(BaseModel):
@@ -72,6 +72,8 @@ class CombatStartResponse(BaseModel):
 
 class CombatResolveRequest(BaseModel):
     """Resolve combat request."""
+    model_config = ConfigDict(populate_by_name=True)
+
     combat_id: Optional[str] = None
     use_engine: bool = True
     result_override: Optional[Dict] = None
@@ -80,7 +82,7 @@ class CombatResolveRequest(BaseModel):
     recipients: Optional[List[str]] = None
     per_character: Dict = Field(default_factory=dict)
     write_indexes: bool = False
-    validate: bool = False
+    validate_input: bool = Field(default=False, alias="validate")
     strict: bool = False
 
 

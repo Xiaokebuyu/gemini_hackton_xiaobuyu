@@ -1,0 +1,39 @@
+{
+  "event_id": "event_fix_furnace",
+  "description": "Player fixed the furnace",
+  "game_day": 12,
+  "location": "blackstone_town",
+  "participants": ["player"],
+  "witnesses": ["gorn"],
+  "nodes": [
+    {
+      "id": "person_gorn",
+      "type": "person",
+      "name": "Gorn",
+      "importance": 0.6,
+      "properties": {
+        "relation": "self"
+      }
+    },
+    {
+      "id": "event_fix_furnace",
+      "type": "event",
+      "name": "Furnace fixed",
+      "importance": 0.7,
+      "properties": {
+        "day": 12,
+        "summary": "I saw the player repair the furnace"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_gorn_event_fix",
+      "source": "person_gorn",
+      "target": "event_fix_furnace",
+      "relation": "witnessed",
+      "weight": 0.8
+    }
+  ],
+  "write_indexes": true
+}

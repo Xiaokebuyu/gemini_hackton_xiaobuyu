@@ -54,7 +54,9 @@ class GMFlashService:
                 )
             ]
 
-        if request.validate:
+        gm_nodes, gm_edges = self._ensure_participant_links(event, event_id, gm_nodes, gm_edges)
+
+        if request.validate_input:
             options = GraphSchemaOptions(
                 allow_unknown_node_types=not request.strict,
                 allow_unknown_relations=not request.strict,
@@ -103,7 +105,7 @@ class GMFlashService:
                         edges=override.edges,
                         state_updates=override.state_updates,
                         write_indexes=override.write_indexes,
-                        validate=override.validate,
+                        validate_input=override.validate_input,
                         strict=override.strict,
                     )
                 elif request.default_dispatch:
@@ -120,7 +122,7 @@ class GMFlashService:
                         nodes=gm_nodes,
                         edges=gm_edges,
                         write_indexes=request.write_indexes,
-                        validate=request.validate,
+                        validate_input=request.validate_input,
                         strict=request.strict,
                     )
                 else:
@@ -156,3 +158,87 @@ class GMFlashService:
                     recipients.add(char_id)
 
         return recipients
+
+    def _ensure_participant_links(
+        self,
+        event,
+        event_id: str,
+        gm_nodes: List[MemoryNode],
+        gm_edges: List,
+    ) -> tuple[List[MemoryNode], List]:
+        if gm_edges:
+            return gm_nodes, gm_edges
+
+        node_ids = {node.id for node in gm_nodes}
+        edges = list(gm_edges)
+        new_nodes = list(gm_nodes)
+
+        participant_map = self._normalize_people(event.participants)
+        witness_map = self._normalize_people(event.witnesses)
+
+        for raw_id, node_id in {**participant_map, **witness_map}.items():
+            if node_id in node_ids:
+                continue
+            new_nodes.append(
+                MemoryNode(
+                    id=node_id,
+                    type="person",
+                    name=raw_id,
+                    importance=0.4,
+                    properties={},
+                )
+            )
+            node_ids.add(node_id)
+
+        seen_edges = set()
+        for raw_id, node_id in participant_map.items():
+            edge_id = f"edge_{node_id}_{event_id}_participated"
+            if edge_id in seen_edges:
+                continue
+            edges.append(
+                {
+                    "id": edge_id,
+                    "source": node_id,
+                    "target": event_id,
+                    "relation": "participated",
+                    "weight": 0.8,
+                    "properties": {},
+                }
+            )
+            seen_edges.add(edge_id)
+
+        for raw_id, node_id in witness_map.items():
+            edge_id = f"edge_{node_id}_{event_id}_witnessed"
+            if edge_id in seen_edges:
+                continue
+            edges.append(
+                {
+                    "id": edge_id,
+                    "source": node_id,
+                    "target": event_id,
+                    "relation": "witnessed",
+                    "weight": 0.7,
+                    "properties": {},
+                }
+            )
+            seen_edges.add(edge_id)
+
+        from app.models.graph import MemoryEdge
+
+        normalized_edges: List[MemoryEdge] = []
+        for edge in edges:
+            if isinstance(edge, MemoryEdge):
+                normalized_edges.append(edge)
+            else:
+                normalized_edges.append(MemoryEdge(**edge))
+
+        return new_nodes, normalized_edges
+
+    def _normalize_people(self, people: List[str]) -> dict:
+        normalized = {}
+        for raw in people or []:
+            if raw.startswith("person_"):
+                normalized[raw] = raw
+            else:
+                normalized[raw] = f"person_{raw}"
+        return normalized

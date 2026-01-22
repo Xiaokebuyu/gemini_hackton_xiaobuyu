@@ -3,10 +3,10 @@ Game loop CLI.
 
 Run:
     cd backend
-    python -m app.tools.game_cli create --world demo_world --payload session.json
-    python -m app.tools.game_cli scene --world demo_world --session sess_xxx --payload scene.json
-    python -m app.tools.game_cli combat-start --world demo_world --session sess_xxx --payload combat_start.json
-    python -m app.tools.game_cli combat-resolve --world demo_world --session sess_xxx --payload combat_resolve.json
+    python -m app.tools.game_cli create --world demo_world --payload examples/phase6/session.json
+    python -m app.tools.game_cli scene --world demo_world --session sess_xxx --payload examples/phase6/scene.json
+    python -m app.tools.game_cli combat-start --world demo_world --session sess_xxx --payload examples/phase6/combat_start.json
+    python -m app.tools.game_cli combat-resolve --world demo_world --session sess_xxx --payload examples/phase6/combat_resolve.json
 """
 import argparse
 import asyncio

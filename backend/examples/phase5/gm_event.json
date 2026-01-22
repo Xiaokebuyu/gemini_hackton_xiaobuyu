@@ -1,0 +1,34 @@
+{
+    "event": {
+      "type": "action",
+      "game_day": 12,
+      "location": "blackstone_town",
+      "participants": ["player"],
+      "witnesses": ["gorn"],
+      "content": {
+        "raw": "玩家在铁匠铺修好了炉子"
+      },
+      "nodes": [
+        {
+          "id": "event_fix_furnace_gm",
+          "type": "event",
+          "name": "修炉子",
+          "properties": {
+            "day": 12,
+            "summary": "玩家修好了炉子"
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "edge_gorn_event_fix_gm",
+          "source": "person_gorn",
+          "target": "event_fix_furnace_gm",
+          "relation": "witnessed",
+          "weight": 0.8
+        }
+      ]
+    },
+    "distribute": true,
+    "known_characters": ["gorn"]
+  }

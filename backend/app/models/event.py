@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.models.graph import MemoryEdge, MemoryNode
 
@@ -53,17 +53,19 @@ class Event(BaseModel):
 
 class EventDispatchOverride(BaseModel):
     """Override dispatch payload for a character."""
+    model_config = ConfigDict(populate_by_name=True)
 
     nodes: List[MemoryNode] = Field(default_factory=list)
     edges: List[MemoryEdge] = Field(default_factory=list)
     state_updates: Dict = Field(default_factory=dict)
     write_indexes: bool = False
-    validate: bool = False
+    validate_input: bool = Field(default=False, alias="validate")
     strict: bool = False
 
 
 class GMEventIngestRequest(BaseModel):
     """GM ingest request (write + dispatch)."""
+    model_config = ConfigDict(populate_by_name=True)
 
     event: Event
     distribute: bool = True
@@ -73,7 +75,7 @@ class GMEventIngestRequest(BaseModel):
     per_character: Dict[str, EventDispatchOverride] = Field(default_factory=dict)
     default_dispatch: bool = True
     write_indexes: bool = False
-    validate: bool = False
+    validate_input: bool = Field(default=False, alias="validate")
     strict: bool = False
 
 

@@ -206,9 +206,33 @@ class MemoryGraph:
     def from_graph_data(cls, graph_data: GraphData) -> "MemoryGraph":
         """Build MemoryGraph from GraphData."""
         graph = cls()
+        node_ids = set()
         for node in graph_data.nodes:
             graph.add_node(node)
+            node_ids.add(node.id)
         for edge in graph_data.edges:
+            if edge.source not in node_ids:
+                graph.add_node(
+                    MemoryNode(
+                        id=edge.source,
+                        type="unknown",
+                        name=edge.source,
+                        importance=0.0,
+                        properties={"placeholder": True},
+                    )
+                )
+                node_ids.add(edge.source)
+            if edge.target not in node_ids:
+                graph.add_node(
+                    MemoryNode(
+                        id=edge.target,
+                        type="unknown",
+                        name=edge.target,
+                        importance=0.0,
+                        properties={"placeholder": True},
+                    )
+                )
+                node_ids.add(edge.target)
             graph.add_edge(edge)
         return graph
 

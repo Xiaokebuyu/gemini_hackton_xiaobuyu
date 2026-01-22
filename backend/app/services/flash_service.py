@@ -38,9 +38,15 @@ class FlashService:
         node_count = 0
         edge_count = 0
 
-        if request.nodes:
-            for node in request.nodes:
-                if request.validate:
+        nodes = list(request.nodes)
+        node_ids = {node.id for node in nodes}
+        if request.edges:
+            nodes = self._ensure_edge_nodes(nodes, request.edges)
+            node_ids = {node.id for node in nodes}
+
+        if nodes:
+            for node in nodes:
+                if request.validate_input:
                     options = GraphSchemaOptions(
                         allow_unknown_node_types=not request.strict,
                         allow_unknown_relations=True,
@@ -60,7 +66,7 @@ class FlashService:
 
         if request.edges:
             for edge in request.edges:
-                if request.validate:
+                if request.validate_input:
                     options = GraphSchemaOptions(
                         allow_unknown_node_types=True,
                         allow_unknown_relations=not request.strict,
@@ -97,6 +103,34 @@ class FlashService:
             state_updated=state_updated,
             note=note,
         )
+
+    def _ensure_edge_nodes(self, nodes, edges):
+        node_ids = {node.id for node in nodes}
+        from app.models.graph import MemoryNode
+
+        def infer_type(node_id: str) -> str:
+            if node_id.startswith("person_"):
+                return "person"
+            if node_id.startswith("location_"):
+                return "location"
+            if node_id.startswith("item_"):
+                return "item"
+            return "unknown"
+
+        for edge in edges:
+            for node_id in (edge.source, edge.target):
+                if node_id not in node_ids:
+                    nodes.append(
+                        MemoryNode(
+                            id=node_id,
+                            type=infer_type(node_id),
+                            name=node_id,
+                            importance=0.0,
+                            properties={"placeholder": True},
+                        )
+                    )
+                    node_ids.add(node_id)
+        return nodes
 
     async def recall_memory(
         self,

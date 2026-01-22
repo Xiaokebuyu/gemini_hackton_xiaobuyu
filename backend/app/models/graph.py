@@ -3,7 +3,7 @@ Graph data models.
 """
 from datetime import datetime
 from typing import Dict, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class MemoryNode(BaseModel):
@@ -16,8 +16,7 @@ class MemoryNode(BaseModel):
     importance: float = 0.0
     properties: Dict = Field(default_factory=dict)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MemoryEdge(BaseModel):
@@ -30,8 +29,7 @@ class MemoryEdge(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     properties: Dict = Field(default_factory=dict)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class GraphData(BaseModel):
@@ -39,5 +37,4 @@ class GraphData(BaseModel):
     nodes: List[MemoryNode] = Field(default_factory=list)
     edges: List[MemoryEdge] = Field(default_factory=list)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -88,9 +88,17 @@ class GameLoopService:
             raise ValueError("combat_id is required")
 
         if request.use_engine:
-            result = self.combat_engine.get_combat_result(combat_id)
-            result_payload = result.to_dict()
-            summary = request.summary_override or result.summary
+            try:
+                result = self.combat_engine.get_combat_result(combat_id)
+                result_payload = result.to_dict()
+                summary = request.summary_override or result.summary
+            except ValueError:
+                if request.result_override:
+                    result_payload = request.result_override
+                    summary = request.summary_override or result_payload.get("summary", "")
+                else:
+                    summary = request.summary_override or "combat resolved (manual)"
+                    result_payload = {"summary": summary, "result": "special"}
         else:
             if not request.result_override:
                 raise ValueError("result_override is required when use_engine=false")
@@ -119,7 +127,7 @@ class GameLoopService:
             character_locations=combat_context.character_locations if combat_context else {},
             per_character=request.per_character,
             write_indexes=request.write_indexes,
-            validate=request.validate,
+            validate_input=request.validate_input,
             strict=request.strict,
         )
 

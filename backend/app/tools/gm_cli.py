@@ -3,7 +3,7 @@ GM CLI for event ingest.
 
 Run:
     cd backend
-    python -m app.tools.gm_cli ingest --world demo_world --payload gm_event.json
+    python -m app.tools.gm_cli ingest --world demo_world --payload examples/phase5/gm_event.json
 """
 import argparse
 import asyncio

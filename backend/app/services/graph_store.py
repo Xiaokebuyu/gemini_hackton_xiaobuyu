@@ -438,6 +438,20 @@ class GraphStore:
                 operations.append((timeline_ref, timeline_payload, True))
         return operations
 
+    def _commit_in_batches(self, operations: Iterable[Tuple[firestore.DocumentReference, dict, bool]]) -> None:
+        """Commit in batches to avoid Firestore limits."""
+        batch = self.db.batch()
+        op_count = 0
+        for doc_ref, payload, merge in operations:
+            batch.set(doc_ref, payload, merge=merge)
+            op_count += 1
+            if op_count >= 450:
+                batch.commit()
+                batch = self.db.batch()
+                op_count = 0
+        if op_count:
+            batch.commit()
+
 
 def _chunked(items: List[str], size: int) -> List[List[str]]:
     if size <= 0:
@@ -454,17 +468,3 @@ def _clear_subcollection(
         for child_doc in child_ref.stream():
             child_doc.reference.delete()
         doc.reference.delete()
-
-    def _commit_in_batches(self, operations: Iterable[Tuple[firestore.DocumentReference, dict, bool]]) -> None:
-        """Commit in batches to avoid Firestore limits."""
-        batch = self.db.batch()
-        op_count = 0
-        for doc_ref, payload, merge in operations:
-            batch.set(doc_ref, payload, merge=merge)
-            op_count += 1
-            if op_count >= 450:
-                batch.commit()
-                batch = self.db.batch()
-                op_count = 0
-        if op_count:
-            batch.commit()

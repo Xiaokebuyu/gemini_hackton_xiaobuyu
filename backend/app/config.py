@@ -4,7 +4,7 @@
 import os
 from pathlib import Path
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -57,9 +57,7 @@ class Settings(BaseModel):
     api_prefix: str = "/api"
     cors_origins: list = ["*"]
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = ConfigDict(env_file=".env", case_sensitive=False)
 
 
 # 全局配置实例

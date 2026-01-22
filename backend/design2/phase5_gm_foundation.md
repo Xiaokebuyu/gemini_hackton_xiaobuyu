@@ -63,7 +63,7 @@ Payload 示例：
 
 ## CLI
 ```
-python -m app.tools.gm_cli ingest --world demo_world --payload gm_event.json
+python -m app.tools.gm_cli ingest --world demo_world --payload examples/phase5/gm_event.json
 ```
 
 ## Phase 5b（待办：由你测试/跑通）

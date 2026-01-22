@@ -1,0 +1,8 @@
+{
+  "scene": {
+    "description": "铁匠铺内火光通明",
+    "location": "blackstone_town",
+    "participants": ["player", "gorn"],
+    "atmosphere": "炎热"
+  }
+}

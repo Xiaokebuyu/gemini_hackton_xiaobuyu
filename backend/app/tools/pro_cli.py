@@ -3,8 +3,8 @@ Pro CLI for profile/context.
 
 Run:
     cd backend
-    python -m app.tools.pro_cli profile --world demo_world --character gorn --payload profile.json
-    python -m app.tools.pro_cli context --world demo_world --character gorn --payload context.json
+    python -m app.tools.pro_cli profile --world demo_world --character gorn --payload examples/phase4/profile.json
+    python -m app.tools.pro_cli context --world demo_world --character gorn --payload examples/phase4/context.json
 """
 import argparse
 import asyncio
