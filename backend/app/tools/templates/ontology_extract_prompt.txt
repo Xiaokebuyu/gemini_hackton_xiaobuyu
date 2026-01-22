@@ -1,0 +1,43 @@
+You are an ontology extraction agent.
+
+Task:
+Given the worldbuilding text chunk, extract a graph in JSON with nodes and edges.
+Return only JSON (no markdown).
+
+Constraints:
+- Use deterministic IDs with stable prefixes (e.g., person_, location_, org_, item_, event_).
+- Reuse IDs if the same entity appears across chunks.
+- Keep names concise and canonical.
+- Only include facts present in the chunk.
+- Node types: identity, person, location, event, rumor, knowledge, item, organization, goal, emotion, *_ref.
+
+Chunk ID: {chunk_id}
+Source: {source}
+
+Text:
+{text}
+
+Output JSON:
+{
+  "nodes": [
+    {
+      "id": "person_marcus",
+      "type": "person",
+      "name": "Marcus",
+      "importance": 0.6,
+      "properties": {
+        "aliases": ["..."]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_marcus_lives_forest",
+      "source": "person_marcus",
+      "target": "location_eastern_forest",
+      "relation": "located_in",
+      "weight": 0.7,
+      "properties": {}
+    }
+  ]
+}
