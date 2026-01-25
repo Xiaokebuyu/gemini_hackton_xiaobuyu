@@ -103,7 +103,7 @@ def main():
         print(f"端口: {args.port}")
     print("=" * 60)
     
-    from app.mcp import run_mcp_server
+    from app.legacy_mcp import run_mcp_server
     run_mcp_server(args.transport)
 
 

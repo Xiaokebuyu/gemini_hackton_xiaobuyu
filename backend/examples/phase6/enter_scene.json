@@ -1,0 +1,10 @@
+{
+  "scene": {
+    "scene_id": "tavern",
+    "description": "旅店的大厅温暖而热闹。壁炉里的火噼啪作响，木桌上放着啤酒杯。几个旅人正在角落里低声交谈。",
+    "location": "金麦旅店",
+    "atmosphere": "温馨热闹",
+    "participants": ["elena", "marcus"]
+  },
+  "generate_description": true
+}

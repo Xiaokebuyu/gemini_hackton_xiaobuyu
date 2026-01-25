@@ -9,8 +9,8 @@
 - sse: Server-Sent Events（适合 Web 应用）
 
 使用方法：
-1. 独立运行: python -m app.mcp.mcp_standard_server
-2. 作为模块导入: from app.mcp.mcp_standard_server import mcp
+1. 独立运行: python -m app.legacy_mcp.mcp_standard_server
+2. 作为模块导入: from app.legacy_mcp.mcp_standard_server import mcp
 """
 
 import asyncio
@@ -39,9 +39,9 @@ def _get_services():
     global _firestore, _llm, _internal_server, _embedding, _memory_gateway
     
     if _firestore is None:
-        from app.services.firestore_service import FirestoreService
+        from app.legacy_mcp.firestore_service import FirestoreService
         from app.services.llm_service import LLMService
-        from app.services.embedding_service import EmbeddingService
+        from app.legacy_mcp.embedding_service import EmbeddingService
         from .server import ContextMCPServer
         from .memory_gateway import MemoryGateway
         

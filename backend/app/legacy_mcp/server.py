@@ -19,9 +19,9 @@ from .truncate_archiver import TruncateArchiver
 from .topic_state import TopicStateManager
 TOOLS: List[Dict[str, Any]] = []
 
-from app.services.firestore_service import FirestoreService
+from app.legacy_mcp.firestore_service import FirestoreService
 from app.services.llm_service import LLMService
-from app.services.embedding_service import EmbeddingService
+from app.legacy_mcp.embedding_service import EmbeddingService
 
 
 class ContextMCPServer:

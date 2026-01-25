@@ -21,10 +21,11 @@ class Settings(BaseModel):
     )
     firestore_database: str = os.getenv("FIRESTORE_DATABASE", "(default)")
     
-    # Gemini API 配置
+    # Gemini API 配置 (全面使用 Gemini 3 系列)
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_flash_model: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash-lite")
+    gemini_flash_model: str = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
     gemini_main_model: str = os.getenv("GEMINI_MAIN_MODEL", "gemini-3-flash-preview")
+    gemini_pro_model: str = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
     gemini_embedding_model: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
     
     # Gemini 3 思考配置

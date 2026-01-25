@@ -1,0 +1,26 @@
+{
+  "enemies": [
+    {
+      "type": "goblin",
+      "level": 1
+    }
+  ],
+  "player_state": {
+    "name": "冒险者",
+    "hp": 30,
+    "max_hp": 30,
+    "ac": 15,
+    "attack_bonus": 5,
+    "damage_dice": "1d8",
+    "damage_bonus": 3,
+    "damage_type": "slashing",
+    "initiative_bonus": 2,
+    "weapon_id": "longsword"
+  },
+  "combat_description": "一只哥布林从灌木丛中跳出来，龇牙咧嘴地看着你！",
+  "environment": {
+    "terrain": "forest",
+    "lighting": "dim",
+    "cover": true
+  }
+}

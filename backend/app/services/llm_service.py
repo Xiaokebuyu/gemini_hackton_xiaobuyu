@@ -380,37 +380,30 @@ Artifact 要求:
     
     async def generate_simple(self, prompt: str) -> str:
         """
-        简单文本生成（不使用思考功能）
-        
+        简单文本生成（使用 Gemini 3 Flash）
+
         Args:
             prompt: 提示文本
-            
+
         Returns:
             生成的文本
         """
         try:
-            thinking_config = types.ThinkingConfig(
-                thinking_level="lowest",
-                include_thoughts=False
-            )
-            
             response = self.client.models.generate_content(
                 model=self.flash_model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    thinking_config=thinking_config
-                )
             )
-            
+
             text = ""
             if hasattr(response, 'candidates') and response.candidates:
                 for part in response.candidates[0].content.parts:
                     if hasattr(part, 'text') and part.text:
+                        # 跳过思考部分，只取实际回答
                         if not (hasattr(part, 'thought') and part.thought):
                             text += part.text
-            
+
             return text.strip()
-            
+
         except Exception as e:
             raise Exception(f"文本生成失败: {str(e)}")
     

@@ -14,7 +14,7 @@ from .models import APIMessage, AssembledContext
 from .message_stream import MessageStream
 
 if TYPE_CHECKING:
-    from app.services.firestore_service import FirestoreService
+    from app.legacy_mcp.firestore_service import FirestoreService
 
 
 class MessageAssembler:

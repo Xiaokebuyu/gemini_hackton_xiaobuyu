@@ -1,33 +1,33 @@
 # Repository Guidelines
 
-## 项目结构与模块组织
-- `backend/app/` 是 FastAPI 应用入口；路由在 `backend/app/routers/`，业务逻辑在 `backend/app/services/`。
-- 数据模型在 `backend/app/models/`，工具函数在 `backend/app/utils/`。
-- 测试用例在仓库根目录的 `tests/`。
-- 文档位于 `design2/` 和 `IMPLEMENTATION_SUMMARY.md`。
+## Project Structure & Module Organization
+- `app/` contains the FastAPI application. Core areas: `routers/` for HTTP endpoints, `services/` for business logic, `models/` for Pydantic data models, `mcp/` for memory gateway components, and `utils/` for shared helpers.
+- `tests/` holds pytest tests (currently focused on graph/spreading activation).
+- `examples/` and `design2/` contain supporting materials and experiments.
+- Documentation lives in `README.md`, `ARCHITECTURE.md`, and `MEMORY_GATEWAY_INTEGRATION.md`.
+- Runtime config and entry points: `.env`, `firebase-credentials.json`, `requirements.txt`, `run.sh`, `run_mcp_server.py`.
 
-## 构建、测试与本地开发命令
-- `pip install -r backend/requirements.txt` 安装运行依赖。
-- `cd backend && uvicorn app.main:app --reload --port 8000` 本地启动 API（热重载）。
-- `cd backend && ./run.sh` 进行环境检查并启动服务。
-- `PYTHONPATH=backend pytest tests/ -v` 运行测试套件。
+## Build, Test, and Development Commands
+- `pip install -r requirements.txt` — install Python dependencies.
+- `uvicorn app.main:app --reload --port 8000` — run the API locally.
+- `./run.sh` — quick-start script that validates env/config and launches the server.
+- `pytest -v` or `pytest tests/test_spreading_activation.py -v` — run tests.
 
-## 编码风格与命名规范
-- Python 使用 4 空格缩进。
-- 保持模块 docstring，并仅添加必要的简短注释。
-- 命名规则：模块/函数/变量使用 `snake_case`，类与 Pydantic 模型使用 `PascalCase`。
-- 未配置格式化或 lint 工具；请遵循既有风格并保持 import 整洁。
+## Coding Style & Naming Conventions
+- Python with 4‑space indentation and module-level docstrings (see `app/` modules).
+- Use Pydantic models for typed data structures in `app/models`.
+- Prefer descriptive, lowercase module names (e.g., `spreading_activation.py`) and route modules in `app/routers`.
+- No formatter/linter config is present; keep changes PEP 8–friendly and consistent with surrounding code.
 
-## 测试指南
-- 测试框架为 `pytest` + `pytest-asyncio`；异步测试需 `@pytest.mark.asyncio`。
-- 测试文件位于 `tests/`，命名建议为 `test_*.py`。
-- 集成测试可能调用真实 Firestore 与外部 API；请使用测试凭证并隔离 `user_id`。
+## Testing Guidelines
+- Framework: pytest.
+- Name tests `test_*.py` and test functions `test_*` (see `tests/test_spreading_activation.py`).
+- Add focused unit tests for new services or algorithms; integration tests may require Firestore/Gemini credentials.
 
-## 提交与 Pull Request 规范
-- 提交信息遵循 Conventional Commits（如 `feat: add memory cleanup`、`fix: handle empty state`）。
-- PR 需包含简短摘要、测试结果、配置变更说明（如适用）。
-- 关联相关 issue；仅在涉及 UI 变更时附截图。
+## Commit & Pull Request Guidelines
+- Commit messages in history are short, often Chinese, with occasional Conventional Commit prefixes (e.g., `feat:`). Match the existing style and keep messages concise.
+- No formal PR template in the repo; include a brief summary, testing performed, and any config/credential notes.
 
-## 安全与配置提示
-- 关键环境变量：`GEMINI_API_KEY`、`CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`GOOGLE_APPLICATION_CREDENTIALS`（见 `backend/app/config.py`）。
-- 默认凭证路径为 `backend/firebase-credentials.json`；禁止提交任何密钥或凭证。
+## Security & Configuration Tips
+- Ensure `.env` includes `GEMINI_API_KEY` and Firebase credentials path; `run.sh` validates these.
+- Avoid committing secrets; keep `firebase-credentials.json` and `.env` local.

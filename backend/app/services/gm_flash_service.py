@@ -1,13 +1,24 @@
 """
 GM Flash service for event recording and dispatch.
+
+支持两种模式：
+1. 结构化模式：直接传入节点/边数据
+2. 自然语言模式：通过LLM解析事件并进行视角转换
 """
 import uuid
 from datetime import datetime
-from typing import List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
-from app.models.event import GMEventIngestRequest, GMEventIngestResponse
+from app.models.event import (
+    CharacterDispatchResult,
+    GMEventIngestRequest,
+    GMEventIngestResponse,
+    NaturalEventIngestRequest,
+    NaturalEventIngestResponse,
+)
 from app.models.flash import EventIngestRequest
-from app.models.graph import MemoryNode
+from app.models.graph import MemoryEdge, MemoryNode
+from app.models.pro import CharacterProfile
 from app.services.event_bus import EventBus
 from app.services.flash_service import FlashService
 from app.services.graph_schema import GraphSchemaOptions, validate_edge, validate_node
@@ -26,6 +37,15 @@ class GMFlashService:
         self.graph_store = graph_store or GraphStore()
         self.flash_service = flash_service or FlashService(self.graph_store)
         self.event_bus = event_bus or EventBus()
+        self._llm_service: Optional["GMLLMService"] = None
+
+    @property
+    def llm_service(self) -> "GMLLMService":
+        """懒加载GM LLM服务"""
+        if self._llm_service is None:
+            from app.services.gm_llm_service import GMLLMService
+            self._llm_service = GMLLMService()
+        return self._llm_service
 
     async def ingest_event(
         self,
@@ -242,3 +262,241 @@ class GMFlashService:
             else:
                 normalized[raw] = f"person_{raw}"
         return normalized
+
+    # ==================== LLM增强方法 ====================
+
+    async def ingest_event_natural(
+        self,
+        world_id: str,
+        request: NaturalEventIngestRequest,
+    ) -> NaturalEventIngestResponse:
+        """
+        LLM增强的事件摄入：自然语言 → GM图谱 + 角色视角分发
+
+        流程：
+        1. 解析事件：提取参与者、目击者、地点等结构
+        2. 编码GM事件：生成GM图谱的客观记录
+        3. 写入GM图谱
+        4. 视角转换：为每个接收者生成专属记忆
+        5. 写入角色记忆
+
+        Args:
+            world_id: 世界ID
+            request: 自然语言事件请求
+
+        Returns:
+            摄入结果，包含GM图谱统计和各角色分发结果
+        """
+        # 1. 解析事件结构
+        parsed_event = await self.llm_service.parse_event(
+            event_description=request.event_description,
+            known_characters=request.known_characters,
+            known_locations=request.known_locations,
+        )
+
+        # 2. 获取GM图谱中已有的重要节点
+        existing_nodes = await self._get_gm_important_nodes(world_id, limit=30)
+
+        # 3. 编码为GM图谱数据
+        gm_encoded = await self.llm_service.encode_gm_event(
+            event_description=request.event_description,
+            parsed_event=parsed_event,
+            game_day=request.game_day,
+            existing_nodes=existing_nodes,
+        )
+
+        # 4. 生成事件ID
+        event_id = f"event_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+        # 5. 写入GM图谱
+        gm_nodes = [MemoryNode(**n) for n in gm_encoded.get("nodes", [])]
+        gm_edges = [MemoryEdge(**e) for e in gm_encoded.get("edges", [])]
+
+        for node in gm_nodes:
+            await self.graph_store.upsert_node(
+                world_id,
+                "gm",
+                node,
+                character_id=None,
+                index=request.write_indexes,
+            )
+
+        for edge in gm_edges:
+            await self.graph_store.upsert_edge(world_id, "gm", edge, character_id=None)
+
+        # 6. 确定接收者和视角
+        recipients_result: List[CharacterDispatchResult] = []
+
+        if request.distribute:
+            recipients_with_perspective = self._determine_perspectives(
+                parsed_event=parsed_event,
+                known_characters=request.known_characters,
+                character_locations=request.character_locations,
+            )
+
+            # 7. 对每个接收者进行视角转换和写入
+            for character_id, perspective in recipients_with_perspective.items():
+                try:
+                    result = await self._dispatch_to_character(
+                        world_id=world_id,
+                        character_id=character_id,
+                        event_description=request.event_description,
+                        parsed_event=parsed_event,
+                        perspective=perspective,
+                        game_day=request.game_day,
+                        write_indexes=request.write_indexes,
+                    )
+                    recipients_result.append(result)
+                except Exception as e:
+                    # 单个角色失败不影响其他角色
+                    recipients_result.append(CharacterDispatchResult(
+                        character_id=character_id,
+                        perspective=perspective,
+                        node_count=0,
+                        edge_count=0,
+                        event_description=f"Error: {str(e)}",
+                    ))
+
+        return NaturalEventIngestResponse(
+            event_id=event_id,
+            parsed_event=parsed_event,
+            gm_node_count=len(gm_nodes),
+            gm_edge_count=len(gm_edges),
+            dispatched=request.distribute,
+            recipients=recipients_result,
+        )
+
+    def _determine_perspectives(
+        self,
+        parsed_event: Dict[str, Any],
+        known_characters: List[str],
+        character_locations: Dict[str, str],
+    ) -> Dict[str, str]:
+        """
+        确定每个角色的视角类型
+
+        规则：
+        - 参与者 -> "participant"
+        - 目击者 -> "witness"
+        - 同一地点的其他角色 -> "bystander"
+        - 其他已知角色（暂不分发，可扩展为"rumor"）
+        """
+        perspectives: Dict[str, str] = {}
+
+        participants = set(parsed_event.get("participants", []))
+        witnesses = set(parsed_event.get("witnesses", []))
+        event_location = parsed_event.get("location")
+
+        # 参与者
+        for char_id in participants:
+            perspectives[char_id] = "participant"
+
+        # 目击者
+        for char_id in witnesses:
+            if char_id not in perspectives:
+                perspectives[char_id] = "witness"
+
+        # 同一地点的旁观者
+        if event_location and character_locations:
+            for char_id, location in character_locations.items():
+                if location == event_location and char_id not in perspectives:
+                    perspectives[char_id] = "bystander"
+
+        return perspectives
+
+    async def _dispatch_to_character(
+        self,
+        world_id: str,
+        character_id: str,
+        event_description: str,
+        parsed_event: Dict[str, Any],
+        perspective: str,
+        game_day: int,
+        write_indexes: bool = False,
+        source_character: Optional[str] = None,
+    ) -> CharacterDispatchResult:
+        """
+        向单个角色分发事件
+
+        Args:
+            world_id: 世界ID
+            character_id: 角色ID
+            event_description: 原始事件描述
+            parsed_event: 解析后的事件结构
+            perspective: 视角类型
+            game_day: 游戏日
+            write_indexes: 是否写入索引
+            source_character: 传闻来源（如果是rumor视角）
+
+        Returns:
+            分发结果
+        """
+        # 1. 获取角色profile
+        profile_data = await self.graph_store.get_character_profile(world_id, character_id)
+        profile = CharacterProfile(**profile_data) if profile_data else CharacterProfile(name=character_id)
+
+        # 2. 视角转换
+        transformed = await self.llm_service.transform_perspective(
+            event_description=event_description,
+            parsed_event=parsed_event,
+            character_id=character_id,
+            character_profile=profile,
+            perspective=perspective,  # type: ignore
+            game_day=game_day,
+            source_character=source_character,
+        )
+
+        # 3. 转换为MemoryNode和MemoryEdge
+        nodes = [MemoryNode(**n) for n in transformed.get("nodes", [])]
+        edges = [MemoryEdge(**e) for e in transformed.get("edges", [])]
+
+        # 4. 写入角色记忆
+        ingest_request = EventIngestRequest(
+            description=transformed.get("event_description", event_description),
+            game_day=game_day,
+            location=parsed_event.get("location"),
+            perspective=perspective,
+            nodes=nodes,
+            edges=edges,
+            state_updates=transformed.get("state_updates", {}),
+            write_indexes=write_indexes,
+        )
+
+        result = await self.flash_service.ingest_event(world_id, character_id, ingest_request)
+
+        return CharacterDispatchResult(
+            character_id=character_id,
+            perspective=perspective,
+            node_count=result.node_count,
+            edge_count=result.edge_count,
+            event_description=transformed.get("event_description"),
+        )
+
+    async def _get_gm_important_nodes(
+        self,
+        world_id: str,
+        limit: int = 30,
+    ) -> List[Dict[str, Any]]:
+        """获取GM图谱中的重要节点"""
+        graph_data = await self.graph_store.load_graph(world_id, "gm", character_id=None)
+
+        if not graph_data or not graph_data.nodes:
+            return []
+
+        # 按importance排序，取前N个
+        sorted_nodes = sorted(
+            graph_data.nodes,
+            key=lambda n: n.importance,
+            reverse=True
+        )
+
+        return [
+            {
+                "id": n.id,
+                "type": n.type,
+                "name": n.name,
+                "importance": n.importance,
+                "properties": n.properties,
+            }
+            for n in sorted_nodes[:limit]
+        ]

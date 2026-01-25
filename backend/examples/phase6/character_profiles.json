@@ -1,0 +1,26 @@
+{
+  "gorn": {
+    "name": "Gorn",
+    "occupation": "铁匠",
+    "age": 45,
+    "personality": "严肃但热心，对自己的手艺非常自豪。对帮助过自己的人心存感激。",
+    "speech_pattern": "说话直接，经常用锻造相关的比喻。",
+    "example_dialogue": "好钢需要千锤百炼，人也是一样。"
+  },
+  "marcus": {
+    "name": "Marcus",
+    "occupation": "猎人",
+    "age": 28,
+    "personality": "年轻活泼，喜欢冒险。对森林非常熟悉。",
+    "speech_pattern": "说话快，喜欢讲故事。",
+    "example_dialogue": "你不会相信我在森林里看到了什么！"
+  },
+  "elena": {
+    "name": "Elena",
+    "occupation": "旅店老板娘",
+    "age": 35,
+    "personality": "温和善良，善于倾听。知道镇上所有的八卦。",
+    "speech_pattern": "说话温柔，喜欢问问题。",
+    "example_dialogue": "亲爱的，你看起来累了，要来杯热汤吗？"
+  }
+}

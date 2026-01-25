@@ -1,7 +1,7 @@
 """
 Pro service models.
 """
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 from app.models.flash import RecallRequest, RecallResponse
@@ -17,6 +17,12 @@ class CharacterProfile(BaseModel):
     example_dialogue: Optional[str] = None
     system_prompt: Optional[str] = None
     metadata: Dict = Field(default_factory=dict)
+
+
+class ChatMessage(BaseModel):
+    """对话消息"""
+    role: Literal["user", "assistant"] = "user"
+    content: str = ""
 
 
 class SceneContext(BaseModel):
@@ -42,3 +48,23 @@ class ProContextResponse(BaseModel):
     scene: SceneContext
     memory: Optional[RecallResponse] = None
     assembled_prompt: Optional[str] = None
+
+
+# ==================== 对话相关模型 ====================
+
+
+class ChatRequest(BaseModel):
+    """对话请求"""
+    message: str
+    scene: Optional[SceneContext] = None
+    conversation_history: List[ChatMessage] = Field(default_factory=list)
+    injected_memory: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    """对话响应"""
+    response: str
+    tool_called: bool = False
+    recalled_memory: Optional[str] = None
+    recall_query: Optional[str] = None
+    thinking: Optional[str] = None

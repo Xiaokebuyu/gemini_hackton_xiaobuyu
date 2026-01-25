@@ -10,12 +10,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
-from app.mcp.models import APIMessage, count_tokens
-from app.mcp.message_stream import MessageStream
-from app.services.firestore_service import FirestoreService
+from app.legacy_mcp.models import APIMessage, count_tokens
+from app.legacy_mcp.message_stream import MessageStream
+from app.legacy_mcp.firestore_service import FirestoreService
 from app.services.llm_service import LLMService
-from app.services.embedding_service import EmbeddingService
-from app.utils.embedding import cosine_similarity
+from app.legacy_mcp.embedding_service import EmbeddingService
+from app.legacy_mcp.embedding import cosine_similarity
 
 
 @dataclass
@@ -540,7 +540,7 @@ async def _archive_stream(
     user_id: str,
     session_id: str,
 ) -> None:
-    from app.mcp.truncate_archiver import TruncateArchiver
+    from app.legacy_mcp.truncate_archiver import TruncateArchiver
 
     archiver = TruncateArchiver(firestore, llm, embedding)
     await archiver.process(stream, user_id, session_id)

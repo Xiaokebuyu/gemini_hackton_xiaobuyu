@@ -5,7 +5,7 @@ from typing import List, Optional
 from google import genai
 
 from app.config import settings
-from app.utils.embedding import get_cloudflare_embedding
+from app.legacy_mcp.embedding import get_cloudflare_embedding
 
 
 class EmbeddingService:

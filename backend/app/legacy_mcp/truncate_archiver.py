@@ -25,9 +25,9 @@ from .models import (
 from .message_stream import MessageStream
 
 if TYPE_CHECKING:
-    from app.services.firestore_service import FirestoreService
+    from app.legacy_mcp.firestore_service import FirestoreService
     from app.services.llm_service import LLMService
-    from app.services.embedding_service import EmbeddingService
+    from app.legacy_mcp.embedding_service import EmbeddingService
 
 
 class TruncateArchiver:

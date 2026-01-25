@@ -4,8 +4,8 @@
 from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 
-from app.services.firestore_service import FirestoreService
-from app.mcp import get_mcp_server
+from app.legacy_mcp.firestore_service import FirestoreService
+from app.legacy_mcp import get_mcp_server
 
 router = APIRouter()
 

@@ -1,0 +1,10 @@
+{
+  "session_id": "sess_gm_demo",
+  "participants": ["player"],
+  "known_characters": ["gorn", "marcus", "elena"],
+  "character_locations": {
+    "gorn": "铁匠铺",
+    "marcus": "金麦旅店",
+    "elena": "金麦旅店"
+  }
+}
