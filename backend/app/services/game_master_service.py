@@ -45,6 +45,10 @@ from app.services.game_loop_service import GameLoopService
 from app.services.gm_flash_service import GMFlashService
 from app.services.graph_store import GraphStore
 from app.services.pro_service import ProService
+# NPC Instance Pool 集成
+from app.services.instance_manager import InstanceManager
+from app.services.memory_graphizer import MemoryGraphizer
+from app.services.flash_pro_bridge import FlashProBridge
 
 
 class GamePhase(str, Enum):
@@ -93,6 +97,7 @@ class GameMasterService:
         pro_service: Optional[ProService] = None,
         flash_service: Optional[FlashService] = None,
         combat_engine: Optional[CombatEngine] = None,
+        instance_manager: Optional[InstanceManager] = None,
     ) -> None:
         self.graph_store = graph_store or GraphStore()
         self.flash_service = flash_service or FlashService(self.graph_store)
@@ -100,6 +105,22 @@ class GameMasterService:
         self.pro_service = pro_service or ProService(self.graph_store, self.flash_service)
         self.game_loop = game_loop or GameLoopService(gm_service=self.gm_service)
         self.combat_engine = combat_engine or CombatEngine()
+
+        # NPC 实例池管理器（双层认知系统）
+        self.instance_manager = instance_manager or InstanceManager(
+            max_instances=settings.instance_pool_max_instances,
+            context_window_size=settings.instance_pool_context_window_size,
+            graphize_threshold=settings.instance_pool_graphize_threshold,
+            keep_recent_tokens=settings.instance_pool_keep_recent_tokens,
+            graph_store=self.graph_store,
+        )
+        # 记忆图谱化器
+        self.memory_graphizer = MemoryGraphizer(graph_store=self.graph_store)
+        # Flash-Pro 通信桥接
+        self.flash_pro_bridge = FlashProBridge(
+            flash_service=self.flash_service,
+            graph_store=self.graph_store,
+        )
 
         # 运行时上下文缓存
         self._contexts: Dict[str, GameContext] = {}
@@ -611,6 +632,10 @@ class GameMasterService:
         """
         开始与NPC对话
 
+        使用 NPC 实例池的双层认知系统：
+        - Pro 层：200K 上下文窗口管理当前对话
+        - Flash 层：图谱检索提供长期记忆
+
         Args:
             world_id: 世界ID
             session_id: 会话ID
@@ -627,22 +652,56 @@ class GameMasterService:
         if context.current_scene and npc_id not in context.current_scene.participants:
             return {"type": "error", "response": f"{npc_id}不在当前场景"}
 
+        # 获取或创建 NPC 实例（双层认知系统）
+        npc_instance = await self.instance_manager.get_or_create(npc_id, world_id)
+
         # 设置对话状态
         context.current_npc = npc_id
         context.phase = GamePhase.DIALOGUE
         context.conversation_history = []
 
-        # 获取NPC资料
-        profile = await self.pro_service.get_profile(world_id, npc_id)
+        # 获取NPC资料（从实例或重新加载）
+        profile = npc_instance.profile or await self.pro_service.get_profile(world_id, npc_id)
+
+        # 预加载场景相关记忆到 Pro 层
+        scene = context.current_scene
+        if scene:
+            try:
+                memory_injection = await self.flash_pro_bridge.preload_scene_memory(
+                    world_id=world_id,
+                    npc_id=npc_id,
+                    scene_description=scene.description or scene.location or "",
+                    other_characters=[c for c in scene.participants if c != npc_id and c != "player"],
+                    npc_profile=profile,
+                )
+                # 将预加载的记忆添加到上下文窗口（作为系统消息）
+                if memory_injection.text and memory_injection.confidence > 0.3:
+                    npc_instance.context_window.add_message(
+                        "system",
+                        f"[场景记忆] {memory_injection.text}",
+                        metadata={"type": "preload_memory", "source_nodes": memory_injection.source_nodes},
+                    )
+            except Exception as e:
+                # 记忆预加载失败不影响对话
+                pass
 
         # 生成开场白
         greeting = await self._generate_npc_greeting(context, profile)
+
+        # 将开场白添加到 NPC 实例的上下文窗口
+        npc_instance.context_window.add_message("assistant", greeting)
+        npc_instance.state.conversation_turn_count = 1
+        npc_instance.state.is_dirty = True
 
         return {
             "type": "dialogue",
             "response": greeting,
             "speaker": profile.name or npc_id,
             "npc_id": npc_id,
+            "instance_info": {
+                "context_tokens": npc_instance.context_window.current_tokens,
+                "context_usage": f"{npc_instance.context_window.usage_ratio:.1%}",
+            },
         }
 
     async def _generate_npc_greeting(
@@ -677,14 +736,42 @@ class GameMasterService:
         context: GameContext,
         player_message: str,
     ) -> Dict[str, Any]:
-        """处理与NPC的对话"""
+        """
+        处理与NPC的对话
+
+        使用双层认知系统：
+        1. 将消息添加到 NPC 实例的 200K 上下文窗口
+        2. 检测是否需要图谱化（窗口满载）
+        3. 如需要，触发图谱化流程
+        4. 生成 NPC 回复
+        """
         if not context.current_npc:
             return {"type": "error", "response": "当前没有对话对象"}
 
-        # 获取NPC资料
-        profile = await self.pro_service.get_profile(context.world_id, context.current_npc)
+        # 获取 NPC 实例
+        npc_instance = self.instance_manager.get(context.world_id, context.current_npc)
+        if not npc_instance:
+            # 如果实例不存在（可能被 LRU 淘汰），重新创建
+            npc_instance = await self.instance_manager.get_or_create(
+                context.current_npc, context.world_id
+            )
 
-        # 构建场景上下文
+        # 获取NPC资料
+        profile = npc_instance.profile or await self.pro_service.get_profile(
+            context.world_id, context.current_npc
+        )
+
+        # 1. 将玩家消息添加到上下文窗口
+        add_result = npc_instance.context_window.add_message("user", player_message)
+
+        # 2. 检查是否需要图谱化
+        graphize_triggered = False
+        graphize_result = None
+        if add_result.should_graphize:
+            graphize_result = await self._trigger_graphize(context, npc_instance)
+            graphize_triggered = True
+
+        # 3. 构建场景上下文
         scene = context.current_scene
         scene_context = SceneContext(
             description=scene.description if scene else "",
@@ -692,13 +779,21 @@ class GameMasterService:
             present_characters=scene.participants if scene else [],
         )
 
-        # 调用Pro服务获取NPC回复
+        # 4. 调用Pro服务获取NPC回复（使用上下文窗口中的历史）
         from app.models.pro import ChatRequest, ChatMessage
+
+        # 从上下文窗口构建对话历史
+        window_messages = npc_instance.context_window.get_all_messages()
+        conversation_history = [
+            ChatMessage(role=m.role, content=m.content)
+            for m in window_messages
+            if m.role in ("user", "assistant")
+        ]
 
         request = ChatRequest(
             message=player_message,
             scene=scene_context,
-            conversation_history=context.conversation_history,
+            conversation_history=conversation_history[-20:],  # 保持合理长度
         )
 
         result = await self.pro_service.chat(
@@ -707,29 +802,84 @@ class GameMasterService:
             request=request,
         )
 
-        # 更新对话历史
+        # 5. 将 NPC 回复添加到上下文窗口
+        npc_instance.context_window.add_message("assistant", result.response)
+        npc_instance.state.conversation_turn_count += 1
+        npc_instance.state.is_dirty = True
+
+        # 6. 同步到 GameContext 的对话历史（兼容旧逻辑）
         context.conversation_history.append(ChatMessage(role="user", content=player_message))
         context.conversation_history.append(ChatMessage(role="assistant", content=result.response))
-
-        # 保持对话历史在合理长度
         if len(context.conversation_history) > 20:
             context.conversation_history = context.conversation_history[-20:]
 
-        # 记录对话事件
+        # 7. 记录对话事件
         await self._record_dialogue_event(context, player_message, result.response)
 
+        # 8. 构建响应
         response_data = {
             "type": "dialogue",
             "response": result.response,
             "speaker": profile.name or context.current_npc,
             "npc_id": context.current_npc,
             "tool_called": result.tool_called,
+            "instance_info": {
+                "context_tokens": npc_instance.context_window.current_tokens,
+                "context_usage": f"{npc_instance.context_window.usage_ratio:.1%}",
+                "turn_count": npc_instance.state.conversation_turn_count,
+            },
         }
 
         if result.recalled_memory:
             response_data["recalled_memory"] = result.recalled_memory
 
+        if graphize_triggered:
+            response_data["graphize_triggered"] = True
+            response_data["graphize_result"] = {
+                "messages_processed": graphize_result.messages_processed if graphize_result else 0,
+                "nodes_added": graphize_result.nodes_added if graphize_result else 0,
+            }
+
         return response_data
+
+    async def _trigger_graphize(
+        self,
+        context: GameContext,
+        npc_instance,
+    ):
+        """
+        触发图谱化流程
+
+        当 NPC 实例的上下文窗口达到阈值时：
+        1. 提取需要图谱化的旧消息
+        2. 使用 MemoryGraphizer 转换为图谱节点/边
+        3. 标记并移除已图谱化的消息
+        """
+        from app.models.context_window import GraphizeRequest
+
+        # 1. 获取图谱化请求
+        graphize_request = npc_instance.context_window.get_graphize_request(
+            current_scene=context.current_scene.location if context.current_scene else None,
+            game_day=context.game_day,
+        )
+
+        if not graphize_request.messages:
+            return None
+
+        # 2. 执行图谱化
+        result = await self.memory_graphizer.graphize(
+            request=graphize_request,
+            npc_profile=npc_instance.profile,
+        )
+
+        if result.success:
+            # 3. 标记并移除已图谱化的消息
+            message_ids = [m.id for m in graphize_request.messages]
+            npc_instance.context_window.mark_messages_graphized(message_ids)
+            npc_instance.context_window.remove_graphized_messages()
+            npc_instance.state.graphize_count += 1
+
+        return result
 
     async def _record_dialogue_event(
         self,
@@ -762,7 +912,12 @@ class GameMasterService:
         world_id: str,
         session_id: str,
     ) -> Dict[str, Any]:
-        """结束当前对话"""
+        """
+        结束当前对话
+
+        NPC 实例保留在池中（不销毁），以便下次对话时恢复上下文。
+        如果实例有未保存的更改，标记为脏数据（稍后持久化）。
+        """
         context = self.get_context(world_id, session_id)
         if not context:
             return {"type": "error", "response": "会话不存在"}
@@ -771,15 +926,35 @@ class GameMasterService:
             return {"type": "system", "response": "当前没有对话"}
 
         npc_id = context.current_npc
+
+        # 获取 NPC 实例信息
+        npc_instance = self.instance_manager.get(world_id, npc_id)
+        instance_stats = None
+        if npc_instance:
+            instance_stats = {
+                "context_tokens": npc_instance.context_window.current_tokens,
+                "context_usage": f"{npc_instance.context_window.usage_ratio:.1%}",
+                "turn_count": npc_instance.state.conversation_turn_count,
+                "graphize_count": npc_instance.state.graphize_count,
+            }
+            # 标记为不活跃（但保留在池中）
+            npc_instance.state.is_active = False
+
+        # 清理 GameContext 状态
         context.current_npc = None
         context.phase = GamePhase.SCENE
         context.conversation_history = []
 
-        return {
+        response = {
             "type": "system",
             "response": f"你结束了与{npc_id}的对话。",
             "speaker": "系统",
         }
+
+        if instance_stats:
+            response["instance_stats"] = instance_stats
+
+        return response
 
     # ============================================
     # 战斗系统

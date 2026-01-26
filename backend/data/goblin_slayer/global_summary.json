@@ -1,0 +1,315 @@
+{
+  "entities": [
+    {
+      "id": "person_女神官",
+      "type": "person",
+      "name": "女神官",
+      "aliases": [
+        "小神官",
+        "地母神信徒",
+        "Priestess",
+        "神殿孤儿"
+      ],
+      "brief": "地母神见习神官，善良坚韧，以治愈和守护为己任，是哥布林杀手小队的核心成员。"
+    },
+    {
+      "id": "person_哥布林杀手",
+      "type": "person",
+      "name": "哥布林杀手",
+      "aliases": [
+        "欧尔克博格",
+        "啮切丸",
+        "Goblin Slayer"
+      ],
+      "brief": "边境银级冒险者，偏执的哥布林清剿专家，极致实用主义者，内心深藏童年创伤。"
+    },
+    {
+      "id": "person_牧牛妹",
+      "type": "person",
+      "name": "牧牛妹",
+      "aliases": [
+        "Cow Girl"
+      ],
+      "brief": "哥布林杀手的青梅竹马，牧场经营者，是哥布林杀手唯一的归宿与人性锚点。"
+    },
+    {
+      "id": "person_柜台小姐",
+      "type": "person",
+      "name": "柜台小姐",
+      "aliases": [
+        "Guild Girl"
+      ],
+      "brief": "边境冒险者公会职员，专业且温柔，在幕后默默支持哥布林杀手。"
+    },
+    {
+      "id": "person_妖精弓手",
+      "type": "person",
+      "name": "妖精弓手",
+      "aliases": [
+        "High Elf Archer",
+        "铁砧"
+      ],
+      "brief": "两千岁的上森人游侠，银级冒险者，性格活泼高傲，箭术精湛。"
+    },
+    {
+      "id": "person_矿人道士",
+      "type": "person",
+      "name": "矿人道士",
+      "aliases": [
+        "Dwarf Shaman"
+      ],
+      "brief": "矿人术师，银级冒险者，豪爽贪杯，擅长土系精灵魔法。"
+    },
+    {
+      "id": "person_蜥蜴僧侣",
+      "type": "person",
+      "name": "蜥蜴僧侣",
+      "aliases": [
+        "Lizard Priest"
+      ],
+      "brief": "蜥蜴人僧侣，银级冒险者，沉稳博学，信奉龙祖，热爱乳制品。"
+    },
+    {
+      "id": "person_剑之圣女",
+      "type": "person",
+      "name": "剑之圣女",
+      "aliases": [
+        "Sword Maiden",
+        "水之都大主教"
+      ],
+      "brief": "前金级英雄，现水之都至高神殿大主教，因过去创伤对哥布林怀有极度恐惧。"
+    },
+    {
+      "id": "person_勇者",
+      "type": "person",
+      "name": "勇者",
+      "aliases": [
+        "Hero"
+      ],
+      "brief": "白金等级冒险者，天真烂漫的救世主，拥有改变世界命运的压倒性力量。"
+    },
+    {
+      "id": "location_四方世界",
+      "type": "location",
+      "name": "四方世界",
+      "aliases": [
+        "哥布林杀手世界"
+      ],
+      "brief": "诸神以骰子决定命运的棋盘世界，充满冒险、魔物与秩序与混沌的斗争。"
+    },
+    {
+      "id": "location_边境小镇",
+      "type": "location",
+      "name": "边境小镇",
+      "aliases": [
+        "Frontier Town",
+        "新手村"
+      ],
+      "brief": "王国西部的开拓据点，冒险者聚集地，对抗哥布林威胁的最前线。"
+    },
+    {
+      "id": "location_水之都",
+      "type": "location",
+      "name": "水之都",
+      "aliases": [
+        "Water Town"
+      ],
+      "brief": "建立在运河网络上的繁华宗教与商业中心，由剑之圣女治理。"
+    },
+    {
+      "id": "location_兰德索尔",
+      "type": "location",
+      "name": "兰德索尔",
+      "aliases": [
+        "Landosol"
+      ],
+      "brief": "位于大陆南部的星形城塞都市，以索尔之塔为象征的冒险者王国。"
+    },
+    {
+      "id": "organization_冒险者公会",
+      "type": "organization",
+      "name": "冒险者公会",
+      "aliases": [
+        "Adventurer's Guild"
+      ],
+      "brief": "遍布大陆的中立组织，负责管理冒险者等级、发布委托与处理魔物威胁。"
+    },
+    {
+      "id": "organization_至高神殿",
+      "type": "organization",
+      "name": "至高神殿",
+      "aliases": [
+        "Supreme Temple"
+      ],
+      "brief": "主要宗教势力，掌管法律与正义，在水之都拥有极高影响力。"
+    },
+    {
+      "id": "identity_哥布林",
+      "type": "identity",
+      "name": "哥布林",
+      "aliases": [
+        "小鬼",
+        "劣等魔物"
+      ],
+      "brief": "残忍狡猾的类人魔物，通过掠夺智慧种族女性繁殖，被视为平庸之恶。"
+    },
+    {
+      "id": "knowledge_诸神的游戏",
+      "type": "knowledge",
+      "name": "诸神的游戏",
+      "aliases": [
+        "Divine Game"
+      ],
+      "brief": "世界的底层法则，诸神通过投掷骰子决定凡人的命运与世界走向。"
+    },
+    {
+      "id": "item_光之圣剑",
+      "type": "item",
+      "name": "光之圣剑",
+      "aliases": [
+        "Holy Sword"
+      ],
+      "brief": "传说中的神器，由勇者持有，拥有斩断魔神与空间的威力。"
+    },
+    {
+      "id": "event_魔神战争",
+      "type": "event",
+      "name": "魔神战争",
+      "aliases": [
+        "Death Labyrinth War"
+      ],
+      "brief": "十年前发生的重大历史事件，剑之圣女等英雄最终讨伐了魔神王。"
+    }
+  ],
+  "key_relations": [
+    {
+      "source": "person_女神官",
+      "target": "person_哥布林杀手",
+      "relation": "companion"
+    },
+    {
+      "source": "person_女神官",
+      "target": "organization_至高神殿",
+      "relation": "member_of"
+    },
+    {
+      "source": "person_哥布林杀手",
+      "target": "person_牧牛妹",
+      "relation": "friend"
+    },
+    {
+      "source": "person_哥布林杀手",
+      "target": "location_边境小镇",
+      "relation": "located_in"
+    },
+    {
+      "source": "person_柜台小姐",
+      "target": "organization_冒险者公会",
+      "relation": "member_of"
+    },
+    {
+      "source": "person_妖精弓手",
+      "target": "person_哥布林杀手",
+      "relation": "companion"
+    },
+    {
+      "source": "person_矿人道士",
+      "target": "person_哥布林杀手",
+      "relation": "companion"
+    },
+    {
+      "source": "person_蜥蜴僧侣",
+      "target": "person_哥布林杀手",
+      "relation": "companion"
+    },
+    {
+      "source": "person_剑之圣女",
+      "target": "location_水之都",
+      "relation": "located_in"
+    },
+    {
+      "source": "person_剑之圣女",
+      "target": "organization_至高神殿",
+      "relation": "member_of"
+    },
+    {
+      "source": "person_勇者",
+      "target": "event_魔神战争",
+      "relation": "participated"
+    },
+    {
+      "source": "person_哥布林杀手",
+      "target": "identity_哥布林",
+      "relation": "enemy"
+    },
+    {
+      "source": "organization_冒险者公会",
+      "target": "location_四方世界",
+      "relation": "located_in"
+    }
+  ],
+  "alias_map": {
+    "小神官": "person_女神官",
+    "地母神信徒": "person_女神官",
+    "priestess": "person_女神官",
+    "神殿孤儿": "person_女神官",
+    "女神官": "person_女神官",
+    "欧尔克博格": "person_哥布林杀手",
+    "啮切丸": "person_哥布林杀手",
+    "goblin slayer": "person_哥布林杀手",
+    "哥布林杀手": "person_哥布林杀手",
+    "cow girl": "person_牧牛妹",
+    "牧牛妹": "person_牧牛妹",
+    "guild girl": "person_柜台小姐",
+    "柜台小姐": "person_柜台小姐",
+    "high elf archer": "person_妖精弓手",
+    "铁砧": "person_妖精弓手",
+    "妖精弓手": "person_妖精弓手",
+    "dwarf shaman": "person_矿人道士",
+    "矿人道士": "person_矿人道士",
+    "lizard priest": "person_蜥蜴僧侣",
+    "蜥蜴僧侣": "person_蜥蜴僧侣",
+    "sword maiden": "person_剑之圣女",
+    "水之都大主教": "person_剑之圣女",
+    "剑之圣女": "person_剑之圣女",
+    "hero": "person_勇者",
+    "勇者": "person_勇者",
+    "哥布林杀手世界": "location_四方世界",
+    "四方世界": "location_四方世界",
+    "frontier town": "location_边境小镇",
+    "新手村": "location_边境小镇",
+    "边境小镇": "location_边境小镇",
+    "water town": "location_水之都",
+    "水之都": "location_水之都",
+    "landosol": "location_兰德索尔",
+    "兰德索尔": "location_兰德索尔",
+    "adventurer's guild": "organization_冒险者公会",
+    "冒险者公会": "organization_冒险者公会",
+    "supreme temple": "organization_至高神殿",
+    "至高神殿": "organization_至高神殿",
+    "小鬼": "identity_哥布林",
+    "劣等魔物": "identity_哥布林",
+    "哥布林": "identity_哥布林",
+    "divine game": "knowledge_诸神的游戏",
+    "诸神的游戏": "knowledge_诸神的游戏",
+    "holy sword": "item_光之圣剑",
+    "光之圣剑": "item_光之圣剑",
+    "death labyrinth war": "event_魔神战争",
+    "魔神战争": "event_魔神战争"
+  },
+  "stats": {
+    "entity_count": 19,
+    "relation_count": 13,
+    "invalid_relations": 1,
+    "type_distribution": {
+      "person": 9,
+      "location": 4,
+      "organization": 2,
+      "identity": 1,
+      "knowledge": 1,
+      "item": 1,
+      "event": 1
+    },
+    "alias_count": 47
+  }
+}

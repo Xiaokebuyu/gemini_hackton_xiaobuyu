@@ -53,6 +53,13 @@ class Settings(BaseModel):
     cloudflare_account_id: str = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
     cloudflare_api_token: str = os.getenv("CLOUDFLARE_API_TOKEN", "")
     cloudflare_embedding_model: str = "@cf/baai/bge-base-en-v1.5"
+
+    # NPC 实例池配置
+    instance_pool_max_instances: int = int(os.getenv("INSTANCE_POOL_MAX_INSTANCES", "20"))
+    instance_pool_context_window_size: int = int(os.getenv("INSTANCE_POOL_CONTEXT_WINDOW_SIZE", "200000"))
+    instance_pool_graphize_threshold: float = float(os.getenv("INSTANCE_POOL_GRAPHIZE_THRESHOLD", "0.9"))
+    instance_pool_keep_recent_tokens: int = int(os.getenv("INSTANCE_POOL_KEEP_RECENT_TOKENS", "50000"))
+    instance_pool_evict_after_minutes: int = int(os.getenv("INSTANCE_POOL_EVICT_AFTER_MINUTES", "30"))
     
     # API 配置
     api_prefix: str = "/api"

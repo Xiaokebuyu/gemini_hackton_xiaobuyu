@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>博德之门 - 导演演员测试台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        /* ==================== 全局样式 ==================== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* 日式色彩 */
+            --gold: #D4A574;
+            --wood-dark: #3E2723;
+            --wood-medium: #5D4037;
+            --wood-light: #8D6E63;
+            --paper: #FFF8E7;
+            --ink: #2C2416;
+            --red-seal: #C62828;
+            --green-tea: #7CB342;
+            
+            /* 阴影 */
+            --shadow-subtle: 0 2px 8px rgba(0,0,0,0.1);
+            --shadow-medium: 0 4px 16px rgba(0,0,0,0.2);
+            --shadow-strong: 0 8px 24px rgba(0,0,0,0.3);
+        }
+
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background: linear-gradient(135deg, var(--wood-dark) 0%, var(--wood-medium) 100%);
+            color: var(--ink);
+            min-height: 100vh;
+            padding: 20px;
+            background-image: 
+                repeating-linear-gradient(90deg, transparent, transparent 2px, rgba(0,0,0,.05) 2px, rgba(0,0,0,.05) 4px),
+                repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.05) 2px, rgba(0,0,0,.05) 4px);
+        }
+
+        /* ==================== 主容器 ==================== */
+        .main-container {
+            max-width: 1800px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 300px 1fr 320px;
+            grid-template-rows: auto 1fr auto;
+            gap: 20px;
+            height: calc(100vh - 40px);
+        }
+
+        /* ==================== 顶部区域 ==================== */
+        .header {
+            grid-column: 1 / -1;
+            background: var(--paper);
+            border: 4px solid var(--wood-dark);
+            border-radius: 8px;
+            padding: 20px 30px;
+            box-shadow: var(--shadow-medium);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            right: -10px;
+            bottom: -10px;
+            background: 
+                linear-gradient(45deg, transparent 48%, var(--gold) 48%, var(--gold) 52%, transparent 52%),
+                linear-gradient(-45deg, transparent 48%, var(--gold) 48%, var(--gold) 52%, transparent 52%);
+            background-size: 20px 20px;
+            opacity: 0.1;
+            z-index: 0;
+        }
+
+        .header-content {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .title {
+            font-family: 'Noto Serif JP', serif;
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--wood-dark);
+            text-shadow: 2px 2px 0 var(--gold);
+            letter-spacing: 4px;
+        }
+
+        .session-info {
+            display: flex;
+            gap: 30px;
+            font-size: 14px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .info-label {
+            color: var(--wood-medium);
+            font-weight: 500;
+        }
+
+        .info-value {
+            background: var(--wood-dark);
+            color: var(--gold);
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-weight: 500;
+            font-family: monospace;
+        }
+
+        .seal {
+            width: 60px;
+            height: 60px;
+            background: var(--red-seal);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-family: 'Noto Serif JP', serif;
+            font-weight: 700;
+            font-size: 20px;
+            box-shadow: var(--shadow-medium);
+            transform: rotate(-15deg);
+        }
+
+        /* ==================== 左侧栏 ==================== */
+        .left-panel {
+            grid-row: 2;
+            background: var(--paper);
+            border: 3px solid var(--wood-dark);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: var(--shadow-medium);
+            overflow-y: auto;
+        }
+
+        .panel-title {
+            font-family: 'Noto Serif JP', serif;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--wood-dark);
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--gold);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .scene-card {
+            background: white;
+            border: 2px solid var(--wood-light);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+            box-shadow: var(--shadow-subtle);
+        }
+
+        .scene-name {
+            font-weight: 700;
+            color: var(--wood-dark);
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+
+        .scene-detail {
+            font-size: 13px;
+            color: var(--wood-medium);
+            margin: 4px 0;
+        }
+
+        .npc-list {
+            margin-top: 12px;
+        }
+
+        .npc-item {
+            background: linear-gradient(135deg, var(--paper) 0%, white 100%);
+            border-left: 3px solid var(--green-tea);
+            padding: 8px 12px;
+            margin: 6px 0;
+            border-radius: 4px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .npc-icon {
+            width: 24px;
+            height: 24px;
+            background: var(--green-tea);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        /* ==================== 中央对话区 ==================== */
+        .main-content {
+            grid-row: 2;
+            background: var(--paper);
+            border: 3px solid var(--wood-dark);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--shadow-medium);
+            overflow: hidden;
+        }
+
+        .scroll-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+            background: 
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 35px,
+                    rgba(212, 165, 116, 0.1) 35px,
+                    rgba(212, 165, 116, 0.1) 36px
+                );
+        }
+
+        /* 自定义滚动条 */
+        .scroll-container::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        .scroll-container::-webkit-scrollbar-track {
+            background: var(--wood-light);
+        }
+
+        .scroll-container::-webkit-scrollbar-thumb {
+            background: var(--wood-dark);
+            border-radius: 6px;
+        }
+
+        .scroll-container::-webkit-scrollbar-thumb:hover {
+            background: var(--wood-medium);
+        }
+
+        /* 消息样式 */
+        .message {
+            margin-bottom: 24px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .message-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 16px;
+            border: 2px solid;
+            box-shadow: var(--shadow-subtle);
+        }
+
+        .avatar-gm {
+            background: linear-gradient(135deg, var(--gold) 0%, #E6C68A 100%);
+            border-color: var(--wood-dark);
+            color: var(--wood-dark);
+        }
+
+        .avatar-npc {
+            background: linear-gradient(135deg, var(--green-tea) 0%, #9CCC65 100%);
+            border-color: var(--wood-medium);
+            color: white;
+        }
+
+        .avatar-player {
+            background: linear-gradient(135deg, #1976D2 0%, #42A5F5 100%);
+            border-color: var(--wood-medium);
+            color: white;
+        }
+
+        .avatar-system {
+            background: linear-gradient(135deg, var(--wood-medium) 0%, var(--wood-light) 100%);
+            border-color: var(--wood-dark);
+            color: white;
+        }
+
+        .message-meta {
+            flex: 1;
+        }
+
+        .message-speaker {
+            font-weight: 700;
+            font-size: 15px;
+            color: var(--wood-dark);
+        }
+
+        .message-time {
+            font-size: 11px;
+            color: var(--wood-medium);
+        }
+
+        .message-content {
+            background: white;
+            padding: 16px 20px;
+            border-radius: 8px;
+            border-left: 4px solid;
+            box-shadow: var(--shadow-subtle);
+            line-height: 1.7;
+            font-size: 15px;
+        }
+
+        .content-gm { border-left-color: var(--gold); }
+        .content-npc { border-left-color: var(--green-tea); }
+        .content-player { border-left-color: #42A5F5; }
+        .content-system { border-left-color: var(--wood-medium); }
+
+        .message-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+
+        .badge-memory {
+            background: #FFE082;
+            color: var(--wood-dark);
+        }
+
+        .badge-combat {
+            background: #EF5350;
+            color: white;
+        }
+
+        /* ==================== 右侧栏 ==================== */
+        .right-panel {
+            grid-row: 2;
+            background: var(--paper);
+            border: 3px solid var(--wood-dark);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: var(--shadow-medium);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .control-section {
+            background: white;
+            border: 2px solid var(--wood-light);
+            border-radius: 6px;
+            padding: 15px;
+            box-shadow: var(--shadow-subtle);
+        }
+
+        .section-title {
+            font-weight: 700;
+            color: var(--wood-dark);
+            margin-bottom: 12px;
+            font-size: 14px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--gold);
+        }
+
+        .quick-action-btn {
+            width: 100%;
+            padding: 10px 15px;
+            margin: 6px 0;
+            background: linear-gradient(135deg, var(--paper) 0%, white 100%);
+            border: 2px solid var(--wood-light);
+            border-radius: 6px;
+            color: var(--wood-dark);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .quick-action-btn:hover {
+            background: var(--gold);
+            border-color: var(--wood-dark);
+            transform: translateX(4px);
+            box-shadow: var(--shadow-medium);
+        }
+
+        .debug-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+            font-size: 13px;
+        }
+
+        .toggle-switch {
+            width: 44px;
+            height: 24px;
+            background: var(--wood-light);
+            border-radius: 12px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .toggle-switch.active {
+            background: var(--green-tea);
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s ease;
+            box-shadow: var(--shadow-subtle);
+        }
+
+        .toggle-switch.active::after {
+            left: 22px;
+        }
+
+        /* ==================== 底部输入区 ==================== */
+        .input-area {
+            grid-column: 1 / -1;
+            background: var(--paper);
+            border: 3px solid var(--wood-dark);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: var(--shadow-medium);
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-box {
+            flex: 1;
+            background: white;
+            border: 2px solid var(--wood-light);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 15px;
+            font-family: 'Noto Sans JP', sans-serif;
+            resize: vertical;
+            min-height: 60px;
+            max-height: 200px;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-box:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.2);
+        }
+
+        .send-btn {
+            padding: 12px 32px;
+            background: linear-gradient(135deg, var(--gold) 0%, #E6C68A 100%);
+            border: 2px solid var(--wood-dark);
+            border-radius: 8px;
+            color: var(--wood-dark);
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: var(--shadow-subtle);
+            font-family: 'Noto Serif JP', serif;
+        }
+
+        .send-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-medium);
+        }
+
+        .send-btn:active {
+            transform: translateY(0);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ==================== 初始化对话框 ==================== */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal {
+            background: var(--paper);
+            border: 4px solid var(--wood-dark);
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: var(--shadow-strong);
+            position: relative;
+        }
+
+        .modal::before {
+            content: '';
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            bottom: 10px;
+            border: 2px solid var(--gold);
+            border-radius: 8px;
+            pointer-events: none;
+        }
+
+        .modal-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .modal-title {
+            font-family: 'Noto Serif JP', serif;
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--wood-dark);
+            text-align: center;
+            margin-bottom: 30px;
+            text-shadow: 1px 1px 0 var(--gold);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 500;
+            color: var(--wood-dark);
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: white;
+            border: 2px solid var(--wood-light);
+            border-radius: 6px;
+            font-size: 15px;
+            font-family: 'Noto Sans JP', sans-serif;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(212, 165, 116, 0.2);
+        }
+
+        .start-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--gold) 0%, #E6C68A 100%);
+            border: 3px solid var(--wood-dark);
+            border-radius: 8px;
+            color: var(--wood-dark);
+            font-size: 18px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: var(--shadow-medium);
+            font-family: 'Noto Serif JP', serif;
+            margin-top: 10px;
+        }
+
+        .start-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-strong);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* ==================== 加载动画 ==================== */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid var(--wood-light);
+            border-top-color: var(--gold);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ==================== 响应式 ==================== */
+        @media (max-width: 1400px) {
+            .main-container {
+                grid-template-columns: 260px 1fr 280px;
+            }
+        }
+
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto 1fr auto;
+            }
+
+            .left-panel, .right-panel {
+                grid-row: auto;
+            }
+
+            .main-content {
+                min-height: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 初始化模态框 -->
+    <div id="initModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-content">
+                <div class="modal-title">🏮 启动游戏世界</div>
+                <div class="form-group">
+                    <label class="form-label">世界标识符</label>
+                    <input type="text" class="form-input" id="worldInput" value="demo_world" placeholder="输入世界ID...">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">API地址</label>
+                    <input type="text" class="form-input" id="apiInput" value="http://localhost:8000" placeholder="后端API地址...">
+                </div>
+                <button class="start-btn" onclick="startGame()">
+                    ⛩️ 开启冒险
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主界面 -->
+    <div class="main-container">
+        <!-- 顶部 -->
+        <div class="header">
+            <div class="header-content">
+                <div class="title">📜 博德之門·記憶編織</div>
+                <div class="session-info">
+                    <div class="info-item">
+                        <span class="info-label">世界</span>
+                        <span class="info-value" id="worldId">---</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">会话</span>
+                        <span class="info-value" id="sessionId">---</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">阶段</span>
+                        <span class="info-value" id="gamePhase">IDLE</span>
+                    </div>
+                </div>
+                <div class="seal">験</div>
+            </div>
+        </div>
+
+        <!-- 左侧栏 -->
+        <div class="left-panel">
+            <div class="panel-title">🗺️ 当前场景</div>
+            <div class="scene-card" id="sceneCard">
+                <div class="scene-name">未进入场景</div>
+                <div class="scene-detail">等待开始游戏...</div>
+            </div>
+
+            <div class="panel-title" style="margin-top: 20px;">👥 在场角色</div>
+            <div id="npcList">
+                <div class="npc-item" style="opacity: 0.5;">
+                    <div class="npc-icon">?</div>
+                    <span>无</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 中央对话区 -->
+        <div class="main-content">
+            <div class="scroll-container" id="messageContainer">
+                <div class="message">
+                    <div class="message-header">
+                        <div class="message-avatar avatar-system">⚙️</div>
+                        <div class="message-meta">
+                            <div class="message-speaker">系统</div>
+                            <div class="message-time">等待启动</div>
+                        </div>
+                    </div>
+                    <div class="message-content content-system">
+                        欢迎来到博德之门记忆编织系统。这是一个测试界面，用于验证Flash+Pro双层认知架构。
+                        <br><br>
+                        请输入世界ID开始游戏。
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧栏 -->
+        <div class="right-panel">
+            <!-- 快速场景切换 -->
+            <div class="control-section">
+                <div class="section-title">🏯 场景传送</div>
+                <button class="quick-action-btn" onclick="enterScene('blacksmith', '铁匠铺', '一间热气腾腾的打铁作坊')">
+                    🔨 铁匠铺
+                </button>
+                <button class="quick-action-btn" onclick="enterScene('tavern', '金麦旅店', '充满酒香和欢声笑语的旅店')">
+                    🍺 金麦旅店
+                </button>
+                <button class="quick-action-btn" onclick="enterScene('forest_edge', '森林边缘', '幽暗森林的边界，远处传来野兽的嚎叫')">
+                    🌲 森林边缘
+                </button>
+                <button class="quick-action-btn" onclick="enterScene('market', '集市', '熙熙攘攘的市场广场')">
+                    🏪 集市
+                </button>
+            </div>
+
+            <!-- 测试功能 -->
+            <div class="control-section">
+                <div class="section-title">🔬 测试工具</div>
+                <button class="quick-action-btn" onclick="testFlash()">
+                    💭 测试记忆编码
+                </button>
+                <button class="quick-action-btn" onclick="testRecall()">
+                    🔍 测试记忆检索
+                </button>
+                <button class="quick-action-btn" onclick="viewGraph()">
+                    🕸️ 查看图谱
+                </button>
+                <button class="quick-action-btn" onclick="triggerTestCombat()">
+                    ⚔️ 触发测试战斗
+                </button>
+            </div>
+
+            <!-- 调试开关 -->
+            <div class="control-section">
+                <div class="section-title">⚙️ 调试选项</div>
+                <div class="debug-toggle">
+                    <span>显示API调用</span>
+                    <div class="toggle-switch" id="apiLogToggle" onclick="toggleDebug('apiLog')"></div>
+                </div>
+                <div class="debug-toggle">
+                    <span>显示记忆调用</span>
+                    <div class="toggle-switch active" id="memoryLogToggle" onclick="toggleDebug('memoryLog')"></div>
+                </div>
+                <div class="debug-toggle">
+                    <span>显示事件分发</span>
+                    <div class="toggle-switch active" id="eventLogToggle" onclick="toggleDebug('eventLog')"></div>
+                </div>
+            </div>
+
+            <!-- 快捷对话 -->
+            <div class="control-section">
+                <div class="section-title">💬 快捷对话</div>
+                <button class="quick-action-btn" onclick="setInput('你好，这里是哪里？')">
+                    打招呼
+                </button>
+                <button class="quick-action-btn" onclick="setInput('最近有什么新鲜事吗？')">
+                    打听消息
+                </button>
+                <button class="quick-action-btn" onclick="setInput('我能帮什么忙吗？')">
+                    提供帮助
+                </button>
+                <button class="quick-action-btn" onclick="setInput('你还记得我之前做的事吗？')">
+                    询问记忆
+                </button>
+            </div>
+        </div>
+
+        <!-- 底部输入 -->
+        <div class="input-area">
+            <div class="input-wrapper">
+                <textarea 
+                    class="input-box" 
+                    id="playerInput" 
+                    placeholder="输入你的行动或对话..."
+                    onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }"
+                ></textarea>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                    发送 📨
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 全局状态 ====================
+        const state = {
+            apiBase: 'http://localhost:8000',
+            worldId: null,
+            sessionId: null,
+            phase: 'idle',
+            currentScene: null,
+            debug: {
+                apiLog: false,
+                memoryLog: true,
+                eventLog: true,
+            }
+        };
+
+        // ==================== API客户端 ====================
+        class GameAPI {
+            constructor(baseURL) {
+                this.baseURL = baseURL;
+            }
+
+            async call(method, endpoint, body = null) {
+                // 确保endpoint以/api开头
+                if (!endpoint.startsWith('/api')) {
+                    endpoint = '/api' + endpoint;
+                }
+                
+                const url = `${this.baseURL}${endpoint}`;
+                const options = {
+                    method,
+                    headers: {'Content-Type': 'application/json'},
+                };
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                try {
+                    if (state.debug.apiLog) {
+                        addMessage('system', `API调用: ${method} ${endpoint}`);
+                    }
+
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || `HTTP ${response.status}`);
+                    }
+                    const data = await response.json();
+                    
+                    if (state.debug.apiLog) {
+                        console.log('API响应:', data);
+                    }
+                    
+                    return data;
+                } catch (error) {
+                    addMessage('system', `❌ API错误: ${error.message}`, 'error');
+                    throw error;
+                }
+            }
+
+            // 游戏主接口
+            async createSession(worldId, participants = ['player']) {
+                return this.call('POST', `/gm/${worldId}/sessions`, {
+                    payload: {
+                        session_id: null,
+                        participants
+                    }
+                });
+            }
+
+            async getContext(worldId, sessionId) {
+                return this.call('GET', `/gm/${worldId}/sessions/${sessionId}/context`);
+            }
+
+            async enterScene(worldId, sessionId, scene) {
+                return this.call('POST', `/gm/${worldId}/sessions/${sessionId}/scene`, {
+                    payload: {
+                        scene,
+                        generate_description: true
+                    }
+                });
+            }
+
+            async sendInput(worldId, sessionId, input) {
+                return this.call('POST', `/gm/${worldId}/sessions/${sessionId}/input`, {
+                    payload: {
+                        input,
+                        input_type: null
+                    }
+                });
+            }
+
+            // Flash接口
+            async ingestEvent(worldId, characterId, eventDesc, gameDay = 1) {
+                return this.call('POST', `/flash/${worldId}/characters/${characterId}/ingest/natural`, {
+                    event_description: eventDesc,
+                    game_day: gameDay
+                });
+            }
+
+            async recallMemory(worldId, characterId, query) {
+                return this.call('POST', `/flash/${worldId}/characters/${characterId}/recall/natural`, {
+                    query,
+                    translate: true
+                });
+            }
+
+            // Pro接口
+            async setProfile(worldId, characterId, profile) {
+                return this.call('PUT', `/pro/${worldId}/characters/${characterId}/profile`, profile);
+            }
+
+            // 图谱接口
+            async getGraph(worldId, graphType, characterId = null) {
+                let endpoint = `/graphs/${worldId}/${graphType}`;
+                if (characterId) {
+                    endpoint += `?character_id=${characterId}`;
+                }
+                return this.call('GET', endpoint);
+            }
+        }
+
+        const api = new GameAPI(state.apiBase);
+
+        // ==================== UI更新函数 ====================
+        function updateUI() {
+            document.getElementById('worldId').textContent = state.worldId || '---';
+            document.getElementById('sessionId').textContent = state.sessionId ? state.sessionId.substring(0, 8) : '---';
+            document.getElementById('gamePhase').textContent = state.phase.toUpperCase();
+        }
+
+        function updateSceneCard(scene) {
+            if (!scene) return;
+            
+            const card = document.getElementById('sceneCard');
+            card.innerHTML = `
+                <div class="scene-name">📍 ${scene.location || '未知地点'}</div>
+                <div class="scene-detail">🌤️ 氛围: ${scene.atmosphere || '普通'}</div>
+                <div class="scene-detail">📝 ${scene.description || '无描述'}</div>
+            `;
+
+            // 更新NPC列表
+            const npcList = document.getElementById('npcList');
+            if (scene.participants && scene.participants.length > 0) {
+                npcList.innerHTML = scene.participants
+                    .filter(p => p !== 'player')
+                    .map(npc => `
+                        <div class="npc-item">
+                            <div class="npc-icon">${npc[0].toUpperCase()}</div>
+                            <span>${npc}</span>
+                        </div>
+                    `).join('');
+            } else {
+                npcList.innerHTML = '<div class="npc-item" style="opacity: 0.5;"><div class="npc-icon">?</div><span>无</span></div>';
+            }
+        }
+
+        function addMessage(type, content, speaker = null) {
+            const container = document.getElementById('messageContainer');
+            const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+            
+            let avatarClass, avatarIcon, contentClass, displaySpeaker;
+            
+            switch(type) {
+                case 'gm':
+                    avatarClass = 'avatar-gm';
+                    avatarIcon = '🎭';
+                    contentClass = 'content-gm';
+                    displaySpeaker = speaker || 'GM';
+                    break;
+                case 'npc':
+                    avatarClass = 'avatar-npc';
+                    avatarIcon = '👤';
+                    contentClass = 'content-npc';
+                    displaySpeaker = speaker || 'NPC';
+                    break;
+                case 'player':
+                    avatarClass = 'avatar-player';
+                    avatarIcon = '🗣️';
+                    contentClass = 'content-player';
+                    displaySpeaker = '你';
+                    break;
+                default:
+                    avatarClass = 'avatar-system';
+                    avatarIcon = '⚙️';
+                    contentClass = 'content-system';
+                    displaySpeaker = '系统';
+            }
+
+            const message = document.createElement('div');
+            message.className = 'message';
+            message.innerHTML = `
+                <div class="message-header">
+                    <div class="message-avatar ${avatarClass}">${avatarIcon}</div>
+                    <div class="message-meta">
+                        <div class="message-speaker">${displaySpeaker}</div>
+                        <div class="message-time">${time}</div>
+                    </div>
+                </div>
+                <div class="message-content ${contentClass}">
+                    ${content}
+                </div>
+            `;
+
+            container.appendChild(message);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function setInput(text) {
+            document.getElementById('playerInput').value = text;
+        }
+
+        function toggleDebug(key) {
+            state.debug[key] = !state.debug[key];
+            const toggle = document.getElementById(key + 'Toggle');
+            toggle.classList.toggle('active');
+        }
+
+        // ==================== 游戏逻辑 ====================
+        async function startGame() {
+            const worldId = document.getElementById('worldInput').value.trim();
+            const apiBase = document.getElementById('apiInput').value.trim();
+            
+            if (!worldId) {
+                alert('请输入世界ID');
+                return;
+            }
+
+            state.apiBase = apiBase;
+            api.baseURL = apiBase;
+            state.worldId = worldId;
+
+            try {
+                addMessage('system', '🎮 正在创建游戏会话...');
+                
+                const result = await api.createSession(worldId);
+                state.sessionId = result.session.session_id;
+                state.phase = 'scene';
+
+                updateUI();
+                document.getElementById('initModal').classList.add('hidden');
+
+                addMessage('system', `✅ 游戏会话已创建\n会话ID: ${state.sessionId}`);
+                addMessage('gm', '冒险者，欢迎来到博德之门的世界。你站在命运的十字路口，前方的道路由你自己选择...');
+                addMessage('system', '💡 提示: 使用右侧的场景传送按钮选择一个地点开始游戏');
+
+            } catch (error) {
+                addMessage('system', `❌ 创建会话失败: ${error.message}`);
+            }
+        }
+
+        async function enterScene(sceneId, sceneName, description) {
+            if (!state.sessionId) {
+                addMessage('system', '❌ 请先开始游戏');
+                return;
+            }
+
+            try {
+                addMessage('system', `🚶 正在前往: ${sceneName}...`);
+
+                const scene = {
+                    scene_id: sceneId,
+                    description: description,
+                    location: sceneName,
+                    participants: ['player'],
+                    atmosphere: 'normal'
+                };
+
+                const result = await api.enterScene(state.worldId, state.sessionId, scene);
+                
+                state.currentScene = result.scene;
+                updateSceneCard(result.scene);
+
+                if (result.description) {
+                    addMessage('gm', result.description);
+                }
+
+                if (state.debug.memoryLog && result.npc_memories) {
+                    for (const [npcId, memory] of Object.entries(result.npc_memories)) {
+                        if (memory && !memory.includes('失败')) {
+                            addMessage('system', `💭 ${npcId}的记忆被预加载: ${memory.substring(0, 100)}...`);
+                        }
+                    }
+                }
+
+            } catch (error) {
+                addMessage('system', `❌ 场景切换失败: ${error.message}`);
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('playerInput').value.trim();
+            if (!input) return;
+
+            if (!state.sessionId) {
+                addMessage('system', '❌ 请先开始游戏');
+                return;
+            }
+
+            try {
+                // 显示玩家输入
+                addMessage('player', input);
+                document.getElementById('playerInput').value = '';
+                
+                // 禁用发送按钮
+                const sendBtn = document.getElementById('sendBtn');
+                sendBtn.disabled = true;
+                sendBtn.innerHTML = '<span class="loading"></span>';
+
+                // 发送到后端
+                const result = await api.sendInput(state.worldId, state.sessionId, input);
+
+                // 显示响应
+                const speaker = result.speaker || 'GM';
+                const messageType = result.type === 'dialogue' ? 'npc' : 'gm';
+                addMessage(messageType, result.response, speaker);
+
+                // 显示记忆调用
+                if (state.debug.memoryLog && result.recalled_memory) {
+                    addMessage('system', `💭 记忆调用: ${result.recalled_memory.substring(0, 150)}...`);
+                }
+
+                // 显示工具调用
+                if (state.debug.memoryLog && result.tool_called) {
+                    addMessage('system', `🔧 ${speaker}调用了recall_memory工具`);
+                }
+
+                // 更新阶段
+                state.phase = result.type;
+                updateUI();
+
+            } catch (error) {
+                addMessage('system', `❌ 发送失败: ${error.message}`);
+            } finally {
+                const sendBtn = document.getElementById('sendBtn');
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = '发送 📨';
+            }
+        }
+
+        // ==================== 测试功能 ====================
+        async function testFlash() {
+            if (!state.worldId) {
+                addMessage('system', '❌ 请先开始游戏');
+                return;
+            }
+
+            addMessage('system', '🧪 测试Flash记忆编码...');
+            
+            try {
+                const result = await api.ingestEvent(
+                    state.worldId,
+                    'gorn',
+                    '玩家帮助Gorn修好了铁匠铺的炉子，Gorn非常感激',
+                    1
+                );
+
+                addMessage('system', `✅ 事件已编码\n- 新增节点: ${result.node_count}\n- 新增边: ${result.edge_count}`);
+            } catch (error) {
+                addMessage('system', `❌ 测试失败: ${error.message}`);
+            }
+        }
+
+        async function testRecall() {
+            if (!state.worldId) {
+                addMessage('system', '❌ 请先开始游戏');
+                return;
+            }
+
+            addMessage('system', '🔍 测试记忆检索...');
+            
+            try {
+                const result = await api.recallMemory(
+                    state.worldId,
+                    'gorn',
+                    '玩家做了什么？'
+                );
+
+                addMessage('system', `✅ 记忆检索结果:\n${result.translated_memory || '(无相关记忆)'}`);
+            } catch (error) {
+                addMessage('system', `❌ 测试失败: ${error.message}`);
+            }
+        }
+
+        async function viewGraph() {
+            if (!state.worldId) {
+                addMessage('system', '❌ 请先开始游戏');
+                return;
+            }
+
+            addMessage('system', '🕸️ 正在加载图谱...');
+            
+            try {
+                const graph = await api.getGraph(state.worldId, 'character', 'gorn');
+                addMessage('system', `✅ 图谱加载成功\n- 节点数: ${graph.nodes.length}\n- 边数: ${graph.edges.length}`);
+                console.log('完整图谱数据:', graph);
+            } catch (error) {
+                addMessage('system', `❌ 加载失败: ${error.message}`);
+            }
+        }
+
+        async function triggerTestCombat() {
+            addMessage('system', '⚔️ 战斗功能开发中...');
+            addMessage('gm', '突然，两只哥布林从阴影中跳出！它们挥舞着生锈的短刀，发出刺耳的尖叫...');
+        }
+
+        // ==================== 初始化 ====================
+        window.addEventListener('load', () => {
+            console.log('🎮 博德之门记忆编织系统已加载');
+            console.log('📊 当前状态:', state);
+        });
+    </script>
+</body>
+</html>

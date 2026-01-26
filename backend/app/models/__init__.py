@@ -30,6 +30,33 @@ from .game import (
     CombatResolveRequest,
     CombatResolveResponse,
 )
+from .npc_instance import (
+    NPCConfig,
+    NPCInstanceState,
+    NPCInstanceInfo,
+    GraphizeTrigger,
+    MemoryInjection,
+    QueryUnderstanding,
+)
+from .context_window import (
+    WindowMessage,
+    ContextWindowState,
+    ContextWindowSnapshot,
+    AddMessageResult,
+    GraphizeRequest,
+    RemoveGraphizedResult,
+)
+from .graph_elements import (
+    TranscriptMessage,
+    TranscriptRange,
+    EventGroupNode,
+    EventNode,
+    GraphEdgeSpec,
+    ExtractedElements,
+    GraphizeResult,
+    MergeResult,
+    MemoryWithContext,
+)
 
 __all__ = [
     "Session",
@@ -71,4 +98,28 @@ __all__ = [
     "CombatStartResponse",
     "CombatResolveRequest",
     "CombatResolveResponse",
+    # NPC Instance Pool models
+    "NPCConfig",
+    "NPCInstanceState",
+    "NPCInstanceInfo",
+    "GraphizeTrigger",
+    "MemoryInjection",
+    "QueryUnderstanding",
+    # Context Window models
+    "WindowMessage",
+    "ContextWindowState",
+    "ContextWindowSnapshot",
+    "AddMessageResult",
+    "GraphizeRequest",
+    "RemoveGraphizedResult",
+    # Graph Elements models
+    "TranscriptMessage",
+    "TranscriptRange",
+    "EventGroupNode",
+    "EventNode",
+    "GraphEdgeSpec",
+    "ExtractedElements",
+    "GraphizeResult",
+    "MergeResult",
+    "MemoryWithContext",
 ]

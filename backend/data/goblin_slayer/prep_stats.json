@@ -1,0 +1,13 @@
+{
+  "input_file": "__哥布林杀手 9.30家产优化.json",
+  "original_entries": 408,
+  "processed_entries": 461,
+  "split_entries": 34,
+  "total_characters": 761572,
+  "estimated_tokens": 381215,
+  "within_1m_context": true,
+  "outputs": {
+    "worldbook_full": "data/goblin_slayer/worldbook_full.md",
+    "entries_jsonl": "data/goblin_slayer/entries.jsonl"
+  }
+}

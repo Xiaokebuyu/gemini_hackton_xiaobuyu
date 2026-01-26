@@ -1,0 +1,55 @@
+你是一个世界观分析专家。请分析以下完整的世界书，提取所有实体和关键关系。
+
+## 任务
+1. 识别所有实体（人物、地点、组织、物品、种族、概念等）
+2. 为每个实体分配确定性 ID（格式：{{type}}_{{主要名称}}，如 person_女神官、location_边境之镇）
+3. 收集每个实体的所有别名/关键词
+4. 识别实体间的主要关系
+
+## 实体类型说明
+- person: 人物/角色
+- location: 地点/场所
+- organization: 组织/团体/势力
+- item: 物品/装备/道具
+- knowledge: 知识/概念/技能/魔法
+- event: 重要事件/历史
+- identity: 身份/职业/种族
+
+## 关系类型说明
+- companion: 同伴关系
+- member_of: 所属组织
+- located_in: 位于某地
+- owns: 拥有物品
+- knows: 认识
+- family: 家庭关系
+- friend: 朋友
+- enemy: 敌对
+- caused: 导致/引发
+- participated: 参与
+
+## 输出格式（JSON）
+{{
+  "entities": [
+    {{
+      "id": "person_女神官",
+      "type": "person",
+      "name": "女神官",
+      "aliases": ["小神官", "地母神信徒", "Priestess"],
+      "brief": "简短描述（50字以内）"
+    }}
+  ],
+  "key_relations": [
+    {{"source": "person_女神官", "target": "person_哥布林杀手", "relation": "companion"}},
+    {{"source": "person_女神官", "target": "organization_地母神教", "relation": "member_of"}}
+  ]
+}}
+
+## 注意事项
+1. ID 必须唯一且有意义，便于后续引用
+2. aliases 包含条目中的所有关键词和别名
+3. brief 要简洁概括实体的核心特征
+4. 关系只提取明确的、重要的关系
+5. 确保所有 source 和 target 都是有效的实体 ID
+
+## 世界书内容
+{worldbook_content}

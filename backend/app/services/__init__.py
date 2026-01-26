@@ -13,6 +13,11 @@ from .gm_flash_service import GMFlashService
 from .game_session_store import GameSessionStore
 from .game_loop_service import GameLoopService
 from .spreading_activation import SpreadingActivationConfig, spread_activation, extract_subgraph, find_paths
+# NPC Instance Pool services
+from .context_window import ContextWindow, count_tokens
+from .instance_manager import InstanceManager, NPCInstance
+from .memory_graphizer import MemoryGraphizer
+from .flash_pro_bridge import FlashProBridge
 
 __all__ = [
     "LLMService",
@@ -30,4 +35,11 @@ __all__ = [
     "spread_activation",
     "extract_subgraph",
     "find_paths",
+    # NPC Instance Pool services
+    "ContextWindow",
+    "count_tokens",
+    "InstanceManager",
+    "NPCInstance",
+    "MemoryGraphizer",
+    "FlashProBridge",
 ]

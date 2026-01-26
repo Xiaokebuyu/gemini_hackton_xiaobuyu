@@ -1,0 +1,84 @@
+你是一个世界观知识图谱提取器。
+
+## 任务
+从以下世界观条目中提取详细的图谱数据（节点和边）。
+
+## 全局实体摘要
+以下是已知的所有实体，**你必须使用这些 ID**，确保跨条目一致性：
+{global_summary}
+
+## 当前条目信息
+- 条目关键词: {entry_keys}
+- 条目分类: {entry_comment}
+
+## 条目内容
+{content}
+
+## 输出要求
+1. 为条目中提到的实体创建详细节点
+2. **必须使用全局摘要中的 ID**，确保跨条目一致性
+3. 提取详细属性（外貌、性格、能力、历史、描述等）
+4. 提取所有关系（包括隐含的关系）
+5. 只有当条目中出现全局摘要中没有的新实体时，才创建新 ID（格式：{{type}}_{{名称}}）
+
+## 节点类型
+- person: 人物/角色
+- location: 地点/场所
+- organization: 组织/团体
+- item: 物品/装备
+- knowledge: 知识/概念/技能/魔法
+- event: 重要事件
+- identity: 身份/职业/种族
+
+## 关系类型
+- companion: 同伴
+- member_of: 所属
+- located_in: 位于
+- owns: 拥有
+- knows: 认识
+- family: 家庭
+- friend: 朋友
+- enemy: 敌对
+- caused: 导致
+- participated: 参与
+- refers_to: 引用/关联
+- part_of: 属于/包含
+
+## 输出格式（JSON）
+{{
+  "nodes": [
+    {{
+      "id": "person_女神官",
+      "type": "person",
+      "name": "女神官",
+      "importance": 0.8,
+      "properties": {{
+        "description": "详细描述",
+        "occupation": "神官",
+        "abilities": ["圣光", "治愈"],
+        "personality": "善良、坚强",
+        "appearance": "外貌描述"
+      }}
+    }}
+  ],
+  "edges": [
+    {{
+      "id": "edge_女神官_哥布林杀手_companion",
+      "source": "person_女神官",
+      "target": "person_哥布林杀手",
+      "relation": "companion",
+      "weight": 0.9,
+      "properties": {{
+        "since": "冒险开始时",
+        "description": "关系描述"
+      }}
+    }}
+  ]
+}}
+
+## 重要提示
+1. importance 范围 0.0-1.0，主角级别 0.8+，重要配角 0.5-0.8，次要角色 0.3-0.5
+2. weight 范围 0.0-1.0，表示关系的强度/重要性
+3. edge.id 建议格式：edge_{{source简称}}_{{target简称}}_{{relation}}
+4. 尽可能提取丰富的属性信息
+5. 如果条目内容主要是描述某个实体，重点提取该实体的详细属性
