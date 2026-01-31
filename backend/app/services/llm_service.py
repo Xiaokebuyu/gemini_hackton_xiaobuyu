@@ -378,19 +378,21 @@ Artifact 要求:
     
     # ==================== MCP 扩展方法 ====================
     
-    async def generate_simple(self, prompt: str) -> str:
+    async def generate_simple(self, prompt: str, model_override: Optional[str] = None) -> str:
         """
         简单文本生成（使用 Gemini 3 Flash）
 
         Args:
             prompt: 提示文本
+            model_override: 可选模型覆盖
 
         Returns:
             生成的文本
         """
         try:
+            model = model_override or self.flash_model
             response = self.client.models.generate_content(
-                model=self.flash_model,
+                model=model,
                 contents=prompt,
             )
 

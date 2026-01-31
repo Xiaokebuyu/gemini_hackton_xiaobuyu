@@ -13,11 +13,11 @@ from app.models.event import (
     NaturalEventIngestRequest,
     NaturalEventIngestResponse,
 )
-from app.services.gm_flash_service import GMFlashService
+from app.services.admin.admin_coordinator import AdminCoordinator
 
 
 router = APIRouter()
-gm_service = GMFlashService()
+gm_service = AdminCoordinator.get_instance()
 
 
 @router.post("/gm/{world_id}/events/ingest")

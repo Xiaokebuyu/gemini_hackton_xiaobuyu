@@ -206,3 +206,4 @@ python -m app.tools.game_master_cli --setup-demo
 3. **剧情触发器**：基于条件自动触发剧情事件
 4. **战斗AI增强**：更智能的敌人决策
 5. **记忆持久化**：对话历史的长期存储和检索
+# 注意：本文档基于旧架构（GameMasterService / gm_flash_service），当前已迁移至 Admin Layer（admin_coordinator / admin/event_service）。仅供历史参考。

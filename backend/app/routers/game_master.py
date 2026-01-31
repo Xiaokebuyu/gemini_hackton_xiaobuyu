@@ -27,11 +27,11 @@ from app.models.game import (
     TriggerCombatRequest,
     TriggerCombatResponse,
 )
-from app.services.game_master_service import GameMasterService, GamePhase as ServiceGamePhase
+from app.services.admin.admin_coordinator import AdminCoordinator
 
 
 router = APIRouter(prefix="/gm", tags=["Game Master"])
-gm_service = GameMasterService()
+gm_service = AdminCoordinator.get_instance()
 
 
 # ============================================
@@ -77,7 +77,7 @@ async def get_context(world_id: str, session_id: str) -> GameContextResponse:
     Returns:
         GameContextResponse: 当前游戏状态
     """
-    context = gm_service.get_context(world_id, session_id)
+    context = await gm_service.get_context_async(world_id, session_id)
     if not context:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -166,20 +166,22 @@ async def process_input(
         PlayerInputResponse: 游戏响应
     """
     try:
-        from app.services.game_master_service import InputType
+        input_type = payload.input_type
 
-        input_type = None
-        if payload.input_type:
+        chat_mode = None
+        if payload.mode:
             try:
-                input_type = InputType(payload.input_type)
+                from app.models.game import ChatMode
+                chat_mode = ChatMode(payload.mode)
             except ValueError:
-                pass
+                chat_mode = None
 
         result = await gm_service.process_player_input(
             world_id=world_id,
             session_id=session_id,
             player_input=payload.input,
             input_type=input_type,
+            mode=chat_mode,
         )
 
         return PlayerInputResponse(
@@ -195,6 +197,7 @@ async def process_input(
                 for a in result.get("available_actions", [])
             ],
             state_changes=result.get("state_changes", {}),
+            responses=result.get("responses", []),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

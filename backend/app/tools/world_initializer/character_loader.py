@@ -12,6 +12,7 @@ from google.cloud import firestore
 from app.config import settings
 from app.services.graph_store import GraphStore
 from app.tools.worldbook_graphizer.models import CharactersData, CharacterInfo, NPCTier
+from app.models.passerby import PasserbySpawnConfig, PasserbyTemplate
 
 
 class CharacterLoader:
@@ -66,16 +67,36 @@ class CharacterLoader:
         stats = {
             "main_loaded": 0,
             "secondary_loaded": 0,
-            "passerby_skipped": 0,
+            "passerby_templates_collected": 0,
+            "passerby_pools_initialized": 0,
             "map_assignments_loaded": 0,
             "errors": [],
         }
 
-        # 加载主要和次要角色的 Profile
+        # 收集 PASSERBY 模板，按地点分组
+        passerby_templates_by_map: Dict[str, List[PasserbyTemplate]] = {}
+
+        # 加载主要和次要角色的 Profile，收集 PASSERBY 模板
         for char in characters_data.characters:
             try:
                 if char.tier == NPCTier.PASSERBY:
-                    stats["passerby_skipped"] += 1
+                    # 收集为模板，不跳过
+                    template = PasserbyTemplate(
+                        id=char.id,
+                        name_pool=[char.name] if char.name else [],
+                        appearance_pool=[char.appearance] if char.appearance else [],
+                        personality_pool=[char.personality] if char.personality else [],
+                        occupation=char.occupation,
+                        default_map=char.default_map,
+                    )
+                    map_key = char.default_map or "default"
+                    if map_key not in passerby_templates_by_map:
+                        passerby_templates_by_map[map_key] = []
+                    passerby_templates_by_map[map_key].append(template)
+                    stats["passerby_templates_collected"] += 1
+
+                    if verbose:
+                        print(f"  Collected passerby template: {char.id} for map {map_key}")
                     continue
 
                 if verbose:
@@ -111,6 +132,25 @@ class CharacterLoader:
 
             except Exception as e:
                 error_msg = f"Failed to load map assignments for {map_id}: {str(e)}"
+                stats["errors"].append(error_msg)
+                if verbose:
+                    print(f"    ERROR: {error_msg}")
+
+        # Module 4: 初始化路人池
+        for map_id, templates in passerby_templates_by_map.items():
+            try:
+                template_ids = [t.id for t in templates]
+                if verbose:
+                    print(f"  Initializing passerby pool for map: {map_id}")
+                    print(f"    - Templates: {template_ids}")
+
+                if not dry_run:
+                    await self._init_passerby_pool(world_id, map_id, templates)
+
+                stats["passerby_pools_initialized"] += 1
+
+            except Exception as e:
+                error_msg = f"Failed to init passerby pool for {map_id}: {str(e)}"
                 stats["errors"].append(error_msg)
                 if verbose:
                     print(f"    ERROR: {error_msg}")
@@ -178,6 +218,49 @@ class CharacterLoader:
         }
 
         npcs_ref.set(assignments_data, merge=True)
+
+    async def _init_passerby_pool(
+        self,
+        world_id: str,
+        map_id: str,
+        templates: List[PasserbyTemplate],
+    ) -> None:
+        """初始化地图的路人池"""
+        # 构建路人池配置
+        config = PasserbySpawnConfig(
+            max_concurrent=5,
+            spawn_interval_minutes=30,
+            despawn_after_minutes=60,
+            templates=[t.id for t in templates],
+        )
+
+        # 存储模板数据
+        templates_data = {}
+        for t in templates:
+            templates_data[t.id] = {
+                "id": t.id,
+                "name_pool": t.name_pool,
+                "appearance_pool": t.appearance_pool,
+                "personality_pool": t.personality_pool,
+                "occupation": t.occupation,
+            }
+
+        # 保存到 Firestore
+        pool_ref = (
+            self.db.collection("worlds")
+            .document(world_id)
+            .collection("maps")
+            .document(map_id)
+            .collection("passerby_pool")
+            .document("config")
+        )
+
+        pool_ref.set({
+            "config": config.model_dump(),
+            "templates": templates_data,
+            "active_instances": {},
+            "sentiment": 0.0,
+        }, merge=True)
 
     async def load_profiles_from_file(
         self,

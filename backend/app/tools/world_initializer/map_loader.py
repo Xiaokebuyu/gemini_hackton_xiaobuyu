@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 from google.cloud import firestore
 
 from app.config import settings
-from app.tools.worldbook_graphizer.models import MapsData, MapInfo, PasserbyTemplate
+from app.tools.worldbook_graphizer.models import MapsData, MapInfo, PasserbyTemplate, SubLocationInfo
 
 
 class MapLoader:
@@ -129,6 +129,20 @@ class MapLoader:
             ],
             "available_actions": map_info.available_actions,
             "key_features": map_info.key_features,
+            # 新增：子地点信息
+            "sub_locations": [
+                {
+                    "id": sl.id,
+                    "name": sl.name,
+                    "description": sl.description,
+                    "interaction_type": sl.interaction_type,
+                    "resident_npcs": sl.resident_npcs,
+                    "available_actions": sl.available_actions,
+                    "passerby_spawn_rate": sl.passerby_spawn_rate,
+                    "travel_time_minutes": sl.travel_time_minutes,
+                }
+                for sl in map_info.sub_locations
+            ],
         }
 
         # 保存到 maps/{map_id}/info

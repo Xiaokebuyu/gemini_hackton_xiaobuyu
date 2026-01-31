@@ -1,9 +1,0 @@
-{
-  "job_name": "batches/k53t9h9nwt4hmzder8g8hbqfup4sqrg71egg",
-  "display_name": "goblin-slayer-worldbook",
-  "model": "gemini-3-flash-preview",
-  "state": "JOB_STATE_PENDING",
-  "created_at": "2026-01-26T11:38:53.097641",
-  "source_file": "files/3s1vf58fpxwk",
-  "input_file": "data/goblin_slayer/batch_requests.jsonl"
-}

@@ -3,12 +3,23 @@
 """
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
+
+
+class NPCTierConfig(BaseModel):
+    """NPC层级AI配置"""
+
+    passerby_model: str = os.getenv("NPC_PASSERBY_MODEL", "gemini-3-flash-preview")
+    passerby_thinking: Optional[Literal["lowest", "low", "medium", "high"]] = None
+    secondary_model: str = os.getenv("NPC_SECONDARY_MODEL", "gemini-3-flash-preview")
+    secondary_thinking: Literal["lowest", "low", "medium", "high"] = "medium"
+    main_model: str = os.getenv("NPC_MAIN_MODEL", "gemini-3-pro-preview")
+    main_thinking: Literal["lowest", "low", "medium", "high"] = "low"
 
 
 class Settings(BaseModel):
@@ -27,12 +38,33 @@ class Settings(BaseModel):
     gemini_main_model: str = os.getenv("GEMINI_MAIN_MODEL", "gemini-3-flash-preview")
     gemini_pro_model: str = os.getenv("GEMINI_PRO_MODEL", "gemini-3-pro-preview")
     gemini_embedding_model: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+
+    # Module 3: 三层AI模型配置
+    gemini_fast_model: str = os.getenv("GEMINI_FAST_MODEL", "gemini-2.5-flash-lite")
+    gemini_subconscious_model: str = os.getenv("GEMINI_SUBCONSCIOUS_MODEL", "gemini-3-flash-preview")
+    gemini_deep_model: str = os.getenv("GEMINI_DEEP_MODEL", "gemini-3-pro-preview")
     
     # Gemini 3 思考配置
     # thinking_level: 思考层级 - "lowest", "low", "medium", "high"
     thinking_enabled: bool = True
     thinking_level: Literal["lowest", "low", "medium", "high"] = "medium"
     include_thoughts: bool = True  # 是否返回思考摘要
+
+    # Admin Layer 配置
+    admin_flash_model: str = os.getenv("ADMIN_FLASH_MODEL", "gemini-3-flash-preview")
+    admin_pro_model: str = os.getenv("ADMIN_PRO_MODEL", "gemini-3-pro-preview")
+    admin_flash_thinking_level: Literal["lowest", "low", "medium", "high"] = os.getenv(
+        "ADMIN_FLASH_THINKING_LEVEL", "low"
+    )
+    admin_pro_thinking_level: Literal["lowest", "low", "medium", "high"] = os.getenv(
+        "ADMIN_PRO_THINKING_LEVEL", "low"
+    )
+    mcp_tools_transport: str = os.getenv("MCP_TOOLS_TRANSPORT", "stdio")
+    mcp_tools_endpoint: str = os.getenv("MCP_TOOLS_ENDPOINT", "stdio://game_tools_server")
+    mcp_tools_command: str = os.getenv("MCP_TOOLS_COMMAND", "python")
+    mcp_tools_args: str = os.getenv("MCP_TOOLS_ARGS", "-m app.mcp.game_tools_server")
+    mcp_combat_command: str = os.getenv("MCP_COMBAT_COMMAND", "python")
+    mcp_combat_args: str = os.getenv("MCP_COMBAT_ARGS", "-m app.combat.combat_mcp_server")
     
     # 热记忆配置
     active_window_size: int = 20
@@ -60,6 +92,12 @@ class Settings(BaseModel):
     instance_pool_graphize_threshold: float = float(os.getenv("INSTANCE_POOL_GRAPHIZE_THRESHOLD", "0.9"))
     instance_pool_keep_recent_tokens: int = int(os.getenv("INSTANCE_POOL_KEEP_RECENT_TOKENS", "50000"))
     instance_pool_evict_after_minutes: int = int(os.getenv("INSTANCE_POOL_EVICT_AFTER_MINUTES", "30"))
+
+    # Module 3: 上下文缓存配置
+    context_cache_ttl_seconds: int = int(os.getenv("CONTEXT_CACHE_TTL_SECONDS", "300"))
+
+    # NPC 三层AI配置（新）
+    npc_tier_config: NPCTierConfig = NPCTierConfig()
     
     # API 配置
     api_prefix: str = "/api"

@@ -11,6 +11,10 @@ from mcp.server.fastmcp import FastMCP
 from .combat_engine import CombatEngine
 from .enemy_registry import list_templates, register_archetype, register_template
 from .models.combat_session import CombatState
+from app.models.event import Event, EventContent, EventType, GMEventIngestRequest
+from app.models.game import CombatContext
+from app.services.game_session_store import GameSessionStore
+from app.services.admin.event_service import AdminEventService
 
 
 # 初始化 FastMCP
@@ -38,6 +42,8 @@ combat_mcp = FastMCP(
 
 # 全局战斗引擎实例
 combat_engine = CombatEngine()
+session_store = GameSessionStore()
+event_service = AdminEventService()
 
 
 # ============================================
@@ -84,6 +90,131 @@ async def start_combat(
         },
         ensure_ascii=False,
         indent=2,
+    )
+
+
+@combat_mcp.tool()
+async def start_combat_session(
+    world_id: str,
+    session_id: str,
+    enemies: List[Dict[str, Any]],
+    player_state: Dict[str, Any],
+    environment: Optional[Dict[str, Any]] = None,
+    allies: Optional[List[Dict[str, Any]]] = None,
+    combat_context: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    开始战斗并写入会话状态
+    """
+    session = combat_engine.start_combat(
+        enemies=enemies,
+        player_state=player_state,
+        environment=environment,
+        allies=allies,
+    )
+    context = CombatContext(**(combat_context or {}))
+    await session_store.set_combat(world_id, session_id, session.combat_id, context)
+    state = await session_store.get_session(world_id, session_id)
+
+    return json.dumps(
+        {
+            "combat_id": session.combat_id,
+            "combat_state": {
+                "combat_id": session.combat_id,
+                "state": session.state.value,
+                "turn_order": session.turn_order,
+                "current_round": session.current_round,
+            },
+            "session": state.model_dump() if state else None,
+        },
+        ensure_ascii=False,
+        indent=2,
+        default=str,
+    )
+
+
+@combat_mcp.tool()
+async def resolve_combat_session(
+    world_id: str,
+    session_id: str,
+    combat_id: Optional[str] = None,
+    use_engine: bool = True,
+    result_override: Optional[Dict[str, Any]] = None,
+    summary_override: Optional[str] = None,
+    dispatch: bool = True,
+    recipients: Optional[List[str]] = None,
+    per_character: Optional[Dict[str, Any]] = None,
+    write_indexes: bool = False,
+    validate: bool = False,
+    strict: bool = False,
+) -> str:
+    """
+    结算战斗并写入事件（GM图谱），同时清理会话战斗状态。
+    """
+    session_state = await session_store.get_session(world_id, session_id)
+    if not session_state:
+        return json.dumps({"error": "session not found"}, ensure_ascii=False)
+
+    combat_id = combat_id or session_state.active_combat_id
+    if not combat_id:
+        return json.dumps({"error": "combat_id is required"}, ensure_ascii=False)
+
+    if use_engine:
+        try:
+            result = combat_engine.get_combat_result(combat_id)
+            result_payload = result.to_dict()
+            summary = summary_override or result.summary
+        except ValueError:
+            if result_override:
+                result_payload = result_override
+                summary = summary_override or result_payload.get("summary", "")
+            else:
+                summary = summary_override or "combat resolved (manual)"
+                result_payload = {"summary": summary, "result": "special"}
+    else:
+        if not result_override:
+            return json.dumps({"error": "result_override is required when use_engine=false"}, ensure_ascii=False)
+        result_payload = result_override
+        summary = summary_override or result_payload.get("summary", "")
+
+    combat_context = session_state.combat_context
+    location = combat_context.location if combat_context else None
+    participants = combat_context.participants if combat_context else []
+    witnesses = combat_context.witnesses if combat_context else []
+
+    event = Event(
+        type=EventType.COMBAT,
+        game_day=None,
+        location=location,
+        participants=participants,
+        witnesses=witnesses,
+        content=EventContent(raw=summary, structured=result_payload),
+    )
+
+    dispatch_request = GMEventIngestRequest(
+        event=event,
+        distribute=dispatch,
+        recipients=recipients,
+        known_characters=combat_context.known_characters if combat_context else [],
+        character_locations=combat_context.character_locations if combat_context else {},
+        per_character=per_character or {},
+        write_indexes=write_indexes,
+        validate_input=validate,
+        strict=strict,
+    )
+
+    response = await event_service.ingest_event(world_id, dispatch_request)
+    await session_store.clear_combat(world_id, session_id)
+
+    return json.dumps(
+        {
+            "combat_id": combat_id,
+            "event_id": response.event_id,
+            "dispatched": response.dispatched,
+        },
+        ensure_ascii=False,
+        indent=2,
+        default=str,
     )
 
 

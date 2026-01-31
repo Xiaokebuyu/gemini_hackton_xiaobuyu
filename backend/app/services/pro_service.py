@@ -101,6 +101,9 @@ class ProService:
         world_id: str,
         character_id: str,
         request: ChatRequest,
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        enable_tools: bool = True,
     ) -> ChatResponse:
         """
         与角色对话
@@ -111,6 +114,9 @@ class ProService:
             world_id: 世界ID
             character_id: 角色ID
             request: 对话请求
+            model_override: 覆盖默认模型（可选）
+            thinking_level: 思考级别 - "lowest"/"low"/"medium"/"high"（可选）
+            enable_tools: 是否启用工具调用（默认True）
 
         Returns:
             对话响应，包含角色回复和可能的记忆检索信息
@@ -129,6 +135,9 @@ class ProService:
             scene=request.scene,
             conversation_history=request.conversation_history,
             injected_memory=request.injected_memory,
+            model_override=model_override,
+            thinking_level=thinking_level,
+            enable_tools=enable_tools,
         )
 
         return ChatResponse(

@@ -1,5 +1,5 @@
 """
-GM Flash service for event recording and dispatch.
+Admin event service for event recording and dispatch.
 
 支持两种模式：
 1. 结构化模式：直接传入节点/边数据
@@ -25,8 +25,8 @@ from app.services.graph_schema import GraphSchemaOptions, validate_edge, validat
 from app.services.graph_store import GraphStore
 
 
-class GMFlashService:
-    """GM-level event service."""
+class AdminEventService:
+    """Admin-level event service."""
 
     def __init__(
         self,
@@ -37,14 +37,14 @@ class GMFlashService:
         self.graph_store = graph_store or GraphStore()
         self.flash_service = flash_service or FlashService(self.graph_store)
         self.event_bus = event_bus or EventBus()
-        self._llm_service: Optional["GMLLMService"] = None
+        self._llm_service: Optional["EventLLMService"] = None
 
     @property
-    def llm_service(self) -> "GMLLMService":
-        """懒加载GM LLM服务"""
+    def llm_service(self) -> "EventLLMService":
+        """懒加载事件LLM服务"""
         if self._llm_service is None:
-            from app.services.gm_llm_service import GMLLMService
-            self._llm_service = GMLLMService()
+            from app.services.admin.event_llm_service import EventLLMService
+            self._llm_service = EventLLMService()
         return self._llm_service
 
     async def ingest_event(

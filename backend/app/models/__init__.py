@@ -19,6 +19,7 @@ from .event import (
     GMEventIngestResponse,
 )
 from .game import (
+    ChatMode,
     SceneState,
     CombatContext,
     GameSessionState,
@@ -90,6 +91,7 @@ __all__ = [
     "GMEventIngestResponse",
     "SceneState",
     "CombatContext",
+    "ChatMode",
     "GameSessionState",
     "CreateSessionRequest",
     "CreateSessionResponse",

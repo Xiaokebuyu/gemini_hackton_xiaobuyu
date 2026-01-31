@@ -1,9 +1,9 @@
 """
-GM LLM Service - GM的LLM能力层
+Event LLM Service - 事件LLM能力层
 
 负责：
 1. 事件解析 (parse_event): 从自然语言中提取事件结构
-2. 事件编码 (encode_gm_event): 编码为GM图谱的结构化数据
+2. 事件编码 (encode_gm_event): 编码为事件图谱的结构化数据
 3. 视角转换 (transform_perspective): 将事件转换为特定角色的视角
 """
 from typing import Any, Dict, List, Literal, Optional
@@ -16,8 +16,8 @@ from app.services.llm_service import LLMService
 PerspectiveType = Literal["participant", "witness", "bystander", "rumor"]
 
 
-class GMLLMService:
-    """GM的LLM能力层"""
+class EventLLMService:
+    """事件LLM能力层"""
 
     def __init__(self, llm_service: Optional[LLMService] = None) -> None:
         self.llm = llm_service or LLMService()

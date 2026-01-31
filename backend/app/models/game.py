@@ -16,6 +16,12 @@ class GamePhase(str, Enum):
     ENDED = "ended"
 
 
+class ChatMode(str, Enum):
+    """玩家输入模式"""
+    THINK = "think"  # 脑内说话
+    SAY = "say"      # 脑外说话（聊天室广播）
+
+
 class SceneState(BaseModel):
     """Scene state."""
     scene_id: Optional[str] = None
@@ -123,6 +129,7 @@ class PlayerInputRequest(BaseModel):
     """玩家输入请求"""
     input: str
     input_type: Optional[str] = None  # narration/dialogue/combat/system
+    mode: Optional[str] = None  # think/say（可选，覆盖当前模式）
 
 
 class PlayerInputResponse(BaseModel):
@@ -136,6 +143,7 @@ class PlayerInputResponse(BaseModel):
     recalled_memory: Optional[str] = None
     available_actions: List[Dict] = Field(default_factory=list)
     state_changes: Dict = Field(default_factory=dict)
+    responses: List[Dict] = Field(default_factory=list)  # 额外回应（聊天室模式）
 
 
 class StartDialogueRequest(BaseModel):
@@ -189,3 +197,59 @@ class GameContextResponse(BaseModel):
     current_scene: Optional[SceneState] = None
     current_npc: Optional[str] = None
     known_characters: List[str] = Field(default_factory=list)
+
+
+# ==================== Phase 7: 区域导航相关模型 ====================
+
+
+class GameTimeResponse(BaseModel):
+    """游戏时间响应"""
+    day: int
+    hour: int
+    minute: int
+    period: str  # dawn/day/dusk/night
+    formatted: str
+
+
+class LocationResponse(BaseModel):
+    """当前位置响应"""
+    location_id: str
+    location_name: str
+    description: str
+    atmosphere: str = ""
+    danger_level: str = "low"
+    available_destinations: List[Dict] = Field(default_factory=list)
+    npcs_present: List[str] = Field(default_factory=list)
+    available_actions: List[str] = Field(default_factory=list)
+    time: GameTimeResponse
+
+
+class NavigateRequest(BaseModel):
+    """导航请求"""
+    destination: Optional[str] = None  # 目的地 ID 或名称
+    direction: Optional[str] = None    # 方向（north/south/east/west）
+
+
+class TravelSegment(BaseModel):
+    """旅途分段"""
+    from_id: str
+    from_name: str
+    to_id: str
+    to_name: str
+    travel_time: str
+    time_minutes: int
+    danger_level: str
+    narration: str = ""
+    event: Optional[Dict] = None
+
+
+class NavigateResponse(BaseModel):
+    """导航响应"""
+    success: bool
+    narration: str = ""
+    segments: List[TravelSegment] = Field(default_factory=list)
+    new_location: Optional[LocationResponse] = None
+    time_elapsed_minutes: int = 0
+    events: List[Dict] = Field(default_factory=list)
+    time: Optional[GameTimeResponse] = None
+    error: Optional[str] = None

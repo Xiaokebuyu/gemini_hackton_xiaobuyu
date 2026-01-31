@@ -12,7 +12,7 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
-from .models import MapInfo, MapConnection, PasserbyTemplate, MapsData
+from .models import MapInfo, MapConnection, PasserbyTemplate, MapsData, SubLocationInfo
 
 
 class MapExtractor:
@@ -154,6 +154,20 @@ class MapExtractor:
                     requirements=conn.get("requirements"),
                 ))
 
+            # Task #19: 转换子地点
+            sub_locations = []
+            for sl_data in map_data.get("sub_locations", []):
+                sub_locations.append(SubLocationInfo(
+                    id=sl_data.get("id", ""),
+                    name=sl_data.get("name", ""),
+                    description=sl_data.get("description", ""),
+                    interaction_type=sl_data.get("interaction_type", "visit"),
+                    resident_npcs=sl_data.get("resident_npcs", []),
+                    available_actions=sl_data.get("available_actions", []),
+                    passerby_spawn_rate=sl_data.get("passerby_spawn_rate", 0.3),
+                    travel_time_minutes=sl_data.get("travel_time_minutes", 0),
+                ))
+
             maps.append(MapInfo(
                 id=map_data.get("id", ""),
                 name=map_data.get("name", ""),
@@ -164,6 +178,7 @@ class MapExtractor:
                 connections=connections,
                 available_actions=map_data.get("available_actions", []),
                 key_features=map_data.get("key_features", []),
+                sub_locations=sub_locations,  # Task #19: 保留子地点数据
             ))
 
         # 转换路人模板

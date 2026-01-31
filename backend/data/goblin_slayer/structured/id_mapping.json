@@ -1,0 +1,28 @@
+{
+  "map_to_graph": {
+    "frontier_town": "location_frontier_town",
+    "royal_capital": "location_royal_capital",
+    "water_town": "location_water_town",
+    "elven_village": "location_elf_village"
+  },
+  "char_to_graph": {
+    "priestess": "character_priestess",
+    "goblin_slayer": "character_goblin_slayer",
+    "hero": "character_hero",
+    "vivella": "character_vivella",
+    "red_haired_boy_mage": "character_red_haired_boy_mage",
+    "witch": "character_witch"
+  },
+  "graph_to_config": {
+    "location_frontier_town": "frontier_town",
+    "location_royal_capital": "royal_capital",
+    "location_water_town": "water_town",
+    "location_elf_village": "elven_village",
+    "character_priestess": "priestess",
+    "character_goblin_slayer": "goblin_slayer",
+    "character_hero": "hero",
+    "character_vivella": "vivella",
+    "character_red_haired_boy_mage": "red_haired_boy_mage",
+    "character_witch": "witch"
+  }
+}

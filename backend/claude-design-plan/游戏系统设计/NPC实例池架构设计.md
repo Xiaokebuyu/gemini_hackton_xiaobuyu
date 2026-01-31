@@ -789,3 +789,4 @@ async def recall_with_context(self, query: str) -> MemoryWithContext:
 | `goal` | 当前目标 | priority, progress, deadline |
 | `emotion` | 情感状态 | target, intensity, cause |
 | `organization` | 组织/团体 | role, standing |
+# 注意：本文档基于旧架构（GameMasterService / gm_flash_service），当前已迁移至 Admin Layer（admin_coordinator / admin/event_service）。仅供历史参考。

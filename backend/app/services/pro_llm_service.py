@@ -169,6 +169,9 @@ class ProLLMService:
         scene: Optional[SceneContext] = None,
         conversation_history: Optional[List[ChatMessage]] = None,
         injected_memory: Optional[str] = None,
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        enable_tools: bool = True,
     ) -> Dict[str, Any]:
         """
         与角色对话
@@ -182,6 +185,9 @@ class ProLLMService:
             scene: 场景上下文
             conversation_history: 对话历史
             injected_memory: 预注入的记忆（场景加载时）
+            model_override: 覆盖默认模型（可选）
+            thinking_level: 思考级别 - "lowest"/"low"/"medium"/"high"（可选）
+            enable_tools: 是否启用工具调用（默认True）
 
         Returns:
             {
@@ -208,19 +214,37 @@ class ProLLMService:
             user_message=user_message,
         )
 
-        # 配置工具
-        tools = types.Tool(function_declarations=[RECALL_MEMORY_DECLARATION])
-        config = types.GenerateContentConfig(
-            tools=[tools],
-            # 让模型自动决定是否调用工具
-            tool_config=types.ToolConfig(
+        # 选择模型
+        model = model_override or self.model
+
+        # 配置工具（可选禁用）
+        config_kwargs = {}
+        if enable_tools:
+            tools = types.Tool(function_declarations=[RECALL_MEMORY_DECLARATION])
+            config_kwargs["tools"] = [tools]
+            config_kwargs["tool_config"] = types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode='AUTO')
-            ),
-        )
+            )
+
+        # 配置思考级别（如果指定）
+        if thinking_level:
+            # Gemini thinking budget mapping
+            thinking_budgets = {
+                "lowest": 1024,
+                "low": 4096,
+                "medium": 8192,
+                "high": 16384,
+            }
+            budget = thinking_budgets.get(thinking_level, 8192)
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=budget
+            )
+
+        config = types.GenerateContentConfig(**config_kwargs)
 
         # 第一次调用模型
         response = self.client.models.generate_content(
-            model=self.model,
+            model=model,
             contents=contents,
             config=config,
         )
@@ -268,7 +292,7 @@ class ProLLMService:
 
                     # 再次调用模型获取最终回复
                     final_response = self.client.models.generate_content(
-                        model=self.model,
+                        model=model,
                         contents=contents,
                         config=config,
                     )

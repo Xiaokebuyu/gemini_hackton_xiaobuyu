@@ -50,7 +50,16 @@ class GameSessionStore:
         updates: dict,
     ) -> None:
         updates["updated_at"] = datetime.now()
-        self._session_ref(world_id, session_id).set(updates, merge=True)
+
+        # Check if any keys contain dot notation (nested path updates)
+        has_dot_notation = any("." in key for key in updates.keys())
+
+        if has_dot_notation:
+            # Use update() for dot notation support
+            self._session_ref(world_id, session_id).update(updates)
+        else:
+            # Use set(merge=True) for simple updates
+            self._session_ref(world_id, session_id).set(updates, merge=True)
 
     async def set_scene(
         self,

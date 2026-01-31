@@ -255,6 +255,65 @@ async def cmd_graphize_characters(args: argparse.Namespace) -> int:
         return 1
 
 
+async def cmd_graphize_tavern(args: argparse.Namespace) -> int:
+    """从酒馆卡片提取知识图谱 (使用 Batch API)"""
+    from app.tools.worldbook_graphizer.graph_extractor import GraphExtractor
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    batch_dir = Path(args.batch_dir) if args.batch_dir else None
+
+    if not input_path.exists():
+        print(f"Error: Input file not found: {input_path}")
+        return 1
+
+    print(f"Extracting knowledge graph from tavern card: {input_path}")
+    print(f"Output: {output_path}")
+    print(f"Model: {args.model}")
+    if batch_dir:
+        print(f"Batch temp dir: {batch_dir}")
+    print()
+
+    try:
+        extractor = GraphExtractor(
+            model=args.model,
+            verbose=not args.quiet,
+        )
+
+        # 构建图谱 (使用 Batch API)
+        graph_data = await extractor.build_graph(input_path, output_dir=batch_dir)
+
+        # 保存结果
+        extractor.save_graph(graph_data, output_path)
+
+        # 打印节点类型分布
+        type_counts = {}
+        for node in graph_data.nodes:
+            type_counts[node.type] = type_counts.get(node.type, 0) + 1
+
+        print("\nNode type distribution:")
+        for node_type, count in sorted(type_counts.items(), key=lambda x: -x[1]):
+            print(f"  {node_type}: {count}")
+
+        # 打印关系类型分布
+        rel_counts = {}
+        for edge in graph_data.edges:
+            rel_counts[edge.relation] = rel_counts.get(edge.relation, 0) + 1
+
+        print("\nRelation type distribution:")
+        for rel_type, count in sorted(rel_counts.items(), key=lambda x: -x[1]):
+            print(f"  {rel_type}: {count}")
+
+        return 0
+
+    except Exception as e:
+        print(f"\nError: {str(e)}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 def main() -> int:
     """主入口"""
     parser = argparse.ArgumentParser(
@@ -361,6 +420,32 @@ def main() -> int:
         help="Gemini 模型"
     )
 
+    # ============ graphize-tavern 命令 ============
+    graphize_tavern_parser = subparsers.add_parser(
+        "graphize-tavern",
+        help="从酒馆卡片 JSON 提取知识图谱 (使用 Batch API)"
+    )
+    graphize_tavern_parser.add_argument(
+        "--input", "-i",
+        required=True,
+        help="酒馆卡片 JSON 文件路径"
+    )
+    graphize_tavern_parser.add_argument(
+        "--output", "-o",
+        required=True,
+        help="输出文件路径 (world_graph.json)"
+    )
+    graphize_tavern_parser.add_argument(
+        "--model", "-m",
+        default="gemini-3-flash-preview",
+        help="Gemini 模型 (默认: gemini-3-flash-preview)"
+    )
+    graphize_tavern_parser.add_argument(
+        "--batch-dir",
+        default=None,
+        help="批量处理中间文件目录 (默认: 输出目录同级的 batch_temp)"
+    )
+
     # ============ load 命令 ============
     load_parser = subparsers.add_parser(
         "load",
@@ -410,6 +495,8 @@ def main() -> int:
         return asyncio.run(cmd_graphize_maps(args))
     elif args.command == "graphize-characters":
         return asyncio.run(cmd_graphize_characters(args))
+    elif args.command == "graphize-tavern":
+        return asyncio.run(cmd_graphize_tavern(args))
     elif args.command == "load":
         return asyncio.run(cmd_load(args))
     elif args.command == "verify":

@@ -9,15 +9,15 @@ from .flash_service import FlashService
 from .pro_service import ProService
 from .pro_context_builder import ProContextBuilder
 from .event_bus import EventBus
-from .gm_flash_service import GMFlashService
+from .admin.event_service import AdminEventService
 from .game_session_store import GameSessionStore
-from .game_loop_service import GameLoopService
 from .spreading_activation import SpreadingActivationConfig, spread_activation, extract_subgraph, find_paths
 # NPC Instance Pool services
 from .context_window import ContextWindow, count_tokens
 from .instance_manager import InstanceManager, NPCInstance
 from .memory_graphizer import MemoryGraphizer
 from .flash_pro_bridge import FlashProBridge
+from .admin import AdminCoordinator, FlashCPUService, ProDMService, StateManager, AdminWorldRuntime
 
 __all__ = [
     "LLMService",
@@ -28,9 +28,8 @@ __all__ = [
     "ProService",
     "ProContextBuilder",
     "EventBus",
-    "GMFlashService",
+    "AdminEventService",
     "GameSessionStore",
-    "GameLoopService",
     "SpreadingActivationConfig",
     "spread_activation",
     "extract_subgraph",
@@ -42,4 +41,9 @@ __all__ = [
     "NPCInstance",
     "MemoryGraphizer",
     "FlashProBridge",
+    "AdminCoordinator",
+    "FlashCPUService",
+    "ProDMService",
+    "StateManager",
+    "AdminWorldRuntime",
 ]

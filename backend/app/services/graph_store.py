@@ -1,5 +1,10 @@
 """
 Graph persistence service (Firestore).
+
+支持的图谱类型：
+- character: 角色级图谱 (worlds/{world_id}/characters/{character_id}/)
+- gm/world: 世界级图谱 (worlds/{world_id}/graphs/{graph_type}/)
+- location: 地点级图谱 (worlds/{world_id}/maps/{map_id}/graphs/shared_memory/) [Module 4]
 """
 from typing import Iterable, List, Optional, Tuple, Union
 
@@ -467,4 +472,208 @@ def _clear_subcollection(
         child_ref = doc.reference.collection(child_collection_name)
         for child_doc in child_ref.stream():
             child_doc.reference.delete()
+
+
+# ==================== Module 4: 地点图谱扩展 ====================
+
+
+class LocationGraphStore(GraphStore):
+    """
+    地点级图谱存储扩展
+
+    支持 maps/{map_id}/graphs/shared_memory 路径结构
+    用于路人NPC共享记忆
+    """
+
+    def _get_location_graph_refs(
+        self,
+        world_id: str,
+        map_id: str,
+        sub_location_id: Optional[str] = None,
+    ) -> Tuple[firestore.CollectionReference, firestore.CollectionReference]:
+        """获取地点图谱的 nodes/edges 引用"""
+        if sub_location_id:
+            base_ref = (
+                self.db.collection("worlds")
+                .document(world_id)
+                .collection("maps")
+                .document(map_id)
+                .collection("sub_locations")
+                .document(sub_location_id)
+                .collection("graphs")
+                .document("shared_memory")
+            )
+        else:
+            base_ref = (
+                self.db.collection("worlds")
+                .document(world_id)
+                .collection("maps")
+                .document(map_id)
+                .collection("graphs")
+                .document("shared_memory")
+            )
+        return base_ref.collection("nodes"), base_ref.collection("edges")
+
+    async def load_location_graph(
+        self,
+        world_id: str,
+        map_id: str,
+        sub_location_id: Optional[str] = None,
+    ) -> GraphData:
+        """
+        加载地点级图谱
+
+        Args:
+            world_id: 世界ID
+            map_id: 地图ID
+            sub_location_id: 子地点ID（可选）
+
+        Returns:
+            GraphData
+        """
+        nodes_ref, edges_ref = self._get_location_graph_refs(
+            world_id, map_id, sub_location_id
+        )
+
+        nodes = []
+        for doc in nodes_ref.stream():
+            data = doc.to_dict()
+            if not data:
+                continue
+            if "id" not in data:
+                data["id"] = doc.id
+            nodes.append(MemoryNode(**data))
+
+        edges = []
+        for doc in edges_ref.stream():
+            data = doc.to_dict()
+            if not data:
+                continue
+            if "id" not in data:
+                data["id"] = doc.id
+            edges.append(MemoryEdge(**data))
+
+        return GraphData(nodes=nodes, edges=edges)
+
+    async def upsert_location_node(
+        self,
+        world_id: str,
+        map_id: str,
+        node: MemoryNode,
+        sub_location_id: Optional[str] = None,
+        merge: bool = True,
+    ) -> None:
+        """
+        向地点图谱添加/更新节点
+
+        Args:
+            world_id: 世界ID
+            map_id: 地图ID
+            node: 记忆节点
+            sub_location_id: 子地点ID（可选）
+            merge: 是否合并（默认True）
+        """
+        nodes_ref, _ = self._get_location_graph_refs(
+            world_id, map_id, sub_location_id
+        )
+        nodes_ref.document(node.id).set(node.model_dump(), merge=merge)
+
+    async def upsert_location_edge(
+        self,
+        world_id: str,
+        map_id: str,
+        edge: MemoryEdge,
+        sub_location_id: Optional[str] = None,
+        merge: bool = True,
+    ) -> None:
+        """
+        向地点图谱添加/更新边
+
+        Args:
+            world_id: 世界ID
+            map_id: 地图ID
+            edge: 记忆边
+            sub_location_id: 子地点ID（可选）
+            merge: 是否合并（默认True）
+        """
+        _, edges_ref = self._get_location_graph_refs(
+            world_id, map_id, sub_location_id
+        )
+        edges_ref.document(edge.id).set(edge.model_dump(), merge=merge)
+
+    async def get_location_nodes_by_type(
+        self,
+        world_id: str,
+        map_id: str,
+        node_type: str,
+        sub_location_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[MemoryNode]:
+        """
+        按类型获取地点图谱中的节点
+
+        Args:
+            world_id: 世界ID
+            map_id: 地图ID
+            node_type: 节点类型
+            sub_location_id: 子地点ID（可选）
+            limit: 返回数量限制
+
+        Returns:
+            节点列表
+        """
+        nodes_ref, _ = self._get_location_graph_refs(
+            world_id, map_id, sub_location_id
+        )
+
+        query = nodes_ref.where("type", "==", node_type).limit(limit)
+        nodes = []
+        for doc in query.stream():
+            data = doc.to_dict()
+            if not data:
+                continue
+            if "id" not in data:
+                data["id"] = doc.id
+            nodes.append(MemoryNode(**data))
+
+        return nodes
+
+    async def get_recent_location_memories(
+        self,
+        world_id: str,
+        map_id: str,
+        sub_location_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[MemoryNode]:
+        """
+        获取最近的地点记忆
+
+        Args:
+            world_id: 世界ID
+            map_id: 地图ID
+            sub_location_id: 子地点ID（可选）
+            limit: 返回数量限制
+
+        Returns:
+            最近的记忆节点列表
+        """
+        nodes_ref, _ = self._get_location_graph_refs(
+            world_id, map_id, sub_location_id
+        )
+
+        # 按更新时间降序
+        query = nodes_ref.order_by(
+            "updated_at", direction=firestore.Query.DESCENDING
+        ).limit(limit)
+
+        nodes = []
+        for doc in query.stream():
+            data = doc.to_dict()
+            if not data:
+                continue
+            if "id" not in data:
+                data["id"] = doc.id
+            nodes.append(MemoryNode(**data))
+
+        return nodes
         doc.reference.delete()

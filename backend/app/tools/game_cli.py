@@ -19,13 +19,13 @@ from app.models.game import (
     CreateSessionRequest,
     UpdateSceneRequest,
 )
-from app.services.game_loop_service import GameLoopService
+from app.services.admin.admin_coordinator import AdminCoordinator
 
 
 async def _create_session(world_id: str, payload_path: Path) -> None:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     request = CreateSessionRequest(**payload)
-    service = GameLoopService()
+    service = AdminCoordinator.get_instance()
     response = await service.create_session(world_id, request)
     print(response.model_dump())
 
@@ -33,7 +33,7 @@ async def _create_session(world_id: str, payload_path: Path) -> None:
 async def _update_scene(world_id: str, session_id: str, payload_path: Path) -> None:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     request = UpdateSceneRequest(**payload)
-    service = GameLoopService()
+    service = AdminCoordinator.get_instance()
     response = await service.update_scene(world_id, session_id, request)
     print(response.model_dump())
 
@@ -41,7 +41,7 @@ async def _update_scene(world_id: str, session_id: str, payload_path: Path) -> N
 async def _start_combat(world_id: str, session_id: str, payload_path: Path) -> None:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     request = CombatStartRequest(**payload)
-    service = GameLoopService()
+    service = AdminCoordinator.get_instance()
     response = await service.start_combat(world_id, session_id, request)
     print(response.model_dump())
 
@@ -49,7 +49,7 @@ async def _start_combat(world_id: str, session_id: str, payload_path: Path) -> N
 async def _resolve_combat(world_id: str, session_id: str, payload_path: Path) -> None:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     request = CombatResolveRequest(**payload)
-    service = GameLoopService()
+    service = AdminCoordinator.get_instance()
     response = await service.resolve_combat(world_id, session_id, request)
     print(response.model_dump())
 

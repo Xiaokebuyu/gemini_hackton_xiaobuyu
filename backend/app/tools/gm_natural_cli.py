@@ -28,7 +28,7 @@ import sys
 from typing import Dict, List
 
 from app.models.event import NaturalEventIngestRequest
-from app.services.gm_flash_service import GMFlashService
+from app.services.admin.admin_coordinator import AdminCoordinator
 from app.services.graph_store import GraphStore
 
 
@@ -41,7 +41,7 @@ async def ingest_event(
     character_locations: Dict[str, str] = None,
 ):
     """摄入自然语言事件"""
-    gm_service = GMFlashService()
+    gm_service = AdminCoordinator.get_instance()
 
     print(f"\n{'='*60}")
     print(f"GM自然语言事件摄入测试")

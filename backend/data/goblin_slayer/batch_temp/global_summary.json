@@ -1,0 +1,299 @@
+{
+  "entities": [
+    {
+      "id": "character_priestess",
+      "type": "character",
+      "name": "女神官",
+      "aliases": [
+        "小神官",
+        "地母神信徒",
+        "神殿孤儿"
+      ],
+      "brief": "地母神的见习神官，哥布林杀手小队的核心成员，性格坚韧且富有同情心。"
+    },
+    {
+      "id": "character_goblin_slayer",
+      "type": "character",
+      "name": "哥布林杀手",
+      "aliases": [
+        "欧尔克博格",
+        "啮切丸",
+        "边境银级冒险者"
+      ],
+      "brief": "专门剿灭哥布林的银级冒险者，实用主义者，因童年创伤对哥布林有极深的执念。"
+    },
+    {
+      "id": "character_hero",
+      "type": "character",
+      "name": "勇者",
+      "aliases": [
+        "Hero",
+        "光之圣剑持有者"
+      ],
+      "brief": "白金等级冒险者，天真烂漫的救世主，拥有压倒性的力量和极高的幸运。"
+    },
+    {
+      "id": "character_sword_maiden",
+      "type": "character",
+      "name": "剑之圣女",
+      "aliases": [
+        "水之都大主教",
+        "至高神大主教",
+        "天枰剑持有者"
+      ],
+      "brief": "前金等级冒险者，现任水之都至高神殿大主教，曾参与讨伐魔神王。"
+    },
+    {
+      "id": "character_guild_girl",
+      "type": "character",
+      "name": "柜台小姐",
+      "aliases": [
+        "公会职员",
+        "前台小姐"
+      ],
+      "brief": "边境城镇冒险者公会的职员，专业能干，对哥布林杀手抱有特殊好感。"
+    },
+    {
+      "id": "character_cow_girl",
+      "type": "character",
+      "name": "牧牛妹",
+      "aliases": [
+        "牧场少女"
+      ],
+      "brief": "哥布林杀手的青梅竹马，在牧场工作，是哥布林杀手心灵的归宿。"
+    },
+    {
+      "id": "character_raiden_ei",
+      "type": "character",
+      "name": "雷电影",
+      "aliases": [
+        "雷电将军",
+        "当代武圣"
+      ],
+      "brief": "鸣神群岛的统治者，当代武圣，致力于维持群岛的和平与封印。"
+    },
+    {
+      "id": "character_pecorine",
+      "type": "character",
+      "name": "佩可莉姆",
+      "aliases": [
+        "贪吃剑士",
+        "尤丝蒂亚娜·冯·阿斯特莱亚"
+      ],
+      "brief": "兰德索尔王室的长公主，因玛娜篡位而流亡，极度热爱美食。"
+    },
+    {
+      "id": "character_mana",
+      "type": "character",
+      "name": "玛娜",
+      "aliases": [
+        "百变妖狐",
+        "尤斯蒂亚娜（伪装）"
+      ],
+      "brief": "兰德索尔的篡位者，擅长幻术与惑控魔法，囚禁了王室成员。"
+    },
+    {
+      "id": "location_frontier_town",
+      "type": "location",
+      "name": "边境小镇",
+      "aliases": [
+        "边境城镇",
+        "新手村"
+      ],
+      "brief": "王国西方边境的重要支点，冒险者公会所在地，冒险者云集。"
+    },
+    {
+      "id": "location_water_town",
+      "type": "location",
+      "name": "水之都",
+      "aliases": [
+        "至高神之都"
+      ],
+      "brief": "繁华的贸易与文化中心，建立在神代遗迹之上，由至高神殿主导。"
+    },
+    {
+      "id": "location_landosol",
+      "type": "location",
+      "name": "兰德索尔",
+      "aliases": [
+        "星形城塞都市"
+      ],
+      "brief": "位于南方的独立城邦王国，以索尔之塔为象征，行会制度发达。"
+    },
+    {
+      "id": "location_sol_tower",
+      "type": "location",
+      "name": "索尔之塔",
+      "aliases": [
+        "Sol Tower"
+      ],
+      "brief": "悬浮于兰德索尔上空的巨大高塔，充满魔物与宝藏的史诗级地下城。"
+    },
+    {
+      "id": "location_narukami_archipelago",
+      "type": "location",
+      "name": "鸣神群岛",
+      "aliases": [
+        "隔绝的国度"
+      ],
+      "brief": "位于东南方的与世隔绝群岛，拥有独特的武道与神道文化。"
+    },
+    {
+      "id": "faction_adventurers_guild",
+      "type": "faction",
+      "name": "冒险者公会",
+      "aliases": [
+        "Adventurer's Guild"
+      ],
+      "brief": "管理冒险者、发布委托的中立组织，维持社会基层稳定。"
+    },
+    {
+      "id": "faction_supreme_temple",
+      "type": "faction",
+      "name": "至高神殿",
+      "aliases": [
+        "律法神殿"
+      ],
+      "brief": "司掌法律与正义的宗教组织，在水之都拥有极高权威。"
+    },
+    {
+      "id": "deity_earth_mother",
+      "type": "deity",
+      "name": "地母神",
+      "aliases": [
+        "丰饶之母",
+        "慈悲女神"
+      ],
+      "brief": "掌管农业、丰收、治愈与生命的女神，教义倾向和平。"
+    },
+    {
+      "id": "deity_supreme_god",
+      "type": "deity",
+      "name": "至高神",
+      "aliases": [
+        "天平之主",
+        "法律女神"
+      ],
+      "brief": "掌管法律、正义与秩序的神祇，强调人类的自由意志。"
+    },
+    {
+      "id": "deity_slaanesh",
+      "type": "deity",
+      "name": "色孽",
+      "aliases": [
+        "黑暗王子",
+        "欢愉之神"
+      ],
+      "brief": "追求极致快感与刺激的邪神，擅长腐化凡人灵魂。"
+    },
+    {
+      "id": "race_human",
+      "type": "race",
+      "name": "人类",
+      "aliases": [
+        "凡人",
+        "只人"
+      ],
+      "brief": "分布最广、适应性最强的种族，是当前文明秩序的主体。"
+    },
+    {
+      "id": "race_goblin",
+      "type": "race",
+      "name": "哥布林",
+      "aliases": [
+        "小鬼",
+        "劣等魔物"
+      ],
+      "brief": "残忍狡猾的类人魔物，通过掠夺其他种族女性进行繁殖。"
+    },
+    {
+      "id": "monster_troll",
+      "type": "monster",
+      "name": "巨魔",
+      "aliases": [
+        "Troll"
+      ],
+      "brief": "拥有恐怖力量和再生能力的巨人族魔物，常奴役哥布林。"
+    },
+    {
+      "id": "item_holy_sword_of_light",
+      "type": "item",
+      "name": "光之圣剑",
+      "aliases": [
+        "圣剑"
+      ],
+      "brief": "传说中的武器，由勇者持有，拥有斩断空间与魔神的力量。"
+    },
+    {
+      "id": "concept_gods_game",
+      "type": "concept",
+      "name": "诸神游戏",
+      "aliases": [
+        "宿命与偶然之骰"
+      ],
+      "brief": "世界的底层法则，诸神通过投掷骰子决定凡人的命运与世界走向。"
+    }
+  ],
+  "key_relations": [
+    {
+      "source": "character_priestess",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_priestess",
+      "target": "deity_earth_mother",
+      "relation": "worships"
+    },
+    {
+      "source": "character_goblin_slayer",
+      "target": "location_frontier_town",
+      "relation": "located_at"
+    },
+    {
+      "source": "character_guild_girl",
+      "target": "faction_adventurers_guild",
+      "relation": "member_of"
+    },
+    {
+      "source": "character_sword_maiden",
+      "target": "location_water_town",
+      "relation": "rules"
+    },
+    {
+      "source": "character_sword_maiden",
+      "target": "deity_supreme_god",
+      "relation": "worships"
+    },
+    {
+      "source": "character_raiden_ei",
+      "target": "location_narukami_archipelago",
+      "relation": "rules"
+    },
+    {
+      "source": "character_pecorine",
+      "target": "character_mana",
+      "relation": "enemy_of"
+    },
+    {
+      "source": "character_mana",
+      "target": "location_landosol",
+      "relation": "rules"
+    },
+    {
+      "source": "character_hero",
+      "target": "item_holy_sword_of_light",
+      "relation": "ally_of"
+    },
+    {
+      "source": "character_cow_girl",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "race_goblin",
+      "target": "race_human",
+      "relation": "enemy_of"
+    }
+  ]
+}

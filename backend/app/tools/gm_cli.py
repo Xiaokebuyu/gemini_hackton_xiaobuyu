@@ -11,13 +11,13 @@ import json
 from pathlib import Path
 
 from app.models.event import GMEventIngestRequest
-from app.services.gm_flash_service import GMFlashService
+from app.services.admin.admin_coordinator import AdminCoordinator
 
 
 async def _ingest(world_id: str, payload_path: Path) -> None:
     payload = json.loads(payload_path.read_text(encoding="utf-8"))
     request = GMEventIngestRequest(**payload)
-    service = GMFlashService()
+    service = AdminCoordinator.get_instance()
     response = await service.ingest_event(world_id, request)
     print(response.model_dump())
 

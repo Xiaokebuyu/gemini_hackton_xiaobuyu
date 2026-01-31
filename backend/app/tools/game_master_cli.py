@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.models.game import SceneState
 from app.models.pro import CharacterProfile
-from app.services.game_master_service import GameMasterService, GamePhase
+from app.services.admin.admin_coordinator import AdminCoordinator
 
 
 # ANSI 颜色代码
@@ -93,7 +93,7 @@ class GameMasterCLI:
     """交互式游戏CLI"""
 
     def __init__(self) -> None:
-        self.gm_service = GameMasterService()
+        self.gm_service = AdminCoordinator.get_instance()
         self.world_id: Optional[str] = None
         self.session_id: Optional[str] = None
         self.running = True
@@ -229,7 +229,10 @@ class GameMasterCLI:
 
         self.session_id = context.session_id
         print(f"  会话ID: {self.session_id}")
-        print(f"  游戏日: 第 {context.game_day} 天")
+        game_day = getattr(context, "game_day", None)
+        if game_day is None and getattr(context, "game_time", None):
+            game_day = context.game_time.day
+        print(f"  游戏日: 第 {game_day or 1} 天")
         print(colorize("\n✓ 游戏会话已创建！", Colors.GREEN))
 
     async def enter_scene(self, scene_id: str) -> None:
@@ -289,6 +292,13 @@ class GameMasterCLI:
             print_error(response)
         else:
             print(response)
+
+        # 追加聊天室回应
+        for extra in result.get("responses", []) or []:
+            extra_speaker = extra.get("speaker", "NPC")
+            extra_text = extra.get("response", "")
+            if extra_text:
+                print_npc(extra_speaker, extra_text)
 
     async def talk_to(self, npc_id: str) -> None:
         """开始与NPC对话"""
@@ -456,7 +466,7 @@ class GameMasterCLI:
                     if context:
                         if context.current_npc:
                             prompt = colorize(f"[与{context.current_npc}对话] > ", Colors.BLUE + Colors.BOLD)
-                        elif context.phase == GamePhase.COMBAT:
+                        elif getattr(context.phase, "value", context.phase) == "combat":
                             prompt = colorize("[战斗中] > ", Colors.RED + Colors.BOLD)
 
                 user_input = input(prompt).strip()
