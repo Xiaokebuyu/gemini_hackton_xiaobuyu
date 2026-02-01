@@ -1,0 +1,149 @@
+{
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "confirm": "确认",
+    "cancel": "取消",
+    "save": "保存",
+    "close": "关闭",
+    "back": "返回",
+    "next": "下一步",
+    "submit": "提交",
+    "reset": "重置"
+  },
+  "navigation": {
+    "go": "前往",
+    "enter": "进入",
+    "leave": "离开",
+    "look": "查看",
+    "destinations": "可前往",
+    "subLocations": "子地点",
+    "currentLocation": "当前位置",
+    "dangerLevel": {
+      "label": "危险等级",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "extreme": "致命"
+    }
+  },
+  "narrative": {
+    "welcome": "你的冒险即将开始",
+    "welcomeHint": "在下方输入框输入你的行动，或使用快捷操作开始你的旅程。",
+    "gmThinking": "地下城主正在思考..."
+  },
+  "party": {
+    "title": "队伍",
+    "addMember": "添加队友",
+    "removeMember": "移除",
+    "empty": "队伍中没有成员",
+    "inactive": "离队中",
+    "talkTo": "与{{name}}交谈",
+    "chattiness": "健谈度",
+    "role": {
+      "warrior": "战士",
+      "healer": "治疗师",
+      "mage": "法师",
+      "rogue": "盗贼",
+      "support": "辅助",
+      "scout": "斥候",
+      "scholar": "学者"
+    },
+    "mood": {
+      "happy": "开心",
+      "neutral": "平静",
+      "angry": "愤怒",
+      "sad": "悲伤",
+      "worried": "担忧",
+      "excited": "兴奋",
+      "tired": "疲惫",
+      "focused": "专注"
+    }
+  },
+  "time": {
+    "day": "第{{day}}天",
+    "period": {
+      "dawn": "黎明",
+      "day": "白天",
+      "dusk": "黄昏",
+      "night": "夜晚"
+    }
+  },
+  "chat": {
+    "placeholder": {
+      "think": "你在想什么...",
+      "say": "你想说什么或做什么..."
+    },
+    "modeThink": "思考",
+    "modeSay": "说话",
+    "modeHint": {
+      "think": "内心独白",
+      "say": "出声说话"
+    },
+    "send": "发送",
+    "sendHint": "按 Enter 发送，Shift+Enter 换行"
+  },
+  "actions": {
+    "title": "可用操作",
+    "quick": "快捷",
+    "look": "观察周围",
+    "wait": "等待",
+    "search": "搜索",
+    "help": "帮助",
+    "attack": "攻击",
+    "defend": "防御",
+    "flee": "逃跑",
+    "talk": "交谈",
+    "use": "使用",
+    "examine": "检查",
+    "category": {
+      "movement": "移动",
+      "interaction": "交互",
+      "observation": "观察",
+      "combat": "战斗",
+      "party": "队伍",
+      "inventory": "物品",
+      "system": "系统"
+    }
+  },
+  "combat": {
+    "title": "战斗",
+    "attack": "攻击",
+    "defense": "防御",
+    "movement": "移动",
+    "other": "其他",
+    "defend": "防御",
+    "flee": "逃跑",
+    "skill": "技能",
+    "item": "物品",
+    "requires": "需要",
+    "yourTurn": "你的回合",
+    "enemyTurn": "敌人回合",
+    "victory": "胜利",
+    "defeat": "失败",
+    "turnOrder": "行动顺序",
+    "distance": "距离",
+    "log": "战斗日志"
+  },
+  "status": {
+    "hp": "生命值",
+    "mp": "魔法值",
+    "ac": "护甲",
+    "level": "等级",
+    "exp": "经验",
+    "gold": "金币",
+    "inventory": "背包"
+  },
+  "speaker": {
+    "gm": "地下城主",
+    "player": "你",
+    "system": "系统"
+  },
+  "ui": {
+    "leftPanel": "导航",
+    "rightPanel": "状态",
+    "minimap": "小地图",
+    "settings": "设置",
+    "language": "语言"
+  }
+}

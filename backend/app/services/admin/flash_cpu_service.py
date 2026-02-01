@@ -515,16 +515,13 @@ class FlashCPUService:
         return None
 
     async def _call_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], fallback):
-        try:
-            result = await self._call_mcp_tool(tool_name, arguments)
-            if isinstance(result, dict) and result.get("error"):
-                raise RuntimeError(result.get("error"))
-            return result
-        except Exception:
-            result = fallback()
-            if hasattr(result, "__await__"):
-                return await result
-            return result
+        """直接调用 fallback，跳过 MCP 子进程（MCP 工具和 fallback 做的是同样的事情）"""
+        # MCP 客户端库有 bug，且 MCP 工具本质上只是调用同样的方法
+        # 所以直接使用 fallback 更优雅、更快
+        result = fallback()
+        if hasattr(result, "__await__"):
+            return await result
+        return result
 
     async def _call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]):
         command = getattr(settings, "mcp_tools_command", "python")

@@ -1,0 +1,164 @@
+/* Fantasy Theme CSS Variables */
+:root {
+  /* 主色调 - 深色奇幻风格 */
+  --color-bg-primary: #1a1a2e;
+  --color-bg-secondary: #16213e;
+  --color-bg-panel: #0f3460;
+  --color-bg-card: #1f4068;
+
+  /* 强调色 */
+  --color-accent-gold: #ffd700;
+  --color-accent-cyan: #00d9ff;
+  --color-accent-green: #7fff00;
+  --color-accent-purple: #9966ff;
+  --color-accent-red: #ff4757;
+
+  /* 文字颜色 */
+  --color-text-primary: #e8e8e8;
+  --color-text-secondary: #a0a0a0;
+  --color-text-muted: #6b6b6b;
+
+  /* 边框 */
+  --color-border-primary: rgba(255, 215, 0, 0.3);
+  --color-border-secondary: rgba(255, 255, 255, 0.1);
+
+  /* 队友职业色 */
+  --color-role-warrior: #ff6b6b;
+  --color-role-healer: #4ecdc4;
+  --color-role-mage: #a29bfe;
+  --color-role-rogue: #778beb;
+  --color-role-support: #ffeaa7;
+  --color-role-scout: #55a3ff;
+  --color-role-scholar: #dfe6e9;
+
+  /* 危险等级 */
+  --color-danger-low: #7bed9f;
+  --color-danger-medium: #ffa502;
+  --color-danger-high: #ff6348;
+  --color-danger-extreme: #ff4757;
+
+  /* 时间段 */
+  --color-time-dawn: #ffeaa7;
+  --color-time-day: #74b9ff;
+  --color-time-dusk: #fd79a8;
+  --color-time-night: #6c5ce7;
+
+  /* 消息类型 */
+  --color-msg-gm: var(--color-accent-gold);
+  --color-msg-npc: var(--color-accent-cyan);
+  --color-msg-player: var(--color-accent-green);
+  --color-msg-teammate: #90ee90;
+  --color-msg-system: #888888;
+  --color-msg-combat: var(--color-accent-red);
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* 阴影 */
+  --shadow-panel: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.3);
+  --shadow-glow-gold: 0 0 10px rgba(255, 215, 0, 0.5);
+  --shadow-glow-cyan: 0 0 10px rgba(0, 217, 255, 0.5);
+  --shadow-glow-red: 0 0 10px rgba(255, 71, 87, 0.5);
+
+  /* 字体 */
+  --font-fantasy: 'Cinzel', Georgia, serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* 过渡 */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+  --transition-slow: 400ms ease;
+}
+
+/* 奇幻边框样式 */
+.fantasy-border {
+  border: 2px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, var(--color-bg-panel) 0%, var(--color-bg-secondary) 100%);
+  box-shadow:
+    var(--shadow-panel),
+    inset 0 0 30px rgba(0, 0, 0, 0.3);
+}
+
+.fantasy-border-gold {
+  border-color: var(--color-accent-gold);
+  box-shadow:
+    var(--shadow-panel),
+    var(--shadow-glow-gold);
+}
+
+.fantasy-border-cyan {
+  border-color: var(--color-accent-cyan);
+  box-shadow:
+    var(--shadow-panel),
+    var(--shadow-glow-cyan);
+}
+
+/* 角落装饰 */
+.corner-decoration {
+  position: relative;
+}
+
+.corner-decoration::before,
+.corner-decoration::after {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-accent-gold);
+}
+
+.corner-decoration::before {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.corner-decoration::after {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+}
+
+/* 发光文字 */
+.text-glow-gold {
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+}
+
+.text-glow-cyan {
+  text-shadow: 0 0 10px rgba(0, 217, 255, 0.5);
+}
+
+/* 滚动条样式 */
+.fantasy-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.fantasy-scrollbar::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+  border-radius: 4px;
+}
+
+.fantasy-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--color-accent-gold) 0%, #b8860b 100%);
+  border-radius: 4px;
+}
+
+.fantasy-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #ffed4a 0%, var(--color-accent-gold) 100%);
+}

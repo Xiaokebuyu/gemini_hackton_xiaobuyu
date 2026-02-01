@@ -37,8 +37,11 @@ class GameState(BaseModel):
     player_location: Optional[str] = None
     sub_location: Optional[str] = None
     game_time: GameTimeState = Field(default_factory=GameTimeState)
-    chat_mode: Literal["think", "say"] = "think"
+    chat_mode: Literal["think", "say"] = "say"  # 默认 SAY 模式（广播）
     active_dialogue_npc: Optional[str] = None
     combat_id: Optional[str] = None
     narrative_progress: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    # 队伍相关
+    party_id: Optional[str] = None

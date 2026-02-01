@@ -27,6 +27,7 @@ from app.models.game import (
     TriggerCombatRequest,
     TriggerCombatResponse,
 )
+from app.models.admin_protocol import CoordinatorResponse
 from app.services.admin.admin_coordinator import AdminCoordinator
 
 
@@ -198,6 +199,31 @@ async def process_input(
             ],
             state_changes=result.get("state_changes", {}),
             responses=result.get("responses", []),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/{world_id}/sessions/{session_id}/input_v2")
+async def process_input_v2(
+    world_id: str,
+    session_id: str,
+    payload: PlayerInputRequest,
+) -> CoordinatorResponse:
+    """
+    处理玩家输入 (Pro-First v2 架构)
+
+    返回完整的 CoordinatorResponse，包含：
+    - narration: GM 叙述
+    - teammate_responses: 队友响应列表
+    - available_actions: 可用操作
+    - state_delta: 状态变更
+    """
+    try:
+        return await gm_service.process_player_input_v2(
+            world_id=world_id,
+            session_id=session_id,
+            player_input=payload.input,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

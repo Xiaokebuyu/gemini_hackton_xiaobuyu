@@ -1,0 +1,339 @@
+/* Sketch/Hand-drawn Theme CSS Variables */
+:root {
+  /* Sketch Palette - Parchment/Paper texture */
+  --sketch-bg-primary: #f5f0e1;      /* Main parchment background */
+  --sketch-bg-secondary: #ebe5d5;    /* Slightly darker paper */
+  --sketch-bg-panel: #faf7ed;        /* Panel background */
+  --sketch-bg-input: #fffdf5;        /* Input field background */
+
+  /* Ink colors */
+  --sketch-ink-primary: #2c2416;     /* Deep brown ink */
+  --sketch-ink-secondary: #5c4d3a;   /* Light brown ink */
+  --sketch-ink-muted: #8b7d6b;       /* Faded ink */
+  --sketch-ink-faint: #b5a898;       /* Very faint ink */
+
+  /* Accent colors - Watercolor style */
+  --sketch-accent-red: #c75146;      /* Ochre red */
+  --sketch-accent-blue: #4a6fa5;     /* Indigo blue */
+  --sketch-accent-green: #5b8a5f;    /* Grass green */
+  --sketch-accent-gold: #c9a227;     /* Golden yellow */
+  --sketch-accent-purple: #7b6b8a;   /* Muted purple */
+  --sketch-accent-cyan: #5a9aa8;     /* Teal */
+
+  /* Message type colors - Softer tones for sketch style */
+  --sketch-msg-gm: #d4a843;          /* GM - warm gold */
+  --sketch-msg-npc: #5a9aa8;         /* NPC - teal */
+  --sketch-msg-player: #5b8a5f;      /* Player - green */
+  --sketch-msg-teammate: #7a9f7d;    /* Teammate - lighter green */
+  --sketch-msg-system: #8b7d6b;      /* System - muted */
+  --sketch-msg-combat: #c75146;      /* Combat - red */
+
+  /* Message bubble backgrounds */
+  --sketch-bubble-gm: #fff9e6;       /* Warm cream for GM */
+  --sketch-bubble-npc: #e8f0f8;      /* Light blue for NPC */
+  --sketch-bubble-player: #e8f5e9;   /* Light green for player */
+  --sketch-bubble-teammate: #f0f8e8; /* Lighter green for teammate */
+  --sketch-bubble-system: #f5f5f5;   /* Gray for system */
+  --sketch-bubble-combat: #fde8e6;   /* Light red for combat */
+
+  /* Danger levels - Softer versions */
+  --sketch-danger-low: #7eb87e;
+  --sketch-danger-medium: #d4a843;
+  --sketch-danger-high: #c75146;
+  --sketch-danger-extreme: #a03a3a;
+
+  /* Time periods */
+  --sketch-time-dawn: #e8c87a;
+  --sketch-time-day: #7aa8c9;
+  --sketch-time-dusk: #c98a8a;
+  --sketch-time-night: #6b5b8a;
+
+  /* Hand-drawn border */
+  --sketch-border-width: 2px;
+  --sketch-border-color: var(--sketch-ink-secondary);
+  --sketch-border-light: var(--sketch-ink-muted);
+
+  /* Handwritten fonts */
+  --font-handwritten: 'Caveat', 'Ma Shan Zheng', cursive;
+  --font-sketch-title: 'Shadows Into Light', 'Ma Shan Zheng', cursive;
+  --font-sketch-body: 'Patrick Hand', 'Ma Shan Zheng', cursive;
+
+  /* Sketch-specific spacing */
+  --sketch-spacing-sm: 8px;
+  --sketch-spacing-md: 16px;
+  --sketch-spacing-lg: 24px;
+
+  /* Sketch shadows - Softer, paper-like */
+  --sketch-shadow-sm: 2px 2px 4px rgba(44, 36, 22, 0.1);
+  --sketch-shadow-md: 3px 3px 8px rgba(44, 36, 22, 0.15);
+  --sketch-shadow-lg: 4px 4px 12px rgba(44, 36, 22, 0.2);
+}
+
+/* Sketch mode overrides for existing variables */
+.sketch-theme {
+  --color-bg-primary: var(--sketch-bg-primary);
+  --color-bg-secondary: var(--sketch-bg-secondary);
+  --color-bg-panel: var(--sketch-bg-panel);
+  --color-bg-card: var(--sketch-bg-panel);
+
+  --color-text-primary: var(--sketch-ink-primary);
+  --color-text-secondary: var(--sketch-ink-secondary);
+  --color-text-muted: var(--sketch-ink-muted);
+
+  --color-accent-gold: var(--sketch-accent-gold);
+  --color-accent-cyan: var(--sketch-accent-cyan);
+  --color-accent-green: var(--sketch-accent-green);
+  --color-accent-red: var(--sketch-accent-red);
+  --color-accent-purple: var(--sketch-accent-purple);
+
+  --color-border-primary: var(--sketch-ink-muted);
+  --color-border-secondary: var(--sketch-ink-faint);
+
+  --color-msg-gm: var(--sketch-msg-gm);
+  --color-msg-npc: var(--sketch-msg-npc);
+  --color-msg-player: var(--sketch-msg-player);
+  --color-msg-teammate: var(--sketch-msg-teammate);
+  --color-msg-system: var(--sketch-msg-system);
+  --color-msg-combat: var(--sketch-msg-combat);
+
+  --shadow-panel: var(--sketch-shadow-md);
+  --shadow-card: var(--sketch-shadow-sm);
+}
+
+/* Sketch border utility class */
+.sketch-border {
+  border: 2px solid var(--sketch-border-color);
+  border-radius: 3px;
+  /* Slightly irregular corners */
+  clip-path: polygon(
+    0% 2%, 2% 0%,
+    98% 0%, 100% 2%,
+    100% 98%, 98% 100%,
+    2% 100%, 0% 98%
+  );
+}
+
+/* Sketch border with hand-drawn feel using box-shadow */
+.sketch-border-rough {
+  border: 2px solid var(--sketch-border-color);
+  border-radius: 2px;
+  box-shadow:
+    1px 1px 0 var(--sketch-border-light),
+    -1px -1px 0 var(--sketch-border-light);
+}
+
+/* Sketch panel background */
+.sketch-panel {
+  background: var(--sketch-bg-panel);
+  border: 2px solid var(--sketch-border-color);
+  border-radius: 4px;
+  box-shadow: var(--sketch-shadow-sm);
+  position: relative;
+}
+
+/* Paper texture overlay (optional) */
+.sketch-paper-texture {
+  position: relative;
+}
+
+.sketch-paper-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
+/* Sketch button style */
+.sketch-button {
+  font-family: var(--font-handwritten);
+  font-size: 1.1em;
+  padding: 0.5em 1em;
+  background: var(--sketch-bg-panel);
+  border: 2px solid var(--sketch-border-color);
+  color: var(--sketch-ink-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  /* Irregular shape */
+  clip-path: polygon(2% 0%, 98% 2%, 100% 98%, 3% 100%);
+}
+
+.sketch-button:hover {
+  background: var(--sketch-bg-secondary);
+  transform: translateY(-1px) rotate(0.5deg);
+}
+
+.sketch-button:active {
+  transform: translateY(0) rotate(0deg);
+}
+
+.sketch-button-primary {
+  background: var(--sketch-accent-gold);
+  color: var(--sketch-ink-primary);
+}
+
+.sketch-button-primary:hover {
+  background: #d4ad2e;
+}
+
+/* Sketch input style */
+.sketch-input {
+  font-family: var(--font-handwritten);
+  font-size: 1.1em;
+  padding: 0.75em 1em;
+  background: var(--sketch-bg-input);
+  border: 2px solid var(--sketch-border-color);
+  color: var(--sketch-ink-primary);
+  border-radius: 3px;
+  transition: border-color 0.2s ease;
+}
+
+.sketch-input:focus {
+  outline: none;
+  border-color: var(--sketch-accent-gold);
+}
+
+.sketch-input::placeholder {
+  color: var(--sketch-ink-faint);
+  font-style: italic;
+}
+
+/* Sketch message bubble */
+.sketch-bubble {
+  position: relative;
+  padding: 1em;
+  margin-bottom: 0.75em;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  /* Slight rotation for hand-drawn feel */
+  transform: rotate(-0.3deg);
+}
+
+.sketch-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  right: 8px;
+  font-size: 0.75em;
+  opacity: 0.3;
+}
+
+/* Sketch decorations */
+.sketch-doodle::before {
+  content: '';
+  position: absolute;
+  opacity: 0.2;
+}
+
+/* Sketch scrollbar */
+.sketch-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.sketch-scrollbar::-webkit-scrollbar-track {
+  background: var(--sketch-bg-secondary);
+}
+
+.sketch-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--sketch-ink-muted);
+  border-radius: 2px;
+  border: 1px solid var(--sketch-bg-secondary);
+}
+
+.sketch-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--sketch-ink-secondary);
+}
+
+/* Sketch heading styles */
+.sketch-heading {
+  font-family: var(--font-sketch-title);
+  color: var(--sketch-ink-primary);
+  position: relative;
+  display: inline-block;
+}
+
+.sketch-heading::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.3;
+  /* Wavy underline effect */
+  clip-path: polygon(
+    0% 50%, 5% 0%, 10% 50%, 15% 100%, 20% 50%,
+    25% 0%, 30% 50%, 35% 100%, 40% 50%, 45% 0%,
+    50% 50%, 55% 100%, 60% 50%, 65% 0%, 70% 50%,
+    75% 100%, 80% 50%, 85% 0%, 90% 50%, 95% 100%, 100% 50%
+  );
+}
+
+/* Sketch card style */
+.sketch-card {
+  background: var(--sketch-bg-panel);
+  border: 2px solid var(--sketch-border-color);
+  padding: 1em;
+  position: relative;
+  box-shadow: var(--sketch-shadow-sm);
+}
+
+/* Corner decorations for sketch cards */
+.sketch-card-decorated::before,
+.sketch-card-decorated::after {
+  content: '';
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--sketch-accent-gold);
+}
+
+.sketch-card-decorated::before {
+  top: -4px;
+  left: -4px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.sketch-card-decorated::after {
+  bottom: -4px;
+  right: -4px;
+  border-left: none;
+  border-top: none;
+}
+
+/* Sketch badge */
+.sketch-badge {
+  font-family: var(--font-handwritten);
+  font-size: 0.85em;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: transparent;
+}
+
+/* Toast styles for sketch theme */
+.sketch-theme .toast-success {
+  background: var(--sketch-accent-green);
+  color: white;
+}
+
+.sketch-theme .toast-error {
+  background: var(--sketch-accent-red);
+  color: white;
+}
+
+.sketch-theme .toast-warning {
+  background: var(--sketch-accent-gold);
+  color: var(--sketch-ink-primary);
+}
+
+.sketch-theme .toast-info {
+  background: var(--sketch-accent-blue);
+  color: white;
+}

@@ -34,28 +34,55 @@ pytest tests/test_spreading_activation.py -v
 PYTHONPATH=backend pytest tests/test_integration.py -v -s
 ```
 
+### 交互式开发 CLI
+
+```bash
+# 主游戏循环测试（推荐）
+python play_cli.py [world_id]
+python play_cli.py goblin_slayer
+
+# 完整游戏管理工具
+python -m app.tools.game_master_cli
+python -m app.tools.game_master_cli --setup-demo
+
+# 其他测试 CLI
+python -m app.tools.game_cli           # 游戏循环测试
+python -m app.tools.flash_natural_cli  # Flash 服务测试
+python -m app.tools.pro_chat_cli       # Pro 服务测试
+```
+
 ## 架构
 
 ### 核心系统
 
-1. **MCP 记忆网关** (`app/mcp/`)
-   - `memory_gateway.py`: 主编排器，提供 `session_snapshot`、`memory_request`、`memory_commit` 工具
-   - `message_stream.py`: 滑动窗口管理（默认 120k tokens）
-   - `truncate_archiver.py`: 归档旧消息，生成带 embedding 的见解
+1. **游戏编排器** (`app/services/admin/`)
+   - `admin_coordinator.py`: 主编排器，协调所有子系统
+   - `world_runtime.py`: 世界状态运行时
+   - `flash_cpu_service.py`: 快速路由和解析
+   - `pro_dm_service.py`: 主角色 AI 服务
+
+2. **多层 NPC AI 系统**
+   - **Passerby Service**: 轻量 NPC 交互（gemini-3-flash-preview）
+   - **Pro Service**: 主角色 AI，扩展上下文（gemini-3-pro-preview）
+   - **GM Service**: 世界叙事和事件生成
+   - 上下文缓存和实例池化提升性能
+
+3. **MCP 记忆网关** (`app/mcp/`)
+   - `game_tools_server.py`: 游戏 MCP 服务器
    - 热记忆（会话）-> 温记忆（归档话题）-> 冷记忆（向量索引，占位）
 
-2. **知识图谱** (`app/services/memory_graph.py`, `spreading_activation.py`)
+4. **知识图谱** (`app/services/memory_graph.py`, `spreading_activation.py`)
    - 记忆节点（人物、地点、事件、概念）
    - 扩散激活算法查找相关概念
    - 两个作用域：世界级和角色级图谱
 
-3. **战斗系统** (`app/combat/`)
+5. **战斗系统** (`app/combat/`)
    - D&D 风格机制，d20 判定
    - `combat_engine.py`: 核心战斗逻辑
    - `ai_opponent.py`: 基于性格的敌人 AI
    - 通过 `combat_mcp_server.py` 暴露 MCP 接口
 
-4. **游戏循环** (`app/services/game_loop_service.py`, `app/routers/game.py`)
+6. **游戏循环** (`app/routers/game.py`, `app/routers/game_master.py`)
    - 会话和场景状态管理
    - 带可见性规则的事件派发
 
@@ -78,6 +105,12 @@ PYTHONPATH=backend pytest tests/test_integration.py -v -s
 ### Firestore 结构
 
 ```
+worlds/{world_id}/
+  graphs/{graph_type}/nodes/{node_id}/, edges/{edge_id}/
+  characters/{character_id}/nodes/, edges/, instances/
+  maps/{map_id}/locations/{location_id}/, graphs/
+  sessions/{session_id}/state/, events/
+
 users/{user_id}/
   sessions/{session_id}/
     messages/{message_id}/
@@ -93,10 +126,13 @@ users/{user_id}/
 - `FIRESTORE_DATABASE`: 数据库名称（默认: "(default)"）
 - `MEMORY_WINDOW_TOKENS`: 窗口大小（默认: 120000）
 - `MEMORY_INSERT_BUDGET_TOKENS`: 插入预算（默认: 20000）
+- `INSTANCE_POOL_MAX_INSTANCES`: NPC 实例池上限（默认: 20）
+- `THINKING_ENABLED`: 启用扩展思考（默认: true）
+- `THINKING_LEVEL`: 思考级别 lowest/low/medium/high（默认: medium）
 
 Gemini 模型配置在 `app/config.py`：
-- `gemini-2.5-flash-lite`: 路由和解析
-- `gemini-3-flash-preview`: 带思考的主生成模型
+- `gemini-3-flash-preview`: Flash 服务（快速路由、NPC 交互）
+- `gemini-3-pro-preview`: Pro 服务（主角色 AI、深度对话）
 
 ## 代码规范
 

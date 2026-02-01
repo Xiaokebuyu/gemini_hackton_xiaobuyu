@@ -1,0 +1,149 @@
+{
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "save": "Save",
+    "close": "Close",
+    "back": "Back",
+    "next": "Next",
+    "submit": "Submit",
+    "reset": "Reset"
+  },
+  "navigation": {
+    "go": "Go to",
+    "enter": "Enter",
+    "leave": "Leave",
+    "look": "Look",
+    "destinations": "Destinations",
+    "subLocations": "Sub-locations",
+    "currentLocation": "Current Location",
+    "dangerLevel": {
+      "label": "Danger Level",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "extreme": "Extreme"
+    }
+  },
+  "narrative": {
+    "welcome": "Your Adventure Awaits",
+    "welcomeHint": "Type your action in the input box below or use the quick actions to begin your journey.",
+    "gmThinking": "The GM is thinking..."
+  },
+  "party": {
+    "title": "Party",
+    "addMember": "Add Member",
+    "removeMember": "Remove",
+    "empty": "No members in party",
+    "inactive": "Inactive",
+    "talkTo": "Talk to {{name}}",
+    "chattiness": "Chattiness",
+    "role": {
+      "warrior": "Warrior",
+      "healer": "Healer",
+      "mage": "Mage",
+      "rogue": "Rogue",
+      "support": "Support",
+      "scout": "Scout",
+      "scholar": "Scholar"
+    },
+    "mood": {
+      "happy": "Happy",
+      "neutral": "Neutral",
+      "angry": "Angry",
+      "sad": "Sad",
+      "worried": "Worried",
+      "excited": "Excited",
+      "tired": "Tired",
+      "focused": "Focused"
+    }
+  },
+  "time": {
+    "day": "Day {{day}}",
+    "period": {
+      "dawn": "Dawn",
+      "day": "Day",
+      "dusk": "Dusk",
+      "night": "Night"
+    }
+  },
+  "chat": {
+    "placeholder": {
+      "think": "What are you thinking...",
+      "say": "What do you say or do..."
+    },
+    "modeThink": "Think",
+    "modeSay": "Say",
+    "modeHint": {
+      "think": "Internal thoughts",
+      "say": "Out loud"
+    },
+    "send": "Send",
+    "sendHint": "Press Enter to send, Shift+Enter for new line"
+  },
+  "actions": {
+    "title": "Available Actions",
+    "quick": "Quick",
+    "look": "Look around",
+    "wait": "Wait",
+    "search": "Search",
+    "help": "Help",
+    "attack": "Attack",
+    "defend": "Defend",
+    "flee": "Flee",
+    "talk": "Talk",
+    "use": "Use",
+    "examine": "Examine",
+    "category": {
+      "movement": "Movement",
+      "interaction": "Interaction",
+      "observation": "Observation",
+      "combat": "Combat",
+      "party": "Party",
+      "inventory": "Inventory",
+      "system": "System"
+    }
+  },
+  "combat": {
+    "title": "Combat",
+    "attack": "Attack",
+    "defense": "Defense",
+    "movement": "Movement",
+    "other": "Other",
+    "defend": "Defend",
+    "flee": "Flee",
+    "skill": "Skill",
+    "item": "Item",
+    "requires": "Requires",
+    "yourTurn": "Your Turn",
+    "enemyTurn": "Enemy Turn",
+    "victory": "Victory",
+    "defeat": "Defeat",
+    "turnOrder": "Turn Order",
+    "distance": "Distance",
+    "log": "Combat Log"
+  },
+  "status": {
+    "hp": "HP",
+    "mp": "MP",
+    "ac": "AC",
+    "level": "Level",
+    "exp": "EXP",
+    "gold": "Gold",
+    "inventory": "Inventory"
+  },
+  "speaker": {
+    "gm": "Dungeon Master",
+    "player": "You",
+    "system": "System"
+  },
+  "ui": {
+    "leftPanel": "Navigation",
+    "rightPanel": "Status",
+    "minimap": "Minimap",
+    "settings": "Settings",
+    "language": "Language"
+  }
+}

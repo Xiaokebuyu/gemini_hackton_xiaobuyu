@@ -60,6 +60,7 @@ COLORS = {
     "hint": "dim",
     "debug": "dim cyan",
     "combat": "bold red",
+    "teammate": "bright_green",  # 队友消息
 }
 
 
@@ -80,8 +81,10 @@ class GameState:
     in_dialogue: bool = False
     in_combat: bool = False
     combat_id: Optional[str] = None
-    chat_mode: str = "think"
     available_actions: List[Dict] = field(default_factory=list)
+    # 队伍相关
+    party_id: Optional[str] = None
+    teammates: List[Dict] = field(default_factory=list)
 
 
 # ==================== 显示渲染 ====================
@@ -118,9 +121,12 @@ class GameRenderer:
 [bold]交互命令:[/bold]
   talk <NPC>      与NPC对话（如: talk 公会职员）
   bye/end         结束当前对话
-  /think          切换到脑内说话模式
-  /say            切换到脑外说话（广播）
-  /mode           查看当前说话模式
+
+[bold]队伍命令:[/bold]
+  party           查看队伍状态
+  party add <ID> <名字> [职责] [性格]  添加队友
+  party remove <ID>                    移除队友
+  teammates       显示队友详情
 
 [bold]时间命令:[/bold]
   time            查看游戏时间
@@ -133,6 +139,7 @@ class GameRenderer:
 [bold]信息命令:[/bold]
   status          查看游戏状态
   progress        查看主线进度
+  actions         查看当前可用操作
 
 [bold]调试命令:[/bold]
   debug           显示完整游戏状态JSON
@@ -146,7 +153,7 @@ class GameRenderer:
   clear           清屏
   quit/exit       退出游戏
 
-[dim]提示: 也可以直接输入自然语言，AI会理解你的意图[/dim]
+[dim]提示: 所有发言默认广播模式，队友会听到并可能回应[/dim]
 """
         self.console.print(Panel(help_text, title="帮助", border_style="green"))
 
@@ -257,6 +264,36 @@ class GameRenderer:
             title=f"[bold cyan]{speaker}[/bold cyan]",
             subtitle=f"[{COLORS['debug']}]{footer}[/]" if footer else None,
             border_style=COLORS["npc"],
+        ))
+
+    def print_teammate_message(
+        self,
+        message: str,
+        speaker: str,
+        reaction: str = "",
+        debug_info: Optional[Dict] = None,
+    ):
+        """打印队友消息（绿色边框，区别于普通NPC）"""
+        content = message
+        if reaction:
+            content = f"{message}\n[dim]({reaction})[/dim]"
+
+        footer = ""
+        if self.debug_mode and debug_info:
+            parts = []
+            if debug_info.get("model_used"):
+                parts.append(f"model: {debug_info['model_used']}")
+            if debug_info.get("thinking_level"):
+                parts.append(f"thinking: {debug_info['thinking_level']}")
+            if debug_info.get("latency_ms"):
+                parts.append(f"latency: {debug_info['latency_ms']}ms")
+            footer = " | ".join(parts)
+
+        self.console.print(Panel(
+            content,
+            title=f"[bold green]🗡️ {speaker}[/bold green]",
+            subtitle=f"[{COLORS['debug']}]{footer}[/]" if footer else None,
+            border_style=COLORS["teammate"],
         ))
 
     def print_player_input(self, message: str):
@@ -380,10 +417,57 @@ class GameRenderer:
         if state.in_dialogue and state.current_npc_name:
             table.add_row("对话中", state.current_npc_name)
 
-        table.add_row("说话模式", state.chat_mode.upper())
+        # 队伍信息
+        if state.teammates:
+            teammate_names = ", ".join(t.get("name", t.get("character_id", "?")) for t in state.teammates)
+            table.add_row("队友", teammate_names)
 
         if state.in_combat:
             table.add_row("战斗", f"进行中 (ID: {state.combat_id})")
+
+        self.console.print(table)
+
+    def print_available_actions(self, actions: List[Dict]):
+        """打印可用操作列表"""
+        if not actions:
+            self.console.print("[dim]当前没有特殊可用操作[/dim]")
+            return
+
+        table = Table(title="可用操作", box=SIMPLE, show_header=True)
+        table.add_column("键", style="yellow", width=3)
+        table.add_column("操作", style="cyan")
+        table.add_column("说明", style="dim")
+
+        for action in actions:
+            hotkey = action.get("hotkey", "-")
+            display_name = action.get("display_name", action.get("action_id", "?"))
+            description = action.get("description", "")[:40]
+            table.add_row(f"[{hotkey}]" if hotkey else "-", display_name, description)
+
+        self.console.print(table)
+        self.console.print("[dim]输入数字快速执行，或输入自然语言描述[/dim]")
+
+    def print_party_info(self, party_info: Dict):
+        """打印队伍信息"""
+        if not party_info.get("has_party"):
+            self.console.print("[dim]你还没有队伍。使用 'party add <ID> <名字>' 添加队友[/dim]")
+            return
+
+        table = Table(title=f"队伍 ({party_info.get('party_id', '?')[:8]})", box=ROUNDED)
+        table.add_column("名字", style="green")
+        table.add_column("职责", style="cyan")
+        table.add_column("性格", style="dim")
+        table.add_column("状态", style="yellow")
+
+        for member in party_info.get("members", []):
+            status = "活跃" if member.get("is_active") else "离队"
+            mood = member.get("current_mood", "neutral")
+            table.add_row(
+                member.get("name", "?"),
+                member.get("role", "support"),
+                member.get("personality", "")[:20],
+                f"{status} ({mood})",
+            )
 
         self.console.print(table)
 
@@ -407,15 +491,17 @@ class GameRenderer:
 
     def get_input(self, state: GameState) -> str:
         """获取玩家输入"""
-        mode_tag = "SAY" if state.chat_mode == "say" else "THINK"
+        # 构建提示符
+        party_tag = f"👥{len(state.teammates)}" if state.teammates else ""
+
         if state.in_combat:
-            prompt_str = f"[{mode_tag}][战斗中] "
+            prompt_str = f"[战斗中]{party_tag} "
         elif state.in_dialogue and state.current_npc_name:
-            prompt_str = f"[{mode_tag}][与{state.current_npc_name}对话] "
+            prompt_str = f"[与{state.current_npc_name}对话]{party_tag} "
         elif state.sub_location_name:
-            prompt_str = f"[{mode_tag}][{state.sub_location_name}] "
+            prompt_str = f"[{state.sub_location_name}]{party_tag} "
         else:
-            prompt_str = f"[{mode_tag}][{state.location_name or '?'}] "
+            prompt_str = f"[{state.location_name or '?'}]{party_tag} "
 
         try:
             return Prompt.ask(f"[green]{prompt_str}[/green]")
@@ -450,7 +536,6 @@ class GameCLI:
             self.state.session_id = admin_state.session_id
             self.state.location_id = admin_state.player_location
             self.state.time = admin_state.game_time.model_dump() if admin_state.game_time else None
-            self.state.chat_mode = admin_state.chat_mode or "think"
 
             self.renderer.print_system(f"会话已创建: {self.state.session_id[:8]}...")
 
@@ -459,7 +544,18 @@ class GameCLI:
             )
             self._update_location_state(location)
             self.renderer.print_location(location, self.state)
-            self.renderer.print_hint("输入 help 查看命令列表，或直接输入自然语言")
+
+            # 显示可用操作
+            context = await self.coordinator._build_context(
+                self.state.world_id, self.state.session_id
+            )
+            actions = await self.coordinator._get_available_actions(
+                self.state.world_id, self.state.session_id, context
+            )
+            self.state.available_actions = actions
+            self.renderer.print_available_actions(actions)
+
+            self.renderer.print_hint("输入数字快速操作，或输入自然语言")
 
         except Exception as e:
             self.renderer.print_error(f"创建会话失败: {e}")
@@ -488,6 +584,11 @@ class GameCLI:
 
     async def handle_input(self, user_input: str):
         """处理用户输入"""
+        # === 快速操作：数字选择 ===
+        if user_input.isdigit():
+            await self._execute_action_by_hotkey(user_input)
+            return
+
         if user_input.startswith("/"):
             await self._handle_slash_command(user_input)
             return
@@ -535,6 +636,15 @@ class GameCLI:
             await self.cmd_end_dialogue()
             return
 
+        # === 队伍命令 ===
+        if cmd == "party":
+            await self.cmd_party(arg)
+            return
+
+        if cmd == "teammates":
+            await self.cmd_teammates()
+            return
+
         # === 信息命令 ===
         if cmd == "status":
             await self.cmd_status()
@@ -551,6 +661,10 @@ class GameCLI:
 
         if cmd == "progress":
             await self.cmd_progress()
+            return
+
+        if cmd == "actions":
+            await self.cmd_show_actions()
             return
 
         # === 战斗命令 ===
@@ -596,27 +710,11 @@ class GameCLI:
 
     async def _handle_slash_command(self, command: str):
         """处理斜杠命令"""
-        cmd_lower = command.lower().strip()
-
-        if cmd_lower.startswith("/think"):
-            self.state.chat_mode = "think"
-            self.renderer.print_system("已切换到 THINK 模式（脑内说话）")
-            return
-
-        if cmd_lower.startswith("/say"):
-            self.state.chat_mode = "say"
-            self.renderer.print_system("已切换到 SAY 模式（广播说话）")
-            return
-
-        if cmd_lower.startswith("/mode"):
-            self.renderer.print_system(f"当前模式: {self.state.chat_mode.upper()}")
-            return
-
+        # 直接传递给服务处理
         result = await self.coordinator.process_player_input(
             self.state.world_id,
             self.state.session_id,
             command,
-            mode=self.state.chat_mode,
         )
         self._handle_response(result)
 
@@ -847,6 +945,203 @@ class GameCLI:
                 "objectives_completed": [],
             }
 
+    # ==================== 队伍命令 ====================
+
+    async def cmd_party(self, arg: str):
+        """队伍管理命令"""
+        parts = arg.split() if arg else []
+        sub_cmd = parts[0].lower() if parts else ""
+
+        if not sub_cmd or sub_cmd == "list" or sub_cmd == "status":
+            # 显示队伍状态
+            party_info = await self.coordinator.get_party_info(
+                self.state.world_id, self.state.session_id
+            )
+            self._update_party_state(party_info)
+            self.renderer.print_party_info(party_info)
+            return
+
+        # 智能识别：如果第一个参数不是子命令，假设是 add
+        if sub_cmd not in ("add", "remove", "list", "status") and len(parts) >= 2:
+            # party <ID> <名字> [职责] [性格] => party add <ID> <名字> ...
+            char_id = parts[0]
+            name = parts[1]
+            role = parts[2] if len(parts) > 2 else "support"
+            personality = " ".join(parts[3:]) if len(parts) > 3 else ""
+
+            result = await self.coordinator.add_teammate(
+                world_id=self.state.world_id,
+                session_id=self.state.session_id,
+                character_id=char_id,
+                name=name,
+                role=role,
+                personality=personality,
+            )
+
+            if result.get("success"):
+                self.renderer.print_system(f"✓ {name} 加入了队伍！职责: {result.get('role')}")
+                party_info = await self.coordinator.get_party_info(
+                    self.state.world_id, self.state.session_id
+                )
+                self._update_party_state(party_info)
+            else:
+                self.renderer.print_error(result.get("error", "添加队友失败"))
+            return
+
+        if sub_cmd == "add" and len(parts) >= 3:
+            # party add <ID> <名字> [职责] [性格]
+            char_id = parts[1]
+            name = parts[2]
+            role = parts[3] if len(parts) > 3 else "support"
+            personality = " ".join(parts[4:]) if len(parts) > 4 else ""
+
+            result = await self.coordinator.add_teammate(
+                world_id=self.state.world_id,
+                session_id=self.state.session_id,
+                character_id=char_id,
+                name=name,
+                role=role,
+                personality=personality,
+            )
+
+            if result.get("success"):
+                self.renderer.print_system(f"✓ {name} 加入了队伍！职责: {result.get('role')}")
+                # 更新本地状态
+                party_info = await self.coordinator.get_party_info(
+                    self.state.world_id, self.state.session_id
+                )
+                self._update_party_state(party_info)
+            else:
+                self.renderer.print_error(result.get("error", "添加队友失败"))
+            return
+
+        if sub_cmd == "remove" and len(parts) >= 2:
+            # party remove <ID>
+            char_id = parts[1]
+            result = await self.coordinator.remove_teammate(
+                self.state.world_id, self.state.session_id, char_id
+            )
+
+            if result.get("success"):
+                self.renderer.print_system(f"✓ {char_id} 离开了队伍")
+                # 更新本地状态
+                party_info = await self.coordinator.get_party_info(
+                    self.state.world_id, self.state.session_id
+                )
+                self._update_party_state(party_info)
+            else:
+                self.renderer.print_error("移除队友失败")
+            return
+
+        # 显示用法
+        self.renderer.print_hint("用法: party [add <ID> <名字> [职责] [性格]] | [remove <ID>] | [list]")
+        self.renderer.print_hint("职责: warrior, healer, mage, rogue, support, scout, scholar")
+
+    async def cmd_teammates(self):
+        """显示队友详情"""
+        party_info = await self.coordinator.get_party_info(
+            self.state.world_id, self.state.session_id
+        )
+
+        if not party_info.get("has_party") or not party_info.get("members"):
+            self.renderer.print_hint("你还没有队友。使用 'party add <ID> <名字>' 添加队友")
+            return
+
+        self._update_party_state(party_info)
+
+        for member in party_info.get("members", []):
+            content = f"""职责: {member.get('role', 'support')}
+性格: {member.get('personality', '（无描述）')}
+情绪: {member.get('current_mood', 'neutral')}
+回复倾向: {member.get('response_tendency', 0.5):.1f}"""
+
+            status = "🟢 活跃" if member.get("is_active") else "🔴 离队"
+            self.renderer.console.print(Panel(
+                content,
+                title=f"[bold green]🗡️ {member.get('name', '?')}[/bold green] {status}",
+                border_style="green",
+            ))
+
+    async def cmd_show_actions(self):
+        """显示当前可用操作"""
+        # 获取位置信息
+        location = await self.coordinator.get_current_location(
+            self.state.world_id, self.state.session_id
+        )
+
+        # 构建上下文并获取操作
+        context = await self.coordinator._build_context(
+            self.state.world_id, self.state.session_id
+        )
+        actions = await self.coordinator._get_available_actions(
+            self.state.world_id, self.state.session_id, context
+        )
+
+        self.state.available_actions = actions
+        self.renderer.print_available_actions(actions)
+
+    async def _execute_action_by_hotkey(self, hotkey: str):
+        """通过快捷键执行操作"""
+        # 如果没有缓存的操作列表，先获取
+        if not self.state.available_actions:
+            context = await self.coordinator._build_context(
+                self.state.world_id, self.state.session_id
+            )
+            self.state.available_actions = await self.coordinator._get_available_actions(
+                self.state.world_id, self.state.session_id, context
+            )
+
+        # 查找匹配的操作
+        action = None
+        for a in self.state.available_actions:
+            if a.get("hotkey") == hotkey:
+                action = a
+                break
+
+        if not action:
+            self.renderer.print_error(f"没有找到快捷键 [{hotkey}] 对应的操作")
+            self.renderer.print_available_actions(self.state.available_actions)
+            return
+
+        action_id = action.get("action_id")
+        display_name = action.get("display_name", action_id)
+
+        self.renderer.print_system(f"执行: {display_name}")
+
+        try:
+            import time
+            start = time.time()
+
+            result = await self.coordinator.execute_action(
+                self.state.world_id,
+                self.state.session_id,
+                action_id,
+            )
+
+            elapsed = (time.time() - start) * 1000
+            self.renderer.print_debug(f"操作完成 ({elapsed:.0f}ms)")
+
+            # 处理响应
+            self._handle_response_v2(result)
+
+            # 更新位置显示
+            location = await self.coordinator.get_current_location(
+                self.state.world_id, self.state.session_id
+            )
+            if location:
+                self._update_location_state(location)
+                self.renderer.print_location(location, self.state)
+
+        except Exception as e:
+            import traceback
+            self.renderer.print_error(f"操作失败: {e}")
+            self.renderer.print_debug(traceback.format_exc())
+
+    def _update_party_state(self, party_info: Dict):
+        """更新本地队伍状态"""
+        self.state.party_id = party_info.get("party_id")
+        self.state.teammates = party_info.get("members", [])
+
     async def cmd_trigger_combat(self):
         """触发演示战斗"""
         self.renderer.print_system("触发战斗...")
@@ -918,20 +1213,32 @@ class GameCLI:
             self.renderer.print_combat_state({}, self.state.available_actions)
 
     async def cmd_natural_input(self, user_input: str):
-        """处理自然语言输入"""
+        """处理自然语言输入（使用 Pro-First v2 流程）"""
         self.renderer.print_player_input(user_input)
 
         start_time = time.time()
-        result = await self.coordinator.process_player_input(
-            self.state.world_id,
-            self.state.session_id,
-            user_input,
-            mode=self.state.chat_mode,
-        )
-        elapsed = (time.time() - start_time) * 1000
 
-        self.renderer.print_debug(f"处理耗时: {elapsed:.0f}ms")
-        self._handle_response(result)
+        # 使用新的 Pro-First 流程
+        try:
+            result = await self.coordinator.process_player_input_v2(
+                self.state.world_id,
+                self.state.session_id,
+                user_input,
+            )
+            elapsed = (time.time() - start_time) * 1000
+            self.renderer.print_debug(f"处理耗时: {elapsed:.0f}ms")
+            self._handle_response_v2(result)
+        except Exception as e:
+            # 降级到旧流程
+            self.renderer.print_debug(f"V2 流程失败，降级到旧流程: {e}")
+            result = await self.coordinator.process_player_input(
+                self.state.world_id,
+                self.state.session_id,
+                user_input,
+            )
+            elapsed = (time.time() - start_time) * 1000
+            self.renderer.print_debug(f"处理耗时: {elapsed:.0f}ms")
+            self._handle_response(result)
 
     # ==================== 调试命令 ====================
 
@@ -948,10 +1255,11 @@ class GameCLI:
                 "location_id": self.state.location_id,
                 "location_name": self.state.location_name,
                 "sub_location_id": self.state.sub_location_id,
-                "chat_mode": self.state.chat_mode,
                 "in_dialogue": self.state.in_dialogue,
                 "current_npc": self.state.current_npc,
                 "in_combat": self.state.in_combat,
+                "party_id": self.state.party_id,
+                "teammates": [t.get("name") for t in self.state.teammates],
             },
             "server_context": {
                 "phase": context.phase.value if context else None,
@@ -1139,6 +1447,59 @@ class GameCLI:
         self.state.sub_location_id = location.get("sub_location_id")
         self.state.sub_location_name = location.get("sub_location_name")
         self.state.time = location.get("time", self.state.time)
+
+    def _handle_response_v2(self, result):
+        """处理 Pro-First v2 响应（CoordinatorResponse）"""
+        from app.models.admin_protocol import CoordinatorResponse
+
+        # 如果是 CoordinatorResponse 对象
+        if isinstance(result, CoordinatorResponse):
+            narration = result.narration
+            speaker = result.speaker
+            teammate_responses = result.teammate_responses
+            available_actions = result.available_actions
+            metadata = result.metadata
+        else:
+            # 兼容字典格式
+            narration = result.get("narration", result.get("response", ""))
+            speaker = result.get("speaker", "GM")
+            teammate_responses = result.get("teammate_responses", [])
+            available_actions = result.get("available_actions", [])
+            metadata = result.get("metadata", {})
+
+        # 1. 打印 GM 叙述
+        if narration:
+            self.renderer.print_gm_message(narration, speaker)
+
+        # 2. 打印队友响应
+        for teammate in teammate_responses:
+            response_text = teammate.get("response")
+            if response_text:
+                self.renderer.print_teammate_message(
+                    message=response_text,
+                    speaker=teammate.get("name", teammate.get("character_id", "队友")),
+                    reaction=teammate.get("reaction", ""),
+                    debug_info={
+                        "model_used": teammate.get("model_used"),
+                        "thinking_level": teammate.get("thinking_level"),
+                        "latency_ms": teammate.get("latency_ms"),
+                    },
+                )
+
+        # 3. 更新可用操作
+        if available_actions:
+            self.state.available_actions = available_actions
+
+        # 4. 显示意图类型（调试）
+        intent_type = metadata.get("intent_type")
+        confidence = metadata.get("confidence")
+        if intent_type:
+            self.renderer.print_debug(f"意图: {intent_type} (置信度: {confidence:.2f})" if confidence else f"意图: {intent_type}")
+
+        # 5. 如果有队友回复，显示提示
+        teammate_count = metadata.get("teammate_count", len(teammate_responses))
+        if teammate_count > 0:
+            self.renderer.print_debug(f"队友回复: {teammate_count} 人")
 
 
 # ==================== 入口 ====================
