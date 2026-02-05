@@ -1,7 +1,7 @@
 """
 Admin layer protocol models.
 
-Pro-First 架构：Pro 解析意图 → Flash 执行 → Pro 叙述
+Pro-First 架构：Flash 分析 → Flash 执行 → Pro 叙述
 """
 from __future__ import annotations
 
@@ -129,6 +129,15 @@ class FlashRequest(BaseModel):
     parameters: Dict[str, Any]
     priority: Literal["low", "normal", "high"] = "normal"
     context_hint: Optional[str] = None
+
+
+class AnalysisPlan(BaseModel):
+    """Flash 一次性分析结果."""
+
+    intent: ParsedIntent
+    operations: List[FlashRequest] = Field(default_factory=list)
+    memory_seeds: List[str] = Field(default_factory=list)
+    reasoning: str = ""
 
 
 class FlashResponse(BaseModel):

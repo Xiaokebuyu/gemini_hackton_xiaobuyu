@@ -82,9 +82,9 @@ python -m app.tools.pro_chat_cli       # Pro 服务测试
    - `ai_opponent.py`: 基于性格的敌人 AI
    - 通过 `combat_mcp_server.py` 暴露 MCP 接口
 
-6. **游戏循环** (`app/routers/game.py`, `app/routers/game_master.py`)
-   - 会话和场景状态管理
-   - 带可见性规则的事件派发
+6. **游戏循环** (`app/routers/game_v2.py`)
+   - 统一 Pro-First v2 接口
+   - 会话、导航、对话、战斗、队伍与事件派发
 
 ### 数据流
 

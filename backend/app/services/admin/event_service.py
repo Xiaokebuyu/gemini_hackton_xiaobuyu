@@ -404,6 +404,29 @@ class AdminEventService:
 
         return perspectives
 
+    async def ingest_for_character(
+        self,
+        world_id: str,
+        character_id: str,
+        event_description: str,
+        parsed_event: Dict[str, Any],
+        perspective: str,
+        game_day: int,
+        write_indexes: bool = False,
+        source_character: Optional[str] = None,
+    ) -> CharacterDispatchResult:
+        """写入单个角色的事件记忆（LLM 视角转换）"""
+        return await self._dispatch_to_character(
+            world_id=world_id,
+            character_id=character_id,
+            event_description=event_description,
+            parsed_event=parsed_event,
+            perspective=perspective,
+            game_day=game_day,
+            write_indexes=write_indexes,
+            source_character=source_character,
+        )
+
     async def _dispatch_to_character(
         self,
         world_id: str,

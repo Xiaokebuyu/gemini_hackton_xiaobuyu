@@ -3,7 +3,9 @@
 
 暴露标准 MCP 工具接口
 """
+import argparse
 import json
+import os
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -489,7 +491,26 @@ def run_combat_mcp_server(transport: str = "stdio"):
 
 
 if __name__ == "__main__":
-    import sys
+    parser = argparse.ArgumentParser(description="Combat MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http"],
+        default=os.getenv("MCP_TRANSPORT", "stdio"),
+        help="Transport protocol",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.getenv("MCP_HOST", "127.0.0.1"),
+        help="Bind host for HTTP transports",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MCP_PORT", "9102")),
+        help="Bind port for HTTP transports",
+    )
+    args = parser.parse_args()
 
-    transport = sys.argv[1] if len(sys.argv) > 1 else "stdio"
-    run_combat_mcp_server(transport)
+    combat_mcp.settings.host = args.host
+    combat_mcp.settings.port = args.port
+    run_combat_mcp_server(args.transport)

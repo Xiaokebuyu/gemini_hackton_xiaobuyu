@@ -4,7 +4,8 @@ FastAPI 应用入口
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings, validate_config
-from app.routers import graphs_router, flash_router, pro_router, gm_router, game_router, game_master_router
+from app.routers import game_v2_router
+from app.services.mcp_client_pool import MCPClientPool
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -23,12 +24,7 @@ app.add_middleware(
 )
 
 # 注册路由
-app.include_router(graphs_router, prefix=settings.api_prefix, tags=["图谱"])
-app.include_router(flash_router, prefix=settings.api_prefix, tags=["Flash"])
-app.include_router(pro_router, prefix=settings.api_prefix, tags=["Pro"])
-app.include_router(gm_router, prefix=settings.api_prefix, tags=["GM"])
-app.include_router(game_router, prefix=settings.api_prefix, tags=["Game"])
-app.include_router(game_master_router, prefix=settings.api_prefix, tags=["Game Master"])
+app.include_router(game_v2_router, prefix=settings.api_prefix, tags=["Game V2"])
 
 
 @app.on_event("startup")
@@ -45,6 +41,12 @@ async def startup_event():
     
     print(f"✓ API 文档: http://localhost:8000/docs")
     print("=" * 60)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时的清理"""
+    await MCPClientPool.shutdown()
 
 
 @app.get("/")

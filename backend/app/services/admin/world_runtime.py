@@ -3,6 +3,7 @@ Admin world runtime service (navigation/time/state).
 """
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from app.models.event import Event, EventContent, EventType, GMEventIngestRequest
@@ -33,18 +34,16 @@ class AdminWorldRuntime:
         self.narrative_service = narrative_service or NarrativeService(self.session_store)
         self.event_service = event_service or AdminEventService()
         self.llm_service = llm_service or LLMService()
-        self._navigators: Dict[str, AreaNavigator] = {}
-        self._event_generators: Dict[str, EventGenerator] = {}
 
+    @lru_cache(maxsize=10)
     def _get_navigator(self, world_id: str) -> AreaNavigator:
-        if world_id not in self._navigators:
-            self._navigators[world_id] = AreaNavigator(world_id)
-        return self._navigators[world_id]
+        """获取导航器（LRU 缓存，最多 10 个世界）"""
+        return AreaNavigator(world_id)
 
+    @lru_cache(maxsize=10)
     def _get_event_generator(self, world_id: str) -> EventGenerator:
-        if world_id not in self._event_generators:
-            self._event_generators[world_id] = EventGenerator(world_id)
-        return self._event_generators[world_id]
+        """获取事件生成器（LRU 缓存）"""
+        return EventGenerator(world_id)
 
     async def get_state(self, world_id: str, session_id: str) -> GameState:
         cached = await self.state_manager.get_state(world_id, session_id)
@@ -185,6 +184,7 @@ class AdminWorldRuntime:
         session_id: str,
         destination: Optional[str] = None,
         direction: Optional[str] = None,
+        generate_narration: bool = True,
     ) -> Dict[str, Any]:
         state = await self.get_state(world_id, session_id)
         if not state.player_location:
@@ -231,13 +231,16 @@ class AdminWorldRuntime:
                 time=current_time,
             )
 
-            narration = await self._generate_travel_narration(
-                from_area=navigator.get_area(segment["from_id"]),
-                to_area=navigator.get_area(segment["to_id"]),
-                travel_time=segment["travel_time"],
-                time_manager=time_manager,
-                random_event=random_event,
-            )
+            if generate_narration:
+                narration = await self._generate_travel_narration(
+                    from_area=navigator.get_area(segment["from_id"]),
+                    to_area=navigator.get_area(segment["to_id"]),
+                    travel_time=segment["travel_time"],
+                    time_manager=time_manager,
+                    random_event=random_event,
+                )
+            else:
+                narration = ""
 
             time_events = time_manager.tick(segment["time_minutes"])
 
@@ -253,7 +256,8 @@ class AdminWorldRuntime:
                 "event": random_event.to_dict() if random_event else None,
             }
             segments.append(segment_data)
-            narration_parts.append(narration)
+            if narration:
+                narration_parts.append(narration)
 
             if random_event:
                 all_events.append(random_event.to_dict())

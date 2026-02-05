@@ -20,6 +20,7 @@ from app.models.party import (
     TeammateRole,
 )
 from app.services.graph_store import GraphStore
+from app.services.party_store import PartyStore
 
 
 class PartyService:
@@ -28,10 +29,15 @@ class PartyService:
     def __init__(
         self,
         graph_store: Optional[GraphStore] = None,
+        party_store: Optional[PartyStore] = None,
     ) -> None:
         self.graph_store = graph_store or GraphStore()
-        # 内存缓存：session_id -> Party
+        self.party_store = party_store
+        # 内存缓存：world_id:session_id -> Party
         self._parties: Dict[str, Party] = {}
+
+    def _key(self, world_id: str, session_id: str) -> str:
+        return f"{world_id}:{session_id}"
 
     # =========================================================================
     # 队伍生命周期
@@ -52,7 +58,9 @@ class PartyService:
             leader_id=leader_id,
             formed_at=datetime.utcnow(),
         )
-        self._parties[session_id] = party
+        self._parties[self._key(world_id, session_id)] = party
+        if self.party_store:
+            await self.party_store.create_party(world_id, session_id, party_id, leader_id)
         return party
 
     async def get_party(
@@ -61,7 +69,16 @@ class PartyService:
         session_id: str,
     ) -> Optional[Party]:
         """获取队伍"""
-        return self._parties.get(session_id)
+        key = self._key(world_id, session_id)
+        cached = self._parties.get(key)
+        if cached:
+            return cached
+        if self.party_store:
+            party = await self.party_store.get_party(world_id, session_id)
+            if party:
+                self._parties[key] = party
+            return party
+        return None
 
     async def get_or_create_party(
         self,
@@ -81,10 +98,13 @@ class PartyService:
         session_id: str,
     ) -> bool:
         """解散队伍"""
-        if session_id in self._parties:
-            del self._parties[session_id]
-            return True
-        return False
+        key = self._key(world_id, session_id)
+        existed = key in self._parties
+        if existed:
+            del self._parties[key]
+        if self.party_store:
+            await self.party_store.delete_party(world_id, session_id)
+        return existed
 
     # =========================================================================
     # 成员管理
@@ -124,6 +144,8 @@ class PartyService:
             graph_ref=f"worlds/{world_id}/characters/{character_id}/",
         )
         party.members.append(member)
+        if self.party_store:
+            await self.party_store.add_member(world_id, session_id, member)
         return member
 
     async def remove_member(
@@ -140,6 +162,8 @@ class PartyService:
         for i, member in enumerate(party.members):
             if member.character_id == character_id:
                 party.members.pop(i)
+                if self.party_store:
+                    await self.party_store.remove_member(world_id, session_id, character_id)
                 return True
         return False
 
@@ -158,6 +182,10 @@ class PartyService:
         member = party.get_member(character_id)
         if member:
             member.is_active = is_active
+            if self.party_store:
+                await self.party_store.update_member_status(
+                    world_id, session_id, character_id, is_active
+                )
             return True
         return False
 
@@ -182,6 +210,10 @@ class PartyService:
 
         party.current_location = new_location
         party.current_sub_location = new_sub_location
+        if self.party_store:
+            await self.party_store.update_party_location(
+                world_id, session_id, new_location, new_sub_location
+            )
 
     # =========================================================================
     # 预定义角色加载
@@ -257,7 +289,7 @@ class PartyService:
         session_id: str,
     ) -> List[str]:
         """获取队友 ID 列表（同步方法）"""
-        party = self._parties.get(session_id)
+        party = self._parties.get(self._key(world_id, session_id))
         if not party:
             return []
         return [m.character_id for m in party.get_active_members()]

@@ -63,6 +63,8 @@ class Settings(BaseModel):
     mcp_tools_endpoint: str = os.getenv("MCP_TOOLS_ENDPOINT", "stdio://game_tools_server")
     mcp_tools_command: str = os.getenv("MCP_TOOLS_COMMAND", "python")
     mcp_tools_args: str = os.getenv("MCP_TOOLS_ARGS", "-m app.mcp.game_tools_server")
+    mcp_combat_transport: str = os.getenv("MCP_COMBAT_TRANSPORT", "stdio")
+    mcp_combat_endpoint: str = os.getenv("MCP_COMBAT_ENDPOINT", "stdio://combat_mcp_server")
     mcp_combat_command: str = os.getenv("MCP_COMBAT_COMMAND", "python")
     mcp_combat_args: str = os.getenv("MCP_COMBAT_ARGS", "-m app.combat.combat_mcp_server")
     

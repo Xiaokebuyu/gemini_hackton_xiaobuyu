@@ -1,13 +1,15 @@
 """
 Admin coordinator - entrypoint for centralized admin layer.
 
-Pro-First 架构：
-1. Pro 解析玩家意图 (parse_intent)
+Pro-First 架构（优化版）：
+1. Flash 一次性分析 (analyze_and_plan)
 2. Flash 执行操作 (execute_request)
-3. Pro 生成叙述 (narrate_v2)
+3. Pro 生成叙述 (narrate)
 """
 from __future__ import annotations
 
+import asyncio
+import warnings
 from dataclasses import dataclass
 from typing import Any, List, Optional, Dict
 
@@ -33,7 +35,6 @@ from app.models.admin_protocol import (
     FlashRequest,
     FlashResponse,
     IntentType,
-    IntentParseResult,
 )
 from app.services.game_session_store import GameSessionStore
 from app.services.flash_service import FlashService
@@ -44,6 +45,7 @@ from app.services.passerby_service import PasserbyService
 from app.services.pro_service import ProService
 from app.services.admin.world_runtime import AdminWorldRuntime
 from app.services.party_service import PartyService
+from app.services.party_store import PartyStore
 from app.services.teammate_response_service import TeammateResponseService
 from app.services.teammate_visibility_manager import TeammateVisibilityManager
 
@@ -59,22 +61,42 @@ class AdminCoordinator:
             cls._instance = cls()
         return cls._instance
 
-    def __init__(self) -> None:
-        self._session_store = GameSessionStore()
-        self._state_manager = StateManager()
-        self.event_service = AdminEventService()
-        self.graph_store = GraphStore()
-        self.flash_service = FlashService(self.graph_store)
-        self.pro_service = ProService(self.graph_store, self.flash_service)
-        self.narrative_service = NarrativeService(self._session_store)
-        self.passerby_service = PasserbyService()
-        self._world_runtime = AdminWorldRuntime(
+    @classmethod
+    def reset_instance(cls) -> None:
+        cls._instance = None
+
+    def __init__(
+        self,
+        session_store: Optional[GameSessionStore] = None,
+        state_manager: Optional[StateManager] = None,
+        event_service: Optional[AdminEventService] = None,
+        graph_store: Optional[GraphStore] = None,
+        flash_service: Optional[FlashService] = None,
+        pro_service: Optional[ProService] = None,
+        narrative_service: Optional[NarrativeService] = None,
+        passerby_service: Optional[PasserbyService] = None,
+        world_runtime: Optional[AdminWorldRuntime] = None,
+        flash_cpu: Optional[FlashCPUService] = None,
+        pro_dm: Optional[ProDMService] = None,
+        party_service: Optional[PartyService] = None,
+        teammate_response_service: Optional[TeammateResponseService] = None,
+        visibility_manager: Optional[TeammateVisibilityManager] = None,
+    ) -> None:
+        self._session_store = session_store or GameSessionStore()
+        self._state_manager = state_manager or StateManager()
+        self.event_service = event_service or AdminEventService()
+        self.graph_store = graph_store or GraphStore()
+        self.flash_service = flash_service or FlashService(self.graph_store)
+        self.pro_service = pro_service or ProService(self.graph_store, self.flash_service)
+        self.narrative_service = narrative_service or NarrativeService(self._session_store)
+        self.passerby_service = passerby_service or PasserbyService()
+        self._world_runtime = world_runtime or AdminWorldRuntime(
             state_manager=self._state_manager,
             session_store=self._session_store,
             narrative_service=self.narrative_service,
             event_service=self.event_service,
         )
-        self.flash_cpu = FlashCPUService(
+        self.flash_cpu = flash_cpu or FlashCPUService(
             state_manager=self._state_manager,
             world_runtime=self._world_runtime,
             session_store=self._session_store,
@@ -83,12 +105,13 @@ class AdminCoordinator:
             narrative_service=self.narrative_service,
             passerby_service=self.passerby_service,
         )
-        self.pro_dm = ProDMService()
+        self.pro_dm = pro_dm or ProDMService()
 
         # 队友系统
-        self.party_service = PartyService(self.graph_store)
-        self.teammate_response_service = TeammateResponseService()
-        self.visibility_manager = TeammateVisibilityManager()
+        self.party_store = PartyStore()
+        self.party_service = party_service or PartyService(self.graph_store, self.party_store)
+        self.teammate_response_service = teammate_response_service or TeammateResponseService()
+        self.visibility_manager = visibility_manager or TeammateVisibilityManager()
 
     @dataclass
     class AdminContextView:
@@ -180,6 +203,11 @@ class AdminCoordinator:
     # ==================== GM compatible methods ====================
 
     async def process_player_input(self, world_id: str, session_id: str, player_input: str, input_type=None, mode=None):
+        warnings.warn(
+            "AdminCoordinator.process_player_input is deprecated; use process_player_input_v2 instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         flash_result = await self.flash_cpu.process_player_input(
             world_id=world_id,
             session_id=session_id,
@@ -189,7 +217,7 @@ class AdminCoordinator:
         )
         if isinstance(flash_result, dict):
             if not flash_result.get("response"):
-                pro_response = await self.pro_dm.narrate(player_input, flash_result, flash_result.get("context"))
+                pro_response = await self.pro_dm.narrate_legacy(player_input, flash_result, flash_result.get("context"))
                 flash_result["response"] = pro_response.narration
                 flash_result["speaker"] = pro_response.speaker
                 flash_result.setdefault("metadata", {}).update(pro_response.metadata)
@@ -207,13 +235,14 @@ class AdminCoordinator:
         Pro-First 架构的玩家输入处理流程。
 
         流程：
-        1. 收集上下文
-        2. Pro 解析玩家意图
-        3. Flash 执行操作
-        4. 导航后同步队友位置
-        5. Pro 生成叙述
-        6. 队友响应
-        7. 分发事件到队友图谱
+        1. 收集基础上下文
+        2. Flash 一次性分析 (intent + operations + memory seeds)
+        3. 并行召回记忆 + 顺序执行操作
+        4. 组装完整上下文
+        5. 导航后同步队友位置
+        6. Pro 生成叙述
+        7. 队友响应
+        8. 分发事件到队友图谱
 
         Args:
             world_id: 世界ID
@@ -227,47 +256,60 @@ class AdminCoordinator:
         party = await self.party_service.get_party(world_id, session_id)
 
         # 1. 收集上下文
-        context = await self._build_context(world_id, session_id)
+        base_context = await self._build_context(world_id, session_id)
 
-        # 2. Pro 解析意图
-        print(f"[Coordinator] 步骤2: 解析意图...")
-        intent_result = await self.pro_dm.parse_intent(player_input, context)
-        intent = intent_result.primary_intent
+        # 2. Flash 一次性分析
+        print(f"[Coordinator] 步骤2: Flash 分析...")
+        analysis = await self.flash_cpu.analyze_and_plan(player_input, base_context)
+        intent = analysis.intent
         print(f"[Coordinator] 意图: {intent.intent_type.value}, 目标: {intent.target}")
 
-        # 3. Flash 执行操作
-        print(f"[Coordinator] 步骤3: Flash 执行...")
+        # 3. 并行召回记忆 + 顺序执行操作
+        print(f"[Coordinator] 步骤3: 执行操作...")
+        memory_task = None
+        if analysis.memory_seeds:
+            memory_task = asyncio.create_task(
+                self._recall_memory(world_id, "player", analysis.memory_seeds)
+            )
+
+        flash_requests = analysis.operations or self._generate_default_flash_requests(intent, base_context)
         flash_results = await self._execute_flash_requests(
-            world_id, session_id, intent_result, context
+            world_id, session_id, flash_requests, generate_narration=False
         )
         print(f"[Coordinator] Flash 结果: {len(flash_results)} 个")
         for r in flash_results:
             print(f"  - {r.operation}: success={r.success}, error={r.error}")
 
-        # 4. 导航后同步队友位置
+        memory_result = await memory_task if memory_task else None
+
+        # 4. 组装完整上下文
+        context = await self._assemble_context(
+            base_context, memory_result, flash_results, world_id, session_id
+        )
+
+        # 5. 导航后同步队友位置
         if intent.intent_type == IntentType.NAVIGATION and party:
-            print(f"[Coordinator] 步骤4: 同步队友位置...")
-            context = await self._build_context(world_id, session_id)
+            print(f"[Coordinator] 步骤5: 同步队友位置...")
             new_location = context.get("location", {}).get("location_id")
             if new_location:
                 await self.party_service.sync_locations(
                     world_id, session_id, new_location
                 )
 
-        # 5. Pro 生成叙述
-        print(f"[Coordinator] 步骤5: 生成叙述...")
-        pro_response = await self.pro_dm.narrate_v2(
-            player_input=player_input,
-            intent_result=intent_result,
-            flash_results=flash_results,
+        # 6. Pro 生成叙述
+        print(f"[Coordinator] 步骤6: 生成叙述...")
+        execution_summary = self._build_execution_summary(flash_results)
+        pro_response = await self.pro_dm.narrate(
             context=context,
+            execution_summary=execution_summary,
+            player_input=player_input,
         )
         print(f"[Coordinator] 叙述完成: {pro_response.narration[:50]}...")
 
-        # 6. 队友响应
+        # 7. 队友响应
         teammate_responses = []
         if party and party.get_active_members():
-            print(f"[Coordinator] 步骤6: 队友响应 ({len(party.get_active_members())} 个队友)...")
+            print(f"[Coordinator] 步骤7: 队友响应 ({len(party.get_active_members())} 个队友)...")
             # 判断是否是显式队友交互（使用 Pro 模型）
             is_explicit_dialogue = intent.intent_type == IntentType.TEAM_INTERACTION
 
@@ -293,11 +335,11 @@ class AdminCoordinator:
                         "latency_ms": resp.latency_ms,
                     })
         else:
-            print(f"[Coordinator] 步骤6: 跳过（无队友）")
+            print(f"[Coordinator] 步骤7: 跳过（无队友）")
 
-        # 7. 分发事件到队友图谱（如果有队友且启用事件共享）
+        # 8. 分发事件到队友图谱（如果有队友且启用事件共享）
         if party and party.share_events and teammate_responses:
-            print(f"[Coordinator] 步骤7: 分发事件...")
+            print(f"[Coordinator] 步骤8: 分发事件...")
             await self._distribute_event_to_party(
                 world_id=world_id,
                 party=party,
@@ -326,6 +368,7 @@ class AdminCoordinator:
                 "intent_type": intent.intent_type.value,
                 "confidence": intent.confidence,
                 "teammate_count": len(teammate_responses),
+                "analysis_reasoning": analysis.reasoning,
                 **pro_response.metadata,
             },
         )
@@ -340,15 +383,82 @@ class AdminCoordinator:
     ) -> None:
         """分发事件到队友图谱"""
         from app.models.party import Party
+        def _format_context_snippet(filtered: Dict[str, Any]) -> str:
+            lines = []
+            location = filtered.get("location") or {}
+            if location:
+                loc_name = location.get("location_name") or location.get("location_id")
+                if loc_name:
+                    lines.append(f"地点: {loc_name}")
+            time_info = filtered.get("time") or {}
+            if time_info:
+                time_text = time_info.get("formatted")
+                if not time_text:
+                    day = time_info.get("day")
+                    hour = time_info.get("hour")
+                    minute = time_info.get("minute")
+                    if day is not None and hour is not None and minute is not None:
+                        time_text = f"第{day}天 {hour:02d}:{minute:02d}"
+                if time_text:
+                    lines.append(f"时间: {time_text}")
+            return "\n".join(lines)
+
+        gm_excerpt = gm_response.strip()
+        if len(gm_excerpt) > 400:
+            gm_excerpt = f"{gm_excerpt[:400]}..."
+
+        base_description = f"玩家: {player_input}\nGM: {gm_excerpt}"
+
+        location_info = context.get("location") or {}
+        location_name = location_info.get("location_name") or location_info.get("location_id")
+        if location_name:
+            base_description = f"地点: {location_name}\n{base_description}"
+
+        time_info = context.get("time") or {}
+        if time_info:
+            time_text = time_info.get("formatted")
+            if not time_text:
+                day = time_info.get("day")
+                hour = time_info.get("hour")
+                minute = time_info.get("minute")
+                if day is not None and hour is not None and minute is not None:
+                    time_text = f"第{day}天 {hour:02d}:{minute:02d}"
+            if time_text:
+                base_description = f"时间: {time_text}\n{base_description}"
+
+        known_characters = [m.character_id for m in party.get_active_members()]
+        if "player" not in known_characters:
+            known_characters.append("player")
+        known_locations = [location_name] if location_name else []
+
+        try:
+            parsed_event = await self.event_service.llm_service.parse_event(
+                event_description=base_description,
+                known_characters=known_characters,
+                known_locations=known_locations,
+            )
+        except Exception as exc:
+            print(f"[Coordinator] 事件解析失败: {exc}")
+            parsed_event = {
+                "participants": ["player"],
+                "witnesses": [m.character_id for m in party.get_active_members()],
+                "location": location_name,
+            }
 
         event = {
             "event_type": "player_action",
-            "description": f"玩家: {player_input}\nGM: {gm_response[:200]}",
+            "description": base_description,
             "visibility": "party",
-            "participants": ["player"],
-            "witnesses": [m.character_id for m in party.get_active_members()],
+            "participants": parsed_event.get("participants") or ["player"],
+            "witnesses": parsed_event.get("witnesses") or [m.character_id for m in party.get_active_members()],
+            "location": parsed_event.get("location") or location_name,
         }
 
+        game_day = time_info.get("day") if isinstance(time_info, dict) else None
+        if game_day is None:
+            game_day = 1
+
+        tasks = []
         for member in party.get_active_members():
             # 检查队友是否应该知道这个事件
             if not self.visibility_manager.should_teammate_know(member, event, party):
@@ -365,10 +475,47 @@ class AdminCoordinator:
                 event=event,
             )
 
-            # TODO: 实际写入队友图谱
-            # await self.event_service.ingest_for_character(
-            #     event, member.character_id, "witness", filtered_context
-            # )
+            perspective = self._determine_teammate_perspective(member, event)
+            snippet = _format_context_snippet(filtered_context)
+            teammate_description = (
+                f"{base_description}\n\n补充信息:\n{snippet}"
+                if snippet
+                else base_description
+            )
+
+            tasks.append(
+                self.event_service.ingest_for_character(
+                    world_id=world_id,
+                    character_id=member.character_id,
+                    event_description=teammate_description,
+                    parsed_event=parsed_event,
+                    perspective=perspective,
+                    game_day=int(game_day),
+                )
+            )
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    print(f"[Coordinator] 队友事件写入失败: {result}")
+
+    def _determine_teammate_perspective(
+        self,
+        member: "PartyMember",
+        event: Dict[str, Any],
+    ) -> str:
+        """确定队友视角类型"""
+        participants = set(event.get("participants") or [])
+        witnesses = set(event.get("witnesses") or [])
+        if member.character_id in participants:
+            return "participant"
+        if member.character_id in witnesses:
+            return "witness"
+        visibility = event.get("visibility")
+        if visibility in ("party", "public"):
+            return "bystander"
+        return "rumor"
 
     async def _build_context(self, world_id: str, session_id: str) -> Dict[str, Any]:
         """构建当前上下文"""
@@ -430,32 +577,143 @@ class AdminCoordinator:
 
         return context
 
+    async def _recall_memory(
+        self,
+        world_id: str,
+        character_id: str,
+        seed_nodes: List[str],
+    ):
+        """召回记忆（异步）"""
+        try:
+            from app.models.flash import RecallRequest
+            recall_req = RecallRequest(
+                seed_nodes=seed_nodes,
+                include_subgraph=True,
+                use_subgraph=True,
+                subgraph_depth=2,
+            )
+            return await self.flash_service.recall_memory(
+                world_id=world_id,
+                character_id=character_id,
+                request=recall_req,
+            )
+        except Exception as exc:
+            print(f"[Coordinator] 记忆召回失败: {exc}")
+            return None
+
+    async def _assemble_context(
+        self,
+        base_context: Dict[str, Any],
+        memory_result: Any,
+        flash_results: List[FlashResponse],
+        world_id: str,
+        session_id: str,
+    ) -> Dict[str, Any]:
+        """组装完整上下文（基础 + 最新状态 + 记忆摘要）"""
+        context = dict(base_context or {})
+        context.update(await self._build_context(world_id, session_id))
+
+        if memory_result and getattr(memory_result, "activated_nodes", None):
+            context["memory_summary"] = self._summarize_memory(memory_result)
+            if hasattr(memory_result, "model_dump"):
+                context["recalled_memory"] = memory_result.model_dump()
+            else:
+                context["recalled_memory"] = memory_result
+
+        if flash_results:
+            context["flash_results"] = [
+                r.model_dump() if hasattr(r, "model_dump") else r for r in flash_results
+            ]
+
+        return context
+
+    def _summarize_memory(self, memory_result) -> str:
+        """将记忆结果转为自然语言摘要"""
+        activated = getattr(memory_result, "activated_nodes", {}) or {}
+        if not activated:
+            return ""
+
+        node_lookup = {}
+        subgraph = getattr(memory_result, "subgraph", None)
+        if subgraph and getattr(subgraph, "nodes", None):
+            node_lookup = {node.id: node for node in subgraph.nodes}
+
+        summaries = []
+        for node_id, _score in sorted(activated.items(), key=lambda x: x[1], reverse=True)[:5]:
+            node = node_lookup.get(node_id)
+            if node:
+                summaries.append(f"[{node.type}] {node.name}")
+            else:
+                summaries.append(node_id)
+
+        return "\n".join(summaries)
+
+    def _build_execution_summary(self, flash_results: List[FlashResponse]) -> str:
+        """构建执行结果摘要"""
+        if not flash_results:
+            return "无系统操作执行"
+
+        summaries = []
+        for result in flash_results:
+            op = result.operation.value if result.operation else "unknown"
+            if result.success:
+                detail = (
+                    result.result.get("summary")
+                    or result.result.get("narration")
+                    or result.result.get("description")
+                    or ""
+                )
+                detail = detail.strip() if isinstance(detail, str) else str(detail)
+                summaries.append(f"[{op}] 成功: {detail or '执行成功'}")
+            else:
+                summaries.append(f"[{op}] 失败: {result.error or '未知错误'}")
+
+        return "\n".join(summaries)
+
+    async def narrate_state_change(
+        self,
+        world_id: str,
+        session_id: str,
+        change_type: str,
+        change_details: Dict[str, Any],
+    ) -> str:
+        """状态变更后的统一叙述（供 navigate/time/dialogue 等端点使用）"""
+        context = await self._build_context(world_id, session_id)
+        summary = self._build_change_summary(change_type, change_details)
+        response = await self.pro_dm.narrate(context=context, execution_summary=summary)
+        return response.narration
+
+    def _build_change_summary(self, change_type: str, details: Dict[str, Any]) -> str:
+        """构建状态变更摘要"""
+        builders = {
+            "navigation": lambda d: f"玩家到达了{d.get('to', '新地点')}",
+            "time_advance": lambda d: f"时间过去了{d.get('minutes', 0)}分钟",
+            "dialogue_start": lambda d: f"玩家开始与{d.get('npc_name', 'NPC')}对话",
+            "sub_location_enter": lambda d: f"玩家进入了{d.get('name', '某处')}",
+            "day_advance": lambda d: f"新的一天（第{d.get('day', 1)}天）开始了",
+        }
+        return builders.get(change_type, lambda d: str(d))(details)
+
     async def _execute_flash_requests(
         self,
         world_id: str,
         session_id: str,
-        intent_result: IntentParseResult,
-        context: Dict[str, Any] = None,
+        flash_requests: List[FlashRequest],
+        generate_narration: bool = True,
     ) -> List[FlashResponse]:
         """执行意图中的 Flash 请求"""
         results = []
-        intent = intent_result.primary_intent
 
-        # 从意图中获取 Flash 请求
-        flash_requests = intent.flash_requests
-        print(f"[Flash] 意图中的请求: {len(flash_requests)} 个")
-
-        # 如果没有显式请求，根据意图类型生成默认请求
+        print(f"[Flash] 请求数量: {len(flash_requests)} 个")
         if not flash_requests:
-            flash_requests = self._generate_default_flash_requests(intent, context)
-            print(f"[Flash] 生成默认请求: {len(flash_requests)} 个")
+            return results
 
         # 执行每个请求
         for i, request in enumerate(flash_requests):
             print(f"[Flash] 执行请求 {i+1}: {request.operation.value} params={request.parameters}")
             try:
                 result = await self.flash_cpu.execute_request(
-                    world_id, session_id, request
+                    world_id, session_id, request, generate_narration=generate_narration
                 )
                 print(f"[Flash] 请求 {i+1} 完成: success={result.success}")
                 results.append(result)
@@ -500,7 +758,7 @@ class AdminCoordinator:
 
     def _generate_default_flash_requests(
         self,
-        intent: "IntentParseResult.primary_intent",
+        intent: "ParsedIntent",
         context: Dict[str, Any] = None,
     ) -> List[FlashRequest]:
         """根据意图类型生成默认的 Flash 请求"""
@@ -773,7 +1031,7 @@ class AdminCoordinator:
         await self._session_store.set_scene(world_id, session_id, scene)
         description = scene.description or ""
         if generate_description and not description:
-            narration = await self.pro_dm.narrate(
+            narration = await self.pro_dm.narrate_legacy(
                 f"进入场景：{scene.location or scene.scene_id}",
                 context={"location": {"location_name": scene.location, "description": scene.description}},
             )
@@ -814,7 +1072,7 @@ class AdminCoordinator:
         combat_description: str = "",
         environment: Optional[dict] = None,
     ) -> Dict[str, Any]:
-        payload = await self.flash_cpu.call_combat_tool(
+        payload = await self.flash_cpu._call_combat_tool_with_fallback(
             "start_combat_session",
             {
                 "world_id": world_id,
@@ -824,9 +1082,13 @@ class AdminCoordinator:
                 "environment": environment,
                 "combat_context": CombatStartRequest(player_state=player_state, enemies=enemies).combat_context.model_dump(),
             },
+            fallback=lambda: {"type": "error", "response": "战斗工具不可用"},
         )
-        if payload.get("error"):
-            return {"type": "error", "response": payload["error"]}
+        if isinstance(payload, dict):
+            if payload.get("error"):
+                return {"type": "error", "response": payload["error"]}
+            if payload.get("type") == "error":
+                return payload
 
         combat_id = payload.get("combat_id", "")
         await self.flash_cpu._apply_delta(world_id, session_id, self.flash_cpu._build_state_delta("start_combat", {"combat_id": combat_id}))
@@ -936,8 +1198,21 @@ class AdminCoordinator:
     async def get_current_location(self, world_id: str, session_id: str):
         return await self._world_runtime.get_current_location(world_id, session_id)
 
-    async def navigate(self, world_id: str, session_id: str, destination: Optional[str] = None, direction: Optional[str] = None):
-        return await self._world_runtime.navigate(world_id, session_id, destination=destination, direction=direction)
+    async def navigate(
+        self,
+        world_id: str,
+        session_id: str,
+        destination: Optional[str] = None,
+        direction: Optional[str] = None,
+        generate_narration: bool = False,
+    ):
+        return await self._world_runtime.navigate(
+            world_id,
+            session_id,
+            destination=destination,
+            direction=direction,
+            generate_narration=generate_narration,
+        )
 
     async def get_game_time(self, world_id: str, session_id: str):
         return await self._world_runtime.get_game_time(world_id, session_id)

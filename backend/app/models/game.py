@@ -137,6 +137,7 @@ class PlayerInputResponse(BaseModel):
     type: str  # narration/dialogue/combat/system/error
     response: str
     speaker: str = "GM"
+    narration: Optional[str] = None
     npc_id: Optional[str] = None
     event_recorded: bool = False
     tool_called: bool = False
@@ -156,6 +157,7 @@ class StartDialogueResponse(BaseModel):
     npc_id: str
     npc_name: str
     greeting: str
+    narration: Optional[str] = None
 
 
 class TriggerCombatRequest(BaseModel):

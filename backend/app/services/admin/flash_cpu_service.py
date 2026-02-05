@@ -3,18 +3,21 @@ Flash CPU service - rules/execution/state management.
 """
 from __future__ import annotations
 
-import json
-import shlex
+import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
-
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
+from typing import Any, Dict, List, Optional
 
 from app.config import settings
-from app.models.admin_protocol import FlashOperation, FlashRequest, FlashResponse
+from app.models.admin_protocol import (
+    AnalysisPlan,
+    FlashOperation,
+    FlashRequest,
+    FlashResponse,
+    IntentType,
+    ParsedIntent,
+)
 from app.models.flash import RecallRequest
 from app.models.state_delta import StateDelta
 from app.services.admin.state_manager import StateManager
@@ -25,6 +28,10 @@ from app.services.game_session_store import GameSessionStore
 from app.services.pro_service import ProService
 from app.services.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
+from app.services.llm_service import LLMService
+from app.services.mcp_client_pool import MCPClientPool
+
+logger = logging.getLogger(__name__)
 
 
 class FlashCPUService:
@@ -40,6 +47,8 @@ class FlashCPUService:
         pro_service: Optional[ProService] = None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
+        llm_service: Optional[LLMService] = None,
+        analysis_prompt_path: Optional[Path] = None,
     ) -> None:
         self.state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
@@ -49,7 +58,234 @@ class FlashCPUService:
         self.pro_service = pro_service or ProService()
         self.narrative_service = narrative_service
         self.passerby_service = passerby_service or PasserbyService()
-        self._mcp_server_root = Path(__file__).resolve().parents[3]
+        self.llm_service = llm_service or LLMService()
+        self.analysis_prompt_path = analysis_prompt_path or Path("app/prompts/flash_analysis.md")
+
+    def _load_analysis_prompt(self) -> str:
+        if self.analysis_prompt_path.exists():
+            return self.analysis_prompt_path.read_text(encoding="utf-8")
+        return (
+            "你是游戏系统的分析引擎。一次性完成意图解析、操作规划与记忆召回建议，并返回严格 JSON。"
+        )
+
+    def _default_plan(self, player_input: str) -> AnalysisPlan:
+        intent = ParsedIntent(
+            intent_type=IntentType.ROLEPLAY,
+            confidence=0.5,
+            raw_input=player_input,
+            interpretation="无法解析，作为角色扮演处理",
+        )
+        return AnalysisPlan(intent=intent)
+
+    def _handle_system_command(self, player_input: str) -> AnalysisPlan:
+        cmd_parts = player_input[1:].split(maxsplit=1)
+        cmd = cmd_parts[0].lower() if cmd_parts else ""
+        arg = cmd_parts[1] if len(cmd_parts) > 1 else ""
+
+        if cmd in ("go", "navigate") and arg:
+            intent = ParsedIntent(
+                intent_type=IntentType.NAVIGATION,
+                confidence=1.0,
+                target=arg,
+                action=cmd,
+                parameters={"destination": arg},
+                raw_input=player_input,
+                interpretation="系统指令导航",
+            )
+            return AnalysisPlan(
+                intent=intent,
+                operations=[
+                    FlashRequest(
+                        operation=FlashOperation.NAVIGATE,
+                        parameters={"destination": arg},
+                    )
+                ],
+                reasoning="system_command",
+            )
+
+        if cmd == "talk" and arg:
+            intent = ParsedIntent(
+                intent_type=IntentType.NPC_INTERACTION,
+                confidence=1.0,
+                target=arg,
+                action=cmd,
+                parameters={"npc_id": arg},
+                raw_input=player_input,
+                interpretation="系统指令对话",
+            )
+            return AnalysisPlan(
+                intent=intent,
+                operations=[
+                    FlashRequest(
+                        operation=FlashOperation.NPC_DIALOGUE,
+                        parameters={"npc_id": arg, "message": "你好"},
+                    )
+                ],
+                reasoning="system_command",
+            )
+
+        if cmd == "wait":
+            minutes = 30
+            if arg.isdigit():
+                minutes = int(arg)
+            intent = ParsedIntent(
+                intent_type=IntentType.WAIT,
+                confidence=1.0,
+                action=cmd,
+                parameters={"minutes": minutes},
+                raw_input=player_input,
+                interpretation="系统指令等待",
+            )
+            return AnalysisPlan(
+                intent=intent,
+                operations=[
+                    FlashRequest(
+                        operation=FlashOperation.UPDATE_TIME,
+                        parameters={"minutes": minutes},
+                    )
+                ],
+                reasoning="system_command",
+            )
+
+        intent = ParsedIntent(
+            intent_type=IntentType.SYSTEM_COMMAND,
+            confidence=1.0,
+            target=cmd,
+            action=cmd,
+            parameters={"command": cmd, "argument": arg},
+            raw_input=player_input,
+            interpretation="系统命令",
+        )
+        return AnalysisPlan(intent=intent, reasoning="system_command")
+
+    def _parse_analysis_result(
+        self,
+        parsed: Dict[str, Any],
+        player_input: str,
+        context: Dict[str, Any],
+    ) -> AnalysisPlan:
+        intent_type_str = str(parsed.get("intent_type", "roleplay")).lower()
+        intent_aliases = {
+            "enter_sublocation": "enter_sub_location",
+            "leave_sublocation": "leave_sub_location",
+            "npc_interaction": "npc_interaction",
+            "team_interaction": "team_interaction",
+            "start_combat": "start_combat",
+        }
+        intent_type_str = intent_aliases.get(intent_type_str, intent_type_str)
+        try:
+            intent_type = IntentType(intent_type_str)
+        except ValueError:
+            intent_type = IntentType.ROLEPLAY
+
+        intent = ParsedIntent(
+            intent_type=intent_type,
+            confidence=float(parsed.get("confidence", 0.8)),
+            target=parsed.get("target"),
+            action=parsed.get("action"),
+            parameters=parsed.get("parameters", {}),
+            raw_input=player_input,
+            interpretation=parsed.get("interpretation"),
+            player_emotion=parsed.get("player_emotion"),
+        )
+
+        operations: List[FlashRequest] = []
+        for req_data in parsed.get("operations", []):
+            if not isinstance(req_data, dict):
+                continue
+            op_raw = str(req_data.get("operation", "")).strip()
+            if not op_raw:
+                continue
+            op_key = op_raw.lower()
+            op_aliases = {
+                "enter_sub_location": "enter_sublocation",
+                "leave_sub_location": "leave_sublocation",
+                "enter_sublocation": "enter_sublocation",
+                "start_combat": "start_combat",
+                "npc_dialogue": "npc_dialogue",
+                "spawn_passerby": "spawn_passerby",
+                "trigger_narrative_event": "trigger_narrative_event",
+                "broadcast_event": "broadcast_event",
+                "graphize_event": "graphize_event",
+                "recall_memory": "recall_memory",
+                "update_time": "update_time",
+                "navigate": "navigate",
+            }
+            op_key = op_aliases.get(op_key, op_key)
+            operation = None
+            try:
+                operation = FlashOperation(op_key)
+            except ValueError:
+                operation = None
+            if not operation:
+                continue
+            operations.append(
+                FlashRequest(
+                    operation=operation,
+                    parameters=req_data.get("parameters", {}),
+                    priority=req_data.get("priority", "normal"),
+                )
+            )
+
+        memory_seeds = [str(s) for s in parsed.get("memory_seeds", []) if s]
+        reasoning = parsed.get("reasoning") or ""
+        return AnalysisPlan(
+            intent=intent,
+            operations=operations,
+            memory_seeds=memory_seeds,
+            reasoning=reasoning,
+        )
+
+    async def analyze_and_plan(
+        self,
+        player_input: str,
+        context: Dict[str, Any],
+    ) -> AnalysisPlan:
+        if player_input.strip().startswith("/"):
+            return self._handle_system_command(player_input)
+
+        prompt = self._load_analysis_prompt()
+        location = context.get("location") or {}
+        time_info = context.get("time") or {}
+        teammates = context.get("teammates") or []
+        available_destinations = context.get("available_destinations") or []
+        sub_locations = context.get("sub_locations") or location.get("sub_locations") or []
+
+        filled_prompt = prompt.format(
+            location_name=location.get("location_name", "未知地点"),
+            available_destinations=", ".join(
+                d.get("name", d.get("id", str(d)))
+                if isinstance(d, dict) else str(d)
+                for d in available_destinations
+            ) or "无",
+            sub_locations=", ".join(
+                f"{s.get('name', s.get('id', str(s)))}"
+                if isinstance(s, dict) else str(s)
+                for s in sub_locations
+            ) or "无",
+            npcs_present=", ".join(location.get("npcs_present", [])) or "无",
+            teammates=", ".join(
+                t.get("name", t) if isinstance(t, dict) else str(t)
+                for t in teammates
+            ) or "无",
+            time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
+            current_state=context.get("state", "exploring"),
+            active_npc=context.get("active_npc") or "无",
+            player_input=player_input,
+        )
+
+        try:
+            result = await self.llm_service.generate_simple(
+                filled_prompt,
+                model_override=settings.gemini_flash_model,
+            )
+            parsed = self.llm_service.parse_json(result)
+            if parsed:
+                return self._parse_analysis_result(parsed, player_input, context)
+        except Exception as exc:
+            print(f"[FlashCPU] analyze_and_plan 失败: {exc}")
+
+        return self._default_plan(player_input)
 
     async def process_player_input(
         self,
@@ -174,45 +410,6 @@ class FlashCPUService:
                     "state_delta": delta.model_dump(),
                 }
 
-        if state and state.active_dialogue_npc:
-            response = await self._npc_respond(world_id, session_id, state.active_dialogue_npc, text)
-            return {
-                "type": "dialogue",
-                "response": response.get("response", ""),
-                "speaker": response.get("npc_id", state.active_dialogue_npc),
-                "npc_id": state.active_dialogue_npc,
-            }
-
-        if state and state.chat_mode == "say" and self.world_runtime:
-            try:
-                location = await self.world_runtime.get_current_location(world_id, session_id)
-                npcs = location.get("npcs_present", []) if isinstance(location, dict) else []
-                responders = npcs[:3]
-                responses = []
-                for npc_id in responders:
-                    npc_resp = await self._npc_respond(world_id, session_id, npc_id, text)
-                    responses.append(
-                        {
-                            "speaker": npc_resp.get("npc_id", npc_id),
-                            "response": npc_resp.get("response", ""),
-                            "npc_id": npc_id,
-                        }
-                    )
-                return {
-                    "type": "dialogue" if responses else "narration",
-                    "response": f"你说：{text}",
-                    "speaker": "GM",
-                    "responses": responses,
-                }
-            except Exception:
-                pass
-
-        # Combat-related inputs: route to combat tools
-        combat_hints = ("attack", "fight", "战斗", "攻击", "施法")
-        input_type_value = getattr(input_type, "value", input_type)
-        if input_type_value in ("combat", "combat_action") or any(hint in text.lower() for hint in combat_hints):
-            return await self._handle_combat_input(world_id, session_id, text)
-
         # Default admin narration path (Pro DM will fill response)
         context_payload: Dict[str, Any] = {}
         if self.world_runtime:
@@ -241,10 +438,23 @@ class FlashCPUService:
         world_id: str,
         session_id: str,
         request: FlashRequest,
+        generate_narration: bool = True,
     ) -> FlashResponse:
         """Execute a Flash operation using legacy services (transitional)."""
         op = request.operation
         params = request.parameters or {}
+
+        runtime_required_ops = {
+            FlashOperation.NAVIGATE,
+            FlashOperation.UPDATE_TIME,
+            FlashOperation.ENTER_SUBLOCATION,
+        }
+        if op in runtime_required_ops and self.world_runtime is None:
+            return FlashResponse(
+                success=False,
+                operation=op,
+                error="world_runtime not initialized",
+            )
 
         try:
             if op == FlashOperation.NAVIGATE:
@@ -255,12 +465,14 @@ class FlashCPUService:
                         "session_id": session_id,
                         "destination": params.get("destination"),
                         "direction": params.get("direction"),
+                        "generate_narration": generate_narration,
                     },
                     fallback=lambda: self.world_runtime.navigate(
                         world_id=world_id,
                         session_id=session_id,
                         destination=params.get("destination"),
                         direction=params.get("direction"),
+                        generate_narration=generate_narration,
                     )
                     if self.world_runtime
                     else (lambda: {"success": False, "error": "导航系统未初始化"})(),
@@ -515,30 +727,16 @@ class FlashCPUService:
         return None
 
     async def _call_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], fallback):
-        """直接调用 fallback，跳过 MCP 子进程（MCP 工具和 fallback 做的是同样的事情）"""
-        # MCP 客户端库有 bug，且 MCP 工具本质上只是调用同样的方法
-        # 所以直接使用 fallback 更优雅、更快
-        result = fallback()
-        if hasattr(result, "__await__"):
-            return await result
-        return result
-
-    async def _call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]):
-        command = getattr(settings, "mcp_tools_command", "python")
-        args_raw = getattr(settings, "mcp_tools_args", "-m app.mcp.game_tools_server")
-        args = shlex.split(args_raw) if isinstance(args_raw, str) else list(args_raw)
-
-        server_params = StdioServerParameters(
-            command=command,
-            args=args,
-            cwd=str(self._mcp_server_root),
-        )
-
-        async with stdio_client(server_params) as (read_stream, write_stream):
-            session = ClientSession(read_stream, write_stream)
-            await session.initialize()
-            result = await session.call_tool(tool_name, arguments)
-            return self._decode_tool_result(result)
+        """Call MCP tool with fallback on failure."""
+        try:
+            pool = await MCPClientPool.get_instance()
+            return await pool.call_tool(MCPClientPool.GAME_TOOLS, tool_name, arguments)
+        except Exception as exc:
+            logger.warning("[FlashCPU] MCP call failed, using fallback: %s", exc)
+            result = fallback()
+            if hasattr(result, "__await__"):
+                return await result
+            return result
 
     async def _call_combat_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], fallback):
         try:
@@ -546,42 +744,16 @@ class FlashCPUService:
             if isinstance(result, dict) and result.get("error"):
                 raise RuntimeError(result.get("error"))
             return result
-        except Exception:
+        except Exception as exc:
+            logger.warning("[FlashCPU] Combat MCP call failed, using fallback: %s", exc)
             result = fallback()
             if hasattr(result, "__await__"):
                 return await result
             return result
 
     async def _call_combat_tool(self, tool_name: str, arguments: Dict[str, Any]):
-        command = getattr(settings, "mcp_combat_command", "python")
-        args_raw = getattr(settings, "mcp_combat_args", "-m app.combat.combat_mcp_server")
-        args = shlex.split(args_raw) if isinstance(args_raw, str) else list(args_raw)
-
-        server_params = StdioServerParameters(
-            command=command,
-            args=args,
-            cwd=str(self._mcp_server_root),
-        )
-
-        async with stdio_client(server_params) as (read_stream, write_stream):
-            session = ClientSession(read_stream, write_stream)
-            await session.initialize()
-            result = await session.call_tool(tool_name, arguments)
-            return self._decode_tool_result(result)
+        pool = await MCPClientPool.get_instance()
+        return await pool.call_tool(MCPClientPool.COMBAT, tool_name, arguments)
 
     async def call_combat_tool(self, tool_name: str, arguments: Dict[str, Any]):
         return await self._call_combat_tool(tool_name, arguments)
-
-    def _decode_tool_result(self, result):
-        if getattr(result, "structuredContent", None) is not None:
-            return result.structuredContent
-        if not result.content:
-            return {}
-        first = result.content[0]
-        text = getattr(first, "text", "")
-        if not text:
-            return {}
-        try:
-            return json.loads(text)
-        except Exception:
-            return {"raw": text}
