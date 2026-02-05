@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Firebase credentials
+firebase-credentials.json
+*-credentials.json
+
+# Logs
+logs/
+*.log
+
+# Data files
+__哥布林杀手*.json
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary
+*.tmp
+*.bak
