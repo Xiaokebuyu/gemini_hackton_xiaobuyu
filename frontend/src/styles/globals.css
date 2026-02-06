@@ -4,9 +4,8 @@
 /* Handwritten fonts for sketch theme */
 @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Shadows+Into+Light&family=Patrick+Hand&family=Ma+Shan+Zheng&display=swap');
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../../tailwind.config.js";
 
 /* Base Styles */
 * {
@@ -21,7 +20,7 @@ html {
 }
 
 body {
-  font-family: var(--font-body);
+  font-family: 'Inter', system-ui, sans-serif;
   background-color: var(--sketch-bg-primary);
   color: var(--sketch-ink-primary);
   line-height: 1.6;
@@ -56,7 +55,7 @@ a:hover {
 /* 标题样式 */
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-fantasy);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--color-text-primary);
   line-height: 1.3;
 }
@@ -95,7 +94,7 @@ input, textarea {
   background-color: var(--color-bg-secondary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-secondary);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   padding: var(--spacing-sm) var(--spacing-md);
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -103,7 +102,7 @@ input, textarea {
 
 input:focus, textarea:focus {
   border-color: var(--color-accent-gold);
-  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 39, 0.3), 0 0 0 3px rgba(201, 162, 39, 0.1);
 }
 
 input::placeholder, textarea::placeholder {
@@ -153,7 +152,7 @@ hr {
 .card {
   background: linear-gradient(135deg, var(--color-bg-card) 0%, var(--color-bg-panel) 100%);
   border: 1px solid var(--color-border-secondary);
-  border-radius: var(--radius-lg);
+  border-radius: 12px;
   padding: var(--spacing-md);
   box-shadow: var(--shadow-card);
 }
@@ -164,7 +163,7 @@ hr {
   color: var(--color-bg-primary);
   font-weight: 600;
   padding: var(--spacing-sm) var(--spacing-lg);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   border: none;
   transition: all var(--transition-fast);
 }
@@ -179,7 +178,7 @@ hr {
   color: var(--color-accent-gold);
   font-weight: 500;
   padding: var(--spacing-sm) var(--spacing-lg);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   border: 1px solid var(--color-accent-gold);
   transition: all var(--transition-fast);
 }
@@ -193,7 +192,7 @@ hr {
   color: white;
   font-weight: 600;
   padding: var(--spacing-sm) var(--spacing-lg);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   border: none;
   transition: all var(--transition-fast);
 }
@@ -269,20 +268,19 @@ hr {
   flex-direction: column;
 }
 
-/* 隐藏默认滚动条 - Sketch style */
+/* 全局滚动条 - 精致化 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--sketch-bg-secondary);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--sketch-ink-muted);
-  border-radius: 2px;
-  border: 1px solid var(--sketch-bg-secondary);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {

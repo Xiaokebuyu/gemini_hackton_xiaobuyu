@@ -1,5 +1,5 @@
 /**
- * Hand-drawn style panel component
+ * Refined parchment-style panel component
  */
 import React from 'react';
 
@@ -22,14 +22,13 @@ export const SketchPanel: React.FC<SketchPanelProps> = ({
         relative
         bg-sketch-bg-panel
         border-2 border-sketch-ink-secondary
+        rounded-xl
         p-4
+        shadow-parchment-md
+        sketch-inner-glow
         ${decorated ? 'sketch-card-decorated' : ''}
         ${className}
       `}
-      style={{
-        boxShadow: '3px 3px 8px rgba(44, 36, 22, 0.15)',
-        borderRadius: '4px',
-      }}
     >
       {/* Title */}
       {title && (
@@ -38,7 +37,7 @@ export const SketchPanel: React.FC<SketchPanelProps> = ({
             absolute -top-3 left-4
             px-3 py-0.5
             bg-sketch-bg-panel
-            font-sketch-title text-lg
+            font-fantasy text-lg
             text-sketch-ink-primary
           "
         >
@@ -57,17 +56,21 @@ export const SketchPanel: React.FC<SketchPanelProps> = ({
           <div
             className="
               absolute -top-1 -left-1
-              w-3 h-3
+              w-6 h-6
               border-t-2 border-l-2
               border-sketch-accent-gold
+              opacity-60
+              rounded-tl
             "
           />
           <div
             className="
               absolute -bottom-1 -right-1
-              w-3 h-3
+              w-6 h-6
               border-b-2 border-r-2
               border-sketch-accent-gold
+              opacity-60
+              rounded-br
             "
           />
         </>

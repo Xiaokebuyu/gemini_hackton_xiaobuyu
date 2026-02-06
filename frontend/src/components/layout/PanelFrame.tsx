@@ -1,5 +1,5 @@
 /**
- * Hand-drawn style panel frame for Sketch theme
+ * Refined panel frame for Sketch theme
  */
 import React from 'react';
 import { motion } from 'framer-motion';
@@ -32,29 +32,20 @@ export const PanelFrame: React.FC<PanelFrameProps> = ({
     relative
     bg-sketch-bg-panel
     border-2 ${variantStyles[variant]}
+    rounded-xl
+    shadow-parchment-md
+    sketch-inner-glow
     overflow-hidden
+    transition-shadow duration-200
+    hover:shadow-parchment-lg
     ${className}
   `;
 
   const content = (
-    <div
-      className={containerClass}
-      style={{
-        boxShadow: '3px 3px 8px rgba(44, 36, 22, 0.15)',
-        borderRadius: '4px',
-      }}
-    >
+    <div className={containerClass}>
       {/* Title */}
       {title && (
-        <div
-          className="
-            absolute -top-3 left-4
-            px-3 py-0.5
-            bg-sketch-bg-panel
-            font-sketch-title text-lg
-            text-sketch-ink-primary
-          "
-        >
+        <div className="sketch-header-strip rounded-t-xl -mx-[2px] -mt-[2px] mb-0">
           {title}
         </div>
       )}
@@ -104,19 +95,20 @@ const CornerDecoration: React.FC<CornerDecorationProps> = ({
   };
 
   const positionStyles = {
-    'top-left': '-top-1 -left-1 border-t-2 border-l-2',
-    'top-right': '-top-1 -right-1 border-t-2 border-r-2',
-    'bottom-left': '-bottom-1 -left-1 border-b-2 border-l-2',
-    'bottom-right': '-bottom-1 -right-1 border-b-2 border-r-2',
+    'top-left': '-top-1 -left-1 border-t-2 border-l-2 rounded-tl',
+    'top-right': '-top-1 -right-1 border-t-2 border-r-2 rounded-tr',
+    'bottom-left': '-bottom-1 -left-1 border-b-2 border-l-2 rounded-bl',
+    'bottom-right': '-bottom-1 -right-1 border-b-2 border-r-2 rounded-br',
   };
 
   return (
     <div
       className={`
         absolute
-        w-3 h-3
+        w-6 h-6
         ${positionStyles[position]}
         ${colorMap[variant]}
+        opacity-60
         pointer-events-none
       `}
     />

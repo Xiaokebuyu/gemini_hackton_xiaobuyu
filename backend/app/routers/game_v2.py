@@ -1,9 +1,10 @@
 """
 Unified Game V2 API routes (Pro-First).
 """
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_coordinator
@@ -82,6 +83,27 @@ class LoadTeammatesRequest(BaseModel):
     teammates: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class RecoverableSessionItem(BaseModel):
+    """可恢复会话摘要"""
+
+    session_id: str
+    world_id: str
+    status: str
+    updated_at: datetime
+    participants: List[str] = Field(default_factory=list)
+    player_location: Optional[str] = None
+    chapter_id: Optional[str] = None
+    sub_location: Optional[str] = None
+
+
+class RecoverableSessionsResponse(BaseModel):
+    """可恢复会话列表响应"""
+
+    world_id: str
+    user_id: str
+    sessions: List[RecoverableSessionItem] = Field(default_factory=list)
+
+
 @router.post("/{world_id}/sessions")
 async def start_session(
     world_id: str,
@@ -113,6 +135,31 @@ async def start_session(
             "location": location_info,
             "time": state.game_time.model_dump() if state.game_time else None,
         }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{world_id}/sessions")
+async def list_sessions(
+    world_id: str,
+    user_id: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=100),
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+) -> RecoverableSessionsResponse:
+    """列出用户在该世界可恢复的会话"""
+    try:
+        sessions = await coordinator.list_recoverable_sessions(
+            world_id=world_id,
+            user_id=user_id,
+            limit=limit,
+        )
+        return RecoverableSessionsResponse(
+            world_id=world_id,
+            user_id=user_id,
+            sessions=[RecoverableSessionItem(**item) for item in sessions],
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -204,6 +251,8 @@ async def process_input_v2(
             session_id=session_id,
             player_input=payload.input,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

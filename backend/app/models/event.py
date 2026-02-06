@@ -99,6 +99,7 @@ class CharacterDispatchResult(BaseModel):
     node_count: int
     edge_count: int
     event_description: Optional[str] = None
+    event_node_ids: List[str] = Field(default_factory=list)
 
 
 class NaturalEventIngestRequest(BaseModel):

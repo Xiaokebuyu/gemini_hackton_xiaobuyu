@@ -25,9 +25,6 @@ interface GameStoreState {
   // Time
   gameTime: GameTimeState;
 
-  // Chat mode
-  chatMode: 'think' | 'say';
-
   // Dialogue
   activeDialogueNpc: string | null;
 
@@ -46,8 +43,6 @@ interface GameStoreState {
   setLocation: (location: LocationResponse) => void;
   setSubLocation: (subLocation: string | null) => void;
   setGameTime: (time: GameTimeState | GameTimeResponse) => void;
-  setChatMode: (mode: 'think' | 'say') => void;
-  toggleChatMode: () => void;
   setActiveDialogueNpc: (npcId: string | null) => void;
   setCombatId: (combatId: string | null) => void;
   setParty: (party: Party | null) => void;
@@ -67,14 +62,13 @@ const initialGameTime: GameTimeState = {
 export const useGameStore = create<GameStoreState>()(
   devtools(
     persist(
-      (set, get) => ({
+      (set) => ({
         // Initial state
         worldId: null,
         sessionId: null,
         location: null,
         subLocation: null,
         gameTime: initialGameTime,
-        chatMode: 'say',
         activeDialogueNpc: null,
         combatId: null,
         party: null,
@@ -92,7 +86,6 @@ export const useGameStore = create<GameStoreState>()(
             location: null,
             subLocation: null,
             gameTime: initialGameTime,
-            chatMode: 'say',
             activeDialogueNpc: null,
             combatId: null,
             party: null,
@@ -118,15 +111,6 @@ export const useGameStore = create<GameStoreState>()(
             formatted: time.formatted,
           };
           set({ gameTime });
-        },
-
-        setChatMode: (chatMode: 'think' | 'say') => {
-          set({ chatMode });
-        },
-
-        toggleChatMode: () => {
-          const current = get().chatMode;
-          set({ chatMode: current === 'think' ? 'say' : 'think' });
         },
 
         setActiveDialogueNpc: (activeDialogueNpc: string | null) => {
@@ -159,9 +143,6 @@ export const useGameStore = create<GameStoreState>()(
             ...(changes.game_time !== undefined && {
               gameTime: changes.game_time as GameTimeState,
             }),
-            ...(changes.chat_mode !== undefined && {
-              chatMode: changes.chat_mode as 'think' | 'say',
-            }),
             ...(changes.active_dialogue_npc !== undefined && {
               activeDialogueNpc: changes.active_dialogue_npc as string | null,
             }),
@@ -177,7 +158,6 @@ export const useGameStore = create<GameStoreState>()(
             sessionId: gameState.session_id,
             subLocation: gameState.sub_location,
             gameTime: gameState.game_time,
-            chatMode: gameState.chat_mode,
             activeDialogueNpc: gameState.active_dialogue_npc,
             combatId: gameState.combat_id,
           });
@@ -188,7 +168,6 @@ export const useGameStore = create<GameStoreState>()(
         partialize: (state) => ({
           worldId: state.worldId,
           sessionId: state.sessionId,
-          chatMode: state.chatMode,
         }),
       }
     ),

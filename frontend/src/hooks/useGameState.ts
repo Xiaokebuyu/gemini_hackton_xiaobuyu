@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useGameStore, useChatStore } from '../stores';
 import { getGameState, getParty, getLocation } from '../api';
+import type { GameState } from '../types';
 
 export function useGameState() {
   const { worldId, sessionId, setParty, setLocation, setGameTime, updateFromGameState } =
@@ -47,7 +48,7 @@ export function useGameState() {
   // Update stores when data changes
   useEffect(() => {
     if (gameStateQuery.data) {
-      updateFromGameState(gameStateQuery.data);
+      updateFromGameState(gameStateQuery.data as unknown as GameState);
     }
   }, [gameStateQuery.data, updateFromGameState]);
 

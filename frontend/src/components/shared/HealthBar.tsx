@@ -79,6 +79,7 @@ export const HealthBar: React.FC<HealthBarProps> = ({
           bg-bg-secondary
           rounded-full
           overflow-hidden
+          border border-[rgba(61,43,31,0.12)]
         `}
       >
         {/* Fill */}

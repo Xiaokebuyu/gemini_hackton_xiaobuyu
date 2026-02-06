@@ -4,7 +4,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Package } from 'lucide-react';
 import { useUIStore } from '../../stores';
 import PanelFrame from './PanelFrame';
 import PlayerStatus from '../party/PlayerStatus';
@@ -26,8 +26,8 @@ export const RightPanel: React.FC<RightPanelProps> = ({ className = '' }) => {
         className="
           absolute -left-3 top-1/2 -translate-y-1/2 z-20
           w-6 h-12
-          bg-sketch-bg-panel border-2 border-sketch-ink-muted
-          rounded-l-md
+          bg-sketch-bg-panel border-2 border-sketch-ink-secondary
+          rounded-l-lg shadow-parchment-sm
           flex items-center justify-center
           hover:bg-sketch-bg-secondary transition-colors
         "
@@ -50,7 +50,7 @@ export const RightPanel: React.FC<RightPanelProps> = ({ className = '' }) => {
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="w-[320px] h-full flex flex-col gap-3 p-3">
+            <div className="w-[320px] h-full flex flex-col gap-2 p-3">
               {/* Player Status */}
               <PanelFrame className="flex-shrink-0">
                 <PlayerStatus />
@@ -64,12 +64,15 @@ export const RightPanel: React.FC<RightPanelProps> = ({ className = '' }) => {
               {/* Inventory placeholder */}
               <PanelFrame className="flex-shrink-0">
                 <div className="p-3">
-                  <h3 className="text-sm font-handwritten text-sketch-accent-gold mb-2">
+                  <h3 className="text-sm font-fantasy text-sketch-accent-gold mb-2">
                     {t('status.inventory')}
                   </h3>
-                  <p className="text-xs text-sketch-ink-muted">
-                    {t('common.loading')}
-                  </p>
+                  <div className="flex flex-col items-center py-4">
+                    <Package className="w-8 h-8 text-sketch-ink-faint mb-2" />
+                    <p className="text-xs text-sketch-ink-muted">
+                      {t('common.loading')}
+                    </p>
+                  </div>
                 </div>
               </PanelFrame>
             </div>

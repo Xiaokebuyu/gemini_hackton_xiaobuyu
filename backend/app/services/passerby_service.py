@@ -3,7 +3,7 @@ Passerby Service - 路人NPC管理服务
 
 路人NPC特点：
 - PASSERBY级别，按地点聚合存储
-- 共享地点级记忆图谱
+- 共享地点级短记忆（passerby_pool 内）
 - 运行时生成，非持久化角色资料
 - 强制使用FAST层AI响应
 
@@ -18,14 +18,13 @@ from typing import Any, Dict, List, Optional
 from google.cloud import firestore
 
 from app.config import settings
-from app.models.graph import MemoryNode
 from app.models.passerby import (
     LocationPasserbyPool,
     PasserbyInstance,
     PasserbySpawnConfig,
     PasserbyTemplate,
+    SharedMemoryContribution,
 )
-from app.services.graph_store import LocationGraphStore
 from app.services.tiered_ai_service import AITier, TieredAIService
 from app.tools.worldbook_graphizer.models import NPCTier
 
@@ -68,7 +67,6 @@ class PasserbyService:
 
     def __init__(
         self,
-        graph_store: Optional[LocationGraphStore] = None,
         tiered_ai: Optional[TieredAIService] = None,
         firestore_client: Optional[firestore.Client] = None,
     ):
@@ -76,11 +74,9 @@ class PasserbyService:
         初始化路人服务
 
         Args:
-            graph_store: 地点图谱存储
             tiered_ai: 三层AI服务
             firestore_client: Firestore客户端
         """
-        self._graph_store = graph_store or LocationGraphStore()
         self._tiered_ai = tiered_ai or TieredAIService()
         self._db = firestore_client or firestore.Client(database=settings.firestore_database)
 
@@ -283,6 +279,7 @@ class PasserbyService:
             config_data = data.get("config", {})
             instances_data = data.get("active_instances", {})
             templates_data = data.get("templates", {})
+            shared_memories_data = data.get("shared_memories", [])
 
             # 加载模板到缓存
             key = f"{world_id}:{map_id}"
@@ -293,6 +290,13 @@ class PasserbyService:
                 except Exception:
                     pass  # 忽略无效模板
 
+            shared_memories = []
+            for memory_data in shared_memories_data:
+                try:
+                    shared_memories.append(SharedMemoryContribution(**memory_data))
+                except Exception:
+                    continue
+
             return LocationPasserbyPool(
                 map_id=map_id,
                 config=PasserbySpawnConfig(**config_data) if config_data else PasserbySpawnConfig(),
@@ -301,6 +305,7 @@ class PasserbyService:
                     for k, v in instances_data.items()
                 },
                 sentiment=data.get("sentiment", 0.0),
+                shared_memories=shared_memories,
             )
 
         # 默认池
@@ -326,6 +331,7 @@ class PasserbyService:
                 k: v.model_dump() for k, v in pool.active_instances.items()
             },
             "sentiment": pool.sentiment,
+            "shared_memories": [m.model_dump() for m in pool.shared_memories[-100:]],
             "updated_at": datetime.now(),
         }, merge=True)
 
@@ -380,24 +386,18 @@ class PasserbyService:
         content: str,
         sub_location_id: Optional[str] = None,
     ) -> None:
-        """贡献到共享记忆图谱"""
-        node = MemoryNode(
-            id=f"shared_{datetime.now().timestamp()}",
-            type="location_memory",
-            name=content[:50],  # 截取摘要作为名称
-            properties={
-                "content": content,
-                "timestamp": datetime.now().isoformat(),
-                "contributor_type": "passerby",
-            },
+        """贡献到路人池共享记忆。"""
+        pool = await self._get_pool(world_id, map_id)
+        pool.shared_memories.append(
+            SharedMemoryContribution(
+                contributor_type="passerby",
+                content=content,
+                sub_location_id=sub_location_id,
+            )
         )
-
-        await self._graph_store.upsert_location_node(
-            world_id=world_id,
-            map_id=map_id,
-            node=node,
-            sub_location_id=sub_location_id,
-        )
+        if len(pool.shared_memories) > 100:
+            pool.shared_memories = pool.shared_memories[-100:]
+        await self._save_pool(world_id, map_id, pool)
 
     async def _get_shared_memory(
         self,
@@ -419,33 +419,31 @@ class PasserbyService:
             共享记忆文本
         """
         try:
+            pool = await self._get_pool(world_id, map_id)
             contents = []
+            recent_memories = list(reversed(pool.shared_memories))
 
-            # 1. 先获取子地点级记忆（如果有）
+            # 1. 先取当前子地点记忆（最多 3 条）
             if sub_location_id:
-                sub_memories = await self._graph_store.get_recent_location_memories(
-                    world_id=world_id,
-                    map_id=map_id,
-                    sub_location_id=sub_location_id,
-                    limit=3,
-                )
-                for m in sub_memories:
-                    if m.properties and "content" in m.properties:
-                        contents.append(m.properties["content"])
+                for memory in recent_memories:
+                    if memory.sub_location_id != sub_location_id:
+                        continue
+                    if memory.content in contents:
+                        continue
+                    contents.append(memory.content)
+                    if len(contents) >= 3:
+                        break
 
-            # 2. 补充地图级记忆
-            remaining_limit = 5 - len(contents)
-            if remaining_limit > 0:
-                map_memories = await self._graph_store.get_recent_location_memories(
-                    world_id=world_id,
-                    map_id=map_id,
-                    limit=remaining_limit,
-                )
-                for m in map_memories:
-                    if m.properties and "content" in m.properties:
-                        content = m.properties["content"]
-                        if content not in contents:  # 去重
-                            contents.append(content)
+            # 2. 再补充地图级通用记忆，整体最多 5 条
+            if len(contents) < 5:
+                for memory in recent_memories:
+                    if memory.sub_location_id not in (None, ""):
+                        continue
+                    if memory.content in contents:
+                        continue
+                    contents.append(memory.content)
+                    if len(contents) >= 5:
+                        break
 
             return "\n".join(contents)
 

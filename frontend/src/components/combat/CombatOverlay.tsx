@@ -12,23 +12,10 @@ import CombatLog from './CombatLog';
 import TurnOrder from './TurnOrder';
 import DiceRollDisplay from './DiceRollDisplay';
 import { PanelFrame } from '../layout';
-import type { CombatActionOption } from '../../types';
 
 interface CombatOverlayProps {
   className?: string;
 }
-
-// Mock actions for demo (would come from backend)
-const mockActions: CombatActionOption[] = [
-  { action_type: 'ATTACK', display_name: 'Attack', description: 'Basic melee attack', enabled: true, requires_target: true },
-  { action_type: 'DEFEND', display_name: 'Defend', description: 'Take defensive stance', enabled: true, requires_target: false },
-  { action_type: 'MOVE', display_name: 'Move', description: 'Change distance', enabled: true, requires_target: false },
-  { action_type: 'DASH', display_name: 'Dash', description: 'Double movement', enabled: true, requires_target: false },
-  { action_type: 'DISENGAGE', display_name: 'Disengage', description: 'Avoid opportunity attacks', enabled: true, requires_target: false },
-  { action_type: 'USE_ITEM', display_name: 'Use Item', description: 'Use an item from inventory', enabled: false, requires_target: false, requires: 'Usable item' },
-  { action_type: 'FLEE', display_name: 'Flee', description: 'Attempt to escape combat', enabled: true, requires_target: false },
-  { action_type: 'END_TURN', display_name: 'End Turn', description: 'End your turn', enabled: true, requires_target: false },
-];
 
 export const CombatOverlay: React.FC<CombatOverlayProps> = ({
   className = '',
@@ -50,19 +37,21 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
 
   const [showDiceRoll, setShowDiceRoll] = useState(false);
 
+  // Get real actions from combat state
+  const actions = combatState?.player_actions || [];
+
   // Handle action execution
   const handleExecuteAction = () => {
     if (!selectedAction || isLoading) return;
 
     // Check if target is needed
-    const actionDef = mockActions.find((a) => a.action_type === selectedAction);
+    const actionDef = actions.find((a) => a.action_type === selectedAction);
     if (actionDef?.requires_target && !selectedTarget) {
       return;
     }
 
     executeAction({
-      action_type: selectedAction,
-      target_id: selectedTarget || undefined,
+      action_id: selectedAction,
     });
 
     clearSelection();
@@ -70,7 +59,7 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
 
   // Handle flee/end combat
   const handleFlee = () => {
-    endCombat(true);
+    endCombat(undefined);
   };
 
   if (!combatState) return null;
@@ -152,15 +141,15 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
                   </h3>
                 </div>
                 <div className="flex-1 overflow-y-auto fantasy-scrollbar p-3">
-                  {playerCanAct ? (
+                  {playerCanAct && actions.length > 0 ? (
                     <ActionOptionList
-                      actions={mockActions}
+                      actions={actions}
                       onSelectAction={selectAction}
                       selectedAction={selectedAction}
                     />
                   ) : (
                     <div className="flex items-center justify-center h-full text-[var(--color-text-muted)]">
-                      Waiting for other combatants...
+                      {playerCanAct ? 'Waiting for actions...' : 'Waiting for other combatants...'}
                     </div>
                   )}
                 </div>
@@ -170,7 +159,7 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
                   <div className="p-3 border-t border-[var(--color-border-secondary)]">
                     <button
                       onClick={handleExecuteAction}
-                      disabled={isLoading || (mockActions.find(a => a.action_type === selectedAction)?.requires_target && !selectedTarget)}
+                      disabled={isLoading || (actions.find(a => a.action_type === selectedAction)?.requires_target && !selectedTarget)}
                       className="
                         w-full
                         py-3
@@ -184,7 +173,7 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
                     >
                       {isLoading ? 'Executing...' : 'Execute Action'}
                     </button>
-                    {mockActions.find(a => a.action_type === selectedAction)?.requires_target && !selectedTarget && (
+                    {actions.find(a => a.action_type === selectedAction)?.requires_target && !selectedTarget && (
                       <p className="text-xs text-accent-red mt-2 text-center">
                         Select a target first
                       </p>

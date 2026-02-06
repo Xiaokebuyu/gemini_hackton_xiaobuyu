@@ -82,7 +82,7 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
 
     return (
       <div className="mb-4">
-        <h4 className="text-xs text-sketch-ink-muted uppercase tracking-wide mb-2 font-handwritten">
+        <h4 className="text-xs text-sketch-ink-muted uppercase tracking-wide mb-2 font-body">
           {t(titleKey)}
         </h4>
         <div className="grid grid-cols-2 gap-2">
@@ -98,8 +98,8 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
                 flex items-center gap-2
                 px-3 py-2
                 bg-sketch-bg-panel
-                border-2
-                text-left font-handwritten
+                border
+                text-left font-body
                 transition-all duration-200
                 ${
                   selectedAction === action.action_type
@@ -112,7 +112,7 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
                     : 'cursor-pointer'
                 }
               `}
-              style={{ borderRadius: '4px' }}
+              style={{ borderRadius: '8px' }}
             >
               <span
                 className={

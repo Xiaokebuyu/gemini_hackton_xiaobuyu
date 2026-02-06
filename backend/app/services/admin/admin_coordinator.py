@@ -48,6 +48,7 @@ from app.services.party_service import PartyService
 from app.services.party_store import PartyStore
 from app.services.teammate_response_service import TeammateResponseService
 from app.services.teammate_visibility_manager import TeammateVisibilityManager
+from app.models.graph_scope import GraphScope
 
 
 class AdminCoordinator:
@@ -131,6 +132,50 @@ class AdminCoordinator:
 
     async def get_session(self, world_id: str, session_id: str) -> GameSessionState | None:
         return await self._session_store.get_session(world_id, session_id)
+
+    async def list_recoverable_sessions(
+        self,
+        world_id: str,
+        user_id: str,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """
+        列出当前用户在某世界可恢复的会话。
+
+        仅返回可用于 v2 继续游玩的会话：
+        - 非 demo 会话
+        - 包含 admin_state
+        """
+        sessions = await self._session_store.list_sessions(
+            world_id=world_id,
+            user_id=user_id,
+            limit=limit,
+        )
+
+        recoverable: List[Dict[str, Any]] = []
+        for session in sessions:
+            if session.session_id.startswith("demo-") or session.session_id == "demo-session-001":
+                continue
+
+            metadata = session.metadata or {}
+            admin_state = metadata.get("admin_state")
+            if not isinstance(admin_state, dict):
+                continue
+
+            recoverable.append(
+                {
+                    "session_id": session.session_id,
+                    "world_id": session.world_id,
+                    "status": session.status,
+                    "updated_at": session.updated_at,
+                    "participants": session.participants,
+                    "player_location": admin_state.get("player_location"),
+                    "chapter_id": admin_state.get("chapter_id"),
+                    "sub_location": admin_state.get("sub_location"),
+                }
+            )
+
+        return recoverable
 
     async def update_scene(self, world_id: str, session_id: str, request: UpdateSceneRequest) -> GameSessionState:
         await self._session_store.set_scene(world_id, session_id, request.scene)
@@ -252,6 +297,11 @@ class AdminCoordinator:
         Returns:
             CoordinatorResponse: 完整响应
         """
+        # 预检查：位置上下文必须可用，避免进入“未知地点”伪成功叙述
+        location_check = await self._world_runtime.get_current_location(world_id, session_id)
+        if location_check.get("error"):
+            raise ValueError(location_check["error"])
+
         # 0. 获取队伍信息
         party = await self.party_service.get_party(world_id, session_id)
 
@@ -266,10 +316,20 @@ class AdminCoordinator:
 
         # 3. 并行召回记忆 + 顺序执行操作
         print(f"[Coordinator] 步骤3: 执行操作...")
+        # 获取当前 chapter/area 上下文用于多图谱合并扩散
+        state = await self._state_manager.get_state(world_id, session_id)
+        current_chapter_id = getattr(state, "chapter_id", None) if state else None
+        current_area_id = getattr(state, "area_id", None) if state else None
+
         memory_task = None
         if analysis.memory_seeds:
             memory_task = asyncio.create_task(
-                self._recall_memory(world_id, "player", analysis.memory_seeds)
+                self._recall_memory(
+                    world_id, "player", analysis.memory_seeds,
+                    intent_type=intent.intent_type.value,
+                    chapter_id=current_chapter_id,
+                    area_id=current_area_id,
+                )
             )
 
         flash_requests = analysis.operations or self._generate_default_flash_requests(intent, base_context)
@@ -381,8 +441,17 @@ class AdminCoordinator:
         gm_response: str,
         context: Dict[str, Any],
     ) -> None:
-        """分发事件到队友图谱"""
+        """分发事件到队友图谱（v2 双视角写入）。
+
+        双视角写入：
+        1. 叙述 event 写入区域叙述图谱（narrative perspective）
+        2. 个人 event 写入各角色图谱（personal perspective）
+        3. perspective_of 边链接两个 event 节点
+        """
+        import uuid as _uuid
         from app.models.party import Party
+        from app.models.graph import MemoryEdge, MemoryNode
+
         def _format_context_snippet(filtered: Dict[str, Any]) -> str:
             lines = []
             location = filtered.get("location") or {}
@@ -390,15 +459,15 @@ class AdminCoordinator:
                 loc_name = location.get("location_name") or location.get("location_id")
                 if loc_name:
                     lines.append(f"地点: {loc_name}")
-            time_info = filtered.get("time") or {}
-            if time_info:
-                time_text = time_info.get("formatted")
+            time_info_inner = filtered.get("time") or {}
+            if time_info_inner:
+                time_text = time_info_inner.get("formatted")
                 if not time_text:
-                    day = time_info.get("day")
-                    hour = time_info.get("hour")
-                    minute = time_info.get("minute")
-                    if day is not None and hour is not None and minute is not None:
-                        time_text = f"第{day}天 {hour:02d}:{minute:02d}"
+                    d = time_info_inner.get("day")
+                    h = time_info_inner.get("hour")
+                    m = time_info_inner.get("minute")
+                    if d is not None and h is not None and m is not None:
+                        time_text = f"第{d}天 {h:02d}:{m:02d}"
                 if time_text:
                     lines.append(f"时间: {time_text}")
             return "\n".join(lines)
@@ -458,13 +527,56 @@ class AdminCoordinator:
         if game_day is None:
             game_day = 1
 
+        # 获取当前 chapter/area 上下文
+        party_session_id = getattr(party, "session_id", None)
+        state = (
+            await self._state_manager.get_state(world_id, party_session_id)
+            if party_session_id
+            else None
+        )
+        chapter_id = getattr(state, "chapter_id", None) if state else None
+        area_id = getattr(state, "area_id", None) if state else None
+
+        # --- 双视角写入 ---
+        narrative_event_id = f"event_narr_{_uuid.uuid4().hex[:12]}"
+        narrative_event_written = False
+
+        # 1. 叙述 event 写入区域叙述图谱（如果有 chapter/area 上下文）
+        if chapter_id and area_id:
+            narrative_node = MemoryNode(
+                id=narrative_event_id,
+                type="event",
+                name=parsed_event.get("summary", "事件")[:60],
+                importance=max(0.3, min(0.9, parsed_event.get("importance", 0.5))),
+                properties={
+                    "perspective": "narrative",
+                    "scope_type": "area",
+                    "chapter_id": chapter_id,
+                    "area_id": area_id,
+                    "day": int(game_day),
+                    "summary": base_description[:300],
+                    "participants": event.get("participants", []),
+                    "witnesses": event.get("witnesses", []),
+                    "location": location_name,
+                    "sub_type": parsed_event.get("event_type", "social"),
+                },
+            )
+            area_scope = GraphScope(
+                scope_type="area", chapter_id=chapter_id, area_id=area_id,
+            )
+            try:
+                await self.graph_store.upsert_node_v2(world_id, area_scope, narrative_node)
+                print(f"[Coordinator] 叙述 event 已写入区域图谱: {narrative_event_id}")
+                narrative_event_written = True
+            except Exception as exc:
+                print(f"[Coordinator] 叙述 event 写入失败: {exc}")
+
+        # 2. 个人 event 写入各角色图谱 + perspective_of 边
         tasks = []
         for member in party.get_active_members():
-            # 检查队友是否应该知道这个事件
             if not self.visibility_manager.should_teammate_know(member, event, party):
                 continue
 
-            # 过滤上下文
             filtered_context = self.visibility_manager.filter_context_for_teammate(
                 teammate=member,
                 full_context={
@@ -483,15 +595,52 @@ class AdminCoordinator:
                 else base_description
             )
 
-            tasks.append(
-                self.event_service.ingest_for_character(
+            async def _write_personal_event(
+                char_id: str,
+                desc: str,
+                persp: str,
+            ) -> None:
+                # 写入个人视角 event 到角色图谱
+                result = await self.event_service.ingest_for_character(
                     world_id=world_id,
-                    character_id=member.character_id,
-                    event_description=teammate_description,
+                    character_id=char_id,
+                    event_description=desc,
                     parsed_event=parsed_event,
-                    perspective=perspective,
+                    perspective=persp,
                     game_day=int(game_day),
                 )
+                # 如果叙述 event 存在，写入 perspective_of 边链接
+                if (
+                    narrative_event_written
+                    and chapter_id
+                    and area_id
+                    and result
+                    and result.event_node_ids
+                ):
+                    personal_event_id = result.event_node_ids[0]
+                    perspective_edge = MemoryEdge(
+                        id=f"edge_perspof_{char_id}_{narrative_event_id[:20]}",
+                        source=personal_event_id,
+                        target=narrative_event_id,
+                        relation="perspective_of",
+                        weight=1.0,
+                        properties={
+                            "perspective": "personal",
+                            "character_id": char_id,
+                            "created_by": "game_event",
+                            "game_day": int(game_day),
+                        },
+                    )
+                    char_scope = GraphScope(scope_type="character", character_id=char_id)
+                    try:
+                        await self.graph_store.upsert_edge_v2(
+                            world_id, char_scope, perspective_edge
+                        )
+                    except Exception:
+                        pass
+
+            tasks.append(
+                _write_personal_event(member.character_id, teammate_description, perspective)
             )
 
         if tasks:
@@ -577,29 +726,154 @@ class AdminCoordinator:
 
         return context
 
+    # 意图→召回配置映射
+    _RECALL_CONFIGS: Dict[str, Dict[str, Any]] = {
+        "exploration": {"depth": 1, "output_threshold": 0.3},
+        "dialogue": {"depth": 2, "output_threshold": 0.2},
+        "npc_interaction": {"depth": 2, "output_threshold": 0.2},
+        "recall": {"depth": 3, "output_threshold": 0.1},
+        "lore": {"depth": 3, "output_threshold": 0.1},
+        "combat": {"depth": 1, "output_threshold": 0.4},
+        "start_combat": {"depth": 1, "output_threshold": 0.4},
+        "navigation": {"depth": 1, "output_threshold": 0.3},
+        "team_interaction": {"depth": 2, "output_threshold": 0.2},
+        "roleplay": {"depth": 2, "output_threshold": 0.2},
+        "enter_sub_location": {"depth": 1, "output_threshold": 0.3},
+        "leave_sub_location": {"depth": 1, "output_threshold": 0.3},
+        "wait": {"depth": 1, "output_threshold": 0.3},
+    }
+
     async def _recall_memory(
         self,
         world_id: str,
         character_id: str,
         seed_nodes: List[str],
+        intent_type: Optional[str] = None,
+        chapter_id: Optional[str] = None,
+        area_id: Optional[str] = None,
     ):
-        """召回记忆（异步）"""
+        """召回记忆（异步），合并多层图谱后统一扩散激活。
+
+        仅 v2: 加载角色图谱 + 营地图谱，并按上下文可选叠加章节/区域图谱。
+        """
         try:
-            from app.models.flash import RecallRequest
-            recall_req = RecallRequest(
-                seed_nodes=seed_nodes,
-                include_subgraph=True,
-                use_subgraph=True,
-                subgraph_depth=2,
+            from app.models.flash import RecallResponse
+            from app.models.activation import SpreadingActivationConfig
+            from app.services.memory_graph import MemoryGraph
+            from app.services.spreading_activation import spread_activation, extract_subgraph
+
+            # 根据意图选择召回配置
+            recall_cfg = self._RECALL_CONFIGS.get(intent_type or "", {})
+            output_threshold = recall_cfg.get("output_threshold", 0.15)
+
+            config = SpreadingActivationConfig(
+                output_threshold=output_threshold,
+                current_chapter_id=chapter_id,
             )
-            return await self.flash_service.recall_memory(
-                world_id=world_id,
-                character_id=character_id,
-                request=recall_req,
+
+            # 角色（必选）+ 营地（必选）+ 章节/区域（可选）
+            scoped_data = []
+
+            # 1) 角色个人图谱（必选）
+            char_scope = GraphScope(scope_type="character", character_id=character_id)
+            char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
+            scoped_data.append((char_scope, char_data))
+
+            # 2) 当前区域叙述图谱（可选）
+            if chapter_id and area_id:
+                try:
+                    area_scope = GraphScope(
+                        scope_type="area", chapter_id=chapter_id, area_id=area_id,
+                    )
+                    area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
+                    scoped_data.append((area_scope, area_data))
+                except Exception as exc:
+                    print(f"[Coordinator] 加载区域图谱失败: {exc}")
+
+            # 3) 章节叙述图谱（可选）
+            if chapter_id:
+                try:
+                    chapter_scope = GraphScope(scope_type="chapter", chapter_id=chapter_id)
+                    chapter_data = await self.graph_store.load_graph_v2(world_id, chapter_scope)
+                    scoped_data.append((chapter_scope, chapter_data))
+                except Exception as exc:
+                    print(f"[Coordinator] 加载章节图谱失败: {exc}")
+
+            # 4) 营地图谱（必选，失败时降级但不中断）
+            try:
+                camp_scope = GraphScope(scope_type="camp")
+                camp_data = await self.graph_store.load_graph_v2(world_id, camp_scope)
+                scoped_data.append((camp_scope, camp_data))
+            except Exception as exc:
+                print(f"[Coordinator] 加载营地图谱失败: {exc}")
+
+            # 5) 注入好感度动态边权重
+            merged = MemoryGraph.from_multi_scope(scoped_data)
+            await self._inject_disposition_edges(world_id, character_id, merged)
+
+            # 6) 运行扩散激活
+            activated = spread_activation(merged, seed_nodes, config)
+
+            subgraph_graph = extract_subgraph(merged, activated)
+            subgraph = subgraph_graph.to_graph_data()
+            subgraph.nodes = [
+                n for n in subgraph.nodes
+                if not (n.properties or {}).get("placeholder", False)
+            ]
+
+            return RecallResponse(
+                seed_nodes=seed_nodes,
+                activated_nodes=activated,
+                subgraph=subgraph,
+                used_subgraph=True,
             )
         except Exception as exc:
             print(f"[Coordinator] 记忆召回失败: {exc}")
             return None
+
+    async def _inject_disposition_edges(
+        self,
+        world_id: str,
+        character_id: str,
+        graph: "MemoryGraph",
+    ) -> None:
+        """注入好感度动态边到合并图谱中。
+
+        从 Firestore 加载角色的所有 dispositions，为图谱中存在的
+        目标角色创建 approves 边，权重 = (approval+100)/200。
+        """
+        from app.models.graph import MemoryEdge
+
+        try:
+            dispositions = await self.graph_store.get_all_dispositions(
+                world_id, character_id
+            )
+        except Exception:
+            return
+
+        char_node_id = f"character_{character_id}" if not character_id.startswith("character_") else character_id
+
+        for target_id, disp_data in dispositions.items():
+            target_node_id = f"character_{target_id}" if not target_id.startswith("character_") else target_id
+            if not graph.has_node(char_node_id) or not graph.has_node(target_node_id):
+                continue
+            approval = disp_data.get("approval", 0)
+            weight = (approval + 100) / 200.0
+            weight = max(0.0, min(1.0, weight))
+            edge_id = f"disposition_{character_id}_{target_id}_approves"
+            if not graph.has_edge(edge_id):
+                graph.add_edge(MemoryEdge(
+                    id=edge_id,
+                    source=char_node_id,
+                    target=target_node_id,
+                    relation="approves",
+                    weight=weight,
+                    properties={
+                        "created_by": "disposition",
+                        "approval": approval,
+                        "trust": disp_data.get("trust", 0),
+                    },
+                ))
 
     async def _assemble_context(
         self,
@@ -609,9 +883,47 @@ class AdminCoordinator:
         world_id: str,
         session_id: str,
     ) -> Dict[str, Any]:
-        """组装完整上下文（基础 + 最新状态 + 记忆摘要）"""
+        """组装完整上下文（基础 + 按需刷新变更字段 + 记忆摘要）"""
         context = dict(base_context or {})
-        context.update(await self._build_context(world_id, session_id))
+
+        # 根据 Flash 操作类型判断需要刷新的字段，避免全量重查
+        ops = {r.operation for r in flash_results if r.success} if flash_results else set()
+
+        refresh_location = ops & {
+            FlashOperation.NAVIGATE,
+            FlashOperation.ENTER_SUBLOCATION,
+        }
+        refresh_time = FlashOperation.UPDATE_TIME in ops
+        refresh_state = ops & {
+            FlashOperation.NPC_DIALOGUE,
+            FlashOperation.START_COMBAT,
+        }
+
+        if refresh_location:
+            try:
+                location = await self._world_runtime.get_current_location(world_id, session_id)
+                context["location"] = location
+                context["available_destinations"] = location.get("available_destinations", [])
+                context["sub_locations"] = location.get("available_sub_locations", [])
+            except Exception:
+                pass
+
+        if refresh_time:
+            try:
+                context["time"] = await self._world_runtime.get_game_time(world_id, session_id)
+            except Exception:
+                pass
+
+        if refresh_state:
+            try:
+                state = await self._state_manager.get_state(world_id, session_id)
+                if state:
+                    context["state"] = "in_dialogue" if state.active_dialogue_npc else (
+                        "combat" if state.combat_id else "exploring"
+                    )
+                    context["active_npc"] = state.active_dialogue_npc
+            except Exception:
+                pass
 
         if memory_result and getattr(memory_result, "activated_nodes", None):
             context["memory_summary"] = self._summarize_memory(memory_result)
@@ -628,25 +940,84 @@ class AdminCoordinator:
         return context
 
     def _summarize_memory(self, memory_result) -> str:
-        """将记忆结果转为自然语言摘要"""
+        """将记忆结果转为自然语言摘要（含属性、关系和时间信息）"""
         activated = getattr(memory_result, "activated_nodes", {}) or {}
         if not activated:
             return ""
 
-        node_lookup = {}
         subgraph = getattr(memory_result, "subgraph", None)
-        if subgraph and getattr(subgraph, "nodes", None):
-            node_lookup = {node.id: node for node in subgraph.nodes}
+        node_lookup: Dict[str, Any] = {}
+        edges: list = []
+        if subgraph:
+            if getattr(subgraph, "nodes", None):
+                node_lookup = {node.id: node for node in subgraph.nodes}
+            if getattr(subgraph, "edges", None):
+                edges = list(subgraph.edges)
 
-        summaries = []
-        for node_id, _score in sorted(activated.items(), key=lambda x: x[1], reverse=True)[:5]:
+        # 按激活分数排序，过滤占位节点
+        scored = sorted(activated.items(), key=lambda x: x[1], reverse=True)
+        valid_nodes: List[Any] = []
+        for node_id, score in scored:
             node = node_lookup.get(node_id)
-            if node:
-                summaries.append(f"[{node.type}] {node.name}")
-            else:
-                summaries.append(node_id)
+            if not node:
+                continue
+            props = getattr(node, "properties", {}) or {}
+            if props.get("placeholder"):
+                continue
+            valid_nodes.append((node, score))
 
-        return "\n".join(summaries)
+        # 按类型分组，每类最多3个，总计最多12个
+        from collections import defaultdict
+        by_type: Dict[str, list] = defaultdict(list)
+        for node, score in valid_nodes:
+            by_type[node.type].append((node, score))
+
+        selected: List[Any] = []
+        for node_type in by_type:
+            selected.extend(by_type[node_type][:3])
+        # 按分数重排，截断到12个
+        selected.sort(key=lambda x: x[1], reverse=True)
+        selected = selected[:12]
+
+        selected_ids = {node.id for node, _ in selected}
+
+        # 格式化节点摘要
+        summaries = []
+        for node, score in selected:
+            props = getattr(node, "properties", {}) or {}
+            parts = [f"[{node.type}] {node.name}"]
+            # 添加关键属性
+            detail_keys = ["occupation", "personality", "summary", "description", "status"]
+            details = []
+            for key in detail_keys:
+                val = props.get(key)
+                if val and isinstance(val, str):
+                    details.append(f"{key}={val}")
+            if details:
+                parts.append(f"({', '.join(details[:3])})")
+            # 添加时间信息
+            game_day = props.get("game_day")
+            if game_day is not None:
+                parts.append(f"[day {game_day}]")
+            summaries.append(" ".join(parts))
+
+        # 格式化关系（仅涉及已选节点的边）
+        relation_lines = []
+        for edge in edges:
+            src = getattr(edge, "source", None)
+            tgt = getattr(edge, "target", None)
+            if src in selected_ids and tgt in selected_ids:
+                src_name = node_lookup[src].name if src in node_lookup else src
+                tgt_name = node_lookup[tgt].name if tgt in node_lookup else tgt
+                relation = getattr(edge, "relation", "related")
+                relation_lines.append(f"关系: {src_name} --[{relation}]--> {tgt_name}")
+
+        result_parts = summaries
+        if relation_lines:
+            result_parts.append("")  # 空行分隔
+            result_parts.extend(relation_lines[:8])
+
+        return "\n".join(result_parts)
 
     def _build_execution_summary(self, flash_results: List[FlashResponse]) -> str:
         """构建执行结果摘要"""
@@ -1371,3 +1742,125 @@ class AdminCoordinator:
                 for m in members
             ],
         }
+
+    # ==================== 好感度系统 ====================
+
+    async def update_disposition(
+        self,
+        world_id: str,
+        character_id: str,
+        target_id: str,
+        deltas: Dict[str, int],
+        reason: str = "",
+        game_day: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """更新角色好感度并同步 approves 边权重到角色图谱。"""
+        result = await self.graph_store.update_disposition(
+            world_id=world_id,
+            character_id=character_id,
+            target_id=target_id,
+            deltas=deltas,
+            reason=reason,
+            game_day=game_day,
+        )
+
+        # 同步 approves 边到角色图谱
+        if "approval" in deltas:
+            from app.models.graph import MemoryEdge
+
+            approval = result.get("approval", 0)
+            weight = (approval + 100) / 200.0
+            weight = max(0.0, min(1.0, weight))
+
+            char_node_id = f"character_{character_id}" if not character_id.startswith("character_") else character_id
+            target_node_id = f"character_{target_id}" if not target_id.startswith("character_") else target_id
+            edge_id = f"disposition_{character_id}_{target_id}_approves"
+
+            edge = MemoryEdge(
+                id=edge_id,
+                source=char_node_id,
+                target=target_node_id,
+                relation="approves",
+                weight=weight,
+                properties={
+                    "created_by": "disposition",
+                    "approval": approval,
+                    "trust": result.get("trust", 0),
+                    "game_day": game_day,
+                },
+            )
+            char_scope = GraphScope(scope_type="character", character_id=character_id)
+            try:
+                await self.graph_store.upsert_edge_v2(world_id, char_scope, edge)
+            except Exception as exc:
+                print(f"[Coordinator] approves 边同步失败: {exc}")
+
+        return result
+
+    async def update_disposition_after_combat(
+        self,
+        world_id: str,
+        session_id: str,
+        combat_result: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """战斗结束后根据结果更新队友好感度。
+
+        规则：
+        - 玩家保护了队友 → approval +5, trust +3
+        - 玩家治疗了队友 → approval +3, trust +2
+        - 队友被击败（玩家未保护）→ approval -3
+        - 战斗胜利 → 所有参与队友 approval +2
+        - 战斗失败 → 所有参与队友 approval -1
+        """
+        party = await self.party_service.get_party(world_id, session_id)
+        if not party:
+            return []
+
+        state = await self._state_manager.get_state(world_id, session_id)
+        game_day = state.game_time.day if state else 1
+
+        updates = []
+        is_victory = combat_result.get("result") == "victory"
+
+        for member in party.get_active_members():
+            char_id = member.character_id
+            deltas: Dict[str, int] = {}
+            reasons: List[str] = []
+
+            # 战斗结果基础好感度
+            if is_victory:
+                deltas["approval"] = deltas.get("approval", 0) + 2
+                reasons.append("combat_victory")
+            else:
+                deltas["approval"] = deltas.get("approval", 0) - 1
+                reasons.append("combat_defeat")
+
+            # 保护/治疗行为
+            protected = combat_result.get("protected_allies", [])
+            healed = combat_result.get("healed_allies", [])
+            if char_id in protected:
+                deltas["approval"] = deltas.get("approval", 0) + 5
+                deltas["trust"] = deltas.get("trust", 0) + 3
+                reasons.append("protected")
+            if char_id in healed:
+                deltas["approval"] = deltas.get("approval", 0) + 3
+                deltas["trust"] = deltas.get("trust", 0) + 2
+                reasons.append("healed")
+
+            if deltas:
+                result = await self.update_disposition(
+                    world_id=world_id,
+                    character_id=char_id,
+                    target_id="player",
+                    deltas=deltas,
+                    reason=", ".join(reasons),
+                    game_day=game_day,
+                )
+                updates.append({
+                    "character_id": char_id,
+                    "deltas": deltas,
+                    "reason": ", ".join(reasons),
+                    "new_approval": result.get("approval"),
+                })
+
+        return updates

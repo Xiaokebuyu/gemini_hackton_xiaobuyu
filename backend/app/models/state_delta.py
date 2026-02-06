@@ -43,5 +43,9 @@ class GameState(BaseModel):
     narrative_progress: Dict[str, Any] = Field(default_factory=dict)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+    # 图谱 v2 上下文（章节/区域追踪）
+    chapter_id: Optional[str] = None
+    area_id: Optional[str] = None
+
     # 队伍相关
     party_id: Optional[str] = None

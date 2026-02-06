@@ -193,9 +193,9 @@
   animation: spin 2s linear infinite;
 }
 
-/* 消息进入动画 - 带延迟 */
+/* 消息进入动画 - 更流畅的 ease-out */
 .message-enter {
-  animation: slideUp 0.3s ease-out forwards;
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .message-enter-delay-1 {
@@ -211,6 +211,32 @@
 .message-enter-delay-3 {
   animation-delay: 0.3s;
   opacity: 0;
+}
+
+/* 面板 hover 过渡动画 */
+.panel-hover {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.panel-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sketch-shadow-lg);
+}
+
+/* Glass reveal 动画 */
+@keyframes glassReveal {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(var(--sketch-glass-blur));
+  }
+}
+
+.glass-reveal {
+  animation: glassReveal 0.3s ease-out forwards;
 }
 
 /* 按钮悬停效果 */
@@ -233,7 +259,7 @@
 }
 
 .card-hover:hover {
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   box-shadow: var(--shadow-panel);
 }
 
@@ -256,4 +282,21 @@
 
 .animate-blink {
   animation: blink 1s ease-in-out infinite;
+}
+
+/* 脉冲金色环 - loading */
+@keyframes pulseRing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(201, 162, 39, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(201, 162, 39, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(201, 162, 39, 0);
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulseRing 1.5s ease-out infinite;
 }

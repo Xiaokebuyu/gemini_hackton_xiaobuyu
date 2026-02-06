@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from app.models.graph import MemoryNode
+from app.models.graph_scope import GraphScope
 from app.models.party import (
     Party,
     PartyMember,
@@ -276,11 +277,10 @@ class PartyService:
                 "is_teammate": True,
             },
         )
-        await self.graph_store.upsert_node(
+        await self.graph_store.upsert_node_v2(
             world_id=world_id,
-            graph_type="character",
+            scope=GraphScope.character(character_id),
             node=identity_node,
-            character_id=character_id,
         )
 
     def get_party_member_ids(

@@ -477,9 +477,27 @@ class FlashCPUService:
                     if self.world_runtime
                     else (lambda: {"success": False, "error": "导航系统未初始化"})(),
                 )
+                if self._is_tool_result_failure(result) and self.world_runtime:
+                    direct_result = await self.world_runtime.navigate(
+                        world_id=world_id,
+                        session_id=session_id,
+                        destination=params.get("destination"),
+                        direction=params.get("direction"),
+                        generate_narration=generate_narration,
+                    )
+                    if isinstance(direct_result, dict):
+                        result = direct_result
                 if self.world_runtime:
                     await self.world_runtime.refresh_state(world_id, session_id)
-                return FlashResponse(success=bool(result.get("success")), operation=op, result=result)
+                payload = result if isinstance(result, dict) else {"raw": result}
+                success = bool(payload.get("success"))
+                error_message = payload.get("error") if not success else None
+                return FlashResponse(
+                    success=success,
+                    operation=op,
+                    result=payload,
+                    error=error_message,
+                )
 
             if op == FlashOperation.UPDATE_TIME:
                 minutes = int(params.get("minutes", 0))
@@ -490,30 +508,75 @@ class FlashCPUService:
                     if self.world_runtime
                     else {"error": "时间系统未初始化"},
                 )
+                if self._is_tool_result_failure(result) and self.world_runtime:
+                    direct_result = await self.world_runtime.advance_time(world_id, session_id, minutes)
+                    if isinstance(direct_result, dict):
+                        result = direct_result
                 if self.world_runtime:
                     await self.world_runtime.refresh_state(world_id, session_id)
-                delta = self._build_state_delta("update_time", {"game_time": result.get("time")})
-                return FlashResponse(success=bool(result.get("success", True)), operation=op, result=result, state_delta=delta)
+                payload = result if isinstance(result, dict) else {"raw": result}
+                success = not self._is_tool_result_failure(payload)
+                delta = self._build_state_delta("update_time", {"game_time": payload.get("time")})
+                error_message = payload.get("error") if not success else None
+                return FlashResponse(
+                    success=success,
+                    operation=op,
+                    result=payload,
+                    state_delta=delta,
+                    error=error_message,
+                )
 
             if op == FlashOperation.ENTER_SUBLOCATION:
+                sub_location_id = await self._resolve_enter_sub_location_id(
+                    world_id=world_id,
+                    session_id=session_id,
+                    params=params,
+                )
+                if not sub_location_id:
+                    return FlashResponse(
+                        success=False,
+                        operation=op,
+                        error="missing sub_location_id",
+                    )
+
                 result = await self._call_tool_with_fallback(
                     "enter_sublocation",
                     {
                         "world_id": world_id,
                         "session_id": session_id,
-                        "sub_location_id": params.get("sub_location_id"),
+                        "sub_location_id": sub_location_id,
                     },
                     fallback=lambda: self.world_runtime.enter_sub_location(
                         world_id=world_id,
                         session_id=session_id,
-                        sub_location_id=params.get("sub_location_id"),
+                        sub_location_id=sub_location_id,
                     )
                     if self.world_runtime
                     else {"success": False, "error": "子地点系统未初始化"},
                 )
+                # MCP 语义失败时（error/success=false），再尝试本地 runtime，
+                # 避免 MCP 子进程状态与主进程短暂不一致导致的误失败。
+                mcp_failed = self._is_tool_result_failure(result)
+                if mcp_failed and self.world_runtime:
+                    direct_result = await self.world_runtime.enter_sub_location(
+                        world_id=world_id,
+                        session_id=session_id,
+                        sub_location_id=sub_location_id,
+                    )
+                    if isinstance(direct_result, dict):
+                        result = direct_result
+
                 if self.world_runtime:
                     await self.world_runtime.refresh_state(world_id, session_id)
-                return FlashResponse(success=bool(result.get("success")), operation=op, result=result)
+                payload = result if isinstance(result, dict) else {"raw": result}
+                success = bool(payload.get("success"))
+                error_message = payload.get("error") if not success else None
+                return FlashResponse(
+                    success=success,
+                    operation=op,
+                    result=payload,
+                    error=error_message,
+                )
 
             if op == FlashOperation.START_COMBAT:
                 result = await self._call_combat_tool_with_fallback(
@@ -544,21 +607,32 @@ class FlashCPUService:
                     if isinstance(recall_payload, RecallRequest)
                     else RecallRequest(**recall_payload)
                 )
+                chapter_id = params.get("chapter_id")
+                area_id = params.get("area_id")
+                tool_args = {
+                    "world_id": world_id,
+                    "character_id": params.get("character_id"),
+                    "request": recall_request.model_dump(),
+                }
+                if chapter_id:
+                    tool_args["chapter_id"] = chapter_id
+                if area_id:
+                    tool_args["area_id"] = area_id
                 result = await self._call_tool_with_fallback(
                     "recall_memory",
-                    {
-                        "world_id": world_id,
-                        "character_id": params.get("character_id"),
-                        "request": recall_request.model_dump(),
-                    },
-                    fallback=lambda: self.flash_service.recall_memory(
-                        world_id=world_id,
-                        character_id=params.get("character_id"),
-                        request=recall_request,
-                    ),
+                    tool_args,
+                    # 不再回退旧的 character-only recall 逻辑，MCP 不可用时显式失败。
+                    fallback=lambda: {"error": "recall_memory MCP tool unavailable"},
                 )
                 payload = result.model_dump() if hasattr(result, "model_dump") else result
-                return FlashResponse(success=True, operation=op, result=payload)
+                payload_dict = payload if isinstance(payload, dict) else {"raw": payload}
+                error_message = payload_dict.get("error")
+                return FlashResponse(
+                    success=not bool(error_message),
+                    operation=op,
+                    result=payload_dict,
+                    error=error_message,
+                )
 
             if op == FlashOperation.BROADCAST_EVENT:
                 # Expect caller to pass a GMEventIngestRequest-compatible dict.
@@ -611,7 +685,7 @@ class FlashCPUService:
                         "world_id": world_id,
                         "npc_id": params.get("npc_id"),
                         "message": params.get("message", ""),
-                        "tier": params.get("tier", "main"),
+                        "tier": params.get("tier", "secondary"),
                         "scene": params.get("scene"),
                         "conversation_history": params.get("conversation_history"),
                     },
@@ -626,6 +700,115 @@ class FlashCPUService:
             return FlashResponse(success=False, operation=op, error=f"unsupported operation: {op}")
         except Exception as exc:
             return FlashResponse(success=False, operation=op, error=str(exc))
+
+    @staticmethod
+    def _is_tool_result_failure(result: Any) -> bool:
+        return (
+            not isinstance(result, dict)
+            or bool(result.get("error"))
+            or result.get("success") is False
+        )
+
+    @staticmethod
+    def _matches_location_candidate(candidate: str, value: Optional[str]) -> bool:
+        if not candidate or not value:
+            return False
+        lhs = candidate.strip().lower()
+        rhs = str(value).strip().lower()
+        if not lhs or not rhs:
+            return False
+        return lhs == rhs or lhs in rhs or rhs in lhs
+
+    def _match_sub_location_from_context(
+        self,
+        candidate: str,
+        sub_locations: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        for item in sub_locations:
+            if not isinstance(item, dict):
+                continue
+            sub_id = item.get("id")
+            sub_name = item.get("name")
+            if self._matches_location_candidate(candidate, sub_id) or self._matches_location_candidate(candidate, sub_name):
+                return str(sub_id) if sub_id else None
+        return None
+
+    async def _resolve_enter_sub_location_id(
+        self,
+        world_id: str,
+        session_id: str,
+        params: Dict[str, Any],
+    ) -> Optional[str]:
+        """
+        兼容两种参数：
+        - sub_location_id: 规范 ID
+        - sub_location: 名称或ID（LLM 常返回中文名称）
+        """
+        raw_id = params.get("sub_location_id")
+        if raw_id is not None and str(raw_id).strip():
+            return str(raw_id).strip()
+
+        raw_name = params.get("sub_location")
+        if raw_name is None and params.get("target") is not None:
+            raw_name = params.get("target")
+        if raw_name is None and params.get("destination") is not None:
+            raw_name = params.get("destination")
+        if raw_name is None and params.get("location") is not None:
+            raw_name = params.get("location")
+        if raw_name is None:
+            return None
+
+        candidate = str(raw_name).strip()
+        if not candidate:
+            return None
+
+        if not self.world_runtime:
+            return candidate
+
+        current_map_id: Optional[str] = None
+        try:
+            state = await self.world_runtime.get_state(world_id, session_id)
+            current_map_id = getattr(state, "player_location", None)
+        except Exception:
+            current_map_id = None
+
+        try:
+            location = await self.world_runtime.get_current_location(world_id, session_id)
+            if isinstance(location, dict):
+                current_map_id = current_map_id or location.get("location_id")
+                sub_locations = (
+                    location.get("available_sub_locations")
+                    or location.get("sub_locations")
+                    or []
+                )
+                resolved = self._match_sub_location_from_context(candidate, sub_locations)
+                if resolved:
+                    return resolved
+        except Exception:
+            pass
+
+        # 再用导航器做兜底匹配（支持名称/ID模糊匹配）
+        try:
+            navigator = self.world_runtime._get_navigator(world_id)
+
+            if current_map_id:
+                if navigator.get_sub_location(current_map_id, candidate):
+                    return candidate
+                for sub_loc in navigator.get_sub_locations(current_map_id):
+                    if (
+                        self._matches_location_candidate(candidate, sub_loc.id)
+                        or self._matches_location_candidate(candidate, sub_loc.name)
+                    ):
+                        return sub_loc.id
+
+            map_id, sub_location_id = navigator.resolve_location(candidate)
+            if sub_location_id and (not current_map_id or map_id == current_map_id):
+                return sub_location_id
+        except Exception:
+            pass
+
+        # 最终兜底：按 ID 原样传递给 runtime，让 runtime 给出明确报错
+        return candidate
 
     def _build_state_delta(self, operation: str, changes: Dict[str, Any]) -> StateDelta:
         return StateDelta(
@@ -660,7 +843,7 @@ class FlashCPUService:
                 "world_id": world_id,
                 "npc_id": npc_id,
                 "message": message,
-                "tier": "main",
+                "tier": "secondary",
                 "scene": scene,
             },
             fallback=lambda: self.pro_service.chat_simple(world_id, npc_id, message),

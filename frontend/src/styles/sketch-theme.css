@@ -1,40 +1,49 @@
-/* Sketch/Hand-drawn Theme CSS Variables */
+/* Sketch/Hand-drawn Theme CSS Variables - Leather-Bound Parchment UI */
 :root {
-  /* Sketch Palette - Parchment/Paper texture */
-  --sketch-bg-primary: #f5f0e1;      /* Main parchment background */
-  --sketch-bg-secondary: #ebe5d5;    /* Slightly darker paper */
-  --sketch-bg-panel: #faf7ed;        /* Panel background */
-  --sketch-bg-input: #fffdf5;        /* Input field background */
+  /* Sketch Palette - Dark leather exterior, cream parchment interior */
+  --sketch-bg-primary: #c8b99a;
+  --sketch-bg-secondary: #b8a888;
+  --sketch-bg-panel: #ede5d3;
+  --sketch-bg-input: #f5eee0;
+  --sketch-bg-glass: rgba(237, 229, 211, 0.92);
+  --sketch-bg-card: #f2ead8;
 
-  /* Ink colors */
-  --sketch-ink-primary: #2c2416;     /* Deep brown ink */
-  --sketch-ink-secondary: #5c4d3a;   /* Light brown ink */
-  --sketch-ink-muted: #8b7d6b;       /* Faded ink */
-  --sketch-ink-faint: #b5a898;       /* Very faint ink */
+  /* Ink colors - Deep, rich tones */
+  --sketch-ink-primary: #1a1008;
+  --sketch-ink-secondary: #3d2b1f;
+  --sketch-ink-muted: #6b5a48;
+  --sketch-ink-faint: #9a8b7a;
 
-  /* Accent colors - Watercolor style */
-  --sketch-accent-red: #c75146;      /* Ochre red */
-  --sketch-accent-blue: #4a6fa5;     /* Indigo blue */
-  --sketch-accent-green: #5b8a5f;    /* Grass green */
-  --sketch-accent-gold: #c9a227;     /* Golden yellow */
-  --sketch-accent-purple: #7b6b8a;   /* Muted purple */
-  --sketch-accent-cyan: #5a9aa8;     /* Teal */
+  /* Accent colors - Jewel tones */
+  --sketch-accent-red: #a03030;
+  --sketch-accent-blue: #2a4a7a;
+  --sketch-accent-green: #2d6a30;
+  --sketch-accent-gold: #b8860b;
+  --sketch-accent-purple: #5a3a7a;
+  --sketch-accent-cyan: #2a7a8a;
 
-  /* Message type colors - Softer tones for sketch style */
-  --sketch-msg-gm: #d4a843;          /* GM - warm gold */
-  --sketch-msg-npc: #5a9aa8;         /* NPC - teal */
-  --sketch-msg-player: #5b8a5f;      /* Player - green */
-  --sketch-msg-teammate: #7a9f7d;    /* Teammate - lighter green */
-  --sketch-msg-system: #8b7d6b;      /* System - muted */
-  --sketch-msg-combat: #c75146;      /* Combat - red */
+  /* Hover state colors - deeper jewel tones */
+  --sketch-accent-gold-hover: #d4a020;
+  --sketch-accent-cyan-hover: #1a6a7a;
+  --sketch-accent-green-hover: #1d5a20;
+  --sketch-accent-red-hover: #902020;
+  --sketch-accent-purple-hover: #4a2a6a;
 
-  /* Message bubble backgrounds */
-  --sketch-bubble-gm: #fff9e6;       /* Warm cream for GM */
-  --sketch-bubble-npc: #e8f0f8;      /* Light blue for NPC */
-  --sketch-bubble-player: #e8f5e9;   /* Light green for player */
-  --sketch-bubble-teammate: #f0f8e8; /* Lighter green for teammate */
-  --sketch-bubble-system: #f5f5f5;   /* Gray for system */
-  --sketch-bubble-combat: #fde8e6;   /* Light red for combat */
+  /* Message type colors - Richer tones */
+  --sketch-msg-gm: #b8860b;
+  --sketch-msg-npc: #2a7a8a;
+  --sketch-msg-player: #2d6a30;
+  --sketch-msg-teammate: #4a8a4d;
+  --sketch-msg-system: #6b5a48;
+  --sketch-msg-combat: #a03030;
+
+  /* Message bubble backgrounds - more saturated */
+  --sketch-bubble-gm: #fce8b8;
+  --sketch-bubble-npc: #c8ddef;
+  --sketch-bubble-player: #c8e6c8;
+  --sketch-bubble-teammate: #d0edc8;
+  --sketch-bubble-system: #e8e8e5;
+  --sketch-bubble-combat: #f5c4c0;
 
   /* Danger levels - Softer versions */
   --sketch-danger-low: #7eb87e;
@@ -48,25 +57,35 @@
   --sketch-time-dusk: #c98a8a;
   --sketch-time-night: #6b5b8a;
 
-  /* Hand-drawn border */
+  /* Border */
   --sketch-border-width: 2px;
   --sketch-border-color: var(--sketch-ink-secondary);
   --sketch-border-light: var(--sketch-ink-muted);
+  --sketch-border-subtle: rgba(61, 43, 31, 0.15);
+  --sketch-border-dark: #3d2b1f;
+  --sketch-border-medium: #6b5a48;
+  --sketch-border-accent: #b8860b;
 
   /* Handwritten fonts */
   --font-handwritten: 'Caveat', 'Ma Shan Zheng', cursive;
-  --font-sketch-title: 'Shadows Into Light', 'Ma Shan Zheng', cursive;
-  --font-sketch-body: 'Patrick Hand', 'Ma Shan Zheng', cursive;
+  --font-sketch-title: 'Cinzel', 'Ma Shan Zheng', Georgia, serif;
+  --font-sketch-body: 'Inter', 'Ma Shan Zheng', system-ui, sans-serif;
 
   /* Sketch-specific spacing */
   --sketch-spacing-sm: 8px;
   --sketch-spacing-md: 16px;
   --sketch-spacing-lg: 24px;
 
-  /* Sketch shadows - Softer, paper-like */
-  --sketch-shadow-sm: 2px 2px 4px rgba(44, 36, 22, 0.1);
-  --sketch-shadow-md: 3px 3px 8px rgba(44, 36, 22, 0.15);
-  --sketch-shadow-lg: 4px 4px 12px rgba(44, 36, 22, 0.2);
+  /* Sketch shadows - Multi-layered, deeper */
+  --sketch-shadow-sm: 0 1px 4px rgba(42, 28, 15, 0.2);
+  --sketch-shadow-md: 0 4px 12px rgba(42, 28, 15, 0.25), 0 1px 3px rgba(42, 28, 15, 0.15);
+  --sketch-shadow-lg: 0 8px 24px rgba(42, 28, 15, 0.3), 0 2px 6px rgba(42, 28, 15, 0.18);
+  --sketch-shadow-glow-gold: 0 0 15px rgba(184, 134, 11, 0.4);
+
+  /* Glass effect */
+  --sketch-glass-bg: rgba(250, 247, 237, 0.85);
+  --sketch-glass-border: rgba(92, 77, 58, 0.2);
+  --sketch-glass-blur: 8px;
 }
 
 /* Sketch mode overrides for existing variables */
@@ -96,42 +115,39 @@
   --color-msg-system: var(--sketch-msg-system);
   --color-msg-combat: var(--sketch-msg-combat);
 
+  --shadow-sm: var(--sketch-shadow-sm);
+  --shadow-md: var(--sketch-shadow-md);
+  --shadow-lg: var(--sketch-shadow-lg);
   --shadow-panel: var(--sketch-shadow-md);
   --shadow-card: var(--sketch-shadow-sm);
 }
 
-/* Sketch border utility class */
+/* Sketch border utility class - refined */
 .sketch-border {
-  border: 2px solid var(--sketch-border-color);
-  border-radius: 3px;
-  /* Slightly irregular corners */
-  clip-path: polygon(
-    0% 2%, 2% 0%,
-    98% 0%, 100% 2%,
-    100% 98%, 98% 100%,
-    2% 100%, 0% 98%
-  );
+  border: 2px solid var(--sketch-border-dark);
+  border-radius: 12px;
+  box-shadow: var(--sketch-shadow-sm);
 }
 
-/* Sketch border with hand-drawn feel using box-shadow */
+/* Sketch border with subtle depth */
 .sketch-border-rough {
-  border: 2px solid var(--sketch-border-color);
-  border-radius: 2px;
+  border: 2px solid var(--sketch-border-dark);
+  border-radius: 12px;
   box-shadow:
-    1px 1px 0 var(--sketch-border-light),
-    -1px -1px 0 var(--sketch-border-light);
+    var(--sketch-shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
 /* Sketch panel background */
 .sketch-panel {
   background: var(--sketch-bg-panel);
-  border: 2px solid var(--sketch-border-color);
-  border-radius: 4px;
-  box-shadow: var(--sketch-shadow-sm);
+  border: 2px solid var(--sketch-border-dark);
+  border-radius: 12px;
+  box-shadow: var(--sketch-shadow-md);
   position: relative;
 }
 
-/* Paper texture overlay (optional) */
+/* Paper texture overlay */
 .sketch-paper-texture {
   position: relative;
 }
@@ -141,59 +157,63 @@
   position: absolute;
   inset: 0;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  opacity: 0.03;
+  opacity: 0.025;
   pointer-events: none;
   mix-blend-mode: multiply;
 }
 
-/* Sketch button style */
+/* Sketch button style - refined */
 .sketch-button {
-  font-family: var(--font-handwritten);
-  font-size: 1.1em;
+  font-family: var(--font-sketch-body);
+  font-size: 1rem;
   padding: 0.5em 1em;
   background: var(--sketch-bg-panel);
   border: 2px solid var(--sketch-border-color);
+  border-radius: 8px;
   color: var(--sketch-ink-primary);
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
-  /* Irregular shape */
-  clip-path: polygon(2% 0%, 98% 2%, 100% 98%, 3% 100%);
 }
 
 .sketch-button:hover {
   background: var(--sketch-bg-secondary);
-  transform: translateY(-1px) rotate(0.5deg);
+  transform: translateY(-1px);
+  box-shadow: var(--sketch-shadow-md);
 }
 
 .sketch-button:active {
-  transform: translateY(0) rotate(0deg);
+  transform: translateY(0);
+  box-shadow: var(--sketch-shadow-sm);
 }
 
 .sketch-button-primary {
-  background: var(--sketch-accent-gold);
+  background: linear-gradient(to bottom, var(--sketch-accent-gold-hover), var(--sketch-accent-gold));
   color: var(--sketch-ink-primary);
+  border-color: var(--sketch-accent-gold);
 }
 
 .sketch-button-primary:hover {
-  background: #d4ad2e;
+  background: linear-gradient(to bottom, #dab832, var(--sketch-accent-gold-hover));
+  box-shadow: var(--sketch-shadow-glow-gold);
 }
 
-/* Sketch input style */
+/* Sketch input style - refined */
 .sketch-input {
-  font-family: var(--font-handwritten);
-  font-size: 1.1em;
+  font-family: var(--font-sketch-body);
+  font-size: 1rem;
   padding: 0.75em 1em;
   background: var(--sketch-bg-input);
-  border: 2px solid var(--sketch-border-color);
+  border: 2px solid var(--sketch-border-medium);
   color: var(--sketch-ink-primary);
-  border-radius: 3px;
-  transition: border-color 0.2s ease;
+  border-radius: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .sketch-input:focus {
   outline: none;
   border-color: var(--sketch-accent-gold);
+  box-shadow: inset 0 0 0 1px var(--sketch-accent-gold), var(--sketch-shadow-sm);
 }
 
 .sketch-input::placeholder {
@@ -201,15 +221,14 @@
   font-style: italic;
 }
 
-/* Sketch message bubble */
+/* Sketch message bubble - refined */
 .sketch-bubble {
   position: relative;
   padding: 1em;
   margin-bottom: 0.75em;
-  border: 2px solid currentColor;
-  border-radius: 3px;
-  /* Slight rotation for hand-drawn feel */
-  transform: rotate(-0.3deg);
+  border: 1px solid var(--sketch-border-subtle);
+  border-radius: 12px;
+  box-shadow: var(--sketch-shadow-sm);
 }
 
 .sketch-bubble::after {
@@ -221,34 +240,26 @@
   opacity: 0.3;
 }
 
-/* Sketch decorations */
-.sketch-doodle::before {
-  content: '';
-  position: absolute;
-  opacity: 0.2;
-}
-
-/* Sketch scrollbar */
+/* Sketch scrollbar - refined, thinner */
 .sketch-scrollbar::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
 }
 
 .sketch-scrollbar::-webkit-scrollbar-track {
-  background: var(--sketch-bg-secondary);
+  background: transparent;
 }
 
 .sketch-scrollbar::-webkit-scrollbar-thumb {
   background: var(--sketch-ink-muted);
-  border-radius: 2px;
-  border: 1px solid var(--sketch-bg-secondary);
+  border-radius: 9999px;
 }
 
 .sketch-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--sketch-ink-secondary);
 }
 
-/* Sketch heading styles */
+/* Sketch heading styles - refined */
 .sketch-heading {
   font-family: var(--font-sketch-title);
   color: var(--sketch-ink-primary);
@@ -263,57 +274,60 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: currentColor;
-  opacity: 0.3;
-  /* Wavy underline effect */
-  clip-path: polygon(
-    0% 50%, 5% 0%, 10% 50%, 15% 100%, 20% 50%,
-    25% 0%, 30% 50%, 35% 100%, 40% 50%, 45% 0%,
-    50% 50%, 55% 100%, 60% 50%, 65% 0%, 70% 50%,
-    75% 100%, 80% 50%, 85% 0%, 90% 50%, 95% 100%, 100% 50%
-  );
+  background: linear-gradient(90deg, currentColor, transparent);
+  opacity: 0.5;
+  border-radius: 1px;
 }
 
-/* Sketch card style */
+/* Sketch card style - refined */
 .sketch-card {
-  background: var(--sketch-bg-panel);
+  background: var(--sketch-bg-card);
   border: 2px solid var(--sketch-border-color);
+  border-radius: 12px;
   padding: 1em;
   position: relative;
   box-shadow: var(--sketch-shadow-sm);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-/* Corner decorations for sketch cards */
+.sketch-card:hover {
+  box-shadow: var(--sketch-shadow-md);
+}
+
+/* Corner decorations for sketch cards - refined */
 .sketch-card-decorated::before,
 .sketch-card-decorated::after {
   content: '';
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 24px;
+  height: 24px;
   border: 2px solid var(--sketch-accent-gold);
+  opacity: 0.6;
 }
 
 .sketch-card-decorated::before {
-  top: -4px;
-  left: -4px;
+  top: -2px;
+  left: -2px;
   border-right: none;
   border-bottom: none;
+  border-radius: 4px 0 0 0;
 }
 
 .sketch-card-decorated::after {
-  bottom: -4px;
-  right: -4px;
+  bottom: -2px;
+  right: -2px;
   border-left: none;
   border-top: none;
+  border-radius: 0 0 4px 0;
 }
 
-/* Sketch badge */
+/* Sketch badge - refined */
 .sketch-badge {
-  font-family: var(--font-handwritten);
+  font-family: var(--font-sketch-body);
   font-size: 0.85em;
   padding: 2px 8px;
   border: 1px solid currentColor;
-  border-radius: 2px;
+  border-radius: 9999px;
   background: transparent;
 }
 
@@ -336,4 +350,37 @@
 .sketch-theme .toast-info {
   background: var(--sketch-accent-blue);
   color: white;
+}
+
+/* Header strip - chapter title bar */
+.sketch-header-strip {
+  background: linear-gradient(135deg, var(--sketch-border-dark), #2a1c12);
+  color: var(--sketch-accent-gold);
+  padding: 6px 12px;
+  font-family: var(--font-sketch-title);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--sketch-border-accent);
+}
+
+/* Decorative divider with gold gradient */
+.sketch-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.sketch-divider::before,
+.sketch-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--sketch-accent-gold), transparent);
+}
+
+/* Inner glow for panels */
+.sketch-inner-glow {
+  box-shadow: inset 0 0 0 1px rgba(184, 134, 11, 0.1), inset 0 0 20px rgba(184, 134, 11, 0.04);
 }

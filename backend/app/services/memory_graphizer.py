@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.models.context_window import GraphizeRequest, WindowMessage
 from app.models.graph import MemoryEdge, MemoryNode
+from app.models.graph_scope import GraphScope
 from app.models.graph_elements import (
     EventGroupNode,
     EventNode,
@@ -490,6 +491,7 @@ class MemoryGraphizer:
             MergeResult 包含合并结果
         """
         result = MergeResult()
+        char_scope = GraphScope.character(npc_id)
 
         # 1. 创建 event_group 节点
         if extraction.event_group:
@@ -513,8 +515,10 @@ class MemoryGraphizer:
                     "token_count": eg.token_count,
                 },
             )
-            await self.graph_store.upsert_node(
-                world_id, "character", node, character_id=npc_id
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=char_scope,
+                node=node,
             )
             result.new_nodes += 1
             result.new_node_ids.append(eg.id)
@@ -538,8 +542,10 @@ class MemoryGraphizer:
                     ] if ev.transcript_snippet else None,
                 },
             )
-            await self.graph_store.upsert_node(
-                world_id, "character", node, character_id=npc_id
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=char_scope,
+                node=node,
             )
             result.new_nodes += 1
             result.new_node_ids.append(ev.id)
@@ -553,8 +559,10 @@ class MemoryGraphizer:
                 importance=float(node_data.get("importance", 0.5)),
                 properties=node_data.get("properties", {}),
             )
-            await self.graph_store.upsert_node(
-                world_id, "character", node, character_id=npc_id
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=char_scope,
+                node=node,
             )
             result.new_nodes += 1
             result.new_node_ids.append(node.id)
@@ -569,8 +577,10 @@ class MemoryGraphizer:
                 weight=edge_spec.weight,
                 properties=edge_spec.properties,
             )
-            await self.graph_store.upsert_edge(
-                world_id, "character", edge, character_id=npc_id
+            await self.graph_store.upsert_edge_v2(
+                world_id=world_id,
+                scope=char_scope,
+                edge=edge,
             )
             result.new_edges += 1
             result.new_edge_ids.append(edge.id)
@@ -590,8 +600,9 @@ class MemoryGraphizer:
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
         """获取角色图谱中的重要节点"""
-        graph_data = await self.graph_store.load_graph(
-            world_id, "character", npc_id
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.character(npc_id),
         )
 
         if not graph_data or not graph_data.nodes:

@@ -321,35 +321,6 @@ export interface NavigateResponse {
 }
 
 /**
- * 创建会话请求
- */
-export interface CreateSessionRequest {
-  session_id?: string;
-  participants?: string[];
-}
-
-/**
- * 创建会话响应
- */
-export interface CreateSessionResponse {
-  session: GameSessionState;
-}
-
-/**
- * 游戏会话状态
- */
-export interface GameSessionState {
-  session_id: string;
-  world_id: string;
-  status: string;
-  current_scene?: SceneState;
-  participants: string[];
-  active_combat_id?: string;
-  updated_at: string;
-  metadata: Record<string, unknown>;
-}
-
-/**
  * 场景状态
  */
 export interface SceneState {
@@ -358,6 +329,211 @@ export interface SceneState {
   location?: string;
   atmosphere?: string;
   participants: string[];
+}
+
+/**
+ * 战斗上下文
+ */
+export interface CombatContext {
+  location?: string;
+  participants: string[];
+  witnesses: string[];
+  visibility_public: boolean;
+  known_characters: string[];
+  character_locations: Record<string, string>;
+}
+
+/**
+ * 游戏会话状态 (对应 GameSessionState)
+ */
+export interface GameSessionState {
+  session_id: string;
+  world_id: string;
+  status: string;
+  current_scene?: SceneState;
+  participants: string[];
+  active_combat_id?: string;
+  combat_context?: CombatContext;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * 创建会话请求 (Legacy, 对应 CreateSessionRequest)
+ */
+export interface CreateSessionRequest {
+  session_id?: string;
+  participants?: string[];
+}
+
+/**
+ * 创建会话响应 (Legacy, 对应 CreateSessionResponse)
+ */
+export interface CreateSessionResponse {
+  session: GameSessionState;
+}
+
+/**
+ * 创建游戏会话请求 (v2, 对应 CreateGameSessionRequest)
+ */
+export interface CreateGameSessionRequest {
+  user_id: string;
+  session_id?: string;
+  participants?: string[];
+  starting_location?: string;
+  starting_time?: { day?: number; hour?: number; minute?: number };
+  known_characters?: string[];
+  character_locations?: Record<string, string>;
+}
+
+/**
+ * 创建游戏会话响应 (v2)
+ */
+export interface CreateGameSessionResponse {
+  session_id: string;
+  world_id: string;
+  phase: string;
+  location: string;
+  time: Record<string, unknown>;
+}
+
+/**
+ * 可恢复会话摘要 (对应后端 RecoverableSessionItem)
+ */
+export interface RecoverableSessionItem {
+  session_id: string;
+  world_id: string;
+  status: string;
+  updated_at: string;
+  participants: string[];
+  player_location?: string | null;
+  chapter_id?: string | null;
+  sub_location?: string | null;
+}
+
+/**
+ * 可恢复会话列表响应 (对应后端 RecoverableSessionsResponse)
+ */
+export interface RecoverableSessionsResponse {
+  world_id: string;
+  user_id: string;
+  sessions: RecoverableSessionItem[];
+}
+
+/**
+ * 游戏阶段
+ */
+export type GamePhase = 'idle' | 'scene' | 'dialogue' | 'combat' | 'ended';
+
+/**
+ * 游戏上下文响应 (对应 GameContextResponse)
+ */
+export interface GameContextResponse {
+  world_id: string;
+  session_id: string;
+  phase: GamePhase;
+  game_day: number;
+  current_scene?: SceneState;
+  current_npc?: string;
+  known_characters: string[];
+}
+
+/**
+ * 进入场景请求 (对应 EnterSceneRequest)
+ */
+export interface EnterSceneRequest {
+  scene: SceneState;
+  generate_description?: boolean;
+}
+
+/**
+ * 进入场景响应 (对应 EnterSceneResponse)
+ */
+export interface EnterSceneResponse {
+  scene: SceneState;
+  description: string;
+  npc_memories: Record<string, string>;
+}
+
+/**
+ * 开始对话请求 (对应 StartDialogueRequest)
+ */
+export interface StartDialogueRequest {
+  npc_id: string;
+}
+
+/**
+ * 开始对话响应 (对应 StartDialogueResponse)
+ */
+export interface StartDialogueResponse {
+  npc_id: string;
+  npc_name: string;
+  greeting: string;
+  narration?: string;
+}
+
+/**
+ * 进入子地点请求 (对应 EnterSubLocationRequest)
+ */
+export interface EnterSubLocationRequest {
+  sub_location_id: string;
+}
+
+/**
+ * 子地点列表响应
+ */
+export interface SubLocationsResponse {
+  location_id: string;
+  location_name: string;
+  current_sub_location: string | null;
+  available_sub_locations: SubLocation[];
+}
+
+/**
+ * 推进时间请求 (对应 AdvanceTimeRequest)
+ */
+export interface AdvanceTimeRequest {
+  minutes?: number;
+}
+
+/**
+ * 路人对话请求 (对应 PasserbyDialogueRequest)
+ */
+export interface PasserbyDialogueRequest {
+  instance_id: string;
+  message: string;
+}
+
+/**
+ * 触发叙事事件请求 (对应 TriggerEventRequest)
+ */
+export interface TriggerEventRequest {
+  event_id: string;
+}
+
+/**
+ * 创建队伍请求 (对应 CreatePartyRequest)
+ */
+export interface CreatePartyRequest {
+  leader_id?: string;
+}
+
+/**
+ * 添加队友请求 (对应 AddTeammateRequest)
+ */
+export interface AddTeammateRequest {
+  character_id: string;
+  name: string;
+  role?: string;
+  personality?: string;
+  response_tendency?: number;
+}
+
+/**
+ * 加载预设队友请求 (对应 LoadTeammatesRequest)
+ */
+export interface LoadTeammatesRequest {
+  teammates: Record<string, unknown>[];
 }
 
 // 保留旧的别名以兼容

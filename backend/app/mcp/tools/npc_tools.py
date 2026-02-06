@@ -60,6 +60,8 @@ def register(game_mcp) -> None:
         model, thinking_level = _tier_settings(tier)
         scene_ctx = SceneContext(**scene) if scene else None
         history = _messages_from_dicts(conversation_history)
+        # main 档位保留工具调用能力；其他档位走纯对话以降低延迟。
+        enable_tools = tier.lower() == "main"
 
         request = ChatRequest(
             message=message,
@@ -73,7 +75,7 @@ def register(game_mcp) -> None:
             request=request,
             model_override=model,
             thinking_level=thinking_level,
-            enable_tools=True,
+            enable_tools=enable_tools,
         )
 
         payload = {

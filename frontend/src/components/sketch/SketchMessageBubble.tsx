@@ -1,5 +1,5 @@
 /**
- * Hand-drawn style message bubble component
+ * Refined parchment-style message bubble component
  */
 import React from 'react';
 import { motion } from 'framer-motion';
@@ -23,37 +23,37 @@ const typeStyles: Record<MessageType, {
   align: 'left' | 'right' | 'center';
 }> = {
   gm: {
-    borderColor: 'border-sketch-accent-gold',
+    borderColor: 'border-l-sketch-accent-gold',
     bgColor: 'bg-sketch-bubble-gm',
     labelColor: 'text-sketch-accent-gold',
     align: 'left',
   },
   npc: {
-    borderColor: 'border-sketch-accent-cyan',
+    borderColor: 'border-l-sketch-accent-cyan',
     bgColor: 'bg-sketch-bubble-npc',
     labelColor: 'text-sketch-accent-cyan',
     align: 'left',
   },
   player: {
-    borderColor: 'border-sketch-accent-green',
+    borderColor: 'border-l-sketch-accent-green',
     bgColor: 'bg-sketch-bubble-player',
     labelColor: 'text-sketch-accent-green',
     align: 'right',
   },
   teammate: {
-    borderColor: 'border-sketch-accent-green/70',
+    borderColor: 'border-l-sketch-accent-green/70',
     bgColor: 'bg-sketch-bubble-teammate',
     labelColor: 'text-sketch-accent-green',
     align: 'left',
   },
   system: {
-    borderColor: 'border-sketch-ink-muted',
+    borderColor: 'border-l-sketch-ink-muted',
     bgColor: 'bg-sketch-bubble-system',
     labelColor: 'text-sketch-ink-muted',
     align: 'center',
   },
   combat: {
-    borderColor: 'border-sketch-accent-red',
+    borderColor: 'border-l-sketch-accent-red',
     bgColor: 'bg-sketch-bubble-combat',
     labelColor: 'text-sketch-accent-red',
     align: 'left',
@@ -62,7 +62,7 @@ const typeStyles: Record<MessageType, {
 
 // Default fallback style for unknown message types
 const defaultStyle = {
-  borderColor: 'border-sketch-ink-muted',
+  borderColor: 'border-l-sketch-ink-muted',
   bgColor: 'bg-sketch-bg-panel',
   labelColor: 'text-sketch-ink-muted',
   align: 'left' as const,
@@ -78,7 +78,6 @@ export const SketchMessageBubble: React.FC<SketchMessageBubbleProps> = ({
 }) => {
   const style = typeStyles[type] || defaultStyle;
 
-  // Log warning for unknown message types (development aid)
   if (!typeStyles[type]) {
     console.warn(`SketchMessageBubble: Unknown message type "${type}", using default style`);
   }
@@ -94,16 +93,13 @@ export const SketchMessageBubble: React.FC<SketchMessageBubbleProps> = ({
     <div
       className={`
         relative max-w-[85%] p-4 mb-3
-        border-2 ${style.borderColor} ${style.bgColor}
-        font-sketch-body text-sketch-ink-primary
+        border border-[rgba(92,77,58,0.12)]
+        border-l-4 ${style.borderColor}
+        ${style.bgColor}
+        rounded-xl
+        shadow-parchment-sm
+        font-body text-sketch-ink-primary
       `}
-      style={{
-        // Slight rotation for hand-drawn feel
-        transform: style.align === 'right' ? 'rotate(0.3deg)' : 'rotate(-0.3deg)',
-        // Irregular shape
-        clipPath: 'polygon(0% 2%, 99% 0%, 100% 97%, 1% 100%)',
-        borderRadius: '4px',
-      }}
     >
       {/* Speaker label */}
       <div
@@ -142,20 +138,15 @@ export const SketchMessageBubble: React.FC<SketchMessageBubbleProps> = ({
           })}
         </div>
       )}
-
-      {/* Decorative pencil mark */}
-      <div className="absolute -bottom-1 -right-1 text-xs opacity-30">
-
-      </div>
     </div>
   );
 
   if (animateEntry) {
     return (
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         className={alignmentClass}
       >
         {bubbleContent}

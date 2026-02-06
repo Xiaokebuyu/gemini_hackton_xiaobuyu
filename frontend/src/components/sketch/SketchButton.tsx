@@ -1,5 +1,5 @@
 /**
- * Hand-drawn style button component
+ * Refined parchment-style button component
  */
 import React from 'react';
 import { motion } from 'framer-motion';
@@ -17,14 +17,14 @@ interface SketchButtonProps {
 
 const variantStyles = {
   primary: `
-    bg-sketch-accent-gold text-sketch-ink-primary
-    border-sketch-ink-secondary
-    hover:brightness-110
+    bg-gradient-to-b from-[#d4ad2e] to-[#c9a227] text-sketch-ink-primary
+    border-sketch-accent-gold
+    hover:shadow-parchment-glow-gold
   `,
   secondary: `
     bg-sketch-bg-panel text-sketch-ink-primary
-    border-sketch-ink-secondary
-    hover:bg-sketch-bg-secondary
+    border-sketch-ink-muted
+    hover:bg-sketch-bg-secondary hover:shadow-parchment-md
   `,
   danger: `
     bg-sketch-accent-red text-white
@@ -33,8 +33,9 @@ const variantStyles = {
   `,
   ghost: `
     bg-transparent text-sketch-ink-secondary
-    border-sketch-ink-muted
+    border-sketch-ink-faint
     hover:bg-sketch-bg-secondary hover:text-sketch-ink-primary
+    hover:shadow-parchment-sm
   `,
 };
 
@@ -61,20 +62,16 @@ export const SketchButton: React.FC<SketchButtonProps> = ({
       disabled={disabled}
       title={title}
       className={`
-        font-handwritten
+        font-body
         border-2
-        rounded-none
+        rounded-lg
         transition-all duration-200
         disabled:opacity-50 disabled:cursor-not-allowed
         ${variantStyles[variant]}
         ${sizeStyles[size]}
         ${className}
       `}
-      style={{
-        // Irregular clip-path for hand-drawn feel
-        clipPath: 'polygon(2% 0%, 98% 2%, 100% 98%, 3% 100%)',
-      }}
-      whileHover={disabled ? {} : { scale: 1.02, rotate: 0.5 }}
+      whileHover={disabled ? {} : { scale: 1.02, y: -1 }}
       whileTap={disabled ? {} : { scale: 0.98 }}
     >
       {children}

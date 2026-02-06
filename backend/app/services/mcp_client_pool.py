@@ -66,7 +66,13 @@ class MCPClientPool:
         self._cooldowns: Dict[str, float] = {}
 
         self._cooldown_seconds = 30.0
-        self._tool_timeout_seconds = 12.0
+        self._tool_timeout_seconds = float(settings.mcp_tool_timeout_seconds)
+        self._tool_timeouts: Dict[str, Dict[str, float]] = {
+            self.GAME_TOOLS: {
+                # NPC 对话可能触发二次模型调用（工具回忆），通常明显慢于其他轻量工具。
+                "npc_respond": float(settings.mcp_npc_tool_timeout_seconds),
+            },
+        }
         self._ping_timeout_seconds = 2.0
 
         self._server_root = Path(__file__).resolve().parents[2]
@@ -118,7 +124,27 @@ class MCPClientPool:
     def _mark_cooldown(self, server_type: str, error: Exception | None = None) -> None:
         self._cooldowns[server_type] = time.monotonic() + self._cooldown_seconds
         if error:
-            logger.warning("[MCPPool] %s entering cooldown: %s", server_type, error)
+            logger.warning(
+                "[MCPPool] %s entering cooldown: %s: %r",
+                server_type,
+                type(error).__name__,
+                error,
+            )
+
+    @staticmethod
+    def _is_timeout_error(error: Exception | None) -> bool:
+        if error is None:
+            return False
+        if isinstance(error, TimeoutError):
+            return True
+        text = str(error).lower()
+        return "timeout" in text or "timed out" in text
+
+    def _resolve_tool_timeout(self, server_type: str, tool_name: str) -> float:
+        server_cfg = self._tool_timeouts.get(server_type, {})
+        timeout = server_cfg.get(tool_name, self._tool_timeout_seconds)
+        # 防御式下限，避免误配 0 或负值导致立即超时。
+        return max(1.0, float(timeout))
 
     def _resolve_command(self, command: str) -> str:
         if command in {"python", "python3"}:
@@ -158,28 +184,34 @@ class MCPClientPool:
         async with call_lock:
             for attempt in range(max_retries + 1):
                 try:
+                    timeout = self._resolve_tool_timeout(server_type, tool_name)
                     session = await self.get_session(server_type)
                     result = await asyncio.wait_for(
                         session.call_tool(tool_name, arguments),
-                        timeout=self._tool_timeout_seconds,
+                        timeout=timeout,
                     )
                     return self._decode_tool_result(result)
                 except Exception as exc:
                     last_error = exc
                     logger.warning(
-                        "[MCPPool] Tool call failed (%s, attempt %s/%s): %s",
+                        "[MCPPool] Tool call failed (%s/%s, attempt %s/%s): %s: %r",
                         server_type,
+                        tool_name,
                         attempt + 1,
                         max_retries + 1,
+                        type(exc).__name__,
                         exc,
                     )
                     self._healthy[server_type] = False
                     if attempt < max_retries:
                         await asyncio.sleep(0.1 * (attempt + 1))
 
-        self._mark_cooldown(server_type, last_error)
+        # 对话类工具超时可能是慢而非挂，超时不进入全局 cooldown，避免把整个工具服务封死。
+        if not self._is_timeout_error(last_error):
+            self._mark_cooldown(server_type, last_error)
         raise RuntimeError(
-            f"Tool call failed after {max_retries + 1} attempts: {last_error}"
+            f"Tool call failed after {max_retries + 1} attempts ({tool_name}): "
+            f"{type(last_error).__name__ if last_error else 'UnknownError'}: {last_error!r}"
         )
 
     async def _connect(self, server_type: str) -> ClientSession:
@@ -269,17 +301,50 @@ class MCPClientPool:
         for server_type in list(self._sessions.keys()):
             await self._close_session(server_type)
 
+    @staticmethod
+    def _try_parse_json(text: Any) -> Any:
+        if not isinstance(text, str):
+            return None
+        stripped = text.strip()
+        if not stripped:
+            return None
+        if not (stripped.startswith("{") or stripped.startswith("[")):
+            return None
+        try:
+            return json.loads(stripped)
+        except Exception:
+            return None
+
+    def _normalize_structured_content(self, payload: Any) -> Dict[str, Any]:
+        """
+        FastMCP 常见返回:
+        {"result": "<json string>"}
+        这里尽量还原成真正的 JSON 对象，减少上层重复兼容代码。
+        """
+        if isinstance(payload, dict):
+            if set(payload.keys()) == {"result"}:
+                parsed = self._try_parse_json(payload.get("result"))
+                if isinstance(parsed, dict):
+                    return parsed
+            return payload
+
+        parsed = self._try_parse_json(payload)
+        if isinstance(parsed, dict):
+            return parsed
+
+        return {"result": payload}
+
     def _decode_tool_result(self, result) -> Dict[str, Any]:
         """Decode MCP tool result to dictionary."""
         if getattr(result, "structuredContent", None) is not None:
-            return result.structuredContent
+            return self._normalize_structured_content(result.structuredContent)
         if not result.content:
             return {}
         first = result.content[0]
         text = getattr(first, "text", "")
         if not text:
             return {}
-        try:
-            return json.loads(text)
-        except Exception:
-            return {"raw": text}
+        parsed = self._try_parse_json(text)
+        if isinstance(parsed, dict):
+            return parsed
+        return {"raw": text}

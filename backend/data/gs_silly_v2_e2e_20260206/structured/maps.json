@@ -1,0 +1,241 @@
+{
+  "maps": [
+    {
+      "id": "frontier_town",
+      "name": "边境城镇",
+      "description": "位于王国西部边境，秩序与混乱并存，是对抗哥布林等威胁的最前线。这里是典型的开拓者聚居地，有冒险者公会分部、铁匠铺、酒馆和神殿。",
+      "atmosphere": "充满活力、秩序与混乱并存",
+      "danger_level": "low",
+      "region": "边境地区",
+      "connections": [
+        {
+          "target_map_id": "eastern_farmland",
+          "connection_type": "travel",
+          "travel_time": "半天路程",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "购物",
+        "休息",
+        "接任务",
+        "情报收集",
+        "住宿",
+        "餐饮",
+        "武器修理",
+        "装备购买"
+      ],
+      "key_features": [
+        "冒险者公会分部",
+        "铁匠铺",
+        "酒馆",
+        "神殿",
+        "市场",
+        "商业街",
+        "工匠街",
+        "住宿长屋",
+        "盘蛇旅店",
+        "里街",
+        "至高神神殿",
+        "地母神神殿",
+        "租借马店",
+        "中心广场"
+      ],
+      "sub_locations": [
+        {
+          "id": "guild_hall",
+          "name": "冒险者公会分部",
+          "description": "当地的冒险者公会分部，墙上贴满了任务委托。柜台后面是忙碌的公会职员，大厅里则是等待任务的冒险者们。",
+          "atmosphere": "嘈杂、充满期待",
+          "interaction_type": "quest",
+          "resident_npcs": ["guild_girl"],
+          "available_actions": ["接任务", "情报收集", "交任务", "查看排行榜", "注册冒险者"],
+          "passerby_spawn_rate": 0.6
+        },
+        {
+          "id": "blacksmith",
+          "name": "铁匠铺",
+          "description": "铁锤敲击的声音不绝于耳，热浪扑面而来。熔炉的火光映红了铁匠的脸庞，各式各样的武器和防具陈列在架子上。",
+          "atmosphere": "炽热、充满金属气息",
+          "interaction_type": "shop",
+          "resident_npcs": [],
+          "available_actions": ["武器修理", "装备购买", "定制装备", "鉴定装备"],
+          "passerby_spawn_rate": 0.2
+        },
+        {
+          "id": "tavern",
+          "name": "酒馆",
+          "description": "冒险者们聚集的地方，充满了欢笑和故事。木质的长桌上摆满了麦酒和简单的食物，角落里有人在低声交谈。",
+          "atmosphere": "热闹、温馨",
+          "interaction_type": "visit",
+          "resident_npcs": [],
+          "available_actions": ["休息", "打听消息", "招募同伴", "用餐", "住宿"],
+          "passerby_spawn_rate": 0.7
+        },
+        {
+          "id": "earth_mother_temple",
+          "name": "地母神神殿",
+          "description": "供奉地母神的神圣场所，空气中弥漫着淡淡的香火气息。神官们在此祈祷、治疗伤者。",
+          "atmosphere": "宁静、神圣",
+          "interaction_type": "worship",
+          "resident_npcs": ["priestess"],
+          "available_actions": ["祈祷", "治疗", "净化", "捐献"],
+          "passerby_spawn_rate": 0.3
+        },
+        {
+          "id": "market",
+          "name": "市场",
+          "description": "边境城镇的商业中心，各种摊位鳞次栉比。从日用品到冒险用具应有尽有，商人们大声叫卖着。",
+          "atmosphere": "热闹、繁忙",
+          "interaction_type": "shop",
+          "resident_npcs": [],
+          "available_actions": ["购物", "讨价还价", "出售物品", "情报收集"],
+          "passerby_spawn_rate": 0.8
+        },
+        {
+          "id": "central_plaza",
+          "name": "中心广场",
+          "description": "城镇的中心地带，公告板上贴满了各种告示。人来人往，是城镇最热闹的地方。",
+          "atmosphere": "开阔、热闘",
+          "interaction_type": "visit",
+          "resident_npcs": [],
+          "available_actions": ["查看公告", "观察行人", "等待", "街头表演"],
+          "passerby_spawn_rate": 0.9
+        }
+      ]
+    },
+    {
+      "id": "royal_capital",
+      "name": "王都",
+      "description": "王国的政治文化中心，防御森严，繁华壮丽，远离边境的残酷。这里有王宫、大圣堂、冒险者公会总部和贵族区。",
+      "atmosphere": "繁华、庄严",
+      "danger_level": "low",
+      "region": "中央王国",
+      "connections": [],
+      "available_actions": [
+        "购物",
+        "政治活动",
+        "宗教仪式"
+      ],
+      "key_features": [
+        "王宫",
+        "大圣堂",
+        "冒险者公会总部",
+        "贵族区"
+      ]
+    },
+    {
+      "id": "water_town",
+      "name": "水之都",
+      "description": "建立在巨大运河网络上的城市，是著名的宗教与商业中心，以其美丽景色和繁茂的经济著称。这里有大神殿、竞技场、复杂水道和地下迷宫。",
+      "atmosphere": "美丽、繁华",
+      "danger_level": "medium",
+      "region": "南方水乡",
+      "connections": [],
+      "available_actions": [
+        "宗教活动",
+        "商业活动",
+        "观光"
+      ],
+      "key_features": [
+        "大神殿",
+        "竞技场",
+        "复杂水道",
+        "地下迷宫"
+      ]
+    },
+    {
+      "id": "elven_village",
+      "name": "森人之里",
+      "description": "位于大森林深处的精灵聚落，建筑与自然融为一体，外人难以进入。这里有世界树、自然结界和精工箭坊。",
+      "atmosphere": "宁静、祥和",
+      "danger_level": "low",
+      "region": "南方大森林",
+      "connections": [],
+      "available_actions": [
+        "与精灵交流",
+        "参观自然景观"
+      ],
+      "key_features": [
+        "世界树",
+        "自然结界",
+        "精工箭坊"
+      ]
+    },
+    {
+      "id": "dwarven_citadel",
+      "name": "矮人王城",
+      "description": "建造在山体之内的宏伟城市，结构坚固，充满了金属与岩石的气息。这里有巨大熔炉、秘银矿脉和符文工坊。",
+      "atmosphere": "坚固、充满活力",
+      "danger_level": "low",
+      "region": "北方世界之脊山脉",
+      "connections": [],
+      "available_actions": [
+        "参观工坊",
+        "购买矮人制品"
+      ],
+      "key_features": [
+        "巨大熔炉",
+        "秘银矿脉",
+        "符文工坊"
+      ]
+    },
+    {
+      "id": "ancient_ruins_dungeons",
+      "name": "古代遗迹/地下城",
+      "description": "遍布大陆的危险区域，是冒险者财富与死亡的主要来源。这里有失落的宝藏、古代陷阱、强大守护者和魔物巢穴。",
+      "atmosphere": "阴森、危险",
+      "danger_level": "high",
+      "region": "未知区域",
+      "connections": [],
+      "available_actions": [
+        "探索",
+        "战斗",
+        "寻宝"
+      ],
+      "key_features": [
+        "失落的宝藏",
+        "古代陷阱",
+        "强大守护者",
+        "魔物巢穴"
+      ]
+    },
+    {
+      "id": "eastern_farmland",
+      "name": "东部农田",
+      "description": "位于边境小镇东部，是牧牛妹的牧场所在地，也是哥布林杀手日常巡逻的区域。这里有广阔的牧草地和麦田。",
+      "atmosphere": "宁静、祥和",
+      "danger_level": "medium",
+      "region": "边境地区",
+      "connections": [
+        {
+          "target_map_id": "frontier_town",
+          "connection_type": "travel",
+          "travel_time": "半天路程",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "休息",
+        "挤奶",
+        "放牧"
+      ],
+      "key_features": [
+        "牧牛妹的牧场",
+        "仓库（哥布林杀手住所）",
+        "麦田"
+      ]
+    }
+  ],
+  "passerby_templates": {
+    "frontier_town": [
+      {
+        "template_id": "rookie_adventurer",
+        "name_pattern": "新手冒险者",
+        "personality_template": "充满热情但经验不足，对哥布林退治任务跃跃欲试",
+        "speech_pattern": "热情、略带紧张",
+        "appearance_hints": "简陋的装备，闪亮的眼神"
+      }
+    ]
+  }
+}

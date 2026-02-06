@@ -15,7 +15,7 @@ interface UseGameInputOptions {
 }
 
 export function useGameInput(options?: UseGameInputOptions) {
-  const { worldId, sessionId, chatMode, setAvailableActions, updateFromStateDelta } =
+  const { worldId, sessionId, setAvailableActions, updateFromStateDelta } =
     useGameStore();
   const { addPlayerMessage, addGMResponseV2, setLoading } = useChatStore();
 
@@ -27,7 +27,6 @@ export function useGameInput(options?: UseGameInputOptions) {
 
       const request: PlayerInputRequest = {
         input: content,
-        mode: chatMode,
       };
 
       return sendGameInputV2(worldId, sessionId, request);

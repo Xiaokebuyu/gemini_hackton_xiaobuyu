@@ -61,7 +61,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <span className="text-xs text-sketch-ink-muted mr-2 font-handwritten">
+      <span className="text-xs text-sketch-ink-muted mr-2 font-body">
         {t('actions.quick')}:
       </span>
       {quickActionsConfig.map((action) => (

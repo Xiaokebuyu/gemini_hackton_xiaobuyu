@@ -18,6 +18,7 @@ from app.models.event import (
 )
 from app.models.flash import EventIngestRequest
 from app.models.graph import MemoryEdge, MemoryNode
+from app.models.graph_scope import GraphScope
 from app.models.pro import CharacterProfile
 from app.services.event_bus import EventBus
 from app.services.flash_service import FlashService
@@ -56,6 +57,7 @@ class AdminEventService:
         event_id = event.id or f"event_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         gm_nodes = list(event.nodes)
         gm_edges = list(event.edges)
+        gm_scope = GraphScope.world()
 
         if not gm_nodes:
             gm_nodes = [
@@ -92,15 +94,17 @@ class AdminEventService:
                     raise ValueError(f"Invalid edge {edge.id}: {errors}")
 
         for node in gm_nodes:
-            await self.graph_store.upsert_node(
-                world_id,
-                "gm",
-                node,
-                character_id=None,
-                index=request.write_indexes,
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=gm_scope,
+                node=node,
             )
         for edge in gm_edges:
-            await self.graph_store.upsert_edge(world_id, "gm", edge, character_id=None)
+            await self.graph_store.upsert_edge_v2(
+                world_id=world_id,
+                scope=gm_scope,
+                edge=edge,
+            )
 
         if self.event_bus:
             await self.event_bus.publish(event)
@@ -311,18 +315,21 @@ class AdminEventService:
         # 5. 写入GM图谱
         gm_nodes = [MemoryNode(**n) for n in gm_encoded.get("nodes", [])]
         gm_edges = [MemoryEdge(**e) for e in gm_encoded.get("edges", [])]
+        gm_scope = GraphScope.world()
 
         for node in gm_nodes:
-            await self.graph_store.upsert_node(
-                world_id,
-                "gm",
-                node,
-                character_id=None,
-                index=request.write_indexes,
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=gm_scope,
+                node=node,
             )
 
         for edge in gm_edges:
-            await self.graph_store.upsert_edge(world_id, "gm", edge, character_id=None)
+            await self.graph_store.upsert_edge_v2(
+                world_id=world_id,
+                scope=gm_scope,
+                edge=edge,
+            )
 
         # 6. 确定接收者和视角
         recipients_result: List[CharacterDispatchResult] = []
@@ -487,12 +494,19 @@ class AdminEventService:
 
         result = await self.flash_service.ingest_event(world_id, character_id, ingest_request)
 
+        # 记录实际写入的事件节点 ID，供上游建立 cross-scope perspective_of 边。
+        event_node_ids = [
+            n.id for n in nodes
+            if n.type in {"event", "rumor", "choice"}
+        ]
+
         return CharacterDispatchResult(
             character_id=character_id,
             perspective=perspective,
             node_count=result.node_count,
             edge_count=result.edge_count,
             event_description=transformed.get("event_description"),
+            event_node_ids=event_node_ids,
         )
 
     async def _get_gm_important_nodes(
@@ -501,7 +515,10 @@ class AdminEventService:
         limit: int = 30,
     ) -> List[Dict[str, Any]]:
         """获取GM图谱中的重要节点"""
-        graph_data = await self.graph_store.load_graph(world_id, "gm", character_id=None)
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.world(),
+        )
 
         if not graph_data or not graph_data.nodes:
             return []

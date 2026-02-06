@@ -1,65 +1,38 @@
 /**
  * Combat state and action hooks
  */
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  getCombatState,
+  triggerCombat,
   executeCombatAction,
-  startCombat,
-  endCombat,
+  resolveCombat,
 } from '../combatApi';
 import { useGameStore } from '../../stores/gameStore';
 import { useCombatStore } from '../../stores/combatStore';
 import type {
-  CombatState,
   CombatActionRequest,
   CombatActionResponse,
+  TriggerCombatRequest,
+  TriggerCombatResponse,
+  CombatResolveRequest,
+  CombatResolveResponse,
 } from '../../types';
-
-export function useCombatState() {
-  const { worldId, sessionId, combatId } = useGameStore();
-
-  const combatQuery = useQuery<CombatState>({
-    queryKey: ['combat', worldId, sessionId, combatId],
-    queryFn: () => {
-      if (!worldId || !sessionId || !combatId) {
-        throw new Error('No active combat');
-      }
-      return getCombatState(worldId, sessionId, combatId);
-    },
-    enabled: !!worldId && !!sessionId && !!combatId,
-    staleTime: 0, // Always refetch
-    refetchInterval: false,
-  });
-
-  return {
-    combatState: combatQuery.data,
-    isLoading: combatQuery.isLoading,
-    error: combatQuery.error,
-    refetch: combatQuery.refetch,
-  };
-}
 
 export function useCombatAction() {
   const queryClient = useQueryClient();
-  const { worldId, sessionId, combatId } = useGameStore();
-  const { updateCombatState } = useCombatStore();
+  const { worldId, sessionId } = useGameStore();
 
   const mutation = useMutation<CombatActionResponse, Error, CombatActionRequest>({
     mutationFn: async (action: CombatActionRequest) => {
-      if (!worldId || !sessionId || !combatId) {
-        throw new Error('No active combat');
+      if (!worldId || !sessionId) {
+        throw new Error('No active session');
       }
-      return executeCombatAction(worldId, sessionId, combatId, action);
+      return executeCombatAction(worldId, sessionId, action);
     },
 
-    onSuccess: (response: CombatActionResponse) => {
-      // Update combat state in store
-      updateCombatState(response.combat_state);
-
-      // Invalidate combat query
+    onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: ['combat', worldId, sessionId, combatId],
+        queryKey: ['combat', worldId, sessionId],
       });
     },
 
@@ -81,17 +54,18 @@ export function useStartCombat() {
   const { worldId, sessionId, setCombatId } = useGameStore();
   const { setCombatState } = useCombatStore();
 
-  const mutation = useMutation({
-    mutationFn: async (targetIds: string[]) => {
+  const mutation = useMutation<TriggerCombatResponse, Error, TriggerCombatRequest>({
+    mutationFn: async (request: TriggerCombatRequest) => {
       if (!worldId || !sessionId) {
         throw new Error('No active session');
       }
-      return startCombat(worldId, sessionId, targetIds);
+      return triggerCombat(worldId, sessionId, request);
     },
 
-    onSuccess: (response) => {
+    onSuccess: (response: TriggerCombatResponse) => {
       setCombatId(response.combat_id);
-      setCombatState(response.combat_state);
+      // combat_state from trigger is a Dict, adapt to CombatState if needed
+      setCombatState(response.combat_state as any);
 
       queryClient.invalidateQueries({
         queryKey: ['combat', worldId, sessionId],
@@ -101,6 +75,7 @@ export function useStartCombat() {
 
   return {
     startCombat: mutation.mutate,
+    startCombatAsync: mutation.mutateAsync,
     isLoading: mutation.isPending,
     error: mutation.error,
   };
@@ -108,15 +83,15 @@ export function useStartCombat() {
 
 export function useEndCombat() {
   const queryClient = useQueryClient();
-  const { worldId, sessionId, combatId, setCombatId } = useGameStore();
+  const { worldId, sessionId, setCombatId } = useGameStore();
   const { clearCombat } = useCombatStore();
 
-  const mutation = useMutation({
-    mutationFn: async (flee: boolean = false) => {
-      if (!worldId || !sessionId || !combatId) {
-        throw new Error('No active combat');
+  const mutation = useMutation<CombatResolveResponse, Error, CombatResolveRequest | undefined>({
+    mutationFn: async (request?: CombatResolveRequest) => {
+      if (!worldId || !sessionId) {
+        throw new Error('No active session');
       }
-      return endCombat(worldId, sessionId, combatId, flee);
+      return resolveCombat(worldId, sessionId, request);
     },
 
     onSuccess: () => {
@@ -131,6 +106,7 @@ export function useEndCombat() {
 
   return {
     endCombat: mutation.mutate,
+    endCombatAsync: mutation.mutateAsync,
     isLoading: mutation.isPending,
     error: mutation.error,
   };

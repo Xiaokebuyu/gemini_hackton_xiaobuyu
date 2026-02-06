@@ -51,7 +51,6 @@ export const DANGER_LEVELS = {
 
 // Keyboard shortcuts
 export const KEYBOARD_SHORTCUTS = {
-  toggleChatMode: { key: 'Tab', description: 'Toggle Think/Say mode' },
   sendMessage: { key: 'Enter', description: 'Send message' },
   newLine: { key: 'Shift+Enter', description: 'New line' },
   toggleLeftPanel: { key: '[', ctrl: true, description: 'Toggle left panel' },

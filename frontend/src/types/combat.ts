@@ -225,40 +225,103 @@ export interface CombatState {
 }
 
 // =============================================================================
-// 战斗 API
+// 战斗 API - 对应后端 game_v2 路由
 // =============================================================================
 
-export interface CombatActionRequest {
-  action_type: CombatActionType;
-  target_id?: string;
-  parameters?: Record<string, unknown>;
+/**
+ * 触发战斗请求 (对应 TriggerCombatRequest)
+ * POST /api/game/{world_id}/sessions/{session_id}/combat/trigger
+ */
+export interface TriggerCombatRequest {
+  enemies: Record<string, unknown>[];
+  player_state: Record<string, unknown>;
+  combat_description?: string;
+  environment?: Record<string, unknown>;
 }
 
-export interface CombatActionResponse {
-  success: boolean;
-  rolls: DiceRoll[];
-  result: {
-    damage?: number;
-    healing?: number;
-    status_applied?: StatusEffect;
-    message: string;
-  };
-  combat_state: CombatState;
-  narration: string;
-}
-
-export interface StartCombatResponse {
+/**
+ * 触发战斗响应 (对应 TriggerCombatResponse)
+ */
+export interface TriggerCombatResponse {
   combat_id: string;
-  combat_state: CombatState;
   narration: string;
+  combat_state: Record<string, unknown>;
+  available_actions: Record<string, unknown>[];
 }
 
-export interface EndCombatResponse {
-  is_victory: boolean;
-  rewards?: {
-    experience: number;
-    gold: number;
-    items: string[];
-  };
-  narration: string;
+/**
+ * 战斗行动请求 (对应 CombatActionRequest)
+ * POST /api/game/{world_id}/sessions/{session_id}/combat/action
+ */
+export interface CombatActionRequest {
+  action_id: string;
 }
+
+/**
+ * 战斗行动响应 (对应 CombatActionResponse)
+ */
+export interface CombatActionResponse {
+  phase: string;
+  narration: string;
+  action_result?: Record<string, unknown>;
+  combat_result?: Record<string, unknown>;
+  available_actions: Record<string, unknown>[];
+}
+
+/**
+ * 战斗开始请求 (Legacy, 对应 CombatStartRequest)
+ * POST /api/game/{world_id}/sessions/{session_id}/combat/start
+ */
+export interface CombatStartRequest {
+  player_state: Record<string, unknown>;
+  enemies: Record<string, unknown>[];
+  allies?: Record<string, unknown>[];
+  environment?: Record<string, unknown>;
+  combat_context?: {
+    location?: string;
+    participants?: string[];
+    witnesses?: string[];
+    visibility_public?: boolean;
+    known_characters?: string[];
+    character_locations?: Record<string, string>;
+  };
+}
+
+/**
+ * 战斗开始响应 (Legacy, 对应 CombatStartResponse)
+ */
+export interface CombatStartResponse {
+  combat_id: string;
+  combat_state: Record<string, unknown>;
+  session: Record<string, unknown>;
+}
+
+/**
+ * 战斗结算请求 (对应 CombatResolveRequest)
+ * POST /api/game/{world_id}/sessions/{session_id}/combat/resolve
+ */
+export interface CombatResolveRequest {
+  combat_id?: string;
+  use_engine?: boolean;
+  result_override?: Record<string, unknown>;
+  summary_override?: string;
+  dispatch?: boolean;
+  recipients?: string[];
+  per_character?: Record<string, unknown>;
+  write_indexes?: boolean;
+}
+
+/**
+ * 战斗结算响应 (对应 CombatResolveResponse)
+ */
+export interface CombatResolveResponse {
+  combat_id: string;
+  event_id?: string;
+  dispatched: boolean;
+}
+
+// Legacy aliases
+/** @deprecated 使用 TriggerCombatResponse */
+export type StartCombatResponse = TriggerCombatResponse;
+/** @deprecated 使用 CombatResolveResponse */
+export type EndCombatResponse = CombatResolveResponse;

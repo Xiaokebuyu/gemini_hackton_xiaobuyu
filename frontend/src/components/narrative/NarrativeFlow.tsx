@@ -43,13 +43,20 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       {/* Empty state */}
       {messages.length === 0 && !isLoading && (
         <div className="flex flex-col items-center justify-center h-full text-center">
-          <div className="text-6xl mb-4">🏰</div>
-          <h2 className="font-handwritten text-xl text-sketch-accent-gold mb-2">
-            {t('narrative.welcome')}
-          </h2>
-          <p className="text-sketch-ink-secondary max-w-md font-handwritten">
-            {t('narrative.welcomeHint')}
-          </p>
+          <div className="border-2 border-sketch-border-accent rounded-xl p-8 max-w-lg shadow-parchment-md bg-sketch-bg-card">
+            <div className="w-20 h-20 rounded-full bg-[var(--sketch-accent-gold)]/15 flex items-center justify-center mb-6 mx-auto border-2 border-sketch-border-accent">
+              <span className="text-5xl">🏰</span>
+            </div>
+            <h2 className="font-fantasy text-2xl text-sketch-accent-gold mb-3">
+              {t('narrative.welcome')}
+            </h2>
+            <p className="text-sketch-ink-secondary max-w-md font-body">
+              {t('narrative.welcomeHint')}
+            </p>
+            <div className="sketch-divider mt-6">
+              <span className="text-sketch-accent-gold text-xs">◆</span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -69,7 +76,7 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       {isLoading && (
         <div className="flex items-center gap-3 py-4">
           <LoadingSpinner size="sm" />
-          <span className="text-sketch-ink-secondary text-sm italic font-handwritten">
+          <span className="text-sketch-ink-secondary text-sm italic font-body">
             {t('narrative.gmThinking')}
           </span>
         </div>
@@ -77,8 +84,9 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
 
       {/* Available actions */}
       {!isLoading && availableActions.length > 0 && (
-        <div className="mt-6 pt-4 border-t border-sketch-ink-faint">
-          <h4 className="text-xs text-sketch-ink-muted uppercase tracking-wide mb-3 font-handwritten">
+        <div className="mt-6 pt-4">
+          <div className="sketch-divider -mt-4 mb-4"><span className="text-sketch-accent-gold text-xs">◆</span></div>
+          <h4 className="text-xs text-sketch-ink-muted uppercase tracking-wide mb-3 font-body">
             {t('actions.title')}
           </h4>
           <ActionButtons actions={availableActions} />

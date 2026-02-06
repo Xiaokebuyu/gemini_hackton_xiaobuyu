@@ -1,5 +1,5 @@
 /**
- * Hand-drawn style input component
+ * Refined parchment-style input component
  */
 import React, { forwardRef } from 'react';
 
@@ -15,21 +15,20 @@ export const SketchInput = forwardRef<HTMLTextAreaElement, SketchInputProps>(
         className={`
           w-full
           px-4 py-3
-          font-handwritten text-lg
+          font-body text-base
           bg-sketch-bg-input
           text-sketch-ink-primary
           placeholder:text-sketch-ink-faint
           placeholder:italic
-          border-2 border-sketch-ink-muted
+          border border-sketch-ink-muted
+          rounded-lg
           focus:border-sketch-accent-gold
+          focus:shadow-[inset_0_0_0_1px_var(--sketch-accent-gold)]
           focus:outline-none
           resize-none
-          transition-colors duration-200
+          transition-all duration-200
           ${className}
         `}
-        style={{
-          borderRadius: '4px',
-        }}
         {...props}
       />
     );

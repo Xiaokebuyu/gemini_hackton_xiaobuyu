@@ -1,0 +1,101 @@
+[
+  {
+    "id": "ch1_awakening",
+    "mainline_id": "goblin_crisis",
+    "name": "觉醒",
+    "order": 0,
+    "status": "active",
+    "description": "新手冒险者的第一步。在边境城镇注册成为冒险者，了解这个世界的规则。",
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      {
+        "id": "obj_meet_guild",
+        "description": "与公会女孩对话"
+      },
+      {
+        "id": "obj_first_quest",
+        "description": "接取第一个任务"
+      }
+    ],
+    "trigger_conditions": {},
+    "completion_conditions": {
+      "events_required": [
+        "meet_guild_girl",
+        "accept_first_quest"
+      ]
+    }
+  },
+  {
+    "id": "ch2_first_hunt",
+    "mainline_id": "goblin_crisis",
+    "name": "初次狩猎",
+    "order": 1,
+    "status": "locked",
+    "description": "第一次讨伐哥布林的任务。学习战斗基础，理解哥布林的危险。",
+    "available_areas": [
+      "frontier_town",
+      "eastern_farmland"
+    ],
+    "objectives": [
+      {
+        "id": "obj_prepare",
+        "description": "准备装备"
+      },
+      {
+        "id": "obj_travel",
+        "description": "前往东部农田"
+      },
+      {
+        "id": "obj_hunt",
+        "description": "讨伐哥布林"
+      }
+    ],
+    "trigger_conditions": {
+      "chapter_completed": "ch1_awakening"
+    },
+    "completion_conditions": {
+      "events_required": [
+        "enter_eastern_farmland",
+        "first_goblin_killed"
+      ]
+    }
+  },
+  {
+    "id": "ch3_lair_discovery",
+    "mainline_id": "goblin_crisis",
+    "name": "巢穴发现",
+    "order": 2,
+    "status": "locked",
+    "description": "发现哥布林巢穴的线索。调查更深层的威胁。",
+    "available_areas": [
+      "frontier_town",
+      "eastern_farmland",
+      "ancient_ruins_dungeons"
+    ],
+    "objectives": [
+      {
+        "id": "obj_clues",
+        "description": "收集哥布林巢穴的情报"
+      },
+      {
+        "id": "obj_team",
+        "description": "组建讨伐队"
+      },
+      {
+        "id": "obj_assault",
+        "description": "突袭哥布林巢穴"
+      }
+    ],
+    "trigger_conditions": {
+      "chapter_completed": "ch2_first_hunt"
+    },
+    "completion_conditions": {
+      "events_required": [
+        "find_lair_entrance",
+        "lair_cleared"
+      ]
+    }
+  }
+]

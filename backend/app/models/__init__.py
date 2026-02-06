@@ -58,6 +58,20 @@ from .graph_elements import (
     MergeResult,
     MemoryWithContext,
 )
+from .graph_nodes import (
+    GraphScope,
+    CRPGNodeType,
+    CRPGRelationType,
+    RELATION_BASE_WEIGHT,
+    default_importance,
+    ChapterNode,
+    AreaNode,
+    LocationNode,
+    CharacterNode,
+    EventNode2,
+    ChoiceNode,
+    QuestNode,
+)
 
 __all__ = [
     "Session",
@@ -124,4 +138,17 @@ __all__ = [
     "GraphizeResult",
     "MergeResult",
     "MemoryWithContext",
+    # CRPG Graph Nodes v2
+    "GraphScope",
+    "CRPGNodeType",
+    "CRPGRelationType",
+    "RELATION_BASE_WEIGHT",
+    "default_importance",
+    "ChapterNode",
+    "AreaNode",
+    "LocationNode",
+    "CharacterNode",
+    "EventNode2",
+    "ChoiceNode",
+    "QuestNode",
 ]

@@ -28,6 +28,7 @@ import sys
 from typing import Dict, List
 
 from app.models.event import NaturalEventIngestRequest
+from app.models.graph_scope import GraphScope
 from app.services.admin.admin_coordinator import AdminCoordinator
 from app.services.graph_store import GraphStore
 
@@ -130,7 +131,10 @@ async def ingest_with_locations(world_id: str, game_day: int, event_description:
 async def show_gm_graph(world_id: str):
     """显示GM图谱"""
     graph_store = GraphStore()
-    graph_data = await graph_store.load_graph(world_id, "gm", character_id=None)
+    graph_data = await graph_store.load_graph_v2(
+        world_id,
+        GraphScope.world(),
+    )
 
     print(f"\n{'='*60}")
     print(f"GM图谱 - {world_id}")
@@ -159,7 +163,10 @@ async def show_gm_graph(world_id: str):
 async def show_character_graph(world_id: str, character_id: str):
     """显示角色图谱"""
     graph_store = GraphStore()
-    graph_data = await graph_store.load_graph(world_id, "character", character_id=character_id)
+    graph_data = await graph_store.load_graph_v2(
+        world_id,
+        GraphScope.character(character_id),
+    )
 
     print(f"\n{'='*60}")
     print(f"角色图谱 - {character_id} @ {world_id}")

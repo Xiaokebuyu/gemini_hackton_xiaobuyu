@@ -13,6 +13,7 @@ from app.config import settings
 from app.tools.worldbook_graphizer.models import MapsData, CharactersData
 from .map_loader import MapLoader
 from .character_loader import CharacterLoader
+from .graph_prefill_loader import GraphPrefillLoader
 
 
 class WorldInitializer:
@@ -30,6 +31,7 @@ class WorldInitializer:
         )
         self.map_loader = MapLoader(firestore_client=self.db)
         self.character_loader = CharacterLoader(firestore_client=self.db)
+        self.graph_prefill_loader = GraphPrefillLoader(firestore_client=self.db)
 
     async def initialize(
         self,
@@ -157,6 +159,27 @@ class WorldInitializer:
             if verbose:
                 print(f"\n[Phase 3] Skipping characters (no data file found)")
 
+        # 阶段 4: 图谱预填充（v2 scope 写入）
+        prefill_path = data_dir / "prefilled_graph.json"
+        if prefill_path.exists():
+            if verbose:
+                print(f"\n[Phase 4] Loading graph prefill from {data_dir}...")
+            try:
+                results["graph_prefill"] = await self.graph_prefill_loader.load_prefilled_graph(
+                    world_id=world_id,
+                    data_dir=data_dir,
+                    dry_run=dry_run,
+                    verbose=verbose,
+                )
+            except Exception as e:
+                error = f"Failed to load graph prefill: {str(e)}"
+                results["errors"].append(error)
+                if verbose:
+                    print(f"ERROR: {error}")
+        else:
+            if verbose:
+                print(f"\n[Phase 4] Skipping graph prefill (file not found: {prefill_path})")
+
         # 打印总结
         if verbose:
             print("\n" + "=" * 50)
@@ -170,6 +193,12 @@ class WorldInitializer:
                 print(f"Secondary characters: {results['characters'].get('secondary_loaded', 0)}")
                 print(f"Map assignments: {results['characters'].get('map_assignments_loaded', 0)}")
             print(f"World map: {'Yes' if results['world_map'] else 'No'}")
+            if results.get("graph_prefill"):
+                gp = results["graph_prefill"]
+                print(f"Graph prefill: {gp.get('nodes_written', 0)} nodes, "
+                      f"{gp.get('edges_written', 0)} edges, "
+                      f"{gp.get('chapters_meta_written', 0)} chapter metas, "
+                      f"{gp.get('dispositions_written', 0)} dispositions")
             if results["errors"]:
                 print(f"\nErrors: {len(results['errors'])}")
                 for err in results["errors"]:

@@ -20,6 +20,7 @@ from app.models.flash import (
     RecallResponse,
 )
 from app.models.graph import MemoryEdge, MemoryNode
+from app.models.graph_scope import GraphScope
 from app.models.pro import CharacterProfile
 from app.services.graph_schema import GraphSchemaOptions, validate_edge, validate_node
 from app.services.graph_store import GraphStore
@@ -61,6 +62,7 @@ class FlashService:
         event_id = request.event_id or f"event_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         node_count = 0
         edge_count = 0
+        char_scope = GraphScope.character(character_id)
 
         nodes = list(request.nodes)
         node_ids = {node.id for node in nodes}
@@ -79,12 +81,10 @@ class FlashService:
                     errors = validate_node(node, options)
                     if errors:
                         raise ValueError(f"Invalid node {node.id}: {errors}")
-                await self.graph_store.upsert_node(
-                    world_id,
-                    "character",
-                    node,
-                    character_id=character_id,
-                    index=request.write_indexes,
+                await self.graph_store.upsert_node_v2(
+                    world_id=world_id,
+                    scope=char_scope,
+                    node=node,
                 )
                 node_count += 1
 
@@ -99,11 +99,10 @@ class FlashService:
                     errors = validate_edge(edge, None, options)
                     if errors:
                         raise ValueError(f"Invalid edge {edge.id}: {errors}")
-                await self.graph_store.upsert_edge(
-                    world_id,
-                    "character",
-                    edge,
-                    character_id=character_id,
+                await self.graph_store.upsert_edge_v2(
+                    world_id=world_id,
+                    scope=char_scope,
+                    edge=edge,
                 )
                 edge_count += 1
 
@@ -150,7 +149,10 @@ class FlashService:
                             type=infer_type(node_id),
                             name=node_id,
                             importance=0.0,
-                            properties={"placeholder": True},
+                            properties={
+                                "placeholder": True,
+                                "_placeholder_source": "edge_auto_create",
+                            },
                         )
                     )
                     node_ids.add(node_id)
@@ -166,27 +168,40 @@ class FlashService:
             return RecallResponse(seed_nodes=[], activated_nodes={}, subgraph=None, used_subgraph=False)
 
         if request.use_subgraph:
-            graph_data = await self.graph_store.load_local_subgraph(
-                world_id,
-                "character",
+            graph_data = await self.graph_store.load_local_subgraph_v2(
+                world_id=world_id,
+                scope=GraphScope.character(character_id),
                 seed_nodes=request.seed_nodes,
                 depth=request.subgraph_depth,
                 direction=request.subgraph_direction,
-                character_id=character_id,
             )
             used_subgraph = True
         else:
-            graph_data = await self.graph_store.load_graph(world_id, "character", character_id)
+            graph_data = await self.graph_store.load_graph_v2(
+                world_id,
+                GraphScope.character(character_id),
+            )
             used_subgraph = False
 
         graph = MemoryGraph.from_graph_data(graph_data)
         config = request.config or SpreadingActivationConfig()
         activated = spread_activation(graph, request.seed_nodes, config)
 
+        # Filter out placeholder nodes from activation results
+        activated = {
+            nid: score for nid, score in activated.items()
+            if not (graph.get_node(nid) and (graph.get_node(nid).properties or {}).get("placeholder", False))
+        }
+
         subgraph = None
         if request.include_subgraph:
             subgraph_graph = extract_subgraph(graph, activated)
             subgraph = subgraph_graph.to_graph_data()
+            # Remove placeholder nodes from subgraph
+            subgraph.nodes = [
+                n for n in subgraph.nodes
+                if not (n.properties or {}).get("placeholder", False)
+            ]
             if request.resolve_refs:
                 subgraph = await self.reference_resolver.resolve_graph_data(world_id, subgraph)
 
@@ -342,7 +357,10 @@ class FlashService:
         limit: int = 30,
     ) -> List[Dict[str, Any]]:
         """获取角色图谱中的重要节点"""
-        graph_data = await self.graph_store.load_graph(world_id, "character", character_id)
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.character(character_id),
+        )
 
         if not graph_data or not graph_data.nodes:
             return []
@@ -372,7 +390,10 @@ class FlashService:
         character_id: str,
     ) -> List[Dict[str, Any]]:
         """获取角色图谱中的所有节点摘要"""
-        graph_data = await self.graph_store.load_graph(world_id, "character", character_id)
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.character(character_id),
+        )
 
         if not graph_data or not graph_data.nodes:
             return []

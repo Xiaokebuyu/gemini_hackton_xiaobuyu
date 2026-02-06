@@ -110,7 +110,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
             className="space-y-2"
           >
             {/* Category label */}
-            <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-handwritten">
+            <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-body">
               {config.icon}
               <span className="uppercase tracking-wide">
                 {t(config.labelKey)}
@@ -130,12 +130,12 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                     flex items-center gap-2
                     px-3 py-2
                     bg-sketch-bg-panel
-                    border-2
-                    text-sm font-handwritten
+                    border
+                    text-sm font-body
                     transition-all duration-200
                     ${action.enabled ? config.color : 'text-sketch-ink-muted border-sketch-ink-faint opacity-50 cursor-not-allowed'}
                   `}
-                  style={{ borderRadius: '4px' }}
+                  style={{ borderRadius: '8px' }}
                   title={action.description || action.display_name}
                 >
                   {action.icon && <span>{action.icon}</span>}

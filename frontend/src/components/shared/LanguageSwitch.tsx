@@ -32,16 +32,17 @@ export const LanguageSwitch: React.FC<LanguageSwitchProps> = ({
         onClick={toggleLanguage}
         className={`
           flex items-center gap-2 px-3 py-1.5
-          font-handwritten text-base
+          font-body text-sm
           bg-sketch-bg-panel
-          border-2 border-sketch-ink-muted
+          border border-sketch-ink-muted
+          rounded-lg
           text-sketch-ink-secondary
           hover:bg-sketch-bg-secondary hover:text-sketch-ink-primary
           hover:border-sketch-ink-secondary
-          transition-colors duration-200
+          backdrop-blur-sm
+          transition-all duration-200
           ${className}
         `}
-        style={{ borderRadius: '3px' }}
         title={switchToLabel}
       >
         <Globe className="w-4 h-4" />

@@ -4,10 +4,9 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
-import { MessageCircle, Heart } from 'lucide-react';
+import { MessageCircle } from 'lucide-react';
 import type { PartyMember, TeammateRole } from '../../types';
 import { useGameInput } from '../../api';
-import HealthBar from '../shared/HealthBar';
 
 interface TeammateCardProps {
   member: PartyMember;
@@ -55,10 +54,6 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
     }
   };
 
-  // Placeholder HP (would come from backend)
-  const hp = 30 - index * 5;
-  const maxHp = 35;
-
   return (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
@@ -67,13 +62,15 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
       className={`
         bg-sketch-bg-panel
         border-2 border-sketch-ink-muted
+        rounded-xl
         p-3
+        shadow-parchment-sm
         hover:border-sketch-ink-secondary
+        hover:shadow-parchment-md
         transition-all duration-200
         ${!member.is_active ? 'opacity-50' : ''}
         ${className}
       `}
-      style={{ borderRadius: '4px' }}
     >
       {/* Header */}
       <div className="flex items-start gap-3 mb-2">
@@ -84,7 +81,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
             bg-sketch-bg-secondary
             flex items-center justify-center
             text-xl
-            border-2 ${roleInfo.color.replace('text-', 'border-')}
+            border ${roleInfo.color.replace('text-', 'border-')}
           `}
         >
           {roleInfo.icon}
@@ -98,7 +95,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
             </h4>
             <span title={t(`party.mood.${member.current_mood}`)}>{moodEmoji}</span>
           </div>
-          <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-handwritten">
+          <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-body">
             <span>{t(roleInfo.labelKey)}</span>
             {!member.is_active && (
               <span className="text-sketch-accent-red">({t('party.inactive')})</span>
@@ -118,30 +115,16 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
             disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors
           "
-          style={{ borderRadius: '4px' }}
+          style={{ borderRadius: '8px' }}
           title={t('party.talkTo', { name: member.name })}
         >
           <MessageCircle className="w-4 h-4 text-sketch-accent-gold" />
         </button>
       </div>
 
-      {/* Health bar */}
-      <div className="mb-2">
-        <div className="flex items-center justify-between text-xs mb-1">
-          <div className="flex items-center gap-1">
-            <Heart className="w-3 h-3 text-sketch-accent-red" />
-            <span className="text-sketch-ink-muted font-handwritten">{t('status.hp')}</span>
-          </div>
-          <span className="text-sketch-ink-secondary font-handwritten">
-            {hp}/{maxHp}
-          </span>
-        </div>
-        <HealthBar current={hp} max={maxHp} variant="health" size="sm" />
-      </div>
-
       {/* Personality snippet */}
       {member.personality && (
-        <p className="text-xs text-sketch-ink-muted italic line-clamp-2 font-handwritten">
+        <p className="text-xs text-sketch-ink-muted italic line-clamp-2 font-body">
           "{member.personality}"
         </p>
       )}
@@ -149,7 +132,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
       {/* Response tendency indicator */}
       <div className="mt-2 pt-2 border-t border-sketch-ink-faint">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-sketch-ink-muted font-handwritten">{t('party.chattiness')}</span>
+          <span className="text-sketch-ink-muted font-body">{t('party.chattiness')}</span>
           <div className="flex gap-0.5">
             {[1, 2, 3, 4, 5].map((i) => (
               <div

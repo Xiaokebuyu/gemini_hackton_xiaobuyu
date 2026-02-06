@@ -10,6 +10,7 @@ Flash 与 Pro 之间的通信桥接，负责：
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.models.graph import GraphData
+from app.models.graph_scope import GraphScope
 from app.models.graph_elements import MemoryWithContext
 from app.models.npc_instance import MemoryInjection, QueryUnderstanding
 from app.models.pro import CharacterProfile
@@ -301,7 +302,10 @@ class FlashProBridge:
         from app.services.memory_graph import MemoryGraph
 
         # 加载图谱
-        graph_data = await self.graph_store.load_graph(world_id, "character", npc_id)
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.character(npc_id),
+        )
         if not graph_data or not graph_data.nodes:
             return {}
 
@@ -342,7 +346,10 @@ class FlashProBridge:
         """
         from app.services.memory_graph import MemoryGraph
 
-        graph_data = await self.graph_store.load_graph(world_id, "character", npc_id)
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.character(npc_id),
+        )
         if not graph_data:
             return GraphData(nodes=[], edges=[])
 
@@ -508,7 +515,10 @@ class FlashProBridge:
         npc_id: str,
     ) -> List[Dict[str, Any]]:
         """获取所有节点摘要"""
-        graph_data = await self.graph_store.load_graph(world_id, "character", npc_id)
+        graph_data = await self.graph_store.load_graph_v2(
+            world_id,
+            GraphScope.character(npc_id),
+        )
 
         if not graph_data or not graph_data.nodes:
             return []

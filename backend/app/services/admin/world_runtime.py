@@ -40,6 +40,20 @@ class AdminWorldRuntime:
         """获取导航器（LRU 缓存，最多 10 个世界）"""
         return AreaNavigator(world_id)
 
+    def _get_navigator_ready(self, world_id: str) -> AreaNavigator:
+        """
+        获取可用导航器。
+
+        若某世界在“数据尚未初始化”时被缓存为空地图，后续补数据后需要重建一次。
+        """
+        navigator = self._get_navigator(world_id)
+        if navigator.maps:
+            return navigator
+
+        # 清理 LRU 缓存并重建，避免长期持有空导航器。
+        self._get_navigator.cache_clear()
+        return self._get_navigator(world_id)
+
     @lru_cache(maxsize=10)
     def _get_event_generator(self, world_id: str) -> EventGenerator:
         """获取事件生成器（LRU 缓存）"""
@@ -92,7 +106,11 @@ class AdminWorldRuntime:
         starting_location: Optional[str] = None,
         starting_time: Optional[dict] = None,
     ) -> GameState:
-        state = await self.session_store.create_session(world_id, session_id, participants)
+        navigator = self._get_navigator_ready(world_id)
+        if not navigator.maps:
+            raise ValueError(
+                f"世界 '{world_id}' 未初始化地图数据，请先准备 data/{world_id}/structured/maps.json"
+            )
 
         initial_time = None
         if starting_time:
@@ -103,9 +121,13 @@ class AdminWorldRuntime:
             )
         time_manager = TimeManager(initial_time=initial_time)
 
-        navigator = self._get_navigator(world_id)
-        current_location = starting_location
-        if not current_location and navigator.maps:
+        current_location = None
+        if starting_location:
+            current_location = navigator.resolve_location_name(starting_location)
+            if not current_location:
+                raise ValueError(f"无效起始地点: {starting_location}")
+
+        if not current_location:
             for area_id, area in navigator.maps.items():
                 if area.danger_level == "low":
                     current_location = area_id
@@ -113,14 +135,20 @@ class AdminWorldRuntime:
             if not current_location:
                 current_location = list(navigator.maps.keys())[0]
 
+        state = await self.session_store.create_session(world_id, session_id, participants)
+
+        progress = await self.narrative_service.get_progress(world_id, state.session_id)
+
         admin_state = GameState(
             session_id=state.session_id,
             world_id=world_id,
             player_location=current_location,
+            area_id=current_location,
+            chapter_id=progress.current_chapter,
             sub_location=None,
             game_time=GameTimeState(**time_manager.to_dict()),
             chat_mode="think",
-            narrative_progress={},
+            narrative_progress=progress.to_dict(),
             metadata={
                 "known_characters": known_characters or [],
                 "character_locations": character_locations or {},
@@ -133,12 +161,21 @@ class AdminWorldRuntime:
 
     async def get_current_location(self, world_id: str, session_id: str) -> Dict[str, Any]:
         state = await self.get_state(world_id, session_id)
-        navigator = self._get_navigator(world_id)
+        navigator = self._get_navigator_ready(world_id)
+
+        if not navigator.maps:
+            return {
+                "error": (
+                    f"世界 '{world_id}' 未初始化地图数据，请先准备 "
+                    f"data/{world_id}/structured/maps.json"
+                )
+            }
 
         location_id = state.player_location
         if not location_id and navigator.maps:
             location_id = list(navigator.maps.keys())[0]
             state.player_location = location_id
+            state.area_id = location_id
             await self.persist_state(state)
 
         if not location_id:
@@ -146,7 +183,15 @@ class AdminWorldRuntime:
 
         area = navigator.get_area(location_id)
         if not area:
-            return {"error": f"位置不存在: {location_id}"}
+            fallback_id = list(navigator.maps.keys())[0]
+            area = navigator.get_area(fallback_id)
+            if area is None:
+                return {"error": f"位置不存在: {location_id}"}
+            location_id = fallback_id
+            state.player_location = fallback_id
+            state.area_id = fallback_id
+            state.sub_location = None
+            await self.persist_state(state)
 
         destinations = navigator.get_available_destinations(location_id)
         time_info = state.game_time.model_dump()
@@ -190,7 +235,7 @@ class AdminWorldRuntime:
         if not state.player_location:
             return {"success": False, "error": "当前位置未知"}
 
-        navigator = self._get_navigator(world_id)
+        navigator = self._get_navigator_ready(world_id)
         event_generator = self._get_event_generator(world_id)
 
         target_id = None
@@ -269,7 +314,14 @@ class AdminWorldRuntime:
                 })
 
         state.player_location = target_id
+        state.area_id = target_id
         state.sub_location = None
+        try:
+            progress = await self.narrative_service.get_progress(world_id, session_id)
+            state.chapter_id = progress.current_chapter
+            state.narrative_progress = progress.to_dict()
+        except Exception:
+            pass
         self._update_time_state(state, time_manager)
 
         await self.state_manager.set_state(world_id, session_id, state)
@@ -339,7 +391,7 @@ class AdminWorldRuntime:
         known_characters: list,
         character_locations: dict,
     ) -> None:
-        navigator = self._get_navigator(world_id)
+        navigator = self._get_navigator_ready(world_id)
         from_area = navigator.get_area(from_id)
         to_area = navigator.get_area(to_id)
 
@@ -403,7 +455,7 @@ class AdminWorldRuntime:
         if not state.player_location:
             return {"success": False, "error": "当前位置未知"}
 
-        navigator = self._get_navigator(world_id)
+        navigator = self._get_navigator_ready(world_id)
         sub_loc = navigator.get_sub_location(state.player_location, sub_location_id)
         if not sub_loc:
             return {"success": False, "error": f"子地点不存在: {sub_location_id}"}

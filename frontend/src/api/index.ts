@@ -10,7 +10,6 @@ export * from './combatApi';
 export { useGameInput } from './hooks/useGameInput';
 export { useLocation, useGameTime } from './hooks/useLocation';
 export {
-  useCombatState,
   useCombatAction,
   useStartCombat,
   useEndCombat,

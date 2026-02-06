@@ -25,6 +25,7 @@ import json
 import sys
 
 from app.models.flash import NaturalEventIngestRequest, NaturalRecallRequest
+from app.models.graph_scope import GraphScope
 from app.models.pro import CharacterProfile
 from app.services.flash_service import FlashService
 from app.services.graph_store import GraphStore
@@ -172,7 +173,10 @@ async def show_graph(world_id: str, character_id: str):
         print(f"  {json.dumps(state, ensure_ascii=False, indent=2)}")
 
     # 获取图谱
-    graph_data = await graph_store.load_graph(world_id, "character", character_id)
+    graph_data = await graph_store.load_graph_v2(
+        world_id,
+        GraphScope.character(character_id),
+    )
 
     if not graph_data or not graph_data.nodes:
         print(f"\n⚠️ 角色 {character_id} 在世界 {world_id} 中没有记忆图谱")

@@ -27,13 +27,13 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
   return (
     <div className={`h-full flex flex-col ${className}`}>
       {/* Header */}
-      <div className="flex items-center justify-between p-3 border-b border-sketch-ink-faint">
+      <div className="flex items-center justify-between p-3 border-b-2 border-sketch-ink-muted">
         <div className="flex items-center gap-2">
           <Users className="w-4 h-4 text-sketch-accent-gold" />
-          <h3 className="text-sm font-handwritten text-sketch-accent-gold">{t('party.title')}</h3>
+          <h3 className="text-sm font-fantasy text-sketch-accent-gold">{t('party.title')}</h3>
         </div>
         {currentParty && (
-          <span className="text-xs text-sketch-ink-muted font-handwritten">
+          <span className="text-xs text-sketch-ink-muted font-body">
             {activeMembers.length}/{currentParty.max_size}
           </span>
         )}
@@ -53,10 +53,10 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
             >
               <UserPlus className="w-8 h-8 text-sketch-ink-muted" />
             </div>
-            <h4 className="text-sm font-medium text-sketch-ink-secondary mb-1 font-handwritten">
+            <h4 className="text-sm font-medium text-sketch-ink-secondary mb-1 font-body">
               {t('party.empty')}
             </h4>
-            <p className="text-xs text-sketch-ink-muted max-w-[200px] font-handwritten">
+            <p className="text-xs text-sketch-ink-muted max-w-[200px] font-body">
               {t('party.addMember')}
             </p>
           </div>
@@ -76,7 +76,7 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
               <>
                 <div className="flex items-center gap-2 mt-4">
                   <div className="flex-1 h-px bg-sketch-ink-faint" />
-                  <span className="text-xs text-sketch-ink-muted font-handwritten">
+                  <span className="text-xs text-sketch-ink-muted font-body">
                     {t('party.inactive')}
                   </span>
                   <div className="flex-1 h-px bg-sketch-ink-faint" />
@@ -94,16 +94,16 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
         )}
       </div>
 
-      {/* Party settings hint */}
+      {/* Party info (read-only) */}
       {currentParty && (
-        <div className="p-3 border-t border-sketch-ink-faint">
-          <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-handwritten">
+        <div className="px-3 py-2 border-t border-sketch-ink-faint">
+          <div className="flex items-center gap-2 text-[10px] text-sketch-ink-faint font-body">
             <span>
               {currentParty.auto_follow ? '👣 Following' : '🚶 Independent'}
             </span>
-            <span className="text-sketch-ink-faint">|</span>
+            <span>·</span>
             <span>
-              {currentParty.share_events ? '👁️ Sharing events' : '🔒 Private'}
+              {currentParty.share_events ? '👁️ Shared' : '🔒 Private'}
             </span>
           </div>
         </div>

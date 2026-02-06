@@ -2,8 +2,8 @@
 Game session storage in Firestore.
 """
 import uuid
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timezone
+from typing import List, Optional
 
 from google.cloud import firestore
 
@@ -42,6 +42,45 @@ class GameSessionStore:
             return None
         data = doc.to_dict() or {}
         return GameSessionState(**data)
+
+    async def list_sessions(
+        self,
+        world_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[GameSessionState]:
+        """
+        列出世界内会话（按更新时间倒序）。
+
+        说明：
+        - Firestore 的 array_contains + order_by 往往需要复合索引。
+        - 为了降低部署前置条件，这里先查询后在内存排序。
+        """
+        sessions_ref = self.db.collection("worlds").document(world_id).collection("sessions")
+        query = sessions_ref
+        if user_id:
+            query = query.where("participants", "array_contains", user_id)
+
+        docs = list(query.stream())
+        sessions: List[GameSessionState] = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            try:
+                sessions.append(GameSessionState(**data))
+            except Exception:
+                continue
+
+        def _sort_key(state: GameSessionState) -> datetime:
+            updated = state.updated_at
+            if isinstance(updated, datetime):
+                if updated.tzinfo is None:
+                    return updated.replace(tzinfo=timezone.utc)
+                return updated
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+        sessions.sort(key=_sort_key, reverse=True)
+        safe_limit = max(1, min(int(limit), 100))
+        return sessions[:safe_limit]
 
     async def update_session(
         self,

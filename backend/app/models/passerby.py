@@ -3,7 +3,7 @@ Passerby Models - 路人NPC聚合存储数据模型
 
 路人NPC特点：
 - PASSERBY级别，按地点聚合存储
-- 共享地点级记忆图谱
+- 共享地点级短记忆（存储在 passerby_pool）
 - 运行时生成，非持久化角色资料
 
 Firestore结构：
@@ -44,20 +44,22 @@ class PasserbySpawnConfig(BaseModel):
     templates: List[str] = Field(default_factory=list)  # 可用模板ID
 
 
+class SharedMemoryContribution(BaseModel):
+    """共享记忆贡献"""
+    contributor_type: str  # "passerby" / "player_action" / "event"
+    content: str
+    sub_location_id: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.now)
+    importance: float = 0.5  # 0-1，重要性
+
+
 class LocationPasserbyPool(BaseModel):
     """地点级路人池"""
     map_id: str
     config: PasserbySpawnConfig = Field(default_factory=PasserbySpawnConfig)
     active_instances: Dict[str, PasserbyInstance] = Field(default_factory=dict)
     sentiment: float = 0.0  # -1到1，地点舆论/氛围
-
-
-class SharedMemoryContribution(BaseModel):
-    """共享记忆贡献"""
-    contributor_type: str  # "passerby" / "player_action" / "event"
-    content: str
-    timestamp: datetime = Field(default_factory=datetime.now)
-    importance: float = 0.5  # 0-1，重要性
+    shared_memories: List[SharedMemoryContribution] = Field(default_factory=list)
 
 
 class PasserbyTemplate(BaseModel):

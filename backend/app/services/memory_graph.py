@@ -1,12 +1,17 @@
 """
 In-memory graph structure and operations.
 """
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, Union
 
 import networkx as nx
 
 from app.models.graph import GraphData, MemoryEdge, MemoryNode
+
+if TYPE_CHECKING:
+    from app.models.graph_scope import GraphScope
 
 
 class MemoryGraph:
@@ -17,6 +22,12 @@ class MemoryGraph:
         self._edge_index: Dict[str, Tuple[str, str, str]] = {}
         self._type_index: Dict[str, set] = {}
         self._name_index: Dict[str, set] = {}
+        # CRPG scope indexes (populated from node properties)
+        self._chapter_index: Dict[str, set] = {}
+        self._area_index: Dict[str, set] = {}
+        self._location_index: Dict[str, set] = {}
+        self._day_index: Dict[int, set] = {}
+        self._participant_index: Dict[str, set] = {}
 
     def add_node(self, node: MemoryNode) -> None:
         """Add or update a node."""
@@ -141,6 +152,17 @@ class MemoryGraph:
                 self._edge_index[key] = (node_id, target, key)
         return neighbors
 
+    def in_neighbors(self, node_id: str) -> List[Tuple[str, MemoryEdge]]:
+        """Return incoming neighbors (sources of edges pointing to this node)."""
+        if node_id not in self.graph:
+            return []
+        result: List[Tuple[str, MemoryEdge]] = []
+        for source, _, key, data in self.graph.in_edges(node_id, keys=True, data=True):
+            result.append((source, MemoryEdge(**data)))
+            if key not in self._edge_index:
+                self._edge_index[key] = (source, node_id, key)
+        return result
+
     def degree(self, node_id: str) -> int:
         """Return node degree."""
         if node_id not in self.graph:
@@ -199,8 +221,118 @@ class MemoryGraph:
         """Rebuild in-memory indexes from current graph."""
         self._type_index = {}
         self._name_index = {}
+        self._chapter_index = {}
+        self._area_index = {}
+        self._location_index = {}
+        self._day_index = {}
+        self._participant_index = {}
         for node_id, data in self.graph.nodes(data=True):
             self._index_node(node_id, dict(data))
+
+    def find_nodes_by_chapter(self, chapter_id: str) -> List[MemoryNode]:
+        """Find nodes belonging to a specific chapter."""
+        node_ids = self._chapter_index.get(chapter_id, set())
+        return [n for nid in node_ids if (n := self.get_node(nid))]
+
+    def find_nodes_by_area(self, area_id: str) -> List[MemoryNode]:
+        """Find nodes belonging to a specific area."""
+        node_ids = self._area_index.get(area_id, set())
+        return [n for nid in node_ids if (n := self.get_node(nid))]
+
+    def find_nodes_by_location(self, location_id: str) -> List[MemoryNode]:
+        """Find nodes belonging to a specific location."""
+        node_ids = self._location_index.get(location_id, set())
+        return [n for nid in node_ids if (n := self.get_node(nid))]
+
+    def find_nodes_by_day(self, day: int) -> List[MemoryNode]:
+        """Find nodes that occurred on a specific game day."""
+        node_ids = self._day_index.get(day, set())
+        return [n for nid in node_ids if (n := self.get_node(nid))]
+
+    def find_nodes_by_participant(self, participant_id: str) -> List[MemoryNode]:
+        """Find nodes involving a specific participant."""
+        node_ids = self._participant_index.get(participant_id, set())
+        return [n for nid in node_ids if (n := self.get_node(nid))]
+
+    def find_nodes_by_perspective(self, perspective: str) -> List[MemoryNode]:
+        """Find nodes by perspective ('narrative' or 'personal')."""
+        results = []
+        for node_id in self.graph.nodes:
+            node = self.get_node(node_id)
+            if not node:
+                continue
+            if (node.properties or {}).get("perspective") == perspective:
+                results.append(node)
+        return results
+
+    @classmethod
+    def from_multi_scope(
+        cls,
+        scoped_data: Union[
+            List[Tuple[GraphScope, GraphData]],
+            List[MemoryGraph],
+        ],
+    ) -> MemoryGraph:
+        """Merge multiple graphs into one unified MemoryGraph.
+
+        Accepts either:
+        - List[Tuple[GraphScope, GraphData]]: auto-injects scope attributes
+          (scope_type, chapter_id, area_id, location_id, character_id) into
+          each node's properties before merging.
+        - List[MemoryGraph]: merges as-is (no scope injection).
+
+        Nodes with duplicate IDs: later entries overwrite earlier ones.
+        Edges are accumulated (MultiDiGraph allows parallel edges).
+        """
+        from app.models.graph_scope import GraphScope as _GraphScope
+
+        merged = cls()
+        pending_edges: List[MemoryEdge] = []
+
+        for item in scoped_data:
+            if isinstance(item, tuple) and len(item) == 2:
+                scope, graph_data = item
+                # Inject scope attributes into node properties
+                scope_attrs = {"scope_type": scope.scope_type}
+                if scope.chapter_id:
+                    scope_attrs["chapter_id"] = scope.chapter_id
+                if scope.area_id:
+                    scope_attrs["area_id"] = scope.area_id
+                if scope.location_id:
+                    scope_attrs["location_id"] = scope.location_id
+                if scope.character_id:
+                    scope_attrs["character_id"] = scope.character_id
+
+                for node in graph_data.nodes:
+                    props = dict(node.properties or {})
+                    props.update(scope_attrs)
+                    injected = MemoryNode(
+                        id=node.id,
+                        type=node.type,
+                        name=node.name,
+                        created_at=node.created_at,
+                        updated_at=node.updated_at,
+                        importance=node.importance,
+                        properties=props,
+                    )
+                    merged.add_node(injected)
+                for edge in graph_data.edges:
+                    pending_edges.append(edge)
+            elif isinstance(item, MemoryGraph):
+                for node in item.list_nodes():
+                    merged.add_node(node)
+                for edge in item.list_edges():
+                    pending_edges.append(edge)
+
+        # Second pass: add edges after all nodes are merged so cross-scope
+        # references (e.g. character->area perspective edges) are preserved.
+        for edge in pending_edges:
+            if merged.has_edge(edge.id):
+                continue
+            if edge.source in merged.graph and edge.target in merged.graph:
+                merged.add_edge(edge)
+
+        return merged
 
     @classmethod
     def from_graph_data(cls, graph_data: GraphData) -> "MemoryGraph":
@@ -218,7 +350,10 @@ class MemoryGraph:
                         type="unknown",
                         name=edge.source,
                         importance=0.0,
-                        properties={"placeholder": True},
+                        properties={
+                            "placeholder": True,
+                            "_placeholder_source": "from_graph_data",
+                        },
                     )
                 )
                 node_ids.add(edge.source)
@@ -229,7 +364,10 @@ class MemoryGraph:
                         type="unknown",
                         name=edge.target,
                         importance=0.0,
-                        properties={"placeholder": True},
+                        properties={
+                            "placeholder": True,
+                            "_placeholder_source": "from_graph_data",
+                        },
                     )
                 )
                 node_ids.add(edge.target)
@@ -243,6 +381,24 @@ class MemoryGraph:
         name = data.get("name")
         if name:
             self._name_index.setdefault(name.lower(), set()).add(node_id)
+        # CRPG scope indexes from properties
+        props = data.get("properties") or {}
+        chapter_id = props.get("chapter_id")
+        if chapter_id:
+            self._chapter_index.setdefault(chapter_id, set()).add(node_id)
+        area_id = props.get("area_id")
+        if area_id:
+            self._area_index.setdefault(area_id, set()).add(node_id)
+        location_id = props.get("location_id")
+        if location_id:
+            self._location_index.setdefault(location_id, set()).add(node_id)
+        day = props.get("day", props.get("game_day"))
+        if day is not None:
+            self._day_index.setdefault(day, set()).add(node_id)
+        participants = props.get("participants")
+        if isinstance(participants, list):
+            for pid in participants:
+                self._participant_index.setdefault(pid, set()).add(node_id)
 
     def _deindex_node(self, node_id: str) -> None:
         if node_id not in self.graph:
@@ -260,3 +416,27 @@ class MemoryGraph:
                 self._name_index[key].discard(node_id)
                 if not self._name_index[key]:
                     self._name_index.pop(key, None)
+        # CRPG scope deindex
+        props = data.get("properties") or {}
+        for field, index in [
+            ("chapter_id", self._chapter_index),
+            ("area_id", self._area_index),
+            ("location_id", self._location_index),
+        ]:
+            val = props.get(field)
+            if val and node_id in index.get(val, set()):
+                index[val].discard(node_id)
+                if not index[val]:
+                    index.pop(val, None)
+        day = props.get("day", props.get("game_day"))
+        if day is not None and node_id in self._day_index.get(day, set()):
+            self._day_index[day].discard(node_id)
+            if not self._day_index[day]:
+                self._day_index.pop(day, None)
+        participants = props.get("participants")
+        if isinstance(participants, list):
+            for pid in participants:
+                if node_id in self._participant_index.get(pid, set()):
+                    self._participant_index[pid].discard(node_id)
+                    if not self._participant_index[pid]:
+                        self._participant_index.pop(pid, None)

@@ -1,16 +1,27 @@
 /**
- * Mini map component (placeholder with visual)
+ * Mini map component - shows current location and available destinations
  */
 import React from 'react';
-import { Map, MapPin, Compass } from 'lucide-react';
+import { Map, MapPin, Compass, Navigation } from 'lucide-react';
 import { useGameStore } from '../../stores';
 
 interface MiniMapProps {
   className?: string;
 }
 
+// Position destinations around the center marker
+const destinationPositions = [
+  { top: '10%', left: '50%', transform: 'translateX(-50%)' },   // north
+  { top: '50%', right: '8%', transform: 'translateY(-50%)' },   // east
+  { bottom: '18%', left: '50%', transform: 'translateX(-50%)' }, // south
+  { top: '50%', left: '8%', transform: 'translateY(-50%)' },    // west
+  { top: '15%', right: '12%' },                                  // NE
+  { bottom: '22%', right: '12%' },                                // SE
+];
+
 export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
   const { location } = useGameStore();
+  const destinations = location?.available_destinations || [];
 
   return (
     <div className={`p-3 ${className}`}>
@@ -29,18 +40,18 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
           relative
           aspect-square
           bg-bg-secondary
-          rounded-lg
+          rounded-xl
           overflow-hidden
-          border border-[var(--color-border-secondary)]
+          border-2 border-sketch-ink-secondary
         "
       >
         {/* Grid pattern */}
         <div
-          className="absolute inset-0 opacity-20"
+          className="absolute inset-0 opacity-40"
           style={{
             backgroundImage: `
-              linear-gradient(rgba(255, 215, 0, 0.1) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255, 215, 0, 0.1) 1px, transparent 1px)
+              linear-gradient(rgba(92, 77, 58, 0.2) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(92, 77, 58, 0.2) 1px, transparent 1px)
             `,
             backgroundSize: '20px 20px',
           }}
@@ -72,6 +83,21 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
           </div>
         </div>
 
+        {/* Destination markers */}
+        {destinations.slice(0, 6).map((dest, i) => (
+          <div
+            key={dest.location_id}
+            className="absolute flex flex-col items-center gap-0.5"
+            style={destinationPositions[i]}
+            title={dest.description}
+          >
+            <Navigation className="w-3 h-3 text-sketch-accent-cyan opacity-70" />
+            <span className="text-[9px] text-sketch-accent-cyan font-body leading-tight text-center max-w-[60px] truncate">
+              {dest.name}
+            </span>
+          </div>
+        ))}
+
         {/* Location name overlay */}
         {location && (
           <div
@@ -79,7 +105,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
               absolute bottom-2 left-2 right-2
               bg-bg-primary/80
               backdrop-blur-sm
-              rounded-md
+              rounded-lg
               p-2
               text-center
             "
@@ -109,10 +135,12 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
           <div className="w-2 h-2 rounded-full bg-accent-gold" />
           <span>You</span>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="w-2 h-2 rounded-full bg-accent-cyan" />
-          <span>POI</span>
-        </div>
+        {destinations.length > 0 && (
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-sketch-accent-cyan" />
+            <span>Destinations</span>
+          </div>
+        )}
       </div>
     </div>
   );

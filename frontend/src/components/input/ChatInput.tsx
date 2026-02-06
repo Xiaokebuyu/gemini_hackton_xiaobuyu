@@ -5,8 +5,7 @@ import React, { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, Loader2 } from 'lucide-react';
 import { useGameInput } from '../../api';
-import { useGameStore, useChatStore } from '../../stores';
-import ChatModeToggle from './ChatModeToggle';
+import { useChatStore } from '../../stores';
 import SketchInput from '../sketch/SketchInput';
 import SketchButton from '../sketch/SketchButton';
 
@@ -18,7 +17,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
   const { t } = useTranslation();
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { chatMode } = useGameStore();
   const { isLoading } = useChatStore();
   const { sendInput } = useGameInput();
 
@@ -58,44 +56,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
     }
   };
 
-  const placeholderText =
-    chatMode === 'think'
-      ? t('chat.placeholder.think')
-      : t('chat.placeholder.say');
-
   return (
     <div className={className}>
-      {/* Mode toggle */}
-      <div className="flex items-center justify-between mb-3">
-        <ChatModeToggle />
-        <span className="text-xs text-sketch-ink-muted font-handwritten">
-          {chatMode === 'think' ? `🧠 ${t('chat.modeHint.think')}` : `🗣️ ${t('chat.modeHint.say')}`}
-        </span>
-      </div>
-
       {/* Input area */}
       <div className="relative flex items-end gap-2">
         <div
-          className={`
+          className="
             flex-1
             relative
             border-2
+            rounded-xl
             transition-all duration-200
-            ${
-              chatMode === 'think'
-                ? 'border-sketch-accent-purple/50 focus-within:border-sketch-accent-purple'
-                : 'border-sketch-accent-green/50 focus-within:border-sketch-accent-green'
-            }
+            border-sketch-ink-muted/50 focus-within:border-sketch-accent-gold
             bg-sketch-bg-input
-          `}
-          style={{ borderRadius: '4px' }}
+          "
         >
           <SketchInput
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={placeholderText}
+            placeholder={t('chat.placeholder.say')}
             disabled={isLoading}
             rows={1}
             className="border-0"
@@ -120,7 +101,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
       </div>
 
       {/* Hint */}
-      <div className="mt-2 text-xs text-sketch-ink-muted font-handwritten">
+      <div className="mt-2 text-xs text-sketch-ink-muted font-body">
         {t('chat.sendHint')}
       </div>
     </div>
