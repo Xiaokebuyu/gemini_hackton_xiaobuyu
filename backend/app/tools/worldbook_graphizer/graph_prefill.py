@@ -97,9 +97,10 @@ class PrefillResult:
 class GraphPrefiller:
     """Reads structured data and emits typed MemoryNode/MemoryEdge."""
 
-    # World-graph node types to keep (drop character and location)
+    # World-graph node types to keep (drop character and location — 它们由专门的处理器负责)
     _WORLD_KEEP_TYPES: Set[str] = {
         "faction", "deity", "race", "monster", "item", "concept", "knowledge",
+        "event",
     }
 
     def __init__(self, data_dir: Path):
@@ -274,6 +275,18 @@ class GraphPrefiller:
                     result=result,
                 )
 
+            # default_sub_location -> hosts_npc edge
+            default_sub = c.get("default_sub_location")
+            if default_sub and default_map:
+                loc_id = f"{default_map}__{default_sub}"
+                self._add_edge(
+                    source=loc_id,
+                    target=char_id,
+                    relation=CRPGRelationType.HOSTS_NPC,
+                    props={"created_by": "worldbook"},
+                    result=result,
+                )
+
             # Relationship edges (may produce multiple edges per relationship)
             relationships = c.get("relationships", {})
             for target_id, desc in relationships.items():
@@ -295,6 +308,18 @@ class GraphPrefiller:
 
     def _process_mainlines(self, mainlines_data: Dict, result: PrefillResult) -> None:
         chapters = mainlines_data.get("chapters", [])
+
+        # 无 mainlines 时自动生成默认章节，打开所有已处理的区域
+        if not chapters:
+            area_ids = [n.id for n in result.nodes if n.type == "area"]
+            if area_ids:
+                chapters = [{
+                    "id": "ch_default",
+                    "name": "序章",
+                    "description": "默认初始章节",
+                    "available_maps": area_ids,
+                }]
+
         for i, ch in enumerate(chapters):
             ch_id = ch["id"]
             chapter_node = ChapterNode(
@@ -376,6 +401,17 @@ class GraphPrefiller:
 
     # ---- internal: world graph ----
 
+    def _normalize_endpoint(self, raw_id: str) -> Optional[str]:
+        """尝试规范化 world_graph 中的端点 ID 到已注册节点"""
+        if raw_id in self._node_ids:
+            return raw_id
+        # 尝试 strip type prefix
+        for prefix in ("character_", "location_"):
+            stripped = raw_id.removeprefix(prefix)
+            if stripped != raw_id and stripped in self._node_ids:
+                return stripped
+        return None
+
     def _process_world_graph(self, world_graph: Dict, result: PrefillResult) -> None:
         """Import faction/deity/race/monster/item/concept nodes and their edges."""
         nodes = world_graph.get("nodes", [])
@@ -405,13 +441,11 @@ class GraphPrefiller:
             self._add_node(mn, result)
             result.world_node_count += 1
 
-        # Edges: keep only edges where both endpoints are in kept_ids
-        # or one endpoint is a character/area we already added
+        # Edges: keep edges where both endpoints exist (with ID normalization)
         for e in world_graph.get("edges", []):
-            src = e["source"]
-            tgt = e["target"]
-            # Both endpoints must exist in our node set
-            if src not in self._node_ids or tgt not in self._node_ids:
+            src = self._normalize_endpoint(e["source"])
+            tgt = self._normalize_endpoint(e["target"])
+            if src is None or tgt is None:
                 continue
 
             relation = e.get("relation", "knows")

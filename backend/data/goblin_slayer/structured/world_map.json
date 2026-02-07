@@ -3,21 +3,12 @@
   "description": "从世界书自动生成的世界地图",
   "regions": [
     {
-      "id": "边境地区",
-      "name": "边境地区",
-      "description": "边境地区，包含 2 个地点",
+      "id": "中央王国西部边境",
+      "name": "中央王国-西部边境",
+      "description": "中央王国-西部边境，包含 2 个地点",
       "maps": [
         "frontier_town",
-        "eastern_farmland"
-      ],
-      "danger_level": "medium"
-    },
-    {
-      "id": "中央王国",
-      "name": "中央王国",
-      "description": "中央王国，包含 1 个地点",
-      "maps": [
-        "royal_capital"
+        "cow_girl_farm"
       ],
       "danger_level": "low"
     },
@@ -26,37 +17,60 @@
       "name": "南方水乡",
       "description": "南方水乡，包含 1 个地点",
       "maps": [
-        "water_town"
-      ],
-      "danger_level": "medium"
-    },
-    {
-      "id": "南方大森林",
-      "name": "南方大森林",
-      "description": "南方大森林，包含 1 个地点",
-      "maps": [
-        "elven_village"
+        "water_capital"
       ],
       "danger_level": "low"
     },
     {
-      "id": "北方世界之脊山脉",
-      "name": "北方世界之脊山脉",
-      "description": "北方世界之脊山脉，包含 1 个地点",
+      "id": "大陆南部",
+      "name": "大陆南部",
+      "description": "大陆南部，包含 2 个地点",
       "maps": [
-        "dwarven_citadel"
+        "landosol_city",
+        "sol_tower"
+      ],
+      "danger_level": "extreme"
+    },
+    {
+      "id": "鸣神群岛",
+      "name": "鸣神群岛",
+      "description": "鸣神群岛，包含 1 个地点",
+      "maps": [
+        "tenryou_town"
       ],
       "danger_level": "low"
     },
     {
-      "id": "未知区域",
-      "name": "未知区域",
-      "description": "未知区域，包含 1 个地点",
+      "id": "西方未知境",
+      "name": "西方未知境",
+      "description": "西方未知境，包含 1 个地点",
       "maps": [
-        "ancient_ruins_dungeons"
+        "sunken_forest"
       ],
       "danger_level": "high"
     }
   ],
-  "global_connections": []
+  "global_connections": [
+    {
+      "from": "frontier_town",
+      "to": "water_capital",
+      "from_region": "中央王国-西部边境",
+      "to_region": "南方水乡",
+      "type": "travel"
+    },
+    {
+      "from": "water_capital",
+      "to": "frontier_town",
+      "from_region": "南方水乡",
+      "to_region": "中央王国-西部边境",
+      "type": "travel"
+    },
+    {
+      "from": "sunken_forest",
+      "to": "frontier_town",
+      "from_region": "西方未知境",
+      "to_region": "中央王国-西部边境",
+      "type": "travel"
+    }
+  ]
 }

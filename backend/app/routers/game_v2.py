@@ -1,5 +1,5 @@
 """
-Unified Game V2 API routes (Pro-First).
+Unified Game V2 API routes (Flash-Only).
 """
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -22,8 +22,6 @@ from app.models.game import (
     CombatResolveResponse,
     CombatStartRequest,
     CombatStartResponse,
-    CreateSessionRequest,
-    CreateSessionResponse,
     EnterSceneRequest,
     EnterSceneResponse,
     GameContextResponse,
@@ -41,6 +39,13 @@ from app.services.admin.admin_coordinator import AdminCoordinator
 
 
 router = APIRouter(prefix="/game", tags=["Game V2"])
+
+
+@router.get("/worlds")
+async def list_worlds(coordinator=Depends(get_coordinator)):
+    """列出所有可用世界"""
+    worlds = await coordinator.list_worlds()
+    return {"worlds": worlds}
 
 
 class CreateGameSessionRequest(BaseModel):
@@ -164,19 +169,6 @@ async def list_sessions(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@router.post("/{world_id}/sessions/legacy")
-async def create_session_legacy(
-    world_id: str,
-    payload: CreateSessionRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-) -> CreateSessionResponse:
-    """兼容旧会话创建（不启动导航/时间系统）"""
-    try:
-        return await coordinator.create_session(world_id, payload)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 @router.get("/{world_id}/sessions/{session_id}")
 async def get_session(
     world_id: str,
@@ -244,7 +236,7 @@ async def process_input_v2(
     payload: PlayerInputRequest,
     coordinator: AdminCoordinator = Depends(get_coordinator),
 ) -> CoordinatorResponse:
-    """处理玩家输入（Pro-First v2）"""
+    """处理玩家输入（Flash-Only v2）"""
     try:
         return await coordinator.process_player_input_v2(
             world_id=world_id,
@@ -253,50 +245,6 @@ async def process_input_v2(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post("/{world_id}/sessions/{session_id}/input_legacy")
-async def process_input_legacy(
-    world_id: str,
-    session_id: str,
-    payload: PlayerInputRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-) -> PlayerInputResponse:
-    """处理玩家输入（Legacy 兼容）"""
-    try:
-        input_type = payload.input_type
-        chat_mode = None
-        if payload.mode:
-            try:
-                from app.models.game import ChatMode
-                chat_mode = ChatMode(payload.mode)
-            except ValueError:
-                chat_mode = None
-
-        result = await coordinator.process_player_input(
-            world_id=world_id,
-            session_id=session_id,
-            player_input=payload.input,
-            input_type=input_type,
-            mode=chat_mode,
-        )
-        return PlayerInputResponse(
-            type=result.get("type", "error"),
-            response=result.get("response", ""),
-            speaker=result.get("speaker", "GM"),
-            npc_id=result.get("npc_id"),
-            event_recorded=result.get("event_recorded", False),
-            tool_called=result.get("tool_called", False),
-            recalled_memory=result.get("recalled_memory"),
-            available_actions=[
-                a.model_dump() if hasattr(a, "model_dump") else a
-                for a in result.get("available_actions", [])
-            ],
-            state_changes=result.get("state_changes", {}),
-            responses=result.get("responses", []),
-        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -929,5 +877,20 @@ async def ingest_event_natural(
         return await coordinator.ingest_event_natural(world_id, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{world_id}/sessions/{session_id}/history")
+async def get_session_history(
+    world_id: str,
+    session_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """获取会话聊天历史"""
+    try:
+        messages = await coordinator.get_session_history(world_id, session_id, limit)
+        return {"messages": messages}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

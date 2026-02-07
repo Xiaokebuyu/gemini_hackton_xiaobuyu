@@ -57,7 +57,7 @@ class NPCClassifier:
         return text
 
     def _parse_json(self, text: str) -> Optional[Dict[str, Any]]:
-        """解析 JSON 响应"""
+        """解析 JSON 响应，支持截断恢复"""
         text = text.strip()
 
         def try_parse(s: str) -> Optional[Dict]:
@@ -94,6 +94,51 @@ class NPCClassifier:
             if result:
                 return result
 
+        # 截断恢复：输出超长时 JSON 可能不完整，尝试在最后一个完整对象处截断
+        result = self._try_recover_truncated(text)
+        if result:
+            return result
+
+        return None
+
+    def _try_recover_truncated(self, text: str) -> Optional[Dict[str, Any]]:
+        """尝试从截断的 JSON 中恢复 characters 数组"""
+        # 找到 "characters" 数组的起始位置
+        idx = text.find('"characters"')
+        if idx == -1:
+            return None
+
+        # 找到数组开始的 [
+        arr_start = text.find('[', idx)
+        if arr_start == -1:
+            return None
+
+        # 从后往前找最后一个完整的 }（角色对象结尾）
+        last_close = text.rfind('}')
+        if last_close <= arr_start:
+            return None
+
+        # 尝试逐步回退找到可解析的完整数组
+        search_from = last_close
+        for _ in range(50):  # 最多回退 50 次
+            candidate = text[:search_from + 1] + ']}'
+            # 确保从顶层 { 开始
+            top_start = text.find('{')
+            if top_start == -1:
+                break
+            candidate = text[top_start:search_from + 1] + ']}'
+            try:
+                data = json.loads(candidate)
+                if isinstance(data.get("characters"), list) and len(data["characters"]) > 0:
+                    print(f"  [truncation recovery] Recovered {len(data['characters'])} characters from truncated JSON")
+                    return data
+            except json.JSONDecodeError:
+                pass
+            # 继续往前找上一个 }
+            search_from = text.rfind('}', 0, search_from)
+            if search_from <= arr_start:
+                break
+
         return None
 
     async def classify(
@@ -126,10 +171,11 @@ class NPCClassifier:
             "{known_maps}", known_maps
         )
 
-        # 配置 JSON 输出
+        # 配置 JSON 输出（角色列表可能很长，需要足够的输出空间）
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             temperature=0.2,
+            max_output_tokens=65536,
         )
 
         # 调用 LLM
@@ -141,16 +187,22 @@ class NPCClassifier:
 
         # 提取响应文本
         text = ""
+        finish_reason = None
         if hasattr(response, 'candidates') and response.candidates:
-            for part in response.candidates[0].content.parts:
+            candidate = response.candidates[0]
+            finish_reason = getattr(candidate, 'finish_reason', None)
+            for part in candidate.content.parts:
                 if hasattr(part, 'text') and part.text:
                     if not (hasattr(part, 'thought') and part.thought):
                         text += part.text
 
+        if finish_reason and str(finish_reason) != "STOP":
+            print(f"  Warning: NPC classification finish_reason={finish_reason}, output may be truncated ({len(text)} chars)")
+
         # 解析 JSON
         raw_data = self._parse_json(text)
         if not raw_data:
-            raise ValueError(f"Failed to parse NPC classification response: {text[:500]}...")
+            raise ValueError(f"Failed to parse NPC classification response (finish_reason={finish_reason}, len={len(text)}): {text[:500]}...")
 
         # 转换为数据模型
         return self._convert_to_model(raw_data)
@@ -171,6 +223,7 @@ class NPCClassifier:
                 name=char_data.get("name", ""),
                 tier=tier,
                 default_map=char_data.get("default_map"),
+                default_sub_location=char_data.get("default_sub_location"),
                 aliases=char_data.get("aliases", []),
                 occupation=char_data.get("occupation"),
                 age=char_data.get("age"),
@@ -315,6 +368,7 @@ class NPCClassifier:
                     "importance": char.importance,
                     "tags": char.tags,
                     "default_map": char.default_map,
+                    "default_sub_location": char.default_sub_location,
                     "tier": char.tier.value,
                 }
             }

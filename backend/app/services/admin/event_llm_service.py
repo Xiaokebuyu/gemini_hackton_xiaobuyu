@@ -6,11 +6,14 @@ Event LLM Service - 事件LLM能力层
 2. 事件编码 (encode_gm_event): 编码为事件图谱的结构化数据
 3. 视角转换 (transform_perspective): 将事件转换为特定角色的视角
 """
+import logging
 from typing import Any, Dict, List, Literal, Optional
 
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.llm_service import LLMService
 
+
+logger = logging.getLogger(__name__)
 
 # 视角类型
 PerspectiveType = Literal["participant", "witness", "bystander", "rumor"]
@@ -94,18 +97,11 @@ class EventLLMService:
 
 只返回JSON，不要其他内容。"""
 
+        logger.info("事件解析 LLM 调用开始")
         result = await self.llm.generate_json(prompt)
 
         if not result:
-            return {
-                "event_type": "action",
-                "summary": event_description,
-                "location": None,
-                "participants": [],
-                "witnesses": [],
-                "importance": 0.5,
-                "consequences": []
-            }
+            raise ValueError("事件解析 LLM 返回空结果")
 
         # 验证和清理
         return self._validate_parse_result(result)
@@ -194,10 +190,11 @@ class EventLLMService:
 
 只返回JSON，不要其他内容。"""
 
+        logger.info("GM 事件编码 LLM 调用开始: game_day=%d", game_day)
         result = await self.llm.generate_json(prompt)
 
         if not result:
-            return {"nodes": [], "edges": []}
+            raise ValueError("GM 事件编码 LLM 返回空结果")
 
         return self._validate_encode_result(result, game_day)
 
@@ -313,15 +310,11 @@ class EventLLMService:
 
 只返回JSON，不要其他内容。"""
 
+        logger.info("视角转换 LLM 调用: character=%s, perspective=%s", character_id, perspective)
         result = await self.llm.generate_json(prompt)
 
         if not result:
-            return {
-                "event_description": event_description,
-                "nodes": [],
-                "edges": [],
-                "state_updates": {}
-            }
+            raise ValueError(f"视角转换 LLM 返回空结果: character={character_id}")
 
         return self._validate_transform_result(result, game_day, perspective)
 

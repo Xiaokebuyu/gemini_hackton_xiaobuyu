@@ -725,34 +725,6 @@ class TestAdditionalEndpoints:
     """其他端点测试"""
 
     @pytest.mark.asyncio
-    async def test_legacy_session_create(self, client: AsyncClient):
-        """POST /{world}/sessions/legacy - 兼容旧会话创建"""
-        payload = {
-            "session_id": unique_session_id("legacy"),
-            "participants": ["test_player"],
-        }
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/legacy",
-            json=payload,
-        )
-        print(f"Legacy 会话创建响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 500]
-
-    @pytest.mark.asyncio
-    async def test_legacy_input(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/input_legacy - 兼容旧输入处理"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/input_legacy",
-            json={"input": "我看看周围"},
-        )
-        print(f"Legacy 输入响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 500]
-
-    @pytest.mark.asyncio
     async def test_enter_scene(self, client: AsyncClient, session_id: str):
         """POST /{world}/sessions/{id}/scene - 进入场景"""
         payload = {

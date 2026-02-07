@@ -43,10 +43,10 @@ export const COMBAT_ACTION_TYPES = [
 
 // Danger levels
 export const DANGER_LEVELS = {
-  low: { color: 'text-danger-low', label: 'Safe' },
-  medium: { color: 'text-danger-medium', label: 'Moderate' },
-  high: { color: 'text-danger-high', label: 'Dangerous' },
-  extreme: { color: 'text-danger-extreme', label: 'Deadly' },
+  low: { color: 'text-g-danger-low', label: 'Safe' },
+  medium: { color: 'text-g-danger-medium', label: 'Moderate' },
+  high: { color: 'text-g-danger-high', label: 'Dangerous' },
+  extreme: { color: 'text-g-danger-extreme', label: 'Deadly' },
 };
 
 // Keyboard shortcuts

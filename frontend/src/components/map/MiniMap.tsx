@@ -28,10 +28,10 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Map className="w-4 h-4 text-accent-gold" />
-          <h3 className="text-sm font-fantasy text-accent-gold">Map</h3>
+          <Map className="w-4 h-4 text-g-gold" />
+          <h3 className="text-sm font-heading text-g-gold">Map</h3>
         </div>
-        <Compass className="w-4 h-4 text-[var(--color-text-muted)]" />
+        <Compass className="w-4 h-4 text-[var(--g-text-muted)]" />
       </div>
 
       {/* Map area */}
@@ -39,10 +39,10 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
         className="
           relative
           aspect-square
-          bg-bg-secondary
+          bg-g-bg-sidebar
           rounded-xl
           overflow-hidden
-          border-2 border-sketch-ink-secondary
+          border-2 border-g-border-strong
         "
       >
         {/* Grid pattern */}
@@ -50,8 +50,8 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
           className="absolute inset-0 opacity-40"
           style={{
             backgroundImage: `
-              linear-gradient(rgba(92, 77, 58, 0.2) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(92, 77, 58, 0.2) 1px, transparent 1px)
+              linear-gradient(rgba(196, 154, 42, 0.08) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(196, 154, 42, 0.08) 1px, transparent 1px)
             `,
             backgroundSize: '20px 20px',
           }}
@@ -64,7 +64,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
             <div
               className="
                 absolute inset-0
-                bg-accent-gold/30
+                bg-g-gold/30
                 rounded-full
                 animate-ping
               "
@@ -74,10 +74,10 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
             <div
               className="
                 w-4 h-4
-                bg-accent-gold
+                bg-g-gold
                 rounded-full
                 border-2 border-white
-                shadow-glow-gold
+                shadow-g-gold
               "
             />
           </div>
@@ -91,8 +91,8 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
             style={destinationPositions[i]}
             title={dest.description}
           >
-            <Navigation className="w-3 h-3 text-sketch-accent-cyan opacity-70" />
-            <span className="text-[9px] text-sketch-accent-cyan font-body leading-tight text-center max-w-[60px] truncate">
+            <Navigation className="w-3 h-3 text-g-cyan opacity-70" />
+            <span className="text-[9px] text-g-cyan font-body leading-tight text-center max-w-[60px] truncate">
               {dest.name}
             </span>
           </div>
@@ -103,7 +103,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
           <div
             className="
               absolute bottom-2 left-2 right-2
-              bg-bg-primary/80
+              bg-g-bg-base/80
               backdrop-blur-sm
               rounded-lg
               p-2
@@ -111,8 +111,8 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
             "
           >
             <div className="flex items-center justify-center gap-1">
-              <MapPin className="w-3 h-3 text-accent-gold" />
-              <span className="text-xs font-medium text-[var(--color-text-primary)] truncate">
+              <MapPin className="w-3 h-3 text-g-gold" />
+              <span className="text-xs font-medium text-[var(--g-text-primary)] truncate">
                 {location.location_name}
               </span>
             </div>
@@ -122,7 +122,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
         {/* Placeholder text if no location */}
         {!location && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-xs text-[var(--color-text-muted)]">
+            <span className="text-xs text-[var(--g-text-muted)]">
               No map data
             </span>
           </div>
@@ -130,14 +130,14 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
       </div>
 
       {/* Mini legend */}
-      <div className="mt-2 flex items-center justify-center gap-4 text-xs text-[var(--color-text-muted)]">
+      <div className="mt-2 flex items-center justify-center gap-4 text-xs text-[var(--g-text-muted)]">
         <div className="flex items-center gap-1">
-          <div className="w-2 h-2 rounded-full bg-accent-gold" />
+          <div className="w-2 h-2 rounded-full bg-g-gold" />
           <span>You</span>
         </div>
         {destinations.length > 0 && (
           <div className="flex items-center gap-1">
-            <div className="w-2 h-2 rounded-full bg-sketch-accent-cyan" />
+            <div className="w-2 h-2 rounded-full bg-g-cyan" />
             <span>Destinations</span>
           </div>
         )}

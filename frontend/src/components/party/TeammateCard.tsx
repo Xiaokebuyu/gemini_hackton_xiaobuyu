@@ -1,10 +1,19 @@
 /**
- * Teammate card component - using Sketch style
+ * Teammate card component - Golden D&D theme
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
-import { MessageCircle } from 'lucide-react';
+import {
+  MessageCircle,
+  Sword,
+  Heart,
+  Sparkles,
+  Crosshair,
+  Shield,
+  Eye,
+  BookOpen,
+} from 'lucide-react';
 import type { PartyMember, TeammateRole } from '../../types';
 import { useGameInput } from '../../api';
 
@@ -16,26 +25,26 @@ interface TeammateCardProps {
 
 const roleConfig: Record<
   TeammateRole,
-  { icon: string; color: string; labelKey: string }
+  { icon: React.ReactNode; color: string; labelKey: string }
 > = {
-  warrior: { icon: '⚔️', color: 'text-sketch-accent-red', labelKey: 'party.role.warrior' },
-  healer: { icon: '💚', color: 'text-sketch-accent-green', labelKey: 'party.role.healer' },
-  mage: { icon: '🔮', color: 'text-sketch-accent-purple', labelKey: 'party.role.mage' },
-  rogue: { icon: '🗡️', color: 'text-sketch-accent-blue', labelKey: 'party.role.rogue' },
-  support: { icon: '🛡️', color: 'text-sketch-accent-gold', labelKey: 'party.role.support' },
-  scout: { icon: '👁️', color: 'text-sketch-accent-cyan', labelKey: 'party.role.scout' },
-  scholar: { icon: '📚', color: 'text-sketch-ink-secondary', labelKey: 'party.role.scholar' },
+  warrior: { icon: <Sword className="w-5 h-5" />, color: 'text-g-red', labelKey: 'party.role.warrior' },
+  healer: { icon: <Heart className="w-5 h-5" />, color: 'text-g-green', labelKey: 'party.role.healer' },
+  mage: { icon: <Sparkles className="w-5 h-5" />, color: 'text-g-purple', labelKey: 'party.role.mage' },
+  rogue: { icon: <Crosshair className="w-5 h-5" />, color: 'text-g-blue', labelKey: 'party.role.rogue' },
+  support: { icon: <Shield className="w-5 h-5" />, color: 'text-g-gold', labelKey: 'party.role.support' },
+  scout: { icon: <Eye className="w-5 h-5" />, color: 'text-g-cyan', labelKey: 'party.role.scout' },
+  scholar: { icon: <BookOpen className="w-5 h-5" />, color: 'g-text-secondary', labelKey: 'party.role.scholar' },
 };
 
-const moodEmojis: Record<string, string> = {
-  happy: '😊',
-  neutral: '😐',
-  sad: '😢',
-  angry: '😠',
-  worried: '😟',
-  excited: '🤩',
-  tired: '😴',
-  focused: '🎯',
+const moodConfig: Record<string, { color: string; label: string }> = {
+  happy: { color: 'bg-g-green', label: 'Happy' },
+  neutral: { color: 'bg-g-text-muted', label: 'Neutral' },
+  sad: { color: 'bg-g-blue', label: 'Sad' },
+  angry: { color: 'bg-g-red', label: 'Angry' },
+  worried: { color: 'bg-g-danger-medium', label: 'Worried' },
+  excited: { color: 'bg-g-gold', label: 'Excited' },
+  tired: { color: 'bg-g-purple', label: 'Tired' },
+  focused: { color: 'bg-g-cyan', label: 'Focused' },
 };
 
 export const TeammateCard: React.FC<TeammateCardProps> = ({
@@ -46,7 +55,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
   const { t } = useTranslation();
   const { sendInput, isLoading } = useGameInput();
   const roleInfo = roleConfig[member.role];
-  const moodEmoji = moodEmojis[member.current_mood] || '😐';
+  const mood = moodConfig[member.current_mood] || moodConfig.neutral;
 
   const handleTalk = () => {
     if (!isLoading) {
@@ -60,13 +69,13 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.1 }}
       className={`
-        bg-sketch-bg-panel
-        border-2 border-sketch-ink-muted
+        bg-g-bg-surface
+        border-2 border-g-border
         rounded-xl
         p-3
-        shadow-parchment-sm
-        hover:border-sketch-ink-secondary
-        hover:shadow-parchment-md
+        shadow-g-sm
+        hover:border-g-border-strong
+        hover:shadow-g-md
         transition-all duration-200
         ${!member.is_active ? 'opacity-50' : ''}
         ${className}
@@ -78,9 +87,8 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
         <div
           className={`
             w-10 h-10 rounded-full
-            bg-sketch-bg-secondary
+            bg-g-bg-sidebar
             flex items-center justify-center
-            text-xl
             border ${roleInfo.color.replace('text-', 'border-')}
           `}
         >
@@ -90,15 +98,18 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
         {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h4 className={`font-handwritten font-medium ${roleInfo.color} truncate`}>
+            <h4 className={`font-heading font-medium ${roleInfo.color} truncate`}>
               {member.name}
             </h4>
-            <span title={t(`party.mood.${member.current_mood}`)}>{moodEmoji}</span>
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${mood.color} inline-block`}
+              title={t(`party.mood.${member.current_mood}`, mood.label)}
+            />
           </div>
-          <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-body">
+          <div className="flex items-center gap-2 text-xs g-text-muted font-body">
             <span>{t(roleInfo.labelKey)}</span>
             {!member.is_active && (
-              <span className="text-sketch-accent-red">({t('party.inactive')})</span>
+              <span className="text-g-red">({t('party.inactive')})</span>
             )}
           </div>
         </div>
@@ -109,30 +120,30 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
           disabled={!member.is_active || isLoading}
           className="
             p-2
-            bg-sketch-bg-secondary
-            border border-sketch-ink-muted
-            hover:bg-sketch-accent-gold/20
+            bg-g-bg-sidebar
+            border border-g-border
+            hover:bg-g-gold/20
             disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors
           "
           style={{ borderRadius: '8px' }}
           title={t('party.talkTo', { name: member.name })}
         >
-          <MessageCircle className="w-4 h-4 text-sketch-accent-gold" />
+          <MessageCircle className="w-4 h-4 text-g-gold" />
         </button>
       </div>
 
       {/* Personality snippet */}
       {member.personality && (
-        <p className="text-xs text-sketch-ink-muted italic line-clamp-2 font-body">
+        <p className="text-xs g-text-muted italic line-clamp-2 font-body">
           "{member.personality}"
         </p>
       )}
 
       {/* Response tendency indicator */}
-      <div className="mt-2 pt-2 border-t border-sketch-ink-faint">
+      <div className="mt-2 pt-2 border-t border-g-border">
         <div className="flex items-center justify-between text-xs">
-          <span className="text-sketch-ink-muted font-body">{t('party.chattiness')}</span>
+          <span className="g-text-muted font-body">{t('party.chattiness')}</span>
           <div className="flex gap-0.5">
             {[1, 2, 3, 4, 5].map((i) => (
               <div
@@ -141,8 +152,8 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
                   w-2 h-2 rounded-full
                   ${
                     i <= Math.round(member.response_tendency * 5)
-                      ? 'bg-sketch-accent-green'
-                      : 'bg-sketch-bg-secondary'
+                      ? 'bg-g-green'
+                      : 'bg-g-bg-sidebar'
                   }
                 `}
               />

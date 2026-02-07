@@ -42,7 +42,7 @@ export const TypewriterText: React.FC<TypewriterTextProps> = ({
 
         // Scroll to bottom if in a scrollable container
         if (containerRef.current) {
-          const parent = containerRef.current.closest('.sketch-scrollbar');
+          const parent = containerRef.current.closest('.g-scrollbar');
           if (parent) {
             parent.scrollTop = parent.scrollHeight;
           }
@@ -74,7 +74,7 @@ export const TypewriterText: React.FC<TypewriterTextProps> = ({
     >
       {displayedText}
       {!isComplete && (
-        <span className="inline-block w-0.5 h-4 bg-accent-gold ml-0.5 animate-pulse" />
+        <span className="inline-block w-0.5 h-4 bg-g-gold ml-0.5 animate-pulse" />
       )}
     </div>
   );

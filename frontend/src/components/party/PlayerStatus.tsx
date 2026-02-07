@@ -1,5 +1,5 @@
 /**
- * Player status component - using Sketch style
+ * Player status component - Golden D&D theme
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -22,18 +22,18 @@ export const PlayerStatus: React.FC<PlayerStatusProps> = ({
         <div
           className="
             w-12 h-12 rounded-full
-            bg-sketch-accent-gold
+            bg-g-gold
             flex items-center justify-center
-            border-2 border-sketch-ink-secondary
-            shadow-parchment-sm
+            border-2 border-g-border-strong
+            shadow-g-sm
           "
         >
-          <User className="w-6 h-6 text-sketch-bg-primary" />
+          <User className="w-6 h-6 text-g-bg-base" />
         </div>
 
         {/* Name */}
         <div className="flex-1">
-          <h3 className="font-handwritten text-lg text-sketch-accent-gold leading-tight">
+          <h3 className="font-heading text-lg text-g-gold leading-tight">
             {t('status.adventurer', 'Adventurer')}
           </h3>
         </div>

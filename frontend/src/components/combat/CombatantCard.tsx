@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Shield, Crosshair } from 'lucide-react';
+import { Shield, Crosshair, User, Sword, Skull } from 'lucide-react';
 import type { Combatant } from '../../types';
 import { STATUS_EFFECT_ICONS, STATUS_EFFECT_LABELS } from '../../types';
 import HealthBar from '../shared/HealthBar';
@@ -27,27 +27,27 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
     <motion.div
       whileHover={onClick ? { scale: 1.02 } : {}}
       whileTap={onClick ? { scale: 0.98 } : {}}
-      animate={isActive ? { boxShadow: '0 0 20px rgba(255, 215, 0, 0.5)' } : {}}
+      animate={isActive ? { boxShadow: '0 0 20px rgba(196, 154, 42, 0.4)' } : {}}
       onClick={onClick}
       className={`
         relative
-        bg-bg-card
+        bg-g-bg-surface-alt
         rounded-lg
         border-2
         p-4
         transition-all duration-200
         ${
           combatant.is_dead
-            ? 'opacity-50 border-[var(--color-text-muted)]'
+            ? 'opacity-50 border-[var(--g-text-muted)]'
             : isSelected
-            ? 'border-accent-gold shadow-glow-gold'
+            ? 'border-g-gold shadow-g-gold'
             : isActive
-            ? 'border-accent-gold'
+            ? 'border-g-gold'
             : combatant.is_ally
-            ? 'border-accent-green/50'
-            : 'border-accent-red/50'
+            ? 'border-g-green/50'
+            : 'border-g-red/50'
         }
-        ${onClick && !combatant.is_dead ? 'cursor-pointer hover:border-accent-gold/70' : ''}
+        ${onClick && !combatant.is_dead ? 'cursor-pointer hover:border-g-gold/70' : ''}
         ${className}
       `}
     >
@@ -56,7 +56,7 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="absolute -top-3 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-accent-gold text-bg-primary text-xs font-bold rounded"
+          className="absolute -top-3 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-g-gold text-g-bg-base text-xs font-bold rounded"
         >
           CURRENT TURN
         </motion.div>
@@ -70,17 +70,21 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
             className={`
               w-12 h-12 rounded-full
               flex items-center justify-center
-              text-2xl
               ${
                 combatant.is_player
-                  ? 'bg-accent-gold/20 border-2 border-accent-gold'
+                  ? 'bg-g-gold/20 border-2 border-g-gold'
                   : combatant.is_ally
-                  ? 'bg-accent-green/20 border-2 border-accent-green'
-                  : 'bg-accent-red/20 border-2 border-accent-red'
+                  ? 'bg-g-green/20 border-2 border-g-green'
+                  : 'bg-g-red/20 border-2 border-g-red'
               }
             `}
           >
-            {combatant.is_player ? '🧙' : combatant.is_ally ? '⚔️' : '👹'}
+            {combatant.is_player
+              ? <User className="w-5 h-5" />
+              : combatant.is_ally
+              ? <Sword className="w-5 h-5" />
+              : <Skull className="w-5 h-5" />
+            }
           </div>
           <div>
             <h4
@@ -88,16 +92,16 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
                 font-medium
                 ${
                   combatant.is_player
-                    ? 'text-accent-gold'
+                    ? 'text-g-gold'
                     : combatant.is_ally
-                    ? 'text-accent-green'
-                    : 'text-accent-red'
+                    ? 'text-g-green'
+                    : 'text-g-red'
                 }
               `}
             >
               {combatant.name}
             </h4>
-            <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 text-xs text-[var(--g-text-muted)]">
               <span>Init: {combatant.initiative}</span>
             </div>
           </div>
@@ -108,9 +112,9 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
           className="
             flex items-center gap-1
             px-2 py-1
-            bg-accent-cyan/20
+            bg-g-cyan/20
             rounded
-            text-sm font-bold text-accent-cyan
+            text-sm font-bold text-g-cyan
           "
           title="Armor Class"
         >
@@ -122,8 +126,8 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
       {/* Health */}
       <div className="mb-3">
         <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-[var(--color-text-muted)]">HP</span>
-          <span className="text-[var(--color-text-secondary)]">
+          <span className="text-[var(--g-text-muted)]">HP</span>
+          <span className="text-[var(--g-text-secondary)]">
             {combatant.hp}/{combatant.max_hp}
           </span>
         </div>
@@ -143,7 +147,7 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
               key={effect}
               className="
                 px-2 py-0.5
-                bg-bg-secondary
+                bg-g-bg-sidebar
                 rounded
                 text-xs
                 flex items-center gap-1
@@ -151,7 +155,7 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
               title={STATUS_EFFECT_LABELS[effect]}
             >
               <span>{STATUS_EFFECT_ICONS[effect]}</span>
-              <span className="text-[var(--color-text-secondary)]">
+              <span className="text-[var(--g-text-secondary)]">
                 {STATUS_EFFECT_LABELS[effect]}
               </span>
             </span>
@@ -161,15 +165,15 @@ export const CombatantCard: React.FC<CombatantCardProps> = ({
 
       {/* Dead overlay */}
       {combatant.is_dead && (
-        <div className="absolute inset-0 flex items-center justify-center bg-bg-primary/50 rounded-lg">
-          <span className="text-2xl">💀</span>
+        <div className="absolute inset-0 flex items-center justify-center bg-g-bg-base/50 rounded-lg">
+          <Skull className="w-6 h-6 text-g-text-muted" />
         </div>
       )}
 
       {/* Target indicator */}
       {isSelected && (
         <div className="absolute -right-2 -top-2">
-          <Crosshair className="w-6 h-6 text-accent-gold" />
+          <Crosshair className="w-6 h-6 text-g-gold" />
         </div>
       )}
     </motion.div>

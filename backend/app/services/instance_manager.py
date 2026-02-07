@@ -7,6 +7,7 @@ NPC Instance Manager.
 - 持久化状态（实例销毁前保存到 Firestore）
 """
 import asyncio
+import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -17,13 +18,15 @@ from app.models.npc_instance import (
     NPCInstanceInfo,
     NPCInstanceState,
 )
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.context_window import ContextWindow
 
 if TYPE_CHECKING:
     from app.services.flash_service import FlashService
     from app.services.graph_store import GraphStore
     from app.services.memory_graph import MemoryGraph
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,14 +35,14 @@ class NPCInstance:
     单个 NPC 的完整认知实例
 
     双层认知系统：
-    - Pro 层（工作记忆）：ContextWindow 管理 200K 上下文
+    - 实时上下文层（工作记忆）：ContextWindow 管理 200K 上下文
     - Flash 层（潜意识）：FlashService + MemoryGraph 管理长期记忆
     """
 
     npc_id: str
     world_id: str
 
-    # Pro 层（工作记忆）
+    # 实时上下文层（工作记忆）
     context_window: ContextWindow
 
     # Flash 层（潜意识）- 延迟初始化
@@ -156,7 +159,7 @@ class InstanceManager:
         max_instances: int = 20,
         evict_after: timedelta = timedelta(minutes=30),
         context_window_size: int = 200_000,
-        graphize_threshold: float = 0.9,
+        graphize_threshold: float = 0.8,
         keep_recent_tokens: int = 50_000,
         graph_store: Optional["GraphStore"] = None,
     ):
@@ -418,12 +421,119 @@ class InstanceManager:
         await self._evict_instance(evict_key)
 
     async def _evict_instance(self, key: str) -> None:
-        """淘汰指定实例"""
+        """淘汰指定实例（含对话图谱化）"""
         instance = self._instances.pop(key, None)
         if instance:
+            # 图谱化剩余对话
+            if instance.context_window.message_count > 0:
+                try:
+                    graphized = await self._graphize_messages(
+                        instance=instance,
+                        current_scene=None,
+                        game_day=1,
+                        force_all=True,
+                    )
+                    if graphized and graphized.get("success"):
+                        logger.info(
+                            "[InstanceManager] 淘汰图谱化 %s: nodes=%d edges=%d",
+                            key,
+                            graphized.get("nodes_added", 0),
+                            graphized.get("edges_added", 0),
+                        )
+                except Exception as e:
+                    logger.error("[InstanceManager] 淘汰图谱化失败 %s: %s", key, e, exc_info=True)
             # 持久化状态
             await instance.persist(self.graph_store)
             self._total_evicted += 1
+
+    async def maybe_graphize_instance(
+        self,
+        world_id: str,
+        npc_id: str,
+        current_scene: Optional[str] = None,
+        game_day: int = 1,
+    ) -> Optional[Dict[str, Any]]:
+        """达到阈值时实时图谱化实例上下文。"""
+        key = self._make_key(world_id, npc_id)
+        lock = self._get_lock(key)
+        async with lock:
+            instance = self._instances.get(key)
+            if not instance:
+                return None
+            return await self._graphize_messages(
+                instance=instance,
+                current_scene=current_scene,
+                game_day=game_day,
+                force_all=False,
+            )
+
+    async def _graphize_messages(
+        self,
+        instance: NPCInstance,
+        current_scene: Optional[str],
+        game_day: int,
+        force_all: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """执行实例图谱化并回收已图谱化消息。"""
+        from app.models.context_window import GraphizeRequest
+        from app.services.memory_graphizer import MemoryGraphizer
+
+        if force_all:
+            messages = [
+                msg
+                for msg in instance.context_window.get_all_messages()
+                if not msg.is_graphized
+            ]
+            request = GraphizeRequest(
+                npc_id=instance.npc_id,
+                world_id=instance.world_id,
+                messages=messages,
+                current_scene=current_scene,
+                game_day=game_day,
+            )
+        else:
+            trigger = instance.context_window.check_graphize_trigger()
+            if not trigger.should_graphize:
+                return None
+            request = instance.context_window.get_graphize_request(
+                current_scene=current_scene,
+                game_day=game_day,
+            )
+
+        if not request.messages:
+            return None
+
+        graphizer = MemoryGraphizer(graph_store=self.graph_store)
+        result = await graphizer.graphize(request)
+        if not result.success:
+            logger.error(
+                "[InstanceManager] 实时图谱化失败 %s:%s: %s",
+                instance.world_id,
+                instance.npc_id,
+                result.error,
+            )
+            return {
+                "success": False,
+                "error": result.error,
+                "nodes_added": 0,
+                "edges_added": 0,
+                "messages_removed": 0,
+                "tokens_freed": 0,
+            }
+
+        message_ids = [msg.id for msg in request.messages]
+        instance.context_window.mark_messages_graphized(message_ids)
+        remove_result = instance.context_window.remove_graphized_messages()
+        instance.state.graphize_count += 1
+        instance.state.is_dirty = True
+        return {
+            "success": True,
+            "nodes_added": result.nodes_added,
+            "edges_added": result.edges_added,
+            "messages_removed": remove_result.removed_count,
+            "tokens_freed": remove_result.tokens_freed,
+            "usage_ratio": remove_result.usage_ratio,
+        }
 
     # ==================== 实例管理 ====================
 

@@ -1,4 +1,3 @@
-import inspect
 import uuid
 
 import pytest
@@ -163,18 +162,14 @@ async def test_world_runtime_get_current_location_self_heals_invalid_location(mo
     assert any("metadata.admin_state" in updates for _, _, updates in store.updated)
 
 
-class _DummyState:
-    player_location = "frontier_town"
-
-
 class _DummyRuntime:
     def __init__(self):
         self.entered_sub_location_id = None
-        self.advance_time_calls = 0
-        self.navigate_calls = 0
 
     async def get_state(self, world_id: str, session_id: str):
-        return _DummyState()
+        class _State:
+            player_location = "frontier_town"
+        return _State()
 
     async def get_current_location(self, world_id: str, session_id: str):
         return {
@@ -193,7 +188,6 @@ class _DummyRuntime:
         return None
 
     async def advance_time(self, world_id: str, session_id: str, minutes: int):
-        self.advance_time_calls += 1
         return {
             "time": {"day": 1, "hour": 8, "minute": minutes},
             "events": [],
@@ -207,7 +201,6 @@ class _DummyRuntime:
         direction: str = None,
         generate_narration: bool = True,
     ):
-        self.navigate_calls += 1
         return {
             "success": True,
             "new_location": {"location_id": destination or "frontier_town"},
@@ -233,18 +226,10 @@ class _DummyRuntime:
         )
 
 
-async def _fallback_only_call(tool_name, arguments, fallback):
-    result = fallback()
-    if inspect.isawaitable(result):
-        return await result
-    return result
-
-
 @pytest.mark.asyncio
 async def test_enter_sublocation_accepts_sub_location_name():
     runtime = _DummyRuntime()
     service = FlashCPUService(world_runtime=runtime)
-    service._call_tool_with_fallback = _fallback_only_call
 
     result = await service.execute_request(
         world_id="test_world",
@@ -263,7 +248,6 @@ async def test_enter_sublocation_accepts_sub_location_name():
 async def test_enter_sublocation_keeps_sub_location_id_priority():
     runtime = _DummyRuntime()
     service = FlashCPUService(world_runtime=runtime)
-    service._call_tool_with_fallback = _fallback_only_call
 
     result = await service.execute_request(
         world_id="test_world",
@@ -282,7 +266,6 @@ async def test_enter_sublocation_keeps_sub_location_id_priority():
 async def test_enter_sublocation_accepts_destination_alias():
     runtime = _DummyRuntime()
     service = FlashCPUService(world_runtime=runtime)
-    service._call_tool_with_fallback = _fallback_only_call
 
     result = await service.execute_request(
         world_id="test_world",
@@ -301,7 +284,6 @@ async def test_enter_sublocation_accepts_destination_alias():
 async def test_enter_sublocation_accepts_location_alias():
     runtime = _DummyRuntime()
     service = FlashCPUService(world_runtime=runtime)
-    service._call_tool_with_fallback = _fallback_only_call
 
     result = await service.execute_request(
         world_id="test_world",
@@ -317,61 +299,10 @@ async def test_enter_sublocation_accepts_location_alias():
 
 
 @pytest.mark.asyncio
-async def test_enter_sublocation_fallbacks_when_mcp_returns_failure():
+async def test_navigate_calls_runtime_directly():
+    """导航操作应直接调用 world_runtime.navigate。"""
     runtime = _DummyRuntime()
     service = FlashCPUService(world_runtime=runtime)
-
-    async def _mcp_semantic_failure(tool_name, arguments, fallback):
-        return {"success": False, "error": "子地点不存在"}
-
-    service._call_tool_with_fallback = _mcp_semantic_failure
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ENTER_SUBLOCATION,
-            parameters={"sub_location_id": "tavern"},
-        ),
-    )
-
-    assert result.success is True
-    assert runtime.entered_sub_location_id == "tavern"
-
-
-@pytest.mark.asyncio
-async def test_update_time_fallbacks_when_mcp_returns_failure():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    async def _mcp_semantic_failure(tool_name, arguments, fallback):
-        return {"error": "mcp error"}
-
-    service._call_tool_with_fallback = _mcp_semantic_failure
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.UPDATE_TIME,
-            parameters={"minutes": 15},
-        ),
-    )
-
-    assert result.success is True
-    assert runtime.advance_time_calls == 1
-    assert "time" in result.result
-
-
-@pytest.mark.asyncio
-async def test_navigate_fallbacks_when_mcp_returns_failure():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    async def _mcp_semantic_failure(tool_name, arguments, fallback):
-        return {"success": False, "error": "位置不存在"}
-
-    service._call_tool_with_fallback = _mcp_semantic_failure
 
     result = await service.execute_request(
         world_id="test_world",
@@ -383,4 +314,22 @@ async def test_navigate_fallbacks_when_mcp_returns_failure():
     )
 
     assert result.success is True
-    assert runtime.navigate_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_update_time_calls_runtime_directly():
+    """时间更新操作应直接调用 world_runtime.advance_time。"""
+    runtime = _DummyRuntime()
+    service = FlashCPUService(world_runtime=runtime)
+
+    result = await service.execute_request(
+        world_id="test_world",
+        session_id="test_session",
+        request=FlashRequest(
+            operation=FlashOperation.UPDATE_TIME,
+            parameters={"minutes": 15},
+        ),
+    )
+
+    assert result.success is True
+    assert "time" in result.result

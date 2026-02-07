@@ -1,20 +1,15 @@
 import pytest
+from unittest.mock import AsyncMock
 
 from app.models.admin_protocol import FlashOperation, FlashRequest
 from app.services.admin.flash_cpu_service import FlashCPUService
 
 
 @pytest.mark.asyncio
-async def test_npc_dialogue_defaults_to_secondary_tier():
+async def test_npc_dialogue_calls_flash_direct_generation():
     service = FlashCPUService()
-    captured = {}
-
-    async def _fake_call_tool_with_fallback(tool_name, arguments, fallback):
-        captured["tool_name"] = tool_name
-        captured["arguments"] = arguments
-        return {"response": "ok"}
-
-    service._call_tool_with_fallback = _fake_call_tool_with_fallback  # type: ignore[assignment]
+    service.llm_service = AsyncMock()
+    service.llm_service.generate_simple = AsyncMock(return_value="ok")
 
     result = await service.execute_request(
         world_id="test_world",
@@ -26,20 +21,14 @@ async def test_npc_dialogue_defaults_to_secondary_tier():
     )
 
     assert result.success is True
-    assert captured["tool_name"] == "npc_respond"
-    assert captured["arguments"]["tier"] == "secondary"
+    service.llm_service.generate_simple.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_npc_dialogue_keeps_explicit_tier():
+async def test_npc_dialogue_direct_prompt_contains_message():
     service = FlashCPUService()
-    captured = {}
-
-    async def _fake_call_tool_with_fallback(tool_name, arguments, fallback):
-        captured["arguments"] = arguments
-        return {"response": "ok"}
-
-    service._call_tool_with_fallback = _fake_call_tool_with_fallback  # type: ignore[assignment]
+    service.llm_service = AsyncMock()
+    service.llm_service.generate_simple = AsyncMock(return_value="ok")
 
     result = await service.execute_request(
         world_id="test_world",
@@ -51,4 +40,5 @@ async def test_npc_dialogue_keeps_explicit_tier():
     )
 
     assert result.success is True
-    assert captured["arguments"]["tier"] == "main"
+    called_prompt = service.llm_service.generate_simple.await_args.args[0]
+    assert "hello" in called_prompt

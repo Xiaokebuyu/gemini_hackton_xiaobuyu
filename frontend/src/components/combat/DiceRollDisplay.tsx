@@ -3,6 +3,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Dices } from 'lucide-react';
 import type { DiceRoll } from '../../types';
 
 interface DiceRollDisplayProps {
@@ -10,16 +11,6 @@ interface DiceRollDisplayProps {
   onComplete?: () => void;
   className?: string;
 }
-
-const diceEmoji: Record<string, string> = {
-  d4: '🔺',
-  d6: '🎲',
-  d8: '◆',
-  d10: '🔷',
-  d12: '⬡',
-  d20: '⬣',
-  d100: '💯',
-};
 
 export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
   roll,
@@ -70,7 +61,7 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
         className={`
           fixed inset-0 z-50
           flex items-center justify-center
-          bg-bg-primary/80 backdrop-blur-sm
+          bg-g-bg-base/80 backdrop-blur-sm
           ${className}
         `}
       >
@@ -87,30 +78,30 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
             rounded-2xl
             ${
               isCrit
-                ? 'bg-accent-gold/20 border-4 border-accent-gold shadow-glow-gold'
+                ? 'bg-g-gold/20 border-4 border-g-gold shadow-g-gold'
                 : isFumble
-                ? 'bg-accent-red/20 border-4 border-accent-red shadow-glow-red'
-                : 'bg-bg-panel border-2 border-[var(--color-border-primary)]'
+                ? 'bg-g-red/20 border-4 border-g-red shadow-glow-red'
+                : 'bg-g-bg-surface border-2 border-[var(--g-border-strong)]'
             }
           `}
         >
           {/* Dice type */}
           <div className="text-2xl mb-1">
-            {diceEmoji[roll.roll_type] || '🎲'}
+            <Dices className="w-8 h-8 text-[var(--g-text-secondary)]" />
           </div>
 
           {/* Roll value */}
           <div
             className={`
               text-4xl font-bold
-              ${isCrit ? 'text-accent-gold' : isFumble ? 'text-accent-red' : 'text-white'}
+              ${isCrit ? 'text-g-gold' : isFumble ? 'text-g-red' : 'text-g-text-primary'}
             `}
           >
             {displayValue ?? '?'}
           </div>
 
           {/* Roll type */}
-          <div className="text-sm text-[var(--color-text-muted)] mt-1">
+          <div className="text-sm text-[var(--g-text-muted)] mt-1">
             {roll.roll_type.toUpperCase()}
           </div>
         </motion.div>
@@ -124,8 +115,8 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
               absolute bottom-1/3
               px-6 py-2
               rounded-full
-              font-fantasy text-xl
-              ${isCrit ? 'bg-accent-gold text-bg-primary' : 'bg-accent-red text-white'}
+              font-heading text-xl
+              ${isCrit ? 'bg-g-gold text-g-bg-base' : 'bg-g-red text-g-text-primary'}
             `}
           >
             {isCrit ? 'CRITICAL HIT!' : 'FUMBLE!'}
@@ -137,7 +128,7 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="absolute bottom-1/4 text-[var(--color-text-secondary)]"
+            className="absolute bottom-1/4 text-[var(--g-text-secondary)]"
           >
             {roll.result} {roll.modifier >= 0 ? '+' : ''}{roll.modifier} = {roll.total}
           </motion.div>

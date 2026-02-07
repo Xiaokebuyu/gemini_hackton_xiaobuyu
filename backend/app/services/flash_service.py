@@ -21,7 +21,7 @@ from app.models.flash import (
 )
 from app.models.graph import MemoryEdge, MemoryNode
 from app.models.graph_scope import GraphScope
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.graph_schema import GraphSchemaOptions, validate_edge, validate_node
 from app.services.graph_store import GraphStore
 from app.services.memory_graph import MemoryGraph

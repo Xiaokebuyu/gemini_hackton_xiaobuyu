@@ -57,7 +57,7 @@ def count_tokens(text: str) -> int:
 
 class ContextWindow:
     """
-    Pro 的 200K 上下文窗口管理器
+    200K 上下文窗口管理器
 
     功能：
     1. 维护消息列表，追踪 token 使用

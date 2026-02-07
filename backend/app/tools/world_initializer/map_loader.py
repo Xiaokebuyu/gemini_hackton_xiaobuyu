@@ -145,7 +145,9 @@ class MapLoader:
             ],
         }
 
-        # 保存到 maps/{map_id}/info
+        # 保存父文档（确保 list_maps stream 能发现它）
+        map_ref.set({"name": map_info.name, "id": map_info.id}, merge=True)
+        # 保存详细信息到 maps/{map_id}/info/data
         map_ref.collection("info").document("data").set(info_data)
 
     async def _load_passerby_templates(
@@ -201,11 +203,18 @@ class MapLoader:
             print(f"    - {len(world_map_data.get('regions', []))} regions")
 
         if not dry_run:
+            # 写入 meta/info 子文档
             meta_ref = self._get_world_meta_ref(world_id)
             meta_ref.set({
                 "name": world_map_data.get("name", world_id),
                 "description": world_map_data.get("description", ""),
                 "world_map": world_map_data,
+            }, merge=True)
+
+            # 同时写入根文档，确保 list_worlds() 可以发现
+            self.db.collection("worlds").document(world_id).set({
+                "name": world_map_data.get("name", world_id),
+                "description": world_map_data.get("description", ""),
             }, merge=True)
 
     async def get_map_info(

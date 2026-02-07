@@ -32,7 +32,7 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
 
   if (locations.length === 0) {
     return (
-      <div className={`text-sm text-[var(--color-text-muted)] ${className}`}>
+      <div className={`text-sm text-[var(--g-text-muted)] ${className}`}>
         No accessible areas nearby.
       </div>
     );
@@ -40,7 +40,7 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
 
   return (
     <div className={`space-y-2 ${className}`}>
-      <h4 className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide mb-2">
+      <h4 className="text-xs text-[var(--g-text-muted)] uppercase tracking-wide mb-2">
         Nearby Areas
       </h4>
       {locations.map((subLoc, index) => (
@@ -60,10 +60,10 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
             transition-all duration-200
             ${
               currentSubLocation === subLoc.id
-                ? 'bg-accent-gold/20 border border-accent-gold'
+                ? 'bg-g-gold/20 border border-g-gold'
                 : subLoc.is_accessible
-                ? 'bg-bg-card hover:bg-bg-card/80 border border-transparent hover:border-accent-cyan/50'
-                : 'bg-bg-secondary opacity-50 cursor-not-allowed border border-transparent'
+                ? 'bg-g-bg-surface-alt hover:bg-g-bg-surface-alt/80 border border-transparent hover:border-g-cyan/50'
+                : 'bg-g-bg-sidebar opacity-50 cursor-not-allowed border border-transparent'
             }
           `}
         >
@@ -72,13 +72,13 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
             className={`
               w-8 h-8 rounded-lg
               flex items-center justify-center
-              ${subLoc.is_accessible ? 'bg-accent-cyan/20' : 'bg-bg-secondary'}
+              ${subLoc.is_accessible ? 'bg-g-cyan/20' : 'bg-g-bg-sidebar'}
             `}
           >
             {subLoc.is_accessible ? (
-              <DoorOpen className="w-4 h-4 text-accent-cyan" />
+              <DoorOpen className="w-4 h-4 text-g-cyan" />
             ) : (
-              <Lock className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <Lock className="w-4 h-4 text-[var(--g-text-muted)]" />
             )}
           </div>
 
@@ -89,10 +89,10 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
                 text-sm font-medium truncate
                 ${
                   currentSubLocation === subLoc.id
-                    ? 'text-accent-gold'
+                    ? 'text-g-gold'
                     : subLoc.is_accessible
-                    ? 'text-[var(--color-text-primary)]'
-                    : 'text-[var(--color-text-muted)]'
+                    ? 'text-[var(--g-text-primary)]'
+                    : 'text-[var(--g-text-muted)]'
                 }
               `}
             >
@@ -102,7 +102,7 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
               )}
             </div>
             {subLoc.description && (
-              <div className="text-xs text-[var(--color-text-muted)] truncate">
+              <div className="text-xs text-[var(--g-text-muted)] truncate">
                 {subLoc.description}
               </div>
             )}

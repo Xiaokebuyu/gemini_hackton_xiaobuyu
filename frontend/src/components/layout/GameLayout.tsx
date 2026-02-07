@@ -1,6 +1,6 @@
 /**
  * Main Game Layout - Three Column Design
- * Uses Sketch (hand-drawn) theme exclusively
+ * Uses golden theme
  */
 import React from 'react';
 import { RotateCcw } from 'lucide-react';
@@ -28,27 +28,19 @@ export const GameLayout: React.FC<GameLayoutProps> = () => {
   };
 
   return (
-    <div className="h-screen w-screen overflow-hidden sketch-theme bg-sketch-bg-primary">
-      {/* Paper texture for sketch theme */}
-      <div className="absolute inset-0 sketch-paper-texture pointer-events-none" />
-      {/* Vignette effect */}
-      <div
-        className="absolute inset-0 pointer-events-none z-[1]"
-        style={{ boxShadow: 'inset 0 0 120px rgba(30,20,10,0.25)' }}
-      />
-
-      {/* Top bar with settings */}
-      <div className="absolute top-2 right-2 z-50 flex items-center gap-2">
+    <div className="h-screen w-screen overflow-hidden bg-g-bg-base">
+      {/* Top nav bar */}
+      <div className="h-12 bg-g-bg-surface border-b border-g-border flex items-center justify-end px-4 gap-2 z-50">
         <button
           onClick={handleReselectSession}
           className="
             px-3 py-1.5
             rounded-lg
-            border border-sketch-ink-secondary
-            bg-sketch-bg-panel
-            text-sketch-ink-primary
+            border border-g-border
+            bg-g-bg-surface
+            text-g-text-primary
             text-xs font-body
-            hover:border-sketch-accent-gold
+            hover:border-g-gold
             transition-colors
             flex items-center gap-1.5
           "
@@ -58,11 +50,11 @@ export const GameLayout: React.FC<GameLayoutProps> = () => {
           <span>重新选择对话</span>
         </button>
         {/* Language switch */}
-        <LanguageSwitch variant="sketch" />
+        <LanguageSwitch />
       </div>
 
       {/* Main content */}
-      <div className="relative z-10 h-full flex">
+      <div className="h-[calc(100vh-3rem)] flex">
         {/* Left Panel - Navigation */}
         <LeftPanel className="flex-shrink-0 h-full" />
 

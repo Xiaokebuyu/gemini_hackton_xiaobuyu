@@ -255,6 +255,75 @@ async def cmd_graphize_characters(args: argparse.Namespace) -> int:
         return 1
 
 
+async def cmd_extract(args: argparse.Namespace) -> int:
+    """统一世界书提取管线：从酒馆卡片 JSON 一步生成全部结构化文件"""
+    from app.tools.worldbook_graphizer.unified_pipeline import UnifiedWorldExtractor
+
+    input_path = Path(args.input)
+    output_dir = Path(args.output)
+    mainlines_path = Path(args.mainlines) if args.mainlines else None
+
+    if not input_path.exists():
+        print(f"Error: Input file not found: {input_path}")
+        return 1
+
+    if mainlines_path and not mainlines_path.exists():
+        print(f"Error: Mainlines file not found: {mainlines_path}")
+        return 1
+
+    thinking_level = args.thinking_level if args.thinking_level != "none" else None
+    use_direct = args.direct
+
+    print(f"Unified extraction pipeline")
+    print(f"  Input:    {input_path}")
+    print(f"  Output:   {output_dir}")
+    print(f"  Model:    {args.model}")
+    print(f"  Thinking: {thinking_level}")
+    print(f"  Mode:     {'direct' if use_direct else 'batch'}")
+    if mainlines_path:
+        print(f"  Mainlines: {mainlines_path}")
+    print()
+
+    try:
+        extractor = UnifiedWorldExtractor(
+            model=args.model,
+            verbose=not args.quiet,
+            thinking_level=thinking_level,
+        )
+
+        stats = await extractor.extract(
+            lorebook_path=input_path,
+            output_dir=output_dir,
+            mainlines_path=mainlines_path,
+            validate=not args.no_validate,
+            use_direct=use_direct,
+        )
+
+        # 打印输出文件状态
+        print("\nOutput files:")
+        expected_files = [
+            "maps.json", "characters.json", "world_map.json",
+            "character_profiles.json", "world_graph.json",
+            "prefilled_graph.json", "chapters_v2.json",
+        ]
+        for fname in expected_files:
+            fpath = output_dir / fname
+            if fpath.exists():
+                size = fpath.stat().st_size
+                print(f"  ✓ {fname:30s} ({size:,} bytes)")
+            else:
+                print(f"  ✗ {fname:30s} (missing)")
+
+        return 0
+
+    except Exception as e:
+        print(f"\nError during extraction: {str(e)}")
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        return 1
+
+
 async def cmd_graphize_tavern(args: argparse.Namespace) -> int:
     """从酒馆卡片提取知识图谱 (使用 Batch API)"""
     from app.tools.worldbook_graphizer.graph_extractor import GraphExtractor
@@ -446,6 +515,48 @@ def main() -> int:
         help="批量处理中间文件目录 (默认: 输出目录同级的 batch_temp)"
     )
 
+    # ============ extract 命令（统一管线） ============
+    extract_parser = subparsers.add_parser(
+        "extract",
+        help="统一提取管线：从酒馆卡片 JSON 生成全部结构化文件"
+    )
+    extract_parser.add_argument(
+        "--input", "-i",
+        required=True,
+        help="SillyTavern V2 Lorebook JSON 文件路径"
+    )
+    extract_parser.add_argument(
+        "--output", "-o",
+        required=True,
+        help="输出目录"
+    )
+    extract_parser.add_argument(
+        "--model", "-m",
+        default="gemini-3-flash-preview",
+        help="Gemini 模型 (默认: gemini-3-flash-preview)"
+    )
+    extract_parser.add_argument(
+        "--mainlines",
+        default=None,
+        help="mainlines.json 路径（可选，无则自动生成默认章节）"
+    )
+    extract_parser.add_argument(
+        "--thinking-level",
+        default="high",
+        choices=["none", "lowest", "low", "medium", "high"],
+        help="思考级别 (默认: high, none=禁用, Batch API 不支持 thinking 时用 none)"
+    )
+    extract_parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="使用直接 LLM 调用而非 Batch API（更快，但无成本优惠）"
+    )
+    extract_parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="跳过验证"
+    )
+
     # ============ load 命令 ============
     load_parser = subparsers.add_parser(
         "load",
@@ -497,6 +608,8 @@ def main() -> int:
         return asyncio.run(cmd_graphize_characters(args))
     elif args.command == "graphize-tavern":
         return asyncio.run(cmd_graphize_tavern(args))
+    elif args.command == "extract":
+        return asyncio.run(cmd_extract(args))
     elif args.command == "load":
         return asyncio.run(cmd_load(args))
     elif args.command == "verify":

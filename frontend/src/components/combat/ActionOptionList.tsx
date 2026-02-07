@@ -1,5 +1,5 @@
 /**
- * Combat action options list - using Sketch style
+ * Combat action options list - using Golden theme style
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -38,18 +38,18 @@ const actionIcons: Record<CombatActionType, React.ReactNode> = {
 };
 
 const actionColors: Record<CombatActionType, string> = {
-  ATTACK: 'border-sketch-accent-red hover:bg-sketch-accent-red/10',
-  OFFHAND: 'border-sketch-danger-high hover:bg-sketch-danger-high/10',
-  THROW: 'border-sketch-danger-medium hover:bg-sketch-danger-medium/10',
-  SHOVE: 'border-sketch-accent-purple hover:bg-sketch-accent-purple/10',
-  SPELL: 'border-sketch-accent-purple hover:bg-sketch-accent-purple/10',
-  DEFEND: 'border-sketch-accent-cyan hover:bg-sketch-accent-cyan/10',
-  MOVE: 'border-sketch-accent-gold hover:bg-sketch-accent-gold/10',
-  DASH: 'border-sketch-accent-gold hover:bg-sketch-accent-gold/10',
-  DISENGAGE: 'border-sketch-ink-secondary hover:bg-sketch-bg-secondary',
-  USE_ITEM: 'border-sketch-accent-green hover:bg-sketch-accent-green/10',
-  FLEE: 'border-sketch-danger-extreme hover:bg-sketch-danger-extreme/10',
-  END_TURN: 'border-sketch-ink-muted hover:bg-sketch-bg-secondary',
+  ATTACK: 'border-g-red hover:bg-g-red/10',
+  OFFHAND: 'border-g-danger-high hover:bg-g-danger-high/10',
+  THROW: 'border-g-danger-medium hover:bg-g-danger-medium/10',
+  SHOVE: 'border-g-purple hover:bg-g-purple/10',
+  SPELL: 'border-g-purple hover:bg-g-purple/10',
+  DEFEND: 'border-g-cyan hover:bg-g-cyan/10',
+  MOVE: 'border-g-gold hover:bg-g-gold/10',
+  DASH: 'border-g-gold hover:bg-g-gold/10',
+  DISENGAGE: 'border-g-text-secondary hover:bg-g-bg-sidebar',
+  USE_ITEM: 'border-g-green hover:bg-g-green/10',
+  FLEE: 'border-g-danger-extreme hover:bg-g-danger-extreme/10',
+  END_TURN: 'border-g-text-muted hover:bg-g-bg-sidebar',
 };
 
 export const ActionOptionList: React.FC<ActionOptionListProps> = ({
@@ -82,7 +82,7 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
 
     return (
       <div className="mb-4">
-        <h4 className="text-xs text-sketch-ink-muted uppercase tracking-wide mb-2 font-body">
+        <h4 className="text-xs text-g-text-muted uppercase tracking-wide mb-2 font-body">
           {t(titleKey)}
         </h4>
         <div className="grid grid-cols-2 gap-2">
@@ -97,13 +97,13 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
               className={`
                 flex items-center gap-2
                 px-3 py-2
-                bg-sketch-bg-panel
+                bg-g-bg-surface
                 border
                 text-left font-body
                 transition-all duration-200
                 ${
                   selectedAction === action.action_type
-                    ? 'border-sketch-accent-gold bg-sketch-accent-gold/10'
+                    ? 'border-g-gold bg-g-gold/10'
                     : actionColors[action.action_type]
                 }
                 ${
@@ -117,7 +117,7 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
               <span
                 className={
                   selectedAction === action.action_type
-                    ? 'text-sketch-accent-gold'
+                    ? 'text-g-gold'
                     : ''
                 }
               >
@@ -129,15 +129,15 @@ export const ActionOptionList: React.FC<ActionOptionListProps> = ({
                     text-sm font-medium truncate
                     ${
                       selectedAction === action.action_type
-                        ? 'text-sketch-accent-gold'
-                        : 'text-sketch-ink-primary'
+                        ? 'text-g-gold'
+                        : 'text-g-text-primary'
                     }
                   `}
                 >
                   {action.display_name}
                 </div>
                 {action.requires && (
-                  <div className="text-xs text-sketch-ink-muted truncate">
+                  <div className="text-xs text-g-text-muted truncate">
                     {t('combat.requires')}: {action.requires}
                   </div>
                 )}

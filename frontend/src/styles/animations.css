@@ -1,6 +1,6 @@
 /* Animation Keyframes */
 
-/* 打字机效果 */
+/* Typewriter cursor */
 @keyframes typewriter-cursor {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
@@ -9,24 +9,20 @@
 .typewriter-cursor::after {
   content: '|';
   animation: typewriter-cursor 1s infinite;
-  color: var(--color-accent-gold);
+  color: var(--g-accent-gold);
 }
 
-/* 淡入 */
+/* Fade in */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .animate-fade-in {
   animation: fadeIn var(--transition-normal) forwards;
 }
 
-/* 从下滑入 */
+/* Slide up */
 @keyframes slideUp {
   from {
     opacity: 0;
@@ -42,7 +38,7 @@
   animation: slideUp var(--transition-normal) forwards;
 }
 
-/* 从右滑入 */
+/* Slide in right */
 @keyframes slideInRight {
   from {
     opacity: 0;
@@ -58,7 +54,7 @@
   animation: slideInRight var(--transition-normal) forwards;
 }
 
-/* 从左滑入 */
+/* Slide in left */
 @keyframes slideInLeft {
   from {
     opacity: 0;
@@ -74,13 +70,13 @@
   animation: slideInLeft var(--transition-normal) forwards;
 }
 
-/* 脉冲发光 */
+/* Pulse glow - golden */
 @keyframes pulseGlow {
   0%, 100% {
-    box-shadow: 0 0 5px rgba(255, 215, 0, 0.3);
+    box-shadow: 0 0 5px rgba(196, 154, 42, 0.2);
   }
   50% {
-    box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+    box-shadow: 0 0 20px rgba(196, 154, 42, 0.4);
   }
 }
 
@@ -88,44 +84,30 @@
   animation: pulseGlow 2s ease-in-out infinite;
 }
 
-/* 骰子滚动 */
+/* Dice roll */
 @keyframes diceRoll {
-  0% {
-    transform: rotate(0deg) scale(1);
-  }
-  25% {
-    transform: rotate(90deg) scale(1.2);
-  }
-  50% {
-    transform: rotate(180deg) scale(1);
-  }
-  75% {
-    transform: rotate(270deg) scale(1.2);
-  }
-  100% {
-    transform: rotate(360deg) scale(1);
-  }
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(90deg) scale(1.2); }
+  50% { transform: rotate(180deg) scale(1); }
+  75% { transform: rotate(270deg) scale(1.2); }
+  100% { transform: rotate(360deg) scale(1); }
 }
 
 .animate-dice-roll {
   animation: diceRoll 0.5s ease-out;
 }
 
-/* 战斗闪烁 */
+/* Combat flash */
 @keyframes combatFlash {
-  0%, 100% {
-    background-color: transparent;
-  }
-  50% {
-    background-color: rgba(255, 71, 87, 0.2);
-  }
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgba(217, 79, 79, 0.15); }
 }
 
 .animate-combat-flash {
   animation: combatFlash 0.3s ease-out;
 }
 
-/* 伤害数字弹出 */
+/* Damage popup */
 @keyframes damagePopup {
   0% {
     opacity: 1;
@@ -145,7 +127,7 @@
   animation: damagePopup 1s ease-out forwards;
 }
 
-/* 治疗效果 */
+/* Heal effect */
 @keyframes healEffect {
   0% {
     opacity: 0;
@@ -165,35 +147,27 @@
   animation: healEffect 0.8s ease-out forwards;
 }
 
-/* 呼吸效果 */
+/* Breathe */
 @keyframes breathe {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.02);
-  }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
 }
 
 .animate-breathe {
   animation: breathe 3s ease-in-out infinite;
 }
 
-/* 加载旋转 */
+/* Spin */
 @keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .animate-spin-slow {
   animation: spin 2s linear infinite;
 }
 
-/* 消息进入动画 - 更流畅的 ease-out */
+/* Message enter */
 .message-enter {
   animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
@@ -213,17 +187,17 @@
   opacity: 0;
 }
 
-/* 面板 hover 过渡动画 */
+/* Panel hover */
 .panel-hover {
   transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .panel-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--sketch-shadow-lg);
+  transform: translateY(-1px);
+  box-shadow: var(--g-shadow-lg);
 }
 
-/* Glass reveal 动画 */
+/* Glass reveal */
 @keyframes glassReveal {
   from {
     opacity: 0;
@@ -231,7 +205,7 @@
   }
   to {
     opacity: 1;
-    backdrop-filter: blur(var(--sketch-glass-blur));
+    backdrop-filter: blur(var(--g-glass-blur));
   }
 }
 
@@ -239,31 +213,31 @@
   animation: glassReveal 0.3s ease-out forwards;
 }
 
-/* 按钮悬停效果 */
+/* Button hover effect */
 .btn-fantasy {
   transition: all var(--transition-fast);
 }
 
 .btn-fantasy:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-glow-gold);
+  transform: translateY(-1px);
+  box-shadow: var(--g-shadow-gold);
 }
 
 .btn-fantasy:active {
   transform: translateY(0);
 }
 
-/* 卡片悬停效果 */
+/* Card hover */
 .card-hover {
   transition: all var(--transition-normal);
 }
 
 .card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-panel);
+  transform: translateY(-1px);
+  box-shadow: var(--g-shadow-md);
 }
 
-/* 震动效果 (用于错误或警告) */
+/* Shake */
 @keyframes shake {
   0%, 100% { transform: translateX(0); }
   10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
@@ -274,7 +248,7 @@
   animation: shake 0.5s ease-in-out;
 }
 
-/* 闪烁效果 */
+/* Blink */
 @keyframes blink {
   0%, 50%, 100% { opacity: 1; }
   25%, 75% { opacity: 0.5; }
@@ -284,16 +258,16 @@
   animation: blink 1s ease-in-out infinite;
 }
 
-/* 脉冲金色环 - loading */
+/* Pulse ring - golden */
 @keyframes pulseRing {
   0% {
-    box-shadow: 0 0 0 0 rgba(201, 162, 39, 0.4);
+    box-shadow: 0 0 0 0 rgba(196, 154, 42, 0.3);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(201, 162, 39, 0);
+    box-shadow: 0 0 0 10px rgba(196, 154, 42, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(201, 162, 39, 0);
+    box-shadow: 0 0 0 0 rgba(196, 154, 42, 0);
   }
 }
 

@@ -6,16 +6,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { GameLayout } from './components/layout';
 import WelcomePage from './components/landing/WelcomePage';
-import { useGameStore, useUIStore, toast } from './stores';
+import { useGameStore, useChatStore, useUIStore, toast } from './stores';
+import { getSessionHistory } from './api';
 import { useKeyboardShortcuts } from './hooks';
 
 // Import i18n configuration (must be before any components that use translations)
 import './i18n';
 
-// Import styles (order matters: theme.css sets base variables, sketch-theme.css overrides them)
+// Import styles (order matters: golden-theme.css defines base variables, theme.css aliases them)
+import './styles/golden-theme.css';
 import './styles/theme.css';
 import './styles/globals.css';
-import './styles/sketch-theme.css';
 import './styles/animations.css';
 
 // Create query client
@@ -39,15 +40,15 @@ const ToastContainer: React.FC = () => {
         <div
           key={t.id}
           className={`
-            px-4 py-3 rounded-lg shadow-parchment-md
+            px-4 py-3 rounded-lg shadow-g-md
             flex items-center gap-3
             animate-slide-up
             font-body
             border
-            ${t.type === 'success' ? 'bg-sketch-accent-green text-white border-sketch-accent-green' : ''}
-            ${t.type === 'error' ? 'bg-sketch-accent-red text-white border-sketch-accent-red' : ''}
-            ${t.type === 'warning' ? 'bg-sketch-accent-gold text-sketch-ink-primary border-sketch-accent-gold' : ''}
-            ${t.type === 'info' ? 'bg-sketch-accent-cyan text-white border-sketch-accent-cyan' : ''}
+            ${t.type === 'success' ? 'toast-success' : ''}
+            ${t.type === 'error' ? 'toast-error' : ''}
+            ${t.type === 'warning' ? 'toast-warning' : ''}
+            ${t.type === 'info' ? 'toast-info' : ''}
           `}
         >
           <span>{t.message}</span>
@@ -66,6 +67,7 @@ const ToastContainer: React.FC = () => {
 // App content with keyboard shortcuts
 const AppContent: React.FC = () => {
   const { worldId, sessionId, setSession, clearSession } = useGameStore();
+  const { loadHistory, clearMessages } = useChatStore();
   const { toggleLeftPanel, toggleRightPanel } = useUIStore();
 
   // Setup keyboard shortcuts
@@ -82,12 +84,25 @@ const AppContent: React.FC = () => {
     },
   ]);
 
-  const handleSessionCreated = (newWorldId: string, newSessionId: string) => {
+  const handleSessionCreated = async (newWorldId: string, newSessionId: string) => {
+    clearMessages();
     setSession(newWorldId, newSessionId);
-    toast.info('Session created. Welcome, adventurer!');
+
+    // Try to load chat history for recovered sessions
+    try {
+      const { messages } = await getSessionHistory(newWorldId, newSessionId, 50);
+      if (messages.length > 0) {
+        loadHistory(messages);
+        toast.info(`Session restored with ${messages.length} messages.`);
+      } else {
+        toast.info('Session created. Welcome, adventurer!');
+      }
+    } catch {
+      toast.info('Session created. Welcome, adventurer!');
+    }
   };
 
-  // 自动清理历史 demo 会话，避免直接进入失效会话。
+  // Auto-cleanup stale demo sessions
   React.useEffect(() => {
     if (!sessionId) return;
     if (sessionId === 'demo-session-001' || sessionId.startsWith('demo-')) {

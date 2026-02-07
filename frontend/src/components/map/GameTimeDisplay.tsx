@@ -16,26 +16,26 @@ const periodConfig = {
   dawn: {
     icon: <Sunrise className="w-5 h-5" />,
     labelKey: 'time.period.dawn',
-    color: 'text-time-dawn',
-    bgColor: 'bg-time-dawn/10',
+    color: 'text-g-time-dawn',
+    bgColor: 'bg-g-time-dawn/10',
   },
   day: {
     icon: <Sun className="w-5 h-5" />,
     labelKey: 'time.period.day',
-    color: 'text-time-day',
-    bgColor: 'bg-time-day/10',
+    color: 'text-g-time-day',
+    bgColor: 'bg-g-time-day/10',
   },
   dusk: {
     icon: <Sunset className="w-5 h-5" />,
     labelKey: 'time.period.dusk',
-    color: 'text-time-dusk',
-    bgColor: 'bg-time-dusk/10',
+    color: 'text-g-time-dusk',
+    bgColor: 'bg-g-time-dusk/10',
   },
   night: {
     icon: <Moon className="w-5 h-5" />,
     labelKey: 'time.period.night',
-    color: 'text-time-night',
-    bgColor: 'bg-time-night/10',
+    color: 'text-g-time-night',
+    bgColor: 'bg-g-time-night/10',
   },
 };
 
@@ -62,10 +62,10 @@ export const GameTimeDisplay: React.FC<GameTimeDisplayProps> = ({
       <div className="flex items-center justify-between">
         {/* Day and time */}
         <div className="flex flex-col">
-          <span className="text-xs text-[var(--color-text-muted)]">
+          <span className="text-xs text-[var(--g-text-muted)]">
             {t('time.day', { day: gameTime.day })}
           </span>
-          <span className="text-lg font-mono font-bold text-[var(--color-text-primary)]">
+          <span className="text-lg font-mono font-bold text-[var(--g-text-primary)]">
             {gameTime.formatted || formatTime(gameTime.hour, gameTime.minute)}
           </span>
         </div>
@@ -87,7 +87,7 @@ export const GameTimeDisplay: React.FC<GameTimeDisplayProps> = ({
       </div>
 
       {/* Visual time bar */}
-      <div className="mt-3 h-1 bg-bg-secondary rounded-full overflow-hidden">
+      <div className="mt-3 h-1 bg-g-bg-sidebar rounded-full overflow-hidden">
         <div
           className={`h-full ${config.bgColor.replace('/10', '')}`}
           style={{

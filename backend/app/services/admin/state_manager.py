@@ -4,8 +4,11 @@ State manager for admin layer.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.models.state_delta import GameState, StateDelta
 
@@ -33,6 +36,7 @@ class StateManager:
         key = self._key(world_id, session_id)
         async with self._lock:
             if key in self._states:
+                logger.debug("状态已存在，跳过初始化: %s", key)
                 return self._states[key]
             if initial_state is None:
                 initial_state = GameState(world_id=world_id, session_id=session_id)
@@ -40,6 +44,7 @@ class StateManager:
                 initial_state.world_id = world_id
                 initial_state.session_id = session_id
             self._states[key] = initial_state
+            logger.info("状态初始化完成: %s", key)
             return initial_state
 
     async def set_state(self, world_id: str, session_id: str, state: GameState) -> GameState:
@@ -55,6 +60,7 @@ class StateManager:
         session_id: str,
         delta: StateDelta,
     ) -> GameState:
+        logger.debug("应用状态变更: %s:%s, changes=%s", world_id, session_id, list((delta.changes or {}).keys()))
         async with self._lock:
             state = self._states.get(self._key(world_id, session_id))
             if state is None:

@@ -4,7 +4,7 @@ Tiered AI Service - 简化的 NPC 层级响应服务
 规则：
 - PASSERBY -> FAST (Flash 模型，无工具)
 - SECONDARY -> SUBCONSCIOUS (Flash 模型 + thinking)
-- MAIN -> DEEP (Pro 模型 + thinking)
+- MAIN -> DEEP (Flash 模型 + thinking)
 """
 import time
 from dataclasses import dataclass
@@ -13,7 +13,6 @@ from typing import Any, Dict, Optional
 
 from app.config import settings
 from app.services.llm_service import LLMService
-from app.services.pro_service import ProService
 from app.tools.worldbook_graphizer.models import NPCTier
 
 
@@ -47,10 +46,8 @@ class TieredAIService:
     def __init__(
         self,
         llm_service: Optional[LLMService] = None,
-        pro_service: Optional[ProService] = None,
     ) -> None:
         self._llm_service = llm_service or LLMService()
-        self._pro_service = pro_service or ProService()
 
     def determine_tier(
         self,
@@ -148,45 +145,32 @@ class TieredAIService:
         thinking_level: Optional[str],
         history_limit: int,
     ) -> Dict[str, Any]:
-        if not self._pro_service:
-            return await self._respond_fast(query, {"name": npc_id}, location_id)
-
-        from app.models.pro import SceneContext, ChatMessage, ChatRequest
-
-        scene = SceneContext(
-            description=f"在{location_id}",
-            location=location_id,
-            present_characters=[npc_id, "player"],
-        )
-
-        history = []
+        history_lines = []
         if conversation_history:
             for msg in conversation_history[-history_limit:]:
-                history.append(
-                    ChatMessage(
-                        role=msg.get("role", "user"),
-                        content=msg.get("content", ""),
-                    )
-                )
+                role = str(msg.get("role", "user"))
+                content = str(msg.get("content", ""))
+                if content:
+                    history_lines.append(f"{role}: {content}")
+        history_text = "\n".join(history_lines) if history_lines else "无"
 
-        request = ChatRequest(
-            message=query,
-            scene=scene,
-            conversation_history=history,
+        prompt = (
+            f"你是 {npc_id}。\n"
+            f"世界ID: {world_id}\n"
+            f"当前地点: {location_id}\n\n"
+            f"## 近期对话\n{history_text}\n\n"
+            f"玩家说: {query}\n\n"
+            "请以角色身份用中文回复1-3句，保持上下文连贯。"
         )
-
-        result = await self._pro_service.chat(
-            world_id=world_id,
-            character_id=npc_id,
-            request=request,
+        content = await self._llm_service.generate_simple(
+            prompt,
             model_override=model,
             thinking_level=thinking_level,
-            enable_tools=True,
         )
 
         return {
-            "content": result.response,
-            "recalled_memory": result.recalled_memory,
+            "content": (content or "").strip(),
+            "recalled_memory": None,
         }
 
     def _build_fast_prompt(

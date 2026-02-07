@@ -4,6 +4,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence } from 'framer-motion';
+import { Landmark } from 'lucide-react';
 import { useChatStore, useGameStore } from '../../stores';
 import NarrativeMessage from './NarrativeMessage';
 import ActionButtons from './ActionButtons';
@@ -35,7 +36,7 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       className={`
         h-full
         overflow-y-auto
-        sketch-scrollbar
+        g-scrollbar
         p-4
         ${className}
       `}
@@ -43,18 +44,18 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       {/* Empty state */}
       {messages.length === 0 && !isLoading && (
         <div className="flex flex-col items-center justify-center h-full text-center">
-          <div className="border-2 border-sketch-border-accent rounded-xl p-8 max-w-lg shadow-parchment-md bg-sketch-bg-card">
-            <div className="w-20 h-20 rounded-full bg-[var(--sketch-accent-gold)]/15 flex items-center justify-center mb-6 mx-auto border-2 border-sketch-border-accent">
-              <span className="text-5xl">🏰</span>
+          <div className="border-2 border-g-border rounded-xl p-8 max-w-lg shadow-g-md bg-g-bg-surface-alt">
+            <div className="w-20 h-20 rounded-full bg-g-gold/15 flex items-center justify-center mb-6 mx-auto border-2 border-g-border">
+              <Landmark className="w-10 h-10 text-g-gold" />
             </div>
-            <h2 className="font-fantasy text-2xl text-sketch-accent-gold mb-3">
+            <h2 className="font-heading text-2xl text-g-gold mb-3">
               {t('narrative.welcome')}
             </h2>
-            <p className="text-sketch-ink-secondary max-w-md font-body">
+            <p className="g-text-secondary max-w-md font-body">
               {t('narrative.welcomeHint')}
             </p>
-            <div className="sketch-divider mt-6">
-              <span className="text-sketch-accent-gold text-xs">◆</span>
+            <div className="g-divider mt-6">
+              <span className="text-g-gold text-xs">&#9670;</span>
             </div>
           </div>
         </div>
@@ -76,7 +77,7 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       {isLoading && (
         <div className="flex items-center gap-3 py-4">
           <LoadingSpinner size="sm" />
-          <span className="text-sketch-ink-secondary text-sm italic font-body">
+          <span className="g-text-secondary text-sm italic font-body">
             {t('narrative.gmThinking')}
           </span>
         </div>
@@ -85,8 +86,8 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       {/* Available actions */}
       {!isLoading && availableActions.length > 0 && (
         <div className="mt-6 pt-4">
-          <div className="sketch-divider -mt-4 mb-4"><span className="text-sketch-accent-gold text-xs">◆</span></div>
-          <h4 className="text-xs text-sketch-ink-muted uppercase tracking-wide mb-3 font-body">
+          <div className="g-divider -mt-4 mb-4"><span className="text-g-gold text-xs">&#9670;</span></div>
+          <h4 className="text-xs g-text-muted uppercase tracking-wide mb-3 font-body">
             {t('actions.title')}
           </h4>
           <ActionButtons actions={availableActions} />

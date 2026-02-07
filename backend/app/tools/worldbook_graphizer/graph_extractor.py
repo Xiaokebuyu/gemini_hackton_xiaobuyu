@@ -36,11 +36,20 @@ class GraphExtractor:
     # 每批处理的条目数量
     BATCH_SIZE = 30
 
+    # SDK thinking_level -> REST API 枚举值
+    _THINKING_LEVEL_REST_MAP = {
+        "lowest": "THINKING_LEVEL_LOWEST",
+        "low": "THINKING_LEVEL_LOW",
+        "medium": "THINKING_LEVEL_MEDIUM",
+        "high": "THINKING_LEVEL_HIGH",
+    }
+
     def __init__(
         self,
         model: str = None,
         api_key: str = None,
         verbose: bool = True,
+        thinking_level: str = None,
     ):
         """
         初始化提取器
@@ -49,10 +58,12 @@ class GraphExtractor:
             model: Gemini 模型名称 (默认: gemini-3-flash-preview)
             api_key: API 密钥
             verbose: 是否输出详细信息
+            thinking_level: 思考级别 (lowest/low/medium/high)
         """
         self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
         self.model = model or DEFAULT_MODEL
         self.verbose = verbose
+        self.thinking_level = thinking_level
 
         # 加载 prompt 模板
         self.entity_prompt = self._load_prompt("entity_extraction.md")
@@ -161,7 +172,9 @@ class GraphExtractor:
                 f.write(json.dumps(data, ensure_ascii=False))
                 f.write("\n")
 
-    def _format_worldbook_markdown(self, entries: List[WorldbookEntry]) -> str:
+    def _format_worldbook_markdown(
+        self, entries: List[WorldbookEntry], max_content_chars: int = 3000
+    ) -> str:
         """格式化条目为 markdown"""
         sections = []
         for entry in entries:
@@ -170,7 +183,7 @@ class GraphExtractor:
             section = f"""## {header}
 关键词: {keys}
 
-{entry.content[:3000]}
+{entry.content[:max_content_chars]}
 
 ---
 """
@@ -228,10 +241,16 @@ class GraphExtractor:
 {worldbook_content}
 """
 
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.2,
-        )
+        config_kwargs = {
+            "response_mime_type": "application/json",
+            "temperature": 0.2,
+        }
+        if self.thinking_level:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=self.thinking_level,
+            )
+
+        config = types.GenerateContentConfig(**config_kwargs)
 
         response = self.client.models.generate_content(
             model=self.model,
@@ -308,15 +327,25 @@ class GraphExtractor:
                     content=entry.content[:4000],
                 )
 
+                req_body = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generation_config": {
+                        "response_mime_type": "application/json",
+                        "temperature": 0.2,
+                    },
+                }
+                # Batch API 的 thinking_config 放在 request 层级
+                if self.thinking_level:
+                    rest_level = self._THINKING_LEVEL_REST_MAP.get(
+                        self.thinking_level, "THINKING_LEVEL_HIGH"
+                    )
+                    req_body["thinking_config"] = {
+                        "thinking_level": rest_level,
+                    }
+
                 request = {
                     "key": f"entry_{i}",
-                    "request": {
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "generation_config": {
-                            "response_mime_type": "application/json",
-                            "temperature": 0.2,
-                        }
-                    }
+                    "request": req_body,
                 }
                 f.write(json.dumps(request, ensure_ascii=False))
                 f.write("\n")
@@ -627,6 +656,131 @@ class GraphExtractor:
                 return result
 
         return None
+
+    async def extract_direct(
+        self,
+        worldbook_md: str,
+        entries: List[WorldbookEntry],
+        chunk_size: int = 15,
+    ) -> GraphData:
+        """
+        直接调用模式提取知识图谱（不使用 Batch API）
+
+        Args:
+            worldbook_md: 全文 markdown（用于全局摘要）
+            entries: 可图谱化的条目列表
+            chunk_size: 每组处理的条目数
+
+        Returns:
+            GraphData: 知识图谱数据
+        """
+        # Phase 1: 全局摘要
+        self._log("[extract_direct] Phase 1: Generating global summary...")
+        summary = self._generate_global_summary(worldbook_md)
+        self._log(f"  Entities: {len(summary.get('entities', []))}")
+        self._log(f"  Relations: {len(summary.get('key_relations', []))}")
+
+        summary_context = self._format_summary_context(summary)
+
+        # Phase 2: 分 chunk 提取
+        self._log(f"\n[extract_direct] Phase 2: Extracting in chunks of {chunk_size}...")
+        all_nodes = []
+        all_edges = []
+
+        chunks = [
+            entries[i:i + chunk_size]
+            for i in range(0, len(entries), chunk_size)
+        ]
+
+        for i, chunk in enumerate(chunks):
+            self._log(f"  Chunk {i + 1}/{len(chunks)} ({len(chunk)} entries)...")
+            nodes, edges = self._extract_chunk_direct(chunk, summary_context)
+            all_nodes.extend(nodes)
+            all_edges.extend(edges)
+            self._log(f"    → {len(nodes)} nodes, {len(edges)} edges")
+
+        self._log(f"\n  Raw total: {len(all_nodes)} nodes, {len(all_edges)} edges")
+
+        # Phase 3: 合并去重
+        merged_nodes, id_alias_map = self._merge_nodes(all_nodes)
+        merged_edges = self._merge_edges(
+            all_edges, id_alias_map, set(n["id"] for n in merged_nodes)
+        )
+
+        self._log(f"  Merged: {len(merged_nodes)} nodes, {len(merged_edges)} edges")
+
+        return self._to_graph_data(merged_nodes, merged_edges)
+
+    def _extract_chunk_direct(
+        self,
+        entries: List[WorldbookEntry],
+        summary_context: str,
+    ) -> Tuple[List[Dict], List[Dict]]:
+        """
+        对一组条目执行直接 LLM 调用提取节点和边
+
+        Args:
+            entries: 条目列表
+            summary_context: 格式化的全局摘要
+
+        Returns:
+            (nodes, edges) 列表
+        """
+        # 加载 prompt 模板
+        prompt_template = self._load_prompt("graph_extraction_direct.md")
+
+        # 构建条目文本块
+        entry_blocks = []
+        for entry in entries:
+            header = entry.comment or f"[{entry.entry_type}]"
+            keys = ", ".join(entry.key[:5]) if entry.key else "无"
+            entry_blocks.append(
+                f"### {header}\n"
+                f"- 类型: {entry.entry_type or 'unknown'}\n"
+                f"- 名称: {entry.entry_name or header}\n"
+                f"- 关键词: {keys}\n\n"
+                f"{entry.content[:4000]}\n"
+            )
+
+        entries_block = "\n---\n".join(entry_blocks)
+
+        prompt = prompt_template.replace(
+            "{global_summary}", summary_context
+        ).replace(
+            "{entries_block}", entries_block
+        )
+
+        config_kwargs = {
+            "response_mime_type": "application/json",
+            "temperature": 0.2,
+        }
+        if self.thinking_level:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=self.thinking_level,
+            )
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=config,
+        )
+
+        text = self._extract_response_text(response)
+        result = self._parse_json(text)
+
+        nodes = []
+        edges = []
+        if result:
+            for node in result.get("nodes", []):
+                if node.get("id") and node.get("type"):
+                    nodes.append(node)
+            for edge in result.get("edges", []):
+                if edge.get("source") and edge.get("target"):
+                    edges.append(edge)
+
+        return nodes, edges
 
     def save_graph(self, graph_data: GraphData, output_path: Path) -> None:
         """保存图谱到文件"""

@@ -2,6 +2,7 @@
  * Combat arena - main combat display area
  */
 import React from 'react';
+import { Skull, User, Sword } from 'lucide-react';
 import { useCombatStore } from '../../stores';
 import CombatantCard from './CombatantCard';
 import DistanceBand from './DistanceBand';
@@ -28,8 +29,8 @@ export const CombatArena: React.FC<CombatArenaProps> = ({
     <div className={`space-y-6 ${className}`}>
       {/* Enemies section */}
       <div>
-        <h3 className="text-sm font-fantasy text-accent-red mb-3 flex items-center gap-2">
-          <span>👹</span>
+        <h3 className="text-sm font-heading text-g-red mb-3 flex items-center gap-2">
+          <Skull className="w-5 h-5" />
           Enemies
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -60,8 +61,8 @@ export const CombatArena: React.FC<CombatArenaProps> = ({
         {/* Player */}
         {player && (
           <div>
-            <h3 className="text-sm font-fantasy text-accent-gold mb-3 flex items-center gap-2">
-              <span>🧙</span>
+            <h3 className="text-sm font-heading text-g-gold mb-3 flex items-center gap-2">
+              <User className="w-5 h-5" />
               You
             </h3>
             <CombatantCard
@@ -74,8 +75,8 @@ export const CombatArena: React.FC<CombatArenaProps> = ({
         {/* Allies */}
         {allies.length > 0 && (
           <div>
-            <h3 className="text-sm font-fantasy text-accent-green mb-3 flex items-center gap-2">
-              <span>⚔️</span>
+            <h3 className="text-sm font-heading text-g-green mb-3 flex items-center gap-2">
+              <Sword className="w-5 h-5" />
               Allies
             </h3>
             <div className="space-y-3">

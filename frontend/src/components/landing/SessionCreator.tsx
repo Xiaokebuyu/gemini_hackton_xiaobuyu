@@ -1,28 +1,59 @@
 /**
  * Session creator form - world selection and session creation
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
-import { createSession, listRecoverableSessions } from '../../api';
+import { createSession, listRecoverableSessions, listWorlds } from '../../api';
 import type { RecoverableSessionItem } from '../../types';
 
 interface SessionCreatorProps {
   onSessionCreated: (worldId: string, sessionId: string) => void;
 }
 
-const PRESET_WORLDS = [
-  { id: 'goblin_slayer', label: 'Goblin Slayer', description: 'A dark fantasy world of monster hunting' },
-  { id: 'tavern_tales', label: 'Tavern Tales', description: 'Lighthearted pub adventures' },
-];
+interface WorldInfo {
+  id: string;
+  name: string;
+  description: string;
+}
 
 export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated }) => {
-  const [worldId, setWorldId] = useState('goblin_slayer');
+  const [worldId, setWorldId] = useState('');
   const [userId, setUserId] = useState('player-001');
   const [isCreating, setIsCreating] = useState(false);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [isLoadingWorlds, setIsLoadingWorlds] = useState(true);
+  const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [recoverableSessions, setRecoverableSessions] = useState<RecoverableSessionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Load available worlds on mount
+  useEffect(() => {
+    let cancelled = false;
+    const loadWorlds = async () => {
+      setIsLoadingWorlds(true);
+      try {
+        const response = await listWorlds();
+        if (!cancelled) {
+          setWorlds(response.worlds);
+          if (response.worlds.length > 0 && !worldId) {
+            setWorldId(response.worlds[0].id);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load worlds:', err);
+        if (!cancelled) {
+          setError('Failed to load worlds. Is the backend running?');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingWorlds(false);
+        }
+      }
+    };
+    loadWorlds();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleCreate = async () => {
     if (!worldId.trim() || !userId.trim()) return;
@@ -92,44 +123,59 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
     <div
       className="
         w-[360px]
-        bg-sketch-bg-panel
-        border border-sketch-ink-secondary
+        bg-g-bg-surface
+        border border-g-border-strong
         rounded-xl
-        shadow-parchment-lg
+        shadow-g-lg
         p-6
       "
     >
       {/* World selection */}
       <label className="block mb-4">
-        <span className="text-sm font-fantasy text-sketch-ink-secondary mb-2 block">
+        <span className="text-sm font-heading text-g-text-secondary mb-2 block">
           World
         </span>
         <div className="space-y-2">
-          {PRESET_WORLDS.map((world) => (
-            <motion.button
-              key={world.id}
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
-              onClick={() => setWorldId(world.id)}
-              className={`
-                w-full text-left
-                p-3 rounded-lg border
-                transition-all duration-200
-                ${
-                  worldId === world.id
-                    ? 'border-sketch-accent-gold bg-sketch-accent-gold/10 shadow-parchment-sm'
-                    : 'border-sketch-ink-faint bg-sketch-bg-input hover:border-sketch-ink-muted'
-                }
-              `}
-            >
-              <div className="font-body text-sm font-medium text-sketch-ink-primary">
-                {world.label}
-              </div>
-              <div className="font-body text-xs text-sketch-ink-muted mt-0.5">
-                {world.description}
-              </div>
-            </motion.button>
-          ))}
+          {isLoadingWorlds ? (
+            <div className="flex items-center justify-center py-4 text-g-text-muted text-sm">
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              Loading worlds...
+            </div>
+          ) : worlds.length > 0 ? (
+            worlds.map((world) => (
+              <motion.button
+                key={world.id}
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+                onClick={() => setWorldId(world.id)}
+                className={`
+                  w-full text-left
+                  p-3 rounded-lg border
+                  transition-all duration-200
+                  ${
+                    worldId === world.id
+                      ? 'border-g-gold bg-g-bg-hover shadow-g-sm'
+                      : 'border-g-border bg-g-bg-input hover:border-g-border-strong'
+                  }
+                `}
+              >
+                <div className="font-body text-sm font-medium text-g-text-primary">
+                  {world.name}
+                </div>
+                {world.description && (
+                  <div className="font-body text-xs text-g-text-muted mt-0.5">
+                    {world.description.length > 80
+                      ? world.description.slice(0, 80) + '...'
+                      : world.description}
+                  </div>
+                )}
+              </motion.button>
+            ))
+          ) : (
+            <div className="text-xs text-g-red py-2">
+              No worlds available in Firestore.
+            </div>
+          )}
         </div>
         {/* Custom world input */}
         <input
@@ -140,11 +186,11 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
             mt-2 w-full
             px-3 py-2
             font-body text-sm
-            bg-sketch-bg-input
-            text-sketch-ink-primary
-            border border-sketch-ink-muted
+            bg-g-bg-input
+            text-g-text-primary
+            border border-g-border-strong
             rounded-lg
-            focus:border-sketch-accent-gold
+            focus:border-g-gold
             focus:outline-none
             transition-colors
           "
@@ -154,7 +200,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
 
       {/* User ID */}
       <label className="block mb-5">
-        <span className="text-sm font-fantasy text-sketch-ink-secondary mb-2 block">
+        <span className="text-sm font-heading text-g-text-secondary mb-2 block">
           Player ID
         </span>
         <input
@@ -165,11 +211,11 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
             w-full
             px-3 py-2
             font-body text-sm
-            bg-sketch-bg-input
-            text-sketch-ink-primary
-            border border-sketch-ink-muted
+            bg-g-bg-input
+            text-g-text-primary
+            border border-g-border-strong
             rounded-lg
-            focus:border-sketch-accent-gold
+            focus:border-g-gold
             focus:outline-none
             transition-colors
           "
@@ -179,7 +225,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
 
       {/* Error */}
       {error && (
-        <p className="text-xs text-sketch-accent-red mb-3">{error}</p>
+        <p className="text-xs text-g-red mb-3">{error}</p>
       )}
 
       {/* Recoverable sessions */}
@@ -190,12 +236,12 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
           className="
             w-full mb-2
             px-3 py-2
-            bg-sketch-bg-input
-            text-sketch-ink-primary
-            border border-sketch-ink-muted
+            bg-g-bg-input
+            text-g-text-primary
+            border border-g-border-strong
             rounded-lg
             text-sm font-body
-            hover:border-sketch-accent-gold
+            hover:border-g-gold
             disabled:opacity-50 disabled:cursor-not-allowed
             transition-colors
           "
@@ -204,7 +250,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
         </button>
 
         {recoverableSessions.length > 0 && (
-          <div className="max-h-36 overflow-y-auto space-y-2 sketch-scrollbar">
+          <div className="max-h-36 overflow-y-auto space-y-2 g-scrollbar">
             {recoverableSessions.map((session) => (
               <button
                 key={session.session_id}
@@ -212,17 +258,17 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
                 className="
                   w-full text-left
                   p-2 rounded-lg
-                  bg-sketch-bg-input
-                  border border-sketch-ink-faint
-                  hover:border-sketch-accent-gold
+                  bg-g-bg-input
+                  border border-g-border
+                  hover:border-g-gold
                   transition-colors
                 "
               >
-                <div className="text-xs font-body text-sketch-ink-primary truncate">
+                <div className="text-xs font-body text-g-text-primary truncate">
                   {session.session_id}
                 </div>
-                <div className="text-[11px] font-body text-sketch-ink-muted mt-0.5">
-                  {session.player_location || '未知地点'} · {formatTime(session.updated_at)}
+                <div className="text-[11px] font-body text-g-text-muted mt-0.5">
+                  {session.player_location || 'Unknown location'} · {formatTime(session.updated_at)}
                 </div>
               </button>
             ))}
@@ -239,13 +285,13 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
         className="
           w-full
           px-4 py-3
-          bg-gradient-to-b from-[#d4ad2e] to-[#c9a227]
-          text-sketch-ink-primary
-          font-fantasy text-base
+          bg-g-gold hover:bg-g-gold-dark
+          text-white
+          font-heading text-base
           rounded-lg
-          border border-sketch-accent-gold
-          shadow-parchment-sm
-          hover:shadow-parchment-glow-gold
+          border border-g-gold
+          shadow-g-sm
+          hover:shadow-g-gold
           disabled:opacity-50 disabled:cursor-not-allowed
           transition-all duration-200
           flex items-center justify-center gap-2

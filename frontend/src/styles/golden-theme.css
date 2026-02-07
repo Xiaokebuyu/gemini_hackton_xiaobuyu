@@ -1,0 +1,203 @@
+/* Golden Theme CSS Variables - Modern D&D Style */
+:root {
+  /* Background colors */
+  --g-bg-base: #FAF6ED;
+  --g-bg-surface: #FFFFFF;
+  --g-bg-surface-alt: #FFF9EE;
+  --g-bg-input: #FFFDF7;
+  --g-bg-hover: #FFF3D6;
+  --g-bg-active: #FFE8A8;
+  --g-bg-sidebar: #FDF5E1;
+
+  /* Text colors */
+  --g-text-primary: #1C1510;
+  --g-text-secondary: #5C4F3D;
+  --g-text-muted: #9B8E7B;
+
+  /* Accent gold */
+  --g-accent-gold: #C49A2A;
+  --g-accent-gold-light: #E8C44A;
+  --g-accent-gold-dark: #9A7A1E;
+
+  /* Borders */
+  --g-border-default: #E8DFD0;
+  --g-border-strong: #D4C9B5;
+  --g-border-subtle: rgba(232, 223, 208, 0.6);
+  --g-border-focus: #C49A2A;
+
+  /* Semantic colors */
+  --g-red: #D94F4F;
+  --g-red-bg: #FDEAEA;
+  --g-blue: #4A7FBA;
+  --g-blue-bg: #E8F0FA;
+  --g-green: #3D8B4F;
+  --g-green-bg: #E8F5EC;
+  --g-purple: #7B5EA7;
+  --g-purple-bg: #F0EAF8;
+  --g-cyan: #2E8B9A;
+  --g-cyan-bg: #E4F3F5;
+
+  /* Message bubble backgrounds */
+  --g-bubble-gm-bg: #FFF8E1;
+  --g-bubble-gm-border: #C49A2A;
+  --g-bubble-npc-bg: #E4F3F5;
+  --g-bubble-npc-border: #2E8B9A;
+  --g-bubble-player-bg: #E8F5EC;
+  --g-bubble-player-border: #3D8B4F;
+  --g-bubble-teammate-bg: #EFF8E8;
+  --g-bubble-teammate-border: #6AAE5D;
+  --g-bubble-system-bg: #F5F3EF;
+  --g-bubble-system-border: #9B8E7B;
+  --g-bubble-combat-bg: #FDEAEA;
+  --g-bubble-combat-border: #D94F4F;
+
+  /* Danger levels */
+  --g-danger-low: #3D8B4F;
+  --g-danger-low-bg: #E8F5EC;
+  --g-danger-medium: #C49A2A;
+  --g-danger-medium-bg: #FFF8E1;
+  --g-danger-high: #D94F4F;
+  --g-danger-high-bg: #FDEAEA;
+  --g-danger-extreme: #B33636;
+  --g-danger-extreme-bg: #F9D4D4;
+
+  /* Time periods */
+  --g-time-dawn: #E8C44A;
+  --g-time-dawn-bg: #FFF8E1;
+  --g-time-day: #4A7FBA;
+  --g-time-day-bg: #E8F0FA;
+  --g-time-dusk: #C47A5A;
+  --g-time-dusk-bg: #FAE8E0;
+  --g-time-night: #7B5EA7;
+  --g-time-night-bg: #F0EAF8;
+
+  /* Role colors */
+  --g-role-warrior: #D94F4F;
+  --g-role-healer: #3D8B4F;
+  --g-role-mage: #7B5EA7;
+  --g-role-rogue: #4A7FBA;
+  --g-role-support: #C49A2A;
+  --g-role-scout: #2E8B9A;
+  --g-role-scholar: #5C4F3D;
+
+  /* Shadows */
+  --g-shadow-sm: 0 1px 3px rgba(28, 21, 16, 0.06), 0 1px 2px rgba(28, 21, 16, 0.04);
+  --g-shadow-md: 0 4px 12px rgba(28, 21, 16, 0.08), 0 1px 3px rgba(28, 21, 16, 0.04);
+  --g-shadow-lg: 0 8px 24px rgba(28, 21, 16, 0.1), 0 2px 6px rgba(28, 21, 16, 0.06);
+  --g-shadow-gold: 0 0 12px rgba(196, 154, 42, 0.25);
+
+  /* Glass */
+  --g-glass-bg: rgba(255, 255, 255, 0.85);
+  --g-glass-border: rgba(232, 223, 208, 0.5);
+  --g-glass-blur: 8px;
+
+  /* Fonts */
+  --font-heading: 'Cinzel', 'Ma Shan Zheng', Georgia, serif;
+  --font-body: 'Inter', 'Ma Shan Zheng', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+  --transition-slow: 400ms ease;
+}
+
+/* Golden scrollbar */
+.g-scrollbar::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.g-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.g-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--g-accent-gold);
+  border-radius: 9999px;
+  opacity: 0.6;
+}
+
+.g-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--g-accent-gold-dark);
+}
+
+/* Decorative divider */
+.g-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.g-divider::before,
+.g-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--g-border-strong), transparent);
+}
+
+/* Heading accent underline */
+.g-heading-accent {
+  position: relative;
+  display: inline-block;
+}
+
+.g-heading-accent::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--g-accent-gold), transparent);
+  border-radius: 1px;
+}
+
+/* Toast styles */
+.toast-success {
+  background: var(--g-green) !important;
+  color: white !important;
+  border-color: var(--g-green) !important;
+}
+
+.toast-error {
+  background: var(--g-red) !important;
+  color: white !important;
+  border-color: var(--g-red) !important;
+}
+
+.toast-warning {
+  background: var(--g-accent-gold) !important;
+  color: var(--g-text-primary) !important;
+  border-color: var(--g-accent-gold) !important;
+}
+
+.toast-info {
+  background: var(--g-cyan) !important;
+  color: white !important;
+  border-color: var(--g-cyan) !important;
+}
+
+/* Panel top color bar variants */
+.g-panel-bar-gold {
+  border-top: 2px solid var(--g-accent-gold);
+}
+
+.g-panel-bar-cyan {
+  border-top: 2px solid var(--g-cyan);
+}
+
+.g-panel-bar-red {
+  border-top: 2px solid var(--g-red);
+}
+
+.g-panel-bar-green {
+  border-top: 2px solid var(--g-green);
+}
+
+/* Inner glow for panels - subtle warm */
+.g-inner-glow {
+  box-shadow: inset 0 0 0 1px rgba(196, 154, 42, 0.06), inset 0 0 20px rgba(196, 154, 42, 0.02);
+}

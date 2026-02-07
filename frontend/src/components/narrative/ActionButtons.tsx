@@ -1,5 +1,5 @@
 /**
- * Available action buttons component - using Sketch style
+ * Available action buttons component - Golden D&D theme
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,37 +28,37 @@ const categoryConfig: Record<
 > = {
   movement: {
     icon: <MapPin className="w-4 h-4" />,
-    color: 'text-sketch-accent-cyan border-sketch-accent-cyan hover:bg-sketch-accent-cyan/10',
+    color: 'text-g-cyan border-g-cyan hover:bg-g-cyan/10',
     labelKey: 'actions.category.movement',
   },
   interaction: {
     icon: <User className="w-4 h-4" />,
-    color: 'text-sketch-accent-gold border-sketch-accent-gold hover:bg-sketch-accent-gold/10',
+    color: 'text-g-gold border-g-gold hover:bg-g-gold/10',
     labelKey: 'actions.category.interaction',
   },
   observation: {
     icon: <Eye className="w-4 h-4" />,
-    color: 'text-sketch-accent-purple border-sketch-accent-purple hover:bg-sketch-accent-purple/10',
+    color: 'text-g-purple border-g-purple hover:bg-g-purple/10',
     labelKey: 'actions.category.observation',
   },
   combat: {
     icon: <Swords className="w-4 h-4" />,
-    color: 'text-sketch-accent-red border-sketch-accent-red hover:bg-sketch-accent-red/10',
+    color: 'text-g-red border-g-red hover:bg-g-red/10',
     labelKey: 'actions.category.combat',
   },
   party: {
     icon: <Users className="w-4 h-4" />,
-    color: 'text-sketch-accent-green border-sketch-accent-green hover:bg-sketch-accent-green/10',
+    color: 'text-g-green border-g-green hover:bg-g-green/10',
     labelKey: 'actions.category.party',
   },
   inventory: {
     icon: <Package className="w-4 h-4" />,
-    color: 'text-sketch-accent-gold border-sketch-accent-gold hover:bg-sketch-accent-gold/10',
+    color: 'text-g-gold border-g-gold hover:bg-g-gold/10',
     labelKey: 'actions.category.inventory',
   },
   system: {
     icon: <Settings className="w-4 h-4" />,
-    color: 'text-sketch-ink-secondary border-sketch-ink-secondary hover:bg-sketch-bg-secondary',
+    color: 'g-text-secondary border-g-border-strong hover:bg-g-bg-sidebar',
     labelKey: 'actions.category.system',
   },
 };
@@ -110,7 +110,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
             className="space-y-2"
           >
             {/* Category label */}
-            <div className="flex items-center gap-2 text-xs text-sketch-ink-muted font-body">
+            <div className="flex items-center gap-2 text-xs g-text-muted font-body">
               {config.icon}
               <span className="uppercase tracking-wide">
                 {t(config.labelKey)}
@@ -129,11 +129,11 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                   className={`
                     flex items-center gap-2
                     px-3 py-2
-                    bg-sketch-bg-panel
+                    bg-g-bg-surface
                     border
                     text-sm font-body
                     transition-all duration-200
-                    ${action.enabled ? config.color : 'text-sketch-ink-muted border-sketch-ink-faint opacity-50 cursor-not-allowed'}
+                    ${action.enabled ? config.color : 'g-text-muted border-g-border opacity-50 cursor-not-allowed'}
                   `}
                   style={{ borderRadius: '8px' }}
                   title={action.description || action.display_name}
@@ -141,7 +141,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                   {action.icon && <span>{action.icon}</span>}
                   <span>{action.display_name}</span>
                   {action.hotkey && (
-                    <kbd className="ml-1 px-1.5 py-0.5 text-xs bg-sketch-bg-secondary border border-sketch-ink-faint">
+                    <kbd className="ml-1 px-1.5 py-0.5 text-xs bg-g-bg-sidebar border border-g-border">
                       {action.hotkey}
                     </kbd>
                   )}

@@ -1,10 +1,10 @@
 /**
- * Single narrative message component - using Sketch style
+ * Single narrative message component - Golden theme
  */
 import React, { useState } from 'react';
 import type { NarrativeMessage as NarrativeMessageType } from '../../types';
 import TypewriterText from './TypewriterText';
-import SketchMessageBubble from '../sketch/SketchMessageBubble';
+import { MessageBubble } from '../ui';
 
 interface NarrativeMessageProps {
   message: NarrativeMessageType;
@@ -32,7 +32,7 @@ export const NarrativeMessage: React.FC<NarrativeMessageProps> = ({
     );
 
   return (
-    <SketchMessageBubble
+    <MessageBubble
       speaker={message.speaker}
       content={content}
       type={message.type}

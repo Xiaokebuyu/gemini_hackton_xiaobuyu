@@ -3,6 +3,7 @@
  */
 import React from 'react';
 import { motion } from 'framer-motion';
+import { MessageCircle } from 'lucide-react';
 import type { TeammateResponseResult } from '../../types';
 
 interface TeammateResponseProps {
@@ -21,12 +22,12 @@ export const TeammateResponse: React.FC<TeammateResponseProps> = ({
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.3, delay }}
-        className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] italic"
+        className="flex items-center gap-2 text-xs text-[var(--g-text-muted)] italic"
       >
-        <span className="text-base">💭</span>
+        <MessageCircle className="w-4 h-4 text-[var(--g-text-muted)]" />
         <span>{response.name} stays silent</span>
         {response.reaction && (
-          <span className="text-[var(--color-text-muted)]">
+          <span className="text-[var(--g-text-muted)]">
             ({response.reaction})
           </span>
         )}
@@ -45,24 +46,23 @@ export const TeammateResponse: React.FC<TeammateResponseProps> = ({
       <div
         className="
           w-8 h-8 rounded-full
-          bg-bg-card
+          bg-g-bg-surface-alt
           flex items-center justify-center
           flex-shrink-0
-          text-lg
         "
       >
-        💭
+        <MessageCircle className="w-4 h-4 text-g-bubble-teammate-border" />
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
         {/* Header */}
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-medium text-[#90ee90]">
+          <span className="text-sm font-medium text-g-bubble-teammate-border">
             {response.name}
           </span>
           {response.reaction && (
-            <span className="text-xs text-[var(--color-text-muted)] italic">
+            <span className="text-xs text-[var(--g-text-muted)] italic">
               {response.reaction}
             </span>
           )}
@@ -71,20 +71,20 @@ export const TeammateResponse: React.FC<TeammateResponseProps> = ({
         {/* Response bubble */}
         <div
           className="
-            bg-gradient-to-r from-[#90ee90]/10 to-transparent
-            border-l-2 border-[#90ee90]
+            bg-gradient-to-r from-g-bubble-teammate-border/10 to-transparent
+            border-l-2 border-g-bubble-teammate-border
             rounded-r-lg
             p-3
           "
         >
-          <p className="text-sm text-[var(--color-text-primary)] whitespace-pre-wrap">
+          <p className="text-sm text-[var(--g-text-primary)] whitespace-pre-wrap">
             {response.response}
           </p>
         </div>
 
         {/* Metadata */}
         {response.model_used && (
-          <div className="text-xs text-[var(--color-text-muted)] mt-1 flex items-center gap-2">
+          <div className="text-xs text-[var(--g-text-muted)] mt-1 flex items-center gap-2">
             <span>{response.latency_ms}ms</span>
             {response.thinking_level && (
               <span className="badge badge-cyan text-[10px]">

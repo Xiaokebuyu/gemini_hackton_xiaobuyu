@@ -62,6 +62,7 @@ class CharacterInfo(BaseModel):
     name: str = Field(..., description="中文名称，如 '女神官'")
     tier: NPCTier = Field(..., description="NPC 层级")
     default_map: Optional[str] = Field(None, description="默认所在地图 ID")
+    default_sub_location: Optional[str] = Field(None, description="默认所在子地点 ID，如 'guild_hall'")
     aliases: List[str] = Field(default_factory=list, description="别名列表")
 
     # 角色资料 - 对应 CharacterProfile

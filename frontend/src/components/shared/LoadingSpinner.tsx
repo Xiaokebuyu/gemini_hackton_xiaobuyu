@@ -22,8 +22,8 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
     <div
       className={`
         ${sizeClasses[size]}
-        border-2 border-[var(--color-border-secondary)]
-        border-t-accent-gold
+        border-2 border-[var(--g-border-default)]
+        border-t-g-gold
         rounded-full
         animate-spin
         ${className}

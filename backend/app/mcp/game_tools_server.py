@@ -12,6 +12,7 @@ from app.mcp.tools import (
     navigation_tools,
     time_tools,
     graph_tools,
+    party_tools,
 )
 
 
@@ -33,6 +34,7 @@ def _register_tools() -> None:
         navigation_tools,
         time_tools,
         graph_tools,
+        party_tools,
     ):
         module.register(game_mcp)
 

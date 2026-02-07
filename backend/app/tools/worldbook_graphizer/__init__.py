@@ -16,6 +16,7 @@ from .map_extractor import MapExtractor
 from .npc_classifier import NPCClassifier
 from .tavern_card_parser import TavernCardParser
 from .graph_extractor import GraphExtractor
+from .unified_pipeline import UnifiedWorldExtractor
 
 __all__ = [
     "WorldbookGraphizer",
@@ -23,4 +24,5 @@ __all__ = [
     "NPCClassifier",
     "TavernCardParser",
     "GraphExtractor",
+    "UnifiedWorldExtractor",
 ]

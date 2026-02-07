@@ -1,7 +1,7 @@
 """
 Admin layer protocol models.
 
-Pro-First 架构：Flash 分析 → Flash 执行 → Pro 叙述
+Flash-Only 架构：Flash 分析 → Flash 执行 → Flash 叙述
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app.models.state_delta import StateDelta
 
 
 # =============================================================================
-# 意图解析模型 (Pro-First)
+# 意图解析模型 (Flash-Only)
 # =============================================================================
 
 
@@ -60,8 +60,8 @@ class ParsedIntent(BaseModel):
     # 原始输入
     raw_input: str = ""
 
-    # Pro 的理解和解释
-    interpretation: Optional[str] = None  # Pro 对玩家意图的解读
+    # 系统理解与解释
+    interpretation: Optional[str] = None  # 对玩家意图的解读
     player_emotion: Optional[str] = None  # 推测的玩家情绪
 
     # 生成的 Flash 请求
@@ -83,7 +83,7 @@ class IntentParseResult(BaseModel):
     # 需要确认的歧义
     ambiguities: List[str] = Field(default_factory=list)
 
-    # Pro 的思考过程（可选，用于调试）
+    # 思考过程（可选，用于调试）
     reasoning: Optional[str] = None
 
 
@@ -98,10 +98,6 @@ class FlashOperation(str, Enum):
     # 实例管理
     SPAWN_PASSERBY = "spawn_passerby"
     NPC_DIALOGUE = "npc_dialogue"
-    # 事件系统
-    BROADCAST_EVENT = "broadcast_event"
-    GRAPHIZE_EVENT = "graphize_event"
-    RECALL_MEMORY = "recall_memory"
     # 导航/时间
     NAVIGATE = "navigate"
     UPDATE_TIME = "update_time"
@@ -110,10 +106,13 @@ class FlashOperation(str, Enum):
     START_COMBAT = "start_combat"
     # 章节
     TRIGGER_NARRATIVE_EVENT = "trigger_narrative_event"
+    # 查询类
+    GET_PROGRESS = "get_progress"
+    GET_STATUS = "get_status"
 
 
 class NPCReaction(BaseModel):
-    """Structured NPC reaction for Pro to narrate."""
+    """Structured NPC reaction for GM narration."""
 
     npc_id: str
     name: Optional[str] = None
@@ -123,7 +122,7 @@ class NPCReaction(BaseModel):
 
 
 class FlashRequest(BaseModel):
-    """Pro -> Flash request."""
+    """Flash operation request."""
 
     operation: FlashOperation
     parameters: Dict[str, Any]
@@ -138,10 +137,11 @@ class AnalysisPlan(BaseModel):
     operations: List[FlashRequest] = Field(default_factory=list)
     memory_seeds: List[str] = Field(default_factory=list)
     reasoning: str = ""
+    context_package: Optional[Dict[str, Any]] = None
 
 
 class FlashResponse(BaseModel):
-    """Flash -> Pro response (JSON only)."""
+    """Flash operation response (JSON only)."""
 
     success: bool
     operation: FlashOperation
@@ -149,15 +149,6 @@ class FlashResponse(BaseModel):
     state_delta: Optional[StateDelta] = None
     npc_reactions: Optional[List[NPCReaction]] = None
     error: Optional[str] = None
-
-
-class ProResponse(BaseModel):
-    """Pro -> Player response (mixed narration + metadata)."""
-
-    narration: str
-    speaker: str = "GM"
-    flash_requests: List[FlashOperation] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 # =============================================================================

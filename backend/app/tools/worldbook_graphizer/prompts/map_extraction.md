@@ -18,6 +18,14 @@
    - travel_time: 旅行时间描述（可选）
 8. **available_actions**: 在此地点可执行的动作类型（如"购物"、"休息"、"接任务"、"战斗"）
 9. **key_features**: 关键地标或特征
+10. **sub_locations**: 地图内的可导航子地点（如酒馆、铁匠铺、公会大厅等），每个子地点包含：
+    - id: 子地点 ID，格式为 `{功能或动作}_英文`（如 "guild_hall"、"tavern"、"blacksmith"）
+    - name: 中文名称
+    - description: 子地点描述
+    - interaction_type: 交互类型（visit=普通访问/shop=商店/quest=任务/rest=休息）
+    - resident_npcs: 常驻 NPC 的角色 ID 列表（如 ["guild_girl", "tavern_keeper"]）
+    - available_actions: 在此子地点可执行的动作列表
+    - passerby_spawn_rate: 路人 NPC 生成概率（0.0-1.0）
 
 ## 输出格式（JSON）
 
@@ -36,7 +44,27 @@
         {"target_map_id": "forest_edge", "connection_type": "travel", "travel_time": "2小时"}
       ],
       "available_actions": ["购物", "休息", "接任务", "情报收集"],
-      "key_features": ["冒险者公会", "酒馆", "神殿", "市场"]
+      "key_features": ["冒险者公会", "酒馆", "神殿", "市场"],
+      "sub_locations": [
+        {
+          "id": "guild_hall",
+          "name": "冒险者公会大厅",
+          "description": "冒险者公会的主要大厅，可以接取任务和查看公告板",
+          "interaction_type": "quest",
+          "resident_npcs": ["guild_girl"],
+          "available_actions": ["接任务", "查看公告", "情报收集"],
+          "passerby_spawn_rate": 0.5
+        },
+        {
+          "id": "tavern",
+          "name": "酒馆",
+          "description": "冒险者们休息聚会的酒馆",
+          "interaction_type": "rest",
+          "resident_npcs": ["tavern_keeper"],
+          "available_actions": ["休息", "用餐", "打听消息"],
+          "passerby_spawn_rate": 0.6
+        }
+      ]
     }
   ],
   "passerby_templates": {
@@ -64,6 +92,9 @@
    - medium: 郊外、农场等有小型威胁的区域
    - high: 森林、洞穴等有怪物的区域
    - extreme: Boss 区域、高等级地下城
+6. 子地点 ID 格式为 `{功能或动作}_英文`，如 "guild_hall"、"blacksmith"、"temple"
+7. `resident_npcs` 应引用角色 ID（与 NPC 提取中使用的 ID 一致）
+8. 城镇/安全区域应包含子地点（如公会、酒馆、商店等），野外/地下城可以没有子地点
 
 ## 世界书内容
 

@@ -9,7 +9,7 @@ Flash LLM Service - Flash的LLM能力层
 from typing import Any, Dict, List, Optional
 
 from app.models.graph import GraphData, MemoryEdge, MemoryNode
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.llm_service import LLMService
 
 

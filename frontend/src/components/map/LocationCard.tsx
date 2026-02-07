@@ -32,7 +32,7 @@ export const LocationCard: React.FC<LocationCardProps> = ({
   if (!currentLocation) {
     return (
       <div className={`p-3 ${className}`}>
-        <div className="flex items-center gap-2 text-[var(--color-text-muted)]">
+        <div className="flex items-center gap-2 text-[var(--g-text-muted)]">
           <MapPin className="w-4 h-4" />
           <span className="text-sm">{t('navigation.currentLocation')}</span>
         </div>
@@ -44,14 +44,14 @@ export const LocationCard: React.FC<LocationCardProps> = ({
     <div className={`p-3 ${className}`}>
       {/* Location header */}
       <div className="flex items-start gap-2 mb-2">
-        <MapPin className="w-5 h-5 text-accent-gold flex-shrink-0 mt-0.5" />
+        <MapPin className="w-5 h-5 text-g-gold flex-shrink-0 mt-0.5" />
         <div className="flex-1 min-w-0">
-          <h3 className="font-fantasy text-lg text-accent-gold truncate">
+          <h3 className="font-heading text-lg text-g-gold truncate">
             {currentLocation.location_name}
           </h3>
           {subLocation && (
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-xs text-[var(--color-text-secondary)]">
+              <span className="text-xs text-[var(--g-text-secondary)]">
                 @ {subLocation}
               </span>
               <button
@@ -59,7 +59,7 @@ export const LocationCard: React.FC<LocationCardProps> = ({
                 disabled={isLoading}
                 className="
                   flex items-center gap-1
-                  text-xs text-accent-cyan
+                  text-xs text-g-cyan
                   hover:underline
                   disabled:opacity-50
                 "
@@ -74,18 +74,18 @@ export const LocationCard: React.FC<LocationCardProps> = ({
 
       {/* Description */}
       {currentLocation.description && (
-        <p className="text-sm text-[var(--color-text-secondary)] line-clamp-3">
+        <p className="text-sm text-[var(--g-text-secondary)] line-clamp-3">
           {currentLocation.description}
         </p>
       )}
 
       {/* NPCs present */}
       {currentLocation.npcs_present?.length > 0 && (
-        <div className="mt-3 pt-2 border-t border-[var(--color-border-secondary)]">
-          <span className="text-xs text-[var(--color-text-muted)]">
+        <div className="mt-3 pt-2 border-t border-[var(--g-border-default)]">
+          <span className="text-xs text-[var(--g-text-muted)]">
             Present:{' '}
           </span>
-          <span className="text-xs text-accent-cyan">
+          <span className="text-xs text-g-cyan">
             {currentLocation.npcs_present.join(', ')}
           </span>
         </div>

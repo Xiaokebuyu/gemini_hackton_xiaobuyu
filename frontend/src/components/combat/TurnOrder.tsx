@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { motion } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, User, Sword, Skull } from 'lucide-react';
 import type { Combatant } from '../../types';
 
 interface TurnOrderProps {
@@ -39,10 +39,10 @@ export const TurnOrder: React.FC<TurnOrderProps> = ({
                 border-2
                 ${
                   isActive
-                    ? 'bg-accent-gold/20 border-accent-gold'
+                    ? 'bg-g-gold/20 border-g-gold'
                     : combatant.is_ally
-                    ? 'bg-bg-card border-accent-green/30'
-                    : 'bg-bg-card border-accent-red/30'
+                    ? 'bg-g-bg-surface-alt border-g-green/30'
+                    : 'bg-g-bg-surface-alt border-g-red/30'
                 }
               `}
             >
@@ -54,14 +54,19 @@ export const TurnOrder: React.FC<TurnOrderProps> = ({
                   text-sm
                   ${
                     combatant.is_player
-                      ? 'bg-accent-gold/20'
+                      ? 'bg-g-gold/20'
                       : combatant.is_ally
-                      ? 'bg-accent-green/20'
-                      : 'bg-accent-red/20'
+                      ? 'bg-g-green/20'
+                      : 'bg-g-red/20'
                   }
                 `}
               >
-                {combatant.is_player ? '🧙' : combatant.is_ally ? '⚔️' : '👹'}
+                {combatant.is_player
+                  ? <User className="w-3 h-3" />
+                  : combatant.is_ally
+                  ? <Sword className="w-3 h-3" />
+                  : <Skull className="w-3 h-3" />
+                }
               </div>
 
               {/* Name */}
@@ -70,10 +75,10 @@ export const TurnOrder: React.FC<TurnOrderProps> = ({
                   text-sm font-medium
                   ${
                     isActive
-                      ? 'text-accent-gold'
+                      ? 'text-g-gold'
                       : combatant.is_ally
-                      ? 'text-accent-green'
-                      : 'text-accent-red'
+                      ? 'text-g-green'
+                      : 'text-g-red'
                   }
                 `}
               >
@@ -81,14 +86,14 @@ export const TurnOrder: React.FC<TurnOrderProps> = ({
               </span>
 
               {/* Initiative */}
-              <span className="text-xs text-[var(--color-text-muted)]">
+              <span className="text-xs text-[var(--g-text-muted)]">
                 ({combatant.initiative})
               </span>
             </motion.div>
 
             {/* Arrow connector */}
             {index < sortedCombatants.length - 1 && (
-              <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] flex-shrink-0" />
+              <ChevronRight className="w-4 h-4 text-[var(--g-text-muted)] flex-shrink-0" />
             )}
           </React.Fragment>
         );

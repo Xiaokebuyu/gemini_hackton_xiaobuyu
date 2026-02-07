@@ -76,12 +76,10 @@
 | test_04_ingest_event | POST /{world}/events/ingest | - | PASSED |
 | test_05_ingest_event_natural | POST /{world}/events/ingest-natural | - | PASSED |
 
-### 其他端点 (4/4 通过)
+### 其他端点 (2/2 通过)
 
 | 测试 | 端点 | 状态 |
 |------|------|------|
-| test_legacy_session_create | POST /{world}/sessions/legacy | PASSED |
-| test_legacy_input | POST /{world}/sessions/{id}/input_legacy | PASSED |
 | test_enter_scene | POST /{world}/sessions/{id}/scene | PASSED |
 | test_advance_day | POST /{world}/sessions/{id}/advance-day | PASSED |
 
@@ -136,19 +134,17 @@ INFO     HTTP Request: POST https://generativelanguage.googleapis.com/...
 
 ## API 覆盖率
 
-### 已覆盖端点 (36/36)
+### 已覆盖端点 (34/34)
 
-**会话管理 (6)**:
+**会话管理 (5)**:
 - [x] POST /{world}/sessions
-- [x] POST /{world}/sessions/legacy
 - [x] GET /{world}/sessions/{id}
 - [x] GET /{world}/sessions/{id}/context
 - [x] POST /{world}/sessions/{id}/scene
 - [x] POST /{world}/sessions/{id}/advance-day
 
-**玩家输入 (2)**:
+**玩家输入 (1)**:
 - [x] POST /{world}/sessions/{id}/input
-- [x] POST /{world}/sessions/{id}/input_legacy
 
 **导航 (5)**:
 - [x] GET /{world}/sessions/{id}/location

@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from app.models.game import SceneState
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.admin.admin_coordinator import AdminCoordinator
 
 
@@ -159,8 +159,10 @@ class GameMasterCLI:
         # 创建角色资料
         print_subheader("创建NPC资料")
         for char_id, profile in self.demo_characters.items():
-            await self.gm_service.pro_service.set_profile(
-                self.world_id, char_id, profile
+            await self.gm_service.graph_store.set_character_profile(
+                self.world_id,
+                char_id,
+                profile.model_dump(exclude_none=True),
             )
             print(f"  ✓ 创建角色: {profile.name} ({char_id})")
 
@@ -265,40 +267,19 @@ class GameMasterCLI:
             print_error("请先开始游戏")
             return
 
-        result = await self.gm_service.process_player_input(
+        result = await self.gm_service.process_player_input_v2(
             self.world_id, self.session_id, user_input
         )
 
-        response_type = result.get("type")
-        response = result.get("response", "")
-        speaker = result.get("speaker", "GM")
+        # 处理 CoordinatorResponse
+        if result.narration:
+            print_gm(result.narration)
 
-        if response_type == "narration":
-            print_gm(response)
-        elif response_type == "dialogue":
-            print_npc(speaker, response)
-            if result.get("recalled_memory"):
-                print_system(f"({speaker}回忆起: {result['recalled_memory'][:100]}...)")
-        elif response_type == "combat":
-            print_combat(response)
-            if result.get("available_actions"):
-                print_subheader("可用行动")
-                for action in result["available_actions"]:
-                    if isinstance(action, dict):
-                        print(f"  - {action.get('display_name', action.get('action_id'))}")
-        elif response_type == "system":
-            print_system(response)
-        elif response_type == "error":
-            print_error(response)
-        else:
-            print(response)
-
-        # 追加聊天室回应
-        for extra in result.get("responses", []) or []:
-            extra_speaker = extra.get("speaker", "NPC")
-            extra_text = extra.get("response", "")
-            if extra_text:
-                print_npc(extra_speaker, extra_text)
+        for teammate in result.teammate_responses:
+            response_text = teammate.get("response")
+            if response_text:
+                name = teammate.get("name", teammate.get("character_id", "队友"))
+                print_npc(name, response_text)
 
     async def talk_to(self, npc_id: str) -> None:
         """开始与NPC对话"""

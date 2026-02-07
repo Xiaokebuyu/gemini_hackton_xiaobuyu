@@ -1,13 +1,13 @@
 /**
- * Main chat input component - using Sketch style
+ * Main chat input component - Golden theme
  */
 import React, { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, Loader2 } from 'lucide-react';
 import { useGameInput } from '../../api';
 import { useChatStore } from '../../stores';
-import SketchInput from '../sketch/SketchInput';
-import SketchButton from '../sketch/SketchButton';
+import { Input } from '../ui';
+import { Button } from '../ui';
 
 interface ChatInputProps {
   className?: string;
@@ -67,11 +67,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
             border-2
             rounded-xl
             transition-all duration-200
-            border-sketch-ink-muted/50 focus-within:border-sketch-accent-gold
-            bg-sketch-bg-input
+            border-g-border-strong focus-within:border-g-gold
+            bg-g-bg-input
           "
         >
-          <SketchInput
+          <Input
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -85,7 +85,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
         </div>
 
         {/* Send button */}
-        <SketchButton
+        <Button
           onClick={handleSubmit}
           disabled={!input.trim() || isLoading}
           variant={input.trim() && !isLoading ? 'primary' : 'secondary'}
@@ -97,11 +97,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
           ) : (
             <Send className="w-5 h-5" />
           )}
-        </SketchButton>
+        </Button>
       </div>
 
       {/* Hint */}
-      <div className="mt-2 text-xs text-sketch-ink-muted font-body">
+      <div className="mt-2 text-xs g-text-muted font-body">
         {t('chat.sendHint')}
       </div>
     </div>

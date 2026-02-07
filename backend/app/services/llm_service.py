@@ -378,22 +378,32 @@ Artifact 要求:
     
     # ==================== MCP 扩展方法 ====================
     
-    async def generate_simple(self, prompt: str, model_override: Optional[str] = None) -> str:
+    async def generate_simple(
+        self,
+        prompt: str,
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+    ) -> str:
         """
         简单文本生成（使用 Gemini 3 Flash）
 
         Args:
             prompt: 提示文本
             model_override: 可选模型覆盖
+            thinking_level: 思考层级 (lowest/low/medium/high)
 
         Returns:
             生成的文本
         """
         try:
             model = model_override or self.flash_model
+            config_kwargs: dict = {}
+            if thinking_level:
+                config_kwargs["thinking_config"] = self._get_thinking_config(thinking_level)
             response = self.client.models.generate_content(
                 model=model,
                 contents=prompt,
+                config=types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
             )
 
             text = ""

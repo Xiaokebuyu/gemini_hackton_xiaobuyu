@@ -15,28 +15,28 @@ interface HealthBarProps {
 
 const variantColors = {
   health: {
-    high: 'bg-danger-low',
-    medium: 'bg-danger-medium',
-    low: 'bg-danger-high',
-    critical: 'bg-danger-extreme',
+    high: 'bg-g-danger-low',
+    medium: 'bg-g-danger-medium',
+    low: 'bg-g-danger-high',
+    critical: 'bg-g-danger-extreme',
   },
   mana: {
-    high: 'bg-accent-purple',
-    medium: 'bg-accent-purple',
-    low: 'bg-accent-purple/70',
-    critical: 'bg-accent-purple/50',
+    high: 'bg-g-purple',
+    medium: 'bg-g-purple',
+    low: 'bg-g-purple/70',
+    critical: 'bg-g-purple/50',
   },
   experience: {
-    high: 'bg-accent-gold',
-    medium: 'bg-accent-gold',
-    low: 'bg-accent-gold/70',
-    critical: 'bg-accent-gold/50',
+    high: 'bg-g-gold',
+    medium: 'bg-g-gold',
+    low: 'bg-g-gold/70',
+    critical: 'bg-g-gold/50',
   },
   generic: {
-    high: 'bg-accent-cyan',
-    medium: 'bg-accent-cyan',
-    low: 'bg-accent-cyan/70',
-    critical: 'bg-accent-cyan/50',
+    high: 'bg-g-cyan',
+    medium: 'bg-g-cyan',
+    low: 'bg-g-cyan/70',
+    critical: 'bg-g-cyan/50',
   },
 };
 
@@ -76,7 +76,7 @@ export const HealthBar: React.FC<HealthBarProps> = ({
         className={`
           w-full
           ${sizeClasses[size]}
-          bg-bg-secondary
+          bg-g-bg-sidebar
           rounded-full
           overflow-hidden
           border border-[rgba(61,43,31,0.12)]

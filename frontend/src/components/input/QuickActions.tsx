@@ -1,12 +1,12 @@
 /**
- * Quick action shortcuts - using Sketch style
+ * Quick action shortcuts - Golden theme
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Eye, Clock, Search, HelpCircle } from 'lucide-react';
 import { useGameInput } from '../../api';
 import { useChatStore } from '../../stores';
-import SketchButton from '../sketch/SketchButton';
+import { Button } from '../ui';
 
 interface QuickActionsProps {
   className?: string;
@@ -61,11 +61,11 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <span className="text-xs text-sketch-ink-muted mr-2 font-body">
+      <span className="text-xs g-text-muted mr-2 font-body">
         {t('actions.quick')}:
       </span>
       {quickActionsConfig.map((action) => (
-        <SketchButton
+        <Button
           key={action.id}
           onClick={() => handleAction(action)}
           disabled={isLoading || chatLoading}
@@ -76,7 +76,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
         >
           {action.icon}
           <span>{t(action.labelKey)}</span>
-        </SketchButton>
+        </Button>
       ))}
     </div>
   );

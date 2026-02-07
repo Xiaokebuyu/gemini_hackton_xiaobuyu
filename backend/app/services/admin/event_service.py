@@ -5,6 +5,7 @@ Admin event service for event recording and dispatch.
 1. 结构化模式：直接传入节点/边数据
 2. 自然语言模式：通过LLM解析事件并进行视角转换
 """
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
@@ -19,11 +20,13 @@ from app.models.event import (
 from app.models.flash import EventIngestRequest
 from app.models.graph import MemoryEdge, MemoryNode
 from app.models.graph_scope import GraphScope
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.event_bus import EventBus
 from app.services.flash_service import FlashService
 from app.services.graph_schema import GraphSchemaOptions, validate_edge, validate_node
 from app.services.graph_store import GraphStore
+
+logger = logging.getLogger(__name__)
 
 
 class AdminEventService:
@@ -53,6 +56,7 @@ class AdminEventService:
         world_id: str,
         request: GMEventIngestRequest,
     ) -> GMEventIngestResponse:
+        logger.info("事件摄入开始: world=%s, type=%s", world_id, request.event.type.value)
         event = request.event
         event_id = event.id or f"event_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         gm_nodes = list(event.nodes)
@@ -158,6 +162,10 @@ class AdminEventService:
                     request=ingest_request,
                 )
 
+        logger.info(
+            "事件摄入完成: event_id=%s, nodes=%d, edges=%d, recipients=%d",
+            event_id, len(gm_nodes), len(gm_edges), len(recipients),
+        )
         return GMEventIngestResponse(
             event_id=event_id,
             gm_node_count=len(gm_nodes),
@@ -291,6 +299,7 @@ class AdminEventService:
         Returns:
             摄入结果，包含GM图谱统计和各角色分发结果
         """
+        logger.info("自然语言事件摄入开始: world=%s", world_id)
         # 1. 解析事件结构
         parsed_event = await self.llm_service.parse_event(
             event_description=request.event_description,
@@ -343,26 +352,16 @@ class AdminEventService:
 
             # 7. 对每个接收者进行视角转换和写入
             for character_id, perspective in recipients_with_perspective.items():
-                try:
-                    result = await self._dispatch_to_character(
-                        world_id=world_id,
-                        character_id=character_id,
-                        event_description=request.event_description,
-                        parsed_event=parsed_event,
-                        perspective=perspective,
-                        game_day=request.game_day,
-                        write_indexes=request.write_indexes,
-                    )
-                    recipients_result.append(result)
-                except Exception as e:
-                    # 单个角色失败不影响其他角色
-                    recipients_result.append(CharacterDispatchResult(
-                        character_id=character_id,
-                        perspective=perspective,
-                        node_count=0,
-                        edge_count=0,
-                        event_description=f"Error: {str(e)}",
-                    ))
+                result = await self._dispatch_to_character(
+                    world_id=world_id,
+                    character_id=character_id,
+                    event_description=request.event_description,
+                    parsed_event=parsed_event,
+                    perspective=perspective,
+                    game_day=request.game_day,
+                    write_indexes=request.write_indexes,
+                )
+                recipients_result.append(result)
 
         return NaturalEventIngestResponse(
             event_id=event_id,

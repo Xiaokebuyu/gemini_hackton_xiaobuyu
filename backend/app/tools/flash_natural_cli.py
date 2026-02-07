@@ -26,7 +26,7 @@ import sys
 
 from app.models.flash import NaturalEventIngestRequest, NaturalRecallRequest
 from app.models.graph_scope import GraphScope
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 from app.services.flash_service import FlashService
 from app.services.graph_store import GraphStore
 

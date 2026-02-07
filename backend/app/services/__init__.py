@@ -6,8 +6,6 @@ from .graph_store import GraphStore
 from .reference_resolver import ReferenceResolver
 from .memory_graph import MemoryGraph
 from .flash_service import FlashService
-from .pro_service import ProService
-from .pro_context_builder import ProContextBuilder
 from .event_bus import EventBus
 from .admin.event_service import AdminEventService
 from .game_session_store import GameSessionStore
@@ -16,8 +14,7 @@ from .spreading_activation import SpreadingActivationConfig, spread_activation, 
 from .context_window import ContextWindow, count_tokens
 from .instance_manager import InstanceManager, NPCInstance
 from .memory_graphizer import MemoryGraphizer
-from .flash_pro_bridge import FlashProBridge
-from .admin import AdminCoordinator, FlashCPUService, ProDMService, StateManager, AdminWorldRuntime
+from .admin import AdminCoordinator, FlashCPUService, StateManager, AdminWorldRuntime
 
 __all__ = [
     "LLMService",
@@ -25,8 +22,6 @@ __all__ = [
     "ReferenceResolver",
     "MemoryGraph",
     "FlashService",
-    "ProService",
-    "ProContextBuilder",
     "EventBus",
     "AdminEventService",
     "GameSessionStore",
@@ -40,10 +35,8 @@ __all__ = [
     "InstanceManager",
     "NPCInstance",
     "MemoryGraphizer",
-    "FlashProBridge",
     "AdminCoordinator",
     "FlashCPUService",
-    "ProDMService",
     "StateManager",
     "AdminWorldRuntime",
 ]

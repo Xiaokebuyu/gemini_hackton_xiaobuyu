@@ -15,18 +15,10 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ onSessionCreated }) =>
   const [showCreator, setShowCreator] = useState(false);
 
   return (
-    <div className="h-screen w-screen overflow-hidden sketch-theme bg-sketch-bg-primary relative">
-      {/* Paper texture */}
-      <div className="absolute inset-0 sketch-paper-texture pointer-events-none" />
-      {/* Vignette */}
-      <div
-        className="absolute inset-0 pointer-events-none z-[1]"
-        style={{ boxShadow: 'inset 0 0 120px rgba(44,36,22,0.15)' }}
-      />
-
+    <div className="h-screen w-screen overflow-hidden bg-g-bg-base relative">
       {/* Language switch */}
       <div className="absolute top-4 right-4 z-50">
-        <LanguageSwitch variant="sketch" />
+        <LanguageSwitch />
       </div>
 
       {/* Center content */}
@@ -44,20 +36,20 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ onSessionCreated }) =>
             transition={{ delay: 0.2, duration: 0.5 }}
             className="
               w-20 h-20 mx-auto mb-6
-              bg-gradient-to-b from-[#d4ad2e] to-[#c9a227]
+              bg-g-gold
               rounded-full
               flex items-center justify-center
-              shadow-parchment-glow-gold
+              shadow-g-gold
             "
           >
-            <Compass className="w-10 h-10 text-sketch-bg-primary" />
+            <Compass className="w-10 h-10 text-white" />
           </motion.div>
 
           {/* Title */}
-          <h1 className="font-fantasy text-4xl text-sketch-ink-primary mb-2">
+          <h1 className="font-heading text-4xl text-g-text-primary mb-2">
             Chronicle
           </h1>
-          <p className="font-body text-sketch-ink-muted mb-8 text-sm">
+          <p className="font-body text-g-text-muted mb-8 text-sm">
             AI-Driven Interactive RPG
           </p>
 
@@ -69,13 +61,13 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ onSessionCreated }) =>
               onClick={() => setShowCreator(true)}
               className="
                 px-8 py-3
-                bg-gradient-to-b from-[#d4ad2e] to-[#c9a227]
-                text-sketch-ink-primary
-                font-fantasy text-lg
+                bg-g-gold hover:bg-g-gold-dark
+                text-white
+                font-heading text-lg
                 rounded-lg
-                border border-sketch-accent-gold
-                shadow-parchment-md
-                hover:shadow-parchment-glow-gold
+                border border-g-gold
+                shadow-g-md
+                hover:shadow-g-gold
                 transition-shadow duration-200
               "
             >
@@ -93,7 +85,7 @@ export const WelcomePage: React.FC<WelcomePageProps> = ({ onSessionCreated }) =>
         </motion.div>
 
         {/* Footer */}
-        <div className="absolute bottom-6 text-xs text-sketch-ink-faint font-body">
+        <div className="absolute bottom-6 text-xs text-g-text-muted font-body">
           Powered by Gemini + MCP
         </div>
       </div>

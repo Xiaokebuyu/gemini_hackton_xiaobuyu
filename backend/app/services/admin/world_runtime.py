@@ -3,8 +3,11 @@ Admin world runtime service (navigation/time/state).
 """
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.models.event import Event, EventContent, EventType, GMEventIngestRequest
 from app.models.state_delta import GameState, GameTimeState, StateDelta
@@ -106,6 +109,7 @@ class AdminWorldRuntime:
         starting_location: Optional[str] = None,
         starting_time: Optional[dict] = None,
     ) -> GameState:
+        logger.info("会话启动: world=%s, session=%s", world_id, session_id)
         navigator = self._get_navigator_ready(world_id)
         if not navigator.maps:
             raise ValueError(
@@ -157,6 +161,7 @@ class AdminWorldRuntime:
 
         await self.state_manager.set_state(world_id, state.session_id, admin_state)
         await self.persist_state(admin_state)
+        logger.info("会话启动完成: session=%s, location=%s", admin_state.session_id, current_location)
         return admin_state
 
     async def get_current_location(self, world_id: str, session_id: str) -> Dict[str, Any]:
@@ -235,6 +240,7 @@ class AdminWorldRuntime:
         if not state.player_location:
             return {"success": False, "error": "当前位置未知"}
 
+        logger.info("导航开始: from=%s, destination=%s, direction=%s", state.player_location, destination, direction)
         navigator = self._get_navigator_ready(world_id)
         event_generator = self._get_event_generator(world_id)
 
@@ -316,18 +322,16 @@ class AdminWorldRuntime:
         state.player_location = target_id
         state.area_id = target_id
         state.sub_location = None
-        try:
-            progress = await self.narrative_service.get_progress(world_id, session_id)
-            state.chapter_id = progress.current_chapter
-            state.narrative_progress = progress.to_dict()
-        except Exception:
-            pass
+        progress = await self.narrative_service.get_progress(world_id, session_id)
+        state.chapter_id = progress.current_chapter
+        state.narrative_progress = progress.to_dict()
         self._update_time_state(state, time_manager)
 
         await self.state_manager.set_state(world_id, session_id, state)
         await self.persist_state(state)
 
         new_location = await self.get_current_location(world_id, session_id)
+        logger.info("导航完成: to=%s, elapsed_minutes=%d", target_id, travel_result.total_time_minutes)
 
         await self._record_movement_event(
             world_id=world_id,
@@ -375,11 +379,8 @@ class AdminWorldRuntime:
             "输出2-3段简洁叙述，不要OOC。"
         )
 
-        try:
-            response = await self.llm_service.generate_response(prompt, "生成旅途叙述", thinking_level="low")
-            return response.text or "你踏上旅途，经历一段路程后抵达目的地。"
-        except Exception:
-            return "你踏上旅途，经历一段路程后抵达目的地。"
+        response = await self.llm_service.generate_response(prompt, "生成旅途叙述", thinking_level="low")
+        return response.text
 
     async def _record_movement_event(
         self,
@@ -413,10 +414,7 @@ class AdminWorldRuntime:
             character_locations=character_locations,
         )
 
-        try:
-            await self.event_service.ingest_event(world_id, request)
-        except Exception:
-            pass
+        await self.event_service.ingest_event(world_id, request)
 
     async def get_game_time(self, world_id: str, session_id: str) -> Dict[str, Any]:
         state = await self.get_state(world_id, session_id)

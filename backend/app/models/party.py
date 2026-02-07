@@ -35,7 +35,7 @@ class TeammateModelConfig(BaseModel):
     casual_thinking: Optional[Literal["lowest", "low", "medium", "high"]] = None
 
     # 显式对话（深度交流）
-    dialogue_model: str = "gemini-3-pro-preview"
+    dialogue_model: str = "gemini-3-flash-preview"
     dialogue_thinking: Literal["lowest", "low", "medium", "high"] = "low"
 
 

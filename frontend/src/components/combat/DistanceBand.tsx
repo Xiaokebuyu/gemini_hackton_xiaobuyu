@@ -12,11 +12,11 @@ interface DistanceBandProps {
 }
 
 const bandColors: Record<DistanceBandType, string> = {
-  ENGAGED: 'bg-accent-red border-accent-red',
-  CLOSE: 'bg-danger-high border-danger-high',
-  NEAR: 'bg-danger-medium border-danger-medium',
-  FAR: 'bg-danger-low border-danger-low',
-  DISTANT: 'bg-accent-cyan border-accent-cyan',
+  ENGAGED: 'bg-g-red border-g-red',
+  CLOSE: 'bg-g-danger-high border-g-danger-high',
+  NEAR: 'bg-g-danger-medium border-g-danger-medium',
+  FAR: 'bg-g-danger-low border-g-danger-low',
+  DISTANT: 'bg-g-cyan border-g-cyan',
 };
 
 export const DistanceBand: React.FC<DistanceBandProps> = ({
@@ -50,8 +50,8 @@ export const DistanceBand: React.FC<DistanceBandProps> = ({
                     isActive
                       ? `${bandColors[band]} text-white shadow-lg`
                       : isPassed
-                      ? 'bg-bg-secondary border-[var(--color-border-secondary)] text-[var(--color-text-muted)]'
-                      : 'bg-bg-card border-[var(--color-border-secondary)] text-[var(--color-text-secondary)]'
+                      ? 'bg-g-bg-sidebar border-[var(--g-border-default)] text-[var(--g-text-muted)]'
+                      : 'bg-g-bg-surface-alt border-[var(--g-border-default)] text-[var(--g-text-secondary)]'
                   }
                 `}
               >
@@ -73,8 +73,8 @@ export const DistanceBand: React.FC<DistanceBandProps> = ({
                     w-4 h-0.5
                     ${
                       index < currentIndex
-                        ? 'bg-[var(--color-text-muted)]'
-                        : 'bg-[var(--color-border-secondary)]'
+                        ? 'bg-[var(--g-text-muted)]'
+                        : 'bg-[var(--g-border-default)]'
                     }
                   `}
                 />
@@ -85,7 +85,7 @@ export const DistanceBand: React.FC<DistanceBandProps> = ({
       </div>
 
       {/* Description */}
-      <div className="mt-2 text-center text-xs text-[var(--color-text-muted)]">
+      <div className="mt-2 text-center text-xs text-[var(--g-text-muted)]">
         {current === 'ENGAGED' && 'In melee range - can attack without moving'}
         {current === 'CLOSE' && 'One step away - can close with a move action'}
         {current === 'NEAR' && 'Moderate distance - requires movement'}

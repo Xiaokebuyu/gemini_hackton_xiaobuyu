@@ -1,0 +1,302 @@
+{
+  "entities": [
+    {
+      "id": "character_goblin_slayer",
+      "type": "character",
+      "name": "哥布林杀手",
+      "aliases": [
+        "欧尔克博格",
+        "啮切丸",
+        "边境银级冒险者"
+      ],
+      "brief": "边境小镇的银级冒险者，专门从事哥布林讨伐任务，性格沉默寡言且极度务实。"
+    },
+    {
+      "id": "character_priestess",
+      "type": "character",
+      "name": "女神官",
+      "aliases": [
+        "小神官",
+        "地母神信徒"
+      ],
+      "brief": "地母神的见习神官，哥布林杀手的核心队友，在冒险中不断成长。"
+    },
+    {
+      "id": "character_high_elf_archer",
+      "type": "character",
+      "name": "妖精弓手",
+      "aliases": [
+        "上森人游侠",
+        "铁砧"
+      ],
+      "brief": "两千岁的上森人游侠，为了寻求真正的冒险而加入哥布林杀手小队。"
+    },
+    {
+      "id": "character_dwarf_shaman",
+      "type": "character",
+      "name": "矿人道士",
+      "aliases": [
+        "术士兄",
+        "酒桶"
+      ],
+      "brief": "经验丰富的矿人术师，擅长土系精灵术，热爱美酒与美食。"
+    },
+    {
+      "id": "character_lizard_priest",
+      "type": "character",
+      "name": "蜥蜴僧侣",
+      "aliases": [
+        "蜥蜴兄",
+        "小鬼杀手兄"
+      ],
+      "brief": "来自南方沼泽的蜥蜴人僧侣，信奉龙祖，是团队中的智囊与前卫。"
+    },
+    {
+      "id": "character_sword_maiden",
+      "type": "character",
+      "name": "剑之圣女",
+      "aliases": [
+        "水之都大主教",
+        "至高神大主教"
+      ],
+      "brief": "前金等级冒险者，讨伐魔神王的英雄之一，现任水之都至高神殿大主教。"
+    },
+    {
+      "id": "character_hero",
+      "type": "character",
+      "name": "勇者",
+      "aliases": [
+        "光之圣剑持有者",
+        "白金等级冒险者"
+      ],
+      "brief": "天真烂漫的救世主，拥有压倒性的力量，完成了讨伐魔神王的壮举。"
+    },
+    {
+      "id": "character_guild_girl",
+      "type": "character",
+      "name": "柜台小姐",
+      "aliases": [
+        "公会职员"
+      ],
+      "brief": "边境小镇冒险者公会的职员，负责管理委托，对哥布林杀手抱有特殊情感。"
+    },
+    {
+      "id": "character_cow_girl",
+      "type": "character",
+      "name": "牧牛妹",
+      "aliases": [
+        "青梅竹马"
+      ],
+      "brief": "哥布林杀手的青梅竹马，在郊外牧场工作，是哥布林杀手心灵的归宿。"
+    },
+    {
+      "id": "character_raiden_ei",
+      "type": "character",
+      "name": "雷电影",
+      "aliases": [
+        "雷电将军",
+        "当代武圣"
+      ],
+      "brief": "鸣神群岛的统治者，武道之巅的守护者，坚信力量是和平的基石。"
+    },
+    {
+      "id": "character_pecorine",
+      "type": "character",
+      "name": "佩可莉姆",
+      "aliases": [
+        "贪吃剑士",
+        "尤丝蒂亚娜"
+      ],
+      "brief": "兰德索尔王室的长公主，因身份被夺而流亡，极度热爱美食。"
+    },
+    {
+      "id": "location_frontier_town",
+      "type": "location",
+      "name": "边境小镇",
+      "aliases": [
+        "新手村"
+      ],
+      "brief": "王国西境的重要支点，冒险者公会所在地，是故事的核心舞台。"
+    },
+    {
+      "id": "location_water_capital",
+      "type": "location",
+      "name": "水之都",
+      "aliases": [
+        "至高神之都"
+      ],
+      "brief": "繁华的贸易中心，由剑之圣女统治，地下拥有复杂的下水道网络。"
+    },
+    {
+      "id": "location_sol_tower",
+      "type": "location",
+      "name": "索尔之塔",
+      "aliases": [
+        "愿望之塔"
+      ],
+      "brief": "悬浮于兰德索尔上空的巨大高塔，充满魔物与宝藏的史诗级地下城。"
+    },
+    {
+      "id": "location_narukami_archipelago",
+      "type": "location",
+      "name": "鸣神群岛",
+      "aliases": [
+        "隔绝的国度"
+      ],
+      "brief": "位于东南海域的孤立群岛，拥有独特的武道与神道文化。"
+    },
+    {
+      "id": "faction_adventurers_guild",
+      "type": "faction",
+      "name": "冒险者公会",
+      "aliases": [
+        "公会"
+      ],
+      "brief": "遍布大陆的中立组织，负责登记冒险者、评定等级并发布委托。"
+    },
+    {
+      "id": "faction_gs_party",
+      "type": "faction",
+      "name": "哥布林杀手小队",
+      "aliases": [
+        "边境五人组"
+      ],
+      "brief": "由哥布林杀手领导的奇特小队，成员涵盖多个种族，专门解决哥布林威胁。"
+    },
+    {
+      "id": "deity_earth_mother",
+      "type": "deity",
+      "name": "地母神",
+      "aliases": [
+        "丰饶之母",
+        "慈悲女神"
+      ],
+      "brief": "秩序五柱神之一，掌管农业、丰收、慈悲与治愈。"
+    },
+    {
+      "id": "deity_supreme_god",
+      "type": "deity",
+      "name": "至高神",
+      "aliases": [
+        "天平之主",
+        "法律女神"
+      ],
+      "brief": "秩序五柱神之一，掌管法律、正义与审判。"
+    },
+    {
+      "id": "deity_ameth",
+      "type": "deity",
+      "name": "爱梅斯",
+      "aliases": [
+        "幻梦神",
+        "梦境之主"
+      ],
+      "brief": "陨落的神祇，现存于梦境领域，是索尔之塔的创造者与引导者。"
+    },
+    {
+      "id": "race_goblin",
+      "type": "race",
+      "name": "哥布林",
+      "aliases": [
+        "小鬼",
+        "不祈祷者"
+      ],
+      "brief": "邪恶的类人生物，繁殖迅速且生性残忍，是文明社会的公敌。"
+    },
+    {
+      "id": "monster_ogre",
+      "type": "monster",
+      "name": "巨魔",
+      "aliases": [
+        "食人魔"
+      ],
+      "brief": "拥有强大力量与再生能力的巨大怪物，常作为哥布林的幕后黑手。"
+    },
+    {
+      "id": "concept_gods_game",
+      "type": "concept",
+      "name": "诸神的游戏",
+      "aliases": [
+        "宿命与偶然"
+      ],
+      "brief": "世界的底层法则，诸神通过投掷骰子决定凡人的命运与战争胜负。"
+    }
+  ],
+  "key_relations": [
+    {
+      "source": "character_priestess",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_high_elf_archer",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_dwarf_shaman",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_lizard_priest",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_priestess",
+      "target": "deity_earth_mother",
+      "relation": "worships"
+    },
+    {
+      "source": "character_sword_maiden",
+      "target": "deity_supreme_god",
+      "relation": "worships"
+    },
+    {
+      "source": "character_sword_maiden",
+      "target": "location_water_capital",
+      "relation": "rules"
+    },
+    {
+      "source": "character_guild_girl",
+      "target": "faction_adventurers_guild",
+      "relation": "member_of"
+    },
+    {
+      "source": "character_goblin_slayer",
+      "target": "location_farm",
+      "relation": "located_at"
+    },
+    {
+      "source": "character_cow_girl",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_raiden_ei",
+      "target": "location_narukami_archipelago",
+      "relation": "rules"
+    },
+    {
+      "source": "character_yae_miko",
+      "target": "location_narukami_archipelago",
+      "relation": "rules"
+    },
+    {
+      "source": "character_pecorine",
+      "target": "location_landosol",
+      "relation": "native_to"
+    },
+    {
+      "source": "character_kokkoro",
+      "target": "deity_ameth",
+      "relation": "worships"
+    },
+    {
+      "source": "race_goblin",
+      "target": "character_goblin_slayer",
+      "relation": "enemy_of"
+    }
+  ]
+}

@@ -14,10 +14,10 @@ interface DestinationListProps {
 }
 
 const dangerColors = {
-  low: 'text-danger-low border-danger-low',
-  medium: 'text-danger-medium border-danger-medium',
-  high: 'text-danger-high border-danger-high',
-  extreme: 'text-danger-extreme border-danger-extreme',
+  low: 'text-g-danger-low border-g-danger-low',
+  medium: 'text-g-danger-medium border-g-danger-medium',
+  high: 'text-g-danger-high border-g-danger-high',
+  extreme: 'text-g-danger-extreme border-g-danger-extreme',
 };
 
 const dangerLabels = {
@@ -44,7 +44,7 @@ export const DestinationList: React.FC<DestinationListProps> = ({
 
   if (dests.length === 0) {
     return (
-      <div className={`text-sm text-[var(--color-text-muted)] ${className}`}>
+      <div className={`text-sm text-[var(--g-text-muted)] ${className}`}>
         No known paths from here.
       </div>
     );
@@ -52,7 +52,7 @@ export const DestinationList: React.FC<DestinationListProps> = ({
 
   return (
     <div className={`space-y-2 ${className}`}>
-      <h4 className="text-xs text-[var(--color-text-muted)] uppercase tracking-wide mb-2">
+      <h4 className="text-xs text-[var(--g-text-muted)] uppercase tracking-wide mb-2">
         Travel To
       </h4>
       {dests.map((dest, index) => (
@@ -72,8 +72,8 @@ export const DestinationList: React.FC<DestinationListProps> = ({
             transition-all duration-200
             ${
               dest.is_accessible
-                ? 'bg-bg-card hover:bg-bg-card/80 border border-transparent hover:border-accent-gold/50'
-                : 'bg-bg-secondary opacity-50 cursor-not-allowed border border-transparent'
+                ? 'bg-g-bg-surface-alt hover:bg-g-bg-surface-alt/80 border border-transparent hover:border-g-gold/50'
+                : 'bg-g-bg-sidebar opacity-50 cursor-not-allowed border border-transparent'
             }
           `}
         >
@@ -82,13 +82,13 @@ export const DestinationList: React.FC<DestinationListProps> = ({
             className={`
               w-8 h-8 rounded-lg
               flex items-center justify-center
-              ${dest.is_accessible ? 'bg-accent-gold/20' : 'bg-bg-secondary'}
+              ${dest.is_accessible ? 'bg-g-gold/20' : 'bg-g-bg-sidebar'}
             `}
           >
             {dest.is_accessible ? (
-              <Navigation className="w-4 h-4 text-accent-gold" />
+              <Navigation className="w-4 h-4 text-g-gold" />
             ) : (
-              <Lock className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <Lock className="w-4 h-4 text-[var(--g-text-muted)]" />
             )}
           </div>
 
@@ -100,21 +100,21 @@ export const DestinationList: React.FC<DestinationListProps> = ({
                   text-sm font-medium truncate
                   ${
                     dest.is_accessible
-                      ? 'text-[var(--color-text-primary)]'
-                      : 'text-[var(--color-text-muted)]'
+                      ? 'text-[var(--g-text-primary)]'
+                      : 'text-[var(--g-text-muted)]'
                   }
                 `}
               >
                 {dest.name}
               </span>
               {dest.distance && (
-                <span className="text-xs text-[var(--color-text-muted)]">
+                <span className="text-xs text-[var(--g-text-muted)]">
                   {dest.distance}
                 </span>
               )}
             </div>
             {dest.description && (
-              <div className="text-xs text-[var(--color-text-muted)] truncate">
+              <div className="text-xs text-[var(--g-text-muted)] truncate">
                 {dest.description}
               </div>
             )}

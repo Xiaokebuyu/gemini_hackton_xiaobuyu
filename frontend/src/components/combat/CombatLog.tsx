@@ -3,7 +3,18 @@
  */
 import React, { useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ScrollText } from 'lucide-react';
+import {
+  ScrollText,
+  Sword,
+  Zap,
+  Heart,
+  Sparkles,
+  CircleDot,
+  Footprints,
+  Play,
+  Pause,
+  Trophy,
+} from 'lucide-react';
 import type { CombatLogEntry, CombatLogEntryType } from '../../types';
 
 interface CombatLogProps {
@@ -13,18 +24,18 @@ interface CombatLogProps {
 
 const entryTypeStyles: Record<
   CombatLogEntryType,
-  { color: string; icon: string }
+  { color: string; icon: React.ReactNode }
 > = {
-  attack: { color: 'text-accent-red', icon: '⚔️' },
-  damage: { color: 'text-danger-high', icon: '💥' },
-  heal: { color: 'text-danger-low', icon: '💚' },
-  spell: { color: 'text-accent-purple', icon: '✨' },
-  status: { color: 'text-danger-medium', icon: '🔮' },
-  movement: { color: 'text-accent-cyan', icon: '👣' },
-  turn_start: { color: 'text-accent-gold', icon: '▶️' },
-  turn_end: { color: 'text-[var(--color-text-muted)]', icon: '⏸️' },
-  combat_start: { color: 'text-accent-red', icon: '⚔️' },
-  combat_end: { color: 'text-accent-gold', icon: '🏆' },
+  attack: { color: 'text-g-red', icon: <Sword className="w-3 h-3 inline" /> },
+  damage: { color: 'text-g-danger-high', icon: <Zap className="w-3 h-3 inline" /> },
+  heal: { color: 'text-g-danger-low', icon: <Heart className="w-3 h-3 inline" /> },
+  spell: { color: 'text-g-purple', icon: <Sparkles className="w-3 h-3 inline" /> },
+  status: { color: 'text-g-danger-medium', icon: <CircleDot className="w-3 h-3 inline" /> },
+  movement: { color: 'text-g-cyan', icon: <Footprints className="w-3 h-3 inline" /> },
+  turn_start: { color: 'text-g-gold', icon: <Play className="w-3 h-3 inline" /> },
+  turn_end: { color: 'text-[var(--g-text-muted)]', icon: <Pause className="w-3 h-3 inline" /> },
+  combat_start: { color: 'text-g-red', icon: <Sword className="w-3 h-3 inline" /> },
+  combat_end: { color: 'text-g-gold', icon: <Trophy className="w-3 h-3 inline" /> },
 };
 
 export const CombatLog: React.FC<CombatLogProps> = ({
@@ -43,15 +54,15 @@ export const CombatLog: React.FC<CombatLogProps> = ({
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Header */}
-      <div className="flex items-center gap-2 p-3 border-b border-[var(--color-border-secondary)]">
-        <ScrollText className="w-4 h-4 text-accent-gold" />
-        <h3 className="text-sm font-fantasy text-accent-gold">Combat Log</h3>
+      <div className="flex items-center gap-2 p-3 border-b border-[var(--g-border-default)]">
+        <ScrollText className="w-4 h-4 text-g-gold" />
+        <h3 className="text-sm font-heading text-g-gold">Combat Log</h3>
       </div>
 
       {/* Log entries */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto fantasy-scrollbar p-3 space-y-2"
+        className="flex-1 overflow-y-auto g-scrollbar p-3 space-y-2"
       >
         <AnimatePresence mode="popLayout">
           {entries.map((entry) => {
@@ -65,7 +76,7 @@ export const CombatLog: React.FC<CombatLogProps> = ({
                 className="text-sm"
               >
                 {/* Timestamp */}
-                <span className="text-xs text-[var(--color-text-muted)] mr-2">
+                <span className="text-xs text-[var(--g-text-muted)] mr-2">
                   {entry.timestamp.toLocaleTimeString([], {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -92,7 +103,7 @@ export const CombatLog: React.FC<CombatLogProps> = ({
                       {' attacks '}
                       <span className="font-medium">{entry.target}</span>
                       {entry.roll && (
-                        <span className="text-[var(--color-text-muted)]">
+                        <span className="text-[var(--g-text-muted)]">
                           {' '}
                           (d20: {entry.roll.result}
                           {entry.roll.modifier >= 0 ? '+' : ''}
@@ -105,7 +116,7 @@ export const CombatLog: React.FC<CombatLogProps> = ({
                     <span>
                       <span className="font-medium">{entry.target}</span>
                       {' takes '}
-                      <span className="font-bold text-accent-red">
+                      <span className="font-bold text-g-red">
                         {entry.result.damage}
                       </span>
                       {' damage'}
@@ -115,7 +126,7 @@ export const CombatLog: React.FC<CombatLogProps> = ({
                     <span>
                       <span className="font-medium">{entry.target}</span>
                       {' heals for '}
-                      <span className="font-bold text-danger-low">
+                      <span className="font-bold text-g-danger-low">
                         {entry.result.healing}
                       </span>
                       {' HP'}
@@ -158,7 +169,7 @@ export const CombatLog: React.FC<CombatLogProps> = ({
 
                 {/* Result message */}
                 {entry.result?.message && (
-                  <div className="ml-6 text-xs text-[var(--color-text-secondary)] italic">
+                  <div className="ml-6 text-xs text-[var(--g-text-secondary)] italic">
                     {entry.result.message}
                   </div>
                 )}
@@ -168,7 +179,7 @@ export const CombatLog: React.FC<CombatLogProps> = ({
         </AnimatePresence>
 
         {entries.length === 0 && (
-          <div className="text-center text-[var(--color-text-muted)] text-sm py-4">
+          <div className="text-center text-[var(--g-text-muted)] text-sm py-4">
             No combat actions yet...
           </div>
         )}

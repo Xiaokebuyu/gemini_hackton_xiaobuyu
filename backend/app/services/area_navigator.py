@@ -110,9 +110,12 @@ class MapConnection:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MapConnection":
+        connection_type_raw = str(data.get("connection_type", "travel")).strip().lower()
+        if connection_type_raw == "walk":
+            connection_type_raw = "travel"
         return cls(
             target_map_id=data["target_map_id"],
-            connection_type=ConnectionType(data.get("connection_type", "travel")),
+            connection_type=ConnectionType(connection_type_raw),
             travel_time=data.get("travel_time", "30分钟"),
             requirements=data.get("requirements"),
             description=data.get("description"),

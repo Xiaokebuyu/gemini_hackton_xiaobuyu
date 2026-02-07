@@ -26,7 +26,7 @@ from app.models.graph_elements import (
     TranscriptMessage,
     TranscriptRange,
 )
-from app.models.pro import CharacterProfile
+from app.models.character_profile import CharacterProfile
 
 if TYPE_CHECKING:
     from app.services.flash_service import FlashService
@@ -229,8 +229,9 @@ class MemoryGraphizer:
 - 游戏日: 第{game_day}天
 - 地点: {location or '未知'}
 
-## 已有的重要节点（可以引用这些节点建立连接）
+## 已有的重要节点（优先引用，不要重复创建）
 {nodes_reference}
+如果对话中提到的人物/地点已存在于以上节点列表中，请直接引用其 ID 建立边连接，不要创建新节点。
 
 ## 输出要求
 
@@ -354,7 +355,7 @@ class MemoryGraphizer:
         event_group = EventGroupNode(
             id=f"event_group_{timestamp}",
             name="对话记录",
-            importance=0.3,
+            importance=0.5,
             day=game_day,
             location=location,
             summary="与玩家进行了一段对话",
@@ -493,6 +494,30 @@ class MemoryGraphizer:
         result = MergeResult()
         char_scope = GraphScope.character(npc_id)
 
+        # 0. 确保当前实例角色节点存在（便于 event_group 锚定到 owner）
+        existing_owner = await self.graph_store.get_nodes_by_ids_v2(
+            world_id=world_id,
+            scope=char_scope,
+            node_ids=[npc_id],
+        )
+        if not existing_owner:
+            owner_node = MemoryNode(
+                id=npc_id,
+                type="character",
+                name=npc_id,
+                importance=0.2,
+                properties={
+                    "character_id": npc_id,
+                    "scope_type": "character",
+                    "created_by": "graphizer_identity",
+                },
+            )
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=char_scope,
+                node=owner_node,
+            )
+
         # 1. 创建 event_group 节点
         if extraction.event_group:
             eg = extraction.event_group
@@ -566,6 +591,51 @@ class MemoryGraphizer:
             )
             result.new_nodes += 1
             result.new_node_ids.append(node.id)
+
+        # 3.5. 程序化锚点边（不依赖 LLM 抽取）
+        if extraction.event_group:
+            eg_id = extraction.event_group.id
+            eg_location = extraction.event_group.location
+            eg_participants = extraction.event_group.participants or []
+
+            anchor_edges = []
+            # 到地点
+            if eg_location:
+                anchor_edges.append(MemoryEdge(
+                    id=f"edge_{eg_id}_at_{eg_location}",
+                    source=eg_id, target=eg_location,
+                    relation="located_in", weight=0.8,
+                ))
+            # 到 owner（当前实例角色）
+            anchor_edges.append(MemoryEdge(
+                id=f"edge_{eg_id}_owner_{npc_id}",
+                source=eg_id, target=npc_id,
+                relation="participated", weight=0.9,
+            ))
+            # 到玩家
+            anchor_edges.append(MemoryEdge(
+                id=f"edge_{eg_id}_player",
+                source=eg_id, target="player",
+                relation="participated", weight=0.9,
+            ))
+            # 到参与者
+            for participant in eg_participants:
+                if participant == "player":
+                    continue  # 已添加
+                anchor_edges.append(MemoryEdge(
+                    id=f"edge_{eg_id}_part_{participant}",
+                    source=eg_id, target=participant,
+                    relation="participated", weight=0.8,
+                ))
+
+            for anchor_edge in anchor_edges:
+                await self.graph_store.upsert_edge_v2(
+                    world_id=world_id,
+                    scope=char_scope,
+                    edge=anchor_edge,
+                )
+                result.new_edges += 1
+                result.new_edge_ids.append(anchor_edge.id)
 
         # 4. 创建边
         for edge_spec in extraction.edges:

@@ -3,8 +3,10 @@ Flash CPU service - rules/execution/state management.
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,14 +20,12 @@ from app.models.admin_protocol import (
     IntentType,
     ParsedIntent,
 )
-from app.models.flash import RecallRequest
 from app.models.state_delta import StateDelta
 from app.services.admin.state_manager import StateManager
 from app.services.flash_service import FlashService
 from app.services.admin.event_service import AdminEventService
 from app.services.admin.world_runtime import AdminWorldRuntime
 from app.services.game_session_store import GameSessionStore
-from app.services.pro_service import ProService
 from app.services.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
 from app.services.llm_service import LLMService
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class FlashCPUService:
-    """Flash CPU service (transitional implementation)."""
+    """Flash CPU service."""
 
     def __init__(
         self,
@@ -44,22 +44,22 @@ class FlashCPUService:
         flash_service: Optional[FlashService] = None,
         world_runtime: Optional[AdminWorldRuntime] = None,
         session_store: Optional[GameSessionStore] = None,
-        pro_service: Optional[ProService] = None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
         llm_service: Optional[LLMService] = None,
         analysis_prompt_path: Optional[Path] = None,
+        instance_manager: Optional[Any] = None,
     ) -> None:
         self.state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
         self.flash_service = flash_service or FlashService()
         self.world_runtime = world_runtime
         self.session_store = session_store or GameSessionStore()
-        self.pro_service = pro_service or ProService()
         self.narrative_service = narrative_service
         self.passerby_service = passerby_service or PasserbyService()
         self.llm_service = llm_service or LLMService()
         self.analysis_prompt_path = analysis_prompt_path or Path("app/prompts/flash_analysis.md")
+        self.instance_manager = instance_manager
 
     def _load_analysis_prompt(self) -> str:
         if self.analysis_prompt_path.exists():
@@ -205,11 +205,10 @@ class FlashCPUService:
                 "npc_dialogue": "npc_dialogue",
                 "spawn_passerby": "spawn_passerby",
                 "trigger_narrative_event": "trigger_narrative_event",
-                "broadcast_event": "broadcast_event",
-                "graphize_event": "graphize_event",
-                "recall_memory": "recall_memory",
                 "update_time": "update_time",
                 "navigate": "navigate",
+                "get_progress": "get_progress",
+                "get_status": "get_status",
             }
             op_key = op_aliases.get(op_key, op_key)
             operation = None
@@ -229,11 +228,15 @@ class FlashCPUService:
 
         memory_seeds = [str(s) for s in parsed.get("memory_seeds", []) if s]
         reasoning = parsed.get("reasoning") or ""
+        context_package = parsed.get("context_package")
+        if context_package and not isinstance(context_package, dict):
+            context_package = None
         return AnalysisPlan(
             intent=intent,
             operations=operations,
             memory_seeds=memory_seeds,
             reasoning=reasoning,
+            context_package=context_package,
         )
 
     async def analyze_and_plan(
@@ -272,166 +275,231 @@ class FlashCPUService:
             current_state=context.get("state", "exploring"),
             active_npc=context.get("active_npc") or "无",
             player_input=player_input,
+            conversation_history=context.get("conversation_history", "无"),
+            character_roster=context.get("character_roster", "无"),
         )
 
         try:
             result = await self.llm_service.generate_simple(
                 filled_prompt,
-                model_override=settings.gemini_flash_model,
+                model_override=settings.admin_flash_model,
+                thinking_level=settings.admin_flash_thinking_level,
             )
             parsed = self.llm_service.parse_json(result)
             if parsed:
                 return self._parse_analysis_result(parsed, player_input, context)
         except Exception as exc:
-            print(f"[FlashCPU] analyze_and_plan 失败: {exc}")
+            logger.error("analyze_and_plan 失败: %s", exc, exc_info=True)
 
         return self._default_plan(player_input)
 
-    async def process_player_input(
+    def _load_curation_prompt(self) -> str:
+        curation_path = Path("app/prompts/flash_context_curation.md")
+        if curation_path.exists():
+            return curation_path.read_text(encoding="utf-8")
+        return "你是上下文编排引擎。从图谱数据中挑选与当前场景相关的信息，返回严格 JSON。"
+
+    def _load_gm_narration_prompt(self) -> str:
+        prompt_path = Path("app/prompts/flash_gm_narration.md")
+        if prompt_path.exists():
+            return prompt_path.read_text(encoding="utf-8")
+        return (
+            "你是GM。基于场景、近期对话、记忆和本轮执行结果生成2-4句沉浸式中文叙述。"
+            "避免复读，不要输出JSON。"
+        )
+
+    def _format_subgraph_for_prompt(self, memory_result) -> tuple:
+        """将扩散激活结果格式化为提示词文本。返回 (nodes_text, edges_text)。"""
+        activated = getattr(memory_result, "activated_nodes", {}) or {}
+        subgraph = getattr(memory_result, "subgraph", None)
+
+        if not activated or not subgraph:
+            return "无激活节点", "无关系"
+
+        node_lookup = {}
+        if getattr(subgraph, "nodes", None):
+            node_lookup = {node.id: node for node in subgraph.nodes}
+
+        # 格式化节点（按激活分数排序，最多20个）
+        scored = sorted(activated.items(), key=lambda x: x[1], reverse=True)
+        node_lines = []
+        for node_id, score in scored[:20]:
+            node = node_lookup.get(node_id)
+            if not node:
+                continue
+            props = getattr(node, "properties", {}) or {}
+            if props.get("placeholder"):
+                continue
+            # 收集关键属性
+            detail_parts = []
+            rich_keys = [
+                "background", "role", "personality", "occupation",
+                "summary", "description", "status", "atmosphere",
+                "danger_level", "resident_npcs", "participants",
+                "emotion", "objectives", "consequences", "resolved",
+                "sub_type", "location",
+            ]
+            for key in rich_keys:
+                val = props.get(key)
+                if val:
+                    val_str = str(val)
+                    if len(val_str) > 120:
+                        val_str = val_str[:120] + "..."
+                    detail_parts.append(f"{key}: {val_str}")
+            game_day = props.get("game_day")
+            if game_day is not None:
+                detail_parts.append(f"game_day: {game_day}")
+
+            details = "; ".join(detail_parts[:6]) if detail_parts else ""
+            details_block = f" | {details}" if details else ""
+            node_lines.append(
+                f"- [{node.type}] {node.name} (id={node.id}, score={score:.2f}){details_block}"
+            )
+
+        # 格式化边（仅涉及激活节点的边，最多15条）
+        edge_lines = []
+        activated_ids = set(activated.keys())
+        if getattr(subgraph, "edges", None):
+            for edge in subgraph.edges:
+                src = getattr(edge, "source", None)
+                tgt = getattr(edge, "target", None)
+                if src not in activated_ids and tgt not in activated_ids:
+                    continue
+                src_name = node_lookup[src].name if src in node_lookup else src
+                tgt_name = node_lookup[tgt].name if tgt in node_lookup else tgt
+                relation = getattr(edge, "relation", "related")
+                edge_props = getattr(edge, "properties", {}) or {}
+                prop_parts = []
+                for ek in ["evidence_text", "travel_time", "approval", "trust", "fear", "romance"]:
+                    ev = edge_props.get(ek)
+                    if ev is not None:
+                        prop_parts.append(f"{ek}: {ev}")
+                prop_str = f" ({', '.join(prop_parts)})" if prop_parts else ""
+                edge_lines.append(f"- {src_name} --[{relation}]--> {tgt_name}{prop_str}")
+                if len(edge_lines) >= 15:
+                    break
+
+        nodes_text = "\n".join(node_lines) if node_lines else "无激活节点"
+        edges_text = "\n".join(edge_lines) if edge_lines else "无关系"
+        return nodes_text, edges_text
+
+    async def curate_context(
         self,
-        world_id: str,
-        session_id: str,
         player_input: str,
-        input_type: Optional[Any] = None,
-        mode: Optional[Any] = None,
-    ) -> Dict[str, Any]:
-        """Process player input with simple rules and tool execution."""
-        state = None
-        if self.world_runtime:
-            try:
-                state = await self.world_runtime.get_state(world_id, session_id)
-            except Exception:
-                state = None
+        intent: "ParsedIntent",
+        memory_result: Any,
+        flash_results: List[Any],
+        context: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """第二轮 Flash：基于扩散激活结果编排 context_package。"""
+        prompt_template = self._load_curation_prompt()
 
-        text = player_input.strip()
+        location = context.get("location") or {}
+        time_info = context.get("time") or {}
 
-        # System commands (simple rule-based)
-        if text.startswith("/think") or text.startswith("/mode think"):
-            delta = self._build_state_delta("chat_mode", {"chat_mode": "think"})
-            await self._apply_delta(world_id, session_id, delta)
-            return {
-                "type": "system",
-                "response": "已切换到 THINK 模式。",
-                "speaker": "系统",
-                "state_changes": {"chat_mode": "think"},
-                "state_delta": delta.model_dump(),
-            }
+        # 格式化扩散激活结果
+        nodes_text, edges_text = self._format_subgraph_for_prompt(memory_result)
 
-        if text.startswith("/say") or text.startswith("/mode say"):
-            delta = self._build_state_delta("chat_mode", {"chat_mode": "say"})
-            await self._apply_delta(world_id, session_id, delta)
-            return {
-                "type": "system",
-                "response": "已切换到 SAY 模式。",
-                "speaker": "系统",
-                "state_changes": {"chat_mode": "say"},
-                "state_delta": delta.model_dump(),
-            }
+        # 格式化操作执行结果
+        exec_lines = []
+        for r in (flash_results or []):
+            op = getattr(r, "operation", None)
+            op_str = op.value if hasattr(op, "value") else str(op)
+            success = getattr(r, "success", False)
+            error = getattr(r, "error", None)
+            if success:
+                detail = ""
+                result_dict = getattr(r, "result", {})
+                if isinstance(result_dict, dict):
+                    detail = (
+                        result_dict.get("summary")
+                        or result_dict.get("narration")
+                        or result_dict.get("description")
+                        or ""
+                    )
+                exec_lines.append(f"- [{op_str}] 成功: {detail or '执行成功'}")
+            else:
+                exec_lines.append(f"- [{op_str}] 失败: {error or '未知错误'}")
+        execution_summary = "\n".join(exec_lines) if exec_lines else "无操作执行"
 
-        if text.startswith("/time"):
-            fallback = (
-                (lambda: self.world_runtime.get_game_time(world_id, session_id))
-                if self.world_runtime
-                else (lambda: {"error": "时间系统未初始化"})
+        filled_prompt = prompt_template.format(
+            intent_type=intent.intent_type.value if hasattr(intent.intent_type, "value") else str(intent.intent_type),
+            intent_target=intent.target or "无",
+            intent_interpretation=intent.interpretation or "无",
+            player_input=player_input,
+            location_name=location.get("location_name", "未知地点"),
+            time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
+            current_state=context.get("state", "exploring"),
+            execution_summary=execution_summary,
+            activated_nodes=nodes_text,
+            activated_edges=edges_text,
+        )
+
+        result = await self.llm_service.generate_simple(
+            filled_prompt,
+            model_override=settings.admin_flash_model,
+            thinking_level=settings.admin_flash_thinking_level,
+        )
+        parsed = self.llm_service.parse_json(result)
+        if not parsed:
+            logger.warning("curate_context: JSON 解析失败, raw=%s", result[:200])
+            return None
+        # 支持顶层 context_package 或直接返回 context_package 内容
+        cp = parsed.get("context_package", parsed)
+        if isinstance(cp, dict):
+            return cp
+        logger.warning("curate_context: 返回值不是 dict, type=%s", type(cp))
+        return None
+
+    async def generate_gm_narration(
+        self,
+        player_input: str,
+        execution_summary: str,
+        context: Dict[str, Any],
+    ) -> str:
+        """使用 Flash 模型直接生成 GM 叙述。"""
+        location = context.get("location") or {}
+        time_info = context.get("time") or {}
+        teammates = context.get("teammates") or []
+        conversation_history = context.get("conversation_history") or "无"
+        world_background = context.get("world_background") or "无"
+        memory_summary = context.get("memory_summary") or "无"
+        context_package = context.get("context_package") or {}
+
+        teammate_lines = []
+        for teammate in teammates:
+            if not isinstance(teammate, dict):
+                continue
+            teammate_lines.append(
+                f"- {teammate.get('name', '?')}({teammate.get('role', '?')}, 情绪:{teammate.get('current_mood', '未知')})"
             )
-            result = await self._call_tool_with_fallback(
-                "get_time",
-                {"world_id": world_id, "session_id": session_id},
-                fallback=fallback,
-            )
-            response_text = result.get("formatted") if isinstance(result, dict) else None
-            return {
-                "type": "system",
-                "response": response_text or "时间信息已获取。",
-                "speaker": "系统",
-                "state_changes": {},
-                "time": result,
-            }
+        teammates_text = "\n".join(teammate_lines) if teammate_lines else "无"
 
-        if text.startswith("/where") or text.startswith("/location"):
-            fallback = (
-                (lambda: self.world_runtime.get_current_location(world_id, session_id))
-                if self.world_runtime
-                else (lambda: {"error": "位置系统未初始化"})
-            )
-            result = await self._call_tool_with_fallback(
-                "get_location",
-                {"world_id": world_id, "session_id": session_id},
-                fallback=fallback,
-            )
-            location_name = result.get("location_name") if isinstance(result, dict) else None
-            return {
-                "type": "system",
-                "response": f"当前位置：{location_name}" if location_name else "已获取位置信息。",
-                "speaker": "系统",
-                "state_changes": {},
-                "location": result,
-            }
+        prompt_template = self._load_gm_narration_prompt()
+        prompt = prompt_template.format(
+            location_name=location.get("location_name", "未知地点"),
+            location_atmosphere=location.get("atmosphere", ""),
+            time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
+            current_state=context.get("state", "exploring"),
+            active_npc=context.get("active_npc") or "无",
+            world_background=world_background,
+            teammates=teammates_text,
+            conversation_history=conversation_history,
+            memory_summary=memory_summary,
+            context_package=json.dumps(context_package, ensure_ascii=False) if context_package else "无",
+            execution_summary=execution_summary or "无",
+            player_input=player_input,
+        )
 
-        if text.startswith("/go ") or text.startswith("/navigate "):
-            destination = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
-            request = FlashRequest(
-                operation=FlashOperation.NAVIGATE,
-                parameters={"destination": destination},
-            )
-            result = await self.execute_request(world_id, session_id, request)
-            return {
-                "type": "narration" if result.success else "error",
-                "response": result.result.get("narration", "") if result.success else (result.error or ""),
-                "speaker": "GM",
-                "state_changes": result.state_delta.model_dump() if result.state_delta else {},
-            }
-
-        if text.startswith("/talk "):
-            npc_id = text.split(maxsplit=1)[1].strip()
-            if not npc_id:
-                return {"type": "error", "response": "请指定NPC ID", "speaker": "系统"}
-            delta = self._build_state_delta("dialogue_start", {"active_dialogue_npc": npc_id})
-            await self._apply_delta(world_id, session_id, delta)
-            response = await self._npc_respond(world_id, session_id, npc_id, "你好")
-            return {
-                "type": "dialogue",
-                "response": response.get("response", ""),
-                "speaker": response.get("npc_id", npc_id),
-                "npc_id": npc_id,
-                "state_changes": {"active_dialogue_npc": npc_id},
-                "state_delta": delta.model_dump(),
-            }
-
-        if text.startswith("/end") or text.startswith("/leave"):
-            if state and state.active_dialogue_npc:
-                delta = self._build_state_delta("dialogue_end", {"active_dialogue_npc": None})
-                await self._apply_delta(world_id, session_id, delta)
-                return {
-                    "type": "system",
-                    "response": "结束对话。",
-                    "speaker": "系统",
-                    "state_changes": {"active_dialogue_npc": None},
-                    "state_delta": delta.model_dump(),
-                }
-
-        # Default admin narration path (Pro DM will fill response)
-        context_payload: Dict[str, Any] = {}
-        if self.world_runtime:
-            try:
-                location = await self.world_runtime.get_current_location(world_id, session_id)
-                time_info = await self.world_runtime.get_game_time(world_id, session_id)
-                context_payload = {
-                    "location": location,
-                    "time": time_info,
-                    "chat_mode": state.chat_mode if state else None,
-                }
-            except Exception:
-                context_payload = {}
-
-        return {
-            "type": "narration",
-            "response": "",
-            "speaker": "GM",
-            "state_changes": {},
-            "context": context_payload,
-        }
-
+        result = await self.llm_service.generate_simple(
+            prompt,
+            model_override=settings.admin_flash_model,
+            thinking_level=settings.admin_flash_thinking_level,
+        )
+        narration = (result or "").strip()
+        if not narration:
+            raise RuntimeError("Flash GM narration empty")
+        return narration
 
     async def execute_request(
         self,
@@ -440,7 +508,7 @@ class FlashCPUService:
         request: FlashRequest,
         generate_narration: bool = True,
     ) -> FlashResponse:
-        """Execute a Flash operation using legacy services (transitional)."""
+        """Execute a Flash operation."""
         op = request.operation
         params = request.parameters or {}
 
@@ -458,37 +526,14 @@ class FlashCPUService:
 
         try:
             if op == FlashOperation.NAVIGATE:
-                result = await self._call_tool_with_fallback(
-                    "navigate",
-                    {
-                        "world_id": world_id,
-                        "session_id": session_id,
-                        "destination": params.get("destination"),
-                        "direction": params.get("direction"),
-                        "generate_narration": generate_narration,
-                    },
-                    fallback=lambda: self.world_runtime.navigate(
-                        world_id=world_id,
-                        session_id=session_id,
-                        destination=params.get("destination"),
-                        direction=params.get("direction"),
-                        generate_narration=generate_narration,
-                    )
-                    if self.world_runtime
-                    else (lambda: {"success": False, "error": "导航系统未初始化"})(),
+                result = await self.world_runtime.navigate(
+                    world_id=world_id,
+                    session_id=session_id,
+                    destination=params.get("destination"),
+                    direction=params.get("direction"),
+                    generate_narration=generate_narration,
                 )
-                if self._is_tool_result_failure(result) and self.world_runtime:
-                    direct_result = await self.world_runtime.navigate(
-                        world_id=world_id,
-                        session_id=session_id,
-                        destination=params.get("destination"),
-                        direction=params.get("direction"),
-                        generate_narration=generate_narration,
-                    )
-                    if isinstance(direct_result, dict):
-                        result = direct_result
-                if self.world_runtime:
-                    await self.world_runtime.refresh_state(world_id, session_id)
+                await self.world_runtime.refresh_state(world_id, session_id)
                 payload = result if isinstance(result, dict) else {"raw": result}
                 success = bool(payload.get("success"))
                 error_message = payload.get("error") if not success else None
@@ -501,21 +546,10 @@ class FlashCPUService:
 
             if op == FlashOperation.UPDATE_TIME:
                 minutes = int(params.get("minutes", 0))
-                result = await self._call_tool_with_fallback(
-                    "advance_time",
-                    {"world_id": world_id, "session_id": session_id, "minutes": minutes},
-                    fallback=lambda: self.world_runtime.advance_time(world_id, session_id, minutes)
-                    if self.world_runtime
-                    else {"error": "时间系统未初始化"},
-                )
-                if self._is_tool_result_failure(result) and self.world_runtime:
-                    direct_result = await self.world_runtime.advance_time(world_id, session_id, minutes)
-                    if isinstance(direct_result, dict):
-                        result = direct_result
-                if self.world_runtime:
-                    await self.world_runtime.refresh_state(world_id, session_id)
+                result = await self.world_runtime.advance_time(world_id, session_id, minutes)
+                await self.world_runtime.refresh_state(world_id, session_id)
                 payload = result if isinstance(result, dict) else {"raw": result}
-                success = not self._is_tool_result_failure(payload)
+                success = isinstance(payload, dict) and not payload.get("error") and payload.get("success") is not False
                 delta = self._build_state_delta("update_time", {"game_time": payload.get("time")})
                 error_message = payload.get("error") if not success else None
                 return FlashResponse(
@@ -539,35 +573,12 @@ class FlashCPUService:
                         error="missing sub_location_id",
                     )
 
-                result = await self._call_tool_with_fallback(
-                    "enter_sublocation",
-                    {
-                        "world_id": world_id,
-                        "session_id": session_id,
-                        "sub_location_id": sub_location_id,
-                    },
-                    fallback=lambda: self.world_runtime.enter_sub_location(
-                        world_id=world_id,
-                        session_id=session_id,
-                        sub_location_id=sub_location_id,
-                    )
-                    if self.world_runtime
-                    else {"success": False, "error": "子地点系统未初始化"},
+                result = await self.world_runtime.enter_sub_location(
+                    world_id=world_id,
+                    session_id=session_id,
+                    sub_location_id=sub_location_id,
                 )
-                # MCP 语义失败时（error/success=false），再尝试本地 runtime，
-                # 避免 MCP 子进程状态与主进程短暂不一致导致的误失败。
-                mcp_failed = self._is_tool_result_failure(result)
-                if mcp_failed and self.world_runtime:
-                    direct_result = await self.world_runtime.enter_sub_location(
-                        world_id=world_id,
-                        session_id=session_id,
-                        sub_location_id=sub_location_id,
-                    )
-                    if isinstance(direct_result, dict):
-                        result = direct_result
-
-                if self.world_runtime:
-                    await self.world_runtime.refresh_state(world_id, session_id)
+                await self.world_runtime.refresh_state(world_id, session_id)
                 payload = result if isinstance(result, dict) else {"raw": result}
                 success = bool(payload.get("success"))
                 error_message = payload.get("error") if not success else None
@@ -579,7 +590,7 @@ class FlashCPUService:
                 )
 
             if op == FlashOperation.START_COMBAT:
-                result = await self._call_combat_tool_with_fallback(
+                result = await self._call_combat_tool(
                     "start_combat_session",
                     {
                         "world_id": world_id,
@@ -590,124 +601,81 @@ class FlashCPUService:
                         "allies": params.get("allies"),
                         "combat_context": params.get("combat_context"),
                     },
-                    fallback=lambda: {"type": "error", "response": "战斗工具不可用"},
                 )
                 if isinstance(result, dict) and result.get("combat_id"):
                     delta = self._build_state_delta("start_combat", {"combat_id": result.get("combat_id")})
                     await self._apply_delta(world_id, session_id, delta)
-                success = True
-                if isinstance(result, dict) and result.get("type") == "error":
-                    success = False
-                return FlashResponse(success=success, operation=op, result=result)
-
-            if op == FlashOperation.RECALL_MEMORY:
-                recall_payload = params.get("request") or {}
-                recall_request = (
-                    recall_payload
-                    if isinstance(recall_payload, RecallRequest)
-                    else RecallRequest(**recall_payload)
-                )
-                chapter_id = params.get("chapter_id")
-                area_id = params.get("area_id")
-                tool_args = {
-                    "world_id": world_id,
-                    "character_id": params.get("character_id"),
-                    "request": recall_request.model_dump(),
-                }
-                if chapter_id:
-                    tool_args["chapter_id"] = chapter_id
-                if area_id:
-                    tool_args["area_id"] = area_id
-                result = await self._call_tool_with_fallback(
-                    "recall_memory",
-                    tool_args,
-                    # 不再回退旧的 character-only recall 逻辑，MCP 不可用时显式失败。
-                    fallback=lambda: {"error": "recall_memory MCP tool unavailable"},
-                )
-                payload = result.model_dump() if hasattr(result, "model_dump") else result
-                payload_dict = payload if isinstance(payload, dict) else {"raw": payload}
-                error_message = payload_dict.get("error")
-                return FlashResponse(
-                    success=not bool(error_message),
-                    operation=op,
-                    result=payload_dict,
-                    error=error_message,
-                )
-
-            if op == FlashOperation.BROADCAST_EVENT:
-                # Expect caller to pass a GMEventIngestRequest-compatible dict.
-                payload = params.get("request")
-                if not payload:
-                    return FlashResponse(success=False, operation=op, error="missing request payload")
-                if not hasattr(payload, "event"):
-                    from app.models.event import GMEventIngestRequest
-                    payload = GMEventIngestRequest(**payload)
-                result = await self.event_service.ingest_event(world_id, payload)
-                return FlashResponse(success=True, operation=op, result=result.model_dump() if hasattr(result, "model_dump") else result)
-
-            if op == FlashOperation.GRAPHIZE_EVENT:
-                return FlashResponse(success=False, operation=op, error="graphize_event not implemented yet")
+                success = isinstance(result, dict) and result.get("type") != "error" and not result.get("error")
+                error_message = None
+                if not success and isinstance(result, dict):
+                    error_message = result.get("error") or result.get("response")
+                return FlashResponse(success=success, operation=op, result=result, error=error_message)
 
             if op == FlashOperation.TRIGGER_NARRATIVE_EVENT:
-                result = await self._call_tool_with_fallback(
-                    "trigger_event",
-                    {"world_id": world_id, "session_id": session_id, "event_id": params.get("event_id")},
-                    fallback=lambda: self.narrative_service.trigger_event(world_id, session_id, params.get("event_id"))
-                    if self.narrative_service
-                    else {"error": "叙事系统未初始化"},
-                )
-                return FlashResponse(success=True, operation=op, result=result)
+                if not self.narrative_service:
+                    return FlashResponse(success=False, operation=op, error="叙事系统未初始化")
+                result = await self.narrative_service.trigger_event(world_id, session_id, params.get("event_id"))
+                payload = result if isinstance(result, dict) else {"raw": result}
+                success = isinstance(payload, dict) and not payload.get("error")
+                error_message = payload.get("error") if not success else None
+                return FlashResponse(success=success, operation=op, result=payload, error=error_message)
 
             if op == FlashOperation.SPAWN_PASSERBY:
-                result = await self._call_tool_with_fallback(
-                    "spawn_passerby",
-                    {
-                        "world_id": world_id,
-                        "map_id": params.get("map_id"),
-                        "sub_location_id": params.get("sub_location_id"),
-                        "spawn_hint": params.get("spawn_hint"),
-                    },
-                    fallback=lambda: self.passerby_service.get_or_spawn_passerby(
-                        world_id,
-                        params.get("map_id"),
-                        params.get("sub_location_id"),
-                    )
-                    if self.passerby_service
-                    else {"error": "路人系统未初始化"},
+                if not self.passerby_service:
+                    return FlashResponse(success=False, operation=op, error="路人系统未初始化")
+                result = await self.passerby_service.get_or_spawn_passerby(
+                    world_id,
+                    params.get("map_id"),
+                    params.get("sub_location_id"),
                 )
                 payload = result.model_dump() if hasattr(result, "model_dump") else result
-                return FlashResponse(success=True, operation=op, result=payload)
+                success = payload is not None and (not isinstance(payload, dict) or not payload.get("error"))
+                error_message = payload.get("error") if isinstance(payload, dict) and not success else None
+                return FlashResponse(success=success, operation=op, result=payload, error=error_message)
 
             if op == FlashOperation.NPC_DIALOGUE:
-                result = await self._call_tool_with_fallback(
-                    "npc_respond",
-                    {
-                        "world_id": world_id,
-                        "npc_id": params.get("npc_id"),
-                        "message": params.get("message", ""),
-                        "tier": params.get("tier", "secondary"),
-                        "scene": params.get("scene"),
-                        "conversation_history": params.get("conversation_history"),
-                    },
-                    fallback=lambda: self.pro_service.chat_simple(
-                        world_id,
-                        params.get("npc_id"),
-                        params.get("message", ""),
-                    ),
-                )
-                return FlashResponse(success=True, operation=op, result=result if isinstance(result, dict) else {"response": result})
+                npc_id = params.get("npc_id")
+                message = params.get("message", "")
+                # 通过 InstanceManager 维护 NPC 对话上下文
+                if self.instance_manager and npc_id:
+                    response_text = await self._npc_dialogue_with_instance(
+                        world_id, npc_id, message,
+                    )
+                    payload = {"response": response_text}
+                elif npc_id:
+                    response_text = await self._npc_dialogue_direct_flash(npc_id, message)
+                    payload = {"response": response_text}
+                else:
+                    payload = {"error": "missing npc_id"}
+                success = payload is not None and (not isinstance(payload, dict) or not payload.get("error"))
+                error_message = payload.get("error") if isinstance(payload, dict) and not success else None
+                return FlashResponse(success=success, operation=op, result=payload, error=error_message)
+
+            if op == FlashOperation.GET_PROGRESS:
+                if not self.narrative_service:
+                    return FlashResponse(success=False, operation=op, error="叙事系统未初始化")
+                result = await self.narrative_service.get_progress(world_id, session_id)
+                payload = result.to_dict() if hasattr(result, "to_dict") else result
+                if not isinstance(payload, dict):
+                    payload = {"raw": payload}
+                success = isinstance(payload, dict) and not payload.get("error")
+                return FlashResponse(success=success, operation=op, result=payload)
+
+            if op == FlashOperation.GET_STATUS:
+                if not self.world_runtime:
+                    return FlashResponse(success=False, operation=op, error="world_runtime not initialized")
+                # 聚合查询：位置 + 时间 + 队伍信息
+                status = {}
+                loc_result = await self.world_runtime.get_current_location(world_id, session_id)
+                status["location"] = loc_result if isinstance(loc_result, dict) else {"raw": loc_result}
+                time_result = await self.world_runtime.get_game_time(world_id, session_id)
+                status["time"] = time_result if isinstance(time_result, dict) else {"raw": time_result}
+                status["party"] = {"has_party": False}
+                return FlashResponse(success=True, operation=op, result=status)
 
             return FlashResponse(success=False, operation=op, error=f"unsupported operation: {op}")
         except Exception as exc:
             return FlashResponse(success=False, operation=op, error=str(exc))
-
-    @staticmethod
-    def _is_tool_result_failure(result: Any) -> bool:
-        return (
-            not isinstance(result, dict)
-            or bool(result.get("error"))
-            or result.get("success") is False
-        )
 
     @staticmethod
     def _matches_location_candidate(candidate: str, value: Optional[str]) -> bool:
@@ -821,34 +789,69 @@ class FlashCPUService:
     async def _apply_delta(self, world_id: str, session_id: str, delta: StateDelta) -> None:
         state = await self.state_manager.apply_delta(world_id, session_id, delta)
         if self.world_runtime:
-            try:
-                await self.world_runtime.persist_state(state)
-            except Exception:
-                pass
+            await self.world_runtime.persist_state(state)
+
+    async def _npc_dialogue_with_instance(
+        self, world_id: str, npc_id: str, message: str,
+    ) -> str:
+        """通过 InstanceManager 进行 NPC 对话（维护多轮上下文）"""
+        instance = await self.instance_manager.get_or_create(npc_id, world_id)
+        user_add = instance.context_window.add_message("user", message)
+        if user_add.should_graphize:
+            await self.instance_manager.maybe_graphize_instance(world_id, npc_id)
+
+        # 构建最近对话历史
+        recent = instance.context_window.get_recent_messages(count=20)
+        history_lines = []
+        for msg in recent[:-1]:  # 排除刚加入的当前消息
+            history_lines.append(f"{msg.role}: {msg.content}")
+
+        system_prompt = instance.context_window.get_system_prompt() or f"你是 {npc_id}。请保持角色一致性。"
+        history_text = "\n".join(history_lines) if history_lines else "无"
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"## 近期对话\n{history_text}\n\n"
+            f"## 当前玩家输入\n{message}\n\n"
+            "请以角色身份简洁回复，保持与近期对话一致。"
+        )
+        result = await self.llm_service.generate_simple(
+            prompt,
+            model_override=settings.admin_flash_model,
+            thinking_level=settings.admin_flash_thinking_level,
+        )
+        result = (result or "").strip()
+        if not result:
+            raise RuntimeError("npc dialogue empty response")
+
+        assistant_add = instance.context_window.add_message("assistant", result)
+        if assistant_add.should_graphize:
+            await self.instance_manager.maybe_graphize_instance(world_id, npc_id)
+        instance.state.conversation_turn_count += 1
+        return result
+
+    async def _npc_dialogue_direct_flash(self, npc_id: str, message: str) -> str:
+        """无实例时的直接 Flash 对话。"""
+        prompt = (
+            f"你是 {npc_id}。\n\n"
+            f"玩家说：{message}\n\n"
+            "请以第一人称、符合角色身份回复1-3句。"
+        )
+        result = await self.llm_service.generate_simple(
+            prompt,
+            model_override=settings.admin_flash_model,
+            thinking_level=settings.admin_flash_thinking_level,
+        )
+        text = (result or "").strip()
+        if not text:
+            raise RuntimeError("npc direct flash response empty")
+        return text
 
     async def _npc_respond(self, world_id: str, session_id: str, npc_id: str, message: str) -> Dict[str, Any]:
-        scene = None
-        if self.world_runtime:
-            location = await self.world_runtime.get_current_location(world_id, session_id)
-            if isinstance(location, dict):
-                scene = {
-                    "description": location.get("description", ""),
-                    "location": location.get("location_name"),
-                    "present_characters": location.get("npcs_present", []),
-                    "environment": location.get("atmosphere"),
-                }
-        result = await self._call_tool_with_fallback(
-            "npc_respond",
-            {
-                "world_id": world_id,
-                "npc_id": npc_id,
-                "message": message,
-                "tier": "secondary",
-                "scene": scene,
-            },
-            fallback=lambda: self.pro_service.chat_simple(world_id, npc_id, message),
-        )
-        return result if isinstance(result, dict) else {"response": result}
+        if self.instance_manager:
+            response = await self._npc_dialogue_with_instance(world_id, npc_id, message)
+        else:
+            response = await self._npc_dialogue_direct_flash(npc_id, message)
+        return {"response": response}
 
     async def _handle_combat_input(self, world_id: str, session_id: str, player_input: str) -> Dict[str, Any]:
         session_state = await self.session_store.get_session(world_id, session_id)
@@ -909,34 +912,16 @@ class FlashCPUService:
                 return action.get("action_id")
         return None
 
-    async def _call_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], fallback):
-        """Call MCP tool with fallback on failure."""
+    async def _call_combat_tool(self, tool_name: str, arguments: Dict[str, Any]):
         try:
             pool = await MCPClientPool.get_instance()
-            return await pool.call_tool(MCPClientPool.GAME_TOOLS, tool_name, arguments)
+            return await pool.call_tool(MCPClientPool.COMBAT, tool_name, arguments)
+        except asyncio.CancelledError as exc:
+            logger.error("[FlashCPU] combat MCP 调用被取消: %s", exc)
+            return {"error": str(exc) or "combat mcp call cancelled"}
         except Exception as exc:
-            logger.warning("[FlashCPU] MCP call failed, using fallback: %s", exc)
-            result = fallback()
-            if hasattr(result, "__await__"):
-                return await result
-            return result
-
-    async def _call_combat_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], fallback):
-        try:
-            result = await self._call_combat_tool(tool_name, arguments)
-            if isinstance(result, dict) and result.get("error"):
-                raise RuntimeError(result.get("error"))
-            return result
-        except Exception as exc:
-            logger.warning("[FlashCPU] Combat MCP call failed, using fallback: %s", exc)
-            result = fallback()
-            if hasattr(result, "__await__"):
-                return await result
-            return result
-
-    async def _call_combat_tool(self, tool_name: str, arguments: Dict[str, Any]):
-        pool = await MCPClientPool.get_instance()
-        return await pool.call_tool(MCPClientPool.COMBAT, tool_name, arguments)
+            logger.error("[FlashCPU] combat MCP 调用失败: %s", exc)
+            return {"error": str(exc)}
 
     async def call_combat_tool(self, tool_name: str, arguments: Dict[str, Any]):
         return await self._call_combat_tool(tool_name, arguments)

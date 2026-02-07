@@ -15,8 +15,6 @@ import type {
   GameTimeResponse,
   Party,
   GameSessionState,
-  CreateSessionRequest,
-  CreateSessionResponse,
   CreateGameSessionRequest,
   CreateGameSessionResponse,
   RecoverableSessionsResponse,
@@ -34,6 +32,22 @@ import type {
   AddTeammateRequest,
   LoadTeammatesRequest,
 } from '../types';
+
+// =============================================================================
+// Worlds
+// =============================================================================
+
+/**
+ * 获取可用世界列表
+ *
+ * GET /api/game/worlds
+ */
+export async function listWorlds(): Promise<{ worlds: { id: string; name: string; description: string }[] }> {
+  const response = await apiClient.get<{ worlds: { id: string; name: string; description: string }[] }>(
+    '/api/game/worlds'
+  );
+  return response.data;
+}
 
 // =============================================================================
 // Session Management
@@ -73,22 +87,6 @@ export async function listRecoverableSessions(
         limit,
       },
     }
-  );
-  return response.data;
-}
-
-/**
- * 创建新会话 (Legacy)
- *
- * POST /api/game/{world_id}/sessions/legacy
- */
-export async function createSessionLegacy(
-  worldId: string,
-  request?: CreateSessionRequest
-): Promise<CreateSessionResponse> {
-  const response = await apiClient.post<CreateSessionResponse>(
-    `/api/game/${worldId}/sessions/legacy`,
-    request || {}
   );
   return response.data;
 }
@@ -139,23 +137,6 @@ export async function sendGameInputV2(
 ): Promise<CoordinatorResponse> {
   const response = await apiClient.post<CoordinatorResponse>(
     `/api/game/${worldId}/sessions/${sessionId}/input`,
-    input
-  );
-  return response.data;
-}
-
-/**
- * 发送玩家输入 (Legacy)
- *
- * POST /api/game/{world_id}/sessions/{session_id}/input_legacy
- */
-export async function sendGameInput(
-  worldId: string,
-  sessionId: string,
-  input: PlayerInputRequest
-): Promise<PlayerInputResponse> {
-  const response = await apiClient.post<PlayerInputResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/input_legacy`,
     input
   );
   return response.data;
@@ -576,6 +557,34 @@ export async function ingestNaturalEvent(
   const response = await apiClient.post(
     `/api/game/${worldId}/events/ingest-natural`,
     request
+  );
+  return response.data;
+}
+
+// =============================================================================
+// Session History
+// =============================================================================
+
+export interface HistoryMessage {
+  role: string;
+  content: string;
+  timestamp: string | null;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * 获取会话聊天历史
+ *
+ * GET /api/game/{world_id}/sessions/{session_id}/history
+ */
+export async function getSessionHistory(
+  worldId: string,
+  sessionId: string,
+  limit = 50
+): Promise<{ messages: HistoryMessage[] }> {
+  const response = await apiClient.get<{ messages: HistoryMessage[] }>(
+    `/api/game/${worldId}/sessions/${sessionId}/history`,
+    { params: { limit } }
   );
   return response.data;
 }

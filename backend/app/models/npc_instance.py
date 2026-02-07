@@ -2,7 +2,7 @@
 NPC Instance Pool data models.
 
 双层认知系统的 NPC 实例数据模型：
-- Pro（工作记忆）：200K 上下文窗口，处理当前对话
+- 实时上下文层（工作记忆）：200K 上下文窗口，处理当前对话
 - Flash（潜意识记忆）：图谱检索 + 激活扩散，长期记忆存储
 """
 from dataclasses import dataclass, field
@@ -43,7 +43,7 @@ class GraphizeTrigger(BaseModel):
 
 
 class MemoryInjection(BaseModel):
-    """记忆注入数据（Flash -> Pro）"""
+    """记忆注入数据（Flash -> 叙述模型）"""
 
     text: str  # 翻译后的自然语言记忆
     source_nodes: List[str] = Field(default_factory=list)  # 来源节点 ID

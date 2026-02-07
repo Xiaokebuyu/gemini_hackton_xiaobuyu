@@ -28,18 +28,18 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
         onClick={toggleLeftPanel}
         className="
           absolute -right-3 top-1/2 -translate-y-1/2 z-20
-          w-6 h-12
-          bg-sketch-bg-panel border-2 border-sketch-ink-secondary
-          rounded-r-lg shadow-parchment-sm
+          w-5 h-8
+          bg-g-bg-surface border border-g-border
+          rounded-r-lg shadow-g-sm
           flex items-center justify-center
-          hover:bg-sketch-bg-secondary transition-colors
+          hover:bg-g-bg-hover transition-colors
         "
         aria-label={leftPanelCollapsed ? 'Expand panel' : 'Collapse panel'}
       >
         {leftPanelCollapsed ? (
-          <ChevronRight className="w-4 h-4 text-sketch-accent-gold" />
+          <ChevronRight className="w-4 h-4 text-g-gold" />
         ) : (
-          <ChevronLeft className="w-4 h-4 text-sketch-accent-gold" />
+          <ChevronLeft className="w-4 h-4 text-g-gold" />
         )}
       </button>
 
@@ -48,12 +48,12 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
         {!leftPanelCollapsed && (
           <motion.div
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 280, opacity: 1 }}
+            animate={{ width: 260, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="w-[280px] h-full flex flex-col gap-2 p-3">
+            <div className="w-[260px] h-full flex flex-col gap-2 p-3">
               {/* Mini Map */}
               <PanelFrame className="flex-shrink-0">
                 <MiniMap />
@@ -67,12 +67,12 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
               {/* Sub Locations */}
               <PanelFrame className="flex-1 min-h-0 overflow-hidden">
                 <div className="h-full flex flex-col">
-                  <h3 className="text-sm font-fantasy text-sketch-accent-gold px-3 pt-3 pb-2">
+                  <h3 className="text-sm font-heading text-g-gold px-3 pt-3 pb-2">
                     {t('navigation.subLocations')}
                   </h3>
-                  <div className="flex-1 overflow-y-auto sketch-scrollbar px-3 pb-3">
+                  <div className="flex-1 overflow-y-auto g-scrollbar px-3 pb-3">
                     <SubLocationList />
-                    <div className="mt-3 pt-3 border-t border-sketch-ink-faint">
+                    <div className="mt-3 pt-3 border-t border-g-border">
                       <DestinationList />
                     </div>
                   </div>

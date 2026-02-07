@@ -1,6 +1,6 @@
 # LLM 记忆系统后端
 
-> 说明：旧的 MCP 记忆网关已隔离到 `app/legacy_mcp`，默认不再挂载到主 API。
+> 说明：旧的 MCP 记忆网关实现已清理，当前主线仅保留 `game_v2` + admin 层。
 
 基于 Firestore 的滑动窗口归档系统，实现 LLM 的长期记忆管理。
 

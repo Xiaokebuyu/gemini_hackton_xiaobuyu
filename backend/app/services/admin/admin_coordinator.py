@@ -1,22 +1,25 @@
 """
 Admin coordinator - entrypoint for centralized admin layer.
 
-Pro-First 架构（优化版）：
+Flash-Only 架构：
 1. Flash 一次性分析 (analyze_and_plan)
 2. Flash 执行操作 (execute_request)
-3. Pro 生成叙述 (narrate)
+3. Flash 生成叙述 (GM + 队友)
 """
 from __future__ import annotations
 
 import asyncio
-import warnings
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 from typing import Any, List, Optional, Dict
 
 from app.config import settings
 from app.services.admin.flash_cpu_service import FlashCPUService
-from app.services.admin.pro_dm_service import ProDMService
 from app.services.admin.state_manager import StateManager
+from app.services.memory_graphizer import MemoryGraphizer
+from app.services.session_history import SessionHistoryManager
 from app.models.game import (
     CombatResolveRequest,
     CombatResolveResponse,
@@ -42,7 +45,6 @@ from app.services.admin.event_service import AdminEventService
 from app.services.graph_store import GraphStore
 from app.services.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
-from app.services.pro_service import ProService
 from app.services.admin.world_runtime import AdminWorldRuntime
 from app.services.party_service import PartyService
 from app.services.party_store import PartyStore
@@ -52,7 +54,7 @@ from app.models.graph_scope import GraphScope
 
 
 class AdminCoordinator:
-    """Coordinator that exposes legacy GM API while preparing new admin flow."""
+    """Core coordinator for admin-layer game flow."""
 
     _instance: Optional["AdminCoordinator"] = None
 
@@ -73,12 +75,10 @@ class AdminCoordinator:
         event_service: Optional[AdminEventService] = None,
         graph_store: Optional[GraphStore] = None,
         flash_service: Optional[FlashService] = None,
-        pro_service: Optional[ProService] = None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
         world_runtime: Optional[AdminWorldRuntime] = None,
         flash_cpu: Optional[FlashCPUService] = None,
-        pro_dm: Optional[ProDMService] = None,
         party_service: Optional[PartyService] = None,
         teammate_response_service: Optional[TeammateResponseService] = None,
         visibility_manager: Optional[TeammateVisibilityManager] = None,
@@ -88,7 +88,6 @@ class AdminCoordinator:
         self.event_service = event_service or AdminEventService()
         self.graph_store = graph_store or GraphStore()
         self.flash_service = flash_service or FlashService(self.graph_store)
-        self.pro_service = pro_service or ProService(self.graph_store, self.flash_service)
         self.narrative_service = narrative_service or NarrativeService(self._session_store)
         self.passerby_service = passerby_service or PasserbyService()
         self._world_runtime = world_runtime or AdminWorldRuntime(
@@ -97,22 +96,44 @@ class AdminCoordinator:
             narrative_service=self.narrative_service,
             event_service=self.event_service,
         )
+
+        # 共享 InstanceManager（队友 + NPC 实例化）
+        from app.services.instance_manager import InstanceManager
+        self.instance_manager = InstanceManager(
+            max_instances=settings.instance_pool_max_instances,
+            context_window_size=settings.instance_pool_context_window_size,
+            graphize_threshold=settings.instance_pool_graphize_threshold,
+            keep_recent_tokens=settings.instance_pool_keep_recent_tokens,
+            graph_store=self.graph_store,
+        )
+
         self.flash_cpu = flash_cpu or FlashCPUService(
             state_manager=self._state_manager,
             world_runtime=self._world_runtime,
             session_store=self._session_store,
             event_service=self.event_service,
-            pro_service=self.pro_service,
             narrative_service=self.narrative_service,
             passerby_service=self.passerby_service,
+            instance_manager=self.instance_manager,
         )
-        self.pro_dm = pro_dm or ProDMService()
 
         # 队友系统
         self.party_store = PartyStore()
         self.party_service = party_service or PartyService(self.graph_store, self.party_store)
-        self.teammate_response_service = teammate_response_service or TeammateResponseService()
+        self.teammate_response_service = teammate_response_service or TeammateResponseService(
+            instance_manager=self.instance_manager,
+        )
         self.visibility_manager = visibility_manager or TeammateVisibilityManager()
+
+        # 会话历史 + 图谱化
+        self.session_history_manager = SessionHistoryManager(
+            firestore_db=self.graph_store.db,
+        )
+        self.memory_graphizer = MemoryGraphizer(graph_store=self.graph_store)
+
+        # 世界背景 / 角色花名册缓存
+        self._world_background_cache: Dict[str, str] = {}
+        self._character_roster_cache: Dict[str, str] = {}
 
     @dataclass
     class AdminContextView:
@@ -123,6 +144,43 @@ class AdminCoordinator:
         current_scene: Any = None
         current_npc: Optional[str] = None
         known_characters: list = None
+
+    # ==================== World listing ====================
+
+    async def list_worlds(self) -> list[dict]:
+        """列出 Firestore 中所有已初始化的世界。
+
+        使用 list_documents() 而非 stream()，因为世界初始化器只创建
+        子集合（meta/info, maps/, characters/ 等）而不一定创建根文档。
+        list_documents() 能发现这些"虚拟"父文档。
+        """
+        worlds_ref = self.graph_store.db.collection("worlds")
+        worlds = []
+        for doc_ref in worlds_ref.list_documents():
+            world_id = doc_ref.id
+            meta_doc = doc_ref.collection("meta").document("info").get()
+            meta = meta_doc.to_dict() if meta_doc.exists else {}
+            if not meta:
+                continue
+            worlds.append({
+                "id": world_id,
+                "name": meta.get("name") or meta.get("title") or world_id,
+                "description": meta.get("description") or meta.get("overview") or "",
+            })
+        return worlds
+
+    # ==================== Session history ====================
+
+    async def get_session_history(
+        self,
+        world_id: str,
+        session_id: str,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """从 Firestore 获取会话聊天历史"""
+        return await self.session_history_manager.load_history_from_firestore(
+            world_id, session_id, limit, self.graph_store.db,
+        )
 
     # ==================== GameLoop compatible methods ====================
 
@@ -245,30 +303,7 @@ class AdminCoordinator:
             dispatched=payload.get("dispatched", False),
         )
 
-    # ==================== GM compatible methods ====================
-
-    async def process_player_input(self, world_id: str, session_id: str, player_input: str, input_type=None, mode=None):
-        warnings.warn(
-            "AdminCoordinator.process_player_input is deprecated; use process_player_input_v2 instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        flash_result = await self.flash_cpu.process_player_input(
-            world_id=world_id,
-            session_id=session_id,
-            player_input=player_input,
-            input_type=input_type,
-            mode=mode,
-        )
-        if isinstance(flash_result, dict):
-            if not flash_result.get("response"):
-                pro_response = await self.pro_dm.narrate_legacy(player_input, flash_result, flash_result.get("context"))
-                flash_result["response"] = pro_response.narration
-                flash_result["speaker"] = pro_response.speaker
-                flash_result.setdefault("metadata", {}).update(pro_response.metadata)
-        return flash_result
-
-    # ==================== Pro-First 架构 (v2) ====================
+    # ==================== Flash-Only 架构 (v2) ====================
 
     async def process_player_input_v2(
         self,
@@ -277,15 +312,16 @@ class AdminCoordinator:
         player_input: str,
     ) -> CoordinatorResponse:
         """
-        Pro-First 架构的玩家输入处理流程。
+        Flash-Only 架构的玩家输入处理流程（两轮 Flash）。
 
         流程：
         1. 收集基础上下文
-        2. Flash 一次性分析 (intent + operations + memory seeds)
+        2. Flash 第一轮分析 (intent + operations + memory seeds)
         3. 并行召回记忆 + 顺序执行操作
         4. 组装完整上下文
+        4.5 Flash 第二轮：基于扩散激活结果编排 context_package
         5. 导航后同步队友位置
-        6. Pro 生成叙述
+        6. Flash 生成叙述
         7. 队友响应
         8. 分发事件到队友图谱
 
@@ -297,48 +333,73 @@ class AdminCoordinator:
         Returns:
             CoordinatorResponse: 完整响应
         """
-        # 预检查：位置上下文必须可用，避免进入“未知地点”伪成功叙述
+        # 预检查：位置上下文必须可用，避免进入"未知地点"伪成功叙述
         location_check = await self._world_runtime.get_current_location(world_id, session_id)
         if location_check.get("error"):
             raise ValueError(location_check["error"])
 
-        # 0. 获取队伍信息
+        # 0. 获取队伍信息 + 会话历史
         party = await self.party_service.get_party(world_id, session_id)
+        history = self.session_history_manager.get_or_create(world_id, session_id)
 
         # 1. 收集上下文
         base_context = await self._build_context(world_id, session_id)
 
+        # 1.5 注入对话历史到上下文（上下文连续性）
+        # Flash 侧优先使用大上下文窗口（1M）
+        conversation_history = history.get_recent_history(max_tokens=1_000_000)
+        if conversation_history:
+            base_context["conversation_history"] = conversation_history
+
         # 2. Flash 一次性分析
-        print(f"[Coordinator] 步骤2: Flash 分析...")
+        logger.info("[v2] 步骤2: Flash 分析")
         analysis = await self.flash_cpu.analyze_and_plan(player_input, base_context)
         intent = analysis.intent
-        print(f"[Coordinator] 意图: {intent.intent_type.value}, 目标: {intent.target}")
+        logger.info("[v2] 意图=%s 目标=%s seeds=%d", intent.intent_type.value, intent.target, len(analysis.memory_seeds or []))
 
         # 3. 并行召回记忆 + 顺序执行操作
-        print(f"[Coordinator] 步骤3: 执行操作...")
+        logger.info("[v2] 步骤3: 执行操作")
         # 获取当前 chapter/area 上下文用于多图谱合并扩散
         state = await self._state_manager.get_state(world_id, session_id)
         current_chapter_id = getattr(state, "chapter_id", None) if state else None
         current_area_id = getattr(state, "area_id", None) if state else None
 
-        memory_task = None
-        if analysis.memory_seeds:
-            memory_task = asyncio.create_task(
-                self._recall_memory(
-                    world_id, "player", analysis.memory_seeds,
-                    intent_type=intent.intent_type.value,
-                    chapter_id=current_chapter_id,
-                    area_id=current_area_id,
-                )
+        # 总是构建基线 seeds（保证最小世界感知）
+        effective_seeds = self._build_effective_seeds(
+            analysis.memory_seeds,
+            base_context,
+            character_id="player",
+        )
+
+        memory_task = asyncio.create_task(
+            self._recall_memory(
+                world_id, "player", effective_seeds,
+                intent_type=intent.intent_type.value,
+                chapter_id=current_chapter_id,
+                area_id=current_area_id,
             )
+        )
 
         flash_requests = analysis.operations or self._generate_default_flash_requests(intent, base_context)
         flash_results = await self._execute_flash_requests(
             world_id, session_id, flash_requests, generate_narration=False
         )
-        print(f"[Coordinator] Flash 结果: {len(flash_results)} 个")
+        logger.info("[v2] Flash 结果: %d 个操作", len(flash_results))
         for r in flash_results:
-            print(f"  - {r.operation}: success={r.success}, error={r.error}")
+            logger.debug("[v2]   操作=%s 成功=%s 错误=%s", r.operation, r.success, r.error)
+
+        # 3.5 LEAVE_SUB_LOCATION 直接处理（无对应 FlashOperation）
+        if intent.intent_type == IntentType.LEAVE_SUB_LOCATION:
+            try:
+                leave_result = await self._world_runtime.leave_sub_location(world_id, session_id)
+                flash_results.append(FlashResponse(
+                    success=leave_result.get("success", False),
+                    operation=FlashOperation.ENTER_SUBLOCATION,
+                    result=leave_result,
+                    error=leave_result.get("error") if not leave_result.get("success") else None,
+                ))
+            except Exception as e:
+                logger.error("[v2] 离开子地点失败: %s", e)
 
         memory_result = await memory_task if memory_task else None
 
@@ -347,42 +408,83 @@ class AdminCoordinator:
             base_context, memory_result, flash_results, world_id, session_id
         )
 
+        # 4.5 第二轮 Flash：基于扩散激活结果编排 context_package
+        if memory_result and getattr(memory_result, "activated_nodes", None):
+            logger.info("[v2] 步骤4.5: Flash 上下文编排（第二轮）")
+            curated_package = await self.flash_cpu.curate_context(
+                player_input=player_input,
+                intent=intent,
+                memory_result=memory_result,
+                flash_results=flash_results,
+                context=context,
+            )
+            if curated_package:
+                context["context_package"] = curated_package
+                logger.info("[v2] context_package 已生成（%d 个字段）", len(curated_package))
+            else:
+                logger.error("[v2] context_package 编排失败，curate_context 返回 None")
+
         # 5. 导航后同步队友位置
         if intent.intent_type == IntentType.NAVIGATION and party:
-            print(f"[Coordinator] 步骤5: 同步队友位置...")
+            logger.info("[v2] 步骤5: 同步队友位置")
             new_location = context.get("location", {}).get("location_id")
             if new_location:
                 await self.party_service.sync_locations(
                     world_id, session_id, new_location
                 )
 
-        # 6. Pro 生成叙述
-        print(f"[Coordinator] 步骤6: 生成叙述...")
+        # 6. 生成叙述和角色回复（Flash 并发）
+        logger.info("[v2] 步骤6: Flash 叙述与角色回复")
         execution_summary = self._build_execution_summary(flash_results)
-        pro_response = await self.pro_dm.narrate(
-            context=context,
-            execution_summary=execution_summary,
-            player_input=player_input,
-        )
-        print(f"[Coordinator] 叙述完成: {pro_response.narration[:50]}...")
 
-        # 7. 队友响应
-        teammate_responses = []
+        # 为每个队友构建图谱上下文（Flash 第二轮编排）
         if party and party.get_active_members():
-            print(f"[Coordinator] 步骤7: 队友响应 ({len(party.get_active_members())} 个队友)...")
-            # 判断是否是显式队友交互（使用 Pro 模型）
-            is_explicit_dialogue = intent.intent_type == IntentType.TEAM_INTERACTION
-
-            teammate_result = await self.teammate_response_service.process_round(
+            teammate_context_packages, teammate_memory_summaries = await self._build_teammate_context_packages(
+                world_id=world_id,
                 party=party,
                 player_input=player_input,
-                gm_response=pro_response.narration,
-                context=context,
-                use_pro_model=is_explicit_dialogue,
+                intent=intent,
+                flash_results=flash_results,
+                base_context=context,
+                base_seeds=analysis.memory_seeds,
+                chapter_id=current_chapter_id,
+                area_id=current_area_id,
             )
-            print(f"[Coordinator] 队友响应完成: {len(teammate_result.responses)} 个响应")
+            if teammate_context_packages:
+                context["teammate_context_packages"] = teammate_context_packages
+            if teammate_memory_summaries:
+                context["teammate_memory_summaries"] = teammate_memory_summaries
 
-            # 转换为字典格式
+        gm_task = asyncio.create_task(
+            self.flash_cpu.generate_gm_narration(
+                player_input=player_input,
+                execution_summary=execution_summary,
+                context=context,
+            )
+        )
+
+        teammate_task = None
+        if party and party.get_active_members():
+            logger.info("[v2] 步骤7: 队友响应（%d 个队友）", len(party.get_active_members()))
+            # 与 GM 并发：队友基于同轮执行摘要生成
+            teammate_task = asyncio.create_task(
+                self.teammate_response_service.process_round(
+                    party=party,
+                    player_input=player_input,
+                    gm_response=execution_summary,
+                    context=context,
+                )
+            )
+        else:
+            logger.debug("[v2] 步骤7: 跳过（无队友）")
+
+        gm_narration = await gm_task
+        logger.info("[v2] 叙述完成: %s...", gm_narration[:50])
+
+        teammate_responses = []
+        if teammate_task:
+            teammate_result = await teammate_task
+            logger.info("[v2] 队友响应完成: %d 个响应", len(teammate_result.responses))
             for resp in teammate_result.responses:
                 if resp.response:  # 只包含实际回复的
                     teammate_responses.append({
@@ -394,33 +496,54 @@ class AdminCoordinator:
                         "thinking_level": resp.thinking_level,
                         "latency_ms": resp.latency_ms,
                     })
-        else:
-            print(f"[Coordinator] 步骤7: 跳过（无队友）")
 
         # 8. 分发事件到队友图谱（如果有队友且启用事件共享）
-        if party and party.share_events and teammate_responses:
-            print(f"[Coordinator] 步骤8: 分发事件...")
+        if party and party.share_events:
+            logger.info("[v2] 步骤8: 分发事件到队友图谱")
             await self._distribute_event_to_party(
                 world_id=world_id,
                 party=party,
                 player_input=player_input,
-                gm_response=pro_response.narration,
+                gm_response=gm_narration,
                 context=context,
             )
-            print(f"[Coordinator] 事件分发完成")
+            logger.info("[v2] 事件分发完成")
 
-        # 8. 构建最终响应
-        state_delta = None
-        for result in flash_results:
-            if result.state_delta:
-                state_delta = result.state_delta
-                break
+        # 9. 记录对话到 SessionHistory + 触发图谱化
+        round_stats = history.record_round(
+            player_input=player_input,
+            gm_response=gm_narration,
+            metadata={"intent_type": intent.intent_type.value},
+        )
+        for tr in teammate_responses:
+            history.record_teammate_response(
+                character_id=tr["character_id"],
+                name=tr["name"],
+                response=tr["response"],
+            )
+        logger.info(
+            "[v2] 步骤9: 历史记录 msgs=%d tokens=%d usage=%.1f%%",
+            round_stats["message_count"],
+            round_stats["total_tokens"],
+            round_stats["usage_ratio"] * 100,
+        )
+
+        # 图谱化检查（fire-and-forget 模式不阻塞响应）
+        if round_stats["should_graphize"]:
+            game_day = context.get("time", {}).get("day", 1)
+            location_id = context.get("location", {}).get("location_id")
+            asyncio.create_task(
+                self._run_graphization(history, game_day, location_id)
+            )
+
+        # 10. 构建最终响应
+        state_delta = self._merge_state_deltas(flash_results)
 
         available_actions = await self._get_available_actions(world_id, session_id, context)
 
         return CoordinatorResponse(
-            narration=pro_response.narration,
-            speaker=pro_response.speaker,
+            narration=gm_narration,
+            speaker="GM",
             teammate_responses=teammate_responses,
             available_actions=available_actions,
             state_delta=state_delta,
@@ -429,7 +552,9 @@ class AdminCoordinator:
                 "confidence": intent.confidence,
                 "teammate_count": len(teammate_responses),
                 "analysis_reasoning": analysis.reasoning,
-                **pro_response.metadata,
+                "session_history": round_stats,
+                "source": "flash_gm",
+                "model": "flash",
             },
         )
 
@@ -500,19 +625,11 @@ class AdminCoordinator:
             known_characters.append("player")
         known_locations = [location_name] if location_name else []
 
-        try:
-            parsed_event = await self.event_service.llm_service.parse_event(
-                event_description=base_description,
-                known_characters=known_characters,
-                known_locations=known_locations,
-            )
-        except Exception as exc:
-            print(f"[Coordinator] 事件解析失败: {exc}")
-            parsed_event = {
-                "participants": ["player"],
-                "witnesses": [m.character_id for m in party.get_active_members()],
-                "location": location_name,
-            }
+        parsed_event = await self.event_service.llm_service.parse_event(
+            event_description=base_description,
+            known_characters=known_characters,
+            known_locations=known_locations,
+        )
 
         event = {
             "event_type": "player_action",
@@ -564,12 +681,9 @@ class AdminCoordinator:
             area_scope = GraphScope(
                 scope_type="area", chapter_id=chapter_id, area_id=area_id,
             )
-            try:
-                await self.graph_store.upsert_node_v2(world_id, area_scope, narrative_node)
-                print(f"[Coordinator] 叙述 event 已写入区域图谱: {narrative_event_id}")
-                narrative_event_written = True
-            except Exception as exc:
-                print(f"[Coordinator] 叙述 event 写入失败: {exc}")
+            await self.graph_store.upsert_node_v2(world_id, area_scope, narrative_node)
+            logger.debug("[事件分发] 叙述 event 已写入区域图谱: %s", narrative_event_id)
+            narrative_event_written = True
 
         # 2. 个人 event 写入各角色图谱 + perspective_of 边
         tasks = []
@@ -632,12 +746,9 @@ class AdminCoordinator:
                         },
                     )
                     char_scope = GraphScope(scope_type="character", character_id=char_id)
-                    try:
-                        await self.graph_store.upsert_edge_v2(
-                            world_id, char_scope, perspective_edge
-                        )
-                    except Exception:
-                        pass
+                    await self.graph_store.upsert_edge_v2(
+                        world_id, char_scope, perspective_edge
+                    )
 
             tasks.append(
                 _write_personal_event(member.character_id, teammate_description, perspective)
@@ -647,7 +758,7 @@ class AdminCoordinator:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"[Coordinator] 队友事件写入失败: {result}")
+                    logger.error("[事件分发] 队友事件写入失败: %s", result)
 
     def _determine_teammate_perspective(
         self,
@@ -666,63 +777,254 @@ class AdminCoordinator:
             return "bystander"
         return "rumor"
 
+    async def _run_graphization(
+        self,
+        history: "SessionHistory",
+        game_day: int,
+        current_scene: Optional[str],
+        retry: int = 0,
+    ) -> None:
+        """Fire-and-forget graphization task with one retry."""
+        try:
+            result = await history.maybe_graphize(
+                graphizer=self.memory_graphizer,
+                graph_store=self.graph_store,
+                game_day=game_day,
+                current_scene=current_scene,
+            )
+            if result:
+                logger.info(
+                    "[图谱化] 完成: nodes=%d edges=%d freed=%d tokens",
+                    result["nodes_added"], result["edges_added"], result["tokens_freed"],
+                )
+            else:
+                logger.info("[图谱化] 跳过：无需图谱化")
+        except Exception as exc:
+            logger.error("[图谱化] 异常 (retry=%d): %s", retry, exc, exc_info=True)
+            if retry < 1:
+                await asyncio.sleep(2)
+                await self._run_graphization(history, game_day, current_scene, retry=retry + 1)
+
+    def _build_effective_seeds(
+        self,
+        seeds: Optional[List[str]],
+        context: Dict[str, Any],
+        character_id: Optional[str] = None,
+    ) -> List[str]:
+        """构建基础召回 seeds（含兜底，且去重保序）。"""
+        effective_seeds = list(seeds or [])
+        location_id = (context.get("location") or {}).get("location_id")
+        if location_id:
+            effective_seeds.append(location_id)
+        active_npc = context.get("active_npc")
+        if active_npc:
+            effective_seeds.append(active_npc)
+        if character_id:
+            effective_seeds.append(character_id)
+        if not effective_seeds:
+            effective_seeds.append("player")
+        return list(dict.fromkeys(s for s in effective_seeds if s))
+
+    async def _build_teammate_context_packages(
+        self,
+        world_id: str,
+        party: "Party",
+        player_input: str,
+        intent: Any,
+        flash_results: List[FlashResponse],
+        base_context: Dict[str, Any],
+        base_seeds: Optional[List[str]],
+        chapter_id: Optional[str],
+        area_id: Optional[str],
+    ) -> tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+        """为每个队友生成基于图谱召回的 Flash 上下文包。"""
+        packages: Dict[str, Dict[str, Any]] = {}
+        memory_summaries: Dict[str, str] = {}
+        members = party.get_active_members()
+        if not members:
+            return packages, memory_summaries
+
+        async def _build_for_member(member) -> tuple[str, Optional[Dict[str, Any]], str]:
+            char_id = member.character_id
+            seeds = self._build_effective_seeds(base_seeds, base_context, character_id=char_id)
+            memory_result = await self._recall_memory(
+                world_id=world_id,
+                character_id=char_id,
+                seed_nodes=seeds,
+                intent_type=intent.intent_type.value,
+                chapter_id=chapter_id,
+                area_id=area_id,
+            )
+            if not memory_result or not getattr(memory_result, "activated_nodes", None):
+                return char_id, None, ""
+
+            teammate_view = dict(base_context)
+            teammate_view["active_character_id"] = char_id
+            curated = await self.flash_cpu.curate_context(
+                player_input=player_input,
+                intent=intent,
+                memory_result=memory_result,
+                flash_results=flash_results,
+                context=teammate_view,
+            )
+            summary = self._summarize_memory(memory_result)
+            return char_id, curated, summary
+
+        results = await asyncio.gather(*(_build_for_member(m) for m in members), return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("[v2] 队友上下文编排失败: %s", result, exc_info=True)
+                continue
+            char_id, curated, summary = result
+            if curated:
+                packages[char_id] = curated
+            if summary:
+                memory_summaries[char_id] = summary
+
+        return packages, memory_summaries
+
+    async def _get_world_background(self, world_id: str, session_id: Optional[str] = None) -> str:
+        """获取世界背景描述（缓存）"""
+        if world_id in self._world_background_cache:
+            base_text = self._world_background_cache[world_id]
+        else:
+            parts = []
+            try:
+                world_ref = self.graph_store.db.collection("worlds").document(world_id)
+                # 优先读取初始化器写入的 worlds/{world_id}/meta/info
+                meta_doc = world_ref.collection("meta").document("info").get()
+                data = meta_doc.to_dict() if meta_doc.exists else {}
+                # 兼容旧数据结构（世界根文档）
+                if not data:
+                    root_doc = world_ref.get()
+                    if root_doc.exists:
+                        data = root_doc.to_dict() or {}
+
+                if data:
+                    desc = data.get("description") or data.get("overview") or ""
+                    if desc:
+                        parts.append(desc)
+                    name = data.get("name") or data.get("title") or ""
+                    if name and not desc.startswith(name):
+                        parts.insert(0, f"世界: {name}")
+            except Exception as exc:
+                logger.debug("[world_background] Firestore 读取失败: %s", exc)
+
+            base_text = "\n".join(parts) if parts else ""
+            self._world_background_cache[world_id] = base_text
+
+        chapter_block = ""
+        if session_id:
+            try:
+                progress = await self.narrative_service.get_progress(world_id, session_id)
+                chapter_id = getattr(progress, "current_chapter", None)
+                if chapter_id:
+                    chapter_info = self.narrative_service.get_chapter_info(chapter_id) or {}
+                    chapter_name = chapter_info.get("name") or chapter_id
+                    chapter_desc = chapter_info.get("description") or ""
+                    chapter_block = f"当前章节: {chapter_name}"
+                    if chapter_desc:
+                        chapter_block += f"\n{chapter_desc}"
+            except Exception as exc:
+                logger.debug("[world_background] chapter 读取失败: %s", exc)
+
+        blocks = [b for b in (base_text, chapter_block) if b]
+        return "\n".join(blocks)
+
+    async def _get_character_roster(self, world_id: str) -> str:
+        """获取世界角色花名册（缓存）"""
+        if world_id in self._character_roster_cache:
+            return self._character_roster_cache[world_id]
+
+        entries = []
+        try:
+            chars_ref = self.graph_store.db.collection("worlds").document(world_id).collection("characters")
+            docs = chars_ref.stream()
+            for doc in docs:
+                data = doc.to_dict() or {}
+                profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
+                metadata = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
+                state = data.get("state") if isinstance(data.get("state"), dict) else {}
+                char_id = doc.id
+                name = profile.get("name") or data.get("name") or char_id
+                occupation = (
+                    profile.get("occupation")
+                    or data.get("occupation")
+                    or profile.get("role")
+                    or data.get("role")
+                    or ""
+                )
+                default_map = (
+                    metadata.get("default_map")
+                    or profile.get("default_map")
+                    or data.get("default_map")
+                    or state.get("current_map")
+                    or data.get("default_location")
+                    or ""
+                )
+                default_sub = metadata.get("default_sub_location") or profile.get("default_sub_location") or ""
+                parts = [f"{name}(id={char_id}"]
+                if occupation:
+                    parts[0] += f", {occupation}"
+                if default_map:
+                    parts[0] += f", 常驻:{default_map}"
+                if default_sub:
+                    parts[0] += f"/{default_sub}"
+                parts[0] += ")"
+                entries.append(parts[0])
+        except Exception as exc:
+            logger.debug("[character_roster] Firestore 读取失败: %s", exc)
+
+        result = ", ".join(entries) if entries else ""
+        self._character_roster_cache[world_id] = result
+        return result
+
     async def _build_context(self, world_id: str, session_id: str) -> Dict[str, Any]:
         """构建当前上下文"""
-        context = {}
+        context = {"world_id": world_id}
 
         # 获取位置信息
-        try:
-            location = await self._world_runtime.get_current_location(world_id, session_id)
-            context["location"] = location
-            context["available_destinations"] = location.get("available_destinations", [])
-            # 添加子地点信息（字段名是 available_sub_locations）
-            context["sub_locations"] = location.get("available_sub_locations", [])
-        except Exception:
-            context["location"] = {}
-            context["available_destinations"] = []
-            context["sub_locations"] = []
+        location = await self._world_runtime.get_current_location(world_id, session_id)
+        context["location"] = location
+        context["available_destinations"] = location.get("available_destinations", [])
+        # 添加子地点信息（字段名是 available_sub_locations）
+        context["sub_locations"] = location.get("available_sub_locations", [])
 
         # 获取时间
-        try:
-            time_info = await self._world_runtime.get_game_time(world_id, session_id)
-            context["time"] = time_info
-        except Exception:
-            context["time"] = {}
+        time_info = await self._world_runtime.get_game_time(world_id, session_id)
+        context["time"] = time_info
 
         # 获取状态
-        try:
-            state = await self._state_manager.get_state(world_id, session_id)
-            if state:
-                context["state"] = "in_dialogue" if state.active_dialogue_npc else (
-                    "combat" if state.combat_id else "exploring"
-                )
-                context["active_npc"] = state.active_dialogue_npc
-            else:
-                context["state"] = "exploring"
-                context["active_npc"] = None
-        except Exception:
+        state = await self._state_manager.get_state(world_id, session_id)
+        if state:
+            context["state"] = "in_dialogue" if state.active_dialogue_npc else (
+                "combat" if state.combat_id else "exploring"
+            )
+            context["active_npc"] = state.active_dialogue_npc
+        else:
             context["state"] = "exploring"
             context["active_npc"] = None
 
         # 队友信息
-        try:
-            party = await self.party_service.get_party(world_id, session_id)
-            if party:
-                context["party"] = party
-                context["teammates"] = [
-                    {
-                        "character_id": m.character_id,
-                        "name": m.name,
-                        "role": m.role.value,
-                        "personality": m.personality,
-                        "current_mood": m.current_mood,
-                    }
-                    for m in party.get_active_members()
-                ]
-            else:
-                context["teammates"] = []
-        except Exception:
+        party = await self.party_service.get_party(world_id, session_id)
+        if party:
+            context["party"] = party
+            context["teammates"] = [
+                {
+                    "character_id": m.character_id,
+                    "name": m.name,
+                    "role": m.role.value,
+                    "personality": m.personality,
+                    "current_mood": m.current_mood,
+                }
+                for m in party.get_active_members()
+            ]
+        else:
             context["teammates"] = []
+
+        # 世界背景 + 角色花名册
+        context["world_background"] = await self._get_world_background(world_id, session_id)
+        context["character_roster"] = await self._get_character_roster(world_id)
 
         return context
 
@@ -756,80 +1058,96 @@ class AdminCoordinator:
 
         仅 v2: 加载角色图谱 + 营地图谱，并按上下文可选叠加章节/区域图谱。
         """
-        try:
-            from app.models.flash import RecallResponse
-            from app.models.activation import SpreadingActivationConfig
-            from app.services.memory_graph import MemoryGraph
-            from app.services.spreading_activation import spread_activation, extract_subgraph
+        from app.models.flash import RecallResponse
+        from app.models.activation import SpreadingActivationConfig
+        from app.services.memory_graph import MemoryGraph
+        from app.services.spreading_activation import spread_activation, extract_subgraph
 
-            # 根据意图选择召回配置
-            recall_cfg = self._RECALL_CONFIGS.get(intent_type or "", {})
-            output_threshold = recall_cfg.get("output_threshold", 0.15)
+        # 根据意图选择召回配置
+        recall_cfg = self._RECALL_CONFIGS.get(intent_type or "", {})
+        output_threshold = recall_cfg.get("output_threshold", 0.15)
 
-            config = SpreadingActivationConfig(
-                output_threshold=output_threshold,
-                current_chapter_id=chapter_id,
+        config = SpreadingActivationConfig(
+            output_threshold=output_threshold,
+            current_chapter_id=chapter_id,
+        )
+
+        # 角色（必选）+ 营地（必选）+ 章节/区域（可选）
+        scoped_data = []
+
+        # 1) 角色个人图谱（必选）
+        char_scope = GraphScope(scope_type="character", character_id=character_id)
+        char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
+        scoped_data.append((char_scope, char_data))
+
+        # 2) 当前区域叙述图谱（可选）
+        if chapter_id and area_id:
+            area_scope = GraphScope(
+                scope_type="area", chapter_id=chapter_id, area_id=area_id,
             )
+            area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
+            scoped_data.append((area_scope, area_data))
 
-            # 角色（必选）+ 营地（必选）+ 章节/区域（可选）
-            scoped_data = []
+        # 3) 章节叙述图谱（可选）
+        if chapter_id:
+            chapter_scope = GraphScope(scope_type="chapter", chapter_id=chapter_id)
+            chapter_data = await self.graph_store.load_graph_v2(world_id, chapter_scope)
+            scoped_data.append((chapter_scope, chapter_data))
 
-            # 1) 角色个人图谱（必选）
-            char_scope = GraphScope(scope_type="character", character_id=character_id)
-            char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
-            scoped_data.append((char_scope, char_data))
+        # 4) 营地图谱（必选）
+        camp_scope = GraphScope(scope_type="camp")
+        camp_data = await self.graph_store.load_graph_v2(world_id, camp_scope)
+        scoped_data.append((camp_scope, camp_data))
 
-            # 2) 当前区域叙述图谱（可选）
-            if chapter_id and area_id:
-                try:
-                    area_scope = GraphScope(
-                        scope_type="area", chapter_id=chapter_id, area_id=area_id,
-                    )
-                    area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
-                    scoped_data.append((area_scope, area_data))
-                except Exception as exc:
-                    print(f"[Coordinator] 加载区域图谱失败: {exc}")
+        # 5) 世界图谱（让世界书跨 scope 边参与扩散）
+        world_scope = GraphScope(scope_type="world")
+        world_data = await self.graph_store.load_graph_v2(world_id, world_scope)
+        scoped_data.append((world_scope, world_data))
 
-            # 3) 章节叙述图谱（可选）
-            if chapter_id:
-                try:
-                    chapter_scope = GraphScope(scope_type="chapter", chapter_id=chapter_id)
-                    chapter_data = await self.graph_store.load_graph_v2(world_id, chapter_scope)
-                    scoped_data.append((chapter_scope, chapter_data))
-                except Exception as exc:
-                    print(f"[Coordinator] 加载章节图谱失败: {exc}")
+        # 7) 注入好感度动态边权重
+        merged = MemoryGraph.from_multi_scope(scoped_data)
+        await self._inject_disposition_edges(world_id, character_id, merged)
 
-            # 4) 营地图谱（必选，失败时降级但不中断）
-            try:
-                camp_scope = GraphScope(scope_type="camp")
-                camp_data = await self.graph_store.load_graph_v2(world_id, camp_scope)
-                scoped_data.append((camp_scope, camp_data))
-            except Exception as exc:
-                print(f"[Coordinator] 加载营地图谱失败: {exc}")
-
-            # 5) 注入好感度动态边权重
-            merged = MemoryGraph.from_multi_scope(scoped_data)
-            await self._inject_disposition_edges(world_id, character_id, merged)
-
-            # 6) 运行扩散激活
-            activated = spread_activation(merged, seed_nodes, config)
-
-            subgraph_graph = extract_subgraph(merged, activated)
-            subgraph = subgraph_graph.to_graph_data()
-            subgraph.nodes = [
-                n for n in subgraph.nodes
-                if not (n.properties or {}).get("placeholder", False)
-            ]
-
+        # 8) 扩展 seeds 为多候选（兼容 prefill 无前缀 + LLM 有前缀）
+        expanded_seeds = []
+        for seed in seed_nodes:
+            expanded_seeds.append(seed)
+            for prefix in ("person_", "character_", "location_", "area_"):
+                if seed.startswith(prefix):
+                    expanded_seeds.append(seed[len(prefix):])
+                else:
+                    expanded_seeds.append(f"{prefix}{seed}")
+        valid_seeds = [s for s in expanded_seeds if merged.has_node(s)]
+        if not valid_seeds:
+            logger.error(
+                "[v2] 记忆召回跳过：无有效种子 (character=%s, original=%s, expanded=%d)",
+                character_id,
+                seed_nodes,
+                len(expanded_seeds),
+            )
             return RecallResponse(
                 seed_nodes=seed_nodes,
-                activated_nodes=activated,
-                subgraph=subgraph,
-                used_subgraph=True,
+                activated_nodes={},
+                subgraph=None,
+                used_subgraph=False,
             )
-        except Exception as exc:
-            print(f"[Coordinator] 记忆召回失败: {exc}")
-            return None
+
+        # 9) 运行扩散激活
+        activated = spread_activation(merged, valid_seeds, config)
+
+        subgraph_graph = extract_subgraph(merged, activated)
+        subgraph = subgraph_graph.to_graph_data()
+        subgraph.nodes = [
+            n for n in subgraph.nodes
+            if not (n.properties or {}).get("placeholder", False)
+        ]
+
+        return RecallResponse(
+            seed_nodes=seed_nodes,
+            activated_nodes=activated,
+            subgraph=subgraph,
+            used_subgraph=True,
+        )
 
     async def _inject_disposition_edges(
         self,
@@ -844,12 +1162,9 @@ class AdminCoordinator:
         """
         from app.models.graph import MemoryEdge
 
-        try:
-            dispositions = await self.graph_store.get_all_dispositions(
-                world_id, character_id
-            )
-        except Exception:
-            return
+        dispositions = await self.graph_store.get_all_dispositions(
+            world_id, character_id
+        )
 
         char_node_id = f"character_{character_id}" if not character_id.startswith("character_") else character_id
 
@@ -900,30 +1215,21 @@ class AdminCoordinator:
         }
 
         if refresh_location:
-            try:
-                location = await self._world_runtime.get_current_location(world_id, session_id)
-                context["location"] = location
-                context["available_destinations"] = location.get("available_destinations", [])
-                context["sub_locations"] = location.get("available_sub_locations", [])
-            except Exception:
-                pass
+            location = await self._world_runtime.get_current_location(world_id, session_id)
+            context["location"] = location
+            context["available_destinations"] = location.get("available_destinations", [])
+            context["sub_locations"] = location.get("available_sub_locations", [])
 
         if refresh_time:
-            try:
-                context["time"] = await self._world_runtime.get_game_time(world_id, session_id)
-            except Exception:
-                pass
+            context["time"] = await self._world_runtime.get_game_time(world_id, session_id)
 
         if refresh_state:
-            try:
-                state = await self._state_manager.get_state(world_id, session_id)
-                if state:
-                    context["state"] = "in_dialogue" if state.active_dialogue_npc else (
-                        "combat" if state.combat_id else "exploring"
-                    )
-                    context["active_npc"] = state.active_dialogue_npc
-            except Exception:
-                pass
+            state = await self._state_manager.get_state(world_id, session_id)
+            if state:
+                context["state"] = "in_dialogue" if state.active_dialogue_npc else (
+                    "combat" if state.combat_id else "exploring"
+                )
+                context["active_npc"] = state.active_dialogue_npc
 
         if memory_result and getattr(memory_result, "activated_nodes", None):
             context["memory_summary"] = self._summarize_memory(memory_result)
@@ -1019,6 +1325,34 @@ class AdminCoordinator:
 
         return "\n".join(result_parts)
 
+    @staticmethod
+    def _merge_state_deltas(flash_results: List[FlashResponse]) -> Optional["StateDelta"]:
+        """合并多个 Flash 结果中的 state_delta。
+
+        后者的 changes 覆盖前者，operation 字符串拼接。
+        单个 delta 直接返回，无 delta 返回 None。
+        """
+        from app.models.state_delta import StateDelta
+
+        deltas = [r.state_delta for r in flash_results if r.state_delta]
+        if not deltas:
+            return None
+        if len(deltas) == 1:
+            return deltas[0]
+
+        merged_changes: Dict[str, Any] = {}
+        operations: List[str] = []
+        for d in deltas:
+            merged_changes.update(d.changes)
+            operations.append(d.operation)
+
+        return StateDelta(
+            delta_id=deltas[-1].delta_id,
+            timestamp=deltas[-1].timestamp,
+            operation=" + ".join(operations),
+            changes=merged_changes,
+        )
+
     def _build_execution_summary(self, flash_results: List[FlashResponse]) -> str:
         """构建执行结果摘要"""
         if not flash_results:
@@ -1028,6 +1362,13 @@ class AdminCoordinator:
         for result in flash_results:
             op = result.operation.value if result.operation else "unknown"
             if result.success:
+                # 查询类操作需要格式化完整数据
+                if result.operation == FlashOperation.GET_STATUS:
+                    summaries.append(self._format_status_summary(result.result))
+                    continue
+                if result.operation == FlashOperation.GET_PROGRESS:
+                    summaries.append(self._format_progress_summary(result.result))
+                    continue
                 detail = (
                     result.result.get("summary")
                     or result.result.get("narration")
@@ -1041,6 +1382,74 @@ class AdminCoordinator:
 
         return "\n".join(summaries)
 
+    @staticmethod
+    def _format_status_summary(data: Dict[str, Any]) -> str:
+        """格式化 GET_STATUS 查询结果供 GM 叙述"""
+        lines = ["[系统状态查询结果]"]
+        loc = data.get("location") or {}
+        if loc and not loc.get("error"):
+            loc_name = loc.get("location_name") or loc.get("location_id") or "未知"
+            lines.append(f"- 当前位置: {loc_name}")
+            desc = loc.get("description")
+            if desc:
+                lines.append(f"  描述: {desc[:100]}")
+            npcs = loc.get("npcs_present")
+            if npcs:
+                lines.append(f"  NPC: {', '.join(npcs)}")
+        time_info = data.get("time") or {}
+        if time_info and not time_info.get("error"):
+            formatted = time_info.get("formatted") or time_info.get("formatted_time")
+            if not formatted:
+                d = time_info.get("day")
+                h = time_info.get("hour")
+                m = time_info.get("minute")
+                if d is not None and h is not None and m is not None:
+                    formatted = f"第{d}天 {h:02d}:{m:02d}"
+            if formatted:
+                lines.append(f"- 时间: {formatted}")
+        party = data.get("party") or {}
+        if party.get("has_party") is not False:
+            members = party.get("members") or []
+            if members:
+                member_strs = [f"{m.get('name', m.get('character_id'))}({m.get('role', '?')})" for m in members]
+                lines.append(f"- 队伍: {', '.join(member_strs)}")
+            else:
+                lines.append("- 队伍: 无队友")
+        else:
+            lines.append("- 队伍: 未组队")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_progress_summary(data: Dict[str, Any]) -> str:
+        """格式化 GET_PROGRESS 查询结果供 GM 叙述"""
+        import json as _json
+        lines = ["[任务进度查询结果]"]
+        # get_progress 返回的数据结构取决于 NarrativeService
+        if isinstance(data, dict):
+            chapter = data.get("current_chapter") or data.get("chapter_id")
+            if chapter:
+                lines.append(f"- 当前章节: {chapter}")
+            quests = data.get("active_quests") or data.get("quests") or data.get("objectives") or []
+            if quests:
+                lines.append("- 活跃任务:")
+                for q in quests[:5]:
+                    if isinstance(q, dict):
+                        name = q.get("name") or q.get("title") or q.get("id", "未知")
+                        status = q.get("status", "进行中")
+                        lines.append(f"  * {name} [{status}]")
+                    else:
+                        lines.append(f"  * {q}")
+            completed = data.get("completed_quests") or data.get("completed") or []
+            if completed:
+                lines.append(f"- 已完成任务: {len(completed)} 个")
+            # 如果没有结构化字段，输出原始 JSON 摘要
+            if len(lines) == 1:
+                raw = _json.dumps(data, ensure_ascii=False, default=str)
+                if len(raw) > 300:
+                    raw = raw[:300] + "..."
+                lines.append(raw)
+        return "\n".join(lines)
+
     async def narrate_state_change(
         self,
         world_id: str,
@@ -1050,9 +1459,16 @@ class AdminCoordinator:
     ) -> str:
         """状态变更后的统一叙述（供 navigate/time/dialogue 等端点使用）"""
         context = await self._build_context(world_id, session_id)
+        history = self.session_history_manager.get_or_create(world_id, session_id)
+        conversation_history = history.get_recent_history(max_tokens=1_000_000)
+        if conversation_history:
+            context["conversation_history"] = conversation_history
         summary = self._build_change_summary(change_type, change_details)
-        response = await self.pro_dm.narrate(context=context, execution_summary=summary)
-        return response.narration
+        return await self.flash_cpu.generate_gm_narration(
+            player_input=summary,
+            execution_summary=summary,
+            context=context,
+        )
 
     def _build_change_summary(self, change_type: str, details: Dict[str, Any]) -> str:
         """构建状态变更摘要"""
@@ -1075,21 +1491,21 @@ class AdminCoordinator:
         """执行意图中的 Flash 请求"""
         results = []
 
-        print(f"[Flash] 请求数量: {len(flash_requests)} 个")
+        logger.info("Flash 请求数量: %d 个", len(flash_requests))
         if not flash_requests:
             return results
 
         # 执行每个请求
         for i, request in enumerate(flash_requests):
-            print(f"[Flash] 执行请求 {i+1}: {request.operation.value} params={request.parameters}")
+            logger.info("Flash 执行请求 %d: %s params=%s", i+1, request.operation.value, request.parameters)
             try:
                 result = await self.flash_cpu.execute_request(
                     world_id, session_id, request, generate_narration=generate_narration
                 )
-                print(f"[Flash] 请求 {i+1} 完成: success={result.success}")
+                logger.info("Flash 请求 %d 完成: success=%s", i+1, result.success)
                 results.append(result)
             except Exception as e:
-                print(f"[Flash] 请求 {i+1} 异常: {e}")
+                logger.error("Flash 请求 %d 异常: %s", i+1, e, exc_info=True)
                 results.append(FlashResponse(
                     success=False,
                     operation=request.operation,
@@ -1097,35 +1513,6 @@ class AdminCoordinator:
                 ))
 
         return results
-
-    def _resolve_sub_location_id(
-        self,
-        target: str,
-        context: Dict[str, Any] = None,
-    ) -> str:
-        """将子地点名称（中文或英文）解析为 sub_location_id"""
-        if not context or "sub_locations" not in context:
-            return target  # 没有上下文，直接返回原值
-
-        sub_locations = context.get("sub_locations", [])
-        target_lower = target.lower()
-
-        for sub_loc in sub_locations:
-            # sub_loc 格式: {"id": "tavern", "name": "酒馆", ...}
-            if isinstance(sub_loc, dict):
-                loc_id = sub_loc.get("id", "")
-                loc_name = sub_loc.get("name", "")
-                # 匹配 ID 或名称
-                if target_lower == loc_id.lower() or target == loc_name:
-                    return loc_id
-            elif isinstance(sub_loc, str):
-                # 如果是字符串格式 "tavern - 酒馆"
-                if target in sub_loc or target_lower in sub_loc.lower():
-                    parts = sub_loc.split(" - ")
-                    if parts:
-                        return parts[0].strip()
-
-        return target  # 找不到匹配，返回原值
 
     def _generate_default_flash_requests(
         self,
@@ -1147,8 +1534,17 @@ class AdminCoordinator:
             )]
 
         if intent_type == IntentType.ENTER_SUB_LOCATION and intent.target:
-            # 尝试将中文名称映射到 sub_location_id
-            sub_loc_id = self._resolve_sub_location_id(intent.target, context)
+            # 尝试将中文名称映射到 sub_location_id（同步快速匹配）
+            sub_loc_id = intent.target
+            sub_locations = (context or {}).get("sub_locations", [])
+            target_lower = intent.target.lower()
+            for sub_loc in sub_locations:
+                if isinstance(sub_loc, dict):
+                    loc_id = sub_loc.get("id", "")
+                    loc_name = sub_loc.get("name", "")
+                    if target_lower == loc_id.lower() or intent.target == loc_name:
+                        sub_loc_id = loc_id
+                        break
             return [FlashRequest(
                 operation=FlashOperation.ENTER_SUBLOCATION,
                 parameters={"sub_location_id": sub_loc_id},
@@ -1163,11 +1559,44 @@ class AdminCoordinator:
                 },
             )]
 
+        if intent_type == IntentType.LEAVE_SUB_LOCATION:
+            return []  # 由 v2 流程直接处理，不生成 Flash 请求
+
         if intent_type == IntentType.WAIT:
             minutes = intent.parameters.get("minutes", 30)
             return [FlashRequest(
                 operation=FlashOperation.UPDATE_TIME,
                 parameters={"minutes": minutes},
+            )]
+
+        if intent_type == IntentType.SYSTEM_COMMAND:
+            target = (intent.target or "").lower()
+            command = (intent.parameters.get("command") or "").lower()
+            keyword = target or command
+
+            # 任务/进度查询
+            progress_keywords = {"任务", "进度", "quest", "progress", "任务列表", "quests", "目标"}
+            if any(k in keyword for k in progress_keywords):
+                return [FlashRequest(
+                    operation=FlashOperation.GET_PROGRESS,
+                    parameters={},
+                )]
+
+            # 状态/信息查询（聚合位置+时间+队伍）
+            status_keywords = {
+                "状态", "status", "player_status", "info",
+                "信息", "队伍", "party", "位置", "where", "时间", "time",
+            }
+            if any(k in keyword for k in status_keywords):
+                return [FlashRequest(
+                    operation=FlashOperation.GET_STATUS,
+                    parameters={},
+                )]
+
+            # 未识别的 system_command，默认走 GET_STATUS
+            return [FlashRequest(
+                operation=FlashOperation.GET_STATUS,
+                parameters={},
             )]
 
         # 其他类型不需要默认请求
@@ -1252,9 +1681,10 @@ class AdminCoordinator:
         action_id: str,
     ) -> CoordinatorResponse:
         """
-        直接执行操作（跳过意图解析）。
+        直接执行操作（复用 v2 流程）。
 
-        用于按钮点击等确定性操作。
+        将 action_id 转换为自然语言后调用 process_player_input_v2，
+        保证按钮操作与自然语言输入有一致的体验。
 
         Args:
             world_id: 世界ID
@@ -1264,133 +1694,26 @@ class AdminCoordinator:
         Returns:
             CoordinatorResponse: 响应
         """
-        import time as _time
-        start = _time.time()
+        player_input = self._action_id_to_input(action_id)
+        return await self.process_player_input_v2(world_id, session_id, player_input)
 
-        # 解析 action_id
+    @staticmethod
+    def _action_id_to_input(action_id: str) -> str:
+        """将 action_id 转换为自然语言输入。"""
         parts = action_id.split("_", 1)
         action_type = parts[0] if parts else ""
         target = parts[1] if len(parts) > 1 else ""
 
-        # 构建 Flash 请求
-        flash_request = None
-        action_description = ""
+        if action_type == "enter" and target:
+            return f"进入{target}"
+        if action_type == "go" and target:
+            return f"前往{target}"
+        if action_type == "talk" and target:
+            return f"与{target}交谈"
+        if action_id == "look_around":
+            return "观察周围"
 
-        if action_type == "enter":
-            flash_request = FlashRequest(
-                operation=FlashOperation.ENTER_SUBLOCATION,
-                parameters={"sub_location_id": target},
-            )
-            action_description = f"进入{target}"
-
-        elif action_type == "go":
-            flash_request = FlashRequest(
-                operation=FlashOperation.NAVIGATE,
-                parameters={"destination": target},
-            )
-            action_description = f"前往{target}"
-
-        elif action_type == "talk":
-            flash_request = FlashRequest(
-                operation=FlashOperation.NPC_DIALOGUE,
-                parameters={"npc_id": target, "message": "你好"},
-            )
-            action_description = f"与{target}交谈"
-
-        elif action_type == "look":
-            action_description = "观察周围"
-            # look_around 不需要 flash 请求，直接生成叙述
-
-        # 执行 Flash 操作
-        flash_results = []
-        if flash_request:
-            try:
-                result = await self.flash_cpu.execute_request(
-                    world_id, session_id, flash_request
-                )
-                flash_results.append(result)
-            except Exception as e:
-                flash_results.append(FlashResponse(
-                    success=False,
-                    operation=flash_request.operation,
-                    error=str(e),
-                ))
-
-        # 更新上下文
-        context = await self._build_context(world_id, session_id)
-
-        # 生成叙述
-        results_summary = self._summarize_action_results(flash_results, action_description)
-        location = context.get("location") or {}
-
-        narration_prompt = f"""你是游戏的 GM。玩家执行了操作，请生成简洁的叙述。
-
-## 当前场景
-- 位置: {location.get("location_name", "未知")}
-- 氛围: {location.get("atmosphere", "")}
-
-## 玩家操作
-{action_description}
-
-## 执行结果
-{results_summary}
-
-## 要求
-- 2-3句话描述场景变化
-- 如果进入新地点，描述环境和氛围
-- 如果有 NPC 在场，可以提及
-- 保持沉浸感
-"""
-
-        try:
-            response = await self.pro_dm.llm_service.generate_simple(
-                narration_prompt,
-                model_override=settings.gemini_flash_model,
-            )
-            narration = response.strip()
-        except Exception as e:
-            print(f"[Coordinator] 叙述生成失败: {e}")
-            narration = results_summary
-
-        elapsed = (_time.time() - start) * 1000
-        print(f"[Coordinator] execute_action 完成 ({elapsed:.0f}ms)")
-
-        # 获取新的可用操作
-        available_actions = await self._get_available_actions(world_id, session_id, context)
-
-        return CoordinatorResponse(
-            narration=narration,
-            speaker="GM",
-            available_actions=available_actions,
-            metadata={
-                "action_id": action_id,
-                "elapsed_ms": elapsed,
-            },
-        )
-
-    def _summarize_action_results(
-        self,
-        flash_results: List[FlashResponse],
-        action_description: str,
-    ) -> str:
-        """汇总操作执行结果"""
-        if not flash_results:
-            return action_description
-
-        summaries = []
-        for result in flash_results:
-            if result.success:
-                if result.result.get("description"):
-                    summaries.append(result.result["description"])
-                elif result.result.get("sub_location"):
-                    sub = result.result["sub_location"]
-                    summaries.append(f"进入了{sub.get('name', '未知地点')}")
-                else:
-                    summaries.append(f"{action_description}成功")
-            else:
-                summaries.append(f"操作失败: {result.error or '未知错误'}")
-
-        return "\n".join(summaries) if summaries else action_description
+        return action_id.replace("_", " ")
 
     async def enter_scene(
         self,
@@ -1402,11 +1725,17 @@ class AdminCoordinator:
         await self._session_store.set_scene(world_id, session_id, scene)
         description = scene.description or ""
         if generate_description and not description:
-            narration = await self.pro_dm.narrate_legacy(
-                f"进入场景：{scene.location or scene.scene_id}",
-                context={"location": {"location_name": scene.location, "description": scene.description}},
+            context = await self._build_context(world_id, session_id)
+            history = self.session_history_manager.get_or_create(world_id, session_id)
+            conversation_history = history.get_recent_history(max_tokens=1_000_000)
+            if conversation_history:
+                context["conversation_history"] = conversation_history
+            summary = f"进入场景：{scene.location or scene.scene_id}"
+            description = await self.flash_cpu.generate_gm_narration(
+                player_input=summary,
+                execution_summary=summary,
+                context=context,
             )
-            description = narration.narration
         return {
             "scene": scene,
             "description": description,
@@ -1443,7 +1772,7 @@ class AdminCoordinator:
         combat_description: str = "",
         environment: Optional[dict] = None,
     ) -> Dict[str, Any]:
-        payload = await self.flash_cpu._call_combat_tool_with_fallback(
+        payload = await self.flash_cpu.call_combat_tool(
             "start_combat_session",
             {
                 "world_id": world_id,
@@ -1453,13 +1782,9 @@ class AdminCoordinator:
                 "environment": environment,
                 "combat_context": CombatStartRequest(player_state=player_state, enemies=enemies).combat_context.model_dump(),
             },
-            fallback=lambda: {"type": "error", "response": "战斗工具不可用"},
         )
-        if isinstance(payload, dict):
-            if payload.get("error"):
-                return {"type": "error", "response": payload["error"]}
-            if payload.get("type") == "error":
-                return payload
+        if payload.get("error"):
+            return {"type": "error", "response": payload["error"]}
 
         combat_id = payload.get("combat_id", "")
         await self.flash_cpu._apply_delta(world_id, session_id, self.flash_cpu._build_state_delta("start_combat", {"combat_id": combat_id}))
@@ -1536,7 +1861,7 @@ class AdminCoordinator:
         )
 
     def get_context(self, world_id: str, session_id: str):
-        # Prefer admin state, fallback to legacy context
+        # Prefer in-memory admin state
         state = self._state_manager._states.get(f"{world_id}:{session_id}")
         if state:
             known_chars = state.metadata.get("known_characters", []) if state.metadata else []
@@ -1790,10 +2115,7 @@ class AdminCoordinator:
                 },
             )
             char_scope = GraphScope(scope_type="character", character_id=character_id)
-            try:
-                await self.graph_store.upsert_edge_v2(world_id, char_scope, edge)
-            except Exception as exc:
-                print(f"[Coordinator] approves 边同步失败: {exc}")
+            await self.graph_store.upsert_edge_v2(world_id, char_scope, edge)
 
         return result
 

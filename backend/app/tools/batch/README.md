@@ -189,7 +189,6 @@ python -m app.tools.graph_importer \
 ## 支持的模型
 
 - `gemini-3-flash-preview` - 推荐，快速便宜
-- `gemini-3-pro-preview` - 更强但更贵
 - `gemini-2.0-flash` - 备选
 
 ---
