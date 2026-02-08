@@ -1,4 +1,4 @@
-# 主线剧情提取 Prompt
+# [DEPRECATED] 主线剧情提取 Prompt — 已被 mainline_enrichment.md 替代
 
 你是一个叙事结构分析专家。请从以下章节信息中生成结构化的主线剧情数据。
 

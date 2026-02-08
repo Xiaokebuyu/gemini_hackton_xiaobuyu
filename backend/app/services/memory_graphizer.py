@@ -494,6 +494,27 @@ class MemoryGraphizer:
         result = MergeResult()
         char_scope = GraphScope.character(npc_id)
 
+        story_event_ids: List[str] = []
+        transition_target = ""
+        chapter_id = ""
+        if extraction.event_group and extraction.event_group.transcript:
+            for msg in extraction.event_group.transcript:
+                metadata = getattr(msg, "metadata", {}) or {}
+                raw_story_events = metadata.get("story_events")
+                if isinstance(raw_story_events, list):
+                    for event_id in raw_story_events:
+                        if isinstance(event_id, str) and event_id.strip():
+                            story_event_ids.append(event_id.strip())
+                if not transition_target:
+                    raw_transition = metadata.get("transition")
+                    if isinstance(raw_transition, str) and raw_transition.strip():
+                        transition_target = raw_transition.strip()
+                if not chapter_id:
+                    raw_chapter_id = metadata.get("chapter_id")
+                    if isinstance(raw_chapter_id, str) and raw_chapter_id.strip():
+                        chapter_id = raw_chapter_id.strip()
+        story_event_ids = sorted(set(story_event_ids))
+
         # 0. 确保当前实例角色节点存在（便于 event_group 锚定到 owner）
         existing_owner = await self.graph_store.get_nodes_by_ids_v2(
             world_id=world_id,
@@ -532,6 +553,10 @@ class MemoryGraphizer:
                     "summary": eg.summary,
                     "emotion": eg.emotion,
                     "participants": eg.participants,
+                    "story_events": story_event_ids,
+                    "transition_target": transition_target,
+                    "chapter_id": chapter_id,
+                    "source": "session_history_graphizer",
                     "transcript": [
                         {"role": t.role, "content": t.content}
                         for t in eg.transcript
@@ -560,6 +585,10 @@ class MemoryGraphizer:
                     "summary": ev.summary,
                     "emotion": ev.emotion,
                     "participants": ev.participants,
+                    "story_events": story_event_ids,
+                    "transition_target": transition_target,
+                    "chapter_id": chapter_id,
+                    "source": "session_history_graphizer",
                     "transcript_range": ev.transcript_range.model_dump() if ev.transcript_range else None,
                     "transcript_snippet": [
                         {"role": t.role, "content": t.content}

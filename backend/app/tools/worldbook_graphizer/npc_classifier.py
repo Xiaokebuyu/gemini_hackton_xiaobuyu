@@ -27,7 +27,7 @@ class NPCClassifier:
             api_key: API 密钥
         """
         self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
-        self.model = model or "gemini-2.0-flash"
+        self.model = model or "gemini-3-pro-preview"
         self.prompt_template = self._load_prompt_template()
 
     def _load_prompt_template(self) -> str:

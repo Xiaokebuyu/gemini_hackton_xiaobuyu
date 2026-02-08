@@ -1,0 +1,886 @@
+{
+  "items": [
+    [
+      {
+        "id": "standard_adventure_gear",
+        "name": "标准冒险装备",
+        "type": "tool",
+        "subtype": "adventuring_gear",
+        "description": "包含皮甲、锁子甲、铁盔、剑、矛、盾、弓箭、火把、绳索、十呎竿的基础生存物资。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "heavy",
+          "price": "variable"
+        },
+        "effects": [
+          "装备的质量和适用性直接决定生存率",
+          "外观和华丽度是次要的"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "healing_stamina_potion",
+        "name": "治疗/体力药水",
+        "type": "potion",
+        "subtype": "healing",
+        "description": "恢复生命或体力的基础炼金物品。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "light",
+          "price": "10 sp"
+        },
+        "effects": [
+          "恢复生命值",
+          "恢复体力"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "antidote",
+        "name": "解毒剂",
+        "type": "potion",
+        "subtype": "consumable",
+        "description": "应对毒蛇或哥布林淬毒武器的必备品。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "light",
+          "price": "variable"
+        },
+        "effects": [
+          "解除中毒状态"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "magic_scroll",
+        "name": "魔法卷轴",
+        "type": "scroll",
+        "subtype": "magic",
+        "description": "封存了一次性法术的羊皮纸，是昂贵的战术底牌。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "light",
+          "price": "very high"
+        },
+        "effects": [
+          "非施法者也能使用",
+          "包含如'传送'等终极逃生法术"
+        ],
+        "rarity": "very_rare"
+      },
+      {
+        "id": "special_materials",
+        "name": "特殊材料",
+        "type": "material",
+        "subtype": "smithing",
+        "description": "秘银、精钢等稀有金属或特定魔物素材。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "variable",
+          "price": "high"
+        },
+        "effects": [
+          "用于打造高品质武器装备",
+          "用于炼金或制作魔法物品"
+        ],
+        "rarity": "rare"
+      },
+      {
+        "id": "practical_techniques",
+        "name": "实用技术",
+        "type": "tool",
+        "subtype": "skill_kit",
+        "description": "陷阱制作、毒药调配、地图绘制、追踪术等非魔法技能。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "n/a",
+          "price": "n/a"
+        },
+        "effects": [
+          "在冒险中与魔法同等重要",
+          "利用环境（火攻、水淹）解决问题"
+        ],
+        "rarity": "common"
+      }
+    ],
+    [
+      {
+        "id": "armor_basic_clothing",
+        "name": "基础衣物",
+        "type": "armor",
+        "subtype": "clothing",
+        "description": "普通衣物，也包括长袍或是神官服。",
+        "properties": {
+          "ac_bonus": 1,
+          "weight": "布甲",
+          "price": "15 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_padded_jacket",
+        "name": "武装衣",
+        "type": "armor",
+        "subtype": "light",
+        "description": "填充棉絮或是羊毛的近身衣物，能缓冲冲击并确保四肢和盔甲紧密贴合。",
+        "properties": {
+          "ac_bonus": 1,
+          "weight": "内衬",
+          "price": "30 sp"
+        },
+        "effects": [
+          "可以穿在铠甲内作为内衬，增加额外防御",
+          "防御值叠加"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_leather",
+        "name": "皮甲",
+        "type": "armor",
+        "subtype": "light",
+        "description": "冒险者最常见的标准装备。",
+        "properties": {
+          "ac_bonus": 2,
+          "weight": "轻甲",
+          "price": "30 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_chain_shirt",
+        "name": "链甲衫",
+        "type": "armor",
+        "subtype": "light",
+        "description": "覆盖躯干和肩膀部位，由金属环链拼接而成，对斩击防御出色。",
+        "properties": {
+          "ac_bonus": 2,
+          "weight": "轻甲",
+          "price": "50 sp"
+        },
+        "effects": [
+          "可穿在宽松衣物(如长袍或神官服)之下"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_breastplate",
+        "name": "胸甲",
+        "type": "armor",
+        "subtype": "light",
+        "description": "覆盖躯干部位，由一整块采取穹壳结构的金属板制成。",
+        "properties": {
+          "ac_bonus": 3,
+          "weight": "轻甲",
+          "price": "85 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_bikini",
+        "name": "比基尼铠甲",
+        "type": "armor",
+        "subtype": "light",
+        "description": "象征意义大于实际防御，战女神信徒与角斗士偏爱。",
+        "properties": {
+          "ac_bonus": 2,
+          "weight": "轻甲",
+          "price": "150 sp"
+        },
+        "effects": [],
+        "rarity": "uncommon"
+      },
+      {
+        "id": "armor_chain_mail",
+        "name": "锁子甲",
+        "type": "armor",
+        "subtype": "heavy",
+        "description": "覆盖躯干和四肢，并配有锁子头巾或是头盔，由金属环链拼接而成。",
+        "properties": {
+          "ac_bonus": 4,
+          "weight": "重甲",
+          "price": "85 sp"
+        },
+        "effects": [
+          "对斩击防御出色"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_scale_mail",
+        "name": "鳞甲",
+        "type": "armor",
+        "subtype": "heavy",
+        "description": "将金属鳞片或是魔物鳞片缝制在皮革上制成的的铠甲。",
+        "properties": {
+          "ac_bonus": 4,
+          "weight": "重甲",
+          "price": "120 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "armor_plate",
+        "name": "板甲",
+        "type": "armor",
+        "subtype": "heavy",
+        "description": "骑士的标志，提供全面防护。",
+        "properties": {
+          "ac_bonus": 6,
+          "weight": "重甲",
+          "price": "500 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "shield_buckler",
+        "name": "小圆盾",
+        "type": "armor",
+        "subtype": "shield",
+        "description": "小型盾牌，便于携带。",
+        "properties": {
+          "ac_bonus": 2,
+          "weight": "小型盾",
+          "price": "25 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "shield_knight",
+        "name": "骑士盾",
+        "type": "armor",
+        "subtype": "shield",
+        "description": "标准的大型盾牌。",
+        "properties": {
+          "ac_bonus": 3,
+          "weight": "大型盾",
+          "price": "50 sp"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "shield_tower",
+        "name": "塔盾",
+        "type": "armor",
+        "subtype": "shield",
+        "description": "堪称可移动的墙壁。",
+        "properties": {
+          "ac_bonus": 5,
+          "weight": "大型盾",
+          "price": "80 sp"
+        },
+        "effects": [
+          "装备时移动力减半"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "shield_stronghold",
+        "name": "据点盾",
+        "type": "armor",
+        "subtype": "shield",
+        "description": "极度厚重的防御工事盾牌。",
+        "properties": {
+          "ac_bonus": 8,
+          "weight": "大型盾",
+          "price": "100 sp"
+        },
+        "effects": [
+          "不可移动",
+          "需要部署在地面"
+        ],
+        "rarity": "uncommon"
+      }
+    ],
+    [
+      {
+        "id": "gear_adventurers_kit",
+        "name": "冒险者套组",
+        "type": "tool",
+        "subtype": "kit",
+        "description": "包含火绒盒、小刀、针线、鱼钩鱼线、磨刀石、水袋等基础生存工具的套装。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "中",
+          "price": "25银币"
+        },
+        "effects": [
+          "提供野外生存所需的基础工具"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "gear_rope",
+        "name": "绳索",
+        "type": "tool",
+        "subtype": "adventuring_gear",
+        "description": "坚固的麻绳，是冒险中不可或缺的工具。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "中",
+          "price": "5银币/10米"
+        },
+        "effects": [],
+        "rarity": "common"
+      },
+      {
+        "id": "gear_grappling_hook",
+        "name": "钩绳",
+        "type": "tool",
+        "subtype": "adventuring_gear",
+        "description": "前端装有铁钩的绳索，便于攀爬或钩取物体。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "中",
+          "price": "7银币/10米"
+        },
+        "effects": [
+          "辅助攀爬判定"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "gear_10ft_pole",
+        "name": "十呎竿",
+        "type": "tool",
+        "subtype": "adventuring_gear",
+        "description": "用于探测前方地面、触发陷阱的标准长杆工具。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "中",
+          "price": "1银币"
+        },
+        "effects": [
+          "安全触发接触式陷阱"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "tool_thieves_tools",
+        "name": "开锁工具",
+        "type": "tool",
+        "subtype": "thieves_tools",
+        "description": "包含各类钩针与扳手，用于解除常规锁具的工具包。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "25银币"
+        },
+        "effects": [
+          "允许进行开锁判定"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "tool_trapmakers_tools",
+        "name": "陷阱师工具",
+        "type": "tool",
+        "subtype": "kit",
+        "description": "用于设置陷阱的材料和工具集合。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "中",
+          "price": "20银币/5个"
+        },
+        "effects": [
+          "允许设置简易陷阱"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "tool_artisans_tools",
+        "name": "工匠工具",
+        "type": "tool",
+        "subtype": "artisan_tools",
+        "description": "各类专业工匠（锻造、皮革等）使用的便携工具。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "中",
+          "price": "20银币"
+        },
+        "effects": [
+          "允许进行相关的工艺检定"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "gear_torch",
+        "name": "火把",
+        "type": "consumable",
+        "subtype": "light",
+        "description": "简易的照明工具，燃烧时会产生烟雾。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1火",
+          "weight": "轻",
+          "price": "1银币/6支"
+        },
+        "effects": [
+          "照亮15米范围",
+          "持续2小时"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "gear_horned_lamp",
+        "name": "角灯",
+        "type": "tool",
+        "subtype": "light",
+        "description": "金属制成的灯具，结构坚固，不易损坏。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "30银币"
+        },
+        "effects": [
+          "照亮20米范围"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "gear_oil_lamp",
+        "name": "油灯",
+        "type": "tool",
+        "subtype": "light",
+        "description": "带有玻璃罩的灯具，防风雨性能好，但玻璃易碎。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "50银币"
+        },
+        "effects": [
+          "照亮20米范围"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "consumable_lamp_oil",
+        "name": "灯油",
+        "type": "consumable",
+        "subtype": "fuel",
+        "description": "作为角灯与油灯的燃料。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "1银币/瓶"
+        },
+        "effects": [
+          "可持续照明12小时"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "potion_healing",
+        "name": "治疗药水",
+        "type": "potion",
+        "subtype": "healing",
+        "description": "红色的炼金药剂，能迅速愈合伤口。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "10银币"
+        },
+        "effects": [
+          "恢复「1d6+5」点伤害"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "potion_stamina",
+        "name": "体力药水",
+        "type": "potion",
+        "subtype": "utility",
+        "description": "恢复体力的药剂，能缓解疲劳。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "10银币"
+        },
+        "effects": [
+          "恢复1点消耗值",
+          "3小时内消耗等级视为降低1级"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "potion_antidote",
+        "name": "解毒剂",
+        "type": "potion",
+        "subtype": "curative",
+        "description": "中和体内毒素的药剂。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "10银币"
+        },
+        "effects": [
+          "解除一个毒素效果"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "potion_ability_elixir",
+        "name": "能力提升秘药",
+        "type": "potion",
+        "subtype": "buff",
+        "description": "能在短时间内激发人体潜能的秘药。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "50银币"
+        },
+        "effects": [
+          "1小时内，某项判定系（力量、灵巧等）获得+2加值"
+        ],
+        "rarity": "uncommon"
+      },
+      {
+        "id": "potion_painkiller",
+        "name": "镇痛剂",
+        "type": "potion",
+        "subtype": "utility",
+        "description": "强效止痛药，虽然能暂时忘却痛苦，但副作用明显。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "25银币"
+        },
+        "effects": [
+          "1小时内免疫疼痛带来的负面影响",
+          "药效过后会结算累积的消耗"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "wondrous_deodorizing_bag",
+        "name": "除臭袋",
+        "type": "wondrous",
+        "subtype": "utility",
+        "description": "装有特殊草药的袋子，能有效掩盖使用者的气味。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "15银币"
+        },
+        "effects": [
+          "掩盖气味",
+          "对基于嗅觉的追踪判定施加-2惩罚",
+          "持续3天"
+        ],
+        "rarity": "uncommon"
+      },
+      {
+        "id": "wondrous_dowsing_candle",
+        "name": "探物蜡烛",
+        "type": "wondrous",
+        "subtype": "divination",
+        "description": "一种魔法蜡烛，其火焰会指向使用者心中所想之物。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "30银币"
+        },
+        "effects": [
+          "火焰朝向心中所想的特定物品方向摇曳",
+          "对第六感判定+4",
+          "持续1小时"
+        ],
+        "rarity": "rare"
+      },
+      {
+        "id": "material_fire_elixir",
+        "name": "火之秘药",
+        "type": "material",
+        "subtype": "ammunition",
+        "description": "使用火器时的必需品，作为发射药使用。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "极轻",
+          "price": "10银币"
+        },
+        "effects": [
+          "每次发射火器消耗1份"
+        ],
+        "rarity": "common"
+      }
+    ],
+    [
+      {
+        "id": "---/道具与装备列表---",
+        "name": "道具与装备列表",
+        "type": "wondrous",
+        "subtype": null,
+        "description": "这是一个未包含具体内容的道具与装备列表占位符（原始描述为 <items_list>）。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": null,
+          "weight": "轻",
+          "price": "0 gp"
+        },
+        "effects": [],
+        "rarity": "common"
+      }
+    ],
+    {
+      "id": "---/道具与装备列表---",
+      "name": "---/道具与装备列表---",
+      "type": "wondrous",
+      "subtype": "meta",
+      "description": "这是一个用于标记道具与装备列表结束或分隔的系统占位符，并非实际游戏物品。",
+      "properties": {
+        "ac_bonus": 0,
+        "damage": null,
+        "weight": "轻",
+        "price": "0 gp"
+      },
+      "effects": [],
+      "rarity": "common"
+    },
+    {
+      "id": "装备生成限制",
+      "name": "装备生成限制",
+      "type": "wondrous",
+      "subtype": "meta_rule",
+      "description": "一种用于平衡世界的法则，根据冒险者等级限制获取装备的稀有度上限，并强制简化低阶装备的命名。",
+      "properties": {
+        "ac_bonus": 0,
+        "damage": null,
+        "weight": "0",
+        "price": "N/A"
+      },
+      "effects": [
+        "等级上限锁定：白瓷/黑曜对应精良，钢铁/青玉对应稀有，翠玉/红玉对应史诗，青铜及以上对应传奇",
+        "命名修正：精良与稀有装备禁止使用夸张修饰词，仅保留材料或特性描述（如“秘银轻甲”）",
+        "触发机制：在铁匠铺打造、任务奖励或地下城宝藏生成时自动生效"
+      ],
+      "rarity": "legendary"
+    },
+    [
+      {
+        "id": "simple_melee_weapon",
+        "name": "简易武器",
+        "type": "weapon",
+        "subtype": "simple melee",
+        "description": "匕首、棍棒、小镰刀等极小尺寸或临时武器。施法媒介也属此类。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d4",
+          "weight": "light",
+          "price": "10 sp"
+        },
+        "effects": [
+          "单手武器",
+          "施法媒介版本价格为60银币"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "light_melee_weapon",
+        "name": "轻型近战武器",
+        "type": "weapon",
+        "subtype": "martial melee",
+        "description": "短剑、弯刀、手斧等轻巧、易在狭窄环境使用的单手武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d6",
+          "weight": "light",
+          "price": "30 sp"
+        },
+        "effects": [
+          "单手武器",
+          "适合狭窄环境"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "standard_melee_weapon",
+        "name": "标准近战武器",
+        "type": "weapon",
+        "subtype": "martial melee",
+        "description": "长剑、战斧、战锤等具有一定长度和重量的通用近战武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d8",
+          "weight": "medium",
+          "price": "60 sp"
+        },
+        "effects": [
+          "单手武器"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "large_melee_weapon",
+        "name": "大型近战武器",
+        "type": "weapon",
+        "subtype": "martial melee",
+        "description": "大剑、巨斧、大锤等具有相当重量，需要双手使用的重型武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d12",
+          "weight": "heavy",
+          "price": "100 sp"
+        },
+        "effects": [
+          "双手武器"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "polearm_weapon",
+        "name": "长柄近战武器",
+        "type": "weapon",
+        "subtype": "martial melee",
+        "description": "长枪、戟、巨镰等长度至少为1.8m的带刃长柄武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "2d6",
+          "weight": "heavy",
+          "price": "80 sp"
+        },
+        "effects": [
+          "双手武器",
+          "长柄(Reach)"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "unarmed_strike",
+        "name": "徒手攻击",
+        "type": "weapon",
+        "subtype": "simple melee",
+        "description": "不使用任何武器，只使用肢体（拳、腿、爪、牙）进行的攻击。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d4",
+          "weight": "light",
+          "price": "0 sp"
+        },
+        "effects": [
+          "单手武器",
+          "非武装"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "light_ranged_weapon",
+        "name": "轻型射击武器",
+        "type": "weapon",
+        "subtype": "simple ranged",
+        "description": "短弓、轻弩等尺寸较小、使用灵活的远程武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d6",
+          "weight": "light",
+          "price": "40 sp"
+        },
+        "effects": [
+          "双手武器"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "heavy_ranged_weapon",
+        "name": "重型射击武器",
+        "type": "weapon",
+        "subtype": "martial ranged",
+        "description": "长弓、重弩等尺寸较大、威力较强、装填较慢的军用武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "2d6",
+          "weight": "heavy",
+          "price": "80 sp"
+        },
+        "effects": [
+          "双手武器"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "thrown_weapon",
+        "name": "投掷武器",
+        "type": "weapon",
+        "subtype": "simple ranged",
+        "description": "飞刀、投石索、手里剑等尺寸极小，通过人力投掷发射的武器。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "1d4",
+          "weight": "light",
+          "price": "1 sp"
+        },
+        "effects": [
+          "单手武器",
+          "投掷"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "firearm_short",
+        "name": "火器(短铳)",
+        "type": "weapon",
+        "subtype": "firearm",
+        "description": "枪管较短的单手持火绳枪或簧轮枪，装填较慢。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "2d6",
+          "weight": "medium",
+          "price": "400 sp"
+        },
+        "effects": [
+          "单手武器",
+          "需消耗[火之秘药]"
+        ],
+        "rarity": "common"
+      },
+      {
+        "id": "firearm_long",
+        "name": "火器(长铳)",
+        "type": "weapon",
+        "subtype": "firearm",
+        "description": "枪管较长的双手持火绳枪或簧轮枪，装填较慢，威力强大。",
+        "properties": {
+          "ac_bonus": 0,
+          "damage": "3d6",
+          "weight": "heavy",
+          "price": "600 sp"
+        },
+        "effects": [
+          "双手武器",
+          "需消耗[火之秘药]"
+        ],
+        "rarity": "common"
+      }
+    ]
+  ]
+}

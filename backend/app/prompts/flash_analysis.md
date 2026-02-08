@@ -12,6 +12,26 @@
 - 状态：{current_state}
 - 对话中：{active_npc}
 
+## 当前章节
+- 章节：{chapter_name}
+- 章节目标：{chapter_goals}
+- 章节描述：{chapter_description}
+- 待完成事件：{chapter_events}
+
+（在分析玩家意图时，考虑当前章节目标。如果玩家行动推进了章节目标或触发了章节事件，在 context_package 中标注。）
+
+## 剧情编排（StoryDirector）
+
+### 当前状态
+{story_directives}
+
+### 待评估条件
+以下条件需要你根据对话和当前情境来判断。对每个条件，回答 true 或 false。
+
+{pending_flash_conditions}
+
+（根据玩家最近的行动和对话来判断。只在明确满足时回答 true。不确定时回答 false。）
+
 ## 世界角色
 {character_roster}
 （注意：以上角色不一定都在当前地点。根据角色常驻位置和当前剧情判断谁可能出现。memory_seeds 中引用角色时直接使用角色 ID，不加前缀。）
@@ -35,6 +55,16 @@
 | start_combat | 发起战斗 | `{{"operation": "start_combat", "parameters": {{"enemies": []}}}}` |
 | system_command | 查询状态/任务等系统信息 | 见下方 system_command 映射 |
 | roleplay | 纯角色扮演/对话 | 无需 operations |
+
+### 队伍管理操作（伴随操作）
+
+以下操作作为**伴随操作**跟随主意图输出，不是独立 intent_type。当剧情发展触发队伍变化时，在 operations 数组中追加对应操作。
+
+| 触发条件 | operation |
+|---|---|
+| NPC表达加入意愿 / 玩家邀请NPC加入队伍 | `{{"operation": "add_teammate", "parameters": {{"character_id": "角色ID", "name": "角色名称", "role": "support", "personality": "性格描述", "response_tendency": 0.5}}}}` |
+| NPC离队 / 剧情需要 / 玩家要求队友离开 | `{{"operation": "remove_teammate", "parameters": {{"character_id": "角色ID", "name": "角色名称", "reason": "离队原因"}}}}` |
+| 剧情大转折导致队伍解散（被迫分离、任务结束、背叛等） | `{{"operation": "disband_party", "parameters": {{"reason": "解散原因"}}}}` |
 
 ### system_command 操作映射
 
@@ -70,5 +100,12 @@
     ],
     "atmosphere_notes": "当前氛围描述：紧张/轻松/神秘/危险等，以及影响氛围的环境因素",
     "suggested_tone": "建议的叙述语气：庄重/幽默/紧迫/温馨/史诗等"
+  }},
+  "story_progression": {{
+    "story_events": ["触发的章节事件ID列表（仅当玩家行动明确完成了章节事件时才填写）"],
+    "progress_note": "章节推进说明（可空）",
+    "condition_evaluations": [
+      {{"id": "条件ID", "result": true, "reasoning": "简短理由"}}
+    ]
   }}
 }}

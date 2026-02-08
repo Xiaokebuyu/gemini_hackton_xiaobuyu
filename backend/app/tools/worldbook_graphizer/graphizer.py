@@ -1,7 +1,8 @@
 """
-世界书图谱化主编排器
+[DEPRECATED] 世界书图谱化主编排器 — 已被 unified_pipeline.py 替代。
 
-协调地图提取、NPC 分类等流程，生成完整的结构化数据。
+请使用 `python -m app.tools.init_world_cli extract` 命令。
+本文件仅被旧 CLI 命令 (graphize/graphize-maps/graphize-characters) 调用。
 """
 import json
 from pathlib import Path

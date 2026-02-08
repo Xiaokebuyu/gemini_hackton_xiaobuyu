@@ -24,6 +24,7 @@ interface CombatStoreState {
   lastRoll: DiceRoll | null;
 
   // Actions
+  setActive: (active: boolean) => void;
   setCombatState: (state: CombatState) => void;
   updateCombatState: (state: Partial<CombatState>) => void;
   clearCombat: () => void;
@@ -60,6 +61,10 @@ export const useCombatStore = create<CombatStoreState>()(
       lastRoll: null,
 
       // Actions
+      setActive: (isActive: boolean) => {
+        set({ isActive });
+      },
+
       setCombatState: (combatState: CombatState) => {
         set({
           combatState,

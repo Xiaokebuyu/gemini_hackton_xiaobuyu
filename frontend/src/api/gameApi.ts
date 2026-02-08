@@ -443,6 +443,36 @@ export async function getNarrativeProgress(
 }
 
 /**
+ * 获取流程面板数据
+ *
+ * GET /api/game/{world_id}/sessions/{session_id}/narrative/flow-board
+ */
+export async function getFlowBoard(
+  worldId: string,
+  sessionId: string
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.get(
+    `/api/game/${worldId}/sessions/${sessionId}/narrative/flow-board`
+  );
+  return response.data;
+}
+
+/**
+ * 获取当前计划
+ *
+ * GET /api/game/{world_id}/sessions/{session_id}/narrative/current-plan
+ */
+export async function getCurrentPlan(
+  worldId: string,
+  sessionId: string
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.get(
+    `/api/game/${worldId}/sessions/${sessionId}/narrative/current-plan`
+  );
+  return response.data;
+}
+
+/**
  * 获取可用地图
  *
  * GET /api/game/{world_id}/sessions/{session_id}/narrative/available-maps

@@ -1,14 +1,17 @@
 /**
- * Right Panel - Player Status & Party
+ * Right Panel - Player Status & Party with tabs (Party/Inventory)
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Package } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useUIStore } from '../../stores';
 import PanelFrame from './PanelFrame';
 import PlayerStatus from '../party/PlayerStatus';
 import PartyPanel from '../party/PartyPanel';
+import InventoryPanel from '../inventory/InventoryPanel';
+
+type RightTab = 'party' | 'inventory';
 
 interface RightPanelProps {
   className?: string;
@@ -17,6 +20,12 @@ interface RightPanelProps {
 export const RightPanel: React.FC<RightPanelProps> = ({ className = '' }) => {
   const { t } = useTranslation();
   const { rightPanelCollapsed, toggleRightPanel } = useUIStore();
+  const [activeTab, setActiveTab] = useState<RightTab>('party');
+
+  const tabs: { key: RightTab; label: string }[] = [
+    { key: 'party', label: t('tabs.party', '队伍') },
+    { key: 'inventory', label: t('tabs.inventory', '背包') },
+  ];
 
   return (
     <div className={`relative flex ${className}`}>
@@ -51,30 +60,43 @@ export const RightPanel: React.FC<RightPanelProps> = ({ className = '' }) => {
             className="overflow-hidden"
           >
             <div className="w-[300px] h-full flex flex-col gap-2 p-3">
-              {/* Player Status */}
-              <PanelFrame className="flex-shrink-0">
-                <PlayerStatus />
-              </PanelFrame>
+              {/* Tab buttons */}
+              <div className="flex gap-3 px-1">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`text-xs pb-1 border-b-2 transition-colors ${
+                      activeTab === tab.key
+                        ? 'text-g-gold border-g-gold font-semibold'
+                        : 'text-g-text-muted border-transparent hover:text-g-text'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
 
-              {/* Party Panel */}
-              <PanelFrame className="flex-1 min-h-0 overflow-hidden">
-                <PartyPanel />
-              </PanelFrame>
+              {/* Tab content */}
+              {activeTab === 'party' && (
+                <>
+                  {/* Player Status */}
+                  <PanelFrame className="flex-shrink-0">
+                    <PlayerStatus />
+                  </PanelFrame>
 
-              {/* Inventory placeholder */}
-              <PanelFrame className="flex-shrink-0">
-                <div className="p-3">
-                  <h3 className="text-sm font-heading text-g-gold mb-2">
-                    {t('status.inventory')}
-                  </h3>
-                  <div className="flex flex-col items-center py-4">
-                    <Package className="w-8 h-8 text-g-text-muted mb-2" />
-                    <p className="text-xs text-g-text-muted">
-                      {t('common.loading')}
-                    </p>
-                  </div>
-                </div>
-              </PanelFrame>
+                  {/* Party Panel */}
+                  <PanelFrame className="flex-1 min-h-0 overflow-hidden">
+                    <PartyPanel />
+                  </PanelFrame>
+                </>
+              )}
+
+              {activeTab === 'inventory' && (
+                <PanelFrame className="flex-1 min-h-0 overflow-hidden">
+                  <InventoryPanel />
+                </PanelFrame>
+              )}
             </div>
           </motion.div>
         )}

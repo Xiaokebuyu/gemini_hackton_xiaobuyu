@@ -74,12 +74,6 @@
       "think": "你在想什么...",
       "say": "你想说什么或做什么..."
     },
-    "modeThink": "思考",
-    "modeSay": "说话",
-    "modeHint": {
-      "think": "内心独白",
-      "say": "出声说话"
-    },
     "send": "发送",
     "sendHint": "按 Enter 发送，Shift+Enter 换行"
   },
@@ -123,7 +117,9 @@
     "defeat": "失败",
     "turnOrder": "行动顺序",
     "distance": "距离",
-    "log": "战斗日志"
+    "log": "战斗日志",
+    "battleStart": "战斗开始！",
+    "enterBattle": "进入战斗界面"
   },
   "status": {
     "hp": "生命值",
@@ -138,6 +134,30 @@
     "gm": "地下城主",
     "player": "你",
     "system": "系统"
+  },
+  "tabs": {
+    "map": "地图",
+    "quest": "任务",
+    "history": "记录",
+    "party": "队伍",
+    "inventory": "背包"
+  },
+  "quest": {
+    "title": "任务进度",
+    "currentChapter": "当前章节",
+    "objectives": "目标",
+    "progress": "进度",
+    "noQuests": "暂无任务"
+  },
+  "history": {
+    "title": "对话记录",
+    "noHistory": "暂无记录"
+  },
+  "inventory": {
+    "comingSoon": "功能开发中"
+  },
+  "options": {
+    "choose": "选择你的行动"
   },
   "ui": {
     "leftPanel": "导航",

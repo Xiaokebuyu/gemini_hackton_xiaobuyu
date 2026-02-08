@@ -64,7 +64,6 @@ export interface GameState {
   player_location: string | null;
   sub_location: string | null;
   game_time: GameTimeState;
-  chat_mode: 'think' | 'say';
   active_dialogue_npc: string | null;
   combat_id: string | null;
   narrative_progress: Record<string, unknown>;
@@ -170,6 +169,9 @@ export interface CoordinatorResponse {
   available_actions: GameAction[];
   state_delta: StateDelta | null;
   metadata: Record<string, unknown>;
+  story_events?: string[];
+  pacing_action?: string | null;
+  chapter_info?: { id: string; transition?: string | null } | null;
 }
 
 // =============================================================================
@@ -238,7 +240,6 @@ export interface NarrativeMessage {
 export interface PlayerInputRequest {
   input: string;
   input_type?: 'narration' | 'dialogue' | 'combat' | 'system' | null;
-  mode?: 'think' | 'say' | null;
 }
 
 /**
@@ -270,6 +271,9 @@ export interface LocationResponse {
   npcs_present: string[];
   available_actions: string[];
   time: GameTimeResponse;
+  sub_location_id?: string | null;
+  sub_location_name?: string | null;
+  available_sub_locations?: SubLocation[];
 }
 
 /**
@@ -393,8 +397,9 @@ export interface CreateGameSessionResponse {
   session_id: string;
   world_id: string;
   phase: string;
-  location: string;
-  time: Record<string, unknown>;
+  location: LocationResponse;
+  time: GameTimeResponse | null;
+  opening_narration: string;
 }
 
 /**

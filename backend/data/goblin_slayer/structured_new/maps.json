@@ -1,0 +1,620 @@
+{
+  "maps": [
+    {
+      "id": "frontier_town",
+      "name": "边境小镇",
+      "description": "位于王国西部边境的要塞城镇，虽然地处偏远，但因冒险者公会支部的存在而充满活力。城镇被河流分为东西两岸，西岸是新兴的商业与公会区，东岸则是传统的居民区与神殿区。",
+      "atmosphere": "喧闹、充满生活气息、鱼龙混杂",
+      "danger_level": "low",
+      "region": "边境地区",
+      "connections": [
+        {
+          "target_map_id": "cow_girl_farm",
+          "connection_type": "walk",
+          "travel_time": "30分钟",
+          "requirements": null
+        },
+        {
+          "target_map_id": "whispering_woods",
+          "connection_type": "travel",
+          "travel_time": "半天马车",
+          "requirements": null
+        },
+        {
+          "target_map_id": "water_town",
+          "connection_type": "travel",
+          "travel_time": "2天马车",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "购物",
+        "休息",
+        "接任务",
+        "情报收集",
+        "社交"
+      ],
+      "key_features": [
+        "冒险者公会",
+        "碎盾工坊",
+        "地母神神殿",
+        "风俗街"
+      ],
+      "sub_locations": [
+        {
+          "id": "guild_hall",
+          "name": "冒险者公会大厅",
+          "description": "城镇的心脏，冒险者们接取委托、结算报酬和交流情报的地方。空气中弥漫着羊皮纸和墨水的味道。",
+          "interaction_type": "quest",
+          "resident_npcs": [
+            "guild_girl",
+            "inspector",
+            "goblin_slayer",
+            "spearman",
+            "heavy_warrior",
+            "female_knight",
+            "rookie_warrior",
+            "apprentice_saintess",
+            "high_elf_archer",
+            "dwarf_shaman",
+            "lizard_priest"
+          ],
+          "available_actions": [
+            "接取委托",
+            "提交报告",
+            "寻找队友",
+            "咨询监察官"
+          ],
+          "passerby_spawn_rate": 0.8,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "tavern_guild",
+          "name": "公会附属酒馆",
+          "description": "位于公会一侧的酒馆，是冒险者们庆祝胜利或借酒浇愁的地方。食物香气和麦酒的味道充斥其中。",
+          "interaction_type": "rest",
+          "resident_npcs": [
+            "beastgirl_waitress",
+            "witch"
+          ],
+          "available_actions": [
+            "用餐",
+            "饮酒",
+            "打听传闻",
+            "庆祝"
+          ],
+          "passerby_spawn_rate": 0.9,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "blacksmith_workshop",
+          "name": "碎盾工坊",
+          "description": "充满煤炭味和打铁声的铁匠铺，由一位脾气古怪的矿人老师傅经营。这里提供最实用的武器维护。",
+          "interaction_type": "shop",
+          "resident_npcs": [
+            "forge_master",
+            "forge_apprentice"
+          ],
+          "available_actions": [
+            "购买装备",
+            "修理装备",
+            "定制防具"
+          ],
+          "passerby_spawn_rate": 0.3,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "temple_earth_mother",
+          "name": "地母神神殿",
+          "description": "位于东岸区的宁静神殿，兼具孤儿院功能。这里提供治疗神迹和心灵的慰藉。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "priestess"
+          ],
+          "available_actions": [
+            "治疗伤势",
+            "祈祷",
+            "捐赠",
+            "复活(需高阶神官)"
+          ],
+          "passerby_spawn_rate": 0.4,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "tailor_shop",
+          "name": "裁缝铺",
+          "description": "坐落在工坊隔壁的店铺，年轻的老板娘以精湛的手艺为冒险者缝补皮具和衣物。",
+          "interaction_type": "shop",
+          "resident_npcs": [
+            "the_seamstress"
+          ],
+          "available_actions": [
+            "购买衣物",
+            "修补皮甲",
+            "定制服装"
+          ],
+          "passerby_spawn_rate": 0.3,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "inn_coiled_serpent",
+          "name": "盘蛇旅店",
+          "description": "由半蛇人普蒂经营的旅店，环境整洁，提供住宿和美味的家常料理。",
+          "interaction_type": "rest",
+          "resident_npcs": [
+            "puti"
+          ],
+          "available_actions": [
+            "住宿",
+            "用餐",
+            "洗浴"
+          ],
+          "passerby_spawn_rate": 0.5,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "red_light_district",
+          "name": "里街(风俗区)",
+          "description": "位于西岸北区的幽暗巷道，是冒险者挥霍金钱和寻求慰藉的场所，也是情报流通的灰色地带。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "albedo",
+            "charr"
+          ],
+          "available_actions": [
+            "寻欢作乐",
+            "购买情报",
+            "特殊服务"
+          ],
+          "passerby_spawn_rate": 0.6,
+          "travel_time_minutes": 0
+        }
+      ]
+    },
+    {
+      "id": "cow_girl_farm",
+      "name": "牧场",
+      "description": "位于边境小镇东郊的宁静牧场，是牧牛妹和她舅舅经营的地方。这里有广阔的草地、牛棚和一间被借住的仓库。",
+      "atmosphere": "宁静、祥和、充满生活气息",
+      "danger_level": "low",
+      "region": "边境地区",
+      "connections": [
+        {
+          "target_map_id": "frontier_town",
+          "connection_type": "walk",
+          "travel_time": "30分钟",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "休息",
+        "闲聊",
+        "帮忙农活",
+        "巡视周边"
+      ],
+      "key_features": [
+        "母屋",
+        "仓库(哥布林杀手住所)",
+        "牛棚"
+      ],
+      "sub_locations": [
+        {
+          "id": "warehouse_residence",
+          "name": "仓库(哥布林杀手的房间)",
+          "description": "虽然是仓库，但被整理得井井有条。架子上摆放着备用的卷轴、药水和整修过的装备。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "goblin_slayer"
+          ],
+          "available_actions": [
+            "整备道具",
+            "思考战术",
+            "休息"
+          ],
+          "passerby_spawn_rate": 0.0,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "farm_house",
+          "name": "牧场主屋",
+          "description": "充满炖菜香气和温暖灯光的木屋，是牧牛妹生活的地方。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "cow_girl"
+          ],
+          "available_actions": [
+            "用餐",
+            "闲聊"
+          ],
+          "passerby_spawn_rate": 0.1,
+          "travel_time_minutes": 0
+        }
+      ]
+    },
+    {
+      "id": "water_town",
+      "name": "水之都",
+      "description": "建立在巨大湖泊沙洲上的繁华都市，以白垩岩建筑和纵横交错的运河闻名。这里是至高神信仰的中心，也是法律与秩序的象征。",
+      "atmosphere": "繁华、庄严、表面光鲜",
+      "danger_level": "low",
+      "region": "西方未知境",
+      "connections": [
+        {
+          "target_map_id": "frontier_town",
+          "connection_type": "travel",
+          "travel_time": "2天马车",
+          "requirements": null
+        },
+        {
+          "target_map_id": "underground_waterway",
+          "connection_type": "explore",
+          "travel_time": "即时",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "购物",
+        "观光",
+        "接受高级委托",
+        "泡澡"
+      ],
+      "key_features": [
+        "律法神殿",
+        "大浴场",
+        "中央广场"
+      ],
+      "sub_locations": [
+        {
+          "id": "temple_supreme_god",
+          "name": "至高神大神殿",
+          "description": "宏伟的白垩石建筑，是水之都的权力与信仰中心，也是剑之圣女的居所。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "sword_maiden"
+          ],
+          "available_actions": [
+            "面见大主教",
+            "接受委托",
+            "解除诅咒"
+          ],
+          "passerby_spawn_rate": 0.2,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "bath_house",
+          "name": "蒸汽大浴场",
+          "description": "水之都著名的公共设施，利用魔法加热的浴池，是放松身心的绝佳去处。",
+          "interaction_type": "rest",
+          "resident_npcs": [],
+          "available_actions": [
+            "沐浴",
+            "恢复体力"
+          ],
+          "passerby_spawn_rate": 0.7,
+          "travel_time_minutes": 0
+        }
+      ]
+    },
+    {
+      "id": "underground_waterway",
+      "name": "地下水道",
+      "description": "位于水之都地下的庞大迷宫，由古代遗迹改造而成。阴暗潮湿，空气中弥漫着霉菌和死亡的气息，是哥布林和邪教徒的温床。",
+      "atmosphere": "阴森、压抑、危险",
+      "danger_level": "high",
+      "region": "水之都(地下)",
+      "connections": [
+        {
+          "target_map_id": "water_town",
+          "connection_type": "walk",
+          "travel_time": "返回地面",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "战斗",
+        "探索",
+        "拆除陷阱",
+        "绘制地图"
+      ],
+      "key_features": [
+        "古代回廊",
+        "祭坛遗迹",
+        "沼龙巢穴"
+      ],
+      "sub_locations": []
+    },
+    {
+      "id": "whispering_woods",
+      "name": "轻语森林",
+      "description": "位于边境西侧的古老森林，树木高大，终年笼罩在薄雾中。这里是森人的领地，也隐藏着古代的秘密。",
+      "atmosphere": "神秘、幽静、自然",
+      "danger_level": "medium",
+      "region": "西方未知境",
+      "connections": [
+        {
+          "target_map_id": "frontier_town",
+          "connection_type": "travel",
+          "travel_time": "半天马车",
+          "requirements": null
+        },
+        {
+          "target_map_id": "mirror_lake",
+          "connection_type": "explore",
+          "travel_time": "深入探索",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "采集",
+        "狩猎",
+        "探索遗迹"
+      ],
+      "key_features": [
+        "妖精法师的小屋",
+        "镜子湖"
+      ],
+      "sub_locations": [
+        {
+          "id": "elf_mage_hut",
+          "name": "妖精法师的小屋",
+          "description": "被藤蔓和鲜花覆盖的温馨木屋，散发着药草的清香。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "elf_mage"
+          ],
+          "available_actions": [
+            "休息",
+            "炼金",
+            "对话"
+          ],
+          "passerby_spawn_rate": 0.0,
+          "travel_time_minutes": 0
+        }
+      ]
+    },
+    {
+      "id": "mirror_lake",
+      "name": "镜子湖",
+      "description": "轻语森林深处的神秘湖泊，湖面如镜，据说湖底隐藏着古代森精灵的遗迹。",
+      "atmosphere": "神圣、静谧",
+      "danger_level": "high",
+      "region": "轻语森林深处",
+      "connections": [
+        {
+          "target_map_id": "whispering_woods",
+          "connection_type": "walk",
+          "travel_time": "返回森林外围",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "潜水",
+        "解谜",
+        "战斗"
+      ],
+      "key_features": [
+        "湖底遗迹入口",
+        "蜥蜴人部落"
+      ],
+      "sub_locations": []
+    },
+    {
+      "id": "sol_tower",
+      "name": "索尔之塔",
+      "description": "悬浮于兰德索尔上空的巨大高塔，是世界级的地标。塔内空间折叠，每一层都是一个独立的世界，充满了魔物与宝藏。",
+      "atmosphere": "宏大、奇异、致命",
+      "danger_level": "extreme",
+      "region": "兰德索尔",
+      "connections": [
+        {
+          "target_map_id": "landosol_city",
+          "connection_type": "walk",
+          "travel_time": "即时",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "爬塔",
+        "战斗",
+        "搜刮宝藏",
+        "挑战领主"
+      ],
+      "key_features": [
+        "云海山脉(低层)",
+        "密林大树(中层)",
+        "天上浮城(高层)"
+      ],
+      "sub_locations": []
+    },
+    {
+      "id": "landosol_city",
+      "name": "兰德索尔",
+      "description": "位于索尔之塔下方的繁荣王国，是冒险者的乐园。城市以城堡为中心呈放射状分布，美食与公会文化极其发达。",
+      "atmosphere": "热闹、美食飘香、充满活力",
+      "danger_level": "low",
+      "region": "大陆南部",
+      "connections": [
+        {
+          "target_map_id": "sol_tower",
+          "connection_type": "explore",
+          "travel_time": "进入塔内",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "品尝美食",
+        "公会活动",
+        "购物"
+      ],
+      "key_features": [
+        "王宫",
+        "公会管理协会",
+        "美食街"
+      ],
+      "sub_locations": [
+        {
+          "id": "guild_association",
+          "name": "行会管理协会",
+          "description": "管理兰德索尔所有行会的机构，同时也作为冒险者公会运作。",
+          "interaction_type": "quest",
+          "resident_npcs": [
+            "pecorine",
+            "karyl",
+            "kokkoro"
+          ],
+          "available_actions": [
+            "注册行会",
+            "接取委托"
+          ],
+          "passerby_spawn_rate": 0.8,
+          "travel_time_minutes": 0
+        }
+      ]
+    },
+    {
+      "id": "narukami_island",
+      "name": "鸣神本岛",
+      "description": "鸣神群岛的核心岛屿，拥有独特的东洋风格建筑和樱花盛开的平原。这里是雷电将军的驻地。",
+      "atmosphere": "威严、美丽、异国情调",
+      "danger_level": "medium",
+      "region": "鸣神群岛",
+      "connections": [
+        {
+          "target_map_id": "frontier_town",
+          "connection_type": "travel",
+          "travel_time": "需跨海航行(极难)",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "参拜神社",
+        "武道修行",
+        "探索"
+      ],
+      "key_features": [
+        "天领町",
+        "鸣神大社",
+        "影向山"
+      ],
+      "sub_locations": [
+        {
+          "id": "narukami_shrine",
+          "name": "鸣神大社",
+          "description": "位于山顶的宏伟神社，供奉着神樱树。是大神主八重神子的居所。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "yae_miko"
+          ],
+          "available_actions": [
+            "求签",
+            "祈福",
+            "对话"
+          ],
+          "passerby_spawn_rate": 0.3,
+          "travel_time_minutes": 0
+        },
+        {
+          "id": "shogun_palace",
+          "name": "天守阁",
+          "description": "雷电将军的居所，象征着鸣神群岛的最高武力与权力。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "raiden_ei"
+          ],
+          "available_actions": [
+            "御前决斗",
+            "觐见"
+          ],
+          "passerby_spawn_rate": 0.1,
+          "travel_time_minutes": 0
+        }
+      ]
+    },
+    {
+      "id": "velen",
+      "name": "威伦",
+      "description": "位于大陆南部的边缘三角洲，是一片被战争和贫困蹂躏的无主之地。沼泽遍布，充满了绝望与危险。",
+      "atmosphere": "阴暗、腐败、绝望",
+      "danger_level": "high",
+      "region": "大陆南部",
+      "connections": [
+        {
+          "target_map_id": "frontier_town",
+          "connection_type": "travel",
+          "travel_time": "长途跋涉",
+          "requirements": null
+        }
+      ],
+      "available_actions": [
+        "狩猎怪物",
+        "探索废墟",
+        "与军阀交易"
+      ],
+      "key_features": [
+        "乌鸦窝(男爵城堡)",
+        "驼背泥沼"
+      ],
+      "sub_locations": [
+        {
+          "id": "crows_perch",
+          "name": "乌鸦窝",
+          "description": "血腥男爵的堡垒，是这片混乱土地上唯一的秩序据点。",
+          "interaction_type": "visit",
+          "resident_npcs": [
+            "bloody_baron"
+          ],
+          "available_actions": [
+            "接取委托",
+            "交易",
+            "打牌"
+          ],
+          "passerby_spawn_rate": 0.4,
+          "travel_time_minutes": 0
+        }
+      ]
+    }
+  ],
+  "passerby_templates": {
+    "frontier_town": [
+      {
+        "template_id": "rookie_adventurer",
+        "name_pattern": "新手冒险者",
+        "personality_template": "充满热情但经验不足，对哥布林退治任务跃跃欲试",
+        "speech_pattern": "热情、略带紧张",
+        "appearance_hints": "简陋的装备，闪亮的眼神"
+      },
+      {
+        "template_id": "veteran_mercenary",
+        "name_pattern": "老练佣兵",
+        "personality_template": "务实、冷淡，只关心报酬和酒",
+        "speech_pattern": "简短、粗鲁",
+        "appearance_hints": "满是伤痕的盔甲，沉稳的步伐"
+      }
+    ],
+    "water_town": [
+      {
+        "template_id": "city_merchant",
+        "name_pattern": "精明的商人",
+        "personality_template": "圆滑、势利，对异乡人充满好奇",
+        "speech_pattern": "礼貌但充满试探",
+        "appearance_hints": "丝绸衣物，计算的眼神"
+      },
+      {
+        "template_id": "temple_acolyte",
+        "name_pattern": "神殿侍祭",
+        "personality_template": "虔诚、谦卑，对律法充满敬畏",
+        "speech_pattern": "庄重、柔和",
+        "appearance_hints": "洁白的长袍，手持圣典"
+      }
+    ],
+    "landosol_city": [
+      {
+        "template_id": "gourmet_hunter",
+        "name_pattern": "美食猎人",
+        "personality_template": "对食材充满狂热，无视危险",
+        "speech_pattern": "三句不离吃",
+        "appearance_hints": "背着巨大的餐具，嗅觉灵敏"
+      }
+    ]
+  }
+}

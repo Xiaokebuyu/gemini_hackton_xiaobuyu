@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 from typing import Any, List, Optional, Dict
@@ -89,6 +90,8 @@ class AdminCoordinator:
         self.graph_store = graph_store or GraphStore()
         self.flash_service = flash_service or FlashService(self.graph_store)
         self.narrative_service = narrative_service or NarrativeService(self._session_store)
+        from app.services.admin.story_director import StoryDirector
+        self.story_director = StoryDirector(self.narrative_service)
         self.passerby_service = passerby_service or PasserbyService()
         self._world_runtime = world_runtime or AdminWorldRuntime(
             state_manager=self._state_manager,
@@ -120,6 +123,8 @@ class AdminCoordinator:
         # 队友系统
         self.party_store = PartyStore()
         self.party_service = party_service or PartyService(self.graph_store, self.party_store)
+        # 补充注入 party_service 到 flash_cpu（flash_cpu 创建早于 party_service）
+        self.flash_cpu.party_service = self.party_service
         self.teammate_response_service = teammate_response_service or TeammateResponseService(
             instance_manager=self.instance_manager,
         )
@@ -128,6 +133,9 @@ class AdminCoordinator:
         # 会话历史 + 图谱化
         self.session_history_manager = SessionHistoryManager(
             firestore_db=self.graph_store.db,
+            max_tokens=settings.session_history_max_tokens,
+            graphize_threshold=settings.session_history_graphize_threshold,
+            keep_recent_tokens=settings.session_history_keep_recent_tokens,
         )
         self.memory_graphizer = MemoryGraphizer(graph_store=self.graph_store)
 
@@ -220,6 +228,18 @@ class AdminCoordinator:
             if not isinstance(admin_state, dict):
                 continue
 
+            # 加载队伍信息
+            party_member_count = 0
+            party_members_names: List[str] = []
+            try:
+                party_obj = await self.party_store.get_party(world_id, session.session_id)
+                if party_obj:
+                    for m in party_obj.get_active_members():
+                        party_member_count += 1
+                        party_members_names.append(m.name)
+            except Exception:
+                pass
+
             recoverable.append(
                 {
                     "session_id": session.session_id,
@@ -230,6 +250,8 @@ class AdminCoordinator:
                     "player_location": admin_state.get("player_location"),
                     "chapter_id": admin_state.get("chapter_id"),
                     "sub_location": admin_state.get("sub_location"),
+                    "party_member_count": party_member_count,
+                    "party_members": party_members_names,
                 }
             )
 
@@ -347,9 +369,39 @@ class AdminCoordinator:
 
         # 1.5 注入对话历史到上下文（上下文连续性）
         # Flash 侧优先使用大上下文窗口（1M）
-        conversation_history = history.get_recent_history(max_tokens=1_000_000)
+        conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
         if conversation_history:
             base_context["conversation_history"] = conversation_history
+
+        # 1.8 StoryDirector Pre-Flash 评估（纯机械，< 1ms）
+        progress = await self.narrative_service.get_progress(world_id, session_id)
+        active_story_chapters = self._resolve_story_chapters(world_id, progress)
+        current_chapter = active_story_chapters[0] if active_story_chapters else None
+        game_ctx = self._build_game_context(base_context, progress, session_id, player_input)
+
+        if len(active_story_chapters) > 1:
+            pre_directive = self.story_director.pre_evaluate_multi(
+                game_ctx, active_story_chapters
+            )
+        else:
+            pre_directive = self.story_director.pre_evaluate(game_ctx, current_chapter)
+
+        # 处理纯机械触发的事件
+        pre_side_effects: List[Dict[str, Any]] = []
+        for event in pre_directive.auto_fired_events:
+            await self.narrative_service.trigger_event(world_id, session_id, event.id)
+            logger.info("[v2] StoryDirector pre-fire: %s", event.id)
+            if event.side_effects:
+                pre_side_effects.extend(event.side_effects)
+        if pre_side_effects:
+            await self._execute_side_effects(world_id, session_id, pre_side_effects)
+
+        # 注入到 base_context 供 Flash 感知
+        base_context["story_directives"] = pre_directive.narrative_injections
+        base_context["pending_flash_conditions"] = [
+            {"id": c.condition_id, "prompt": c.condition_prompt, "event_id": c.event_id}
+            for c in pre_directive.pending_flash_conditions
+        ]
 
         # 2. Flash 一次性分析
         logger.info("[v2] 步骤2: Flash 分析")
@@ -408,6 +460,12 @@ class AdminCoordinator:
             base_context, memory_result, flash_results, world_id, session_id
         )
 
+        # 保留第一轮分析产出的结构化编排建议（第二轮可能覆盖 context_package）。
+        if isinstance(analysis.context_package, dict) and analysis.context_package:
+            context["context_package"] = dict(analysis.context_package)
+        if isinstance(analysis.story_progression, dict):
+            context["story_progression"] = analysis.story_progression
+
         # 4.5 第二轮 Flash：基于扩散激活结果编排 context_package
         if memory_result and getattr(memory_result, "activated_nodes", None):
             logger.info("[v2] 步骤4.5: Flash 上下文编排（第二轮）")
@@ -419,10 +477,115 @@ class AdminCoordinator:
                 context=context,
             )
             if curated_package:
-                context["context_package"] = curated_package
-                logger.info("[v2] context_package 已生成（%d 个字段）", len(curated_package))
+                merged_package = {}
+                if isinstance(context.get("context_package"), dict):
+                    merged_package.update(context["context_package"])
+                merged_package.update(curated_package)
+                context["context_package"] = merged_package
+                if isinstance(curated_package.get("story_progression"), dict):
+                    context["story_progression"] = curated_package["story_progression"]
+                logger.info("[v2] context_package 已生成（%d 个字段）", len(merged_package))
             else:
                 logger.error("[v2] context_package 编排失败，curate_context 返回 None")
+
+        # 4.8 StoryDirector Post-Flash 评估
+        flash_condition_results: Dict[str, bool] = {}
+        story_prog = context.get("story_progression")
+        if isinstance(story_prog, dict):
+            for eval_item in story_prog.get("condition_evaluations", []):
+                if isinstance(eval_item, dict) and "id" in eval_item:
+                    flash_condition_results[str(eval_item["id"])] = bool(eval_item.get("result", False))
+
+        # 刷新进度（Pre-Flash 可能触发了事件）
+        progress = await self.narrative_service.get_progress(world_id, session_id)
+        active_story_chapters = self._resolve_story_chapters(world_id, progress)
+        current_chapter = active_story_chapters[0] if active_story_chapters else None
+        game_ctx_updated = self._build_game_context(context, progress, session_id, player_input)
+
+        if len(active_story_chapters) > 1:
+            final_directive = self.story_director.post_evaluate_multi(
+                game_ctx_updated,
+                chapters=active_story_chapters,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+            )
+        else:
+            final_directive = self.story_director.post_evaluate(
+                game_ctx_updated,
+                chapter=current_chapter,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+            )
+
+        # 执行副作用
+        if final_directive.side_effects:
+            await self._execute_side_effects(world_id, session_id, final_directive.side_effects)
+
+        turn_story_events = list(pre_directive.auto_fired_events) + list(final_directive.fired_events)
+
+        # 落地 fired_events
+        for event in final_directive.fired_events:
+            await self.narrative_service.trigger_event(world_id, session_id, event.id)
+            logger.info("[v2] StoryDirector post-fire: %s", event.id)
+
+        # 注入叙述指令到 context 供 GM 叙述使用
+        all_narrative_directives = pre_directive.narrative_injections + final_directive.narrative_injections
+        if all_narrative_directives:
+            context["story_narrative_directives"] = all_narrative_directives
+
+        # 更新回合计数
+        progress.rounds_in_chapter += 1
+        has_progress = bool(final_directive.fired_events or pre_directive.auto_fired_events)
+        if has_progress:
+            progress.rounds_since_last_progress = 0
+        else:
+            progress.rounds_since_last_progress += 1
+        # NPC 交互计数
+        for req, res in zip(flash_requests, flash_results):
+            if res.success and res.operation == FlashOperation.NPC_DIALOGUE:
+                npc_id = req.parameters.get("npc_id")
+                if npc_id:
+                    progress.npc_interactions[npc_id] = progress.npc_interactions.get(npc_id, 0) + 1
+        # 冷却时间记录（以章节内回合作为基准）
+        for event in turn_story_events:
+            progress.event_cooldowns[event.id] = progress.rounds_in_chapter
+        await self.narrative_service.save_progress(world_id, session_id, progress)
+
+        # 处理章节转换（v2 StoryDirector 评估的 transitions）
+        v2_transition_result: Optional[Dict[str, Any]] = None
+        if final_directive.chapter_transition:
+            trans = final_directive.chapter_transition
+            logger.info(
+                "[v2] StoryDirector 章节转换: → %s (%s)",
+                trans.target_chapter_id,
+                trans.transition_type,
+            )
+            # narrative_hint 注入叙述
+            if trans.narrative_hint:
+                context.setdefault("story_narrative_directives", []).append(trans.narrative_hint)
+
+            v2_transition_result = await self.narrative_service.transition_to_chapter(
+                world_id=world_id,
+                session_id=session_id,
+                target_chapter_id=trans.target_chapter_id,
+                transition_type=trans.transition_type,
+            )
+            if state and v2_transition_result.get("new_chapter"):
+                state.chapter_id = v2_transition_result["new_chapter"]
+                await self._state_manager.set_state(world_id, session_id, state)
+
+        # StoryDirector 同回合强一致写图（失败阻断回合）
+        if settings.story_event_graph_sync and (turn_story_events or final_directive.chapter_transition):
+            await self._sync_story_director_graph(
+                world_id=world_id,
+                session_id=session_id,
+                events=turn_story_events,
+                chapter_transition=final_directive.chapter_transition,
+                context=context,
+                player_input=player_input,
+                party=party,
+                progress=progress,
+            )
 
         # 5. 导航后同步队友位置
         if intent.intent_type == IntentType.NAVIGATION and party:
@@ -481,6 +644,16 @@ class AdminCoordinator:
         gm_narration = await gm_task
         logger.info("[v2] 叙述完成: %s...", gm_narration[:50])
 
+        if v2_transition_result and v2_transition_result.get("new_chapter"):
+            transition_text = await self._generate_chapter_transition(
+                world_id,
+                session_id,
+                v2_transition_result.get("new_chapter"),
+                v2_transition_result.get("new_maps_unlocked", []),
+            )
+            if transition_text:
+                gm_narration += f"\n\n{transition_text}"
+
         teammate_responses = []
         if teammate_task:
             teammate_result = await teammate_task
@@ -509,11 +682,36 @@ class AdminCoordinator:
             )
             logger.info("[v2] 事件分发完成")
 
+        # 8.5 strict-v2: 仅记录 Flash 自报事件用于调试（不再走 legacy fallback）
+        story_prog = context.get("story_progression")
+        if not isinstance(story_prog, dict):
+            story_prog = (context.get("context_package") or {}).get("story_progression", {})
+        flash_story_events: List[str] = []
+        story_events_raw = story_prog.get("story_events", []) if isinstance(story_prog, dict) else []
+        if isinstance(story_events_raw, list):
+            for event_id in story_events_raw:
+                if isinstance(event_id, str) and event_id.strip():
+                    flash_story_events.append(event_id.strip())
+        if flash_story_events:
+            logger.debug("[v2] Flash self-reported story events: %s", flash_story_events)
+
         # 9. 记录对话到 SessionHistory + 触发图谱化
         round_stats = history.record_round(
             player_input=player_input,
             gm_response=gm_narration,
-            metadata={"intent_type": intent.intent_type.value},
+            metadata={
+                "intent_type": intent.intent_type.value,
+                "story_events": [event.id for event in turn_story_events],
+                "transition": (
+                    final_directive.chapter_transition.target_chapter_id
+                    if final_directive.chapter_transition else ""
+                ),
+                "chapter_id": (
+                    v2_transition_result.get("new_chapter")
+                    if v2_transition_result and v2_transition_result.get("new_chapter")
+                    else progress.current_chapter
+                ),
+            },
         )
         for tr in teammate_responses:
             history.record_teammate_response(
@@ -556,6 +754,12 @@ class AdminCoordinator:
                 "source": "flash_gm",
                 "model": "flash",
             },
+            story_events=[e.id for e in turn_story_events] if turn_story_events else [],
+            pacing_action=final_directive.pacing_action if final_directive else None,
+            chapter_info={
+                "id": progress.current_chapter,
+                "transition": final_directive.chapter_transition.target_chapter_id
+            } if (final_directive and final_directive.chapter_transition) else None,
         )
 
     async def _distribute_event_to_party(
@@ -883,6 +1087,274 @@ class AdminCoordinator:
 
         return packages, memory_summaries
 
+    # ==================== 游戏状态恢复 ====================
+
+    async def resume_session(
+        self,
+        world_id: str,
+        session_id: str,
+        generate_narration: bool = True,
+    ) -> Dict[str, Any]:
+        """完整恢复游戏会话状态。
+
+        加载 admin_state、队伍、对话历史，预热队友实例，
+        并可选生成恢复叙述帮助玩家回忆进度。
+        """
+        # 1. 加载 admin_state（从 Firestore 恢复到 StateManager）
+        state = await self._world_runtime.get_state(world_id, session_id)
+        if not state:
+            raise ValueError(f"session {session_id} not found or has no admin_state")
+
+        # 2. 加载队伍（从 Firestore 加载并缓存）
+        party = await self.party_service.get_party(world_id, session_id)
+
+        # 3. 加载对话历史（自动从 Firestore 恢复）
+        history = self.session_history_manager.get_or_create(world_id, session_id)
+
+        # 4. 预热队友实例（恢复 state metadata）
+        prewarmed_members = []
+        if party:
+            for member in party.get_active_members():
+                try:
+                    await self.instance_manager.get_or_create(
+                        member.character_id, world_id,
+                    )
+                    prewarmed_members.append(member.name)
+                except Exception as exc:
+                    logger.warning(
+                        "[resume] 队友实例预热失败 (%s): %s",
+                        member.character_id, exc,
+                    )
+
+        # 5. 获取当前位置信息
+        location = await self._world_runtime.get_current_location(world_id, session_id)
+
+        # 6. 构建恢复数据
+        history_stats = {
+            "message_count": history._window.message_count,
+            "total_tokens": history._window.current_tokens,
+        }
+
+        party_info: Dict[str, Any] = {"has_party": False, "members": []}
+        if party:
+            party_info = {
+                "has_party": True,
+                "party_id": party.party_id,
+                "members": [
+                    {
+                        "character_id": m.character_id,
+                        "name": m.name,
+                        "role": m.role.value,
+                        "is_active": m.is_active,
+                    }
+                    for m in party.members
+                ],
+            }
+
+        state_dict = {
+            "player_location": state.player_location,
+            "sub_location": state.sub_location,
+            "chapter_id": getattr(state, "chapter_id", None),
+            "game_time": state.game_time.model_dump() if state.game_time else None,
+        }
+
+        # 7. 可选生成恢复叙述
+        resume_narration = ""
+        if generate_narration:
+            resume_narration = await self._generate_resume_narration(
+                world_id=world_id,
+                location=location,
+                state=state,
+                party=party,
+                history=history,
+            )
+
+        return {
+            "session_id": session_id,
+            "restored": True,
+            "state": state_dict,
+            "location": location,
+            "party": party_info,
+            "history": history_stats,
+            "resume_narration": resume_narration,
+            "prewarmed_members": prewarmed_members,
+        }
+
+    async def _generate_resume_narration(
+        self,
+        world_id: str,
+        location: Dict[str, Any],
+        state: Any,
+        party: Any,
+        history: Any,
+    ) -> str:
+        """生成恢复叙述，帮助玩家回忆进度。"""
+        from app.services.llm_service import LLMService
+
+        location_name = location.get("location_name") or location.get("location_id") or "未知地点"
+        time_info = state.game_time
+        time_text = ""
+        if time_info:
+            day = getattr(time_info, "day", None)
+            hour = getattr(time_info, "hour", None)
+            minute = getattr(time_info, "minute", None)
+            if day is not None and hour is not None and minute is not None:
+                time_text = f"第{day}天 {hour:02d}:{minute:02d}"
+
+        teammate_names = []
+        if party:
+            teammate_names = [m.name for m in party.get_active_members()]
+
+        recent_history = history.get_recent_history(max_tokens=2000) if history else ""
+
+        prompt_path = Path("app/prompts/session_resume.md")
+        if prompt_path.exists():
+            prompt_template = prompt_path.read_text(encoding="utf-8")
+            prompt = prompt_template.format(
+                location_name=location_name,
+                time=time_text or "未知",
+                teammates=", ".join(teammate_names) if teammate_names else "无",
+                recent_history=recent_history or "无",
+            )
+        else:
+            prompt = (
+                f"你是游戏 GM。玩家正在恢复之前的游戏会话。请根据以下信息生成2-3句沉浸式中文叙述，"
+                f"帮助玩家回忆他们上次游戏的进度和状态。不要输出JSON。\n\n"
+                f"当前位置: {location_name}\n"
+                f"时间: {time_text or '未知'}\n"
+                f"队友: {', '.join(teammate_names) if teammate_names else '无'}\n"
+                f"近期对话:\n{recent_history or '无'}\n"
+            )
+
+        try:
+            llm_service = self.flash_cpu.llm_service
+            result = await llm_service.generate_simple(
+                prompt,
+                model_override=settings.admin_flash_model,
+                thinking_level=settings.admin_flash_thinking_level,
+            )
+            narration = (result or "").strip()
+            if narration:
+                return narration
+        except Exception as exc:
+            logger.error("[resume_narration] LLM 生成失败: %s", exc)
+
+        # fallback
+        parts = [f"你回到了{location_name}。"]
+        if time_text:
+            parts.append(f"现在是{time_text}。")
+        if teammate_names:
+            parts.append(f"{', '.join(teammate_names)}还在你身边。")
+        return "".join(parts)
+
+    async def generate_opening_narration(
+        self,
+        world_id: str,
+        session_id: str,
+    ) -> str:
+        """生成开场叙述"""
+        try:
+            # 构建上下文
+            location = await self._world_runtime.get_current_location(world_id, session_id)
+            location_name = location.get("location_name") or location.get("location_id") or "未知地点"
+            location_atmosphere = location.get("atmosphere") or ""
+            npcs_present = ", ".join(location.get("npcs_present", [])) or "无"
+
+            time_info = await self._world_runtime.get_game_time(world_id, session_id)
+            time_text = time_info.get("formatted") or time_info.get("formatted_time") or "未知"
+
+            world_background = await self._get_world_background(world_id, session_id)
+
+            # 章节信息
+            chapter_plan = await self.narrative_service.get_current_chapter_plan(world_id, session_id)
+            chapter_obj = chapter_plan.get("chapter") or {}
+            chapter_name = chapter_obj.get("name", "序章")
+            chapter_description = chapter_obj.get("description", "")
+            chapter_goals = chapter_plan.get("goals", [])
+
+            # 队友
+            party = await self.party_service.get_party(world_id, session_id)
+            teammates = "无"
+            if party:
+                names = [m.name for m in party.get_active_members()]
+                if names:
+                    teammates = ", ".join(names)
+
+            # 加载 prompt
+            prompt_path = Path("app/prompts/opening_narration.md")
+            if prompt_path.exists():
+                prompt_template = prompt_path.read_text(encoding="utf-8")
+                prompt = prompt_template.format(
+                    world_background=world_background or "未知世界",
+                    chapter_name=chapter_name,
+                    chapter_description=chapter_description[:300] or "冒险的开始",
+                    chapter_goals="、".join(chapter_goals[:3]) if chapter_goals else "探索世界",
+                    location_name=location_name,
+                    location_atmosphere=location_atmosphere or "平静",
+                    npcs_present=npcs_present,
+                    teammates=teammates,
+                    time=time_text,
+                )
+            else:
+                prompt = (
+                    f"你是TRPG游戏GM。玩家刚开始冒险，请生成3-5句开场叙述。\n\n"
+                    f"位置：{location_name}\n时间：{time_text}\n"
+                    f"章节：{chapter_name}\n不要输出JSON。"
+                )
+
+            result = await self.flash_cpu.llm_service.generate_simple(
+                prompt,
+                model_override=settings.admin_flash_model,
+                thinking_level=settings.admin_flash_thinking_level,
+            )
+            narration = (result or "").strip()
+            if narration:
+                return narration
+        except Exception as exc:
+            logger.error("[opening_narration] 生成失败: %s", exc)
+
+        # fallback
+        fallback_name = location_name if "location_name" in locals() else "未知地点"
+        return f"冒险在{fallback_name}开始了。"
+
+    async def _generate_chapter_transition(
+        self,
+        world_id: str,
+        session_id: str,
+        new_chapter_id: Optional[str],
+        new_maps_unlocked: List[str],
+    ) -> str:
+        """生成章节过渡叙述"""
+        if not new_chapter_id:
+            return ""
+
+        chapter_info = self.narrative_service.get_chapter_info(world_id, new_chapter_id)
+        chapter_name = chapter_info.get("name", new_chapter_id) if chapter_info else new_chapter_id
+        chapter_desc = chapter_info.get("description", "") if chapter_info else ""
+
+        maps_text = ""
+        if new_maps_unlocked and "*" not in new_maps_unlocked:
+            maps_text = f"\n新区域已解锁：{'、'.join(new_maps_unlocked)}"
+
+        prompt = (
+            f"你是TRPG游戏GM。当前章节已完成，故事推进到新章节。"
+            f"请用2-3句中文叙述章节转换，营造过渡感。不要输出JSON。\n\n"
+            f"新章节：{chapter_name}\n"
+            f"章节描述：{chapter_desc}\n"
+            f"{maps_text}"
+        )
+
+        try:
+            result = await self.flash_cpu.llm_service.generate_simple(
+                prompt,
+                model_override=settings.admin_flash_model,
+                thinking_level=settings.admin_flash_thinking_level,
+            )
+            return (result or "").strip() or f"故事进入了新篇章——{chapter_name}。"
+        except Exception as exc:
+            logger.error("[chapter_transition] LLM 生成失败: %s", exc)
+            return f"故事进入了新篇章——{chapter_name}。{maps_text}"
+
     async def _get_world_background(self, world_id: str, session_id: Optional[str] = None) -> str:
         """获取世界背景描述（缓存）"""
         if world_id in self._world_background_cache:
@@ -919,12 +1391,23 @@ class AdminCoordinator:
                 progress = await self.narrative_service.get_progress(world_id, session_id)
                 chapter_id = getattr(progress, "current_chapter", None)
                 if chapter_id:
-                    chapter_info = self.narrative_service.get_chapter_info(chapter_id) or {}
+                    chapter_info = self.narrative_service.get_chapter_info(world_id, chapter_id) or {}
                     chapter_name = chapter_info.get("name") or chapter_id
                     chapter_desc = chapter_info.get("description") or ""
                     chapter_block = f"当前章节: {chapter_name}"
                     if chapter_desc:
                         chapter_block += f"\n{chapter_desc}"
+                    try:
+                        chapter_plan = await self.narrative_service.get_current_chapter_plan(
+                            world_id=world_id,
+                            session_id=session_id,
+                        )
+                        goals = chapter_plan.get("goals", []) if isinstance(chapter_plan, dict) else []
+                        if goals:
+                            goal_lines = "\n".join(f"- {goal}" for goal in goals[:3])
+                            chapter_block += f"\n当前推进目标:\n{goal_lines}"
+                    except Exception as inner_exc:
+                        logger.debug("[world_background] chapter_plan 读取失败: %s", inner_exc)
             except Exception as exc:
                 logger.debug("[world_background] chapter 读取失败: %s", exc)
 
@@ -1026,7 +1509,273 @@ class AdminCoordinator:
         context["world_background"] = await self._get_world_background(world_id, session_id)
         context["character_roster"] = await self._get_character_roster(world_id)
 
+        # 章节信息
+        try:
+            chapter_plan = await self.narrative_service.get_current_chapter_plan(world_id, session_id)
+            context["chapter_info"] = chapter_plan
+        except Exception as exc:
+            logger.debug("[_build_context] 章节信息获取失败: %s", exc)
+            context["chapter_info"] = {}
+
         return context
+
+    def _resolve_story_chapters(self, world_id: str, progress: Any) -> List[Any]:
+        """解析当前激活章节（主章节 + 并行章节）。"""
+        chapters_by_id = self.narrative_service._world_chapters(world_id)
+        chapter_ids: List[str] = []
+
+        current_chapter_id = getattr(progress, "current_chapter", "")
+        if isinstance(current_chapter_id, str) and current_chapter_id.strip():
+            chapter_ids.append(current_chapter_id.strip())
+
+        for chapter_id in getattr(progress, "active_chapters", []) or []:
+            if not isinstance(chapter_id, str):
+                continue
+            chapter_id = chapter_id.strip()
+            if chapter_id and chapter_id not in chapter_ids:
+                chapter_ids.append(chapter_id)
+
+        chapters: List[Any] = []
+        for chapter_id in chapter_ids:
+            chapter = chapters_by_id.get(chapter_id)
+            if chapter:
+                chapters.append(chapter)
+        return chapters
+
+    def _build_game_context(
+        self,
+        base_context: Dict[str, Any],
+        progress: Any,
+        session_id: str,
+        player_input: str = "",
+    ) -> "GameContext":
+        """从 base_context + progress 构建 GameContext 快照。"""
+        from app.services.admin.condition_engine import GameContext
+
+        location = base_context.get("location") or {}
+        time_info = base_context.get("time") or {}
+        party = base_context.get("party")
+        teammates = base_context.get("teammates") or []
+
+        party_member_ids: List[str] = []
+        if party and hasattr(party, "get_active_members"):
+            party_member_ids = [m.character_id for m in party.get_active_members()]
+        elif teammates:
+            party_member_ids = [
+                t.get("character_id", "") for t in teammates if isinstance(t, dict)
+            ]
+
+        return GameContext(
+            session_id=session_id,
+            area_id=location.get("location_id") or location.get("area_id") or "",
+            sub_location=location.get("sub_location_id"),
+            game_day=int(time_info.get("day", 0)),
+            game_hour=int(time_info.get("hour", 0)),
+            game_minute=int(time_info.get("minute", 0)),
+            game_state=base_context.get("state", "exploring"),
+            active_npc=base_context.get("active_npc"),
+            party_member_ids=party_member_ids,
+            events_triggered=list(progress.events_triggered),
+            objectives_completed=list(progress.objectives_completed),
+            rounds_in_chapter=progress.rounds_in_chapter,
+            npc_interactions=dict(progress.npc_interactions),
+            event_cooldowns=dict(progress.event_cooldowns),
+            rounds_since_last_progress=progress.rounds_since_last_progress,
+            player_input=player_input,
+            conversation_history=base_context.get("conversation_history", ""),
+        )
+
+    async def _sync_story_director_graph(
+        self,
+        world_id: str,
+        session_id: str,
+        events: List[Any],
+        chapter_transition: Optional[Any],
+        context: Dict[str, Any],
+        player_input: str,
+        party: Optional[Any],
+        progress: Any,
+    ) -> None:
+        """将 StoryDirector 本回合结果同步写入图谱（失败即抛错阻断回合）。"""
+        from app.models.graph import MemoryEdge, MemoryNode
+
+        location = context.get("location") or {}
+        time_info = context.get("time") or {}
+        chapter_id = getattr(progress, "current_chapter", "") or ""
+        area_id = location.get("location_id") or location.get("area_id") or ""
+        game_day = int(time_info.get("day", 0))
+        round_idx = int(getattr(progress, "rounds_in_chapter", 0))
+        session_key = str(session_id).replace("-", "_")
+
+        character_ids = ["player"]
+        if party and hasattr(party, "get_active_members"):
+            for member in party.get_active_members():
+                char_id = getattr(member, "character_id", "")
+                if isinstance(char_id, str) and char_id and char_id not in character_ids:
+                    character_ids.append(char_id)
+
+        async def _write_story_event(
+            story_event_id: str,
+            name: str,
+            summary: str,
+            event_type: str,
+            transition_target: str = "",
+        ) -> None:
+            safe_event = str(story_event_id).replace("/", "_").replace(" ", "_")
+            narrative_id = f"story_narr_{session_key}_{safe_event}_{game_day}_{round_idx}"
+            narrative_props = {
+                "perspective": "narrative",
+                "scope_type": "area" if (chapter_id and area_id) else "world",
+                "source": "story_director_v2",
+                "story_event_id": story_event_id,
+                "event_type": event_type,
+                "chapter_id": chapter_id,
+                "area_id": area_id,
+                "transition_target": transition_target,
+                "day": game_day,
+                "round": round_idx,
+                "summary": summary[:500],
+            }
+            narrative_node = MemoryNode(
+                id=narrative_id,
+                type="event",
+                name=(name or story_event_id)[:80],
+                importance=0.85,
+                properties=narrative_props,
+            )
+
+            # world 视图必写
+            await self.graph_store.upsert_node_v2(
+                world_id=world_id,
+                scope=GraphScope.world(),
+                node=narrative_node,
+            )
+            # area 视图可选写
+            if chapter_id and area_id:
+                await self.graph_store.upsert_node_v2(
+                    world_id=world_id,
+                    scope=GraphScope.area(chapter_id=chapter_id, area_id=area_id),
+                    node=narrative_node,
+                )
+
+            for char_id in character_ids:
+                personal_id = f"story_personal_{char_id}_{safe_event}_{game_day}_{round_idx}"
+                personal_node = MemoryNode(
+                    id=personal_id,
+                    type="event",
+                    name=(name or story_event_id)[:80],
+                    importance=0.8,
+                    properties={
+                        "perspective": "personal",
+                        "source": "story_director_v2",
+                        "story_event_id": story_event_id,
+                        "event_type": event_type,
+                        "character_id": char_id,
+                        "chapter_id": chapter_id,
+                        "area_id": area_id,
+                        "transition_target": transition_target,
+                        "day": game_day,
+                        "round": round_idx,
+                        "summary": summary[:500],
+                    },
+                )
+                char_scope = GraphScope.character(char_id)
+                await self.graph_store.upsert_node_v2(
+                    world_id=world_id,
+                    scope=char_scope,
+                    node=personal_node,
+                )
+                await self.graph_store.upsert_edge_v2(
+                    world_id=world_id,
+                    scope=char_scope,
+                    edge=MemoryEdge(
+                        id=f"edge_story_perspective_{char_id}_{safe_event}_{game_day}_{round_idx}",
+                        source=personal_id,
+                        target=narrative_id,
+                        relation="perspective_of",
+                        weight=1.0,
+                        properties={
+                            "source": "story_director_v2",
+                            "chapter_id": chapter_id,
+                            "area_id": area_id,
+                            "day": game_day,
+                            "round": round_idx,
+                        },
+                    ),
+                )
+
+        for event in events:
+            summary = getattr(event, "description", "") or getattr(event, "narrative_directive", "") or player_input
+            await _write_story_event(
+                story_event_id=str(getattr(event, "id", "")),
+                name=str(getattr(event, "name", "")),
+                summary=summary,
+                event_type="story_event",
+            )
+
+        if chapter_transition:
+            target = str(getattr(chapter_transition, "target_chapter_id", "")).strip()
+            if target:
+                await _write_story_event(
+                    story_event_id=f"transition_{target}",
+                    name=f"章节转换:{target}",
+                    summary=f"章节转换至 {target}",
+                    event_type="chapter_transition",
+                    transition_target=target,
+                )
+
+    async def _execute_side_effects(
+        self,
+        world_id: str,
+        session_id: str,
+        effects: List[Dict[str, Any]],
+    ) -> None:
+        """执行 StoryDirector 副作用（地图解锁、队伍变化等）。"""
+        for effect in effects:
+            effect_type = effect.get("type", "")
+            try:
+                if effect_type == "unlock_map":
+                    map_id = effect.get("map_id")
+                    if map_id:
+                        logger.info("[v2] 副作用: 解锁地图 %s", map_id)
+                        # NarrativeService 没有动态添加地图的 API，记录日志
+                        # 地图可用性由当前章节的 available_maps 控制
+                        # 章节转换时会自动解锁下一章的地图
+                elif effect_type == "add_teammate":
+                    character_id = effect.get("character_id")
+                    if character_id:
+                        logger.info("[v2] 副作用: 添加队友 %s", character_id)
+                        name = effect.get("name", character_id)
+                        try:
+                            await self.party_service.add_member(
+                                world_id=world_id,
+                                session_id=session_id,
+                                character_id=character_id,
+                                name=name,
+                            )
+                            logger.info("[v2] 队友已添加: %s (%s)", name, character_id)
+                        except Exception as add_exc:
+                            logger.warning("[v2] 添加队友失败 %s: %s", character_id, add_exc)
+                elif effect_type == "remove_teammate":
+                    character_id = effect.get("character_id")
+                    if character_id:
+                        logger.info("[v2] 副作用: 移除队友 %s", character_id)
+                        try:
+                            removed = await self.party_service.remove_member(
+                                world_id=world_id,
+                                session_id=session_id,
+                                character_id=character_id,
+                            )
+                            if removed:
+                                logger.info("[v2] 队友已移除: %s", character_id)
+                            else:
+                                logger.debug("[v2] 队友不在队伍中: %s", character_id)
+                        except Exception as rm_exc:
+                            logger.warning("[v2] 移除队友失败 %s: %s", character_id, rm_exc)
+                else:
+                    logger.debug("[v2] 未知副作用类型: %s", effect_type)
+            except Exception as exc:
+                logger.error("[v2] 副作用执行失败 (%s): %s", effect_type, exc)
 
     # 意图→召回配置映射
     _RECALL_CONFIGS: Dict[str, Dict[str, Any]] = {
@@ -1230,6 +1979,30 @@ class AdminCoordinator:
                     "combat" if state.combat_id else "exploring"
                 )
                 context["active_npc"] = state.active_dialogue_npc
+
+        # 队伍变更后刷新队伍信息
+        refresh_party = ops & {
+            FlashOperation.ADD_TEAMMATE,
+            FlashOperation.REMOVE_TEAMMATE,
+            FlashOperation.DISBAND_PARTY,
+        }
+        if refresh_party:
+            party = await self.party_service.get_party(world_id, session_id)
+            if party:
+                context["party"] = party
+                context["teammates"] = [
+                    {
+                        "character_id": m.character_id,
+                        "name": m.name,
+                        "role": m.role.value,
+                        "personality": m.personality,
+                        "current_mood": m.current_mood,
+                    }
+                    for m in party.get_active_members()
+                ]
+            else:
+                context["party"] = None
+                context["teammates"] = []
 
         if memory_result and getattr(memory_result, "activated_nodes", None):
             context["memory_summary"] = self._summarize_memory(memory_result)
@@ -1460,7 +2233,7 @@ class AdminCoordinator:
         """状态变更后的统一叙述（供 navigate/time/dialogue 等端点使用）"""
         context = await self._build_context(world_id, session_id)
         history = self.session_history_manager.get_or_create(world_id, session_id)
-        conversation_history = history.get_recent_history(max_tokens=1_000_000)
+        conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
         if conversation_history:
             context["conversation_history"] = conversation_history
         summary = self._build_change_summary(change_type, change_details)
@@ -1727,7 +2500,7 @@ class AdminCoordinator:
         if generate_description and not description:
             context = await self._build_context(world_id, session_id)
             history = self.session_history_manager.get_or_create(world_id, session_id)
-            conversation_history = history.get_recent_history(max_tokens=1_000_000)
+            conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
             if conversation_history:
                 context["conversation_history"] = conversation_history
             summary = f"进入场景：{scene.location or scene.scene_id}"

@@ -27,7 +27,7 @@ from .tavern_card_parser import TavernCardParser, GRAPHABLE_TYPES
 
 
 # 默认使用 gemini-3-flash-preview
-DEFAULT_MODEL = "gemini-3-flash-preview"
+DEFAULT_MODEL = "gemini-3-pro-preview"
 
 
 class GraphExtractor:

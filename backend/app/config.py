@@ -87,10 +87,19 @@ class Settings(BaseModel):
 
     # NPC 实例池配置
     instance_pool_max_instances: int = int(os.getenv("INSTANCE_POOL_MAX_INSTANCES", "20"))
-    instance_pool_context_window_size: int = int(os.getenv("INSTANCE_POOL_CONTEXT_WINDOW_SIZE", "200000"))
+    instance_pool_context_window_size: int = int(os.getenv("INSTANCE_POOL_CONTEXT_WINDOW_SIZE", "1000000"))
     instance_pool_graphize_threshold: float = float(os.getenv("INSTANCE_POOL_GRAPHIZE_THRESHOLD", "0.8"))
     instance_pool_keep_recent_tokens: int = int(os.getenv("INSTANCE_POOL_KEEP_RECENT_TOKENS", "50000"))
     instance_pool_evict_after_minutes: int = int(os.getenv("INSTANCE_POOL_EVICT_AFTER_MINUTES", "30"))
+
+    # SessionHistory 自动图谱化窗口（玩家主会话）
+    session_history_max_tokens: int = int(os.getenv("SESSION_HISTORY_MAX_TOKENS", "1000000"))
+    session_history_graphize_threshold: float = float(os.getenv("SESSION_HISTORY_GRAPHIZE_THRESHOLD", "0.8"))
+    session_history_keep_recent_tokens: int = int(os.getenv("SESSION_HISTORY_KEEP_RECENT_TOKENS", "150000"))
+
+    # 剧情编排严格模式
+    narrative_v2_strict_mode: bool = os.getenv("NARRATIVE_V2_STRICT_MODE", "true").lower() in ("1", "true", "yes")
+    story_event_graph_sync: bool = os.getenv("STORY_EVENT_GRAPH_SYNC", "true").lower() in ("1", "true", "yes")
 
     # Module 3: 上下文缓存配置
     context_cache_ttl_seconds: int = int(os.getenv("CONTEXT_CACHE_TTL_SECONDS", "300"))

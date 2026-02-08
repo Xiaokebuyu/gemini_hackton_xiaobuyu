@@ -1,19 +1,19 @@
 {
   "priestess": {
     "name": "女神官",
-    "occupation": "神官（钢铁级冒险者）",
+    "occupation": "神官（瓷器级冒险者）",
     "age": 15,
-    "personality": "温柔善良但内心坚强，拥有极强的共情能力与精神韧性",
-    "speech_pattern": "礼貌温和，常使用敬语，祈祷时虔诚肃穆",
-    "example_dialogue": "我相信，我们一定能拯救更多的人。请让我与您同行。",
+    "personality": "温柔善良，具有极强的共情能力，外柔内刚，在黑暗中成长的坚韧之光",
+    "speech_pattern": "礼貌温和，常使用敬语，祈祷时念诵经文，偶尔会因小事害羞",
+    "example_dialogue": "慈悲为怀的地母神啊，请将大地的恩惠赐予迷途之人。",
     "metadata": {
-      "appearance": "金色长发，碧蓝色眼睛，身穿白蓝相间的神官服，手持天秤造型的金色锡杖",
-      "backstory": "神殿长大的孤儿，初次冒险被哥布林杀手所救，随后成为其最坚定的伙伴",
+      "appearance": "金色及腰长发，蔚蓝色眼眸，身穿纯白与宁静蓝配色的神官服，手持天秤状锡杖",
+      "backstory": "神殿长大的孤儿，初次冒险差点丧命于哥布林之手，被哥布林杀手所救后成为其固定队友。",
       "aliases": [
         "小神官",
         "地母神的信徒"
       ],
-      "importance": 0.95,
+      "importance": 1.0,
       "tags": [
         "治愈者",
         "神官",
@@ -26,168 +26,48 @@
   },
   "goblin_slayer": {
     "name": "哥布林杀手",
-    "occupation": "战士/斥候（银等级）",
+    "occupation": "冒险者（银等级）",
     "age": 20,
-    "personality": "偏执、实用主义、情感隔离但内心善良，专注于剿灭哥布林",
-    "speech_pattern": "言简意赅，常用“是吗”、“嗯”、“我明白了”回应",
-    "example_dialogue": "我不拯救世界，只管杀哥布林。",
+    "personality": "极致的实用主义者，偏执，情感隔离但内心善良，对哥布林有生理性憎恶",
+    "speech_pattern": "极度简练，常用“是吗”、“我明白了”，不擅长社交辞令",
+    "example_dialogue": "我不拯救世界，我只杀哥布林。",
     "metadata": {
-      "appearance": "全身穿着肮脏廉价的皮甲与锁子甲，戴着红缨铁盔，眼部透出红光",
-      "backstory": "童年目睹姐姐被哥布林残害，从此走上只猎杀哥布林的复仇之路",
+      "appearance": "身穿脏兮兮的皮甲与锁子甲，头戴廉价铁盔从不示人，红眼光芒（特效）",
+      "backstory": "童年目睹姐姐被哥布林虐杀，在圃人师傅的严苛训练下成为专杀哥布林的专家。",
       "aliases": [
         "欧尔克博格",
         "啮切丸",
-        "边境银级冒险者"
+        "小鬼杀手"
       ],
       "importance": 1.0,
       "tags": [
         "战士",
-        "专家",
-        "主角"
+        "斥候",
+        "主角团",
+        "战术家"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "cow_girl_farm",
+      "default_sub_location": "adventurers_guild",
       "tier": "main"
-    }
-  },
-  "vivella": {
-    "name": "薇薇拉",
-    "occupation": "猎魔人/剑术宗师",
-    "age": 18,
-    "personality": "超然优雅但内心孤独，对自身存在感到不安，珍视人性",
-    "speech_pattern": "平淡且带有古风，邀请他人时显得笨拙傲娇",
-    "example_dialogue": "今晚的月亮，和三百年前的那晚很像。",
-    "metadata": {
-      "appearance": "黑色细双马尾，宝石红眼瞳（含六芒星），身穿古典宫廷元素夜行衣",
-      "backstory": "亡国公主，灵魂与吸血鬼融合，流浪世间寻找自我与过去",
-      "aliases": [
-        "剑姬",
-        "没落的公主"
-      ],
-      "importance": 0.9,
-      "tags": [
-        "半吸血鬼",
-        "剑士",
-        "宗师"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": null,
-      "tier": "main"
-    }
-  },
-  "hero": {
-    "name": "勇者",
-    "occupation": "冒险者（白金等级）",
-    "age": 15,
-    "personality": "天真烂漫、极度乐观、缺乏常识但正义感极强",
-    "speech_pattern": "充满活力，直来直去，常把讨伐魔神当成普通任务",
-    "example_dialogue": "下次冒险就去那边了！只要干掉这家伙就解决了！",
-    "metadata": {
-      "appearance": "红发及腰，明亮坚定的眼眸，身穿华丽的白银铠甲，手持光之圣剑",
-      "backstory": "神殿孤儿，误打误撞拔出圣剑并消灭魔神将，从此开启救世之旅",
-      "aliases": [
-        "光之圣剑持有者"
-      ],
-      "importance": 0.9,
-      "tags": [
-        "救世主",
-        "白金级",
-        "天选之人"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": null,
-      "tier": "main"
-    }
-  },
-  "red_haired_boy_mage": {
-    "name": "红发少年魔法师",
-    "occupation": "魔法师（钢铁级）",
-    "age": 15,
-    "personality": "初期自负冲动、被仇恨驱动，后期懂得反思并重视同伴",
-    "speech_pattern": "初期尖锐具攻击性，后期变得沉稳并带有思考感",
-    "example_dialogue": "我不需要火球，我只需要让它们全部停下来！",
-    "metadata": {
-      "appearance": "火焰般的红发，戴眼镜，绿色瞳孔，身穿全新长袍持法杖",
-      "backstory": "姐姐死于哥布林之手，为复仇离开学院，在女神官引导下成长",
-      "aliases": [
-        "屠龙勇士（自称）"
-      ],
-      "importance": 0.85,
-      "tags": [
-        "魔法师",
-        "成长型",
-        "复仇者"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": "training_ground",
-      "tier": "main"
-    }
-  },
-  "witch": {
-    "name": "魔女",
-    "occupation": "魔法师（银等级）",
-    "age": null,
-    "personality": "慵懒、神秘、喜欢看热闹，拥有极强的支配欲与孤独感",
-    "speech_pattern": "语调拉长，一字一顿，言语真假参半且充满暗示",
-    "example_dialogue": "啊……啦……，这……就……到……极……限……了……吗？",
-    "metadata": {
-      "appearance": "紫发大波浪，紫瞳，身材丰满妩媚，常叼着长烟管",
-      "backstory": "来自都城的资深魔法师，了解公会潜规则，曾为哥布林杀手鉴定卷轴",
-      "aliases": [
-        "阿尔克墨涅"
-      ],
-      "importance": 0.8,
-      "tags": [
-        "魔法师",
-        "银等级",
-        "导师"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": "artisan_alley",
-      "tier": "secondary"
-    }
-  },
-  "guild_girl": {
-    "name": "柜台小姐",
-    "occupation": "冒险者公会职员",
-    "age": null,
-    "personality": "温柔认真、富有责任感，专业干练且带有少女的偏爱",
-    "speech_pattern": "亲切得体，标准的职业微笑，面对哥杀时会流露私人关心",
-    "example_dialogue": "您在做必须有人去做的事情。这点还请您抬头挺胸。",
-    "metadata": {
-      "appearance": "栗色长发编成三股辫，栗黄色眼眸，身穿公会制服",
-      "backstory": "小贵族出身，在边境公会任职5年，是哥布林杀手与社会的连接点",
-      "aliases": [
-        "公会职员"
-      ],
-      "importance": 0.85,
-      "tags": [
-        "公会",
-        "后援",
-        "非战斗人员"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": "guild_hall",
-      "tier": "secondary"
     }
   },
   "high_elf_archer": {
     "name": "妖精弓手",
     "occupation": "游侠（银等级）",
     "age": 2000,
-    "personality": "活泼高傲、善良直率、充满好奇心，典型的傲娇",
-    "speech_pattern": "抱怨不断但语气可靠，常称呼哥杀为“欧尔克博格”",
-    "example_dialogue": "为什么非得钻这种又臭又脏的洞啊！",
+    "personality": "活泼高傲，傲娇，好奇心旺盛，厌恶肮脏环境",
+    "speech_pattern": "直率，喜欢抱怨，经常和矿人道士斗嘴",
+    "example_dialogue": "真是的！为什么非得钻这种又臭又脏的洞啊！",
     "metadata": {
-      "appearance": "薄荷绿短发，浅绿色眼眸，身穿绿色紧身上衣与皮质束腰",
-      "backstory": "为寻求真正冒险离开森林的上森人，对美食和未知充满好奇",
+      "appearance": "薄荷绿短发，浅绿色眼眸，身材纤细（贫乳），典型的精灵游侠装束",
+      "backstory": "为了寻求真正的冒险离开森林，加入了哥布林杀手的小队。",
       "aliases": [
-        "精灵弓手",
-        "铁砧"
+        "上森人",
+        "长耳朵"
       ],
       "importance": 0.9,
       "tags": [
-        "游侠",
+        "弓箭手",
         "精灵",
         "主角团"
       ],
@@ -200,19 +80,20 @@
     "name": "矿人道士",
     "occupation": "术师（银等级）",
     "age": 107,
-    "personality": "豪爽豁达、乐天派、爱开玩笑，拥有长者的智慧",
-    "speech_pattern": "语气豪迈，常与妖精弓手斗嘴，称其为“长耳朵”",
-    "example_dialogue": "酒有另一个肚子装！",
+    "personality": "豪爽豁达，享乐主义，喜欢美酒美食，毒舌幽默",
+    "speech_pattern": "洪亮，喜欢开玩笑，常以长者自居",
+    "example_dialogue": "哦吼！这酒够劲！",
     "metadata": {
-      "appearance": "身材矮壮如石墩，留有纯白大胡须，身穿东洋风格术师袍",
-      "backstory": "为追求美食美酒踏上旅途的矿人，经验丰富的银级冒险者",
+      "appearance": "矮壮敦实，白色大胡子，身穿东洋风格术师袍",
+      "backstory": "为了寻找美食美酒而冒险，成为了队伍中的开心果和法术支援。",
       "aliases": [
+        "矮人",
         "术士兄"
       ],
       "importance": 0.9,
       "tags": [
-        "术师",
-        "矿人",
+        "施法者",
+        "矮人",
         "主角团"
       ],
       "default_map": "frontier_town",
@@ -224,20 +105,20 @@
     "name": "蜥蜴僧侣",
     "occupation": "僧侣（银等级）",
     "age": null,
-    "personality": "沉稳、彬彬有礼、虔诚，是团队的智囊与调解者",
-    "speech_pattern": "庄重得体，常使用古龙般的语气，称呼乳制品为“甘露”",
-    "example_dialogue": "这真是至高无上的甘露啊！",
+    "personality": "沉稳，彬彬有礼，虔诚，对乳制品（甘露）有狂热喜爱",
+    "speech_pattern": "古风，庄重，经常提及龙之祖先",
+    "example_dialogue": "此乃龙之祖先的指引。还有，这乳酪真是绝品。",
     "metadata": {
-      "appearance": "高大健硕的蜥蜴人，覆盖绿色鳞片，戴兽牙护符",
-      "backstory": "来自南方沼泽，为追寻更高信仰与品尝甘露而成为冒险者",
+      "appearance": "高大健硕的蜥蜴人，绿色鳞片，身穿部族风格服装，佩戴骨牙护符",
+      "backstory": "为了提升信仰等级和品尝美食而游历，队伍中的调解者。",
       "aliases": [
-        "武僧",
+        "蜥蜴人",
         "蜥蜴兄"
       ],
       "importance": 0.9,
       "tags": [
-        "僧侣",
-        "蜥蜴人",
+        "前卫",
+        "治疗者",
         "主角团"
       ],
       "default_map": "frontier_town",
@@ -245,74 +126,211 @@
       "tier": "main"
     }
   },
-  "sword_maiden": {
-    "name": "剑之圣女",
-    "occupation": "至高神殿大主教（前金等级）",
-    "age": 28,
-    "personality": "端庄威严但内心极度脆弱，深受PTSD折磨，渴求救赎",
-    "speech_pattern": "公众场合清冷威严，私下柔和且带有引诱意味",
-    "example_dialogue": "请告诉我，我所做的……是正确的吗？",
+  "cow_girl": {
+    "name": "牧牛妹",
+    "occupation": "牧场农女",
+    "age": 18,
+    "personality": "温柔包容，开朗勤劳，坚定的守候者",
+    "speech_pattern": "亲切自然，像家人一样",
+    "example_dialogue": "欢迎回来。晚饭想吃什么？",
     "metadata": {
-      "appearance": "金色长发，双眼蒙黑布，身穿半透明白色长袍，身材极其丰满",
-      "backstory": "曾讨伐魔神王的英雄，初次冒险被哥布林凌虐留下永恒创伤",
+      "appearance": "粉赤红短发，身材丰满（E罩杯），穿着背带工装裤",
+      "backstory": "哥布林杀手的青梅竹马，在他失去一切后收留了他，是他心灵的港湾。",
       "aliases": [
-        "水之都大主教"
+        "青梅竹马"
       ],
-      "importance": 0.95,
+      "importance": 0.85,
       "tags": [
-        "大主教",
-        "英雄",
-        "受难者"
+        "后勤",
+        "治愈系",
+        "日常"
       ],
-      "default_map": "water_capital",
-      "default_sub_location": "supreme_temple",
+      "default_map": "cow_girl_farm",
+      "default_sub_location": null,
       "tier": "main"
     }
   },
-  "sword_saint": {
-    "name": "剑圣",
-    "occupation": "冒险者（白金等级）",
+  "guild_girl": {
+    "name": "柜台小姐",
+    "occupation": "冒险者公会职员",
     "age": null,
-    "personality": "直率、好战、信赖同伴，纯粹的剑之求道者",
-    "speech_pattern": "简洁明了，不喜欢长篇大论，对话直接",
-    "example_dialogue": "只要干掉这家伙，就全都解决了！",
+    "personality": "专业干练，温柔负责，对哥布林杀手有特殊好感",
+    "speech_pattern": "职业化的礼貌，面对特定对象时会流露少女心",
+    "example_dialogue": "辛苦了，这是您的报酬。请务必小心。",
     "metadata": {
-      "appearance": "乌黑长发高束马尾，鲜红眼瞳，身穿红黑金三色轻便铠甲",
-      "backstory": "勇者的同伴，队伍的王牌战力，剑技已达化境",
+      "appearance": "栗色长发盘辫，身材窈窕（C罩杯），穿着公会制服",
+      "backstory": "出身小贵族，在边境公会工作多年，理解并支持着哥布林杀手。",
       "aliases": [
-        "勇者小队成员"
+        "公会职员"
       ],
-      "importance": 0.75,
+      "importance": 0.85,
       "tags": [
+        "后勤",
+        "公会",
+        "管理者"
+      ],
+      "default_map": "frontier_town",
+      "default_sub_location": "guild_hall",
+      "tier": "main"
+    }
+  },
+  "vivella": {
+    "name": "薇薇拉",
+    "occupation": "猎魔人/流浪者（白银级上位）",
+    "age": 18,
+    "personality": "古老灵魂与少女心绪的矛盾，优雅超然但渴望人性",
+    "speech_pattern": "平淡、略带古风，偶尔傲娇",
+    "example_dialogue": "……今晚的月亮，和三百年前的那晚很像。",
+    "metadata": {
+      "appearance": "黑发双马尾，红瞳，哥特风格战斗装，身材匀称（D罩杯）",
+      "backstory": "亡国公主与吸血鬼融合，流浪世间寻找自我。",
+      "aliases": [
+        "剑姬",
+        "没落的公主"
+      ],
+      "importance": 0.7,
+      "tags": [
+        "半吸血鬼",
         "剑士",
-        "白金级",
-        "勇者团"
+        "流浪者"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "sage": {
-    "name": "贤者",
+  "hero": {
+    "name": "勇者",
     "occupation": "冒险者（白金等级）",
-    "age": null,
-    "personality": "冷静知性、责任感强、偶尔流露出倦怠感",
-    "speech_pattern": "逻辑主导，对话以事实和分析为基础",
-    "example_dialogue": "我家孩子给您添麻烦了。",
+    "age": 15,
+    "personality": "天真烂漫，缺乏常识，无敌且幸运",
+    "speech_pattern": "充满活力，直来直去",
+    "example_dialogue": "只要干掉这家伙，就全都解决了！",
     "metadata": {
-      "appearance": "银白色短发，金色眼眸，娇小玲珑但曲线丰满，穿华丽神官袍",
-      "backstory": "勇者的同伴，队伍的大脑，负责规划和预知危机",
+      "appearance": "红色长发，充满活力的少女，身穿白银铠甲",
+      "backstory": "天选之子，第一次冒险就拔出圣剑，视讨伐魔神为日常。",
       "aliases": [
-        "勇者小队军师"
+        "凉宫春日(外貌参考)"
       ],
-      "importance": 0.75,
+      "importance": 0.8,
       "tags": [
-        "军师",
-        "白金级",
-        "勇者团"
+        "勇者",
+        "无敌",
+        "天选"
+      ],
+      "default_map": "landosol",
+      "default_sub_location": null,
+      "tier": "main"
+    }
+  },
+  "red_haired_boy_mage": {
+    "name": "红发少年魔法师",
+    "occupation": "新手魔法师",
+    "age": 15,
+    "personality": "初期自负偏执，后期懂得反思与合作",
+    "speech_pattern": "初期尖锐带刺，后期变得沉稳",
+    "example_dialogue": "我会证明我的魔法是最强的！",
+    "metadata": {
+      "appearance": "红发，戴眼镜，身穿长袍",
+      "backstory": "姐姐死于哥布林之手，怀着复仇之心成为冒险者，后被感化成长。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "魔法师",
+        "成长型",
+        "复仇者"
       ],
       "default_map": "frontier_town",
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "witch": {
+    "name": "魔女",
+    "occupation": "冒险者（银等级）",
+    "age": null,
+    "personality": "慵懒，神秘，喜欢看热闹，爱抽烟",
+    "speech_pattern": "缓慢，拉长语调（为了防止误触发魔法）",
+    "example_dialogue": "啊……啦……，这……真……是……有……趣……",
+    "metadata": {
+      "appearance": "紫发紫瞳，身材丰满（D罩杯），穿着妩媚的长袍",
+      "backstory": "强大的施法者，经常与枪兵组队，对哥布林杀手提供过帮助。",
+      "aliases": [
+        "阿尔克墨涅"
+      ],
+      "importance": 0.7,
+      "tags": [
+        "魔法师",
+        "御姐",
+        "支援者"
+      ],
+      "default_map": "frontier_town",
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "sword_maiden": {
+    "name": "剑之圣女",
+    "occupation": "至高神殿大主教（前金等级冒险者）",
+    "age": 20,
+    "personality": "外表端庄威严，内心因创伤而脆弱，极度恐惧哥布林",
+    "speech_pattern": "庄重，私下会流露柔弱",
+    "example_dialogue": "请救救我……从那些噩梦中……",
+    "metadata": {
+      "appearance": "金发，双眼蒙黑布（失明），身材极度丰满，身穿白色法衣",
+      "backstory": "曾是讨伐魔神王的英雄，但年轻时被哥布林俘虏凌虐，留下了心理阴影。",
+      "aliases": [
+        "大主教"
+      ],
+      "importance": 0.8,
+      "tags": [
+        "神官",
+        "英雄",
+        "创伤"
+      ],
+      "default_map": "water_town",
+      "default_sub_location": "supreme_temple",
+      "tier": "secondary"
+    }
+  },
+  "sword_saint": {
+    "name": "剑圣",
+    "occupation": "冒险者（勇者小队）",
+    "age": null,
+    "personality": "直率，好战，务实，信赖同伴",
+    "speech_pattern": "简洁明了",
+    "example_dialogue": "只要砍了就行了吧？",
+    "metadata": {
+      "appearance": "黑发马尾，红瞳，身材高挑健美，穿着轻便铠甲",
+      "backstory": "勇者的队友，剑术登峰造极。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "剑士",
+        "强者"
+      ],
+      "default_map": "landosol",
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "sage": {
+    "name": "贤者",
+    "occupation": "冒险者（勇者小队）",
+    "age": null,
+    "personality": "冷静，知性，操心命，偶尔倦怠",
+    "speech_pattern": "逻辑主导，有时啰嗦",
+    "example_dialogue": "真是的，又乱来了……",
+    "metadata": {
+      "appearance": "银白短发，金瞳，身材娇小但丰满，穿着神官袍",
+      "backstory": "勇者的队友，负责制定计划和善后。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "魔法师",
+        "智囊"
+      ],
+      "default_map": "landosol",
       "default_sub_location": null,
       "tier": "secondary"
     }
@@ -321,20 +339,17 @@
     "name": "女骑士",
     "occupation": "冒险者（银等级）",
     "age": null,
-    "personality": "正直、毒舌、务实，高洁但会为婚事烦恼",
-    "speech_pattern": "嘴上不饶人，常对重战士进行辛辣吐槽",
-    "example_dialogue": "按照《骑士章程》，这种行为是绝对不允许的！",
+    "personality": "正直，毒舌，务实，为婚事烦恼",
+    "speech_pattern": "直爽，经常吐槽",
+    "example_dialogue": "你这个肌肉脑！",
     "metadata": {
-      "appearance": "浅金色长发，身穿白银骑士铠甲，手持步行剑与大盾",
-      "backstory": "重战士的青梅竹马，立志成为圣骑士，是队伍坚固的盾",
-      "aliases": [
-        "吐槽役骑士"
-      ],
-      "importance": 0.7,
+      "appearance": "金发，身材热辣，身穿白银骑士铠甲",
+      "backstory": "重战士的青梅竹马，立志成为圣骑士。",
+      "aliases": [],
+      "importance": 0.6,
       "tags": [
         "骑士",
-        "银等级",
-        "盾牌"
+        "坦克"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
@@ -344,44 +359,38 @@
   "rookie_warrior": {
     "name": "新手战士",
     "occupation": "冒险者（白瓷等级）",
-    "age": 15,
-    "personality": "莽撞、有英雄梦、会反省，质朴且不断成长",
-    "speech_pattern": "直率，有时会抱怨，对前辈充满敬意",
-    "example_dialogue": "我一定要变强，强到能保护大家！",
+    "age": null,
+    "personality": "莽撞，天真，有成长潜力",
+    "speech_pattern": "充满干劲，偶尔抱怨",
+    "example_dialogue": "总有一天我要去屠龙！",
     "metadata": {
-      "appearance": "年轻稚嫩，穿着全新薄皮甲，手持棍棒",
-      "backstory": "乡下出身，怀揣梦想来到边境，在挫折中逐渐成熟",
-      "aliases": [
-        "在成长的男孩"
-      ],
-      "importance": 0.65,
+      "appearance": "年轻男性，装备简陋",
+      "backstory": "乡下来的新人，在挫折中逐渐成长。",
+      "aliases": [],
+      "importance": 0.5,
       "tags": [
         "战士",
-        "白瓷级",
         "新人"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "training_ground",
+      "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "heavy_warrior": {
     "name": "重战士",
-    "occupation": "战士（银等级）",
+    "occupation": "冒险者（银等级）",
     "age": null,
-    "personality": "豪爽、爱照顾人、嘴硬心软，外刚内柔",
-    "speech_pattern": "说话直接粗鲁但无恶意，很有领导风范",
-    "example_dialogue": "哪怕是神，一样宰得掉！",
+    "personality": "豪爽，爱照顾人，嘴硬心软",
+    "speech_pattern": "粗鲁但亲切",
+    "example_dialogue": "真是麻烦死了……好吧，我帮你。",
     "metadata": {
-      "appearance": "体格异常强壮，黑色短发，穿厚重大型全覆盖铠甲，背负巨剑",
-      "backstory": "故乡曾被哥杀拯救，心怀恩情，是边境冒险者的中坚力量",
-      "aliases": [
-        "可靠大哥"
-      ],
-      "importance": 0.75,
+      "appearance": "强壮巨汉，身穿厚重铠甲，背负巨剑",
+      "backstory": "资深冒险者，曾被哥布林杀手拯救过故乡。",
+      "aliases": [],
+      "importance": 0.6,
       "tags": [
         "战士",
-        "银等级",
         "领袖"
       ],
       "default_map": "frontier_town",
@@ -392,69 +401,62 @@
   "apprentice_saintess": {
     "name": "见习圣女",
     "occupation": "冒险者（白瓷等级）",
-    "age": 15,
-    "personality": "认真务实、爱照顾人、冷静，是团队的管理者",
-    "speech_pattern": "礼貌周到，常对新手战士进行吐槽和制止",
-    "example_dialogue": "不行，没钱！我们要精打细算才行。",
+    "age": null,
+    "personality": "认真，务实，爱操心",
+    "speech_pattern": "吐槽役，礼貌",
+    "example_dialogue": "真是的，你又乱花钱了！",
     "metadata": {
-      "appearance": "红发高马尾，紫色瞳孔，身穿白色圣袍，戴天秤剑圣符",
-      "backstory": "新手战士的青梅竹马，为照顾他而成为冒险者，侍奉至高神",
-      "aliases": [
-        "爱操心的搭档"
-      ],
-      "importance": 0.65,
+      "appearance": "红发高马尾，紫瞳，身材匀称",
+      "backstory": "为了照顾青梅竹马而成为冒险者。",
+      "aliases": [],
+      "importance": 0.5,
       "tags": [
         "神官",
-        "白瓷级",
-        "新人"
+        "管家婆"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "female_mage": {
+  "female_mage_red": {
     "name": "红发少女魔法师",
     "occupation": "冒险者（白瓷等级）",
-    "age": 15,
-    "personality": "骄傲、理论派、缺乏实战经验，心理素质差",
-    "speech_pattern": "初期冷静自信，崩溃时歇斯底里",
-    "example_dialogue": "请……杀了我……让我解脱……",
+    "age": null,
+    "personality": "骄傲，自信，心理素质差",
+    "speech_pattern": "初期自信，后期绝望",
+    "example_dialogue": "请……杀了我……",
     "metadata": {
-      "appearance": "戴眼镜，神情冷静，穿厚实长袍，持石榴石法杖",
-      "backstory": "魔法学院才女，初次冒险因轻敌被哥布林重创，请求哥杀终结生命",
+      "appearance": "戴眼镜，身材丰满，身穿法袍",
+      "backstory": "魔法学院毕业生，因轻敌在哥布林洞穴中遭遇悲惨结局。",
       "aliases": [
         "女魔法师"
       ],
-      "importance": 0.5,
+      "importance": 0.4,
       "tags": [
         "魔法师",
-        "牺牲者",
-        "悲剧"
+        "悲剧角色"
       ],
-      "default_map": "frontier_town",
+      "default_map": "goblin_cave",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "noble_fencer": {
     "name": "千金剑士",
-    "occupation": "冒险者（新手）",
+    "occupation": "冒险者",
     "age": null,
-    "personality": "初期自信高洁，中期偏执封闭，后期坚强并信赖他人",
-    "speech_pattern": "不善言辞，用行动表达决心，后期趋向温柔",
-    "example_dialogue": "这把剑，是为了复仇，也是为了守护。",
+    "personality": "初期高傲，中期偏执复仇，后期坚强",
+    "speech_pattern": "贵族口吻，后转为冷漠",
+    "example_dialogue": "我要把它们……全部杀光。",
     "metadata": {
-      "appearance": "蜂蜜色短发，浅蜜色眼眸，颈部有“绿月之眼”烙印",
-      "backstory": "贵族千金，因轻敌导致小队覆灭并受辱，后在哥杀小队帮助下救赎",
-      "aliases": [
-        "复仇者"
-      ],
-      "importance": 0.7,
+      "appearance": "金发（后剪短），身材丰满，颈部有烙印",
+      "backstory": "贵族千金，冒险失败被俘受辱，被救出后寻求复仇。",
+      "aliases": [],
+      "importance": 0.6,
       "tags": [
         "剑士",
-        "复仇者",
-        "贵族"
+        "复仇者"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
@@ -462,48 +464,46 @@
     }
   },
   "master_ninja": {
-    "name": "哥布林杀手的师傅",
-    "occupation": "冒险者（黄金等级）",
+    "name": "老师",
+    "occupation": "隐退冒险者/导师",
     "age": null,
-    "personality": "偏执、严苛、实用主义，充满禅意且洞察深刻",
-    "speech_pattern": "喜欢用谜语提问，强调“做或不做”",
-    "example_dialogue": "我的口袋里，有什么！",
+    "personality": "偏执，严苛，实用主义，充满禅意",
+    "speech_pattern": "喜欢出谜语，严厉",
+    "example_dialogue": "我的口袋里，有什么？",
     "metadata": {
-      "appearance": "身材矮小、皮肤黝黑的圃人老者，眼神锐利如火",
-      "backstory": "神秘的圃人，在哥杀最绝望时带走他并进行了5年残酷训练",
+      "appearance": "身材矮小的圃人，穿着白金炼甲",
+      "backstory": "哥布林杀手的师傅，教导了他生存与战斗的技巧。",
       "aliases": [
-        "老师",
-        "忍者"
+        "忍者",
+        "圃人老者"
       ],
-      "importance": 0.6,
+      "importance": 0.5,
       "tags": [
         "导师",
-        "忍者",
-        "圃人"
+        "强者"
       ],
-      "default_map": "frontier_town",
+      "default_map": "unknown",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "rare_druid_girl": {
+  "rare_girl": {
     "name": "圃人少女",
-    "occupation": "督伊德（银等级）",
+    "occupation": "冒险者（督伊德）",
     "age": null,
-    "personality": "敏锐、善于观察、关心同带，团队的可爱担当",
-    "speech_pattern": "活泼，喜欢小声讨论八卦",
-    "example_dialogue": "嘿嘿，我看到妖精弓手小姐又在生气了。",
+    "personality": "敏锐，活泼，关心同伴",
+    "speech_pattern": "活泼",
+    "example_dialogue": "哎呀，又有八卦了？",
     "metadata": {
-      "appearance": "身材娇小活泼的草原民族少女",
-      "backstory": "重战士小队成员，以督伊德身份活跃，经验丰富",
+      "appearance": "身材矮小，活泼",
+      "backstory": "重战士小队的成员。",
       "aliases": [
         "圃人督伊德少女"
       ],
-      "importance": 0.55,
+      "importance": 0.4,
       "tags": [
-        "督伊德",
-        "圃人",
-        "银等级"
+        "德鲁伊",
+        "支援"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
@@ -512,118 +512,91 @@
   },
   "lancer": {
     "name": "枪兵",
-    "occupation": "战士（银等级）",
+    "occupation": "冒险者（银等级）",
     "age": null,
-    "personality": "豪爽、骄傲、重情义、爱面子",
-    "speech_pattern": "喜欢吹嘘战绩，常向柜台小姐搭讪",
-    "example_dialogue": "事后请我喝一杯，我就帮你这个忙。",
+    "personality": "豪爽，骄傲，重情义，爱面子",
+    "speech_pattern": "自信，喜欢吹嘘",
+    "example_dialogue": "本大爷可是边境最强！",
     "metadata": {
-      "appearance": "浅粉色头发后梳，穿蓝色精钢铠甲，持锋利长枪",
-      "backstory": "边境极负盛名的冒险者，与魔女是搭档，暗恋柜台小姐",
+      "appearance": "粉红发，身穿蓝色铠甲，不戴头盔",
+      "backstory": "实力强大的冒险者，经常与魔女组队，追求柜台小姐。",
       "aliases": [
-        "边境最强"
+        "长枪手"
       ],
-      "importance": 0.75,
+      "importance": 0.6,
       "tags": [
-        "枪兵",
-        "银等级",
-        "边境三男"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": "guild_hall",
-      "tier": "secondary"
-    }
-  },
-  "female_martial_artist": {
-    "name": "女武斗家",
-    "occupation": "拳师（白瓷等级）",
-    "age": null,
-    "personality": "勇敢无畏、善良爽朗、富有正义感",
-    "speech_pattern": "直来直去，充满英气，常发出战斗呼喝",
-    "example_dialogue": "别怕，我会保护你们的！",
-    "metadata": {
-      "appearance": "高挑丰满，黑发单马尾，穿紧身皮甲背心与短裤，戴铁片拳套",
-      "backstory": "乡下跟随师傅学拳，初次冒险遭遇惨剧，被哥布林制服",
-      "aliases": [
-        "女拳师"
-      ],
-      "importance": 0.5,
-      "tags": [
-        "拳师",
-        "白瓷级",
-        "牺牲者"
+        "战士",
+        "输出"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "cow_girl": {
-    "name": "牧牛妹",
-    "occupation": "牧场经营者",
-    "age": 18,
-    "personality": "温柔包容、开朗勤劳，是哥杀内心的最后锚点",
-    "speech_pattern": "亲切主动，像家人一样率直，偶尔会假装生气",
-    "example_dialogue": "欢迎回来。今天有热腾腾的炖菜哦。",
+  "female_martial_artist": {
+    "name": "女武斗家",
+    "occupation": "冒险者（白瓷等级）",
+    "age": null,
+    "personality": "勇敢无畏，爽朗，富有正义感",
+    "speech_pattern": "充满活力",
+    "example_dialogue": "交给我吧！",
     "metadata": {
-      "appearance": "粉赤红短发，淡红色瞳孔，身材丰腴（安产型），穿工装背带裤",
-      "backstory": "哥杀的青梅竹马，十年前因不在村中幸存，始终等待哥杀归来",
+      "appearance": "黑发单马尾，身材高挑丰满（E罩杯），穿着皮甲",
+      "backstory": "新手小队成员，在哥布林洞穴中不幸牺牲。",
       "aliases": [
-        "牧场少女"
+        "女拳师"
       ],
-      "importance": 0.9,
+      "importance": 0.4,
       "tags": [
-        "青梅竹马",
-        "治愈",
-        "非战斗人员"
+        "格斗家",
+        "悲剧角色"
       ],
-      "default_map": "cow_girl_farm",
-      "default_sub_location": "mother_house",
-      "tier": "main"
+      "default_map": "goblin_cave",
+      "default_sub_location": null,
+      "tier": "secondary"
     }
   },
   "teria": {
     "name": "特利娅",
-    "occupation": "魔术师",
+    "occupation": "魔术师（未注册）",
     "age": 1000,
-    "personality": "好奇、俏皮、善变、狡猾，喜欢捉弄感兴趣的人",
-    "speech_pattern": "语气随意且充满玩味，常带“呢”、“呀”尾音",
-    "example_dialogue": "被可爱的小女孩踩在脚下的感觉如何？",
+    "personality": "好奇，俏皮，善变，狡猾",
+    "speech_pattern": "随意，充满玩味",
+    "example_dialogue": "这就不行了吗？",
     "metadata": {
-      "appearance": "14岁萝莉体型，银白长发红瞳，有紫黑色龙翼、龙角与龙尾",
-      "backstory": "活了千年的银龙，厌倦巢穴生活化为人形旅行，寻找乐子",
+      "appearance": "银白长发萝莉，红瞳，有龙角龙翼龙尾",
+      "backstory": "活了千年的银龙，化为人形游历人间寻找乐趣。",
       "aliases": [
         "龙娘"
       ],
-      "importance": 0.85,
+      "importance": 0.6,
       "tags": [
         "龙族",
         "萝莉",
         "强者"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "tavern",
-      "tier": "main"
+      "default_sub_location": "adventurers_guild",
+      "tier": "secondary"
     }
   },
   "seamstress": {
     "name": "裁缝铺老板娘",
-    "occupation": "工匠/裁缝",
+    "occupation": "裁缝",
     "age": 21,
-    "personality": "外在内敛害羞，内在活泼天真，对手艺极度自信",
-    "speech_pattern": "腼腆但谈及手艺时很专业，讨厌被当成小孩",
-    "example_dialogue": "我不是小孩子！这是王都最流行的款式！",
+    "personality": "内敛害羞但内心活泼，对技术自信，讨厌被当小孩",
+    "speech_pattern": "腼腆",
+    "example_dialogue": "我不是小孩子！",
     "metadata": {
-      "appearance": "身高152cm，深蓝色短发，用发夹束起刘海露出饱满额头",
-      "backstory": "独自继承父母的裁缝铺，梦想将时尚带给小镇",
+      "appearance": "深蓝短发，露额头，身材娇小",
+      "backstory": "继承父母店铺的年轻裁缝，手艺精湛。",
       "aliases": [
         "小裁缝",
         "额头妹妹"
       ],
-      "importance": 0.6,
+      "importance": 0.4,
       "tags": [
         "工匠",
-        "裁缝",
         "平民"
       ],
       "default_map": "frontier_town",
@@ -635,117 +608,107 @@
     "name": "监督官",
     "occupation": "公会高级职员/至高神祭司",
     "age": null,
-    "personality": "沉着冷静、观察敏锐、富有责任感、行事公正",
-    "speech_pattern": "温和知性，能看穿谎言，私下会调侃好友",
-    "example_dialogue": "在至高神的天秤面前，谎言无所遁形。",
+    "personality": "沉着冷静，敏锐，温柔，公正",
+    "speech_pattern": "知性，温和",
+    "example_dialogue": "请让我确认一下事实。",
     "metadata": {
-      "appearance": "浅棕色长直发，蓝色眼眸，穿干练公会制服，戴天秤圣印",
-      "backstory": "小贵族出身，至高神祭司，负责监督公会秩序与审查报告",
-      "aliases": [
-        "审查官"
-      ],
-      "importance": 0.7,
+      "appearance": "浅棕长直发，蓝瞳，身材娇小匀称，穿制服",
+      "backstory": "被派往边境公会的监督官，维护公会秩序。",
+      "aliases": [],
+      "importance": 0.5,
       "tags": [
-        "公会",
-        "祭司",
-        "秩序"
+        "管理者",
+        "神官"
       ],
       "default_map": "frontier_town",
       "default_sub_location": "guild_hall",
       "tier": "secondary"
     }
   },
-  "elf_shining_helm": {
-    "name": "戴闪亮银盔的森人",
+  "elf_with_shining_helm": {
+    "name": "戴闪亮头盔的森人",
     "occupation": "森人战士/未来族长",
     "age": null,
-    "personality": "高傲、传统、责任感强、极度护短的傲娇兄长",
-    "speech_pattern": "常用说教掩饰关心，对异族带有一丝矜持",
-    "example_dialogue": "别误会了，我只是不希望森林的传统被破坏。",
+    "personality": "高傲，传统，妹控，妻控",
+    "speech_pattern": "有些别扭，傲娇",
+    "example_dialogue": "哼，人类。",
     "metadata": {
-      "appearance": "修长矫健，银色长发，戴真银打造的闪亮头盔",
-      "backstory": "妖精弓手的表哥，森人精英，后接纳哥杀一行人",
-      "aliases": [
-        "闪亮银盔"
-      ],
-      "importance": 0.65,
+      "appearance": "银色长发，戴真银头盔",
+      "backstory": "妖精弓手的表哥，森人族的精英。",
+      "aliases": [],
+      "importance": 0.4,
       "tags": [
-        "森人",
         "战士",
-        "傲娇"
+        "精灵"
       ],
-      "default_map": "frontier_town",
+      "default_map": "whispering_forest",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "elf_princess": {
+  "forest_princess": {
     "name": "森人公主",
     "occupation": "森人族长/自然神谕者",
     "age": null,
-    "personality": "睿智、慈悲、超然、平和，森林与自然的化身",
-    "speech_pattern": "富有诗意或哲理，声音轻柔而富有感染力",
-    "example_dialogue": "我能感受到森林在为你歌唱。",
+    "personality": "睿智，慈悲，超然，温柔",
+    "speech_pattern": "诗意，轻柔",
+    "example_dialogue": "森林在歌唱。",
     "metadata": {
-      "appearance": "身高175cm，银色长发及腰，戴鲜花花冠，穿轻纱礼服",
-      "backstory": "森人王之森未来的族长，拥有超脱尘世的视角",
+      "appearance": "银色长发，戴花冠，身穿轻纱礼服",
+      "backstory": "森人族的精神领袖。",
       "aliases": [
         "戴花冠的森人"
       ],
-      "importance": 0.65,
+      "importance": 0.4,
       "tags": [
-        "森人",
         "领袖",
-        "神谕者"
+        "精灵"
       ],
-      "default_map": "frontier_town",
+      "default_map": "whispering_forest",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "qiao_feng": {
     "name": "乔峰",
-    "occupation": "武学宗师",
+    "occupation": "武学宗师/流浪者",
     "age": 30,
-    "personality": "侠义为本、重诺轻生、豪迈坦荡、沉默寡言",
-    "speech_pattern": "多使用书面语，词直接有力，自称“乔某”",
-    "example_dialogue": "此等行径，与禽兽何异！痛快！当浮一大白！",
+    "personality": "侠义，豪迈，重诺",
+    "speech_pattern": "古风，豪爽",
+    "example_dialogue": "痛快！当浮一大白！",
     "metadata": {
-      "appearance": "身形魁梧，浓眉大眼，高鼻阔口，穿朴素灰色劲装",
-      "backstory": "异世界盖世英雄，被命运抛入此世，以肉掌行侠仗义",
+      "appearance": "魁梧汉子，浓眉大眼，身穿灰色劲装",
+      "backstory": "异世界穿越而来的大侠，在异界行侠仗义。",
       "aliases": [
-        "帮主",
         "乔帮主"
       ],
-      "importance": 0.85,
+      "importance": 0.5,
       "tags": [
-        "宗师",
-        "侠客",
-        "异世界"
+        "武术家",
+        "穿越者"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "guild_hall",
-      "tier": "main"
+      "default_sub_location": null,
+      "tier": "secondary"
     }
   },
   "viola": {
     "name": "薇欧拉",
-    "occupation": "重装战士（银等级）",
+    "occupation": "冒险者（白银级）",
     "age": null,
-    "personality": "外冷内热，冰山外表下隐藏着幽默感与分享欲",
-    "speech_pattern": "冷峻但熟络后会开启话痨模式，爱讲冷笑话",
-    "example_dialogue": "此年份蝎狮，尾末神经束胶质丰富，炖汤口感最佳。",
+    "personality": "外冷内热，幽默，热爱魔物料理",
+    "speech_pattern": "冷笑话，一本正经地胡说八道",
+    "example_dialogue": "这只蝎狮的尾巴炖汤一定很鲜美。",
     "metadata": {
-      "appearance": "身高175cm，白金色长发，冰蓝眼眸，穿板链甲混搭重甲",
-      "backstory": "来自北方霜狼部落，巨魔杀手，热衷于制作魔物料理",
+      "appearance": "白金长发，冰蓝眼眸，身穿混搭重甲",
+      "backstory": "来自北方的战士，对魔物食材有独特研究。",
       "aliases": [
         "北境旅人"
       ],
-      "importance": 0.7,
+      "importance": 0.6,
       "tags": [
         "战士",
-        "美食家",
-        "北境"
+        "厨师"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
@@ -756,22 +719,19 @@
     "name": "妖精法师",
     "occupation": "法师（银等级）",
     "age": null,
-    "personality": "冷静克制、温柔动人、有照顾癖，带有自毁倾向",
-    "speech_pattern": "话不算少，但因常年居于森林，常说出词不达意的双关语",
+    "personality": "冷静克制，温柔，有照顾癖，词不达意",
+    "speech_pattern": "有时会说出让人误会的双关语",
     "example_dialogue": "你流汗了？我可以帮你舔掉……啊，是‘拭掉’对吧？",
     "metadata": {
-      "appearance": "金色齐腰长发，绿色瞳孔，纤细苗条，常年赤足",
-      "backstory": "身中“消逝诅咒”，寿命将尽，在寻找救赎之法",
-      "aliases": [
-        "轻语森林的法师"
-      ],
-      "importance": 0.7,
+      "appearance": "金色长发，绿瞳，身穿绿色法袍，赤足",
+      "backstory": "身中诅咒的上森人法师，生命即将走到尽头。",
+      "aliases": [],
+      "importance": 0.6,
       "tags": [
-        "法师",
-        "森人",
-        "受难者"
+        "魔法师",
+        "精灵"
       ],
-      "default_map": "frontier_town",
+      "default_map": "whispering_forest",
       "default_sub_location": null,
       "tier": "secondary"
     }
@@ -780,20 +740,19 @@
     "name": "零",
     "occupation": "魔术师（黑曜石级）",
     "age": null,
-    "personality": "友善亲切、礼貌温和、对孩子溺爱，有自我牺牲倾向",
-    "speech_pattern": "安静有礼，能直接感知他人感情",
-    "example_dialogue": "虽然我不了解自己，但我希望能保护大家。",
+    "personality": "友善亲切，迷茫，缺乏常识",
+    "speech_pattern": "礼貌，温和",
+    "example_dialogue": "请问……我是人类吗？",
     "metadata": {
-      "appearance": "身高165cm，黑发红褐眼，I罩杯爆乳，穿设计感强烈的制服",
-      "backstory": "50%魅魔血统的混血儿，缺乏孩提记忆，认同自己是人类",
+      "appearance": "黑发，红褐色眼睛，身穿设计感强烈的制服，身材极度丰满",
+      "backstory": "半魅魔半神造物，对自身种族认知模糊。",
       "aliases": [
         "白魔法少女"
       ],
-      "importance": 0.7,
+      "importance": 0.5,
       "tags": [
-        "魅魔",
-        "魔术师",
-        "混血"
+        "魔法师",
+        "魅魔"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
@@ -802,22 +761,19 @@
   },
   "beastgirl_waitress": {
     "name": "兽人女服务生",
-    "occupation": "酒馆女服务生",
+    "occupation": "酒馆服务生",
     "age": null,
-    "personality": "活泼开朗、勤劳直率、观察敏锐，带点小八卦",
-    "speech_pattern": "元气满满，充满热情，常发出开心的呜咽声",
-    "example_dialogue": "欢迎回来！今天要来点什么？",
+    "personality": "活泼开朗，勤劳直率，八卦",
+    "speech_pattern": "元气满满",
+    "example_dialogue": "欢迎光临！今天要喝点什么？",
     "metadata": {
-      "appearance": "棕色短发，琥珀色眼眸，有犬耳和毛茸茸的尾巴",
-      "backstory": "犬足族少女，酒馆不可或缺的一员，擅长洞察人心",
-      "aliases": [
-        "酒馆看板娘"
-      ],
-      "importance": 0.6,
+      "appearance": "棕色短发，犬耳犬尾，身穿制服",
+      "backstory": "公会酒馆的看板娘，深受冒险者喜爱。",
+      "aliases": [],
+      "importance": 0.4,
       "tags": [
-        "兽人",
-        "看板娘",
-        "平民"
+        "平民",
+        "兽人"
       ],
       "default_map": "frontier_town",
       "default_sub_location": "tavern",
@@ -828,47 +784,43 @@
     "name": "工坊学徒",
     "occupation": "锻造学徒",
     "age": null,
-    "personality": "认真勤奋、心善嘴硬，在特定人面前非常害羞",
-    "speech_pattern": "笨拙真挚，被打趣时会满脸通红",
-    "example_dialogue": "啧，拿去吧，这是多出来的寻物蜡烛。",
+    "personality": "认真勤奋，害羞，心善",
+    "speech_pattern": "笨拙，真诚",
+    "example_dialogue": "这把剑……我会修好的！",
     "metadata": {
-      "appearance": "身材结实，棕色短发沾有烟灰，穿厚实皮围裙",
-      "backstory": "跟随矿人师傅学习，逐渐理解“为使用者而锻造”的意义",
-      "aliases": [
-        "打铁少年"
-      ],
-      "importance": 0.55,
+      "appearance": "棕色短发，结实，穿着皮围裙",
+      "backstory": "跟随矿人师傅学习锻造的年轻人。",
+      "aliases": [],
+      "importance": 0.4,
       "tags": [
         "工匠",
-        "学徒",
         "平民"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "forge",
+      "default_sub_location": "smithy",
       "tier": "secondary"
     }
   },
   "forge_master": {
     "name": "工坊师傅",
-    "occupation": "铁匠/武器商人",
+    "occupation": "铁匠大师",
     "age": null,
-    "personality": "脾气古怪、嘴硬心软、重信义，拥有顶级匠人精神",
-    "speech_pattern": "说话直接粗鲁，从不客套，言出必行",
-    "example_dialogue": "对哥布林挥起传说魔剑的家伙，就只是个大蠢蛋罢了。",
+    "personality": "脾气古怪，嘴硬心软，匠人精神",
+    "speech_pattern": "粗鲁，直接",
+    "example_dialogue": "别拿那种垃圾来侮辱我的锤子！",
     "metadata": {
-      "appearance": "矮壮结实，浓密胡须用金属环束起，满手老茧与旧疤",
-      "backstory": "经营“碎盾工坊”，见证无数生死，是冒险者可靠的后盾",
+      "appearance": "矮壮矿人，浓密胡须，穿着脏围裙",
+      "backstory": "技艺高超的铁匠，认可哥布林杀手。",
       "aliases": [
         "矿人铁匠"
       ],
-      "importance": 0.6,
+      "importance": 0.5,
       "tags": [
         "工匠",
-        "矿人",
-        "宗师"
+        "矮人"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "forge",
+      "default_sub_location": "smithy",
       "tier": "secondary"
     }
   },
@@ -876,118 +828,156 @@
     "name": "古罗",
     "occupation": "猎人/陷阱师",
     "age": 50,
-    "personality": "机警、残忍、野性，对人类缺乏同理心",
-    "speech_pattern": "极少说话，听觉很差，行为更像野兽",
-    "example_dialogue": "（沉默的注视与磨刀声）",
+    "personality": "机警，残忍，野性，缺乏同理心",
+    "speech_pattern": "沉默寡言，像野兽",
+    "example_dialogue": "……入侵者……死。",
     "metadata": {
-      "appearance": "披暗色兽皮斗篷，戴狼獾帽，亚麻色长发，精致八字胡",
-      "backstory": "幼年因哥布林屠村而食腐幸存，野化生活，视所有入侵者为猎物",
-      "aliases": [
-        "野性猎人"
-      ],
-      "importance": 0.5,
+      "appearance": "披着兽皮，戴狼獾帽，手持双管猎枪",
+      "backstory": "在尸体堆中长大的野性猎人，视领地内一切为猎物。",
+      "aliases": [],
+      "importance": 0.4,
       "tags": [
         "猎人",
-        "野性",
-        "中立"
+        "野人"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "forest",
+      "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "edina": {
-    "name": "艾迪娜",
-    "occupation": "骑士（银等级）",
+  "adina": {
+    "name": "艾迪娜·冯·海因里希",
+    "occupation": "骑士（白银级/接近黄金）",
     "age": null,
-    "personality": "严于律己、恪守骑士道，内心潜藏扭曲欲望",
-    "speech_pattern": "言行堪称楷模，高岭之花姿态",
-    "example_dialogue": "为了正义，我愿献出一切。",
+    "personality": "表面高洁恪守骑士道，内心潜藏扭曲欲望",
+    "speech_pattern": "高贵，正义凛然",
+    "example_dialogue": "以圣辉之名，斩断邪恶！",
     "metadata": {
-      "appearance": "身高175cm，金色长发，穿秘银重型板甲，披狮鹫绒披风",
-      "backstory": "贵族出身，因哥布林凌辱觉醒邪神秘密，无意识通过性爱“献祭”",
+      "appearance": "金发蓝瞳（发情时粉瞳），身穿秘银板甲",
+      "backstory": "贵族骑士，因被哥布林凌辱而觉醒了色孽相关的体质。",
       "aliases": [
         "圣辉狮姬",
         "狮鹫骑士"
       ],
-      "importance": 0.7,
+      "importance": 0.6,
       "tags": [
         "骑士",
-        "受难者",
-        "矛盾"
+        "堕落"
       ],
-      "default_map": "water_capital",
+      "default_map": "water_town",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "leviathan": {
     "name": "利维坦",
-    "occupation": "外神意识分割体",
-    "age": 200000,
-    "personality": "知识渊博、温柔和蔼、共情力强，具有古老威严",
-    "speech_pattern": "超凡口才，华丽强势，自称“老夫”",
-    "example_dialogue": "谢谢你，到最后仍然选择相信我。",
+    "occupation": "外神意识体",
+    "age": null,
+    "personality": "知识渊博，温柔和蔼，古老威严",
+    "speech_pattern": "古老，带有慈悲",
+    "example_dialogue": "老夫我……",
     "metadata": {
-      "appearance": "身高158cm，白发金瞳，精致如洋娃娃，背生漆黑触手",
-      "backstory": "来自维度之外的外神，被封印于女性躯壳，困于此世",
+      "appearance": "娇小女性躯壳，白发金瞳，背后有触手",
+      "backstory": "被困于此世的外神意识，居住在沉没巨林。",
       "aliases": [
         "搁浅之鲸"
       ],
-      "importance": 0.9,
+      "importance": 0.7,
       "tags": [
         "外神",
-        "不可名状",
-        "守护者"
+        "神秘"
       ],
-      "default_map": "sunken_forest",
+      "default_map": "whispering_forest",
       "default_sub_location": null,
-      "tier": "main"
+      "tier": "secondary"
     }
   },
   "elaina": {
     "name": "伊蕾娜",
     "occupation": "魔女/旅人",
-    "age": null,
-    "personality": "优雅自信、自恋、毒舌腹黑但本质温柔（老好人）",
-    "speech_pattern": "自信且带调侃，常说“没错，就是我”",
-    "example_dialogue": "能做到这种事的究竟是谁呢？没错，就是我。",
+    "age": 18,
+    "personality": "自信自恋，毒舌腹黑但本质善良",
+    "speech_pattern": "自恋，毒舌",
+    "example_dialogue": "没错，就是我！",
     "metadata": {
-      "appearance": "灰白色长发，紫罗兰色眼眸，戴尖顶魔女帽，穿黑色长袍",
-      "backstory": "异世界天才魔女，误入此世，一边旅行一边寻找归途",
+      "appearance": "灰白长发，紫瞳，魔女装束",
+      "backstory": "异世界穿越而来的天才魔女，正在寻找回家的方法。",
       "aliases": [
         "灰之魔女"
       ],
-      "importance": 0.85,
+      "importance": 0.6,
       "tags": [
         "魔女",
-        "异世界",
-        "旅人"
+        "穿越者"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
-      "tier": "main"
+      "tier": "secondary"
+    }
+  },
+  "fox_archer": {
+    "name": "狐族弓手",
+    "occupation": "游侠（翠玉级）",
+    "age": null,
+    "personality": "天真纯洁，害羞，闷骚",
+    "speech_pattern": "轻柔，不确定",
+    "example_dialogue": "那个……请问……",
+    "metadata": {
+      "appearance": "亚麻色长发，狐耳狐尾，身材极好",
+      "backstory": "寻找失散族人的狐族少女。",
+      "aliases": [],
+      "importance": 0.5,
+      "tags": [
+        "弓箭手",
+        "兽人"
+      ],
+      "default_map": "frontier_town",
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "sanguinius": {
+    "name": "圣吉列斯",
+    "occupation": "战士（基因原体）",
+    "age": null,
+    "personality": "神圣，慈悲，威严，守护者",
+    "speech_pattern": "庄重，充满力量",
+    "example_dialogue": "为了帝皇！",
+    "metadata": {
+      "appearance": "金发俊美，背生双翼，身穿金色皮甲",
+      "backstory": "异世界穿越而来的基因原体，致力于清除邪恶。",
+      "aliases": [
+        "大天使",
+        "圣血天使"
+      ],
+      "importance": 0.8,
+      "tags": [
+        "天使",
+        "穿越者",
+        "强者"
+      ],
+      "default_map": "water_town",
+      "default_sub_location": null,
+      "tier": "secondary"
     }
   },
   "mata": {
     "name": "玛塔",
     "occupation": "魔女/术士",
     "age": null,
-    "personality": "冷静理性、有利己主义倾向，崇尚公平交易",
-    "speech_pattern": "慢条斯理但一针见血，喜用隐喻和双关",
-    "example_dialogue": "知识是有代价的，你准备好支付了吗？",
+    "personality": "冷静理性，追求知识与力量，利己主义",
+    "speech_pattern": "慢条斯理，一针见血",
+    "example_dialogue": "知识就是力量。",
     "metadata": {
-      "appearance": "身高173cm，左眼红瞳右眼紫瞳，脸颊有魔纹，穿黑色高开衩法袍",
-      "backstory": "半暗人半龙混血，掌握禁忌知识，背叛种族逃往地上",
+      "appearance": "异色瞳，暗白色皮肤，身穿黑色丝绸法袍",
+      "backstory": "背叛族群的半暗人半龙混血，追求禁忌知识。",
       "aliases": [
-        "凝渊",
-        "深渊凝视者"
+        "凝渊"
       ],
-      "importance": 0.65,
+      "importance": 0.6,
       "tags": [
-        "混血",
-        "魔女",
-        "利己主义"
+        "术士",
+        "暗人"
       ],
       "default_map": "frontier_town",
       "default_sub_location": null,
@@ -996,48 +986,46 @@
   },
   "megumin": {
     "name": "惠惠",
-    "occupation": "大法师（白瓷等级）",
-    "age": null,
-    "personality": "戏剧性中二病、偏执狂热、意外纯情傲娇",
-    "speech_pattern": "充满戏剧性与表演色彩，咏唱词极长且夸张",
-    "example_dialogue": "Explosion！这就是究极的破坏！",
+    "occupation": "大法师（白瓷级）",
+    "age": 14,
+    "personality": "中二病，偏执，傲娇",
+    "speech_pattern": "戏剧性，夸张",
+    "example_dialogue": "吾名惠惠！乃红魔族第一的天才魔法师！",
     "metadata": {
-      "appearance": "黑短发红瞳，戴眼罩，穿漆黑披风长袍，持巨大法杖",
-      "backstory": "红魔族天才，只学爆裂魔法，每天必须释放一发否则不舒服",
+      "appearance": "黑发红瞳，戴眼罩，身穿魔女服",
+      "backstory": "只会爆裂魔法的红魔族少女，正在寻找队友。",
       "aliases": [
         "爆裂魔法使"
       ],
-      "importance": 0.85,
+      "importance": 0.6,
       "tags": [
         "魔法师",
-        "中二病",
-        "异世界"
+        "中二病"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "guild_hall",
-      "tier": "main"
+      "default_sub_location": null,
+      "tier": "secondary"
     }
   },
   "mimi": {
     "name": "美美",
     "occupation": "战士（自称）",
     "age": 10,
-    "personality": "活泼好动、天真烂漫、爱哭但勇敢",
-    "speech_pattern": "以自己的名字“美美”作为第一人称，充满童真",
-    "example_dialogue": "美美啊，最喜欢哥哥了！小兔子蹦蹦跳跳♪",
+    "personality": "天真烂漫，爱哭但勇敢",
+    "speech_pattern": "充满童趣，口癖是自称美美",
+    "example_dialogue": "美美会保护大家的！",
     "metadata": {
-      "appearance": "樱粉色双马尾，金色眼瞳，有兔耳兔尾，持胡萝卜长剑",
-      "backstory": "小小甜心成员，梦想击败大魔王，能与动物沟通",
+      "appearance": "粉色双麻花辫，兔耳，身穿粉色兔子主题服装",
+      "backstory": "小小甜心公会成员，梦想打倒大魔王。",
       "aliases": [
-        "蹦蹦跳跳的兔兔剑士"
+        "兔兔剑士"
       ],
-      "importance": 0.6,
+      "importance": 0.5,
       "tags": [
         "兽人",
-        "萝莉",
-        "小小甜心"
+        "萝莉"
       ],
-      "default_map": "landosol_city",
+      "default_map": "landosol",
       "default_sub_location": null,
       "tier": "secondary"
     }
@@ -1046,22 +1034,22 @@
     "name": "镜华",
     "occupation": "魔术师",
     "age": 8,
-    "personality": "早熟勤奋、傲娇、警惕心极高，装作成熟",
-    "speech_pattern": "严厉且带教训口吻，害羞时会骂对方“变态”",
-    "example_dialogue": "变态！？是、是你啊～你果然是变态！",
+    "personality": "早熟，傲娇，认真，警惕心强",
+    "speech_pattern": "小大人语气，严厉",
+    "example_dialogue": "真是的，拿你们没办法。",
     "metadata": {
-      "appearance": "浅紫色长发双马尾，渐变瞳，穿和服元素连衣裙",
-      "backstory": "森人优等生，小小甜心领袖，努力学习保护同伴",
+      "appearance": "浅紫双马尾，和服风格连衣裙",
+      "backstory": "小小甜心公会成员，负责照顾两个问题儿童。",
       "aliases": [
-        "小小的优等生魔术师"
+        "小小的优等生"
       ],
-      "importance": 0.6,
+      "importance": 0.5,
       "tags": [
-        "森人",
+        "精灵",
         "萝莉",
         "傲娇"
       ],
-      "default_map": "landosol_city",
+      "default_map": "landosol",
       "default_sub_location": null,
       "tier": "secondary"
     }
@@ -1070,96 +1058,92 @@
     "name": "未奏希",
     "occupation": "斥候",
     "age": 9,
-    "personality": "活泼好动、爱恶作剧、好奇心旺盛，实用主义",
-    "speech_pattern": "俏皮充满活力，常谈论陷阱和探险",
-    "example_dialogue": "嘿嘿，恶作剧的证据就在这里烧掉吧！",
+    "personality": "活泼好动，喜欢恶作剧，探险家",
+    "speech_pattern": "俏皮",
+    "example_dialogue": "嘿嘿，吓了一跳吧！",
     "metadata": {
-      "appearance": "亮橙色侧马尾，棕瞳，穿黄色高叉连体衣，戴橙色拳铠",
-      "backstory": "退役冒险者之女，小小甜心成员，擅长制作陷阱",
+      "appearance": "橙色侧马尾，身穿高叉连体衣",
+      "backstory": "小小甜心公会成员，退役冒险者的女儿。",
       "aliases": [
         "恶作剧大师"
       ],
-      "importance": 0.6,
+      "importance": 0.5,
       "tags": [
-        "斥候",
-        "恶作剧",
-        "小小甜心"
+        "人类",
+        "萝莉",
+        "捣蛋鬼"
       ],
-      "default_map": "landosol_city",
+      "default_map": "landosol",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "albedo": {
     "name": "雅儿贝德",
-    "occupation": "魅魔/街头娼妓",
+    "occupation": "魅魔/娼妓",
     "age": null,
-    "personality": "顶级掠食者，情感层面纯情赤子，对“最初之人”偏执",
-    "speech_pattern": "奉承顺从（伪装），面对“凡品”时冰冷蔑视",
-    "example_dialogue": "您就是我寻觅已久的挚爱，天命之人吗？",
+    "personality": "偏执，痴情（伪），捕食者",
+    "speech_pattern": "诱惑，奉承",
+    "example_dialogue": "您就是我寻觅已久的挚爱吗？",
     "metadata": {
-      "appearance": "及腰黑发，有羊角与黑羽翼，穿洁白无瑕的典雅服饰",
-      "backstory": "离开深渊的魅魔，在风俗街寻找命中注定的“最初之人”",
+      "appearance": "黑发，羊角，黑翼，身穿白色和服",
+      "backstory": "寻找“最初之人”的强大魅魔，以精气为食。",
       "aliases": [
-        "甘露猎手",
-        "巷中的白影"
+        "甘露猎手"
       ],
-      "importance": 0.7,
+      "importance": 0.5,
       "tags": [
         "魅魔",
-        "偏执",
-        "强者"
+        "反派"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "pleasure_district",
+      "default_sub_location": "red_light_district",
       "tier": "secondary"
     }
   },
   "rimuru": {
     "name": "利姆露",
-    "occupation": "新生拟态种",
+    "occupation": "特殊魔物",
     "age": null,
-    "personality": "本质善良、高度谨慎，人类道德与魔物本能冲突",
-    "speech_pattern": "语言带“呢”、“呀”尾音，紧张时语无伦次",
-    "example_dialogue": "那个……我可以吃掉这些哥布林吗？",
+    "personality": "善良，谨慎，有人类理性",
+    "speech_pattern": "带有口癖",
+    "example_dialogue": "我不是坏史莱姆哦！",
     "metadata": {
-      "appearance": "淡蓝果冻体（史莱姆）/ 155cm银发金瞳少女",
-      "backstory": "人类转生为史莱姆，与哥杀达成交易，协助清剿巢穴",
+      "appearance": "银发少女（拟态）/蓝色史莱姆",
+      "backstory": "转生者，与哥布林杀手达成合作清理哥布林。",
       "aliases": [
-        "大森林的异变体"
+        "史莱姆"
       ],
-      "importance": 0.7,
+      "importance": 0.6,
       "tags": [
-        "史莱姆",
-        "拟态",
-        "异世界"
+        "魔物",
+        "转生者"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "forest",
+      "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "ashina_isshin": {
     "name": "苇名一心",
-    "occupation": "剑圣",
+    "occupation": "剑灵",
     "age": null,
-    "personality": "纯粹的求道者，尊重强者，信奉“迷惘乃大忌”",
-    "speech_pattern": "语言简练且充满哲理，战斗中会指点对手",
-    "example_dialogue": "犹豫，就会败北。",
+    "personality": "纯粹的求道者，豪迈",
+    "speech_pattern": "古风，充满哲理",
+    "example_dialogue": "迷惘乃大忌。",
     "metadata": {
-      "appearance": "枯瘦老者，眼神锐利如隼，穿深色武士服，持打刀“开门”",
-      "backstory": "鸣神传奇，死后化为剑灵，在一心净土寻求永恒死斗",
+      "appearance": "枯瘦老者，身穿武士服",
+      "backstory": "鸣神群岛的传说剑圣，死后化为剑灵寻求强者。",
       "aliases": [
         "剑圣"
       ],
-      "importance": 0.75,
+      "importance": 0.7,
       "tags": [
-        "剑圣",
-        "剑灵",
-        "宗师"
+        "剑士",
+        "亡灵"
       ],
-      "default_map": "tenryou_town",
-      "default_sub_location": "isshin_pure_land",
+      "default_map": "narukami_island",
+      "default_sub_location": "isshins_pure_land",
       "tier": "secondary"
     }
   },
@@ -1167,296 +1151,278 @@
     "name": "武藏",
     "occupation": "剑豪",
     "age": 18,
-    "personality": "极致矛盾体，日常温柔如母，战斗时化身修罗",
-    "speech_pattern": "日常温和优雅，战斗时极度专注冷酷",
-    "example_dialogue": "此剑之后，唯余寂灭。",
+    "personality": "日常温柔人妻，战斗时修罗",
+    "speech_pattern": "温和/严厉",
+    "example_dialogue": "死线即是道场。",
     "metadata": {
-      "appearance": "高挑狐耳女性，九条紫色狐尾，穿露肩黑色和服",
-      "backstory": "古老天狐血统，独自追求剑道巅峰，被鬼武者团体排斥",
+      "appearance": "狐耳狐尾，紫黑长发，身材丰满",
+      "backstory": "追求剑道极致的天狐，被称为鬼武者。",
       "aliases": [
-        "天元の剑狐"
+        "天元之剑狐"
       ],
-      "importance": 0.7,
+      "importance": 0.6,
       "tags": [
-        "狐娘",
-        "剑豪",
-        "天狐"
+        "剑士",
+        "兽人"
       ],
-      "default_map": "tenryou_town",
+      "default_map": "narukami_island",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "raiden_ei": {
     "name": "雷电影",
-    "occupation": "剑圣/统治者",
+    "occupation": "统治者/武圣",
     "age": null,
-    "personality": "孤独的守护者，严厉的统帅，坚信力量是和平基石",
-    "speech_pattern": "威严而疏离，公开场合言行符合统治者身份",
-    "example_dialogue": "无念，为常。此身即为永恒。",
+    "personality": "威严，执着于永恒与和平，喜爱甜食",
+    "speech_pattern": "威严，疏离",
+    "example_dialogue": "此乃天道。",
     "metadata": {
-      "appearance": "及腰紫发麻花辫，深紫色瞳孔，穿紫金华服和服，持“梦想一心”",
-      "backstory": "鸣神最年轻武圣，继承将军位，以武力杜绝纷争",
+      "appearance": "紫发麻花辫，身穿紫色和服",
+      "backstory": "鸣神群岛的统治者，武艺高强。",
       "aliases": [
-        "雷电将军",
-        "当代武圣"
+        "雷电将军"
       ],
-      "importance": 0.95,
+      "importance": 0.8,
       "tags": [
-        "统治者",
-        "武圣",
-        "强者"
+        "领袖",
+        "剑士"
       ],
-      "default_map": "tenryou_town",
-      "default_sub_location": "shogun_palace",
-      "tier": "main"
+      "default_map": "narukami_island",
+      "default_sub_location": "raiden_shoguns_palace",
+      "tier": "secondary"
     }
   },
   "xibiya": {
     "name": "席比雅",
     "occupation": "剑客",
     "age": 22,
-    "personality": "反差萌，日常风趣幽默爱护孩童，谈及剑道威严自持",
-    "speech_pattern": "日常爱讲冷笑话，战斗时肃穆专注",
-    "example_dialogue": "剑，是用来守护纯真的。",
+    "personality": "反差萌，平时幽默爱孩子，战斗时严肃",
+    "speech_pattern": "喜欢讲冷笑话",
+    "example_dialogue": "心如莲花，不染尘埃。",
     "metadata": {
-      "appearance": "粉色长发，蓝色眼眸，穿高开衩改良旗袍，持报春剑",
-      "backstory": "莲花剑派首席，以守护孩子们的纯真为挥剑动力",
+      "appearance": "粉发，改良旗袍，手持莲花",
+      "backstory": "莲花剑派首席，追求物我合一。",
       "aliases": [
         "莲花第一剑"
       ],
-      "importance": 0.65,
+      "importance": 0.5,
       "tags": [
-        "剑客",
-        "反差萌",
-        "莲花派"
+        "剑士",
+        "武术家"
       ],
-      "default_map": "tenryou_town",
-      "default_sub_location": "lotus_island",
+      "default_map": "narukami_island",
+      "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "guren": {
     "name": "红莲",
-    "occupation": "剑豪",
+    "occupation": "浪人",
     "age": null,
-    "personality": "洒脱不羁、浪漫、通透，将生命托付于酒与剑",
-    "speech_pattern": "古风古韵，常夹杂文言，称呼强者为“阁下”",
-    "example_dialogue": "花无十日红，人无千日好。干杯，阁下。",
+    "personality": "洒脱不羁，嗜酒，浪漫",
+    "speech_pattern": "古风，带醉意",
+    "example_dialogue": "花无十日红，人无千日好。",
     "metadata": {
-      "appearance": "樱粉色长发，红玫瑰发饰，穿敞开的纯白和服，持“花无十日红”",
-      "backstory": "覆灭剑客氏族最后血脉，在鸣神寻找内心平静的浪人",
+      "appearance": "樱粉长发，身穿白色和服，拿着酒壶",
+      "backstory": "没落剑客氏族的后裔，流浪于鸣神群岛。",
       "aliases": [
-        "薄幸的红刃",
-        "风来坊"
+        "薄幸的红刃"
       ],
-      "importance": 0.7,
+      "importance": 0.5,
       "tags": [
-        "浪人",
-        "剑豪",
-        "酒鬼"
+        "剑士",
+        "浪人"
       ],
-      "default_map": "tenryou_town",
+      "default_map": "narukami_island",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
   "yae_miko": {
     "name": "八重神子",
-    "occupation": "大神主/谋士",
+    "occupation": "巫女/谋士",
     "age": null,
-    "personality": "狡黠、智慧、优雅的观察家，趣味至上",
-    "speech_pattern": "言辞犀利，掌控节奏，喜欢用模棱两可的话试探",
-    "example_dialogue": "哎呀，这可真是太有趣了，不是吗？",
+    "personality": "狡黠，智慧，腹黑，喜欢有趣的事",
+    "speech_pattern": "调侃，模棱两可",
+    "example_dialogue": "哎呀，这可真是……有趣呢。",
     "metadata": {
-      "appearance": "粉色长发狐耳，紫水晶瞳孔，穿改良巫女服，持神乐铃",
-      "backstory": "天狐族长，见证数代将军更迭，幕后维系群岛平衡",
+      "appearance": "粉发狐耳，身穿改良巫女服",
+      "backstory": "鸣神大社宫司，雷电影的挚友与辅佐者。",
       "aliases": [
-        "大神主",
-        "天狐之长"
+        "大神主"
       ],
-      "importance": 0.9,
+      "importance": 0.8,
       "tags": [
-        "狐妖",
-        "智者",
-        "领袖"
+        "神官",
+        "智囊",
+        "兽人"
       ],
-      "default_map": "tenryou_town",
-      "default_sub_location": "narukami_shrine",
-      "tier": "main"
+      "default_map": "narukami_island",
+      "default_sub_location": "narukami_grand_shrine",
+      "tier": "secondary"
     }
   },
-  "ciel": {
+  "shiel": {
     "name": "夏尔",
     "occupation": "邪术师/旅人",
     "age": 15,
-    "personality": "敏感脆弱、狡黠伪装，厌恶剥削，自我认同挣扎",
-    "speech_pattern": "警惕疏离，面对威胁时言辞尖锐讽刺",
-    "example_dialogue": "我不需要你的同情，也不会沦为你的玩物。",
+    "personality": "敏感脆弱，狡黠，厌恶贵族",
+    "speech_pattern": "带刺，自我保护",
+    "example_dialogue": "别靠近我，人类。",
     "metadata": {
-      "appearance": "银白短发金瞳，少女般纤细，有黑色小翅膀与心形尾巴",
-      "backstory": "罕见雄性半魅魔，被父亲抛弃，伪装成少女在人类社会旅行",
-      "aliases": [
-        "男娘魅魔"
-      ],
-      "importance": 0.65,
+      "appearance": "银白短发，女性化外貌，有恶魔翅膀",
+      "backstory": "雄性半魅魔，被父亲抛弃后独自流浪。",
+      "aliases": [],
+      "importance": 0.5,
       "tags": [
-        "男娘",
         "魅魔",
-        "邪术师"
+        "伪娘"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "pleasure_district",
+      "default_sub_location": "red_light_district",
       "tier": "secondary"
     }
   },
   "mana": {
     "name": "玛娜",
-    "occupation": "魔女（银等级）",
+    "occupation": "统治者（篡位）",
     "age": 19,
-    "personality": "逃避现实、残酷、极度渴望成为童话中的公主",
-    "speech_pattern": "高傲且带有表演感，极力维持公主形象",
-    "example_dialogue": "我才是这个国家真正的公主，唯一的尤斯蒂亚娜。",
+    "personality": "逃避现实，冷酷，渴望童话般的爱",
+    "speech_pattern": "高傲，公主语气",
+    "example_dialogue": "我是这个国家的公主。",
     "metadata": {
-      "appearance": "及地银发双马尾，紫水晶眼，狐耳，穿白色巫女服配紫黑长裙",
-      "backstory": "兽人贵族长子，性转后篡夺兰德索尔王位，囚禁王室",
+      "appearance": "银白长发，狐耳，华丽服饰",
+      "backstory": "兽人贵族长子，变性篡位成为兰德索尔公主。",
       "aliases": [
-        "百变妖狐",
-        "尤斯蒂亚娜（伪）"
+        "百变妖狐"
       ],
-      "importance": 0.9,
+      "importance": 0.7,
       "tags": [
-        "篡位者",
-        "狐妖",
-        "魔女"
+        "反派",
+        "幻术师"
       ],
-      "default_map": "landosol_city",
-      "default_sub_location": "landosol_castle",
-      "tier": "main"
+      "default_map": "landosol",
+      "default_sub_location": "royal_palace",
+      "tier": "secondary"
     }
   },
   "karyl": {
     "name": "凯露",
-    "occupation": "魔术师（青玉级）",
+    "occupation": "魔术师",
     "age": 14,
-    "personality": "典型傲娇、常识人、吐槽役，在忠诚与友情间挣扎",
-    "speech_pattern": "口头禅是“宰了你哦！”，被夸奖时会脸红反驳",
-    "example_dialogue": "你别随便跟我搭话！我们又不是朋友！",
+    "personality": "傲娇，常识人，纠结",
+    "speech_pattern": "吐槽，口是心非",
+    "example_dialogue": "宰了你哦！",
     "metadata": {
-      "appearance": "黑长卷发带白挑染，翠绿眼，有猫耳猫尾，穿深蓝露肩外套",
-      "backstory": "邪教家庭出身，为报恩效力玛娜，后被佩可莉姆感化",
+      "appearance": "黑发白挑染，猫耳，身穿法师服",
+      "backstory": "玛娜的下属，被派去监视佩可莉姆，却产生了友情。",
       "aliases": [
-        "神秘猫耳魔法师"
+        "黑猫"
       ],
-      "importance": 0.9,
+      "importance": 0.7,
       "tags": [
-        "猫耳",
-        "傲娇",
-        "魔法师"
+        "魔法师",
+        "兽人",
+        "傲娇"
       ],
-      "default_map": "landosol_city",
+      "default_map": "landosol",
       "default_sub_location": null,
-      "tier": "main"
+      "tier": "secondary"
     }
   },
   "pecorine": {
     "name": "佩可莉姆",
-    "occupation": "战士（翠玉级）",
+    "occupation": "战士/公主",
     "age": 17,
-    "personality": "阳光开朗但内心孤独，极度热爱美食，有公主器量",
-    "speech_pattern": "口癖是“おいっす～☆”和“やばいですね☆”",
-    "example_dialogue": "和喜欢的人们一起吃喜欢的东西！这真是最奢侈的事情了☆",
+    "personality": "阳光开朗，贪吃，内心孤独",
+    "speech_pattern": "元气，口癖“厉害了呀”",
+    "example_dialogue": "肚子饿了！",
     "metadata": {
-      "appearance": "灿烂金发带呆毛，天蓝色眼，E罩杯，穿白色连衣裙配金属护肩",
-      "backstory": "兰德索尔真公主，身份被夺后流亡，靠吃美食欣赏生命",
+      "appearance": "金发，巨乳，身穿冒险者服装，戴王冠",
+      "backstory": "流亡的兰德索尔公主，拥有强大的王家装备。",
       "aliases": [
-        "贪吃剑士",
-        "尤丝蒂亚娜"
+        "贪吃剑士"
       ],
-      "importance": 0.95,
+      "importance": 0.7,
       "tags": [
+        "战士",
         "公主",
-        "贪吃",
-        "战士"
+        "吃货"
       ],
-      "default_map": "landosol_city",
+      "default_map": "landosol",
       "default_sub_location": null,
-      "tier": "main"
+      "tier": "secondary"
     }
   },
   "bloody_baron": {
     "name": "血腥男爵",
-    "occupation": "贵族/军阀",
+    "occupation": "军阀/领主",
     "age": 42,
-    "personality": "残暴酗酒但充满复杂人性，深爱妻女且渴望救赎",
-    "speech_pattern": "粗鲁、充满威胁感，谈及妻女时声音低沉悔恨",
-    "example_dialogue": "别跟我扯什么狗屁正义，在这里，拳头就是正义。",
+    "personality": "残暴，酗酒，深爱家人但不懂表达",
+    "speech_pattern": "粗俗，暴躁",
+    "example_dialogue": "在这里，拳头就是正义。",
     "metadata": {
-      "appearance": "高大肥胖臃肿，深褐色乱发络腮胡，披血红色披风",
-      "backstory": "退役将领，流放至威伦建立势力，因家暴导致妻女失踪",
+      "appearance": "肥胖魁梧，络腮胡，身穿红色披风",
+      "backstory": "被流放的贵族，在威伦建立了自己的势力，寻找失踪妻女。",
       "aliases": [
-        "威伦的统治者"
+        "菲利普·斯特雷戈"
       ],
       "importance": 0.6,
       "tags": [
-        "军阀",
-        "受难者",
-        "统治者"
+        "战士",
+        "领主"
       ],
-      "default_map": "water_capital",
-      "default_sub_location": "velen_castle",
+      "default_map": "velen",
+      "default_sub_location": "barons_castle",
       "tier": "secondary"
     }
   },
   "puti": {
     "name": "普蒂",
-    "occupation": "女仆/厨师",
+    "occupation": "旅店店主/厨师",
     "age": null,
-    "personality": "母性萝莉、勤劳体贴，对绝对信任的亲密有极度渴望",
-    "speech_pattern": "温柔唠叨，像妈妈一样照顾他人，对轻浮言语困惑",
-    "example_dialogue": "真是的，又弄得这么脏了……来，我帮你洗。",
+    "personality": "勤劳体贴，母性萝莉，渴望亲密",
+    "speech_pattern": "温柔，像妈妈一样",
+    "example_dialogue": "真是的，衣服又弄脏了。",
     "metadata": {
-      "appearance": "上半身萝莉下半身巨蛇，亮紫色长发，青蓝色蛇瞳",
-      "backstory": "蛇类兽人部落出身，受森人厨师教导，在边境经营旅店",
-      "aliases": [
-        "盘蛇旅店店主"
-      ],
-      "importance": 0.6,
+      "appearance": "上半身萝莉，下半身蛇尾，紫发",
+      "backstory": "来自蛇人部落，在边境小镇经营旅店。",
+      "aliases": [],
+      "importance": 0.5,
       "tags": [
-        "拉米亚",
-        "店主",
-        "母性"
+        "魔物娘",
+        "后勤"
       ],
       "default_map": "frontier_town",
-      "default_sub_location": "coiled_serpent_inn",
+      "default_sub_location": "serpent_inn",
       "tier": "secondary"
     }
   },
   "kokkoro": {
     "name": "可可萝",
-    "occupation": "战士/精灵使/神官",
-    "age": 1100,
-    "personality": "绝对忠诚、温柔坚定、承载千年孤独的慈母",
-    "speech_pattern": "平静温和，频繁提及“爱梅斯大人”，充满智慧",
-    "example_dialogue": "我是爱梅斯大人的巫女，可可萝。奉神谕，前来引导您。",
+    "occupation": "向导/神官",
+    "age": 11,
+    "personality": "忠诚，温柔，母性，使命感强",
+    "speech_pattern": "恭敬，奉献",
+    "example_dialogue": "我是爱梅斯大人的巫女，前来引导您。",
     "metadata": {
-      "appearance": "身高140cm，银白色短发，紫水晶眼，穿绿色金边短袍",
-      "backstory": "幻梦神使者，数百年来在世界各地引导冒险者前往索尔之塔",
+      "appearance": "银白短发，身穿绿色短袍，手持长枪",
+      "backstory": "幻梦神的巫女，引导冒险者前往索尔之塔。",
       "aliases": [
         "小小的引导者"
       ],
-      "importance": 0.9,
+      "importance": 0.6,
       "tags": [
-        "引导者",
-        "森人",
-        "忠诚"
+        "辅助",
+        "精灵"
       ],
-      "default_map": "landosol_city",
+      "default_map": "frontier_town",
       "default_sub_location": null,
-      "tier": "main"
+      "tier": "secondary"
     }
   },
-  "syl_esske": {
+  "syll_esske": {
     "name": "希尔·埃斯克",
     "occupation": null,
     "age": null,
@@ -1465,7 +1431,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "色孽势力的最高统领之一，负责接收凡人高层名单并进行针对性腐化。",
+      "backstory": "色孽信徒的最高统领之一，接收贵族信徒提供的凡人高层名单以进行针对性腐化。",
       "aliases": [],
       "importance": 0.9,
       "tags": [
@@ -1476,8 +1442,8 @@
       "tier": "secondary"
     }
   },
-  "succubus_handmaiden": {
-    "name": "魅魔侍女",
+  "goblin_slayers_sister": {
+    "name": "哥布林杀手的姐姐",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1485,7 +1451,27 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "色孽派系的领导者之一，能够统领色孽恶魔。",
+      "backstory": "哥布林杀手的亲姐姐，在哥布林袭击村庄时惨遭杀害，她的死成为哥布林杀手复仇的动力。",
+      "aliases": [],
+      "importance": 0.8,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "cow_girls_uncle": {
+    "name": "牧牛妹的舅舅",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "牧牛妹的舅舅，经营着边境小镇东边的牧场。虽然对冒险者有顾虑，但最终同意收留哥布林杀手。",
       "aliases": [],
       "importance": 0.7,
       "tags": [
@@ -1496,8 +1482,8 @@
       "tier": "secondary"
     }
   },
-  "sister": {
-    "name": "姐姐",
+  "goblin_slayers_master": {
+    "name": "哥布林杀手的师傅",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1505,209 +1491,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "哥布林杀手的亲姐姐，在哥布林袭击村庄时惨死，是其复仇的动力。",
+      "backstory": "一位神秘的圃人，对哥布林杀手进行了五年的严苛教导，教授他生存、思考及猎杀猎物的方式。",
       "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "master_rhea": {
-    "name": "圃人师傅",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "性格严苛的圃人，教导了哥布林杀手生存、思考及务实的战斗技巧。",
-      "aliases": [],
-      "importance": 0.7,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "uncle": {
-    "name": "舅舅",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "牧牛妹的收养者，牧场的经营者，起初对哥布林杀手有所顾虑。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "arcane_spellcaster": {
-    "name": "弧电术士",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "住在镇外的性情古怪的强大冒险者，协助鉴定戒指并提供情报。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "blacksmith": {
-    "name": "铁匠铺老板",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "与哥布林杀手讨论并提供装备支持的工匠。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "rookie_swordsman": {
-    "name": "新手剑士",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "白瓷等级冒险者，新手小队队长，因轻敌和装备不当在洞窟中战死。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "red_haired_mage": {
-    "name": "红发女魔法师",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "新手小队成员，因法术次数用尽且被毒刃刺中，最终由哥布林杀手了结痛苦。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "spearman": {
-    "name": "长枪手",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "边境最强的冒险者，对哥布林杀手持轻蔑态度。",
-      "aliases": [],
-      "importance": 0.9,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": "water_capital",
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "bartender": {
-    "name": "酒保",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "酒馆经营者，了解哥布林杀手的过去。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "noble_female_knight": {
-    "name": "贵族女骑士",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "钢铁级冒险小队的领袖，因轻敌和情报不足在山寨中遭遇覆灭。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "bard_of_capital": {
-    "name": "都城吟游诗人",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "在公会酒馆传唱美化后的“山寨火劫”故事，将残酷的战斗描绘成英雄传说。",
-      "aliases": [],
-      "importance": 0.4,
+      "importance": 1.0,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -1717,7 +1503,7 @@
     }
   },
   "user": {
-    "name": "你",
+    "name": "我 (User)",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1725,19 +1511,19 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "从新成员蜕变为团队核心，以智慧和共情拯救了剑之圣女的灵魂。",
+      "backstory": "本章主角，新人冒险者，在哥布林巢穴中幸存并被哥布林杀手所救。",
       "aliases": [],
       "importance": 1.0,
       "tags": [
         "backfilled_from_graph"
       ],
-      "default_map": "frontier_town",
+      "default_map": "water_town",
       "default_sub_location": null,
       "tier": "secondary"
     }
   },
-  "rhea_ninja": {
-    "name": "圃人忍者",
+  "bard": {
+    "name": "吟游诗人",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1745,9 +1531,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "哥布林杀手的老师，性格刻薄但充满智慧，通过残酷的猜谜训练传授生存术。",
+      "backstory": "来自都城的诗人，将哥布林杀手的行动美化为传统的英雄传说。",
       "aliases": [],
-      "importance": 0.9,
+      "importance": 0.5,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -1756,8 +1542,8 @@
       "tier": "secondary"
     }
   },
-  "player": {
-    "name": "玩家",
+  "dead_adventurer": {
+    "name": "牺牲的冒险者",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1765,9 +1551,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "剧情的参与者与体验者，在章节管理器的引导下进行游戏。",
+      "backstory": "在地下水道中发现的腐烂尸体，其遗物被回收。",
       "aliases": [],
-      "importance": 1.0,
+      "importance": 0.5,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -1785,9 +1571,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "村庄被哥布林袭击后前往公会求助的受害者。",
+      "backstory": "衣衫褴褛的村民，因村庄遭受哥布林袭击而陷入绝望，拿出全部财产向公会求助。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -1796,7 +1582,7 @@
       "tier": "secondary"
     }
   },
-  "high_elf_captive": {
+  "elf_captive": {
     "name": "森人女性俘虏",
     "occupation": null,
     "age": null,
@@ -1805,9 +1591,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "被哥布林囚禁在秽物房间中的俘虏，遭受了极端的折磨与暴行。",
+      "backstory": "被锁在遗迹污秽房间内的森人女性，遭受了哥布林非人的折磨，四肢被折断，身体严重受损。",
       "aliases": [],
-      "importance": 0.8,
+      "importance": 0.7,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -1816,8 +1602,8 @@
       "tier": "secondary"
     }
   },
-  "old_blacksmith": {
-    "name": "老铁匠",
+  "female_prisoner": {
+    "name": "女俘虏",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1825,9 +1611,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "经验丰富的工匠，从专业角度认可了哥布林杀手选择装备的合理性。",
+      "backstory": "被救出的受害者，留下的背包中藏有关键的遗迹地图。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.4,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -1845,47 +1631,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "因违规面临处分的冒险者，对哥布林杀手和{{user}}怀有怨恨。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "waitress": {
-    "name": "酒馆女服务生",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "第二章的主角，在冒险者公会酒馆工作的服务生。",
-      "aliases": [],
-      "importance": 0.9,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "rhea_assassin": {
-    "name": "圃人刺客",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "第一章中因违规被审查的盗贼，伪装成暗人发动致命突袭，是阴谋的执行者。",
+      "backstory": "因行为不端被处分的冒险者，对哥布林杀手和柜台小姐怀恨在心。",
       "aliases": [],
       "importance": 0.7,
       "tags": [
@@ -1896,8 +1642,8 @@
       "tier": "secondary"
     }
   },
-  "evil_mage": {
-    "name": "邪恶人类魔法师",
+  "halfling_assassin": {
+    "name": "圃人刺客",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -1905,107 +1651,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "曾在森林进行活体实验，临死前对妖精法师施加了诅咒。",
-      "aliases": [],
-      "importance": 0.8,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "user_veteran": {
-    "name": "前辈(玩家)",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "充满责任感的资深冒险者，主导了对新人的援助与教导，是智慧的传承者。",
-      "aliases": [],
-      "importance": 1.0,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "lizardman_patriarch": {
-    "name": "蜥蜴人族长",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "沼泽部落的睿智长者，鳞片呈青铜色，知晓镜子湖与月露的传说。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "shattered_shield": {
-    "name": "碎盾者",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "矿人道士的叔叔，促成了最初的任务委托。",
-      "aliases": [],
-      "importance": 0.3,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "goblin_paladin": {
-    "name": "哥布林圣骑士",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "具有极高纪律性的哥布林首领，摧毁了千金剑士的团队。",
-      "aliases": [],
-      "importance": 0.8,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "dark_human_summoner": {
-    "name": "暗人召唤士",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "混沌使徒，牧场袭击事件的幕后黑手。",
+      "backstory": "在章节开始前被玩家击杀的刺客。",
       "aliases": [],
       "importance": 0.9,
       "tags": [
@@ -2016,7 +1662,127 @@
       "tier": "secondary"
     }
   },
-  "entity_nature_messenger": {
+  "evil_wizard": {
+    "name": "邪恶魔法师",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "建造象牙塔的强大魔法师，自称“无法被有言语者所弒”，最终被扔下塔摔死。",
+      "aliases": [],
+      "importance": 0.8,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "lizardman_chieftain": {
+    "name": "蜥蜴人族长",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "沼泽部落的首领，睿智的长者，知晓镜子湖与月露的传说。",
+      "aliases": [],
+      "importance": 0.8,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "shield_breaker": {
+    "name": "碎盾者",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "矿人道士的叔叔，出于政治考量强行要求矿人道士与森人组队。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "beastman_soldier": {
+    "name": "兽人士兵",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "在回忆中因无礼而被妖精弓手教训的角色。",
+      "aliases": [],
+      "importance": 0.4,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "darkman_summoner": {
+    "name": "暗人召唤士",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "本章最终BOSS，幕后黑手，能够召唤龙牙兵并化身为七臂魔物。",
+      "aliases": [],
+      "importance": 1.0,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "narcissus": {
+    "name": "纳尔西斯",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "番外卷中提及的人物，与银泪有关",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "nature_messenger": {
     "name": "自然使者",
     "occupation": null,
     "age": null,
@@ -2025,9 +1791,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "由白光构成的幻影，通过哲学问题考验探索者的智慧。",
+      "backstory": "位于智慧之路的幻影，由树叶和星光组成，提出哲理问题。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.8,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2036,27 +1802,7 @@
       "tier": "secondary"
     }
   },
-  "sulfurzero": {
-    "name": "sulfurzero",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "古神卷的作者。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "silver_bard": {
+  "silver_haired_bard": {
     "name": "银发吟游诗人",
     "occupation": null,
     "age": null,
@@ -2065,9 +1811,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "在镇中心广场弹唱关于利维坦歌谣的神秘诗人。",
+      "backstory": "在镇中心广场弹唱关于搁浅之鲸歌谣的吟游诗人。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2085,9 +1831,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "提供关于沉没巨林危险情报的商人。",
+      "backstory": "贩卖情报的商人，暗示传说的危险性。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 0.5,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2097,7 +1843,7 @@
     }
   },
   "new_dawn_leader": {
-    "name": "新曙光领队女子",
+    "name": "新曙光领队",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2105,7 +1851,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "神情严肃，言辞冷静理性，试图说服User与组织合作。",
+      "backstory": "新曙光组织的女性领队，神情严肃，试图劝说User放弃利维坦。",
       "aliases": [],
       "importance": 0.8,
       "tags": [
@@ -2116,8 +1862,8 @@
       "tier": "secondary"
     }
   },
-  "black_robed_woman": {
-    "name": "黑袍女子",
+  "black_robed_envoy": {
+    "name": "黑衣使者",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2125,7 +1871,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "Leviathan的投影，曾与User接触，被新曙光认为极其危险。",
+      "backstory": "新曙光组织的领队，指挥了对主角团的伏击。",
       "aliases": [],
       "importance": 0.7,
       "tags": [
@@ -2136,8 +1882,8 @@
       "tier": "secondary"
     }
   },
-  "black_envoy": {
-    "name": "黑衣使者",
+  "lame_kitten": {
+    "name": "瘸腿小猫",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2145,9 +1891,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "新曙光组织的成员，率领精锐力量进行伏击。",
+      "backstory": "被Leviathan救治过的小猫，居住在她的巢穴中，象征着Leviathan的善良与被遗留的羁绊。",
       "aliases": [],
-      "importance": 0.7,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2165,7 +1911,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "来自静默之鳞部落的情报官与地形向导，被用户救出后成为盟友。",
+      "backstory": "静默之鳞部落的成员，被哥布林囚禁后获救，提供关键情报与地形向导。",
       "aliases": [],
       "importance": 0.8,
       "tags": [
@@ -2185,7 +1931,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "静默之鳞部落的技术顾问，精通地域生态与菌类知识。",
+      "backstory": "静默之鳞部落的长者或领袖，提供技术顾问与地域生态情报。",
       "aliases": [],
       "importance": 0.6,
       "tags": [
@@ -2196,8 +1942,8 @@
       "tier": "secondary"
     }
   },
-  "haqimi": {
-    "name": "哈气咪",
+  "lizardman_guide": {
+    "name": "蜥蜴人向导",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2205,33 +1951,13 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "抉择卷的作者。",
+      "backstory": "带领主角和薇欧拉走出地下遗迹的向导。",
       "aliases": [],
-      "importance": 0.7,
+      "importance": 0.3,
       "tags": [
         "backfilled_from_graph"
       ],
       "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "sanguinius": {
-    "name": "圣吉列斯",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "拥有金色羽翼和火之剑的基因原体，能感知色孽气息并守护观察者。",
-      "aliases": [],
-      "importance": 1.0,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": "sunken_forest",
       "default_sub_location": null,
       "tier": "secondary"
     }
@@ -2245,7 +1971,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "在城墙指挥台指挥战斗的公会负责人。",
+      "backstory": "水之都防线的指挥者，指挥弩炮与冒险者对抗混沌。",
       "aliases": [],
       "importance": 0.6,
       "tags": [
@@ -2256,8 +1982,8 @@
       "tier": "secondary"
     }
   },
-  "sculptor": {
-    "name": "雕塑家",
+  "user_captain": {
+    "name": "你 (队长)",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2265,9 +1991,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "曾是水之都的雕塑家，现为色孽信徒首领。",
+      "backstory": "本章故事的主角，小队的最高指挥官，展现了冷静的头脑与宏观的战术规划能力。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 1.0,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2285,7 +2011,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "在河畔洞窟失踪并被哥布林俘虏的少女。",
+      "backstory": "被哥布林掳走的受害者，在河畔洞窟被小队救出。",
       "aliases": [],
       "importance": 0.6,
       "tags": [
@@ -2296,8 +2022,8 @@
       "tier": "secondary"
     }
   },
-  "cow_girl_uncle": {
-    "name": "牧牛妹的舅舅",
+  "protagonist": {
+    "name": "主人公",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2305,189 +2031,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "牧场的经营者，性格务实且对陌生冒险者保持警惕。",
+      "backstory": "接受零的组队请求的冒险者，与零建立了深厚的信赖关系。",
       "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "dwarf_foreman": {
-    "name": "矮人工头",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "训练场的建设负责人，向哥布林杀手小队发布调查失踪队伍的任务。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "missing_adventurer": {
-    "name": "失踪的女性冒险者",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "在陵墓深处发出尖叫的幸存者，成为诱发红发少年冲动的诱饵。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "female_acolyte": {
-    "name": "失踪的侍祭",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "被哥布林掳走并在拷问室遭受折磨的女性冒险者。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "wizard_sister": {
-    "name": "红发少年的姐姐",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "天才女魔法师，在讨伐哥布林任务中因大意中毒身亡。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "gs_sister": {
-    "name": "哥布林杀手的姐姐",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "哥布林杀手记忆中被凌辱杀害的至亲，是他所有行动的原始驱动力与核心创伤。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "rhea_fighter": {
-    "name": "圃人少女剑士",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "正在接受女骑士指导的新人冒险者。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "rhea_thaumaturge": {
-    "name": "圃人少女巫术师",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "向哥布林杀手学习投石索制作技巧的新人。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "red_haired_boy": {
-    "name": "红发少年",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "被长枪手追赶训练体能的新人魔法师。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "boy_mage_sister": {
-    "name": "红发少年魔法师的姐姐",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "曾是新手女魔法师，在剿灭哥布林的冒险中不幸丧生，是少年最初仇恨的根源。",
-      "aliases": [],
-      "importance": 0.5,
+      "importance": 0.9,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2505,9 +2051,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "年轻的国王，与剑之圣女是旧识，维持着微妙的友人关系。",
+      "backstory": "年轻的国王，与剑之圣女是旧识，关系带有友人般的随意。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.9,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2516,7 +2062,7 @@
       "tier": "secondary"
     }
   },
-  "young_scout": {
+  "boy_scout": {
     "name": "少年斥候",
     "occupation": null,
     "age": null,
@@ -2525,9 +2071,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "重战士小队的成员，被重战士视为需要照顾的后辈。",
+      "backstory": "重战士队伍里的核心成员，被重战士视为需要照顾的小毛头。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.8,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2536,7 +2082,7 @@
       "tier": "secondary"
     }
   },
-  "swordsman_rookie": {
+  "swordsman_partner": {
     "name": "剑士",
     "occupation": null,
     "age": null,
@@ -2545,9 +2091,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "红发少女魔法师的同乡伙伴，新手冒险者。",
+      "backstory": "红发少女魔法师的同乡伙伴，一同组队冒险。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 0.8,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2556,27 +2102,7 @@
       "tier": "secondary"
     }
   },
-  "fighter_rookie": {
-    "name": "武斗家",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "红发少女魔法师的同乡伙伴，新手冒险者。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "half_elf_fencer": {
+  "half_elf_light_swordsman": {
     "name": "半森人轻剑士",
     "occupation": null,
     "age": null,
@@ -2587,7 +2113,7 @@
       "appearance": null,
       "backstory": "重战士小队的成员，与圃人少女关系亲密，经常一起行动。",
       "aliases": [],
-      "importance": 0.6,
+      "importance": 0.8,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2596,8 +2122,8 @@
       "tier": "secondary"
     }
   },
-  "elf_with_flower_crown": {
-    "name": "戴花冠的森人",
+  "rookie_swordsman": {
+    "name": "新手剑士",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2605,7 +2131,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "戴闪亮银盔的森人的未婚妻，森人族的森林公主，性格温柔。",
+      "backstory": "与女武斗家、女神官、女魔法师组队的新手冒险者，担任队长。",
       "aliases": [],
       "importance": 0.7,
       "tags": [
@@ -2616,7 +2142,7 @@
       "tier": "secondary"
     }
   },
-  "evil_sorcerer": {
+  "evil_mage": {
     "name": "邪恶法师",
     "occupation": null,
     "age": null,
@@ -2625,67 +2151,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "在轻语森林进行邪恶实验，临死前对妖精法师施加了消逝诅咒。",
-      "aliases": [],
-      "importance": 0.4,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "edina_von_heinrich": {
-    "name": "艾迪娜·冯.海因里希",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "出身贵族、恪守骑士精神的水之都白银级骑士，代号‘狮鹫骑士’，潜藏着邪神眷属的秘密。",
-      "aliases": [],
-      "importance": 1.0,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": "water_capital",
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "fox_archer": {
-    "name": "狐族弓手",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "来自南方大森林的狐族游侠，翠玉级冒险者。外表纯真但内心戏丰富，拥有极高的敏捷与雷元素亲和力。",
-      "aliases": [],
-      "importance": 1.0,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": "frontier_town",
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "emperor": {
-    "name": "帝皇",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "圣吉列斯故乡的统治者，其绝对忠诚的对象。",
+      "backstory": "十年前在轻语森林进行邪恶实验的法师，死前对妖精法师施加了诅咒。",
       "aliases": [],
       "importance": 0.5,
       "tags": [
@@ -2696,7 +2162,47 @@
       "tier": "secondary"
     }
   },
-  "misogi_father": {
+  "nike": {
+    "name": "妮可",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "《妮可的冒险谭》的主角，启发伊蕾娜踏上旅途的魔女。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "little_griffin": {
+    "name": "小小格里芬",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "美美救下的狮鹫幼崽，是她最亲密的伙伴和坐骑。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "misogis_father": {
     "name": "未奏希的父亲",
     "occupation": null,
     "age": null,
@@ -2705,9 +2211,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "退役冒险者，现经营小酒馆，是未奏希崇拜的对象和生存技能的来源。",
+      "backstory": "退役冒险者，现经营小酒馆，是未奏希崇拜的对象和探险知识的来源。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2717,7 +2223,7 @@
     }
   },
   "veldora": {
-    "name": "维尔德拉",
+    "name": "暴风龙维尔德拉",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2725,9 +2231,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "暴风魔神龙，与利姆露签订平等契约并被封印在其体内。",
+      "backstory": "暴风魔神龙，被封印在利姆露体内，与利姆露签订了平等契约，仅能进行意识交流。",
       "aliases": [],
-      "importance": 0.7,
+      "importance": 0.9,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2736,8 +2242,8 @@
       "tier": "secondary"
     }
   },
-  "miyamoto_musashi_spirit": {
-    "name": "宫本武藏(灵体)",
+  "miyamoto_musashi": {
+    "name": "宫本武藏",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2745,47 +2251,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "武藏战斗时出现的半透明紫色武士灵体，协助其施展二天一流剑术。",
-      "aliases": [],
-      "importance": 0.7,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "barons_wife": {
-    "name": "男爵之妻",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "因男爵的家暴和酗酒而神秘失踪的家属，是男爵寻找和救赎的核心目标。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "barons_daughter": {
-    "name": "男爵之女",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "因男爵的家暴和酗酒而神秘失踪的家属。",
+      "backstory": "历史上的剑豪，武藏背后灵体的原型。",
       "aliases": [],
       "importance": 0.6,
       "tags": [
@@ -2805,7 +2271,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "擅长力量对抗的矿人族战士。",
+      "backstory": "冒险队伍中的前排战士，擅长力量",
       "aliases": [],
       "importance": 0.5,
       "tags": [
@@ -2825,7 +2291,27 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "擅长解除陷阱与敏捷行动的圃人族斥候。",
+      "backstory": "擅长敏捷和解除陷阱的冒险者",
+      "aliases": [],
+      "importance": 0.5,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": "goblin_cave",
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "elf_ranger": {
+    "name": "森人游侠",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "擅长追踪和感知的冒险者",
       "aliases": [],
       "importance": 0.5,
       "tags": [
@@ -2836,7 +2322,7 @@
       "tier": "secondary"
     }
   },
-  "wizard": {
+  "magician": {
     "name": "魔术师",
     "occupation": null,
     "age": null,
@@ -2845,27 +2331,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "精通古代语言与知识的施法者。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "bard": {
-    "name": "吟游诗人",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "擅长交涉与说服的旅行艺人。",
+      "backstory": "拥有丰富知识，佩戴单片眼镜的施法者",
       "aliases": [],
       "importance": 0.5,
       "tags": [
@@ -2885,9 +2351,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "关系列表中的示例NPC。",
+      "backstory": "变量系统示例中出现的角色，用于演示好感度与信任度规则。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2896,7 +2362,127 @@
       "tier": "secondary"
     }
   },
-  "lucino": {
+  "dwarf_foreman": {
+    "name": "矮人工头",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "训练场的建设负责人，发布了调查失踪冒险者的委托。",
+      "aliases": [],
+      "importance": 0.5,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "missing_female_adventurer": {
+    "name": "失踪的女冒险者",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "在古墓深处发出尖叫的幸存者，疑似正遭受哥布林折磨。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "missing_acolyte": {
+    "name": "失踪的侍祭",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "一名女性冒险者，在拷问室被发现时已身受重伤，手指被切断。",
+      "aliases": [],
+      "importance": 0.5,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "red_haired_boys_sister": {
+    "name": "红发少年的姐姐",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "天才女魔法师，因大意被哥布林杀害，是红发少年执着于哥布林的原因。",
+      "aliases": [],
+      "importance": 0.7,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "halfling_fencer": {
+    "name": "圃人少女剑士",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "正在接受女骑士的战斗指导，学习倒地反击。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "halfling_shaman": {
+    "name": "圃人少女巫术师",
+    "occupation": null,
+    "age": null,
+    "personality": null,
+    "speech_pattern": null,
+    "example_dialogue": null,
+    "metadata": {
+      "appearance": null,
+      "backstory": "担任后卫，向哥布林杀手学习投石索的使用。",
+      "aliases": [],
+      "importance": 0.6,
+      "tags": [
+        "backfilled_from_graph"
+      ],
+      "default_map": null,
+      "default_sub_location": null,
+      "tier": "secondary"
+    }
+  },
+  "luqinuo": {
     "name": "露琪诺",
     "occupation": null,
     "age": null,
@@ -2905,9 +2491,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "祖龙术法术列表的记录者或整理者。",
+      "backstory": "龙祭司（祖龙术）条目的作者或整理者。",
       "aliases": [],
-      "importance": 0.3,
+      "importance": 0.8,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2916,8 +2502,8 @@
       "tier": "secondary"
     }
   },
-  "northern_traveler": {
-    "name": "北境旅人",
+  "archbishop": {
+    "name": "大司教",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2925,9 +2511,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "边境小镇公会的冒险者",
+      "backstory": "至高神殿的高层神职人员。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 0.8,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2936,8 +2522,8 @@
       "tier": "secondary"
     }
   },
-  "forehead_sister": {
-    "name": "额头妹妹",
+  "fanatics": {
+    "name": "狂热信徒",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -2945,9 +2531,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "裁缝铺的活跃角色",
+      "backstory": "邪教的成员。",
       "aliases": [],
-      "importance": 0.4,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -2965,7 +2551,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "魔神大军的首领，从地狱卷土重来，最终在死之迷宫被讨伐。",
+      "backstory": "大约十年前率领大军从地狱卷土重来，几乎毁灭所有文明的恐怖存在，后被剑之圣女讨伐。",
       "aliases": [],
       "importance": 0.9,
       "tags": [
@@ -2985,27 +2571,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "上古王国的统治者。",
-      "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "goblin_hero": {
-    "name": "哥布林英雄",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "哥布林群体中极其强大的个体，通常作为巢穴的统治者。",
+      "backstory": "传说中统治上古统一王国的君主，带来了短暂的黄金时代。",
       "aliases": [],
       "importance": 0.6,
       "tags": [
@@ -3016,8 +2582,8 @@
       "tier": "secondary"
     }
   },
-  "goblin_king": {
-    "name": "哥布林王",
+  "ion": {
+    "name": "亚恩",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -3025,47 +2591,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "哥布林群体中具备统率和指挥能力的个体。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "goblin_shaman": {
-    "name": "哥布林萨满",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "哥布林群体中聪明的个体，通常掌握简单的法术或策略。",
-      "aliases": [],
-      "importance": 0.6,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "insectoid_queen": {
-    "name": "虫人女王",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "虫人社会的绝对核心，既是统治者也是信仰的中心。",
+      "backstory": "引导欲肉教的大术士，窃取了亚大伯斯的神力并构成了奇术的基础。",
       "aliases": [],
       "importance": 0.8,
       "tags": [
@@ -3076,8 +2602,8 @@
       "tier": "secondary"
     }
   },
-  "war_goddess": {
-    "name": "战女神",
+  "town_mayor": {
+    "name": "镇长",
     "occupation": null,
     "age": null,
     "personality": null,
@@ -3085,69 +2611,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "北方蛮族传说中的神祇，据传其在凡人时期信奉嗜虐神。",
+      "backstory": "名义上的行政中心，职位长期空缺，权力被架空。",
       "aliases": [],
-      "importance": 0.5,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "grand_sorcerer_ion": {
-    "name": "亚恩",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "欲肉教的大术士，被认为窃取了亚大伯斯的神力并奠定了教派奇术基础。",
-      "aliases": [],
-      "importance": 0.7,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "guild_supervisor": {
-    "name": "公会监督官",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "冒险者公会支部长，代行镇长职责的城镇第一权威。",
-      "aliases": [],
-      "importance": 0.7,
-      "tags": [
-        "backfilled_from_graph"
-      ],
-      "default_map": null,
-      "default_sub_location": null,
-      "tier": "secondary"
-    }
-  },
-  "dwarf_blacksmith": {
-    "name": "矿人师傅",
-    "occupation": null,
-    "age": null,
-    "personality": null,
-    "speech_pattern": null,
-    "example_dialogue": null,
-    "metadata": {
-      "appearance": null,
-      "backstory": "碎盾工坊的经营者，脾气古怪但手艺精湛。",
-      "aliases": [],
-      "importance": 0.5,
+      "importance": 0.4,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -3165,7 +2631,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "来自东方的剑士，曾是剑之圣女的队友，为封印邪恶而牺牲。",
+      "backstory": "百年前穿越风暴抵达大陆的东方剑士，曾是剑之圣女的队友。",
       "aliases": [],
       "importance": 0.7,
       "tags": [
@@ -3185,9 +2651,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "贵族千金，墨丘利财团的创始人。",
+      "backstory": "墨丘利财团的成立者，贵族千金。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.7,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -3205,9 +2671,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "原王宫骑士团副团长，咲恋救济院的经营者。",
+      "backstory": "咲恋救济院的建立者，原王宫骑士团副团长。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.7,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -3227,7 +2693,7 @@
       "appearance": null,
       "backstory": "拉比林斯的建立者，神秘人物。",
       "aliases": [],
-      "importance": 0.6,
+      "importance": 0.7,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -3245,9 +2711,9 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "阿克托伊商会的会长。",
+      "backstory": "阿克托伊商会会长。",
       "aliases": [],
-      "importance": 0.5,
+      "importance": 0.6,
       "tags": [
         "backfilled_from_graph"
       ],
@@ -3265,7 +2731,7 @@
     "example_dialogue": null,
     "metadata": {
       "appearance": null,
-      "backstory": "通过死灵术创造并操控低级不死生物的施法者。",
+      "backstory": "创造并操控低级不死生物的施法者。",
       "aliases": [],
       "importance": 0.8,
       "tags": [

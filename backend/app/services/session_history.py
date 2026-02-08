@@ -86,7 +86,7 @@ class SessionHistory:
         assistant_result = self._window.add_message(
             role="assistant",
             content=gm_response,
-            metadata={"source": "gm_narration"},
+            metadata={"source": "gm_narration", **(metadata or {})},
         )
 
         # Fire-and-forget Firestore persistence
@@ -98,7 +98,12 @@ class SessionHistory:
                     self._persist_messages_sync,
                     [
                         {"role": "user", "content": player_input, "timestamp": now, "metadata": metadata or {}},
-                        {"role": "assistant", "content": gm_response, "timestamp": now, "metadata": {"source": "gm_narration"}},
+                        {
+                            "role": "assistant",
+                            "content": gm_response,
+                            "timestamp": now,
+                            "metadata": {"source": "gm_narration", **(metadata or {})},
+                        },
                     ],
                 )
             except Exception as exc:
@@ -287,9 +292,18 @@ class SessionHistoryManager:
     Singleton pattern — one manager per coordinator.
     """
 
-    def __init__(self, firestore_db: Any = None) -> None:
+    def __init__(
+        self,
+        firestore_db: Any = None,
+        max_tokens: int = 1_000_000,
+        graphize_threshold: float = 0.9,
+        keep_recent_tokens: int = 100_000,
+    ) -> None:
         self._histories: Dict[str, SessionHistory] = {}
         self._firestore_db = firestore_db
+        self._max_tokens = max_tokens
+        self._graphize_threshold = graphize_threshold
+        self._keep_recent_tokens = keep_recent_tokens
 
     def get_or_create(
         self,
@@ -302,6 +316,9 @@ class SessionHistoryManager:
             history = SessionHistory(
                 world_id=world_id,
                 session_id=session_id,
+                max_tokens=self._max_tokens,
+                graphize_threshold=self._graphize_threshold,
+                keep_recent_tokens=self._keep_recent_tokens,
                 firestore_db=self._firestore_db,
             )
             # Try to restore from Firestore on first access

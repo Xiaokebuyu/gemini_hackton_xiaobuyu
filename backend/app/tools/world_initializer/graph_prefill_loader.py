@@ -52,6 +52,7 @@ class GraphPrefillLoader:
             "nodes_written": 0,
             "edges_written": 0,
             "chapters_meta_written": 0,
+            "mainlines_meta_written": 0,
             "dispositions_written": 0,
             "scopes_used": [],
             "errors": [],
@@ -60,6 +61,7 @@ class GraphPrefillLoader:
         # Load data files
         graph_path = data_dir / "prefilled_graph.json"
         chapters_path = data_dir / "chapters_v2.json"
+        mainlines_path = data_dir / "mainlines.json"
 
         if not graph_path.exists():
             stats["errors"].append(f"prefilled_graph.json not found in {data_dir}")
@@ -73,10 +75,32 @@ class GraphPrefillLoader:
         if chapters_path.exists():
             chapters_v2 = json.loads(chapters_path.read_text(encoding="utf-8"))
 
+        mainlines_raw: List[Dict[str, Any]] = []
+        if mainlines_path.exists():
+            mainlines_payload = json.loads(mainlines_path.read_text(encoding="utf-8"))
+            if isinstance(mainlines_payload, dict):
+                raw_mainlines = mainlines_payload.get("mainlines")
+                if isinstance(raw_mainlines, list):
+                    mainlines_raw = raw_mainlines
+
+        # strict-v2：写入 Firestore 前强校验，避免线上导入 legacy 结构
+        if settings.narrative_v2_strict_mode:
+            chapters_v2, mainlines_raw = self.upgrade_narrative_v2_artifacts(
+                chapters_v2=chapters_v2,
+                mainlines_raw=mainlines_raw,
+            )
+            self.validate_narrative_v2_artifacts(
+                chapters_v2=chapters_v2,
+                mainlines_raw=mainlines_raw,
+                data_dir=data_dir,
+            )
+
         if verbose:
             print(f"  Loaded {len(nodes)} nodes, {len(edges)} edges")
             if chapters_v2:
                 print(f"  Loaded {len(chapters_v2)} chapter definitions")
+            if mainlines_raw:
+                print(f"  Loaded {len(mainlines_raw)} mainline definitions")
 
         # Build area -> first chapter mapping from chapters_v2
         # Each area is assigned to the earliest chapter that references it
@@ -141,7 +165,10 @@ class GraphPrefillLoader:
             for ch in chapters_v2:
                 ch_id = ch["id"]
                 meta = {
+                    "id": ch_id,
+                    "mainline_id": ch.get("mainline_id"),
                     "name": ch["name"],
+                    "type": ch.get("type", "story"),
                     "order": ch.get("order", 0),
                     "status": ch.get("status", "locked"),
                     "description": ch.get("description"),
@@ -149,12 +176,39 @@ class GraphPrefillLoader:
                     "objectives": ch.get("objectives", []),
                     "trigger_conditions": ch.get("trigger_conditions", {}),
                     "completion_conditions": ch.get("completion_conditions", {}),
+                    # v2 剧情编排字段
+                    "events": ch.get("events", []),
+                    "transitions": ch.get("transitions", []),
+                    "pacing": ch.get("pacing", {}),
+                    "entry_conditions": ch.get("entry_conditions"),
+                    "tags": ch.get("tags", []),
                 }
                 if not dry_run:
                     self._write_chapter_meta(world_id, ch_id, meta)
                 stats["chapters_meta_written"] += 1
                 if verbose:
                     print(f"  Chapter meta: {ch_id} ({ch['name']})")
+
+        # Write mainline meta documents (for chapter_graph / DAG navigation)
+        if mainlines_raw:
+            for ml in mainlines_raw:
+                if not isinstance(ml, dict):
+                    continue
+                mainline_id = str(ml.get("id", "")).strip()
+                if not mainline_id:
+                    continue
+                meta = {
+                    "id": mainline_id,
+                    "name": ml.get("name", mainline_id),
+                    "description": ml.get("description", ""),
+                    "chapters": ml.get("chapters", []),
+                    "chapter_graph": ml.get("chapter_graph", {}),
+                }
+                if not dry_run:
+                    self._write_mainline_meta(world_id, mainline_id, meta)
+                stats["mainlines_meta_written"] += 1
+                if verbose:
+                    print(f"  Mainline meta: {mainline_id} ({meta['name']})")
 
         # Write initial dispositions from companion/friend relationships
         disposition_count = self._write_initial_dispositions(
@@ -170,6 +224,222 @@ class GraphPrefillLoader:
                 print(f"  Initial dispositions: {disposition_count}")
 
         return stats
+
+    @staticmethod
+    def _build_linear_chapter_graph(chapter_ids: List[str]) -> Dict[str, List[str]]:
+        graph: Dict[str, List[str]] = {}
+        for i in range(len(chapter_ids) - 1):
+            graph[chapter_ids[i]] = [chapter_ids[i + 1]]
+        return graph
+
+    @classmethod
+    def upgrade_narrative_v2_artifacts(
+        cls,
+        chapters_v2: List[Dict[str, Any]],
+        mainlines_raw: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Upgrade legacy-like narrative artifacts to strict-v2 in memory."""
+        if not isinstance(chapters_v2, list):
+            chapters_v2 = []
+        if not isinstance(mainlines_raw, list):
+            mainlines_raw = []
+
+        valid_chapter_ids: List[str] = []
+        chapters_by_mainline: Dict[str, List[str]] = {}
+        for chapter in chapters_v2:
+            if not isinstance(chapter, dict):
+                continue
+            chapter_id = str(chapter.get("id") or "").strip()
+            if chapter_id:
+                valid_chapter_ids.append(chapter_id)
+            mainline_id = str(chapter.get("mainline_id") or "").strip()
+            if mainline_id and chapter_id:
+                chapters_by_mainline.setdefault(mainline_id, []).append(chapter_id)
+
+            chapter_type = str(chapter.get("type") or "story").strip().lower()
+            if chapter_type != "story":
+                continue
+
+            completion = chapter.get("completion_conditions")
+            if not isinstance(completion, dict):
+                completion = {}
+                chapter["completion_conditions"] = completion
+
+            events_raw = chapter.get("events")
+            if not isinstance(events_raw, list) or not events_raw:
+                required_raw = completion.get("events_required")
+                required_ids: List[str] = []
+                if isinstance(required_raw, list):
+                    for event_id in required_raw:
+                        if isinstance(event_id, str) and event_id.strip():
+                            required_ids.append(event_id.strip())
+                if not required_ids:
+                    fallback_id = f"{chapter_id or 'unknown'}_event_1"
+                    required_ids = [fallback_id]
+
+                synthesized_events: List[Dict[str, Any]] = []
+                prev_event_id: Optional[str] = None
+                for event_id in required_ids:
+                    conditions: List[Dict[str, Any]] = []
+                    if prev_event_id:
+                        conditions.append({
+                            "type": "event_triggered",
+                            "params": {"event_id": prev_event_id},
+                        })
+                    else:
+                        conditions.append({
+                            "type": "rounds_elapsed",
+                            "params": {"min_rounds": 0},
+                        })
+                    synthesized_events.append({
+                        "id": event_id,
+                        "name": event_id,
+                        "description": "Auto-synthesized v2 event from legacy completion_conditions",
+                        "is_required": True,
+                        "is_repeatable": False,
+                        "cooldown_rounds": 0,
+                        "trigger_conditions": {"operator": "and", "conditions": conditions},
+                        "narrative_directive": "",
+                        "side_effects": [],
+                    })
+                    prev_event_id = event_id
+                chapter["events"] = synthesized_events
+                completion["events_required"] = required_ids
+
+                tags = chapter.get("tags")
+                if not isinstance(tags, list):
+                    tags = []
+                if "auto_migrated_v2" not in tags:
+                    tags.append("auto_migrated_v2")
+                chapter["tags"] = tags
+
+            if not isinstance(chapter.get("transitions"), list):
+                chapter["transitions"] = []
+            if not isinstance(chapter.get("pacing"), dict):
+                chapter["pacing"] = {
+                    "min_rounds": 3,
+                    "ideal_rounds": 10,
+                    "max_rounds": 30,
+                    "stall_threshold": 5,
+                    "hint_escalation": [
+                        "subtle_environmental",
+                        "npc_reminder",
+                        "direct_prompt",
+                        "forced_event",
+                    ],
+                }
+            if "entry_conditions" not in chapter:
+                chapter["entry_conditions"] = None
+            if not isinstance(chapter.get("tags"), list):
+                chapter["tags"] = []
+
+            required = completion.get("events_required")
+            if not isinstance(required, list) or not required:
+                required_ids: List[str] = []
+                for ev in chapter.get("events", []):
+                    if not isinstance(ev, dict):
+                        continue
+                    event_id = str(ev.get("id") or "").strip()
+                    if event_id:
+                        required_ids.append(event_id)
+                if required_ids:
+                    completion["events_required"] = required_ids
+
+        valid_set = set(valid_chapter_ids)
+        for mainline in mainlines_raw:
+            if not isinstance(mainline, dict):
+                continue
+            mainline_id = str(mainline.get("id") or "").strip()
+            chapters_raw = mainline.get("chapters")
+            normalized_chapters: List[str] = []
+            if isinstance(chapters_raw, list):
+                for chapter_id in chapters_raw:
+                    if (
+                        isinstance(chapter_id, str)
+                        and chapter_id.strip()
+                        and chapter_id.strip() in valid_set
+                    ):
+                        normalized_chapters.append(chapter_id.strip())
+            if not normalized_chapters and mainline_id in chapters_by_mainline:
+                normalized_chapters = list(chapters_by_mainline[mainline_id])
+            normalized_chapters = list(dict.fromkeys(normalized_chapters))
+            mainline["chapters"] = normalized_chapters
+
+            chapter_graph = mainline.get("chapter_graph")
+            if not isinstance(chapter_graph, dict) or not chapter_graph:
+                mainline["chapter_graph"] = cls._build_linear_chapter_graph(normalized_chapters)
+            else:
+                sanitized_graph: Dict[str, List[str]] = {}
+                for src, targets in chapter_graph.items():
+                    src_id = str(src).strip()
+                    if not src_id or src_id not in valid_set or not isinstance(targets, list):
+                        continue
+                    valid_targets = []
+                    for target in targets:
+                        if isinstance(target, str) and target.strip() in valid_set:
+                            valid_targets.append(target.strip())
+                    if valid_targets:
+                        sanitized_graph[src_id] = list(dict.fromkeys(valid_targets))
+                if not sanitized_graph and normalized_chapters:
+                    sanitized_graph = cls._build_linear_chapter_graph(normalized_chapters)
+                mainline["chapter_graph"] = sanitized_graph
+
+        return chapters_v2, mainlines_raw
+
+    @staticmethod
+    def validate_narrative_v2_artifacts(
+        chapters_v2: List[Dict[str, Any]],
+        mainlines_raw: List[Dict[str, Any]],
+        data_dir: Optional[Path] = None,
+    ) -> None:
+        """Validate strict-v2 narrative artifacts before Firestore import."""
+        if not isinstance(chapters_v2, list) or not chapters_v2:
+            base = f" ({data_dir})" if data_dir else ""
+            raise ValueError(f"strict-v2 导入失败: 缺少有效 chapters_v2.json{base}")
+        if not isinstance(mainlines_raw, list) or not mainlines_raw:
+            base = f" ({data_dir})" if data_dir else ""
+            raise ValueError(f"strict-v2 导入失败: 缺少有效 mainlines.json{base}")
+
+        invalid_events: List[str] = []
+        invalid_transitions: List[str] = []
+        invalid_pacing: List[str] = []
+        for chapter in chapters_v2:
+            if not isinstance(chapter, dict):
+                continue
+            chapter_type = str(chapter.get("type") or "story").strip().lower()
+            if chapter_type != "story":
+                continue
+            chapter_id = str(chapter.get("id") or "unknown")
+            if not isinstance(chapter.get("events"), list) or not chapter.get("events"):
+                invalid_events.append(chapter_id)
+            if not isinstance(chapter.get("transitions"), list):
+                invalid_transitions.append(chapter_id)
+            if not isinstance(chapter.get("pacing"), dict):
+                invalid_pacing.append(chapter_id)
+
+        invalid_graph: List[str] = []
+        for mainline in mainlines_raw:
+            if not isinstance(mainline, dict):
+                continue
+            mainline_id = str(mainline.get("id") or "unknown")
+            if "chapter_graph" not in mainline or not isinstance(mainline.get("chapter_graph"), dict):
+                invalid_graph.append(mainline_id)
+
+        problems: List[str] = []
+        if invalid_events:
+            problems.append(f"缺少 events: {', '.join(invalid_events[:10])}")
+        if invalid_transitions:
+            problems.append(f"transitions 非列表: {', '.join(invalid_transitions[:10])}")
+        if invalid_pacing:
+            problems.append(f"pacing 非对象: {', '.join(invalid_pacing[:10])}")
+        if invalid_graph:
+            problems.append(f"mainline 缺少/错误 chapter_graph: {', '.join(invalid_graph[:10])}")
+
+        if problems:
+            base = f" ({data_dir})" if data_dir else ""
+            raise ValueError(
+                "strict-v2 导入失败" + base + ": " + " | ".join(problems)
+            )
 
     # ---- Scope routing ----
 
@@ -265,6 +535,18 @@ class GraphPrefillLoader:
             .document(world_id)
             .collection("chapters")
             .document(chapter_id)
+        )
+        ref.set(meta, merge=True)
+
+    def _write_mainline_meta(
+        self, world_id: str, mainline_id: str, meta: Dict[str, Any]
+    ) -> None:
+        """Write mainline meta document to mainlines/{mainline_id}."""
+        ref = (
+            self.db.collection("worlds")
+            .document(world_id)
+            .collection("mainlines")
+            .document(mainline_id)
         )
         ref.set(meta, merge=True)
 

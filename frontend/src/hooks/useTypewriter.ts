@@ -14,18 +14,23 @@ export function useTypewriter(text: string, options: UseTypewriterOptions = {}) 
   const [displayedText, setDisplayedText] = useState('');
   const [isComplete, setIsComplete] = useState(skipAnimation);
   const indexRef = useRef(0);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     if (skipAnimation) {
-      setDisplayedText(text);
-      setIsComplete(true);
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
 
-    setDisplayedText('');
-    setIsComplete(false);
     indexRef.current = 0;
+    const resetTimer = setTimeout(() => {
+      setDisplayedText('');
+      setIsComplete(false);
+    }, 0);
 
     const interval = setInterval(() => {
       if (indexRef.current < text.length) {
@@ -34,24 +39,30 @@ export function useTypewriter(text: string, options: UseTypewriterOptions = {}) 
       } else {
         clearInterval(interval);
         setIsComplete(true);
-        onComplete?.();
+        onCompleteRef.current?.();
       }
     }, speed);
 
-    return () => clearInterval(interval);
-  }, [text, speed, skipAnimation, onComplete]);
+    return () => {
+      clearTimeout(resetTimer);
+      clearInterval(interval);
+    };
+  }, [text, speed, skipAnimation]);
+
+  const effectiveDisplayedText = skipAnimation ? text : displayedText;
+  const effectiveComplete = skipAnimation || isComplete;
 
   const skip = useCallback(() => {
-    if (!isComplete) {
+    if (!skipAnimation && !isComplete) {
       setDisplayedText(text);
       setIsComplete(true);
-      onComplete?.();
+      onCompleteRef.current?.();
     }
-  }, [isComplete, text, onComplete]);
+  }, [isComplete, skipAnimation, text]);
 
   return {
-    displayedText,
-    isComplete,
+    displayedText: effectiveDisplayedText,
+    isComplete: effectiveComplete,
     skip,
   };
 }

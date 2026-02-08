@@ -76,7 +76,19 @@ export const useGameStore = create<GameStoreState>()(
 
         // Actions
         setSession: (worldId: string, sessionId: string) => {
-          set({ worldId, sessionId });
+          // Switching session must clear volatile runtime state to avoid leaking
+          // previous session data into the new session before fresh data arrives.
+          set({
+            worldId,
+            sessionId,
+            location: null,
+            subLocation: null,
+            gameTime: initialGameTime,
+            activeDialogueNpc: null,
+            combatId: null,
+            party: null,
+            availableActions: [],
+          });
         },
 
         clearSession: () => {

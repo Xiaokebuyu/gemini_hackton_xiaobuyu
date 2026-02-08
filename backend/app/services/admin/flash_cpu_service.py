@@ -49,6 +49,7 @@ class FlashCPUService:
         llm_service: Optional[LLMService] = None,
         analysis_prompt_path: Optional[Path] = None,
         instance_manager: Optional[Any] = None,
+        party_service: Optional[Any] = None,
     ) -> None:
         self.state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
@@ -60,6 +61,7 @@ class FlashCPUService:
         self.llm_service = llm_service or LLMService()
         self.analysis_prompt_path = analysis_prompt_path or Path("app/prompts/flash_analysis.md")
         self.instance_manager = instance_manager
+        self.party_service = party_service
 
     def _load_analysis_prompt(self) -> str:
         if self.analysis_prompt_path.exists():
@@ -209,6 +211,9 @@ class FlashCPUService:
                 "navigate": "navigate",
                 "get_progress": "get_progress",
                 "get_status": "get_status",
+                "add_teammate": "add_teammate",
+                "remove_teammate": "remove_teammate",
+                "disband_party": "disband_party",
             }
             op_key = op_aliases.get(op_key, op_key)
             operation = None
@@ -231,12 +236,62 @@ class FlashCPUService:
         context_package = parsed.get("context_package")
         if context_package and not isinstance(context_package, dict):
             context_package = None
+
+        story_progression = parsed.get("story_progression")
+        if not isinstance(story_progression, dict) and isinstance(context_package, dict):
+            nested_story_progression = context_package.get("story_progression")
+            if isinstance(nested_story_progression, dict):
+                story_progression = nested_story_progression
+
+        if isinstance(story_progression, dict):
+            story_events_raw = story_progression.get("story_events", [])
+            story_events: List[str] = []
+            if isinstance(story_events_raw, list):
+                for event_id in story_events_raw:
+                    event_text = ""
+                    if isinstance(event_id, str):
+                        event_text = event_id.strip()
+                    elif isinstance(event_id, (int, float)) and not isinstance(event_id, bool):
+                        event_text = str(event_id).strip()
+                    if event_text:
+                        story_events.append(event_text)
+            elif isinstance(story_events_raw, str):
+                story_events = [
+                    token.strip()
+                    for token in story_events_raw.replace("，", ",").replace("、", ",").split(",")
+                    if token.strip()
+                ]
+
+            normalized_story_progression: Dict[str, Any] = {"story_events": story_events}
+            progress_note = story_progression.get("progress_note")
+            if isinstance(progress_note, str) and progress_note.strip():
+                normalized_story_progression["progress_note"] = progress_note.strip()
+
+            # v2: 提取 condition_evaluations（缺失降级为 []）
+            raw_evals = story_progression.get("condition_evaluations", [])
+            condition_evaluations: List[Dict[str, Any]] = []
+            if isinstance(raw_evals, list):
+                for eval_item in raw_evals:
+                    if isinstance(eval_item, dict) and "id" in eval_item:
+                        condition_evaluations.append({
+                            "id": str(eval_item["id"]),
+                            "result": bool(eval_item.get("result", False)),
+                            "reasoning": str(eval_item.get("reasoning", "")),
+                        })
+            if condition_evaluations:
+                normalized_story_progression["condition_evaluations"] = condition_evaluations
+
+            story_progression = normalized_story_progression
+        else:
+            story_progression = None
+
         return AnalysisPlan(
             intent=intent,
             operations=operations,
             memory_seeds=memory_seeds,
             reasoning=reasoning,
             context_package=context_package,
+            story_progression=story_progression,
         )
 
     async def analyze_and_plan(
@@ -253,6 +308,25 @@ class FlashCPUService:
         teammates = context.get("teammates") or []
         available_destinations = context.get("available_destinations") or []
         sub_locations = context.get("sub_locations") or location.get("sub_locations") or []
+
+        chapter_info = context.get("chapter_info") or {}
+        chapter_obj = chapter_info.get("chapter") or {}
+        chapter_goals = chapter_info.get("goals", [])
+        chapter_events = chapter_info.get("required_events", [])
+
+        # v2 StoryDirector 注入
+        story_directives_list = context.get("story_directives") or []
+        story_directives_text = "\n".join(story_directives_list) if story_directives_list else "无"
+
+        pending_conditions = context.get("pending_flash_conditions") or []
+        if pending_conditions:
+            pending_lines = []
+            for pc in pending_conditions:
+                if isinstance(pc, dict):
+                    pending_lines.append(f"- [{pc.get('id', '?')}] {pc.get('prompt', '?')}")
+            pending_flash_text = "\n".join(pending_lines) if pending_lines else "无"
+        else:
+            pending_flash_text = "无"
 
         filled_prompt = prompt.format(
             location_name=location.get("location_name", "未知地点"),
@@ -277,6 +351,12 @@ class FlashCPUService:
             player_input=player_input,
             conversation_history=context.get("conversation_history", "无"),
             character_roster=context.get("character_roster", "无"),
+            chapter_name=chapter_obj.get("name", "未知"),
+            chapter_goals="、".join(chapter_goals) if chapter_goals else "无",
+            chapter_description=chapter_obj.get("description", "")[:200] or "无",
+            chapter_events="、".join(chapter_events) if chapter_events else "无",
+            story_directives=story_directives_text,
+            pending_flash_conditions=pending_flash_text,
         )
 
         try:
@@ -422,6 +502,10 @@ class FlashCPUService:
                 exec_lines.append(f"- [{op_str}] 失败: {error or '未知错误'}")
         execution_summary = "\n".join(exec_lines) if exec_lines else "无操作执行"
 
+        chapter_info = context.get("chapter_info") or {}
+        chapter_obj = chapter_info.get("chapter") or {}
+        chapter_goals = chapter_info.get("goals", [])
+
         filled_prompt = prompt_template.format(
             intent_type=intent.intent_type.value if hasattr(intent.intent_type, "value") else str(intent.intent_type),
             intent_target=intent.target or "无",
@@ -433,6 +517,8 @@ class FlashCPUService:
             execution_summary=execution_summary,
             activated_nodes=nodes_text,
             activated_edges=edges_text,
+            chapter_name=chapter_obj.get("name", "未知"),
+            chapter_goals="、".join(chapter_goals) if chapter_goals else "无",
         )
 
         result = await self.llm_service.generate_simple(
@@ -475,6 +561,10 @@ class FlashCPUService:
             )
         teammates_text = "\n".join(teammate_lines) if teammate_lines else "无"
 
+        # v2 StoryDirector 叙述指令
+        story_directives_list = context.get("story_narrative_directives") or context.get("story_directives") or []
+        story_directives_text = "\n".join(story_directives_list) if story_directives_list else "无"
+
         prompt_template = self._load_gm_narration_prompt()
         prompt = prompt_template.format(
             location_name=location.get("location_name", "未知地点"),
@@ -483,6 +573,8 @@ class FlashCPUService:
             current_state=context.get("state", "exploring"),
             active_npc=context.get("active_npc") or "无",
             world_background=world_background,
+            chapter_guidance=self._build_chapter_guidance(context),
+            story_directives=story_directives_text,
             teammates=teammates_text,
             conversation_history=conversation_history,
             memory_summary=memory_summary,
@@ -500,6 +592,19 @@ class FlashCPUService:
         if not narration:
             raise RuntimeError("Flash GM narration empty")
         return narration
+
+    def _build_chapter_guidance(self, context: Dict[str, Any]) -> str:
+        """构建章节引导文本"""
+        chapter_info = context.get("chapter_info") or {}
+        chapter_obj = chapter_info.get("chapter") or {}
+        chapter_name = chapter_obj.get("name")
+        if not chapter_name:
+            return "无"
+        goals = chapter_info.get("goals", [])
+        parts = [f"当前章节：{chapter_name}"]
+        if goals:
+            parts.append(f"推进目标：{'、'.join(goals[:3])}")
+        return "\n".join(parts)
 
     async def execute_request(
         self,
@@ -672,6 +777,97 @@ class FlashCPUService:
                 status["time"] = time_result if isinstance(time_result, dict) else {"raw": time_result}
                 status["party"] = {"has_party": False}
                 return FlashResponse(success=True, operation=op, result=status)
+
+            if op == FlashOperation.ADD_TEAMMATE:
+                if not self.party_service:
+                    return FlashResponse(success=False, operation=op, error="party_service not initialized")
+                from app.models.party import TeammateRole
+                character_id = params.get("character_id")
+                name = params.get("name", character_id or "未知")
+                role_str = params.get("role", "support")
+                personality = params.get("personality", "")
+                response_tendency = float(params.get("response_tendency", 0.5))
+                if not character_id:
+                    return FlashResponse(success=False, operation=op, error="missing character_id")
+                party = await self.party_service.get_or_create_party(world_id, session_id)
+                if party.is_full():
+                    return FlashResponse(success=False, operation=op, error="队伍已满")
+                if party.get_member(character_id):
+                    return FlashResponse(success=False, operation=op, error=f"{name} 已在队伍中")
+                try:
+                    teammate_role = TeammateRole(role_str)
+                except ValueError:
+                    teammate_role = TeammateRole.SUPPORT
+                member = await self.party_service.add_member(
+                    world_id=world_id,
+                    session_id=session_id,
+                    character_id=character_id,
+                    name=name,
+                    role=teammate_role,
+                    personality=personality,
+                    response_tendency=response_tendency,
+                )
+                if member:
+                    return FlashResponse(
+                        success=True, operation=op,
+                        result={"summary": f"{name} 加入了队伍", "character_id": character_id, "name": name, "role": teammate_role.value},
+                    )
+                return FlashResponse(success=False, operation=op, error="添加队友失败")
+
+            if op == FlashOperation.REMOVE_TEAMMATE:
+                if not self.party_service:
+                    return FlashResponse(success=False, operation=op, error="party_service not initialized")
+                character_id = params.get("character_id")
+                reason = params.get("reason", "")
+                if not character_id:
+                    return FlashResponse(success=False, operation=op, error="missing character_id")
+                # 图谱化并持久化该队友的实例（保存对话记忆）
+                if self.instance_manager and self.instance_manager.has(world_id, character_id):
+                    try:
+                        await self.instance_manager.maybe_graphize_instance(world_id, character_id)
+                        instance = self.instance_manager.get(world_id, character_id)
+                        if instance and hasattr(instance, "persist") and self.instance_manager.graph_store:
+                            await instance.persist(self.instance_manager.graph_store)
+                    except Exception as exc:
+                        logger.warning("[remove_teammate] 实例图谱化/持久化失败 (%s): %s", character_id, exc)
+                success = await self.party_service.remove_member(world_id, session_id, character_id)
+                name = params.get("name", character_id)
+                summary = f"{name} 离开了队伍"
+                if reason:
+                    summary += f"（{reason}）"
+                return FlashResponse(
+                    success=success, operation=op,
+                    result={"summary": summary, "character_id": character_id, "reason": reason},
+                    error=None if success else "移除队友失败",
+                )
+
+            if op == FlashOperation.DISBAND_PARTY:
+                if not self.party_service:
+                    return FlashResponse(success=False, operation=op, error="party_service not initialized")
+                reason = params.get("reason", "")
+                party = await self.party_service.get_party(world_id, session_id)
+                if not party:
+                    return FlashResponse(success=False, operation=op, error="当前没有队伍")
+                saved_members = []
+                for member in party.get_active_members():
+                    if self.instance_manager and self.instance_manager.has(world_id, member.character_id):
+                        try:
+                            await self.instance_manager.maybe_graphize_instance(world_id, member.character_id)
+                            inst = self.instance_manager.get(world_id, member.character_id)
+                            if inst and hasattr(inst, "persist") and self.instance_manager.graph_store:
+                                await inst.persist(self.instance_manager.graph_store)
+                            saved_members.append(member.name)
+                        except Exception as exc:
+                            logger.warning("[disband_party] 实例图谱化失败 (%s): %s", member.character_id, exc)
+                success = await self.party_service.disband_party(world_id, session_id)
+                summary = "队伍已解散"
+                if reason:
+                    summary += f"（{reason}）"
+                return FlashResponse(
+                    success=success, operation=op,
+                    result={"summary": summary, "reason": reason, "saved_members": saved_members},
+                    error=None if success else "解散队伍失败",
+                )
 
             return FlashResponse(success=False, operation=op, error=f"unsupported operation: {op}")
         except Exception as exc:

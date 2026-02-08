@@ -7,22 +7,24 @@ import { Compass } from 'lucide-react';
 import { LanguageSwitch } from '../shared';
 import SessionCreator from './SessionCreator';
 
+import type { CreateGameSessionResponse } from '../../types';
+
 interface WelcomePageProps {
-  onSessionCreated: (worldId: string, sessionId: string) => void;
+  onSessionCreated: (worldId: string, sessionId: string, createResponse?: CreateGameSessionResponse) => void;
 }
 
 export const WelcomePage: React.FC<WelcomePageProps> = ({ onSessionCreated }) => {
   const [showCreator, setShowCreator] = useState(false);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-g-bg-base relative">
+    <div className="h-screen w-screen overflow-y-auto bg-g-bg-base relative">
       {/* Language switch */}
       <div className="absolute top-4 right-4 z-50">
         <LanguageSwitch />
       </div>
 
       {/* Center content */}
-      <div className="relative z-10 h-full flex flex-col items-center justify-center">
+      <div className="relative z-10 min-h-full flex flex-col items-center justify-center py-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

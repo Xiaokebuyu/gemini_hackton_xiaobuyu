@@ -5,10 +5,10 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import { createSession, listRecoverableSessions, listWorlds } from '../../api';
-import type { RecoverableSessionItem } from '../../types';
+import type { RecoverableSessionItem, CreateGameSessionResponse } from '../../types';
 
 interface SessionCreatorProps {
-  onSessionCreated: (worldId: string, sessionId: string) => void;
+  onSessionCreated: (worldId: string, sessionId: string, createResponse?: CreateGameSessionResponse) => void;
 }
 
 interface WorldInfo {
@@ -36,8 +36,8 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
         const response = await listWorlds();
         if (!cancelled) {
           setWorlds(response.worlds);
-          if (response.worlds.length > 0 && !worldId) {
-            setWorldId(response.worlds[0].id);
+          if (response.worlds.length > 0) {
+            setWorldId((current) => current || response.worlds[0].id);
           }
         }
       } catch (err) {
@@ -65,7 +65,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
       const response = await createSession(worldId, {
         user_id: userId,
       });
-      onSessionCreated(response.world_id, response.session_id);
+      onSessionCreated(response.world_id, response.session_id, response);
     } catch (err) {
       console.error('Session creation failed:', err);
       const detail =
@@ -228,8 +228,39 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
         <p className="text-xs text-g-red mb-3">{error}</p>
       )}
 
-      {/* Recoverable sessions */}
-      <div className="mb-4">
+      {/* Submit - primary action */}
+      <motion.button
+        whileHover={isCreating ? {} : { scale: 1.02, y: -1 }}
+        whileTap={isCreating ? {} : { scale: 0.98 }}
+        onClick={handleCreate}
+        disabled={isCreating || !worldId.trim() || !userId.trim()}
+        className="
+          w-full mb-4
+          px-4 py-3
+          bg-g-gold hover:bg-g-gold-dark
+          text-white
+          font-heading text-base
+          rounded-lg
+          border border-g-gold
+          shadow-g-sm
+          hover:shadow-g-gold
+          disabled:opacity-50 disabled:cursor-not-allowed
+          transition-all duration-200
+          flex items-center justify-center gap-2
+        "
+      >
+        {isCreating ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Creating...</span>
+          </>
+        ) : (
+          <span>Enter World</span>
+        )}
+      </motion.button>
+
+      {/* Recoverable sessions - secondary action */}
+      <div>
         <button
           onClick={handleLoadSessions}
           disabled={isLoadingSessions || !worldId.trim() || !userId.trim()}
@@ -275,37 +306,6 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
           </div>
         )}
       </div>
-
-      {/* Submit */}
-      <motion.button
-        whileHover={isCreating ? {} : { scale: 1.02, y: -1 }}
-        whileTap={isCreating ? {} : { scale: 0.98 }}
-        onClick={handleCreate}
-        disabled={isCreating || !worldId.trim() || !userId.trim()}
-        className="
-          w-full
-          px-4 py-3
-          bg-g-gold hover:bg-g-gold-dark
-          text-white
-          font-heading text-base
-          rounded-lg
-          border border-g-gold
-          shadow-g-sm
-          hover:shadow-g-gold
-          disabled:opacity-50 disabled:cursor-not-allowed
-          transition-all duration-200
-          flex items-center justify-center gap-2
-        "
-      >
-        {isCreating ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Creating...</span>
-          </>
-        ) : (
-          <span>Enter World</span>
-        )}
-      </motion.button>
     </div>
   );
 };

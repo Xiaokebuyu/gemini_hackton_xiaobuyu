@@ -48,6 +48,33 @@ PYTHONPATH=. \
   pytest tests/test_fastapi_to_mcp.py -v -s
 ```
 
+### 世界数据提取（统一管线）
+
+```bash
+# 从酒馆卡片 JSON 一步生成全部结构化文件（Batch API 模式，推荐）
+python -m app.tools.init_world_cli extract \
+    --input "worldbook.json" \
+    --output data/goblin_slayer/structured/ \
+    --model gemini-3-pro-preview \
+    --thinking-level none \
+    --relabel-edges --enrich-entities
+
+# 直接调用模式（实时返回，无 Batch 等待，但无成本优惠）
+python -m app.tools.init_world_cli extract \
+    --input "worldbook.json" \
+    --output data/goblin_slayer/structured/ \
+    --model gemini-3-pro-preview \
+    --direct --relabel-edges --enrich-entities
+
+# 主要选项：
+#   --model              Gemini 模型（默认 gemini-3-pro-preview）
+#   --thinking-level     思考级别：high/medium/low/lowest/none（Batch API 不支持时用 none）
+#   --direct             直接 LLM 调用而非 Batch API
+#   --relabel-edges      LLM 重标注 unknown 边类型
+#   --enrich-entities    提取 D&D 实体数据（怪物/物品/技能）
+#   --mainlines FILE     指定已有的 mainlines.json（否则自动生成）
+```
+
 ### 交互式开发 CLI
 
 ```bash
@@ -55,7 +82,7 @@ python -m app.tools.game_master_cli              # 完整游戏管理
 python -m app.tools.game_master_cli --setup-demo # 初始化演示世界
 python -m app.tools.flash_natural_cli            # Flash 服务测试
 python -m app.tools.gm_natural_cli               # GM 叙述测试
-python -m app.tools.init_world_cli               # 世界初始化
+python -m app.tools.init_world_cli               # 世界初始化（查看所有子命令）
 ```
 
 ## 架构

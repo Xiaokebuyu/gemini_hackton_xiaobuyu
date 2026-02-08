@@ -22,18 +22,22 @@ export const TypewriterText: React.FC<TypewriterTextProps> = ({
   const [isComplete, setIsComplete] = useState(skipAnimation);
   const indexRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+  const effectiveDisplayedText = skipAnimation ? text : displayedText;
+  const effectiveComplete = skipAnimation || isComplete;
 
   useEffect(() => {
     if (skipAnimation) {
-      setDisplayedText(text);
-      setIsComplete(true);
-      onComplete?.();
+      onCompleteRef.current?.();
       return;
     }
 
-    setDisplayedText('');
-    setIsComplete(false);
     indexRef.current = 0;
+    const resetTimer = setTimeout(() => {
+      setDisplayedText('');
+      setIsComplete(false);
+    }, 0);
 
     const interval = setInterval(() => {
       if (indexRef.current < text.length) {
@@ -50,30 +54,33 @@ export const TypewriterText: React.FC<TypewriterTextProps> = ({
       } else {
         clearInterval(interval);
         setIsComplete(true);
-        onComplete?.();
+        onCompleteRef.current?.();
       }
     }, speed);
 
-    return () => clearInterval(interval);
-  }, [text, speed, skipAnimation, onComplete]);
+    return () => {
+      clearTimeout(resetTimer);
+      clearInterval(interval);
+    };
+  }, [text, speed, skipAnimation]);
 
   // Allow clicking to skip animation
   const handleClick = () => {
-    if (!isComplete) {
+    if (!skipAnimation && !isComplete) {
       setDisplayedText(text);
       setIsComplete(true);
-      onComplete?.();
+      onCompleteRef.current?.();
     }
   };
 
   return (
     <div
       ref={containerRef}
-      className={`${className} ${!isComplete ? 'cursor-pointer' : ''}`}
+      className={`${className} ${!effectiveComplete ? 'cursor-pointer' : ''}`}
       onClick={handleClick}
     >
-      {displayedText}
-      {!isComplete && (
+      {effectiveDisplayedText}
+      {!effectiveComplete && (
         <span className="inline-block w-0.5 h-4 bg-g-gold ml-0.5 animate-pulse" />
       )}
     </div>

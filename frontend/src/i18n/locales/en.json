@@ -74,12 +74,6 @@
       "think": "What are you thinking...",
       "say": "What do you say or do..."
     },
-    "modeThink": "Think",
-    "modeSay": "Say",
-    "modeHint": {
-      "think": "Internal thoughts",
-      "say": "Out loud"
-    },
     "send": "Send",
     "sendHint": "Press Enter to send, Shift+Enter for new line"
   },
@@ -123,7 +117,9 @@
     "defeat": "Defeat",
     "turnOrder": "Turn Order",
     "distance": "Distance",
-    "log": "Combat Log"
+    "log": "Combat Log",
+    "battleStart": "Battle Start!",
+    "enterBattle": "Enter Combat"
   },
   "status": {
     "hp": "HP",
@@ -138,6 +134,30 @@
     "gm": "Dungeon Master",
     "player": "You",
     "system": "System"
+  },
+  "tabs": {
+    "map": "Map",
+    "quest": "Quests",
+    "history": "History",
+    "party": "Party",
+    "inventory": "Inventory"
+  },
+  "quest": {
+    "title": "Quest Progress",
+    "currentChapter": "Current Chapter",
+    "objectives": "Objectives",
+    "progress": "Progress",
+    "noQuests": "No quests available"
+  },
+  "history": {
+    "title": "Chat History",
+    "noHistory": "No history yet"
+  },
+  "inventory": {
+    "comingSoon": "Coming Soon"
+  },
+  "options": {
+    "choose": "Choose your action"
   },
   "ui": {
     "leftPanel": "Navigation",

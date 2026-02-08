@@ -7,7 +7,8 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { GameLayout } from './components/layout';
 import WelcomePage from './components/landing/WelcomePage';
 import { useGameStore, useChatStore, useUIStore, toast } from './stores';
-import { getSessionHistory } from './api';
+import { getSessionHistory, getLocation, getGameTime } from './api';
+import type { CreateGameSessionResponse } from './types';
 import { useKeyboardShortcuts } from './hooks';
 
 // Import i18n configuration (must be before any components that use translations)
@@ -66,9 +67,18 @@ const ToastContainer: React.FC = () => {
 
 // App content with keyboard shortcuts
 const AppContent: React.FC = () => {
-  const { worldId, sessionId, setSession, clearSession } = useGameStore();
-  const { loadHistory, clearMessages } = useChatStore();
+  const {
+    worldId,
+    sessionId,
+    setSession,
+    clearSession,
+    setLocation,
+    setSubLocation,
+    setGameTime,
+  } = useGameStore();
+  const { loadHistory, clearMessages, addMessage } = useChatStore();
   const { toggleLeftPanel, toggleRightPanel } = useUIStore();
+  const initRequestRef = React.useRef(0);
 
   // Setup keyboard shortcuts
   useKeyboardShortcuts([
@@ -84,21 +94,73 @@ const AppContent: React.FC = () => {
     },
   ]);
 
-  const handleSessionCreated = async (newWorldId: string, newSessionId: string) => {
+  const handleSessionCreated = async (
+    newWorldId: string,
+    newSessionId: string,
+    createResponse?: CreateGameSessionResponse,
+  ) => {
+    const requestId = ++initRequestRef.current;
+
+    const isCurrentRequest = () => {
+      const state = useGameStore.getState();
+      return (
+        initRequestRef.current === requestId &&
+        state.worldId === newWorldId &&
+        state.sessionId === newSessionId
+      );
+    };
+
     clearMessages();
     setSession(newWorldId, newSessionId);
 
-    // Try to load chat history for recovered sessions
-    try {
-      const { messages } = await getSessionHistory(newWorldId, newSessionId, 50);
-      if (messages.length > 0) {
-        loadHistory(messages);
-        toast.info(`Session restored with ${messages.length} messages.`);
-      } else {
-        toast.info('Session created. Welcome, adventurer!');
+    if (createResponse) {
+      if (!isCurrentRequest()) return;
+      // New session: initialize from createResponse data
+      if (createResponse.location) {
+        setLocation(createResponse.location);
+        setSubLocation(createResponse.location.sub_location_id ?? null);
       }
-    } catch {
+      const initialTime = createResponse.time ?? createResponse.location?.time;
+      if (initialTime) setGameTime(initialTime);
+      if (createResponse.opening_narration) {
+        addMessage({ speaker: 'GM', content: createResponse.opening_narration, type: 'gm' });
+      }
       toast.info('Session created. Welcome, adventurer!');
+    } else {
+      // Recovered session: fetch location + time + history in parallel
+      try {
+        const [locationResult, timeResult, historyResult] = await Promise.allSettled([
+          getLocation(newWorldId, newSessionId),
+          getGameTime(newWorldId, newSessionId),
+          getSessionHistory(newWorldId, newSessionId, 50),
+        ]);
+        if (!isCurrentRequest()) return;
+
+        if (locationResult.status === 'fulfilled') {
+          setLocation(locationResult.value);
+          setSubLocation(locationResult.value.sub_location_id ?? null);
+        }
+        if (timeResult.status === 'fulfilled') {
+          setGameTime(timeResult.value);
+        }
+
+        const restoredMessages =
+          historyResult.status === 'fulfilled' ? historyResult.value.messages : [];
+        if (restoredMessages.length > 0) {
+          loadHistory(restoredMessages);
+        }
+
+        if (locationResult.status === 'rejected' || timeResult.status === 'rejected') {
+          toast.error('Session restored, but failed to load some state.');
+        } else if (restoredMessages.length > 0) {
+          toast.info(`Session restored with ${restoredMessages.length} messages.`);
+        } else {
+          toast.info('Session restored.');
+        }
+      } catch {
+        if (!isCurrentRequest()) return;
+        toast.error('Session restored, but failed to load location or time.');
+      }
     }
   };
 
@@ -110,6 +172,29 @@ const AppContent: React.FC = () => {
       toast.warning('Detected stale demo session. Please create or resume a real session.');
     }
   }, [sessionId, clearSession]);
+
+  // Restore location/time after page refresh
+  // zustand persists worldId/sessionId but not location/time
+  React.useEffect(() => {
+    if (!worldId || !sessionId) return;
+    const { location } = useGameStore.getState();
+    if (location !== null) return; // already have data, not a refresh
+
+    Promise.allSettled([
+      getLocation(worldId, sessionId),
+      getGameTime(worldId, sessionId),
+    ]).then(([locResult, timeResult]) => {
+      const state = useGameStore.getState();
+      if (state.worldId !== worldId || state.sessionId !== sessionId) return;
+      if (locResult.status === 'fulfilled') {
+        state.setLocation(locResult.value);
+        state.setSubLocation(locResult.value.sub_location_id ?? null);
+      }
+      if (timeResult.status === 'fulfilled') {
+        state.setGameTime(timeResult.value);
+      }
+    }).catch(() => {});
+  }, [worldId, sessionId]);
 
   // Show welcome page if no session
   if (!worldId || !sessionId) {

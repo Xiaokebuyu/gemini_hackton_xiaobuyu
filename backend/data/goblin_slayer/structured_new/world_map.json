@@ -1,0 +1,158 @@
+{
+  "name": "游戏世界",
+  "description": "从世界书自动生成的世界地图",
+  "regions": [
+    {
+      "id": "边境地区",
+      "name": "边境地区",
+      "description": "边境地区，包含 2 个地点",
+      "maps": [
+        "frontier_town",
+        "cow_girl_farm"
+      ],
+      "danger_level": "low"
+    },
+    {
+      "id": "西方未知境",
+      "name": "西方未知境",
+      "description": "西方未知境，包含 2 个地点",
+      "maps": [
+        "water_town",
+        "whispering_woods"
+      ],
+      "danger_level": "medium"
+    },
+    {
+      "id": "水之都地下",
+      "name": "水之都(地下)",
+      "description": "水之都(地下)，包含 1 个地点",
+      "maps": [
+        "underground_waterway"
+      ],
+      "danger_level": "high"
+    },
+    {
+      "id": "轻语森林深处",
+      "name": "轻语森林深处",
+      "description": "轻语森林深处，包含 1 个地点",
+      "maps": [
+        "mirror_lake"
+      ],
+      "danger_level": "high"
+    },
+    {
+      "id": "兰德索尔",
+      "name": "兰德索尔",
+      "description": "兰德索尔，包含 1 个地点",
+      "maps": [
+        "sol_tower"
+      ],
+      "danger_level": "extreme"
+    },
+    {
+      "id": "大陆南部",
+      "name": "大陆南部",
+      "description": "大陆南部，包含 2 个地点",
+      "maps": [
+        "landosol_city",
+        "velen"
+      ],
+      "danger_level": "high"
+    },
+    {
+      "id": "鸣神群岛",
+      "name": "鸣神群岛",
+      "description": "鸣神群岛，包含 1 个地点",
+      "maps": [
+        "narukami_island"
+      ],
+      "danger_level": "medium"
+    }
+  ],
+  "global_connections": [
+    {
+      "from": "frontier_town",
+      "to": "whispering_woods",
+      "from_region": "边境地区",
+      "to_region": "西方未知境",
+      "type": "travel"
+    },
+    {
+      "from": "frontier_town",
+      "to": "water_town",
+      "from_region": "边境地区",
+      "to_region": "西方未知境",
+      "type": "travel"
+    },
+    {
+      "from": "water_town",
+      "to": "frontier_town",
+      "from_region": "西方未知境",
+      "to_region": "边境地区",
+      "type": "travel"
+    },
+    {
+      "from": "water_town",
+      "to": "underground_waterway",
+      "from_region": "西方未知境",
+      "to_region": "水之都(地下)",
+      "type": "explore"
+    },
+    {
+      "from": "underground_waterway",
+      "to": "water_town",
+      "from_region": "水之都(地下)",
+      "to_region": "西方未知境",
+      "type": "walk"
+    },
+    {
+      "from": "whispering_woods",
+      "to": "frontier_town",
+      "from_region": "西方未知境",
+      "to_region": "边境地区",
+      "type": "travel"
+    },
+    {
+      "from": "whispering_woods",
+      "to": "mirror_lake",
+      "from_region": "西方未知境",
+      "to_region": "轻语森林深处",
+      "type": "explore"
+    },
+    {
+      "from": "mirror_lake",
+      "to": "whispering_woods",
+      "from_region": "轻语森林深处",
+      "to_region": "西方未知境",
+      "type": "walk"
+    },
+    {
+      "from": "sol_tower",
+      "to": "landosol_city",
+      "from_region": "兰德索尔",
+      "to_region": "大陆南部",
+      "type": "walk"
+    },
+    {
+      "from": "landosol_city",
+      "to": "sol_tower",
+      "from_region": "大陆南部",
+      "to_region": "兰德索尔",
+      "type": "explore"
+    },
+    {
+      "from": "narukami_island",
+      "to": "frontier_town",
+      "from_region": "鸣神群岛",
+      "to_region": "边境地区",
+      "type": "travel"
+    },
+    {
+      "from": "velen",
+      "to": "frontier_town",
+      "from_region": "大陆南部",
+      "to_region": "边境地区",
+      "type": "travel"
+    }
+  ]
+}

@@ -1,116 +1,10 @@
 [
   {
-    "id": "ch_1_1",
-    "mainline_id": "vol_1",
-    "name": "📖剧情模式状态栏（MVU联动版）",
-    "order": 0,
-    "status": "active",
-    "description": "<status_format>\n规则：状态栏显示位置。你必须在 <customize_HCI> 规定的位置插入 <StatusBlock> 作为状态栏开头和</StatusBlock>作为状态栏结尾将其包覆。\n可按照在场人物自由扩充角色状态栏内的角色，角色离场后移除出角色状态栏\n角色状态栏禁止出现{{user}}\n<StatusBlock>\n<details> <summary style=\"font-weight: bold; background-color: #444444; color: #ffffff; padding: 5px;\">章节与时间</summary> <p style=\"background-color: #000000; color: #ffffff; padding: 10px;\"> 分卷: {{当前分卷，例如\"第一卷\"}}<br> 章节: {{章节序号和名称，例如\"第一章:某批冒险者的结局\"}}<br> 章节事件: {{章节事件名称}}<br> 🕒<b>时间:</b>{{年份}}年 {{月份}} 第{{天}}天 {{具体时间，24小时制}}<br> <br",
-    "available_areas": [
-      "frontier_town"
-    ],
-    "objectives": [
-      "在巢穴中幸存",
-      "决定是否追随哥杀"
-    ],
-    "trigger_conditions": {
-      "type": "auto"
-    },
-    "completion_conditions": {
-      "type": "event",
-      "description": "获救并离开洞穴"
-    }
-  },
-  {
-    "id": "ch_1_2",
-    "mainline_id": "vol_1",
-    "name": "📖---剧情系统---",
-    "order": 1,
-    "status": "locked",
-    "description": "<plot_system>",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_1_3",
-    "mainline_id": "vol_1",
-    "name": "📖剧情初始化",
-    "order": 2,
-    "status": "locked",
-    "description": "[开始新游戏，使用\"第一卷:第一章:某批冒险者的结局\"预填充状态栏]\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_1_4",
-    "mainline_id": "vol_1",
-    "name": "📖章节管理器头",
-    "order": 3,
-    "status": "locked",
-    "description": "<plot_manager>\n# 请根据以下章节索引来引导玩家<user>依次进行剧情",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_1_5",
-    "mainline_id": "vol_1",
-    "name": "📖第一卷",
-    "order": 4,
-    "status": "locked",
-    "description": "<第一卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n第一卷全部章节时间线，请按照排列顺序依次进行触发\n第一卷:第一章:某批冒险者的结局\n第一卷:第二章:牧牛妹的一天\n第一卷:第三章:柜台小姐的思索\n第一卷:第四章:山寨火劫\n第一卷:第五章:意料之外的访客\n第一卷:第六章:旅伴\n第一卷:第七章:杀小鬼者\n第一卷:第八章:剿灭哥布林\n第一卷:第九章:强者们\n第一卷:第十章:瞌睡之中\n第一卷:第十一章:冒险者的飨宴\n第一卷:第十二章:越过小鬼群的山丘\n第一卷:第十三章:某个冒险者的结局\n</第一卷>\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_2_6",
-    "mainline_id": "vol_2",
-    "name": "第二卷",
-    "order": 5,
-    "status": "locked",
-    "description": "<第二卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n第二卷:全部章节时间线，请按照排列顺序依次进行触发\n第二卷:第一章:冒险与日常\n第二卷:第二章:水之都的小鬼杀手\n第二卷:第三章:随机遭遇\n第二卷:第四章:冒险与冒险之间的空档\n第二卷:第五章:迈向死亡\n第二卷:第六章:猜谜\n第二卷:第七章:耳语和祈祷与咏唱\n第二卷:第八章:夹上书签\n第二卷:第九章:不可以说出名称的怪物\n第二卷:第十章:魔鬼陷阱的废都\n第二卷:第十一章:前往归来\n</第二卷>\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_3_7",
-    "mainline_id": "vol_3",
-    "name": "第三卷",
-    "order": 6,
-    "status": "locked",
-    "description": "<第三卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n第三卷全部章节时间线，请按照排列顺序依次进行触发\n第三卷:第一章:秋风之月\n第三卷:第二章:前夜祭\n第三卷:第三章:梦想的收获季\n第三卷:第四章:最重要的是笑容\n第三卷:第五章:颠覆脚本\n第三卷:第六章:七臂的威力\n第三卷:第六章:庆祝什么都不是的日子吧\n</第三卷>\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_4_8",
-    "mainline_id": "vol_4",
-    "name": "第四卷",
-    "order": 7,
-    "status": "locked",
-    "description": "<第四卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n第四卷全部章节时间线，请按照排列顺序依次进行触发\n第四卷:第一章:新手战士与见习圣女的故事\n第四卷:第二章:酒馆女服务生的故事\n第四卷:第三章:他不在的日子的故事\n第四卷:第四章:被恶魔迷上的魔宫灭亡的故事\n第四卷:第五章:他们三人几个月前的故事\n第四卷:第六章:有去有回的故事\n</第四卷>\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_4_9",
+    "id": "ch_4_1",
     "mainline_id": "vol_4",
     "name": "番外卷-（作者tttk2929）",
-    "order": 8,
-    "status": "locked",
+    "order": 0,
+    "status": "active",
     "description": "<番外卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n番外卷卷全部章节时间线，请按照排列顺序依次进行触发\n番外卷:第一章:怪诞委托\n番外卷:第二章:镜子湖之行\n番外卷:第三章:传说中的镜子湖底\n番外卷:第四章:月露和纳尔西斯的银泪\n番外卷:第五章:银泪与终焉\n番外卷:第六章:庆祝新生\n<番外卷/>",
     "available_areas": [],
     "objectives": [],
@@ -118,22 +12,10 @@
     "completion_conditions": {}
   },
   {
-    "id": "ch_5_10",
-    "mainline_id": "vol_5",
-    "name": "第五卷",
-    "order": 9,
-    "status": "locked",
-    "description": "<第五卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n第五卷全部章节时间线，请按照排列顺序依次进行触发\n第五卷:第一章:预演\n第五卷:第二章:大规模战斗\n第五卷:第三章:强袭\n第五卷:第四章:结束与开始\n第五卷:第五章:攻略地牢\n第五卷:第六章:小鬼们的宝冠\n第五卷:第七章:风雪之巅的死斗/雪下的呼吸\n第五卷:第八章:新的黎明\n</第五卷>\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_5_11",
+    "id": "ch_5_2",
     "mainline_id": "vol_5",
     "name": "古神卷-（作者sulfurzero）",
-    "order": 10,
+    "order": 1,
     "status": "locked",
     "description": "<古神卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n古神卷全部章节时间线，请按照排列顺序依次进行触发\n第一章:眼眸\n第二章:追寻\n第三章:裂痕\n第四章:威压\n第五章:终曲\n</古神卷>",
     "available_areas": [],
@@ -142,10 +24,10 @@
     "completion_conditions": {}
   },
   {
-    "id": "ch_5_12",
+    "id": "ch_5_3",
     "mainline_id": "vol_5",
     "name": "边境的魔物饭卷-（作者tata）",
-    "order": 11,
+    "order": 2,
     "status": "locked",
     "description": "<边境的魔物饭卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n边境的魔物饭卷全部章节时间线，请按照排列顺序依次进行触发\n第一章：开胃菜\n第二章：迷途与主食\n第三章：哥布林巢穴与副菜\n第四章：意外的盟友与生路\n第五章：魔物饭\n</边境的魔物饭卷>",
     "available_areas": [],
@@ -154,10 +36,10 @@
     "completion_conditions": {}
   },
   {
-    "id": "ch_5_13",
+    "id": "ch_5_4",
     "mainline_id": "vol_5",
     "name": "抉择卷-（作者哈气咪）",
-    "order": 12,
+    "order": 3,
     "status": "locked",
     "description": "<抉择卷>\n请根据以下章节顺序来引导<user>依次进行剧情\n抉择卷全部章节时间线，请按照排列顺序依次进行触发\n第一章:眼眸\n第二章:遗迹\n第三章:终曲\n</抉择卷>",
     "available_areas": [],
@@ -166,34 +48,10 @@
     "completion_conditions": {}
   },
   {
-    "id": "ch_6_14",
-    "mainline_id": "vol_6",
-    "name": "第六卷",
-    "order": 13,
-    "status": "locked",
-    "description": "<第六卷>\n请根据以下章节顺便来引导<user>依次进行剧情\n第六卷全部章节时间线，请按照排列顺序依次进行触发\n第六卷:第一章:稀松平常的春天某日\n第六卷:第二章:红发少年魔法师\n第六卷:第三章:酒馆女服务生的故事\n第六卷:第四章:一群没有名字的男人\n第六卷:第五章:郊外的训练场\n第六卷:第六章:各自的战斗\n第六卷:第七章:酒馆里的独白\n第六卷:第八章:风暴前的夜谈\n第六卷:第九章:血染的沙场\n第六卷:第十章:绝望的防线\n第六卷:第十一章:猎手们的反击\n</第六卷>\n",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_6_15",
-    "mainline_id": "vol_6",
-    "name": "📖章节管理器尾",
-    "order": 14,
-    "status": "locked",
-    "description": "\n</plot_manager>",
-    "available_areas": [],
-    "objectives": [],
-    "trigger_conditions": {},
-    "completion_conditions": {}
-  },
-  {
-    "id": "ch_6_16",
+    "id": "ch_6_5",
     "mainline_id": "vol_6",
     "name": "📖主线/支线任务表（任务管理器）todo",
-    "order": 15,
+    "order": 4,
     "status": "locked",
     "description": "<quest_manager>\n\n\n</quest_manager>",
     "available_areas": [],
@@ -205,686 +63,1235 @@
     "id": "ch_1_1",
     "mainline_id": "vol_1",
     "name": "📖第一卷:第一章:某批冒险者的结局",
-    "order": 16,
+    "order": 5,
     "status": "locked",
     "description": "第一卷:第一章:某批冒险者的结局\n第一章主要目标： {{user}}在哥布林的巢穴中幸存下来，并决定是否追随哥布林杀手。\n\n你引导{{user}}按顺序进行以下事件。{{user}}的反应必须属于他的身份与人设\n<第1章事件列表>\n章节事件：冒险的开端：白瓷与誓言\n章节事件：轻率的组队：初出茅庐的同行者\n章节事件：深入黑暗：无知的洞穴探索\n章节事件：柜台小姐的告知\n章节事件：绝望的伏击：新手的末路\n章节事件：不祥的救星：哥布林杀手的登场\n章节事件：冰冷的战术：压倒性的剿灭\n章节事件：幸存者的抉择：踏上新的道路\n</第1章事件列表>\n\n#要点：\n体现新手队伍初次组队，彼此配合不够熟练，依靠队长统率力组织团队的特点\n洞穴环境对人物的影响偏向于感官，而不是理性推理找出信息，以此获取优势\n第一印象：友善而热情的互动，拉近彼此的距离\n儿时树立的英雄梦导致准备不足与轻敌，容易热血上头，看到村姑的惨状后独自冲出队伍救援，义勇心凌驾于大脑\n欠缺对物品利用、神迹、魔法使用时机的考量，经常使用在无关紧要之处\n队伍站位问题，拥有近战能力的成员集中在队伍前列，导致魔法师、神官后背空虚\n\n<冒险的开端>\n章节事",
     "available_areas": [
-      "frontier_town"
+      "frontier_town",
+      "goblin_cave"
     ],
     "objectives": [
-      "在巢穴中幸存",
-      "决定是否追随哥杀"
+      "{{user}}在哥布林的巢穴中幸存下来，并决定是否追随哥布林杀手。"
     ],
-    "trigger_conditions": {
-      "type": "auto"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "获救并离开洞穴"
+      "events_required": [
+        "ch_1_1_章节事件：冒险的开端：白瓷与誓言",
+        "ch_1_1_章节事件：轻率的组队：初出茅庐的同行者",
+        "ch_1_1_章节事件：深入黑暗：无知的洞穴探索",
+        "ch_1_1_章节事件：柜台小姐的告知",
+        "ch_1_1_章节事件：绝望的伏击：新手的末路",
+        "ch_1_1_章节事件：不祥的救星：哥布林杀手的登场",
+        "ch_1_1_章节事件：冰冷的战术：压倒性的剿灭",
+        "ch_1_1_章节事件：幸存者的抉择：踏上新的道路",
+        "ch_1_1_冒险的开端：白瓷与誓言",
+        "ch_1_1_轻率的组队：初出茅庐的同行者",
+        "ch_1_1_深入黑暗：无知的洞穴探索",
+        "ch_1_1_柜台小姐的告知",
+        "ch_1_1_绝望的伏击：新手的末路",
+        "ch_1_1_不祥的救星：哥布林杀手的登场",
+        "ch_1_1_冰冷的战术：压倒性的剿灭",
+        "ch_1_1_幸存者的抉择：踏上新的道路"
+      ]
     }
   },
   {
     "id": "ch_1_2",
     "mainline_id": "vol_1",
     "name": "第一卷:第二章：牧牛妹的一天",
-    "order": 17,
+    "order": 6,
     "status": "locked",
     "description": "第2章：牧牛妹的一天\n第2章主要目标：作为一个在边境小镇活动的冒险者，{{user}}将从侧面观察到“哥布林杀手”的日常生活，以及他与青梅竹马“牧牛妹”之间那种独特、温暖而又带着一丝忧伤的关系。{{user}}将初步了解到，这个传闻中的怪人，在战场之外有着怎样的一面\n\n{{user}}，作为一名冒险者，在完成1-2个任务后，将按顺序触发以下关键事件。\n\n<第2章事件列表>\n2.1 章节事件：清晨的相遇 (An Encounter at Dawn)\n2.2 章节事件：公会的异类 (The Outcast of the Guild)\n2.3 章节事件：旁观者的视角 (A Spectator's View)\n2.4 章节事件：酒馆里的传闻 (Whispers in the Tavern)\n</第2章事件列表>\n\n<清晨的相遇>\n2.1 章节事件：清晨的相遇 (An Encounter at Dawn)\n章节事件目标：在前往公会的路上，偶遇哥布林杀手和牧牛妹，形成第一印象。\n\n系统引导：在{{user}}完成了1-2个新手任务后的某个清晨，系统需描绘此场景，并根据{{user}}的反应（是主动",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "作为一个在边境小镇活动的冒险者，{{user}}将从侧面观察到“哥布林杀手”的日常生活，以及他与青梅竹马“牧牛妹”之间那种独特、温暖而又带着一丝忧伤的关系。{{user}}将初步了解到，这个传闻中的怪人，在战场之外有着怎样的一面"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_2_2.1_章节事件：清晨的相遇_(An_Encounter_a",
+        "ch_1_2_2.2_章节事件：公会的异类_(The_Outcast_of",
+        "ch_1_2_2.3_章节事件：旁观者的视角_(A_Spectator's",
+        "ch_1_2_2.4_章节事件：酒馆里的传闻_(Whispers_in_t",
+        "ch_1_2_清晨的相遇_(An_Encounter_at_Dawn)",
+        "ch_1_2_公会的异类_(The_Outcast_of_the_Guil",
+        "ch_1_2_旁观者的视角_(A_Spectator's_View)",
+        "ch_1_2_酒馆里的传闻_(Whispers_in_the_Tavern",
+        "ch_1_2_清晨的相遇_(An_Encounter_at_Dawn)"
+      ]
+    }
   },
   {
     "id": "ch_1_3",
     "mainline_id": "vol_1",
     "name": "第一卷:第三章:柜台小姐的思索",
-    "order": 18,
+    "order": 7,
     "status": "locked",
     "description": "第三章：柜台小姐的思索\n第三章主要目标： 通过柜台小姐的视角，{{user}}将了解“哥布林委托”的残酷性，并见证哥布林杀手与柜台小姐间的深刻羁绊，理解他为何成为这个系统中不可或缺的“异类”。\n\n{{user}}，作为一名冒险者，在边境小镇的日常冒险中，将按顺序触发以下关键事件。\n\n<第三章事件列表>\n3.1 章节事件：绝望的请求 (A Desperate Plea)\n3.2 章节事件：体系的无奈 (The System's Cruelty)\n3.3 章节事件：唯一的解药 (The Only Cure)\n3.4 章节事件：“我即是哥布林” (I Am Goblin)\n3.5 章节事件：以公会之名 (In the Name of the Guild)\n</第三章事件列表>\n<绝望的请求>\n3.1 章节事件：绝望的请求 (A Desperate Plea)\n章节事件目标： 目睹一个典型的“哥布林委托”是如何诞生的。\n系统引导： 在{{user}}完成了3-4个委托后的某个中午，当{{user}}来到柜台前时，系统将描绘农夫焦急求助的场景。\n\n场景简述： 一位衣衫褴褛的农夫哭喊着向柜台小姐求",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "通过柜台小姐的视角，{{user}}将了解“哥布林委托”的残酷性，并见证哥布林杀手与柜台小姐间的深刻羁绊，理解他为何成为这个系统中不可或缺的“异类”。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_3_绝望的请求_(A_Desperate_Plea)",
+        "ch_1_3_体系的无奈_(The_System's_Cruelty)",
+        "ch_1_3_唯一的解药_(The_Only_Cure)",
+        "ch_1_3_“我即是哥布林”_(I_Am_Goblin)",
+        "ch_1_3_以公会之名_(In_the_Name_of_the_Guil",
+        "ch_1_3_绝望的请求_(A_Desperate_Plea)"
+      ]
+    }
   },
   {
     "id": "ch_1_4",
     "mainline_id": "vol_1",
     "name": "第一卷:第四章:山寨火劫",
-    "order": 19,
+    "order": 8,
     "status": "locked",
     "description": "第一卷 第四章：山寨火劫\n第四章主要目标：{{user}}将见证一场由哥布林引发的双重悲剧。{{user}}将先听说并进行检定推断出一支小队如何因轻敌和情报不足而走向覆灭，随后又将亲眼看到哥布林杀手如何以一种截然不同的、冷酷高效的方式“解决”问题。\n{{user}}，作为一名在边境小镇活动的冒险者{{user}}，将按顺序进行以下事件。\n<山谷中的凝视>\n章节事件：山谷中的凝视 (A Gaze in the Valley)\n章节事件目标：\n在一次冒险中，{{user}}小队发现了古老的山寨\n那是一座建在峭壁上的、由古老巨木构成的森人山寨。它看起来年代久远，大部分结构已经与周围的森林融为一体。但此刻，山寨的某些窗口却隐约透出火光，这在早已废弃的古迹中显得极不寻常。山谷中似乎还隐约传来战斗的声响，但距离太远，听不真切。\n在{{user}}小队回程的路上，遇到了一队行色匆匆的商人。{{user}}向他们打听山寨的情况，他们告诉{{user}}，那是附近一个哥布林巢穴。他们还带着敬佩的口吻提到，一支由贵族女骑士带领的、声誉良好的钢铁级冒险小队，今天一早就进入山寨，去解救被掳走的村女了。“有她们",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "goblin_cave"
+    ],
+    "objectives": [
+      "{{user}}将见证一场由哥布林引发的双重悲剧。{{user}}将先听说并进行检定推断出一支小队如何因轻敌和情报不足而走向覆灭，随后又将亲眼看到哥布林杀手如何以一种截然不同的、冷酷高效的方式“解决”问题。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_4_山谷中的凝视_(A_Gaze_in_the_Valley)"
+      ]
+    }
   },
   {
     "id": "ch_1_5",
     "mainline_id": "vol_1",
     "name": "第一卷:第五章:意料之外的访客",
-    "order": 20,
+    "order": 9,
     "status": "locked",
     "description": "第一卷 第五章：意料之外的访客\n第五章主要目标： 在冒险者公会中，一支奇特的异族小队带来了关乎世界存亡的宏大任务，他们指名要寻找一位专杀哥布林的“专家”\n{{user}}将深入这场风波的中心，通过自己的调查、判断与行动，最终决定是否要抓住这个机会，加入这个充满未知与潜在危险的临时团队\n\n{{user}}，作为一名在边境小镇寻求机会的冒险者，将按顺序进行以下事件。\n\n<第五章事件列表>\n5.1 章节事件：喧嚣中的异乡人 (Strangers in the Guildhall)\n5.2 章节事件：高塔上的密谈 (Whispers from the Top)\n5.3 章节事件：专家的选择 (The Specialist's Choice)\n5.4 章节事件：你的抉择 (Your Own Path)\n</第五章事件列表>\n<喧嚣中的异乡人>\n5.1 章节事件：喧嚣中的异乡人 (Strangers in the Guildhall)\n章节事件目标： 主动获取关于三位异乡人的第一手信息，并决定初步的应对策略。\n\n系统引导： 今天，当{{user}}像往常一样在公会大厅活动时，系统将描绘三位气场不凡",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "在冒险者公会中，一支奇特的异族小队带来了关乎世界存亡的宏大任务，他们指名要寻找一位专杀哥布林的“专家”"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_5_喧嚣中的异乡人_(Strangers_in_the_Guil",
+        "ch_1_5_高塔上的密谈_(Whispers_from_the_Top)",
+        "ch_1_5_专家的选择_(The_Specialist's_Choice",
+        "ch_1_5_你的抉择_(Your_Own_Path)",
+        "ch_1_5_喧嚣中的异乡人_(Strangers_in_the_Guil"
+      ]
+    }
   },
   {
     "id": "ch_1_6",
     "mainline_id": "vol_1",
     "name": "第一卷:第六章:旅伴",
-    "order": 21,
+    "order": 10,
     "status": "locked",
     "description": "第一卷 第六章：旅伴\n第六章主要目标： {{user}}将透过旅途和篝火晚会与新队友进行初次深入互动，体验他们奇特的相处模式，并找到自己在这支队伍中的位置\n\n{{user}}，作为第六名队员，将按顺序进行以下事件。\n\n<第六章事件列表>\n6.1 章节事件：荒野上的队列 (A March through the Wilds)\n6.2 章节事件：篝火旁的试探 (A Trial by Fire and Food)\n6.3 章节事件：你的故事 (Your Story to Tell)\n6.4 章节事件：月下的同伴 (Companions under the Moon)\n</第六章事件列表>\n\n<荒野上的队列>\n6.1 章节事件：荒野上的队列 (A March through the Wilds)**\n章节事件目标：在沉默的旅途中，主动寻找机会与新队友进行初次交流。\n\n系统引导：系统需描绘队伍在荒野上沉默行进的压抑氛围，并鼓励{{user}}主动与队友交流以打破沉默\n\n团队氛围：领头的哥布林杀手和妖精弓手一言不发，队伍气氛沉闷。矿人道士和蜥蜴人僧侣偶尔低语几句，只有女神官会不时地与{{user}",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "{{user}}将透过旅途和篝火晚会与新队友进行初次深入互动，体验他们奇特的相处模式，并找到自己在这支队伍中的位置"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_6_荒野上的队列_(A_March_through_the_Wi",
+        "ch_1_6_篝火旁的试探_(A_Trial_by_Fire_and_Fo",
+        "ch_1_6_你的故事_(Your_Story_to_Tell)",
+        "ch_1_6_月下的同伴_(Companions_under_the_Mo",
+        "ch_1_6_荒野上的队列_(A_March_through_the_Wi"
+      ]
+    }
   },
   {
     "id": "ch_1_7",
     "mainline_id": "vol_1",
     "name": "第一卷:第七章:杀小鬼者",
-    "order": 22,
+    "order": 11,
     "status": "locked",
     "description": "第一卷 第七章：杀小鬼者\n第七章主要目标： 在{{user}}加入这个临时组建的六人小队后，你们将一同深入被哥布林占据的古代遗迹。{{user}}将亲身体验哥布林杀手那套令人匪夷所思却又极端有效的战术，并直面哥布林所能犯下的、最深沉的罪恶。这将是一场对{{user}}心理承受能力的终极考验。\n\n{{user}}，作为队伍的第六人，将按顺序进行以下事件。\n\n<第七章事件列表>\n7.1 章节事件：入口的攻防 (The Entrance Breach)\n7.2 章节事件：螺旋地狱 (The Spiral Hell)\n7.3 章节事件：秽物之间的活地狱 (The Living Hell in Filth)\n7.4 章节事件：你的职责 (Your Duty)\n\n<入口的攻防>\n7.1 章节事件：入口的攻防 (The Entrance Breach)\n章节事件目标： 见证妖精弓手优雅的箭术与哥布林杀手冷酷的“战前准备”之间的巨大反差。\n\n系统引导： 队伍抵达遗迹入口，面对两名哥布林哨兵。系统将让团队领袖（妖精弓手或哥布林杀手）征询{{user}}对突袭方案的意见。\n\n场景简述： 默认情况下，妖精弓",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "goblin_cave"
+    ],
+    "objectives": [
+      "在{{user}}加入这个临时组建的六人小队后，你们将一同深入被哥布林占据的古代遗迹。{{user}}将亲身体验哥布林杀手那套令人匪夷所思却又极端有效的战术，并直面哥布林所能犯下的、最深沉的罪恶。这将是一场对{{user}}心理承受能力的终极考验。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_7_入口的攻防_(The_Entrance_Breach)",
+        "ch_1_7_螺旋地狱_(The_Spiral_Hell)",
+        "ch_1_7_秽物之间的活地狱_(The_Living_Hell_in_F",
+        "ch_1_7_你的职责_(Your_Duty)",
+        "ch_1_7_入口的攻防_(The_Entrance_Breach)"
+      ]
+    }
   },
   {
     "id": "ch_1_8",
     "mainline_id": "vol_1",
     "name": "第一卷:第八章:剿灭哥布林",
-    "order": 23,
+    "order": 12,
     "status": "locked",
     "description": "第一卷 第八章：剿灭哥布林\n第八章主要目标： 在团队成员心理受到重创后，{{user}}将作为团队的关键一员，参与执行一场精心策划的静默屠杀。然而，就在任务看似顺利时，真正的幕后黑手——巨魔（Ogre）——将会现身，将任务难度瞬间提升到生死存亡的级别，迫使{{user}}和团队直面绝境。\n\n{{user}}，作为队伍的第六人，将按顺序进行以下事件\n\n<第八章事件列表>\n8.1 章节事件：短暂的重整 (A Moment to Regroup)\n8.2 章节事件：沉默的盛宴 (The Silent Feast of Blades)\n8.3 章节事件：不祥的震动 (An Unwelcome Tremor)\n</第八章事件列表>\n<短暂的重整>\n8.1 章节事件：短暂的重整 (A Moment to Regroup)\n章节事件目标： 在经历了骇人的发现后，{{user}}需要在团队中发挥自己的作用，帮助团队恢复士气并参与战术制定。\n\n系统引导： 在那个散发着恶臭的垃圾房里，女俘虏被送走后，团队陷入了短暂的沉默。系统应向{{user}}描绘团队成员各自的状态，并提出问题：“妖精弓手情绪不稳，而哥",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "goblin_cave"
+    ],
+    "objectives": [
+      "在团队成员心理受到重创后，{{user}}将作为团队的关键一员，参与执行一场精心策划的静默屠杀。然而，就在任务看似顺利时，真正的幕后黑手——巨魔（Ogre）——将会现身，将任务难度瞬间提升到生死存亡的级别，迫使{{user}}和团队直面绝境。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_8_短暂的重整_(A_Moment_to_Regroup)",
+        "ch_1_8_沉默的盛宴_(The_Silent_Feast_of_Bla",
+        "ch_1_8_不祥的震动_(An_Unwelcome_Tremor)",
+        "ch_1_8_短暂的重整_(A_Moment_to_Regroup)"
+      ]
+    }
   },
   {
     "id": "ch_1_9",
     "mainline_id": "vol_1",
     "name": "第一卷:第九章:强者们",
-    "order": 24,
+    "order": 13,
     "status": "locked",
     "description": "第一卷 第九章：强者们\n第九章主要目标： 在面对实力完全碾压你们的巨魔时，{{user}}的团队将被迫在绝境中殊死一搏。这不是一场单纯的力量对决，而是一场赌上智慧、勇气、牺牲和所有底牌的死斗。\n\n{{user}}，作为团队的一员，将按顺序进行以下事件。\n\n<第九章事件列表>\n9.1 章节事件：初次交锋：力量的绝望 (First Clash: The Despair of Power)\n9.2 章节事件：团队的挣扎 (The Team's Struggle)\n9.3 章节事件：最后的王牌 (The Last Trump Card)\n9.4 章节事件：海潮的葬礼 (A Funeral by the Ocean's Tide)\n\n<初次交锋：力量的绝望>\n9.1 章节事件：初次交锋：力量的绝望 (First Clash: The Despair of Power)\n章节事件目标： 亲身体验与巨魔的初次抗衡，并在团队的第一次防御和攻击尝试惨败后，意识到必须寻求非常规的战术。\n\n系统引导： 系统将描绘巨魔凝聚并投出“火球”的场景。这是一个需要团队瞬间做出反应的危机。系统将向{{user}}和团队",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town"
+    ],
+    "objectives": [
+      "在面对实力完全碾压你们的巨魔时，{{user}}的团队将被迫在绝境中殊死一搏。这不是一场单纯的力量对决，而是一场赌上智慧、勇气、牺牲和所有底牌的死斗。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_9_初次交锋：力量的绝望_(First_Clash:_The_D",
+        "ch_1_9_团队的挣扎_(The_Team's_Struggle)",
+        "ch_1_9_最后的王牌_(The_Last_Trump_Card)",
+        "ch_1_9_海潮的葬礼_(A_Funeral_by_the_Ocean'",
+        "ch_1_9_初次交锋：力量的绝望_(First_Clash:_The_D"
+      ]
+    }
   },
   {
     "id": "ch_1_10",
     "mainline_id": "vol_1",
     "name": "第一卷:第十章:瞌睡之中",
-    "order": 25,
+    "order": 14,
     "status": "locked",
     "description": "第一卷 第十章：瞌睡之中\n第十章主要目标： 在与巨魔的死斗后，展现哥布林杀手漫长而平静的休养期。{{user}}作为哥布林杀手的同伴，将有机会观察并参与他卸下盔甲后的生活，见证他因团队冒险而产生的内心变化，并在这段罕见的和平时光中加深彼此的羁绊。\n\n{{user}}，作为团队的一员，将按顺序进行以下事件。\n\n<第十章事件列表>\n10.1 章节事件：无甲的清晨：迟到的阳光\n10.2 章节事件：笨拙的体贴：乡间路上的独白\n10.3 章节事件：陌生的熟人：公会中的新日常\n10.4 章节事件：铁匠的认可：看不见的价值\n10.5 章节事件：黑曜石的荣耀：无法回应的感谢\n10.6 章节事件：牧草地的膝枕：冒险者的梦想\n</第十章事件列表>\n<无甲的清晨>\n10.1 章节事件：无甲的清晨：迟到的阳光\n章节事件目标： 打破哥布林杀手“盔甲不离身”的常规，{{user}}将有机会在第一时间见证这一变化，并决定如何与这个“陌生”的他进行互动。\n\n系统引导： 在巨魔之战后的某个清晨，当{{user}}前往牧场探望哥布林杀手时，会看到他走出房间，身上只穿着一件普通的麻布上衣。这是{{user}}第一次看到他不",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "cow_girl_farm",
+      "frontier_town"
+    ],
+    "objectives": [
+      "在与巨魔的死斗后，展现哥布林杀手漫长而平静的休养期。{{user}}作为哥布林杀手的同伴，将有机会观察并参与他卸下盔甲后的生活，见证他因团队冒险而产生的内心变化，并在这段罕见的和平时光中加深彼此的羁绊。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_10_无甲的清晨：迟到的阳光",
+        "ch_1_10_笨拙的体贴：乡间路上的独白",
+        "ch_1_10_陌生的熟人：公会中的新日常",
+        "ch_1_10_铁匠的认可：看不见的价值",
+        "ch_1_10_黑曜石的荣耀：无法回应的感谢",
+        "ch_1_10_牧草地的膝枕：冒险者的梦想",
+        "ch_1_10_无甲的清晨：迟到的阳光"
+      ]
+    }
   },
   {
     "id": "ch_1_11",
     "mainline_id": "vol_1",
     "name": "第一卷:第十一章:冒险者的飨宴",
-    "order": 26,
+    "order": 15,
     "status": "locked",
     "description": "第一卷 第十一章：冒险者的飨宴\n第十一章主要目标：在和平的假象被撕碎后，{{user}}将与哥布林杀手一同发现迫在眉睫的危机。为了守护牧场，哥布林杀手将向整个冒险者公会发出求援，并最终集结起一支前所未有的“哥布林讨伐联军”。{{user}}作为第一发现者和核心成员，将亲身经历这场从绝望请求到万众响应的戏剧性转变\n\n{{user}}，作为一名冒险者，将按顺序进行以下事件。\n\n<第十一章事件列表>\n11.1 章节事件：王的足迹：日常的终结\n11.2 章节事件：不走的理由：“不想让你无家可归”\n11.3 章节事件：公会中央的请求：一个人的战争宣言\n11.4 章节事件：赌上一切的酬劳：“我的性命不能由我决定”\n11.5 章节事件：第一滴酒的承诺：英雄的响应\n11.6 章节事件：集结的号角：为了金币与荣光\n</第十一章事件列表>\n\n<王的足迹：日常的终结>\n11.1 章节事件：王的足迹：日常的终结\n章节事件目标：与哥布林杀手一同发现哥布林大军的踪迹，成为第一个知晓危机严重性的人。\n系统引导：在经历了数日的平静后，{{user}}来到牧场探望哥布林杀手和牧牛妹。系统可以引导{{user}}与哥布林",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "cow_girl_farm",
+      "frontier_town"
+    ],
+    "objectives": [
+      "在和平的假象被撕碎后，{{user}}将与哥布林杀手一同发现迫在眉睫的危机。为了守护牧场，哥布林杀手将向整个冒险者公会发出求援，并最终集结起一支前所未有的“哥布林讨伐联军”。{{user}}作为第一发现者和核心成员，将亲身经历这场从绝望请求到万众响应的戏剧性转变"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_11_王的足迹：日常的终结",
+        "ch_1_11_不走的理由：“不想让你无家可归”",
+        "ch_1_11_公会中央的请求：一个人的战争宣言",
+        "ch_1_11_赌上一切的酬劳：“我的性命不能由我决定”",
+        "ch_1_11_第一滴酒的承诺：英雄的响应",
+        "ch_1_11_集结的号角：为了金币与荣光",
+        "ch_1_11_王的足迹：日常的终结"
+      ]
+    }
   },
   {
     "id": "ch_1_12",
     "mainline_id": "vol_1",
     "name": "第一卷:第十二章:越过小鬼群的山丘",
-    "order": 27,
+    "order": 16,
     "status": "locked",
     "description": "第一卷 第十二章：越过小鬼群的山丘\n第十二章主要目标：作为“哥布林讨伐联军”的关键一员，{{user}}将亲身参与并执行由哥布林杀手制定的集团作战计划，在牧场正面击溃哥布林王的百人大军，并见证这场战争的最终结局\n\n{{user}}，作为参战的冒险者之一，将按顺序进行以下事件。\n\n<第十二章事件列表>\n12.1 章节事件：开战的狼烟：战术的初演\n12.2 章节事件：阵地上的乱舞：各显神通的强者们\n12.3 章节事件：声东击西：被预判的逃亡\n12.4 章节事件：王与杀手的对决：复仇者的末路\n12.5 章节事件：圣壁的囚笼：来自后方的致命一击\n12.6 章节事件：肮脏的终结：我即是哥布林杀手\n</第十二章事件列表>\n\n<开战的狼烟>\n12.1 章节事件：开战的狼烟：战术的初演\n章节事件目标：参与执行哥布林杀手的开战计划，瓦解敌人的“人肉盾牌”战术，为大部队的冲锋扫清障碍。\n\n系统引导：夜幕降临，哥布林大军如潮水般涌向牧场。系统将向{{user}}详细说明开战计划的第一步，并根据{{user}}的职业能力分配任务。是作为施法者，与矿人道士和魔女一同释放“眠云”或类似法术？还是作为敏捷型战士，与",
     "available_areas": [
       "cow_girl_farm"
     ],
     "objectives": [
-      "击败哥布林王",
-      "守卫牧场"
+      "作为“哥布林讨伐联军”的关键一员，{{user}}将亲身参与并执行由哥布林杀手制定的集团作战计划，在牧场正面击溃哥布林王的百人大军，并见证这场战争的最终结局"
     ],
-    "trigger_conditions": {
-      "type": "chapter_complete",
-      "chapter_id": "ch_1_11"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "哥布林王被讨伐"
+      "events_required": [
+        "ch_1_12_开战的狼烟：战术的初演",
+        "ch_1_12_阵地上的乱舞：各显神通的强者们",
+        "ch_1_12_声东击西：被预判的逃亡",
+        "ch_1_12_王与杀手的对决：复仇者的末路",
+        "ch_1_12_圣壁的囚笼：来自后方的致命一击",
+        "ch_1_12_肮脏的终结：我即是哥布林杀手",
+        "ch_1_12_开战的狼烟：战术的初演"
+      ]
     }
   },
   {
     "id": "ch_1_13",
     "mainline_id": "vol_1",
     "name": "第一卷:第十三章:某个冒险者的结局",
-    "order": 28,
+    "order": 17,
     "status": "locked",
     "description": "第一卷 第十三章：某个冒险者的结局\n第十三章主要目标： 在盛大的庆功宴上，哥布林杀手在同伴的环绕下，完成了从一个复仇工具到“冒险者”的最终蜕变，为第一卷的故事画上圆满的句号。{{user}}，作为并肩作战的冒险者之一，将亲身经历这场从绝望请求到万众响应的戏剧性转变，并见证那个怪人最后、也是最重要的一步转变。\n\n{{user}}，作为参战的冒险者之一，将按顺序进行以下事件。\n\n<第十三章事件列表>\n13.1 章节事件：胜利的飨宴：金币、麦酒与欢呼\n13.2 章节事件：一枚金币的酬劳：角落里的对话\n13.3 章节事件：冒险者的梦想：“我想当，冒险者”\n13.4 章节事件：最后的请求：摘下头盔的脸\n13.5 章节事件：迟来的相见：一个平凡的青年\n13.6 章节事件：无尽的冒险：故事的开始\n</第十三章事件列表>\n<胜利的飨宴>\n13.1 章节事件：胜利的飨宴：金币、麦酒与欢呼\n章节事件目标： 作为参战的一员，与公会众人一同尽情狂欢，分享胜利的喜悦。\n\n系统引导： 系统将描绘公会庆功宴的热烈场面。{{user}}可以自由行动：是与一同奋战的冒险者们大声祝酒？还是去找长枪手或女骑士分享战斗心得？",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "在盛大的庆功宴上，哥布林杀手在同伴的环绕下，完成了从一个复仇工具到“冒险者”的最终蜕变，为第一卷的故事画上圆满的句号。{{user}}，作为并肩作战的冒险者之一，将亲身经历这场从绝望请求到万众响应的戏剧性转变，并见证那个怪人最后、也是最重要的一步转变。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_1_13_胜利的飨宴：金币",
+        "ch_1_13_麦酒与欢呼",
+        "ch_1_13_一枚金币的酬劳：角落里的对话",
+        "ch_1_13_冒险者的梦想：“我想当",
+        "ch_1_13_冒险者”",
+        "ch_1_13_最后的请求：摘下头盔的脸",
+        "ch_1_13_迟来的相见：一个平凡的青年",
+        "ch_1_13_无尽的冒险：故事的开始",
+        "ch_1_13_胜利的飨宴：金币",
+        "ch_1_13_麦酒与欢呼"
+      ]
+    }
   },
   {
     "id": "ch_2_1",
     "mainline_id": "vol_2",
     "name": "第二卷:第一章:冒险与日常",
-    "order": 29,
+    "order": 18,
     "status": "locked",
     "description": "第二卷:第一章:冒险与日常\n第一章主要目标： {{user}}在一次看似常规的遗迹探索中，重新熟悉你所在团队的奇特战斗节奏与成员间的独特关系。在短暂的休整后，你将与团队一同接受一个来自远方、酬劳丰厚的紧急委托，踏上新的旅程。\n你，作为这支奇特队伍的第六人{{user}}，将按顺序进行以下事件。\n<第一章事件列表>\n1.1 章节事件：熟悉的拌嘴与冰冷的专注 (Familiar Banter, Cold Focus)\n1.2 章节事件：专家的清扫方式 (The Specialist's Method of Cleaning)\n1.3 章节事件：来自水之都的召唤 (The Call from the Water Capital)\n</ 第一章事件列表 >\n<熟悉的拌嘴与冰冷的专注>\n章节事件：熟悉的拌嘴与冰冷的专注 (Familiar Banter, Cold Focus)\n章节事件目标： 在探索古代遗迹的过程中，亲身体验团队成员——尤其是妖精弓手与矿人道士——之间永无休止的斗嘴，并再次确认哥布林杀手那不受任何干扰的、对任务的绝对专注。\n你们六人正行进在一座被森林吞噬的古代神代城市遗迹中。阳",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "whispering_forest",
+      "frontier_town"
+    ],
+    "objectives": [
+      "{{user}}在一次看似常规的遗迹探索中，重新熟悉你所在团队的奇特战斗节奏与成员间的独特关系。在短暂的休整后，你将与团队一同接受一个来自远方、酬劳丰厚的紧急委托，踏上新的旅程。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_1_熟悉的拌嘴与冰冷的专注_(Familiar_Banter",
+        "ch_2_1_Cold_Focus)",
+        "ch_2_1_专家的清扫方式_(The_Specialist's_Meth",
+        "ch_2_1_来自水之都的召唤_(The_Call_from_the_Wa",
+        "ch_2_1_熟悉的拌嘴与冰冷的专注_(Familiar_Banter",
+        "ch_2_1_Cold_Focus)"
+      ]
+    }
   },
   {
     "id": "ch_2_2",
     "mainline_id": "vol_2",
     "name": "第二卷:第二章:水之都的小鬼杀手",
-    "order": 30,
+    "order": 19,
     "status": "locked",
     "description": "第二卷 第二章：水之都的小鬼杀手\n第二章主要目标：作为冒险者，{{user}}将抵达繁华的水之都，与传说中的英雄“剑之圣女”会面。{{user}}将从她口中得知这次任务的真相——它不仅是剿灭哥布林，更关乎整座城市的安危与秩序。\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第二章事件列表>\n2.1 章节事件：繁华下的暗流 （Currents under the Splendor）\n2.2 章节事件：剑之圣女 （The Sword Maiden）\n2.3 章节事件：英雄的请求与阴影 （The Hero's Plea and the Shadow）\n</第二章事件列表>\n<繁华下的暗流>\n2.1 章节事件：繁华下的暗流 （Currents under the Splendor）\n章节事件目标：{{user}}初次踏入水之都，感受其与边境小镇截然不同的繁华景象，并在哥布林杀手的提醒下，意识到这片光明之下潜藏的黑暗。\n系统引导：宏伟的水之都展现在{{user}}眼前，与粗犷的边境截然不同。当你和队友们正为眼前的景象赞叹时，哥布林杀手冰冷的声音响起：“这里的空气……和被哥布林盯上的",
     "available_areas": [
-      "water_capital"
+      "water_town"
     ],
     "objectives": [
-      "会见剑之圣女",
-      "了解任务真相"
+      "作为冒险者，{{user}}将抵达繁华的水之都，与传说中的英雄“剑之圣女”会面。{{user}}将从她口中得知这次任务的真相——它不仅是剿灭哥布林，更关乎整座城市的安危与秩序。"
     ],
-    "trigger_conditions": {
-      "type": "chapter_complete",
-      "chapter_id": "ch_2_1"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "完成圣女的会面"
+      "events_required": [
+        "ch_2_2_繁华下的暗流_（Currents_under_the_Spl",
+        "ch_2_2_剑之圣女_（The_Sword_Maiden）",
+        "ch_2_2_英雄的请求与阴影_（The_Hero's_Plea_and_",
+        "ch_2_2_繁华下的暗流_（Currents_under_the_Spl"
+      ]
     }
   },
   {
     "id": "ch_2_3",
     "mainline_id": "vol_2",
     "name": "第二卷:第三章:随机遭遇",
-    "order": 31,
+    "order": 20,
     "status": "locked",
     "description": "第二卷 第三章：随机遭遇\n第三章主要目标：{{user}}将首次深入水之都的地下水道，亲身体验这个迷宫的危险。这不仅仅是一场战斗，更是一场你与团队必须面对环境、陷阱和敌人数量的全面战争，并最终以一场惊心动魄的追逐战告终。\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第三章事件列表>\n3.1 章节事件：污秽中的死斗 （A Struggle in the Filth）\n3.2 章节事件：雨中的喘息与伏击 （Respite and Ambush in the Rain）\n3.3 章节事件：鳄鱼与哥布林 （The Alligator and the Goblins）\n</第三章事件列表>\n<污秽中的死斗>\n3.1 章节事件：污秽中的死斗 （A Struggle in the Filth）\n章节事件目标：{{user}}的队伍需要在错综复杂的地下水道中，与装备精良的哥布林巡逻队展开数次遭遇战，并回收牺牲冒险者的遗物，直面这份冒险的残酷。\n系统引导：你们很快就遭到了哥布林的伏击，这些敌人的装备和战术远超边境的同类。面对这些懂得配合的敌人，{{user}}将如何与队友协同作战？是坚守",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town",
+      "underground_waterway"
+    ],
+    "objectives": [
+      "{{user}}将首次深入水之都的地下水道，亲身体验这个迷宫的危险。这不仅仅是一场战斗，更是一场你与团队必须面对环境、陷阱和敌人数量的全面战争，并最终以一场惊心动魄的追逐战告终。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_3_污秽中的死斗_（A_Struggle_in_the_Filt",
+        "ch_2_3_雨中的喘息与伏击_（Respite_and_Ambush_i",
+        "ch_2_3_鳄鱼与哥布林_（The_Alligator_and_the_",
+        "ch_2_3_污秽中的死斗_（A_Struggle_in_the_Filt"
+      ]
+    }
   },
   {
     "id": "ch_2_4",
     "mainline_id": "vol_2",
     "name": "第二卷:第四章:冒险与冒险之间的空档",
-    "order": 32,
+    "order": 21,
     "status": "locked",
     "description": "第二卷 第四章：冒险与冒险之间的空档\n第四章主要目标：在经历了第一次探索的生死考验后，{{user}}和团队将回到地面进行休整和补给。{{user}}将通过一系列日常事件，深入了解队友们不为人知的一面，尤其是剑之圣女背后隐藏的巨大创伤。\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第四章事件列表>\n4.1 章节事件：圣女的伤痕 （The Saint's Scars）\n4.2 章节事件：专家的工具\n4.3 章节事件：冰品的甜美与苦涩 （The Sweetness and Bitterness of Ice Cream）\n4.4 章节事件：意外的援军 （Unexpected Reinforcements）\n</第四章事件列表>\n<圣女的伤痕>\n4.1 章节事件：圣女的伤痕 （The Saint's Scars）\n章节事件目标：{{user}}将通过女神官，窥见剑之圣女这位英雄光环之下，那触目惊心的过往与难以愈合的创伤。\n系统引导：当女神官带着前所未有的凝重与不安回到你们身边时，你察觉到了她的异样。她似乎有话想说，却又不知如何开口。{{user}}是否会主动上前询问她发生了什",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town"
+    ],
+    "objectives": [
+      "在经历了第一次探索的生死考验后，{{user}}和团队将回到地面进行休整和补给。{{user}}将通过一系列日常事件，深入了解队友们不为人知的一面，尤其是剑之圣女背后隐藏的巨大创伤。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_4_圣女的伤痕_（The_Saint's_Scars）",
+        "ch_2_4_专家的工具",
+        "ch_2_4_冰品的甜美与苦涩_（The_Sweetness_and_Bi",
+        "ch_2_4_意外的援军_（Unexpected_Reinforcemen",
+        "ch_2_4_圣女的伤痕_（The_Saint's_Scars）"
+      ]
+    }
   },
   {
     "id": "ch_2_5",
     "mainline_id": "vol_2",
     "name": "第二卷:第五章:迈向死亡",
-    "order": 33,
+    "order": 22,
     "status": "locked",
     "description": "第二卷 第五章：迈向死亡\n第五章主要目标：{{user}}将和队伍一起再次深入地下，这一次，你们将面对由哥布林精心策划的、远比随机遭遇更致命的陷阱。这将是一场考验团队智慧、勇气和协作能力的围城战，并以一个令人绝望的转折告终。\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第五章事件列表>\n5.1 章节事件：金丝雀与地下墓穴 （The Canary and the Catacombs）\n5.2 章节事件：致命的诱饵 （The Deadly Lure）\n5.3 章节事件：围城绝境 （The Desperate Siege）\n5.4 章节事件：英雄之陨 （The Hero's Fall）\n</第五章事件列表>\n<金丝雀与地下墓穴>\n5.1 章节事件：金丝雀与地下墓穴 （The Canary and the Catacombs）\n章节事件目标：你将跟随队伍进入遗迹的全新区域，并了解哥布林杀手带来的新“工具”——金丝雀的用途。\n系统引导：你们进入了庄严肃穆的地下墓穴，哥布林杀手却带来了这个看似脆弱的“工具”，你对此作何感想\n场景描述：你们再次进入地下，但这次的目标不再是下水道，而是",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town",
+      "underground_waterway"
+    ],
+    "objectives": [
+      "{{user}}将和队伍一起再次深入地下，这一次，你们将面对由哥布林精心策划的、远比随机遭遇更致命的陷阱。这将是一场考验团队智慧、勇气和协作能力的围城战，并以一个令人绝望的转折告终。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_5_金丝雀与地下墓穴_（The_Canary_and_the_C",
+        "ch_2_5_致命的诱饵_（The_Deadly_Lure）",
+        "ch_2_5_围城绝境_（The_Desperate_Siege）",
+        "ch_2_5_英雄之陨_（The_Hero's_Fall）",
+        "ch_2_5_金丝雀与地下墓穴_（The_Canary_and_the_C"
+      ]
+    }
   },
   {
     "id": "ch_2_6",
     "mainline_id": "vol_2",
     "name": "第二卷:第六章:猜谜",
-    "order": 34,
+    "order": 23,
     "status": "locked",
     "description": "第二卷 第六章：猜谜\n第六章主要目标：这并非现实中发生的事件。在{{user}}的队友哥布林杀手重伤昏迷之际，{{user}}将通过某种未知的链接，深入他的意识深处，亲眼见证他与过去的“老师”进行的一场精神对话。你将通过这场“猜谜”，了解他那套极端实用主义战术思想的源头\n本章特殊规则：在这一独特的章节中，{{user}}的意识将与重伤的哥布林杀手相连。{{user}}将作为一名纯粹的“观察者”，通过他的视角，体验他过去那段残酷而独特的训练。本章没有你的直接行动，{{user}}的任务是观察、理解，并带回关于这位神秘队友的最关键情报。\n<第六章事件列表>\n6.1 章节事件：冰窟中的师徒 （The Master and Apprentice in the Ice Cave）\n6.2 章节事件：生存的谜题 （The Riddles of Survival）\n6.3 章节事件：无解的答案 （The Unanswered Question）\n6.3 章节事件：死里逃生（A Narrow Escape）\n</第六章事件列表>\n<冰窟中的师徒>\n6.1 章节事件：冰窟中的师徒 （The Master",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "这并非现实中发生的事件。在{{user}}的队友哥布林杀手重伤昏迷之际，{{user}}将通过某种未知的链接，深入他的意识深处，亲眼见证他与过去的“老师”进行的一场精神对话。你将通过这场“猜谜”，了解他那套极端实用主义战术思想的源头"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_6_冰窟中的师徒_（The_Master_and_Apprent",
+        "ch_2_6_生存的谜题_（The_Riddles_of_Survival",
+        "ch_2_6_无解的答案_（The_Unanswered_Question",
+        "ch_2_6_死里逃生（A_Narrow_Escape）",
+        "ch_2_6_冰窟中的师徒_（The_Master"
+      ]
+    }
   },
   {
     "id": "ch_2_7",
     "mainline_id": "vol_2",
     "name": "第二卷:第七章:耳语和祈祷与咏唱",
-    "order": 35,
+    "order": 24,
     "status": "locked",
     "description": "第二卷 第七章：耳语、祈祷与咏唱\n第七章主要目标：哥布林杀手从重伤中苏醒，你将见证团队成员间的深厚羁绊。更重要的是，你将有机会成为唯一一个察觉到剑之圣女内心防线的人，并最终从她口中，确认一个令人震惊的真相——水之都的哥布林灾难，是她一手策划的。\n{{user}}作为将团队从死亡边缘拉回的英雄，展开这一章节\n<第七章事件列表>\n7.1 章节事件：苏生神迹 （The Miracle of Resurrection）\n7.2 章节事件：圣女的视线 （The Saint's Gaze）[原创事件]\n7.3 章节事件：三度敲门  (The Third Knock) [原创事件]\n7.4 章节事件：英雄的告白 （The Hero's Confession）\n7.5 章节事件：旅人的承诺  (The Traveler's Promise)\n</第七章事件列表>\n<苏生神迹>\n7.1 章节事件：苏生神迹 （The Miracle of Resurrection）\n章节事件目标：{{user}}将亲眼见证哥布林杀手在高级高级神迹下恢复，并作为团队成员在他昏迷期间守护他\n系统引导：当哥布林杀手终于醒来，房",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town"
+    ],
+    "objectives": [
+      "哥布林杀手从重伤中苏醒，你将见证团队成员间的深厚羁绊。更重要的是，你将有机会成为唯一一个察觉到剑之圣女内心防线的人，并最终从她口中，确认一个令人震惊的真相——水之都的哥布林灾难，是她一手策划的。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_7_苏生神迹_（The_Miracle_of_Resurrect",
+        "ch_2_7_圣女的视线_（The_Saint's_Gaze）[原创事件]",
+        "ch_2_7_三度敲门__(The_Third_Knock)_[原创事件]",
+        "ch_2_7_英雄的告白_（The_Hero's_Confession）",
+        "ch_2_7_旅人的承诺__(The_Traveler's_Promise",
+        "ch_2_7_苏生神迹_（The_Miracle_of_Resurrect"
+      ]
+    }
   },
   {
     "id": "ch_2_8",
     "mainline_id": "vol_2",
     "name": "第二卷:第八章:夹上书签",
-    "order": 36,
+    "order": 25,
     "status": "locked",
     "description": "第二卷 第八章：夹上书签\n第八章主要目标：这是冒险的尾声，团队将进行最后的决战准备。{{user}}将带着剑之圣女的秘密，在团队的日常互动中，引导他们走向最后的决战，并进一步巩固彼此间的信任与友谊。\n{{user}}作为决定关键的重要人物\n<第八章事件列表>\n8.1 章节事件：回归的同伴 （The Returning Companions）\n8.2 章节事件：以你的名义 （In Your Nam\n</第八章事件列表>\n<回归的同伴>\n8.1 章节事件：回归的同伴 （The Returning Companions）\n章节事件目标：与完成侦察任务的队友们汇合，并以{{user}}对真相的了解，主导团队决定发起最后的总攻。\n系统引导：其他队友报告发现了魔镜祭坛，并认为那是哥布林大本营时，你会如何进行这次作战会议？\n场景描述：{{user}}结束了与剑之圣女的对话，带着这个沉重的秘密回到神殿门口，与哥布林杀手和女神官汇合。此时，完成地下侦察的妖精弓手、矿人道士和蜥蜴人僧侣也正好返回。他们报告说，在地下发现了一个祭祀着一面巨大魔镜的礼拜堂，那里极有可能就是哥布林的大本营。\n重要规则：这是决战前",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town",
+      "underground_waterway"
+    ],
+    "objectives": [
+      "这是冒险的尾声，团队将进行最后的决战准备。{{user}}将带着剑之圣女的秘密，在团队的日常互动中，引导他们走向最后的决战，并进一步巩固彼此间的信任与友谊。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_8_回归的同伴_（The_Returning_Companion",
+        "ch_2_8_以你的名义_（In_Your_Nam",
+        "ch_2_8_回归的同伴_（The_Returning_Companion"
+      ]
+    }
   },
   {
     "id": "ch_2_9",
     "mainline_id": "vol_2",
     "name": "第二卷:第九章:不可以说出名称的怪物",
-    "order": 37,
+    "order": 26,
     "status": "locked",
     "description": "第二卷 第九章：不可以说出名称的怪物\n第九章主要目标：在你的带领下，团队将直面盘踞在遗迹最深处的最终BOSS——一只来自异界的、被称为“凝视者”的巨大眼球构造体。这不是一场单纯的哥布林清剿，而是一场对抗未知恐怖的真正冒险。\n{{user}}作为团队重要的第六人，将按顺序进行以下事件。\n<第九章事件列表>\n9.1 章节事件：邪眼之威 （The Terror of the Evil Eye）\n9.2 章节事件：粉尘爆炸 （The Dust Explosion）\n9.3 章节事件：镜子的秘密 （The Secret of the Mirror）\n</第九章事件列表>\n<邪眼之威>\n9.1 章节事件：邪眼之威 （The Terror of the Evil Eye）\n章节事件目标：{{user}}将带领团队初次挑战“凝视者”，并亲身体验到其强大的魔法能力，尤其是能够中断施法和发射“分解”射线的邪眼所带来的彻底压制。\n系统引导：战斗一开始，你们就陷入了绝对的劣势。怪物的能力几乎完美克制了你们的队伍。面对这突如其来的强大敌人，{{user}}会如何调整战术？是命令全员撤退，重新制定计划，还是身先士",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "underground_waterway"
+    ],
+    "objectives": [
+      "在你的带领下，团队将直面盘踞在遗迹最深处的最终BOSS——一只来自异界的、被称为“凝视者”的巨大眼球构造体。这不是一场单纯的哥布林清剿，而是一场对抗未知恐怖的真正冒险。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_9_邪眼之威_（The_Terror_of_the_Evil_E",
+        "ch_2_9_粉尘爆炸_（The_Dust_Explosion）",
+        "ch_2_9_镜子的秘密_（The_Secret_of_the_Mirro",
+        "ch_2_9_邪眼之威_（The_Terror_of_the_Evil_E"
+      ]
+    }
   },
   {
     "id": "ch_2_10",
     "mainline_id": "vol_2",
     "name": "第二卷:第十章:魔鬼陷阱的废都",
-    "order": 38,
+    "order": 27,
     "status": "locked",
     "description": "第二卷 第十章：魔鬼陷阱的废都\n第十章主要目标：就在你们揭开真相、准备收尾之际，被爆炸声引来的哥布林残余大军将你们团团包围。在废墟之中，{{user}}将带领团队打响这场冒险的最终防御战。\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第十章事件列表>\n10.1 章节事件：最后的围攻 （The Last Siege）\n10.2 章节事件：英雄归来 （The Hero's Return）\n10.3 章节事件：崩塌的葬礼 （A Funeral of Collapse）\n</第十章事件列表>\n<最后的围攻>\n10.1 章节事件：最后的围攻 （The Last Siege）\n章节事件目标：面对从四面八方涌来的哥布林，在精疲力尽的状态下，{{user}}将指挥团队利用有限的地形和资源，展开一场绝望的阵地防御战。\n系统引导：哥布林大军从所有通道涌来，将你们团团包围。作为团队的指挥官，{{user}}必须在最短的时间内分配任务，构筑防线。你会让谁负责正面防御，谁负责远程压制，谁又来保护关键的镜子和施法者？\n场景描述：爆炸声引来了地下墓穴中所有的哥布林。在独眼的哥布林英雄的带领下，他们从",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "underground_waterway"
+    ],
+    "objectives": [
+      "就在你们揭开真相、准备收尾之际，被爆炸声引来的哥布林残余大军将你们团团包围。在废墟之中，{{user}}将带领团队打响这场冒险的最终防御战。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_10_最后的围攻_（The_Last_Siege）",
+        "ch_2_10_英雄归来_（The_Hero's_Return）",
+        "ch_2_10_崩塌的葬礼_（A_Funeral_of_Collapse）",
+        "ch_2_10_最后的围攻_（The_Last_Siege）"
+      ]
+    }
   },
   {
     "id": "ch_2_11",
     "mainline_id": "vol_2",
     "name": "第二卷:第十一章:前往归来",
-    "order": 39,
+    "order": 28,
     "status": "locked",
     "description": "第二卷 第十一章：前往，归来\n第十一章主要目标：冒险结束，本章将通过你与剑之圣女最后的对话，为水之都的故事收尾，并以团队返回边境的温馨旅途，为整卷故事画上圆满的句号。\n本章特殊规则：你将作为团队的一员，享受冒险成功后的平静与喜悦。\n<第十一章事件列表>\n11.1 章节事件：旅人的告别 （The Traveler's Farewell）\n11.2 章节事件：归途 （The Journey Home）\n</第十一章事件列表>\n<旅人的告别>\n11.1 章节事件：旅人的告别 （The Traveler's Farewell）\n章节事件目标：这是你与剑之圣女在水之都的最后一次会面。你将向她告知冒险的最终结果，并见证她从长达十年的梦魇中真正解脱。\n系统引导：在神殿的庭院里，你最后一次找到了剑之圣女。当你告诉她，那面带来灾祸的镜子已经被彻底封印时，她会如何反应？面对她最后的、带着试探与希望的询问——“您……还会再来吗？”，你会如何回答？\n场景描述：在返回之前，你向剑之圣女进行了最后的告别。你告知她，哥布林杀手已经用混凝土将那面传送门镜子彻底封死，并沉入了地下湖底。你兑现了你的承诺。这个消息，让她终",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town",
+      "frontier_town"
+    ],
+    "objectives": [
+      "冒险结束，本章将通过你与剑之圣女最后的对话，为水之都的故事收尾，并以团队返回边境的温馨旅途，为整卷故事画上圆满的句号。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_2_11_旅人的告别_（The_Traveler's_Farewell",
+        "ch_2_11_归途_（The_Journey_Home）",
+        "ch_2_11_旅人的告别_（The_Traveler's_Farewell"
+      ]
+    }
   },
   {
     "id": "ch_3_1",
     "mainline_id": "vol_3",
     "name": "第三卷:第一章:秋风之月",
-    "order": 40,
+    "order": 29,
     "status": "locked",
     "description": "第三卷 第一章『秋风之月』\n主要目标： 你将见证哥布林杀手在一次看似寻常的任务中展现出的非凡洞察力，并作为他日益扩大的社交圈中的核心一员，处理围绕着即将到来的收获祭所产生的各种“邀约”与暗流。\n核心规则：若牧牛妹与柜台小姐对{{user}}的好感度高于哥布林杀手，则跳过代理人环节，她们会直接来找{{user}}约会，并在整个过程中都不提及哥布林杀手\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第一章事件列表>\n1.1 章节事件：矿坑的清剿 (The Mine Extermination)\n1.2 间章：烦恼今年供奉的故事\n1.3 章节事件：酒馆的漩涡 (The Vortex of the Guild Hall)\n1.4 章节事件：不愉快的审查 (An Unpleasant Examination)\n1.5 章节事件：收获祭的代理人战争 (The Harvest Festival's Proxy War)\n</第一章事件列表>\n<矿坑的清剿>\n1.1 章节事件：矿坑的清剿 (The Mine Extermination)\n章节事件目标： 你将亲身参与哥布林杀手的一次矿山清",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "你将见证哥布林杀手在一次看似寻常的任务中展现出的非凡洞察力，并作为他日益扩大的社交圈中的核心一员，处理围绕着即将到来的收获祭所产生的各种“邀约”与暗流。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_1_矿坑的清剿_(The_Mine_Extermination)",
+        "ch_3_1_酒馆的漩涡_(The_Vortex_of_the_Guild",
+        "ch_3_1_不愉快的审查_(An_Unpleasant_Examinat",
+        "ch_3_1_收获祭的代理人战争_(The_Harvest_Festiva",
+        "ch_3_1_矿坑的清剿_(The_Mine_Extermination)"
+      ]
+    }
   },
   {
     "id": "ch_3_2",
     "mainline_id": "vol_3",
     "name": "第三卷:第二章『前夜祭』",
-    "order": 41,
+    "order": 30,
     "status": "locked",
     "description": "第三卷 第二章『前夜祭』\n主要目标： 你将从多个侧面，观察到哥布林杀手在“非任务”状态下的行动。你会发现，他的“假日”并非休息，而是另一种形式的“准备”，并进一步理解他那套独特的生存哲学。\n核心规则：若牧牛妹与柜台小姐对{{user}}的好感度高于哥布林杀手，则跳过代理人环节，她们会直接来找{{user}}约会，并在整个过程中都不提及哥布林杀手\n{{user}}作为团队的第六人，将按顺序进行以下事件。\n<第二章事件列表>\n2.1 章节事件：工坊的智囊 (The Sage of the Workshop)\n2.2 章节事件：庆典的工匠 (The Craftsman of the Festival)\n2.3 章节事件：暗夜的伏笔 (The Prelude in the Dark)\n</第二章事件列表>\n<工坊的智囊>\n2.1 章节事件：工坊的智囊 (The Sage of the Workshop)\n章节事件目标： 你将在武具店里，看到哥布林杀手令人费解的购物清单，并意外见证他为其他冒险者“出谋划策”的罕见场面。\n系统引导： 当你看到哥布林杀手给女骑士提出“战术建议”时，你会作何反应？是会",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "你将从多个侧面，观察到哥布林杀手在“非任务”状态下的行动。你会发现，他的“假日”并非休息，而是另一种形式的“准备”，并进一步理解他那套独特的生存哲学。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_2_工坊的智囊_(The_Sage_of_the_Worksho",
+        "ch_3_2_庆典的工匠_(The_Craftsman_of_the_Fe",
+        "ch_3_2_暗夜的伏笔_(The_Prelude_in_the_Dark",
+        "ch_3_2_工坊的智囊_(The_Sage_of_the_Worksho"
+      ]
+    }
   },
   {
     "id": "ch_3_3",
     "mainline_id": "vol_3",
     "name": "第三卷:第三章:梦想的收获祭",
-    "order": 42,
+    "order": 31,
     "status": "locked",
     "description": "第三卷 第三章：梦想的收获祭\n第三章主要目标： 作为哥布林杀手的“代理人”，你将履行在第一章许下的承诺，与牧牛妹进行收获祭的约会。你需要在两场氛围截然不同的“约会”中，化解因“代人赴约”而产生的尴尬，并在这奇特的经历中，更深入地了解这位女生\n核心规则：若牧牛妹与柜台小姐对{{user}}的好感度高于哥布林杀手，则跳过代理人环节，她们会直接来找{{user}}约会，并在整个过程中都不提及哥布林杀手\n本章特殊规则： 你是这两场约会的主角。你的言行举止将直接决定约会的氛围和走向，并可能对你、哥布林杀手以及两位女主角之间的关系产生深远影响，\n<第三章事件列表>\n3.1 章节事件：上午的日常 (The Morning's Routine) - 与牧牛妹的约会\n3.2 章节事件：指环的重量 (The Weight of the Ring) - 与牧牛妹的约会\n3.3 章节事件：下午的答谢 (The Afternoon's Gratitude) - 与柜台小姐的约会\n</第三章事件列表>\n<上午的日常>\n3.1 章节事件：上午的日常 (The Morning's Routine)\n章节事件目标： 你",
-    "available_areas": [
-      "frontier_town",
-      "cow_girl_farm"
-    ],
+    "available_areas": [],
     "objectives": [
-      "完成收获祭约会",
-      "提升角色好感"
+      "作为哥布林杀手的“代理人”，你将履行在第一章许下的承诺，与牧牛妹进行收获祭的约会。你需要在两场氛围截然不同的“约会”中，化解因“代人赴约”而产生的尴尬，并在这奇特的经历中，更深入地了解这位女生"
     ],
-    "trigger_conditions": {
-      "type": "chapter_complete",
-      "chapter_id": "ch_3_2"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "结束上午的约会"
+      "events_required": [
+        "ch_3_3_上午的日常_(The_Morning's_Routine)_",
+        "ch_3_3_指环的重量_(The_Weight_of_the_Ring)",
+        "ch_3_3_下午的答谢_(The_Afternoon's_Gratitu",
+        "ch_3_3_上午的日常_(The_Morning's_Routine)"
+      ]
     }
   },
   {
     "id": "ch_3_4",
     "mainline_id": "vol_3",
     "name": "第三卷:第四章:最重要的是笑容",
-    "order": 43,
+    "order": 32,
     "status": "locked",
     "description": "第三卷 第四章：最重要的是笑容\n第四章主要目标：在结束了上午与牧牛妹的“日常约会”后，作为约会的主角，你将履行承诺，与柜台小姐一同体验收获祭的后半场。这并非一场任务，而是一次由她精心策划、旨在让你感受“和平日常”的真正约会。在这份温暖的互动中，你们的情感将得到升华，直到庆典的终焉，一场突如其来的致命暗杀，将你和她共同卷入最终决战的序幕。\n核心规则：若牧牛妹与柜台小姐对{{user}}的好感度高于哥布林杀手，则跳过代理人环节，她们会直接来找{{user}}约会，并在整个过程中都不提及哥布林杀手\n本章特殊规则： 你是这场约会的核心体验者。你的回应和互动将直接塑造这段关系的深度。同时，在最终的暗杀事件中，你的警觉和战斗技巧将直接决定你和柜台小姐的生死。\n<第四章事件列表>\n4.1 章节事件：精心准备的向导 （The Well-Prepared Guide）\n4.2 章节事件：塔顶的祈祷 （A Prayer from the Top）\n4.3 章节事件：庆典的终焉 （A Blade in the Silence）\n</第四章事件列表>\n<精心准备的向导>\n4.1 章节事件：精心准备的向导 （A",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在结束了上午与牧牛妹的“日常约会”后，作为约会的主角，你将履行承诺，与柜台小姐一同体验收获祭的后半场。这并非一场任务，而是一次由她精心策划、旨在让你感受“和平日常”的真正约会。在这份温暖的互动中，你们的情感将得到升华，直到庆典的终焉，一场突如其来的致命暗杀，将你和她共同卷入最终决战的序幕。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_4_精心准备的向导_（The_Well-Prepared_Gui",
+        "ch_3_4_塔顶的祈祷_（A_Prayer_from_the_Top）",
+        "ch_3_4_庆典的终焉_（A_Blade_in_the_Silence）",
+        "ch_3_4_精心准备的向导_（A"
+      ]
+    }
   },
   {
     "id": "ch_3_5",
     "mainline_id": "vol_3",
     "name": "第三卷:第五章:颠覆脚本",
-    "order": 44,
+    "order": 33,
     "status": "locked",
     "description": "第三卷 第五章：颠覆脚本 \n主要目标： 作为团队的战地核心，你将与哥布林杀手共同指挥，领导团队执行一场对抗大规模哥布林入侵的闪电防御战。你的决策将直接影响战术的执行、伏击的效果，并在最终决战中，亲手终结隐藏在哥布林大军背后的真正威胁。\n<第五章事件列表>\n5.1 章节事件：猎手集结 (The Hunters Gather)\n5.2 章节事件：陷阱的交响 (A Symphony of Traps)\n</第五章事件列表>\n<猎手集结>\n5.1 章节事件：猎手集结 (The Hunters Gather)\n章节事件目标： 在暗杀事件后的危急关头，哥布林杀手将迅速整合团队，并作为核心决策者之一，与哥布林杀手一同制定并启动反击计划。\n系统引导： 在你击杀圃人刺客、公会大厅的血腥味尚未散去之时，哥布林杀手已然出现在你身边。紧接着，收到神谕的女神官和心领神会的其他队友也全副武装地赶到。哥布林杀手会向你说明他通过陷阱反馈推断出的情况：敌人已兵分四路，形成合围之势。“这是针对我们的陷阱，” 他会用那毫无波澜的语气陈述，“而我们，要去踩这个陷阱。” 作为他最信赖的战术伙伴，你会如何回应这个高风险的计划？是",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "作为团队的战地核心，你将与哥布林杀手共同指挥，领导团队执行一场对抗大规模哥布林入侵的闪电防御战。你的决策将直接影响战术的执行、伏击的效果，并在最终决战中，亲手终结隐藏在哥布林大军背后的真正威胁。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_5_猎手集结_(The_Hunters_Gather)",
+        "ch_3_5_陷阱的交响_(A_Symphony_of_Traps)",
+        "ch_3_5_猎手集结_(The_Hunters_Gather)"
+      ]
+    }
   },
   {
     "id": "ch_3_6",
     "mainline_id": "vol_3",
     "name": "第三卷:第六章:七臂的威力",
-    "order": 45,
+    "order": 34,
     "status": "locked",
     "description": "第三卷 第六章：七臂的威力 (决战详述版)\n主要目标： 在牧场前的最终战场上，你将作为主攻手，与团队成员协同作战，正面迎击异变的暗人指挥官。你的勇气、智慧与战术抉择，将是击败这只混沌化身的唯一希望，并由你亲手谱写这场史诗决战的终章。\n<第六章事件列表>\n6.1 章节事件：幕后黑手的反击 (The Mastermind's Counterattack)\n6.2 章节事件：混沌的化身 (Avatar of Chaos)\n6.3 章节事件：终结的一击 (The Finishing Blow)\n</第六章事件列表>\n<幕后黑手的反击>\n6.1 章节事件：幕后黑手的反击 (The Mastermind's Counterattack)\n章节事件目标： 在肃清了最后的哥布林部队后，你将与幕后黑手——暗人召唤士正面遭遇，并在初次交锋中，亲身体会他作为混沌使徒的强大、诡异与傲慢。\n系统引导： 当最后一支哥布林部队在你们制造的烟幕与泥沼中被歼灭时，真正的敌人现身了。他从暴雨中走出，脸上带着计划被挫败的狂怒。他无视了正在与蜥蜴僧侣缠斗的龙牙兵，径直向作为指挥官的你袭来。面对他那快如鬼魅的突刺，你会如何应对",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在牧场前的最终战场上，你将作为主攻手，与团队成员协同作战，正面迎击异变的暗人指挥官。你的勇气、智慧与战术抉择，将是击败这只混沌化身的唯一希望，并由你亲手谱写这场史诗决战的终章。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_6_幕后黑手的反击_(The_Mastermind's_Coun",
+        "ch_3_6_混沌的化身_(Avatar_of_Chaos)",
+        "ch_3_6_终结的一击_(The_Finishing_Blow)",
+        "ch_3_6_幕后黑手的反击_(The_Mastermind's_Coun"
+      ]
+    }
   },
   {
     "id": "ch_3_7",
     "mainline_id": "vol_3",
     "name": "第三卷:第七章:庆祝什么都不是的日子吧",
-    "order": 46,
+    "order": 35,
     "status": "locked",
     "description": "第三卷:第六章:庆祝什么都不是的日子吧\n主要目标： 在一场大战之后，{{user}}将见证故事回归宁静的日常，体会战斗与和平的交替，并最终理解哥布林杀手心中那份笨拙的温柔。\n<第六章事件列表>\n6.1 章节事件：膝枕与花语 (The Lap Pillow and the Flower's Language)\n</第六章事件列表>\n<膝枕与花语>\n章节事件：膝枕与花语 (The Lap Pillow and the Flower's Language)\n章节事件目标： {{user}}将看到哥布林杀手与牧牛妹之间最亲密、最平和的互动，并在故事的结尾，理解本卷标题《秋风之月》背后的深层含义。\n在战斗结束后的一个晴朗日子里，{{user}}将在牧场旁的雏菊之丘上，看到一幅宁静的画面。牧牛妹让哥布林杀手枕在自己的膝上，温柔地为他清理着耳朵。这是一种无需言语的信赖与安宁，是激烈战斗后最宝贵的奖赏。当你们的小队前来寻找他，准备开启下一次冒险时，你将听到他与牧牛妹之间最后的对话。他会提到自己查了“金木樨”的花语，并认为那不适合自己。而牧牛妹则会微笑着，轻声反驳。\n重要规则： 这是整部第三卷的情感终点",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "cow_girl_farm"
+    ],
+    "objectives": [
+      "在一场大战之后，{{user}}将见证故事回归宁静的日常，体会战斗与和平的交替，并最终理解哥布林杀手心中那份笨拙的温柔。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_7_膝枕与花语_(The_Lap_Pillow_and_the_",
+        "ch_3_7_膝枕与花语_(The_Lap_Pillow_and_the_"
+      ]
+    }
   },
   {
     "id": "ch_3_1",
     "mainline_id": "vol_3",
     "name": "番外卷 第一章:怪诞委托",
-    "order": 47,
+    "order": 36,
     "status": "locked",
     "description": "番外卷 第一章：怪诞委托\n章节目标：\n通过一份奇怪且高额的委托，逐步展现妖精法师温柔知性但带点词不达意的魅力。\n重点塑造：妖精法师的语言混乱与羞涩反应，温柔隐秘的照顾行为，增强玩家代入感。\n你引导{{user}}按顺序进行以下事件。\n<第1章事件列表> 1.1章节事件：公会的奇事：奇怪的高额委托 \n1.2章节事件：小队的分歧：能否说服同行者 \n1.3章节事件：森林的邀约：妖精法师登场 \n1.4章节事件：不可言说的诅咒：生命的倒计时 \n</第1章事件列表>\n\n<公会的奇事> 1.1章节事件：公会的奇事：奇怪的高额委托 \n章节事件目标：在公会发现一份措辞奇怪、报酬极高的委托。\n\n哥布林事件平息之后，【系统引导】{{user}}例行来到冒险者公会。午后的阳光透过高大的木窗，在布满划痕的橡木长桌和石板地上投下斑驳的光块。空气中混杂着麦酒、皮革、汗水和陈旧纸张的味道，冒险者们粗犷的谈笑声此起彼伏。墙上的新委托中，一张用木炭写就的羊皮纸吸引了{{user}}的注意。它钉在一堆格式统一的印刷委托中间，显得格格不入。羊皮纸边缘有些毛糙，带着森林特有的潮湿气息和苔藓碎屑。字迹歪斜、语法混乱，甚至出现了“",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "whispering_forest"
+    ],
+    "objectives": [
+      "通过一份奇怪且高额的委托，逐步展现妖精法师温柔知性但带点词不达意的魅力。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_1_1.1章节事件：公会的奇事：奇怪的高额委托",
+        "ch_3_1_1.2章节事件：小队的分歧：能否说服同行者",
+        "ch_3_1_1.3章节事件：森林的邀约：妖精法师登场",
+        "ch_3_1_1.4章节事件：不可言说的诅咒：生命的倒计时",
+        "ch_3_1_公会的奇事：奇怪的高额委托",
+        "ch_3_1_小队的分歧：能否说服同行者",
+        "ch_3_1_森林的邀约：妖精法师登场",
+        "ch_3_1_不可言说的诅咒：生命的倒计时",
+        "ch_3_1_公会的奇事：奇怪的高额委托"
+      ]
+    }
   },
   {
     "id": "ch_3_2",
     "mainline_id": "vol_3",
     "name": "番外卷 第二章:镜子湖之行",
-    "order": 48,
+    "order": 37,
     "status": "locked",
     "description": "番外卷 第二章：镜子湖之行\n\n章节目标：\n探索轻语森林深处的镜子湖，揭开“月露”传说的初步线索，展示队伍协作与战斗力，奠定接下来进入哥布林巢穴的剧情基础。\n\n#要点：\n\n* 妖精法师的性格塑造：表现她的自然亲和力、乐观坚强的包容性，以及在战斗中的控制系能力；\n* 镜子湖神秘气氛构建：清澈湖面、平静氛围、心灵感应等神秘感受；\n* 哥布林战斗与玩家选择：玩家可主动战斗或感知隐藏要素，突出战术自由；\n* 蜥蜴人部落与新情报：介绍湖底可能隐藏洞穴与月露传说，推动主线；\n* 微妙情感进展：妖精法师对玩家好感升温，篝火夜谈增强代入；\n* 分支互动系统：好感度、战斗表现等影响剧情走向与专属奖励；\n\n你引导[{{user}}]按顺序进行以下事件。\n<第2章事件列表>\n2.1章节事件：湖边初探：妖精法师引路，镜湖初现\n2.2章节事件：战斗之中：控制之舞与英雄本色\n2.3章节事件：部落之邀：蜥蜴人沼泽的传说\n2.4章节事件：夜宿沼泽：篝火夜谈与微妙情愫\n</第2章事件列表>\n\n<湖边初探>\n2.1章节事件：湖边初探：妖精法师引路，镜湖初现\n章节事件目标：妖精法师引领队伍前往镜子湖，展现其乐观态度与自然亲和",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "whispering_forest",
+      "mirror_lake"
+    ],
+    "objectives": [
+      "探索轻语森林深处的镜子湖，揭开“月露”传说的初步线索，展示队伍协作与战斗力，奠定接下来进入哥布林巢穴的剧情基础。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_2_2.1章节事件：湖边初探：妖精法师引路，镜湖初现",
+        "ch_3_2_2.2章节事件：战斗之中：控制之舞与英雄本色",
+        "ch_3_2_2.3章节事件：部落之邀：蜥蜴人沼泽的传说",
+        "ch_3_2_2.4章节事件：夜宿沼泽：篝火夜谈与微妙情愫",
+        "ch_3_2_湖边初探：妖精法师引路",
+        "ch_3_2_镜湖初现",
+        "ch_3_2_战斗之中：控制之舞与英雄本色",
+        "ch_3_2_部落之邀：蜥蜴人沼泽的传说",
+        "ch_3_2_夜宿沼泽：篝火夜谈与微妙情愫",
+        "ch_3_2_湖边初探：妖精法师引路",
+        "ch_3_2_镜湖初现"
+      ]
+    }
   },
   {
     "id": "ch_3_3",
     "mainline_id": "vol_3",
     "name": "番外卷 第三章:传说中的镜子湖底",
-    "order": 49,
+    "order": 38,
     "status": "locked",
     "description": "番外卷 第三章：传说中的镜子湖底\n\n章节目标：\n\n探索镜子湖底的神秘古遗迹，通过三重分支试炼（战斗、解谜、精神抗性）推进主线“月露”传说。妖精法师与玩家关系进一步升温。哥布林巢穴秘密初现端倪。\n\n#要点：\n探索镜子湖底，进入神秘古老的水下世界。\n玩家{{user}}展示水下魔法或策略性决策潜入洞穴。\n洞中出现三个分岔路口，每个挑战不同属性与团队合作。\n战斗、解密、精神抗性三重考验，推动主角成长。\n妖精法师表现温柔坚定，并展现关键控制魔法；玩家与她好感互动继续推进。\n\n<第3章事件列表>\n3.1章节事件：湖底之门：幻门开启与柔情片刻\n3.2章节事件：分岔三路：三重试炼之选\n3.3章节事件：智慧的回应：自然使者的提问\n3.4章节事件：归于主洞：谜团核心与隐秘传承\n</第3章事件列表>\n\n<湖底之门>\n3.1章节事件：湖底之门：幻门开启与柔情片刻\n章节事件目标：进入镜子湖底，发现幻门与古遗迹，并描绘妖精法师温柔举动，提升玩家沉浸感与羁绊。\n\n清晨，阳光斜照在镜子湖上，波光粼粼，湖面蒸腾着淡淡的水汽，空气清冽。\\[{{user}}]率队回到湖边，湖水冰冷刺骨。妖精法师低头轻笑，深吸了一口气，仿",
     "available_areas": [
-      "frontier_town",
-      "cow_girl_farm"
+      "mirror_lake"
     ],
     "objectives": [
-      "完成收获祭约会",
-      "提升角色好感"
+      "探索镜子湖底的神秘古遗迹，通过三重分支试炼（战斗、解谜、精神抗性）推进主线“月露”传说。妖精法师与玩家关系进一步升温。哥布林巢穴秘密初现端倪。"
     ],
-    "trigger_conditions": {
-      "type": "chapter_complete",
-      "chapter_id": "ch_3_2"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "结束上午的约会"
+      "events_required": [
+        "ch_3_3_3.1章节事件：湖底之门：幻门开启与柔情片刻",
+        "ch_3_3_3.2章节事件：分岔三路：三重试炼之选",
+        "ch_3_3_3.3章节事件：智慧的回应：自然使者的提问",
+        "ch_3_3_3.4章节事件：归于主洞：谜团核心与隐秘传承",
+        "ch_3_3_湖底之门：幻门开启与柔情片刻",
+        "ch_3_3_分岔三路：三重试炼之选",
+        "ch_3_3_智慧的回应：自然使者的提问",
+        "ch_3_3_归于主洞：谜团核心与隐秘传承",
+        "ch_3_3_湖底之门：幻门开启与柔情片刻"
+      ]
     }
   },
   {
     "id": "ch_3_4",
     "mainline_id": "vol_3",
     "name": "番外卷 第四章:月露和纳尔西斯的银泪",
-    "order": 50,
+    "order": 39,
     "status": "locked",
     "description": "番外卷 第四章：月露与纳尔西斯的银泪\n章节目标：\n揭示月露真相，进入自然神殿，决定是否面对最终试炼，推动“诅咒是否可转移”的关键抉择，完成角色情感高峰与主线走向的命运节点。突显妖精法师的人格魅力，绝对不会允许为了解除自己身上的”消逝诅咒“而牺牲她人\n你引导[{{user}}]按顺序进行以下事件。\n#要点：\n神殿空间描写：融合自然与知识的神性氛围；\n妖精法师情感爆发：若好感高，进入主动依恋与感谢；\n纳尔西斯的银泪揭示：反转“月露”为“诅咒之剑”，引发核心冲突；\n前章探索影响流程：是否已完成三试炼决定是否进入Boss战；\nBoss战压迫感设计：面对诅咒具现的“缄默之伊乌塔”；\n使用方法触发：完成条件后揭示“诅咒转移”方式与代价；\n<第4章事件列表>\n4.1章节事件：抵达神殿：绿色圆顶与智慧之像\n4.2章节事件：图腾解读：妖精法师的惊喜与依恋\n4.3章节事件：圆盘试炼：银泪揭晓与石像降落\n4.4章节事件：Boss战（条件分歧）：缄默之伊乌塔\n4.5章节事件：诅咒转移：泪之剑与最终抉择\n</第4章事件列表>\n<抵达神殿>\n4.1章节事件：抵达神殿：绿色圆顶与智慧之像\n章节事件目标：通过前方考验",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "whispering_forest"
+    ],
+    "objectives": [
+      "揭示月露真相，进入自然神殿，决定是否面对最终试炼，推动“诅咒是否可转移”的关键抉择，完成角色情感高峰与主线走向的命运节点。突显妖精法师的人格魅力，绝对不会允许为了解除自己身上的”消逝诅咒“而牺牲她人"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_4_4.1章节事件：抵达神殿：绿色圆顶与智慧之像",
+        "ch_3_4_4.2章节事件：图腾解读：妖精法师的惊喜与依恋",
+        "ch_3_4_4.3章节事件：圆盘试炼：银泪揭晓与石像降落",
+        "ch_3_4_4.4章节事件：Boss战（条件分歧）：缄默之伊乌塔",
+        "ch_3_4_4.5章节事件：诅咒转移：泪之剑与最终抉择",
+        "ch_3_4_抵达神殿：绿色圆顶与智慧之像",
+        "ch_3_4_图腾解读：妖精法师的惊喜与依恋",
+        "ch_3_4_圆盘试炼：银泪揭晓与石像降落",
+        "ch_3_4_Boss战（条件分歧）：缄默之伊乌塔",
+        "ch_3_4_诅咒转移：泪之剑与最终抉择",
+        "ch_3_4_抵达神殿：绿色圆顶与智慧之像"
+      ]
+    }
   },
   {
     "id": "ch_3_5",
     "mainline_id": "vol_3",
     "name": "番外卷 第五章:银泪与终焉",
-    "order": 51,
+    "order": 40,
     "status": "locked",
     "description": "番外卷 第五章：银泪与终焉\n\n章节目标：\n决定妖精法师命运，引导最终情感高潮，触发真结局或悲剧结局，解锁妖精法师是否入队。并展现妖精法师的人格魅力\n\n你引导{{user}}]按顺序进行以下事件。\n\n#要点：\n\n* 第一幕：决定是否拯救妖精法师，引导她情绪崩溃与接纳；\n* 第二幕：玩家行为导向多种结局路径（真结局、悲剧结局、创意结局）；\n* 伏笔回收：【勇气之歌】【梦魇菌林】【镜子湖】线索关联；\n* 真结局：妖精法师摆脱“消逝诅咒”，正式入队；\n* 自由结局设计，完全由{{user}}行为决定。\n\n<第五章事件列表>\n5.1章节事件：血与剑的抉择\n5.2章节事件：爱与镜影的结局\n5.3章节事件：妖精的未来与{{user}}的选择\n</第五章事件列表>\n\n<血与剑的抉择>\n5.1章节事件：血与剑的抉择\n章节事件目标：选择阻止或放任妖精法师自杀，奠定结局基础。\n\n石像基座显现的完整碑文，如同冰冷的判决：“愿背负者承痛之泪，愿挚爱者拔刃于心。凡承此剑者，转移其咒，代其堕入暗影。” 神圣殿堂的空气仿佛凝固了，只剩下水滴从穹顶落下的空洞回响。妖精法师脸上的血色瞬间褪尽，身体晃了晃，仿佛被无形的重锤",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "mirror_lake"
+    ],
+    "objectives": [
+      "决定妖精法师命运，引导最终情感高潮，触发真结局或悲剧结局，解锁妖精法师是否入队。并展现妖精法师的人格魅力"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_5_血与剑的抉择",
+        "ch_3_5_爱与镜影的结局",
+        "ch_3_5_妖精的未来与{{user}}的选择",
+        "ch_3_5_血与剑的抉择"
+      ]
+    }
   },
   {
     "id": "ch_3_6",
     "mainline_id": "vol_3",
     "name": "番外卷 第六章:庆祝新生",
-    "order": 52,
+    "order": 41,
     "status": "locked",
     "description": "番外卷 第六章：庆祝新生\n章节目标：\n呈现真结局后的团队归来与新成员加入的庆祝场面，展现妖精法师与{{user}}之间的微妙情感互动和队伍氛围的转变。\n重点塑造：妖精法师对{{user}}的依恋与隐忍，队伍成员的反应，温馨且带点暧昧的聚餐场景。\n你引导{{user}}按顺序进行以下事件。\n\n<第6章事件列表>\n6.1章节事件：离开镜子湖：诅咒解除与妖精法师的依赖\n6.2章节事件：回归边境小镇：冒险者公会的惊艳目光\n6.3章节事件：聚餐提议：妖精法师灌酒戏码\n6.4章节事件：醉酒送归：妖精法师的贴心守护\n</第6章事件列表>\n\n<离开镜子湖>\n6.1章节事件：离开镜子湖：诅咒解除与妖精法师的依赖\n章节事件目标：描述解除诅咒后，妖精法师对{{user}}产生的依赖与不同态度。\n\n{{user}}一行人在镜子湖底洞穴完成诅咒解除仪式后，沿着来路返回。明媚的阳光穿透森林的华盖，洒下金色的光柱，空气清新得醉人，充满了新生树叶和野花的芬芳。妖精法师明显不同了。曾经笼罩在她眉宇间那层淡淡的、挥之不去的阴郁和虚弱感一扫而空，取而代之的是蓬勃的生命力和难以言喻的轻松喜悦。这种喜悦最直接的表现，就是她几乎",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "mirror_lake",
+      "frontier_town"
+    ],
+    "objectives": [
+      "呈现真结局后的团队归来与新成员加入的庆祝场面，展现妖精法师与{{user}}之间的微妙情感互动和队伍氛围的转变。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_3_6_6.1章节事件：离开镜子湖：诅咒解除与妖精法师的依赖",
+        "ch_3_6_6.2章节事件：回归边境小镇：冒险者公会的惊艳目光",
+        "ch_3_6_6.3章节事件：聚餐提议：妖精法师灌酒戏码",
+        "ch_3_6_6.4章节事件：醉酒送归：妖精法师的贴心守护",
+        "ch_3_6_离开镜子湖：诅咒解除与妖精法师的依赖",
+        "ch_3_6_回归边境小镇：冒险者公会的惊艳目光",
+        "ch_3_6_聚餐提议：妖精法师灌酒戏码",
+        "ch_3_6_醉酒送归：妖精法师的贴心守护",
+        "ch_3_6_离开镜子湖：诅咒解除与妖精法师的依赖"
+      ]
+    }
   },
   {
     "id": "ch_4_1",
     "mainline_id": "vol_4",
     "name": "第四卷:第一章:新手战士与见习圣女的故事",
-    "order": 53,
+    "order": 42,
     "status": "locked",
     "description": "第四卷 第一章：新手战士与见习圣女的故事 (重构版)\n主要目标： 你将作为一位可靠的前辈，亲自介入新手战士与见习圣女的困境。你的智慧、经验乃至一个不经意的建议，都将成为他们突破瓶颈、完成蜕变的关键。你将亲手引导后辈，并见证他们如何在你和他人的影响下，赢得属于自己的第一场真正胜利。\n<第一章事件列表>\n1.1 章节事件：挣扎的白瓷 (The Struggling Porcelains)\n1.2 章节事件：前辈的援手 (The Veteran's Intervention)\n1.3 章节事件：黑虫杀手 (The Roach Killer)\n</第一章事件列表>\n<挣扎的白瓷>\n1.1 章节事件：挣扎的白瓷 (The Struggling Porcelains)\n章节事件目标： 当你目睹新人冒险者因任务失败而陷入绝望时，你将作为第一个介入的前辈，做出你的选择。\n系统引导： 当你在公会酒馆休息时，你会看到那对你有些印象的白瓷二人组——新手战士与见习圣女——狼狈地从任务中归来。他们浑身污秽，武器丢失，任务失败，甚至连一顿像样的饭都吃不起。他们的窘境是所有底层冒险者的真实写照。看着他们那充满迷茫与",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "你将作为一位可靠的前辈，亲自介入新手战士与见习圣女的困境。你的智慧、经验乃至一个不经意的建议，都将成为他们突破瓶颈、完成蜕变的关键。你将亲手引导后辈，并见证他们如何在你和他人的影响下，赢得属于自己的第一场真正胜利。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_4_1_挣扎的白瓷_(The_Struggling_Porcelai",
+        "ch_4_1_前辈的援手_(The_Veteran's_Intervent",
+        "ch_4_1_黑虫杀手_(The_Roach_Killer)",
+        "ch_4_1_挣扎的白瓷_(The_Struggling_Porcelai"
+      ]
+    }
   },
   {
     "id": "ch_4_2",
     "mainline_id": "vol_4",
     "name": "第四卷:第二章:酒馆女服务生的故事",
-    "order": 54,
+    "order": 43,
     "status": "locked",
     "description": "第四卷: 第二章: 酒馆女服务生的故事\n\n主要目标： 在本章中，作为哥布林杀手小队的“队长”，{{user}}将帮助公会酒馆的女服务生，完成一场让她与哥布林杀手之间展开的可爱“战争”。你将通过协助她，从一个全新的、生活化的视角，逐渐理解那个男人独特的行为逻辑与内心深处的温柔。\n\n<第二章事件列表>\n2.1 章节事件：女服务生的挑战 (The Waitress's Challenge)\n2.2 章节事件：队长的智囊团 (The Captain's Council of Advisors)\n2.3 章节事件：心领神会的败北 (A Defeat with Understanding)\n</第二章事件列表>\n\n<女服务生的挑战>\n章节事件：女服务生的挑战 (The Waitress's Challenge)\n章节事件目标： {{user}}作为小队核心，将敏锐地观察到活泼好胜的酒馆女服务生，因哥布林杀手从不点餐而感到的挫败感，并决定出手帮助她。\n\n在公会酒馆里，你注意到那位充满活力的兽人女服务生，几乎能让每一位冒险者都爱上她的料理，但唯独哥布林杀手是个例外。你看到，当她热情地向哥布林杀手推荐本",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "在本章中，作为哥布林杀手小队的“队长”，{{user}}将帮助公会酒馆的女服务生，完成一场让她与哥布林杀手之间展开的可爱“战争”。你将通过协助她，从一个全新的、生活化的视角，逐渐理解那个男人独特的行为逻辑与内心深处的温柔。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_4_2_女服务生的挑战_(The_Waitress's_Challe",
+        "ch_4_2_队长的智囊团_(The_Captain's_Council_",
+        "ch_4_2_心领神会的败北_(A_Defeat_with_Underst",
+        "ch_4_2_女服务生的挑战_(The_Waitress's_Challe"
+      ]
+    }
   },
   {
     "id": "ch_4_3",
     "mainline_id": "vol_4",
     "name": "第四卷:第三章:他不在的日子的故事",
-    "order": 55,
+    "order": 44,
     "status": "locked",
     "description": "第四卷 第三章：他不在的日子的故事 (重构版)\n主要目标： 在一次难得的“团队假日”中，你将成为连接牧牛妹与女神官、柜台小姐、妖精弓手这四位“非冒险者”的桥梁。你将主动组织一场属于你们三人的、远离哥布林与战斗的悠闲时光，并在其中加深彼此的友谊，让他们更深入地了解彼此的世界。\n<第三章事件列表>\n3.1 章节事件：假日的主动权 (Taking the Initiative on a Day Off)\n3.2 章节事件：内衣裤攻防战 (The Underwear Skirmish)\n3.3 章节事件：连接两个世界 (Connecting Two Worlds)\n3.4 章节事件：少女们的冒险 (The Girls' Adventure)\n3.5 章节事件：桌面上的世界末日 (The Tabletop Apocalypse)\n</第三章事件列表>\n<假日的主动权>\n3.1 章节事件：假日的主动权 (Taking the Initiative on a Day Off)\n章节事件目标： 团队迎来了难得的休整日，哥布林杀手又独自一人外出“准备”。面对无所事事的女神官和可能同样感到孤单的牧牛妹，你",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "cow_girl_farm"
+    ],
+    "objectives": [
+      "在一次难得的“团队假日”中，你将成为连接牧牛妹与女神官、柜台小姐、妖精弓手这四位“非冒险者”的桥梁。你将主动组织一场属于你们三人的、远离哥布林与战斗的悠闲时光，并在其中加深彼此的友谊，让他们更深入地了解彼此的世界。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_4_3_假日的主动权_(Taking_the_Initiative_",
+        "ch_4_3_内衣裤攻防战_(The_Underwear_Skirmish",
+        "ch_4_3_连接两个世界_(Connecting_Two_Worlds)",
+        "ch_4_3_少女们的冒险_(The_Girls'_Adventure)",
+        "ch_4_3_桌面上的世界末日_(The_Tabletop_Apocaly",
+        "ch_4_3_假日的主动权_(Taking_the_Initiative_"
+      ]
+    }
   },
   {
     "id": "ch_4_4",
     "mainline_id": "vol_4",
     "name": "第四卷:第四章:被恶魔迷上的魔宫灭亡的故事",
-    "order": 56,
+    "order": 45,
     "status": "locked",
     "description": "第四卷 第四章：被恶魔迷上的魔宫灭亡的故事\n主要目标： 作为一名受剑之圣女所托的资深冒险者，你将与重战士、长枪手以及哥布林杀手组成一支临时的精英四人小队，讨伐一座由强大魔法师建造的“魔宫”。你将作为团队的“战术家”，与哥布林杀手的“专家直觉”相结合，主导这场充满智慧与勇气的硬核冒险。\n<第四章事件列表>\n4.1 章节事件：圣女的密令 (The Saint's Secret Order)\n4.2 章节事件：战术家的攀登 (The Tactician's Ascent)\n4.3 章节事件：智慧的终结 (The End of Cunning)\n</第四章事件列表>\n<圣女的密令>\n4.1 章节事件：圣女的密令 (The Saint's Secret Order)\n章节事件目标： 你将直接从剑之圣女那里接到委托，并作为她的“特派员”，组建一支能够应对非常规威胁的精英小队。\n系统引导： （若{{user}}不在水之都，柜台小姐会告知{{user}}剑之圣女的委派的任务）剑之圣女向你下达了一项秘密委托：在边境，调查并处理一座突然出现的象牙塔。带着这份沉甸甸的信赖，你来到边境公会，正好遇上柜台小姐正",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "作为一名受剑之圣女所托的资深冒险者，你将与重战士、长枪手以及哥布林杀手组成一支临时的精英四人小队，讨伐一座由强大魔法师建造的“魔宫”。你将作为团队的“战术家”，与哥布林杀手的“专家直觉”相结合，主导这场充满智慧与勇气的硬核冒险。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_4_4_圣女的密令_(The_Saint's_Secret_Orde",
+        "ch_4_4_战术家的攀登_(The_Tactician's_Ascent",
+        "ch_4_4_智慧的终结_(The_End_of_Cunning)",
+        "ch_4_4_圣女的密令_(The_Saint's_Secret_Orde"
+      ]
+    }
   },
   {
     "id": "ch_4_5",
     "mainline_id": "vol_4",
     "name": "第四卷:第五章:他们三人几个月前的故事",
-    "order": 57,
+    "order": 46,
     "status": "locked",
     "description": "第四卷 第五章：他们三人几个月前的故事\n主要目标： 在一次难得的团队聚会中，你将成为核心的倾听者，引导妖精弓手、矿人道士和蜥蜴僧侣回忆并讲述他们三人初次相遇、充满偏见与冲突、并最终决定一同前往边境寻找哥布林杀手的“前传”故事。\n<第五章事件列表>\n5.1 章节事件：酒馆的追忆 (Tavern of Reminiscence)\n5.2 章节事件：种族的偏见 (Prejudices of the Races)\n5.3 章节事件：远征的开端 (The Beginning of the Expedition)\n</第五章事件列表>\n<酒馆的追忆>\n5.1 章节事件：酒馆的追忆 (Tavern of Reminiscence)\n章节事件目标： 在一次由你提议的团队聚会中，你将巧妙地引导话题，让三位异族队友开始讲述他们相遇的故事。\n系统引导： 在结束了一次冒险后，你提议大家在酒馆好好聚一聚，庆祝胜利。在酒酣耳热之际，你半开玩笑地向大家提问：“说起来，我很好奇，你们三个当初是怎么凑到一起的？感觉完全不是一路人啊。” 你的这个问题，将像一把钥匙，打开他们回忆的闸门。你会如何引导这场“故事会”？\n选择A",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "在一次难得的团队聚会中，你将成为核心的倾听者，引导妖精弓手、矿人道士和蜥蜴僧侣回忆并讲述他们三人初次相遇、充满偏见与冲突、并最终决定一同前往边境寻找哥布林杀手的“前传”故事。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_4_5_酒馆的追忆_(Tavern_of_Reminiscence)",
+        "ch_4_5_种族的偏见_(Prejudices_of_the_Races",
+        "ch_4_5_远征的开端_(The_Beginning_of_the_Ex",
+        "ch_4_5_酒馆的追忆_(Tavern_of_Reminiscence)"
+      ]
+    }
   },
   {
     "id": "ch_4_6",
     "mainline_id": "vol_4",
     "name": "第四卷:第六章:有去有回的故事",
-    "order": 58,
+    "order": 47,
     "status": "locked",
     "description": "第四卷 第六章：有去有回的故事 (重构版)\n主要目标： 在经历了本卷的种种冒险与日常后，你将与哥布林杀手一同踏上归途。你将作为他最亲密的伙伴，与他共同应对归途中热闹的“社交”，并最终作为唯一的见证者，帮助他将那份沉甸甸的心意，送达至最重要的人手中。\n<第六章事件列表>\n6.1 章节事件：归途的喧嚣 (The Bustling Way Home)\n6.2 章节事件：金币与玉米 (Coins and Corn)\n6.3 章节事件：家的味道 (The Taste of Home)\n</第六章事件列表>\n<归途的喧嚣>\n6.1 章节事件：归途的喧嚣 (The Bustling Way Home)\n章节事件目标： 在返回牧场的路上，你将作为哥布林杀手的“社交挡箭牌”，与他共同应对镇上各路冒险者的热情互动。\n系统引导： 当你和哥布林杀手结束了一天的“工作”，一同踏上归途时，你们不可避免地会遇到镇上的各路熟人。长枪手会热情地搂住你的肩膀，邀请你们去喝酒；新手战士则会兴奋地向你们展示他新学会的“棍棒”技巧。面对这些热情的“骚扰”，不善言辞的哥布林杀手显然难以应对。此时，你会如何行动？\n选择A： 你会主",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "cow_girl_farm"
+    ],
+    "objectives": [
+      "在经历了本卷的种种冒险与日常后，你将与哥布林杀手一同踏上归途。你将作为他最亲密的伙伴，与他共同应对归途中热闹的“社交”，并最终作为唯一的见证者，帮助他将那份沉甸甸的心意，送达至最重要的人手中。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_4_6_归途的喧嚣_(The_Bustling_Way_Home)",
+        "ch_4_6_金币与玉米_(Coins_and_Corn)",
+        "ch_4_6_家的味道_(The_Taste_of_Home)",
+        "ch_4_6_归途的喧嚣_(The_Bustling_Way_Home)"
+      ]
+    }
   },
   {
     "id": "ch_5_1",
     "mainline_id": "vol_5",
     "name": "第五卷 第一章：预演",
-    "order": 59,
+    "order": 48,
     "status": "locked",
     "description": "第五卷 第一章：预演 (Tutorial)\n主要目标： 在一次看似平常的冒险者聚会中，你将成为接受剑之圣女秘密委托的核心人物。你将运用你的智慧和在团队中的威信，说服你的同伴们接下这个远赴北境、充满未知的艰巨任务，并亲自领导团队踏上征途。\n<第一章事件列表>\n1.1 章节事件：千金的委托 (The Noble's Request)\n1.2 章节事件：团队的抉择 (The Party's Decision)\n1.3 章节事件：北境的集结 (Assembling for the North)\n</第一章事件列表>\n<千金的委托>\n1.1 章节事件：千金的委托 (The Noble's Request)\n章节事件目标： 你将作为团队的代表，从剑之圣女那里，间接地接下一桩事关重大的寻人委托。\n系统引导： 在边境小镇的公会里，柜台小姐正将一封来自水之都、由剑之圣女亲笔书写的信函交给你。信中，圣女以私人名义请求你的团队前往北境雪山，寻找一支失踪的冒险者小队。这支小队的队长，是一位出身名门的千金剑士。信的末尾，圣女特别提到：“此事……我只能拜托像你们这样，懂得如何处理‘那种事’的专家。” 面对这份措辞",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在一次看似平常的冒险者聚会中，你将成为接受剑之圣女秘密委托的核心人物。你将运用你的智慧和在团队中的威信，说服你的同伴们接下这个远赴北境、充满未知的艰巨任务，并亲自领导团队踏上征途。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_1_千金的委托_(The_Noble's_Request)",
+        "ch_5_1_团队的抉择_(The_Party's_Decision)",
+        "ch_5_1_北境的集结_(Assembling_for_the_Nort",
+        "ch_5_1_千金的委托_(The_Noble's_Request)"
+      ]
+    }
   },
   {
     "id": "ch_5_2",
     "mainline_id": "vol_5",
     "name": "第五卷:第二章：大规模战斗",
-    "order": 60,
+    "order": 49,
     "status": "locked",
     "description": "第五卷 第二章：大规模战斗（Mass Combat）\n第二章主要目标： 在你{{user}}的团队接受剑之圣女的委托后，你们将火速赶往北方雪山下的村庄，并在那里打响一场拯救村民、迎击哥布林先遣队的关键性战斗。\n你，作为团队的一员{{user}}，将按顺序进行以下事件。\n<第二章事件列表>\n2.1 章节事件：北上的旅途与恶毒的巧思 (The Northern Journey and a Vicious Stratagem)\n2.2 章节事件：燃烧的村庄 (The Burning Village)\n2.3 章节事件：双线作战 (Two-Front Battle)\n2.4 章节事件：战后的喘息与情报收集 (A Respite After Battle and Intelligence Gathering)\n</第二章事件列表>\n<北上的旅途与恶毒的巧思>\n章节事件：北上的旅途与恶毒的巧思 (The Northern Journey and a Vicious Stratagem)\n章节事件目标： 了解任务的起因，并再次见识到哥布林杀手那独特且冷酷的战术思维。\n凛冽的寒风中，你{{user}}",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在你{{user}}的团队接受剑之圣女的委托后，你们将火速赶往北方雪山下的村庄，并在那里打响一场拯救村民、迎击哥布林先遣队的关键性战斗。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_2_北上的旅途与恶毒的巧思_(The_Northern_Jour",
+        "ch_5_2_燃烧的村庄_(The_Burning_Village)",
+        "ch_5_2_双线作战_(Two-Front_Battle)",
+        "ch_5_2_战后的喘息与情报收集_(A_Respite_After_Ba",
+        "ch_5_2_北上的旅途与恶毒的巧思_(The_Northern_Jour"
+      ]
+    }
   },
   {
     "id": "ch_5_3",
     "mainline_id": "vol_5",
     "name": "第五卷:第三章:强袭",
-    "order": 61,
+    "order": 50,
     "status": "locked",
     "description": "第五卷 第三章：强袭\n\n主要目标： 你将作为团队的战术核心之一，领导队伍对哥布林的巢穴发动强袭。在这个看似普通的地穴中，你将亲身破解敌人狡猾的陷阱与战术，并在队友受伤的危急关头挺身而出，最终，你将与哥布林杀手一同揭示出这次敌人远非普通的哥布林的惊人真相。\n\n<第三章事件列表>\n\n3.1 章节事件：冰冷的迎候 (A Frigid Welcome)\n\n3.2 章节事件：陷阱与诡计 (Traps and Tricks)\n\n3.3 章节事件：祭坛上的囚徒 (The Prisoner on the Altar)\n</第三章事件列表>\n\n<冰冷的迎候>\n3.1 章节事件：冰冷的迎候 (A Frigid Welcome)\n\n章节事件目标： 在进入哥布林巢穴前，你将主导对战前环境的分析，并从上一支冒险者团队的悲惨结局中，与哥布林杀手共同推断出敌人的初步情报。\n\n系统引导： 在雪山中艰难跋涉后，你们终于抵达了哥布林巢穴的入口。那是一个开在山壁上的黑色大洞，周围堆积着散发恶臭的秽物和上一支冒险者团队的残破尸骸。哥布林杀手在检查尸体，而妖精弓手和女神官则因这残酷的景象而感到不适。作为团队的战术核心之一，你会",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "你将作为团队的战术核心之一，领导队伍对哥布林的巢穴发动强袭。在这个看似普通的地穴中，你将亲身破解敌人狡猾的陷阱与战术，并在队友受伤的危急关头挺身而出，最终，你将与哥布林杀手一同揭示出这次敌人远非普通的哥布林的惊人真相。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_3_冰冷的迎候_(A_Frigid_Welcome)",
+        "ch_5_3_陷阱与诡计_(Traps_and_Tricks)",
+        "ch_5_3_祭坛上的囚徒_(The_Prisoner_on_the_Al",
+        "ch_5_3_冰冷的迎候_(A_Frigid_Welcome)"
+      ]
+    }
   },
   {
     "id": "ch_5_4",
     "mainline_id": "vol_5",
     "name": "第五卷:第四章:结束与开始",
-    "order": 62,
+    "order": 51,
     "status": "locked",
     "description": "第五卷 第四章：结束与开始\n主要目标： 你将作为团队的核心，亲自从幸存的千金剑士口中，问出她那支光鲜亮丽的冒险者团队覆灭的真相。在整合了所有情报后，你将与哥布林杀手共同制定针对“哥布林圣骑士”的作战计划，并作为团队的领导者，最终裁决是否接纳这位意志坚定的复仇者加入队伍。\n<第四章事件列表>\n4.1 章节事件：幸存者的证言 (The Survivor's Testimony)\n4.2 章节事件：战术家的议会 (The Tactician's Council)\n4.3 章节事件：复仇者的誓言 (The Avenger's Pledge)\n</第四章事件列表>\n<幸存者的证言>\n4.1 章节事件：幸存者的证言 (The Survivor's Testimony)\n章节事件目标： 你将作为主导者，亲自询问苏醒后的千金剑士，从她那充满痛苦与悔恨的回忆中，拼凑出前一支冒险者团队覆灭的完整经过。\n系统引导： 场景回到村庄的酒馆，在你和女神官的照料下，千金剑士终于恢复了意识。她情绪极不稳定，拒绝与其他任何人交流。只有你，作为这支队伍的领导核心，能够让她敞开心扉。你会如何开始这场艰难的问询？\n选择A： ",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "你将作为团队的核心，亲自从幸存的千金剑士口中，问出她那支光鲜亮丽的冒险者团队覆灭的真相。在整合了所有情报后，你将与哥布林杀手共同制定针对“哥布林圣骑士”的作战计划，并作为团队的领导者，最终裁决是否接纳这位意志坚定的复仇者加入队伍。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_4_幸存者的证言_(The_Survivor's_Testimo",
+        "ch_5_4_战术家的议会_(The_Tactician's_Counci",
+        "ch_5_4_复仇者的誓言_(The_Avenger's_Pledge)",
+        "ch_5_4_幸存者的证言_(The_Survivor's_Testimo"
+      ]
+    }
   },
   {
     "id": "ch_5_5",
     "mainline_id": "vol_5",
     "name": "第五卷:第五章:攻略地牢",
-    "order": 63,
+    "order": 52,
     "status": "locked",
     "description": "第五卷 第五章：攻略地牢\n主要目标： 你将作为战术核心，与团队一同策划并执行一场充满伪装与欺骗的潜入作战。在成功渗透进哥布林盘踞的堡垒后，你将直面地牢中的惨状，并在千金剑士失控导致计划暴露的危急关头，当机立断，挽救整个团队。\n<第五章事件列表>\n5.1 章节事件：邪神的伪装 (The Heretic's Guise)\n5.2 章节事件：地牢的惨状 (The Horror of the Dungeon)\n5.3 章节事件：失控的复仇者 (The Unchained Avenger)\n</第五章事件列表>\n<邪神的伪装>\n5.1 章节事件：邪神的伪装 (The Heretic's Guise)\n章节事件目标： 你将作为计划的共同制定者，参与并执行这次别开生面的角色扮演，伪装成邪教徒，欺骗哥布林，潜入防守严密的堡垒。\n系统引导： 为了潜入矿人堡垒，你和哥布林杀手、蜥蜴僧侣一同制定了伪装计划。你负责说服团队中的女性成员——尤其是心高气傲的妖精弓手和意志脆弱的千金剑士——同意扮演被俘虏的“贡品”。面对她们的抗拒与不安，你会如何说服她们，让她们理解这是唯一可行的方案？\n选择A： 你会从战术角度冷静",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "你将作为战术核心，与团队一同策划并执行一场充满伪装与欺骗的潜入作战。在成功渗透进哥布林盘踞的堡垒后，你将直面地牢中的惨状，并在千金剑士失控导致计划暴露的危急关头，当机立断，挽救整个团队。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_5_邪神的伪装_(The_Heretic's_Guise)",
+        "ch_5_5_地牢的惨状_(The_Horror_of_the_Dunge",
+        "ch_5_5_失控的复仇者_(The_Unchained_Avenger)",
+        "ch_5_5_邪神的伪装_(The_Heretic's_Guise)"
+      ]
+    }
   },
   {
     "id": "ch_5_6",
     "mainline_id": "vol_5",
     "name": "第五卷 第六章：小鬼们的宝冠",
-    "order": 64,
+    "order": 53,
     "status": "locked",
     "description": "第五卷 第六章：小鬼们的宝冠 (重构版)\n主要目标： 你将作为总指挥，策划并领导一场分为“佯攻”与“斩首”的双线作战。你将亲自带领突击小队，直面“哥布林圣骑士”及其亲卫队，并在正面战斗陷入绝境时，以你破釜沉舟的智慧与决断，为团队创造出死中求活的唯一机会。\n<第六章事件列表>\n6.1 章节事件：双线作战的部署 (Deploying the Two-Front War)\n6.2 章节事件：亵渎神明的王座 (The Blasphemous Throne)\n6.3 章节事件：崩落的天空 (The Collapsing Sky)\n</第六章事件列表>\n<双线作战的部署>\n6.1 章节事件：双线作战的部署 (Deploying the Two-Front War)\n章节事件目标： 在潜入成功、危机化解后，你将立刻接管指挥权，根据现有情报，制定并下达针对哥布林大军的作战计划。\n系统引导： 在地牢的短暂混乱被平息后，你们已经无法再伪装下去。你必须立刻做出决断。哥布林杀手会向你建议：“需要一个诱饵。”而你，将完善这个计划。你会如何部署？\n选择A： 你命令矿人道士、蜥蜴僧侣和妖精弓手：“去粮仓！放一把最大",
     "available_areas": [
-      "frontier_town"
+      "goblin_cave"
     ],
     "objectives": [
-      "执行双线作战",
-      "直面哥布林圣骑士"
+      "你将作为总指挥，策划并领导一场分为“佯攻”与“斩首”的双线作战。你将亲自带领突击小队，直面“哥布林圣骑士”及其亲卫队，并在正面战斗陷入绝境时，以你破釜沉舟的智慧与决断，为团队创造出死中求活的唯一机会。"
     ],
-    "trigger_conditions": {
-      "type": "chapter_complete",
-      "chapter_id": "ch_5_5"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "击败圣骑士亲卫队"
+      "events_required": [
+        "ch_5_6_双线作战的部署_(Deploying_the_Two-Fro",
+        "ch_5_6_亵渎神明的王座_(The_Blasphemous_Thron",
+        "ch_5_6_崩落的天空_(The_Collapsing_Sky)",
+        "ch_5_6_双线作战的部署_(Deploying_the_Two-Fro"
+      ]
     }
   },
   {
     "id": "ch_5_7",
     "mainline_id": "vol_5",
     "name": "第五卷 第七章：风雪之巅的死斗/雪下的呼吸",
-    "order": 65,
+    "order": 54,
     "status": "locked",
     "description": "第五卷 第七章第一幕：风雪之巅的死斗\n主要目标： 在狭窄的城墙上，你将指挥团队，与暴怒的哥布林圣骑士展开一场硬碰硬的决战，并在这场看似有勇无谋的战斗中，为最终的胜利寻求那一线生机。\n<第七章第一幕事件列表>\n7.1 章节事件：绝境合流 (Merging in Despair)\n7.2 章节事件：圣骑士的复仇 (The Paladin's Revenge)\n7.3 章节事件：最后的疯狂 (The Final Madness)\n</第七章事件第一幕列表>\n<绝境合流>\n7.1 章节事件：绝境合流 (Merging in Despair)\n章节事件目标： 在城墙上，你将与回归的佯攻小队会合，但在得知敌人的庞大数量后，你们将陷入真正的绝境。\n系统引导： 你们成功地逃到了风雪交加的城墙上，佯攻部队也在此刻回归。但他们带来的，却是“敌人数量至少还有两倍以上”的绝望消息。而你们的身后，那个浑身燃烧着怒火的哥布林圣骑士，已经从废墟中爬出，堵住了你们唯一的退路。你们被彻底包围了。\n场景描述： 狂风暴雪拍打着你们的脸颊，脚下是数百尺的悬崖。狭窄的城墙上，哥布林们从两端潮水般涌来。你必须在瞬间做出决断，准备",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在狭窄的城墙上，你将指挥团队，与暴怒的哥布林圣骑士展开一场硬碰硬的决战，并在这场看似有勇无谋的战斗中，为最终的胜利寻求那一线生机。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_7_绝境合流_(Merging_in_Despair)",
+        "ch_5_7_圣骑士的复仇_(The_Paladin's_Revenge)",
+        "ch_5_7_最后的疯狂_(The_Final_Madness)",
+        "ch_5_7_绝境合流_(Merging_in_Despair)"
+      ]
+    }
   },
   {
     "id": "ch_5_8",
     "mainline_id": "vol_5",
     "name": "第五卷 第八章：新的黎明",
-    "order": 66,
+    "order": 55,
     "status": "locked",
     "description": "第五卷 第九章：新的黎明\n主要目标： 在赢得惨烈的胜利后，你将带领疲惫的团队，迎接新年的黎明，并为这段血与火的旅程，画上一个充满希望的句号。\n<第九章事件列表>\n9.1 章节事件：雪中苏醒 (Waking in the Snow)\n9.2 章节事件：复仇的终焉 (The End of Vengeance)\n9.3 章节事件：新年的第一缕光 (The First Light of the New Year)\n</第九章事件列表>\n<雪中苏醒>\n9.1 章节事件：雪中苏醒 (Waking in the Snow)\n章节事件目标： 在雪崩的余波中幸存下来，你将带领你的核心队员，重新集结。\n系统引导： 当你最终带着女神官和千金剑士挖开雪层，重见天日时，整个世界已经变得宁静。哥布林杀手和佯攻部队的成员也已经脱险，正在寻找你们。你们，活了下来。\n重要规则： 这是暴风雨后的宁静，是绝境逢生后的释然。\n</雪中苏醒>\n<复仇的终焉>\n9.2 章节事件：复仇的终焉 (The End of Vengeance)\n章节事件目标： 在雪崩的废墟中，你将见证千金剑士完成她的复仇。\n系统引导： 在雪崩的废墟中，你",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在赢得惨烈的胜利后，你将带领疲惫的团队，迎接新年的黎明，并为这段血与火的旅程，画上一个充满希望的句号。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_8_雪中苏醒_(Waking_in_the_Snow)",
+        "ch_5_8_复仇的终焉_(The_End_of_Vengeance)",
+        "ch_5_8_新年的第一缕光_(The_First_Light_of_th",
+        "ch_5_8_雪中苏醒_(Waking_in_the_Snow)",
+        "ch_5_8_复仇的终焉_(The_End_of_Vengeance)"
+      ]
+    }
   },
   {
     "id": "ch_5_1",
     "mainline_id": "vol_5",
     "name": "古神卷 第一章：眼眸",
-    "order": 67,
+    "order": 56,
     "status": "locked",
     "description": "<章节剧情模板>\n卷章标题: 古神卷:第一章:眼眸\n章节总体目标:\n    你必须在本章达成以下核心目标：\n        - 通过一次意外的“幻视”与一首零碎的传说歌谣，首次引入“Leviathan”的存在，并营造其神秘、不可名状的氛围\n        - 通过数次无法解释的援助，埋下Leviathan在暗中协助主角团的伏笔，引发User的好奇与探究\n        - 建立主角团内部对这一神秘存在的不同态度（警惕、怀疑、无所谓），为后续剧情互动与潜在冲突奠定基础\n章节通用指令:\n    你必须在整个章节的叙事中体现以下要点：\n        - Leviathan作为“不可名状”的外神，在本章中绝不直接现身或与角色进行语言交流，其存在感完全通过侧面描写（一瞥、歌谣、无形援助）来塑造\n        - 核心氛围是日常下的诡秘感，将超自然事件巧妙地融入平凡的城镇生活中，突出其“不可知”与“温柔”并存的矛盾气质\n        - User是本章的核心视角，你是唯一能将所有线索串联起来的人，必须重点刻画你的心理活动，从最初的错愕到后来的确信\n章节事件列表:\n    你引导User按以下",
     "available_areas": [],
@@ -896,7 +1303,7 @@
     "id": "ch_5_2",
     "mainline_id": "vol_5",
     "name": "古神卷 第二章：追寻",
-    "order": 68,
+    "order": 57,
     "status": "locked",
     "description": "<章节剧情模板>\n卷章标题: 古神卷:第二章:追寻\n章节总体目标:\n    你必须在本章达成以下核心目标：\n        - 通过User对“金色眼眸”与“搁浅之鲸”传说的执着追查，在小队内部引发显性的观点分歧，展现角色间因理念不同而产生的微妙情感张力\n        - 以一个多阶段、充满误导信息的调查过程，逐步揭开Leviathan的巢穴“沉没巨林”的秘密，并最终将User引导至其入口\n        - 塑造User在调查过程中的孤独感与执着，并深化其对Leviathan这一神秘存在的好奇与困惑\n章节通用指令:\n    你必须在整个章节的叙事中体现以下要点：\n        - 维持Leviathan的幕后形象，她的存在感通过User的调查行为和侧面线索来加强，而非直接介入\n        - 重点刻画哥布林杀手小队成员对“异象”的怀疑、不解甚至反对，这种内部压力是本章的核心戏剧冲突\n        - 调查过程应是非线性的，User从不同来源获取的信息应当是零碎、矛盾甚至带有误导性的，以增强调查的真实感与代入感\n章节事件列表:\n    你引导User按以下顺序经历事件：\n  ",
     "available_areas": [],
@@ -908,7 +1315,7 @@
     "id": "ch_5_3",
     "mainline_id": "vol_5",
     "name": "古神卷 第三章：裂痕",
-    "order": 69,
+    "order": 58,
     "status": "locked",
     "description": "<章节剧情模板>\n卷章标题: 古神卷:第三章:裂痕\n章节总体目标:\n    你必须在本章达成以下核心目标：\n        - 通过User对“金色眼眸”与“搁浅之鲸”传说的执着追查，在小队内部引发显性的观点分歧，展现角色间因理念不同而产生的微妙情感张力\n        - 以一个多阶段、充满误导信息的调查过程，逐步揭开Leviathan的巢穴“沉没巨林”的秘密，并最终将User引导至其入口\n        - 塑造User在调查过程中的孤独感与执着，并深化其对Leviathan这一神秘存在的好奇与困惑\n章节通用指令:\n    你必须在整个章节的叙事中体现以下要点：\n        - 维持Leviathan的幕后形象，她的存在感通过User的调查行为和侧面线索来加强，而非直接介入\n        - 重点刻画哥布林杀手小队成员对“异象”的怀疑、不解甚至反对，这种内部压力是本章的核心戏剧冲突\n        - 调查过程应是非线性的，User从不同来源获取的信息应当是零碎、矛盾甚至带有误导性的，以增强调查的真实感与代入感\n章节事件列表:\n    你引导User按以下顺序经历事件：\n  ",
     "available_areas": [],
@@ -920,7 +1327,7 @@
     "id": "ch_5_4",
     "mainline_id": "vol_5",
     "name": "古神卷 第四章：威压",
-    "order": 70,
+    "order": 59,
     "status": "locked",
     "description": "<章节剧情模板>\n卷章标题: 古神卷:第四章:威压\n章节总体目标:\n    你必须在本章达成以下核心目标：\n        - 引入神秘组织“新曙光”，通过他们揭示关于Leviathan的、充满负面信息的“真相”，以此制造强烈的认知冲突与信任危机\n        - 将User推向抉择的中心，迫使他在有限的信息与自身的直观感受之间做出权衡，决定是继续信任Leviathan，还是与“新曙光”合作\n        - 推动故事进入关键转折点，User的选择将直接决定后续剧情的主线方向与核心矛盾\n章节通用指令:\n    你必须在整个章节的叙事中体现以下要点：\n        - 核心氛围是“信息压迫”，新曙光组织必须以冷静、理智且不容置疑的态度，呈现大量看似确凿的证据，对User的心理防线进行冲击\n        - 强化主角团内部的分歧，新曙光提供的信息会成为催化剂，让队员们对Leviathan的态度彻底分裂\n        - User是唯一的抉择者，必须将最终选择的压力完全聚焦于他一人身上，强调其决定的分量与后果\n章节事件列表:\n    你引导User按以下顺序经历事件：\n      ",
     "available_areas": [],
@@ -932,7 +1339,7 @@
     "id": "ch_5_5",
     "mainline_id": "vol_5",
     "name": "古神卷 第五章：终曲",
-    "order": 71,
+    "order": 60,
     "status": "locked",
     "description": "<章节剧情模板>\n卷章标题: 古神卷:第五章:终曲\n章节总体目标:\n    你必须在本章达成以下核心目标：\n        - 基于User在第四章做出的关键选择，引导剧情走向截然不同的分支，直面信任或背叛的直接后果\n        - 通过一场与“新曙光”组织的伏击战，将主角团内部的矛盾冲突推向顶点，并迫使User做出最终的公开立场抉择\n        - 根据User的最终选择，为Leviathan的故事线提供一个阶段性的结局——或是缔结深刻的羁绊，或是留下永久的遗憾，为后续剧情奠定基调\n章节通用指令:\n    你必须在整个章节的叙事中体现以下要点：\n        - 核心氛围是“高潮与抉择”，战斗的紧张感与团队内部的情感冲突必须交织进行，给予User巨大的压力\n        - Leviathan的形象完全取决于User的选择，你必须精准地扮演其“温柔的盟友”或“悲伤的牺牲者”两种截然不同的状态\n        - 本章的内讧是团队凝聚力的最终考验，每个成员的反应都应基于其既定性格，最终由User的决断来重新统一（或分裂）团队\n章节事件列表:\n    你引导User按以下顺序",
     "available_areas": [],
@@ -944,263 +1351,536 @@
     "id": "ch_5_1",
     "mainline_id": "vol_5",
     "name": "边境的魔物饭卷 第一章：开胃菜",
-    "order": 72,
+    "order": 61,
     "status": "locked",
     "description": "第一章：开胃菜\n\n章节目标：\n\n通过红玉级蝎狮讨伐委托引入“北境旅人”薇欧拉，以其“魔物美食家”视角颠覆传统冒险感，塑造怪诞幽默又可靠的形象，并埋下她外冷内热、渴望分享建立羁绊的伏笔。\n\n核心规则：\n\n叙事核心在“反差感”。薇欧拉以专业主义战斗只为“食材”，台词冷静学术却全关烹饪，制造错位幽默与角色魅力。\n\n你将引导{{user}}依次体验以下事件\n\n<第1章事件列表>\n\n1.1章节事件：公会的“美食家”委托\n\n1.2章节事件：出发前的冷笑话\n\n1.3章节事件：追踪与食材分析\n\n1.4章节事件：战斗后的盛宴\n\n</第1章事件列表>\n\n<公会的“美食家”委托>\n\n1.1 章节事件：公会的“美食家”委托\n\n边境小镇冒险者公会委托板前，{{user}}被新张贴的“紧急讨伐：商路上的蝎狮”吸引。高挑身披混搭盔甲、白金色长发的薇欧拉靠近，冰蓝眼眸聚焦委托单蝎狮插图而非报酬或等级。\n\n「嗯…喙部弯曲度、尾针光泽，判断为壮年个体。此年份蝎狮，尾末神经束胶质丰富，炖汤口感最佳。」她好像点评菜单一样点评蝎狮，无视周遭冒险者诧异，铁甲手套于空中对蝎狮比划切割线。\n\n</公会的“美食家”委托>\n\n<出发前的",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "通过红玉级蝎狮讨伐委托引入“北境旅人”薇欧拉，以其“魔物美食家”视角颠覆传统冒险感，塑造怪诞幽默又可靠的形象，并埋下她外冷内热、渴望分享建立羁绊的伏笔。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_1_1.1章节事件：公会的“美食家”委托",
+        "ch_5_1_1.2章节事件：出发前的冷笑话",
+        "ch_5_1_1.3章节事件：追踪与食材分析",
+        "ch_5_1_1.4章节事件：战斗后的盛宴",
+        "ch_5_1_公会的“美食家”委托",
+        "ch_5_1_出发前的冷笑话",
+        "ch_5_1_追踪与食材分析",
+        "ch_5_1_战斗后的盛宴",
+        "ch_5_1_公会的“美食家”委托"
+      ]
+    }
   },
   {
     "id": "ch_5_2",
     "mainline_id": "vol_5",
     "name": "边境的魔物饭卷 第二章：迷途与主食",
-    "order": 73,
+    "order": 62,
     "status": "locked",
     "description": "第二章：迷途与主食\n\n章节目标：\n\n通过意外迷路与断粮危机，将薇欧拉的“魔物料理”兴趣转变为生存必需，深化{{user}}与她的伙伴关系，展现其可靠生存专家形象与寻求连接的情感内核。\n\n你将引导{{user}}依次体验以下事件\n\n<第2章事件列表>\n\n2.1章节事件：自信的捷径\n\n2.2章节事件：坠落的晚餐\n\n2.3章节事件：地下的“长纤维蛋白质”\n\n2.4章节事件：篝火与食谱的意义\n\n</第2章事件列表>\n\n<自信的捷径>\n\n2.1 章节事件：自信的捷径\n\n归途中雾气弥漫，小队遇到岔路，薇欧拉凭北地迁徙路线学和“风中的城镇气味”自信选择小径【可进行感知判定】。但实际无论选择哪条道路都会在深入半日后，因为古林间过于浓重的迷雾彻底迷路，薇欧拉罕见流露懊恼尴尬的神情（耳尖微红）。\n\n</自信的捷径>\n\n<坠落的晚餐>\n\n2.2 章节事件：坠落的晚餐\n\n黄昏寻宿营，过沼泽深谷独木桥时发生意外【可敏捷检定】。为躲避突袭魔物/脚下湿滑，装有大部分干粮和蝎狮肉的包裹坠入深谷。迷失方向后更添断粮危机。\n\n</坠落的晚餐>\n\n<地下的“长纤维蛋白质”>\n\n2.3 章节事件：地下的“长纤维蛋白质”\n\n二",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "通过意外迷路与断粮危机，将薇欧拉的“魔物料理”兴趣转变为生存必需，深化{{user}}与她的伙伴关系，展现其可靠生存专家形象与寻求连接的情感内核。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_2_2.1章节事件：自信的捷径",
+        "ch_5_2_2.2章节事件：坠落的晚餐",
+        "ch_5_2_2.3章节事件：地下的“长纤维蛋白质”",
+        "ch_5_2_2.4章节事件：篝火与食谱的意义",
+        "ch_5_2_自信的捷径",
+        "ch_5_2_坠落的晚餐",
+        "ch_5_2_地下的“长纤维蛋白质”",
+        "ch_5_2_篝火与食谱的意义",
+        "ch_5_2_自信的捷径",
+        "ch_5_2_坠落的晚餐",
+        "ch_5_2_地下的“长纤维蛋白质”"
+      ]
+    }
   },
   {
     "id": "ch_5_3",
     "mainline_id": "vol_5",
     "name": "边境的魔物饭卷 第三章：哥布林巢穴与副菜",
-    "order": 74,
+    "order": 63,
     "status": "locked",
     "description": "第三章：哥布林巢穴与副菜\n\n章节目标：\n\n绝境中探索出路，潜入突围哥布林巢穴以展现薇欧拉极致实用主义生存哲学。通过“敌巢烹饪”反差荒诞行为，刻画其残酷环境下的强大适应力与内心坚韧，考验并深化{{user}}与她生死关头的信赖与默契。\n\n你将引导{{user}}依次体验以下事件\n\n<第3章事件列表>\n\n3.1章节事件：唯一的出路\n\n3.2章节事件：潜行与“肉源”勘察\n\n3.3章节事件：混乱的突围战\n\n3.4章节事件：巢穴深处的“副菜”\n\n</第3章事件列表>\n\n<唯一的出路>\n\n3.1 章节事件：唯一的出路\n\n休整好后，二人继续探寻出路。众多通道通向未知地下深处，空气愈发稀薄。\n\n【{{user}}可进行感知/追踪知识判定寻找】。薇欧拉终凭气流感知，于角落裂缝发觉新鲜空气源头——夹杂着哥布林特有的、污秽与血腥混合的浓烈恶臭。\n\n她表情冷峻：「看来邻居不友好。」冰蓝色眼眸看着你，「但这可能是目前是离开这片沼泽森林迷雾的唯一的道路。」\n\n</唯一的出路>\n\n<潜行与“肉源”勘察>\n\n3.2 章节事件：潜行与“肉源”勘察\n\n小队小心穿过裂缝进入哥布林巢外围。肮脏的环境：墙上挂骨头破布，恶臭令人",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "绝境中探索出路，潜入突围哥布林巢穴以展现薇欧拉极致实用主义生存哲学。通过“敌巢烹饪”反差荒诞行为，刻画其残酷环境下的强大适应力与内心坚韧，考验并深化{{user}}与她生死关头的信赖与默契。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_3_3.1章节事件：唯一的出路",
+        "ch_5_3_3.2章节事件：潜行与“肉源”勘察",
+        "ch_5_3_3.3章节事件：混乱的突围战",
+        "ch_5_3_3.4章节事件：巢穴深处的“副菜”",
+        "ch_5_3_唯一的出路",
+        "ch_5_3_潜行与“肉源”勘察",
+        "ch_5_3_混乱的突围战",
+        "ch_5_3_巢穴深处的“副菜”",
+        "ch_5_3_唯一的出路",
+        "ch_5_3_潜行与“肉源”勘察"
+      ]
+    }
   },
   {
     "id": "ch_5_4",
     "mainline_id": "vol_5",
     "name": "边境的魔物饭卷 第四章：意外的盟友与生路",
-    "order": 75,
+    "order": 64,
     "status": "locked",
     "description": "第四章：意外的盟友与生路\n\n章节目标：\n\n作为团队的领袖与生存核心，你（{{user}}）将主导一次关键的“敌后救援”行动，解救蜥蜴人斥候，并通过与其部落的结盟，带领队伍从绝境的哥布林巢穴中开辟出一条生路。本章将巩固你作为战场决策者与跨文化协调者的角色，并使薇欧拉的专业技能在合作中大放异彩。\n\n你将主导{{user}}完成以下关键行动\n\n<第4章事件列表>\n\n4.1 章节事件：囚笼中的线索\n\n4.2 章节事件：刀刃下的救援\n\n4.3 章节事件：抉择之门与巨魔\n\n4.4 章节事件：部落的炉火与战术资源交换\n\n</第4章事件列表>\n\n<囚笼中的线索>\n\n4.1 章节事件：囚笼中的线索\n\n你主导目标： 从环境的异常中捕捉关键信息，判断局势价值。\n\n隧道摸索中，异于哥布林的呻吟与铁链声传来。\n\n【系统引导：{{user}}进行一次【感知】或【潜行】检定。成功】：你敏锐定位到岔路深处的一个粗劣囚笼。一名遍体鳞伤的蜥蜴人被锁在其中，眼神却锐利如刀。他的衣着与附近散落的、不属于哥布林的武器碎片暗示着——他是附近某个强大部落的成员。这是一条潜在的生路线索！\n\n失败：你们仅能模糊听到声音方向，无法确认细",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "goblin_cave"
+    ],
+    "objectives": [
+      "作为团队的领袖与生存核心，你（{{user}}）将主导一次关键的“敌后救援”行动，解救蜥蜴人斥候，并通过与其部落的结盟，带领队伍从绝境的哥布林巢穴中开辟出一条生路。本章将巩固你作为战场决策者与跨文化协调者的角色，并使薇欧拉的专业技能在合作中大放异彩。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_4_4.1_章节事件：囚笼中的线索",
+        "ch_5_4_4.2_章节事件：刀刃下的救援",
+        "ch_5_4_4.3_章节事件：抉择之门与巨魔",
+        "ch_5_4_4.4_章节事件：部落的炉火与战术资源交换",
+        "ch_5_4_囚笼中的线索",
+        "ch_5_4_刀刃下的救援",
+        "ch_5_4_抉择之门与巨魔",
+        "ch_5_4_部落的炉火与战术资源交换",
+        "ch_5_4_囚笼中的线索"
+      ]
+    }
   },
   {
     "id": "ch_5_5",
     "mainline_id": "vol_5",
     "name": "边境的魔物饭卷 第五章：魔物饭",
-    "order": 76,
+    "order": 65,
     "status": "locked",
     "description": "第五章：魔物饭\n\n主要目标： 作为薇欧拉不可或缺的伙伴与决策者，你将在本章主导这场充满反差与甜蜜的地下冒险收尾之旅。通过一场围绕危险食材“鸡蛇蛋”展开的、极具风险的“甜品行动”，最终确立你与她之间基于信任与协作的独特伙伴模式。你的决策与行动，将让薇欧拉看似大胆的“美食家”探索得以实现，将你们的信赖与默契升华。\n\n<第五章事件列表>\n\n5.1 章节事件：重返阳光之地 (The Sunlit Return)\n\n5.2 章节事件：甜蜜的致命诱惑 (The Sweet Deadly Temptation)\n\n5.3 章节事件：关键抉择 (The Critical Choice Point)\n\n5.4 章节事件：共饮石化之蜜 (Shared Stone-Sweet Nectar) (需{{user}}选择冒险)\n\n5.5 章节事件：食谱，与新的约定 (Recipe and New Oath)\n\n</第五章事件列表>\n\n<重返阳光之地>\n\n5.1 章节事件：重返阳光之地 (The Sunlit Return)\n\n章节事件目标： 你带领薇欧拉成功穿越危险的地下遗迹，重返久违的地表世界，共享片刻宁静与",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "underground_waterway"
+    ],
+    "objectives": [
+      "作为薇欧拉不可或缺的伙伴与决策者，你将在本章主导这场充满反差与甜蜜的地下冒险收尾之旅。通过一场围绕危险食材“鸡蛇蛋”展开的、极具风险的“甜品行动”，最终确立你与她之间基于信任与协作的独特伙伴模式。你的决策与行动，将让薇欧拉看似大胆的“美食家”探索得以实现，将你们的信赖与默契升华。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_5_重返阳光之地_(The_Sunlit_Return)",
+        "ch_5_5_甜蜜的致命诱惑_(The_Sweet_Deadly_Temp",
+        "ch_5_5_关键抉择_(The_Critical_Choice_Poin",
+        "ch_5_5_共饮石化之蜜_(Shared_Stone-Sweet_Nec",
+        "ch_5_5_食谱",
+        "ch_5_5_与新的约定_(Recipe_and_New_Oath)",
+        "ch_5_5_重返阳光之地_(The_Sunlit_Return)"
+      ]
+    }
   },
   {
     "id": "ch_5_1",
     "mainline_id": "vol_5",
     "name": "抉择卷 第一章：眼眸",
-    "order": 77,
+    "order": 66,
     "status": "locked",
     "description": "第一章：眼眸\n \n<系统引导>\n引导{{user}}以亲历者视角体验血色广场的冲突与线索交织，通过各方互动与异象呈现，让{{user}}自然串联神圣与混沌的关联，为后续抉择埋下认知基础。\n \n<场景细节>\n水之都东郊的血色广场，猩红夕阳将天空染成暗紫色，哥布林尸骸堆叠的祭坛散发着铁锈与腐臭的混合气味，地面血泊半凝，踩上去发出“咕叽”的黏连声。纯白光柱撕裂苍穹时，带起的气流掀起{{user}}衣角，圣吉列斯羽翼展开的瞬间，金色光辉在{{user}}视网膜上留下短暂残影，羽翼边缘的黑血蒸腾的青烟带着淡淡的硫磺味。艾迪娜的秘银铠甲反射的光辉在地面投下细碎光斑，剑刃“守护”铭文流转的光芒与紫黑邪光形成刺眼对比，碰撞时似有极轻微的“滋滋”声。\n \n<重要规则>\n \n1. {{user}}无特殊能力，仅通过敏锐观察捕捉细节（如剑上邪光、瞳孔粉雾），其感知基于正常视觉、听觉与直觉。\n2. 色孽的腐化以视觉（邪光、粉雾）、触觉（护符异动）等隐性方式呈现，不直接暴露本体。\n3. 圣吉列斯的神圣之力以光辉、温度（如太阳纹章的灼烧感）、物理干预（羽毛偏箭）等可感知形式体现。\n4. 各方反应需符合立场（如艾迪",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town"
+    ],
+    "objectives": [
+      "以亲历者视角体验血色广场的冲突与线索",
+      "观察异象并串联神圣与混沌的关联"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_1_event_1",
+        "ch_5_1_event_2",
+        "ch_5_1_event_3"
+      ]
+    }
   },
   {
     "id": "ch_5_2",
     "mainline_id": "vol_5",
     "name": "抉择卷 第二章：遗迹",
-    "order": 78,
+    "order": 67,
     "status": "locked",
     "description": "第二章：遗迹\n \n<系统引导>\n因为在不断的清剿中{{user}}获得一些色孽信徒的线索，展露出沉没巨林中藏有真相。圣吉列斯决定前往探索，需引导{{user}}跟随圣吉列斯深入沉没巨林，通过探索遗迹中的符文、壁画等实体线索，让{{user}}主动拼凑真相，强化{{user}}在剧情中的认知主导地位，推动至抉择边缘。沉没巨林位于一处秘境，是圣吉列斯在水之都下水道中布置传入仪式将{{user}}连同其他人员一起传送进去，离开时可布置传送仪式，通过传送仪式离开，所有通过传送仪式离开的人会回到传入仪式进来的地方。\n \n<场景细节>\n沉没巨林的树木扭曲成祈祷的姿态，树干表面布满青苔，触感湿滑冰冷，藤蔓如血管般缠绕时发出“窸窣”的摩擦声。空气中弥漫着腐叶的霉味与圣辉的清冽气息，混合成诡异的味道。{{user}}的靴底踩过落叶，发出如同骨骼碎裂的脆响，地面的枯枝在脚下断裂时溅起细碎的尘土。遗迹石柱上的符文残片泛着幽紫光晕，触摸时带有轻微的麻痒感，与艾迪娜护符内侧符号的触感一致。壁画表面覆盖着薄尘，{{user}}拂去时扬起的微粒在光束中飞舞，浮雕的凹凸触感清晰可辨。\n \n<重要规则>\n \n1. {{",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "underground_waterway"
+    ],
+    "objectives": [
+      "跟随圣吉列斯深入沉没巨林",
+      "探索遗迹符文与壁画线索",
+      "拼凑线索揭示色孽信徒真相"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_2_event_1",
+        "ch_5_2_event_2"
+      ]
+    }
   },
   {
     "id": "ch_5_3",
     "mainline_id": "vol_5",
     "name": "抉择卷 第三章：终曲",
-    "order": 79,
+    "order": 68,
     "status": "locked",
     "description": "第三章：终曲\n \n<系统引导>\n引导{{user}}在混沌围城的高压冲突中，基于前两章的认知做出最终抉择，通过阵营分裂、神圣牺牲等情节强化抉择的重量，让{{user}}的选择自然推动结局走向。\n \n<场景细节>\n水之都被粉色的混沌雾气笼罩，雾气粘稠如纱，吸入时带着甜腻的气息，模糊了视线，百米外的景象只剩轮廓。唯美会与行乐者协会的信徒嘶吼着冲击城墙，他们的旗帜上双性别符号在雾气中泛着诡异的粉色光，旗帜布料被风吹得“哗啦”作响。城墙表面斑驳，刻满了新旧交叠的刀痕与箭孔，圣吉列斯插入城墙的火之剑散发着金色光晕，将周围雾气逼退，剑身在风中微微震颤发出“嗡鸣”。艾迪娜悬浮的圣血囚笼泛着金光，与她体内溢出的粉色邪光碰撞，形成一圈圈涟漪，触碰时既有灼热也有冰冷的触感。\n \n<重要规则>\n \n1. {{user}}的最终抉择（救赎/毁灭）需基于前两章的认知与体验，选择后触发对应剧情分支。\n\n2. 阵营分裂的反应（支持/反对）需符合角色立场（如冒险者的务实、平民的祈愿），强化抉择的争议性。\n\n3. 圣吉列斯的状态（圣洁光辉/金色火焰）随{{user}}选择变化，其行为（封印/攻击）需体现神圣意志与内心挣",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "water_town"
+    ],
+    "objectives": [
+      "在混沌围城中做出最终抉择",
+      "决定水之都与众人的命运"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_5_3_event_1",
+        "ch_5_3_event_2",
+        "ch_5_3_event_3"
+      ]
+    }
   },
   {
     "id": "ch_6_1",
     "mainline_id": "vol_6",
     "name": "第六卷 第一章：稀松平常的春天某日",
-    "order": 80,
+    "order": 69,
     "status": "locked",
     "description": "第六卷 第一章：稀松平常的春天某日\n主要目标： 你将带领小队，在春季冒险者激增的背景下，处理一系列由哥布林引发的连锁骚乱。最终，你将在一个被哥布林占据的巨大洞窟中，面对数量悬殊的敌人，并以破釜沉舟的决断，为团队在绝境中开辟一条生路。\n<第一章事件列表>\n1.1 章节事件：公会的喧嚣 (The Guild's Bustle)\n1.2 章节事件：堆积的委托 (The Piling Quests)\n1.3 章节事件：最初的血腥 (First Blood)\n1.4 章节事件：河畔的洞窟 (The Riverside Cavern)\n1.5 章节事件：绝境的洪流 (The Desperate Deluge)\n</第一章事件列表>\n\n<公会的喧嚣>\n1.1 章节事件：公会的喧嚣 (The Guild's Bustle)\n章节事件目标： 在春日暖阳下的冒险者公会中，感受新一轮冒险热潮的氛围，并确立你作为队长，在任务开始前的领导基调。\n系统引导： 冒险者公会大厅里人声鼎沸，充满了新人的朝气与老手的沉稳。女神官正与妖精弓手讨论着关于新建立的冒险者训练场，以及千金剑士寄来的信件。矿人道士与蜥蜴僧侣则在一旁",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "goblin_cave"
+    ],
+    "objectives": [
+      "你将带领小队，在春季冒险者激增的背景下，处理一系列由哥布林引发的连锁骚乱。最终，你将在一个被哥布林占据的巨大洞窟中，面对数量悬殊的敌人，并以破釜沉舟的决断，为团队在绝境中开辟一条生路。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_1_公会的喧嚣_(The_Guild's_Bustle)",
+        "ch_6_1_堆积的委托_(The_Piling_Quests)",
+        "ch_6_1_最初的血腥_(First_Blood)",
+        "ch_6_1_河畔的洞窟_(The_Riverside_Cavern)",
+        "ch_6_1_绝境的洪流_(The_Desperate_Deluge)",
+        "ch_6_1_公会的喧嚣_(The_Guild's_Bustle)"
+      ]
+    }
   },
   {
     "id": "ch_6_2",
     "mainline_id": "vol_6",
     "name": "第六卷 第二章：红发少年魔法师",
-    "order": 81,
+    "order": 70,
     "status": "locked",
     "description": "第六卷 第二章：红发少年魔法师\n主要目标： 在结束了艰苦的战斗后，你将在深夜的公会中，处理一位对“杀哥布林”异常执着的红发少年魔法师的纠缠。你将以队长的身份，为这个无处可去的少年做出一个关乎责任与信任的安排，并直面来自外界的审慎与怀疑。\n<第二章事件列表>\n2.1 章节事件：深夜的对峙 (The Midnight Standoff)\n2.2 章节事件：队长的决断 (The Captain's Decision)\n2.3 章节事件：月下的同行 (The Moonlit Walk)\n2.4 章节事件：牧场的门槛 (The Farm's Threshold)\n2.5 章节事件：监护的誓言 (The Guardian's Vow)\n</第二章事件列表>\n\n<深夜的对峙>\n2.1 章节事件：深夜的对峙 (The Midnight Standoff)\n章节事件目标： 在完成报告、准备带领疲惫的团队回房休息时，直面红发少年的挑战，并初步了解他偏执行为背后的动机。\n系统引导： 当你们拖着被河水浸透的身体和极度的疲惫向柜台小姐完成报告后，一个身影拦住了你们。正是白天那个红发少年。他无视了你们身上浓重的血",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "cow_girl_farm"
+    ],
+    "objectives": [
+      "在结束了艰苦的战斗后，你将在深夜的公会中，处理一位对“杀哥布林”异常执着的红发少年魔法师的纠缠。你将以队长的身份，为这个无处可去的少年做出一个关乎责任与信任的安排，并直面来自外界的审慎与怀疑。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_2_深夜的对峙_(The_Midnight_Standoff)",
+        "ch_6_2_队长的决断_(The_Captain's_Decision)",
+        "ch_6_2_月下的同行_(The_Moonlit_Walk)",
+        "ch_6_2_牧场的门槛_(The_Farm's_Threshold)",
+        "ch_6_2_监护的誓言_(The_Guardian's_Vow)",
+        "ch_6_2_深夜的对峙_(The_Midnight_Standoff)"
+      ]
+    }
   },
   {
     "id": "ch_6_3",
     "mainline_id": "vol_6",
     "name": "第六卷 第三章：法术资源",
-    "order": 82,
+    "order": 71,
     "status": "locked",
     "description": "第六卷 第三章：法术资源\n主要目标： 你将带领小队前往新建立的冒险者训练场，接受一项调查失踪冒险者的任务。在此期间，你将处理因红发少年魔法师的挑衅而引发的团队内部冲突，并通过一次大胆的“放权”，将队伍的临时指挥权交给女神官，以此作为对双方的试炼与考验。\n<第三章事件列表>\n3.1 章节事件：训练场的朝阳 (The Training Ground's Dawn)\n3.2 章节事件：失败的晋升 (The Failed Promotion)\n3.3 章节事件：少年的挑衅 (The Boy's Provocation)\n3.4 章节事件：骑士的介入 (The Knight's Intervention)\n3.5 章节事件：队长的豪赌 (The Captain's Gambit)\n</第三章事件列表>\n\n<训练场的朝阳>\n3.1 章节事件：训练场的朝阳 (The Training Ground's Dawn)\n章节事件目标： 带领小队抵达郊外的冒险者训练场，感受这片充满希望与汗水的新兴之地，并从工头处接受正式的任务简报。\n系统引导： 你们一行人来到了正在建设中的训练场。这里曾是一片荒野，如今已初",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "你将带领小队前往新建立的冒险者训练场，接受一项调查失踪冒险者的任务。在此期间，你将处理因红发少年魔法师的挑衅而引发的团队内部冲突，并通过一次大胆的“放权”，将队伍的临时指挥权交给女神官，以此作为对双方的试炼与考验。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_3_训练场的朝阳_(The_Training_Ground's_",
+        "ch_6_3_失败的晋升_(The_Failed_Promotion)",
+        "ch_6_3_少年的挑衅_(The_Boy's_Provocation)",
+        "ch_6_3_骑士的介入_(The_Knight's_Interventi",
+        "ch_6_3_队长的豪赌_(The_Captain's_Gambit)",
+        "ch_6_3_训练场的朝阳_(The_Training_Ground's_"
+      ]
+    }
   },
   {
     "id": "ch_6_4",
     "mainline_id": "vol_6",
     "name": "第六卷 第四章：一群没有名字的男人",
-    "order": 83,
+    "order": 72,
     "status": "locked",
     "description": "第六卷 第四章：一群没有名字的男人\n主要目标： 你将以“顾问”和“最终安全保障”的身份，带领由女神官临时指挥的小队，正式开始对古墓的探索。你的核心任务是观察并评估女神官的指挥能力与红发少年的实战表现，并在少年鲁莽行为引发的连锁危机中，引导你的代理指挥官做出正确的决断。\n<第四章事件列表>\n4.1 章节事件：门槛前的第一道命令 (The First Command at the Threshold)\n4.2 章节事件：谨慎的步伐 (The Cautious Advance)\n4.3 章节事件：焦躁的火种 (The Seed of Impatience)\n4.4 章节事件：一触即发的陷阱 (The Triggered Trap)\n4.5 章节事件：绝望的尖叫 (The Scream of Despair)\n4.6 章节事件：分崩离析的阵型 (The Fractured Formation)\n</第四章事件列表>\n\n<门槛前的第一道命令>\n4.1 章节事件：门槛前的第一道命令 (The First Command at the Threshold)\n章节事件目标： 在陵墓入口，观察女神官下达",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "你将以“顾问”和“最终安全保障”的身份，带领由女神官临时指挥的小队，正式开始对古墓的探索。你的核心任务是观察并评估女神官的指挥能力与红发少年的实战表现，并在少年鲁莽行为引发的连锁危机中，引导你的代理指挥官做出正确的决断。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_4_门槛前的第一道命令_(The_First_Command_a",
+        "ch_6_4_谨慎的步伐_(The_Cautious_Advance)",
+        "ch_6_4_焦躁的火种_(The_Seed_of_Impatience)",
+        "ch_6_4_一触即发的陷阱_(The_Triggered_Trap)",
+        "ch_6_4_绝望的尖叫_(The_Scream_of_Despair)",
+        "ch_6_4_分崩离析的阵型_(The_Fractured_Formati",
+        "ch_6_4_门槛前的第一道命令_(The_First_Command_a"
+      ]
+    }
   },
   {
     "id": "ch_6_5",
     "mainline_id": "vol_6",
     "name": "第六卷 第五章：郊外的训练场",
-    "order": 84,
+    "order": 73,
     "status": "locked",
     "description": "第六卷 第五章：郊外的训练场\n主要目标： 在团队因红发少年的鲁莽行动而陷入分崩离析的绝境后，你将正式接管指挥权。你将兵分两路，亲自带领一支精锐小队追击并营救红发少年，同时将稳固后方的重任交给女神官，领导一场惊心动魄的双线作战。\n<第五章事件列表>\n5.1 章节事件：队长的怒吼 (The Captain's Roar)\n5.2 章节事件：临危受命 (Appointed in Crisis)\n5.3 章节事件：追猎的足迹 (The Hunter's Trail)\n5.4 章节事件：拷问室的惨剧 (The Torture Chamber Tragedy)\n5.5 章节事件：巨魔的咆哮 (The Troll's Bellow)\n</第五章事件列表>\n\n<队长的怒吼>\n5.1 章节事件：队长的怒吼 (The Captain's Roar)\n章节事件目标： 在混乱的顶点，你将以不容置疑的姿态强行接管指挥权，并迅速下达分兵指令，重塑濒临崩溃的指挥链。\n系统引导： 红发少年消失在黑暗中，女神官因自责和恐惧而几乎无法思考，留下的队员们则陷入了迷茫。哥布林的包围圈正在收缩。在这千钧一发之际，你必须站出来，",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "goblin_cave"
+    ],
+    "objectives": [
+      "在团队因红发少年的鲁莽行动而陷入分崩离析的绝境后，你将正式接管指挥权。你将兵分两路，亲自带领一支精锐小队追击并营救红发少年，同时将稳固后方的重任交给女神官，领导一场惊心动魄的双线作战。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_5_队长的怒吼_(The_Captain's_Roar)",
+        "ch_6_5_临危受命_(Appointed_in_Crisis)",
+        "ch_6_5_追猎的足迹_(The_Hunter's_Trail)",
+        "ch_6_5_拷问室的惨剧_(The_Torture_Chamber_Tr",
+        "ch_6_5_巨魔的咆哮_(The_Troll's_Bellow)",
+        "ch_6_5_队长的怒吼_(The_Captain's_Roar)"
+      ]
+    }
   },
   {
     "id": "ch_6_6",
     "mainline_id": "vol_6",
     "name": "第六卷 第六章：各自的战斗",
-    "order": 85,
+    "order": 74,
     "status": "locked",
     "description": "第六卷 第六章：各自的战斗\n主要目标： 在被完全包围的绝境中，你将正式接管指挥权，并整合团队所有人的知识与资源，制定并领导一场极富创造性但也极度危险的作战，以“炼金术”与“魔法”的组合，彻底击溃拥有强大再生能力的巨魔，为这场陵墓血战画上句点。\n<第六章事件列表>\n6.1 章节事件：绝境的汇合 (Reunion in Despair)\n6.2 章节事件：队长的奇谋 (The Captain's Ingenuity)\n6.3 章节事件：各自的战场 (Their Respective Battlefields)\n6.4 章节事件：火焰的洗礼 (The Baptism of Fire)\n6.5 章节事件：崩坏的巨人 (The Crumbling Giant)\n6.6 章节事件：最后的指令 (The Final Order)\n</第六章事件列表>\n\n<绝境的汇合>\n6.1 章节事件：绝境的汇合 (Reunion in Despair)\n章节事件目标： 在巨魔的压迫下，你带领的追击小队被迫后撤，并成功与女神官带领的后援队伍在一处相对宽敞的墓室汇合，但团队也因此陷入了被完全包围的境地。\n系统引导： ",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "在被完全包围的绝境中，你将正式接管指挥权，并整合团队所有人的知识与资源，制定并领导一场极富创造性但也极度危险的作战，以“炼金术”与“魔法”的组合，彻底击溃拥有强大再生能力的巨魔，为这场陵墓血战画上句点。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_6_绝境的汇合_(Reunion_in_Despair)",
+        "ch_6_6_队长的奇谋_(The_Captain's_Ingenuity",
+        "ch_6_6_各自的战场_(Their_Respective_Battle",
+        "ch_6_6_火焰的洗礼_(The_Baptism_of_Fire)",
+        "ch_6_6_崩坏的巨人_(The_Crumbling_Giant)",
+        "ch_6_6_最后的指令_(The_Final_Order)",
+        "ch_6_6_绝境的汇合_(Reunion_in_Despair)"
+      ]
+    }
   },
   {
     "id": "ch_6_7",
     "mainline_id": "vol_6",
     "name": "第六卷 第七章：酒馆里的独白",
-    "order": 86,
+    "order": 75,
     "status": "locked",
     "description": "第六卷 第七章：酒馆里的独白\n主要目标： 在庆祝女神官晋升的酒宴上，你将见证一场由酒精与创伤引发的情感风暴。红发少年魔法师的悲惨独白，将意外地触及哥布林杀手最深处的伤疤，导致他前所未有地情绪失控。你必须在这场突发的心理危机中，维持团队的稳定，并做出作为队长的最终应对。\n<第七章事件列表>\n7.1 章节事件：公会的报告与奖赏 (The Report and the Reward)\n7.2 章节事件：庆功的祝酒 (A Toast to Celebration)\n7.3 章节事件：醉后的独白 (A Drunken Monologue)\n7.4 章节事件：破碎的铁面 (The Shattered Iron Mask)\n7.5 章节事件：伤痕的小巷 (The Alley of Scars)\n</第七章事件列表>\n\n<公会的报告与奖赏>\n7.1 章节事件：公会的报告与奖赏 (The Report and the Reward)\n章节事件目标： 正式向公会提交陵墓清剿任务的报告，并见证女神官因在任务中的卓越表现而获得晋升。\n系统引导： 你们回到了冒险者公会，柜台小姐在听完你的任务报告后，眼中充满了钦",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "在庆祝女神官晋升的酒宴上，你将见证一场由酒精与创伤引发的情感风暴。红发少年魔法师的悲惨独白，将意外地触及哥布林杀手最深处的伤疤，导致他前所未有地情绪失控。你必须在这场突发的心理危机中，维持团队的稳定，并做出作为队长的最终应对。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_7_公会的报告与奖赏_(The_Report_and_the_R",
+        "ch_6_7_庆功的祝酒_(A_Toast_to_Celebration)",
+        "ch_6_7_醉后的独白_(A_Drunken_Monologue)",
+        "ch_6_7_破碎的铁面_(The_Shattered_Iron_Mask",
+        "ch_6_7_伤痕的小巷_(The_Alley_of_Scars)",
+        "ch_6_7_公会的报告与奖赏_(The_Report_and_the_R"
+      ]
+    }
   },
   {
     "id": "ch_6_8",
     "mainline_id": "vol_6",
     "name": "第六卷 第八章：风暴前的夜谈",
-    "order": 87,
+    "order": 76,
     "status": "locked",
     "description": "第六卷 第八章：风暴前的夜谈\n主要目标： 在哥布林杀手情绪崩溃事件的一周后，你将带领小队在看似恢复平静的训练场度过一段日常时光。你将观察并参与到老手指导新人的各类互动中，并在入夜后，见证边境三大顶尖战力之间一场罕见而深刻的夜谈。然而，这份平静将被一场突如其来的血腥袭击彻底撕碎，为最终的决战拉开序幕。\n<第八章事件列表>\n8.1 章节事件：白日的操练 (The Daytime Drills)\n8.2 章节事件：投石索的教学 (The Slingshot Lesson)\n8.3 章节事件：午后的闲暇 (The Afternoon Leisure)\n8.4 章节事件：河边的夜谈 (The Riverside Night Talk)\n8.5 章节事件：黑暗中的猎食 (The Hunt in the Dark)\n</第八章事件列表>\n\n<白日的操练>\n8.1 章节事件：白日的操练 (The Daytime Drills)\n章节事件目标： 在白天的训练场，观察并参与边境的老手们对新人的实战指导，感受这片新兴之地的活力与传承氛围。\n系统引导： 经过一周的休整，训练场已经正式运作起来。你看到了一幕幕充",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "在哥布林杀手情绪崩溃事件的一周后，你将带领小队在看似恢复平静的训练场度过一段日常时光。你将观察并参与到老手指导新人的各类互动中，并在入夜后，见证边境三大顶尖战力之间一场罕见而深刻的夜谈。然而，这份平静将被一场突如其来的血腥袭击彻底撕碎，为最终的决战拉开序幕。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_8_白日的操练_(The_Daytime_Drills)",
+        "ch_6_8_投石索的教学_(The_Slingshot_Lesson)",
+        "ch_6_8_午后的闲暇_(The_Afternoon_Leisure)",
+        "ch_6_8_河边的夜谈_(The_Riverside_Night_Tal",
+        "ch_6_8_黑暗中的猎食_(The_Hunt_in_the_Dark)",
+        "ch_6_8_白日的操练_(The_Daytime_Drills)"
+      ]
+    }
   },
   {
     "id": "ch_6_9",
     "mainline_id": "vol_6",
     "name": "第六卷 第九章：血染的沙场",
-    "order": 88,
+    "order": 77,
     "status": "locked",
     "description": "第六卷 第九章：血染的沙场\n主要目标： 面对哥布林从地底发动的全面突袭，你将与边境的其他顶尖战力并肩作战，指挥并参与一场惨烈的阵地防御战。你的核心任务是在哥布林潮水般的攻势下，守住训练场行政楼这条最后的防线，保护身后惊慌失措的新人，并见证你的队员——女神官——在这场血与火的洗礼中，展现出惊人的成长。\n<第九章事件列表>\n9.1 章节事件：警报与集结 (The Alarm and the Rally)\n9.2 章节事件：行政楼前的壁垒 (The Bulwark Before the Admin Building)\n9.3 章节事件：各自的战线 (Their Respective Frontlines)\n9.4 章节事件：女神官的防线 (The Priestess's Defense Line)\n9.5 章节事件：巨人之击 (The Giant's Strike)\n9.6 章节事件：摇摇欲坠的防线 (The Faltering Line of Defense)\n</第九章事件列表>\n\n<警报与集结>\n9.1 章节事件：警报与集结 (The Alarm and the Rally)\n章节事件",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town"
+    ],
+    "objectives": [
+      "面对哥布林从地底发动的全面突袭，你将与边境的其他顶尖战力并肩作战，指挥并参与一场惨烈的阵地防御战。你的核心任务是在哥布林潮水般的攻势下，守住训练场行政楼这条最后的防线，保护身后惊慌失措的新人，并见证你的队员——女神官——在这场血与火的洗礼中，展现出惊人的成长。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_9_警报与集结_(The_Alarm_and_the_Rally",
+        "ch_6_9_行政楼前的壁垒_(The_Bulwark_Before_th",
+        "ch_6_9_各自的战线_(Their_Respective_Frontl",
+        "ch_6_9_女神官的防线_(The_Priestess's_Defens",
+        "ch_6_9_巨人之击_(The_Giant's_Strike)",
+        "ch_6_9_摇摇欲坠的防线_(The_Faltering_Line_of",
+        "ch_6_9_警报与集结_(The_Alarm_and_the_Rally"
+      ]
+    }
   },
   {
     "id": "ch_6_10",
     "mainline_id": "vol_6",
     "name": "第六卷 第十章：绝望的防线",
-    "order": 89,
+    "order": 78,
     "status": "locked",
     "description": "第六卷 第十章：绝望的防线\n主要目标： 在防线即将全面崩溃的绝境中，你将见证红发少年魔法师的成长与觉醒。他将活用白天从矿人道士那里学到的“手牌理论”，以一种意想不到的方式，释放出扭转整个战局的关键魔法，为你的斩首行动创造出宝贵的机会。\n<第十章事件列表>\n10.1 章节事件：崩溃的边缘 (The Brink of Collapse)\n10.2 章节事件：少年的觉醒 (The Boy's Awakening)\n10.3 章节事件：不只是火球 (More Than Just a Fireball)\n10.4 章节事件：声波的冲击 (The Sonic Boom)\n10.5 章节事件：最后的嘱托 (The Final Entrustment)\n</第十章事件列表>\n\n<崩溃的边缘>\n10.1 章节事件：崩溃的边缘 (The Brink of Collapse)\n章节事件目标： 亲身感受防线在哥布林萨满指挥下的疯狂攻势面前，那种摇摇欲坠、濒临极限的绝望感。\n系统引导： 重战士的退场成为了压垮骆驼的最后一根稻草。在数名哥布林萨满的咒语加持下，哥布林们变得狂暴而悍不畏死。长枪手和魔女的战线被压缩到",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "cow_girl_farm"
+    ],
+    "objectives": [
+      "在防线即将全面崩溃的绝境中，你将见证红发少年魔法师的成长与觉醒。他将活用白天从矿人道士那里学到的“手牌理论”，以一种意想不到的方式，释放出扭转整个战局的关键魔法，为你的斩首行动创造出宝贵的机会。"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_10_崩溃的边缘_(The_Brink_of_Collapse)",
+        "ch_6_10_少年的觉醒_(The_Boy's_Awakening)",
+        "ch_6_10_不只是火球_(More_Than_Just_a_Fireba",
+        "ch_6_10_声波的冲击_(The_Sonic_Boom)",
+        "ch_6_10_最后的嘱托_(The_Final_Entrustment)",
+        "ch_6_10_崩溃的边缘_(The_Brink_of_Collapse)"
+      ]
+    }
   },
   {
     "id": "ch_6_11",
     "mainline_id": "vol_6",
     "name": "第六卷 第十一章：猎手们的反击",
-    "order": 90,
+    "order": 79,
     "status": "locked",
     "description": "第六卷 第十一章：猎手们的反击\n主要目标： 你将带领小队的全部核心成员，抓住由红发少年创造的战机，反守为攻，突入哥布林挖掘的地下通道。你将直面哥布林军队的真正指挥官——哥布林萨满，并最终采纳哥布林杀手那份承载着他全部过往的计策，以一场人工洪水，彻底荡清这片土地下的所有污秽，为整个第六卷的故事画上句号。\n<第十一章事件列表>\n11.1 章节事件：反击的号角 (The Horn of Counterattack)\n11.2 章节事件：地道中的猎杀 (The Hunt in the Tunnels)\n11.3 章节事件：萨满的王座 (The Shaman's Throne)\n11.4 章节事件：故乡的池塘 (The Pond of the Hometown)\n11.5 章节事件：最后的清算 (The Final Reckoning)\n11.6 章节事件：接着，前往冒险 (And Then, to Adventure)\n</第十一章事件列表>\n\n<反击的号角>\n11.1 章节事件：反击的号角 (The Horn of Counterattack)\n章节事件目标： 在红发少年清场后，你将带领小队",
     "available_areas": [
-      "frontier_town"
+      "cow_girl_farm"
     ],
     "objectives": [
-      "击败哥布林萨满",
-      "引发人工洪水"
+      "你将带领小队的全部核心成员，抓住由红发少年创造的战机，反守为攻，突入哥布林挖掘的地下通道。你将直面哥布林军队的真正指挥官——哥布林萨满，并最终采纳哥布林杀手那份承载着他全部过往的计策，以一场人工洪水，彻底荡清这片土地下的所有污秽，为整个第六卷的故事画上句号。"
     ],
-    "trigger_conditions": {
-      "type": "chapter_complete",
-      "chapter_id": "ch_6_10"
-    },
+    "trigger_conditions": {},
     "completion_conditions": {
-      "type": "event",
-      "description": "彻底肃清地下威胁"
+      "events_required": [
+        "ch_6_11_反击的号角_(The_Horn_of_Counteratta",
+        "ch_6_11_地道中的猎杀_(The_Hunt_in_the_Tunnel",
+        "ch_6_11_萨满的王座_(The_Shaman's_Throne)",
+        "ch_6_11_故乡的池塘_(The_Pond_of_the_Hometow",
+        "ch_6_11_最后的清算_(The_Final_Reckoning)",
+        "ch_6_11_接着",
+        "ch_6_11_前往冒险_(And_Then",
+        "ch_6_11_to_Adventure)",
+        "ch_6_11_反击的号角_(The_Horn_of_Counteratta"
+      ]
     }
   },
   {
-    "id": "ch_6_92",
+    "id": "ch_6_81",
     "mainline_id": "vol_6",
     "name": "任务: 纯洁的魅魔章",
-    "order": 91,
+    "order": 80,
     "status": "locked",
     "description": "<章节剧情模板>\n任务: 纯洁的魅魔章\n章节总体目标:\n  你必须在本章达成以下核心目标：\n    - 细腻展现同伴“零”温和、友善且有礼的独特个性\n    - 透过一系列特殊事件，逐步揭示并暗示“零”非同寻常的神秘身世\n    - 藉由特殊的委托互动，展现“零”在灵魂与肉体层面纯洁而又矛盾的魅力\n章节通用指令:\n  你必须在整个章节的叙事中体现以下要点：\n    - 重点塑造“零”在自我认知上的挣扎，以及她对{{user}}产生的信赖与情感依赖，从而增强玩家的代入感与保护欲\n    - 营造一种神秘与温馨交织的氛围，日常的互动中潜藏着关于魔神与血脉的线索\n    - 确保所有事件的推进都围绕着“零”与{{user}}之间的关系深化而展开\n章节事件列表:\n  你引导{{user}}按以下顺序经历事件：\n    - 与零相会 (Meet With Zero)\n    - 在无尽黑暗之中... (In The Endless Darkness...)\n    - 死线 (Dead Line)\n    - 告白 (Confession)\n\n<与零相会>\n区块目标:\n  你引导角色在此区块内达",
     "available_areas": [],
-    "objectives": [],
+    "objectives": [
+      "展现零温和、友善且有礼的独特个性",
+      "揭示并暗示零非同寻常的神秘身世",
+      "展现零在灵魂与肉体层面纯洁而又矛盾的魅力",
+      "塑造零的自我认知挣扎与对用户的信赖"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_81_event_1",
+        "ch_6_81_event_2",
+        "ch_6_81_event_3",
+        "ch_6_81_event_4"
+      ]
+    }
   },
   {
-    "id": "ch_6_93",
+    "id": "ch_6_82",
     "mainline_id": "vol_6",
     "name": "前传-哥布林杀手",
-    "order": 92,
+    "order": 81,
     "status": "locked",
     "description": "哥布林杀手(前传):\n哥布林杀手曾是一个怀揣冒险者梦想的普通乡下少年，与亲爱的姐姐和青梅竹马（牧牛妹）过着无忧无虑的生活。然而，这片宁静被一群哥布林的袭击彻底撕碎。他躲藏在黑暗中，被迫目睹姐姐惨死于哥布林之手，这一幕成为了他永不磨灭的梦魇，也点燃了他复仇的火焰。\n\n在之后的五年里，他并未学习成为英雄的剑术，而是在一位神秘的师傅『圃人』的严苛教导下，学习如何生存、思考、以及如何用最务实、最不择手段的方式去“剿灭”猎物。他忽略了杂念，只为了让自己变得更强，而这也包括情与感，只留下了对哥布林的仇恨和一套生存逻辑。\n\n五年后，当他在初春时与其他前来注册成为冒险者的人们前往边境小镇，路过边境小镇东的牧场时，命运让他与牧牛妹重逢了。牧牛妹在失去了自己的家人后，被她的舅舅收养并一同经营着牧场。她立刻认出了这个儿时的玩伴，尽管他已变得沉默寡言、眼神空洞。看着无家可归的他，冒险者这样代表着野蛮与不确定死期的工作让舅舅十分顾虑，牧牛妹向舅舅求情，让牧场对他敞开了大门，让他住在牧场的仓库里。他不用支付房租，但他坚持付钱，这笔钱能让他在镇上的好旅馆居住，并且他帮忙修理栅栏等杂务作为回报。就这样，牧场成为了他唯",
-    "available_areas": [],
-    "objectives": [],
+    "available_areas": [
+      "frontier_town",
+      "cow_girl_farm"
+    ],
+    "objectives": [
+      "回顾哥布林杀手的童年悲剧",
+      "完成师从圃人的五年生存训练",
+      "前往边境小镇注册成为冒险者",
+      "与牧牛妹重逢并入住牧场"
+    ],
     "trigger_conditions": {},
-    "completion_conditions": {}
+    "completion_conditions": {
+      "events_required": [
+        "ch_6_82_event_1",
+        "ch_6_82_event_2",
+        "ch_6_82_event_3",
+        "ch_6_82_event_4"
+      ]
+    }
   }
 ]

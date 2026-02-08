@@ -106,6 +106,10 @@ class FlashOperation(str, Enum):
     START_COMBAT = "start_combat"
     # 章节
     TRIGGER_NARRATIVE_EVENT = "trigger_narrative_event"
+    # 队伍管理
+    ADD_TEAMMATE = "add_teammate"
+    REMOVE_TEAMMATE = "remove_teammate"
+    DISBAND_PARTY = "disband_party"
     # 查询类
     GET_PROGRESS = "get_progress"
     GET_STATUS = "get_status"
@@ -138,6 +142,7 @@ class AnalysisPlan(BaseModel):
     memory_seeds: List[str] = Field(default_factory=list)
     reasoning: str = ""
     context_package: Optional[Dict[str, Any]] = None
+    story_progression: Optional[Dict[str, Any]] = None
 
 
 class FlashResponse(BaseModel):
@@ -174,6 +179,11 @@ class CoordinatorResponse(BaseModel):
 
     # 元数据
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    # V2 orchestration data (optional)
+    story_events: List[str] = Field(default_factory=list)
+    pacing_action: Optional[str] = None
+    chapter_info: Optional[Dict[str, Any]] = None
 
 
 # 解决前向引用

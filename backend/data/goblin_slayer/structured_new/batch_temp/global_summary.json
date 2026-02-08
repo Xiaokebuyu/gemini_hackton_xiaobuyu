@@ -1,0 +1,604 @@
+{
+  "entities": [
+    {
+      "id": "character_goblin_slayer",
+      "type": "character",
+      "name": "哥布林杀手",
+      "aliases": [
+        "欧尔克博格",
+        "啮切丸",
+        "小鬼杀手"
+      ],
+      "brief": "边境小镇的银等级冒险者，只接受剿灭哥布林任务的专家，身穿肮脏的皮甲和铁盔。"
+    },
+    {
+      "id": "character_priestess",
+      "type": "character",
+      "name": "女神官",
+      "aliases": [
+        "小神官",
+        "地母神信徒"
+      ],
+      "brief": "地母神的见习神官，哥布林杀手的队友，性格善良坚韧。"
+    },
+    {
+      "id": "character_high_elf_archer",
+      "type": "character",
+      "name": "妖精弓手",
+      "aliases": [
+        "上森人",
+        "铁砧"
+      ],
+      "brief": "银等级游侠，哥布林杀手的队友，为了寻求冒险而离开森林的上森人。"
+    },
+    {
+      "id": "character_dwarf_shaman",
+      "type": "character",
+      "name": "矿人道士",
+      "aliases": [
+        "术士兄",
+        "酒桶"
+      ],
+      "brief": "银等级术师，哥布林杀手的队友，豪爽且喜爱美食美酒的矿人。"
+    },
+    {
+      "id": "character_lizard_priest",
+      "type": "character",
+      "name": "蜥蜴僧侣",
+      "aliases": [
+        "蜥蜴兄"
+      ],
+      "brief": "银等级僧侣，哥布林杀手的队友，崇尚龙祖信仰，喜爱乳制品。"
+    },
+    {
+      "id": "character_cow_girl",
+      "type": "character",
+      "name": "牧牛妹",
+      "aliases": [],
+      "brief": "哥布林杀手的青梅竹马，牧场的经营者，是他心灵的归宿。"
+    },
+    {
+      "id": "character_guild_girl",
+      "type": "character",
+      "name": "柜台小姐",
+      "aliases": [
+        "公会职员",
+        "前台小姐"
+      ],
+      "brief": "冒险者公会的职员，对哥布林杀手抱有特殊的好感与信赖。"
+    },
+    {
+      "id": "character_sword_maiden",
+      "type": "character",
+      "name": "剑之圣女",
+      "aliases": [
+        "水之都大主教"
+      ],
+      "brief": "水之都至高神殿的大主教，前金等级冒险者，曾讨伐魔神王，深受哥布林造成的创伤折磨。"
+    },
+    {
+      "id": "character_hero",
+      "type": "character",
+      "name": "勇者",
+      "aliases": [
+        "凉宫春日(外貌原型)"
+      ],
+      "brief": "拥有光之圣剑的少女，魔神王讨伐者，天真烂漫的救世主。"
+    },
+    {
+      "id": "character_vivella",
+      "type": "character",
+      "name": "薇薇拉",
+      "aliases": [
+        "剑姬",
+        "没落的公主"
+      ],
+      "brief": "半吸血鬼猎魔人，承载失落王国记忆的亡国公主，流浪的剑术宗师。"
+    },
+    {
+      "id": "character_witch",
+      "type": "character",
+      "name": "魔女",
+      "aliases": [
+        "阿尔克墨涅"
+      ],
+      "brief": "银等级魔法师，枪兵的搭档，性格慵懒神秘，喜欢抽烟。"
+    },
+    {
+      "id": "character_lancer",
+      "type": "character",
+      "name": "枪兵",
+      "aliases": [
+        "边境最强"
+      ],
+      "brief": "银等级战士，魔女的搭档，性格豪爽爱面子，拥有强大的实力。"
+    },
+    {
+      "id": "character_heavy_warrior",
+      "type": "character",
+      "name": "重战士",
+      "aliases": [],
+      "brief": "银等级战士，女骑士的搭档，外刚内柔的可靠大哥。"
+    },
+    {
+      "id": "character_female_knight",
+      "type": "character",
+      "name": "女骑士",
+      "aliases": [],
+      "brief": "银等级圣骑士志愿，重战士的搭档，性格正直且毒舌。"
+    },
+    {
+      "id": "character_rookie_warrior",
+      "type": "character",
+      "name": "新手战士",
+      "aliases": [],
+      "brief": "白瓷等级冒险者，见习圣女的搭档，从失败中成长的热血少年。"
+    },
+    {
+      "id": "character_apprentice_saintess",
+      "type": "character",
+      "name": "见习圣女",
+      "aliases": [],
+      "brief": "白瓷等级冒险者，新手战士的搭档，爱操心且务实的神官战士。"
+    },
+    {
+      "id": "character_noble_fencer",
+      "type": "character",
+      "name": "千金剑士",
+      "aliases": [],
+      "brief": "曾遭哥布林凌虐的贵族千金，后在哥布林杀手小队帮助下找回自我。"
+    },
+    {
+      "id": "character_teria",
+      "type": "character",
+      "name": "特利娅",
+      "aliases": [
+        "龙娘"
+      ],
+      "brief": "活了千年的银龙，化为人形寻找乐趣，性格俏皮狡黠。"
+    },
+    {
+      "id": "character_seamstress",
+      "type": "character",
+      "name": "裁缝铺老板娘",
+      "aliases": [
+        "小裁缝",
+        "额头妹妹"
+      ],
+      "brief": "边境小镇裁缝铺的年轻老板娘，手艺精湛，性格内敛。"
+    },
+    {
+      "id": "character_inspector",
+      "type": "character",
+      "name": "监督官",
+      "aliases": [
+        "审查官"
+      ],
+      "brief": "冒险者公会的高级职员，至高神祭司，维护公会秩序。"
+    },
+    {
+      "id": "character_qiao_feng",
+      "type": "character",
+      "name": "乔峰",
+      "aliases": [
+        "乔帮主"
+      ],
+      "brief": "来自异世界的丐帮帮主，武学宗师，为人豪迈侠义。"
+    },
+    {
+      "id": "character_viola",
+      "type": "character",
+      "name": "薇欧拉",
+      "aliases": [
+        "北境旅人"
+      ],
+      "brief": "来自北方的重装战士，热衷于魔物料理的美食家。"
+    },
+    {
+      "id": "character_elven_sorceress",
+      "type": "character",
+      "name": "妖精法师",
+      "aliases": [],
+      "brief": "身负消逝诅咒的上森人法师，性格温柔，有照顾癖。"
+    },
+    {
+      "id": "character_zero",
+      "type": "character",
+      "name": "零",
+      "aliases": [
+        "白学者",
+        "白魔法少女"
+      ],
+      "brief": "拥有魅魔血统的失忆少女，性格友善，认为自己是人类。"
+    },
+    {
+      "id": "character_beastgirl_waitress",
+      "type": "character",
+      "name": "兽人女服务生",
+      "aliases": [],
+      "brief": "公会酒馆的看板娘，犬足族，性格活泼开朗。"
+    },
+    {
+      "id": "character_sanguinius",
+      "type": "character",
+      "name": "圣吉列斯",
+      "aliases": [
+        "大天使",
+        "圣血天使"
+      ],
+      "brief": "来自异世界的基因原体，拥有天使之翼，猎杀邪恶。"
+    },
+    {
+      "id": "character_mata",
+      "type": "character",
+      "name": "玛塔",
+      "aliases": [
+        "凝渊"
+      ],
+      "brief": "半暗人半龙混血的魔女，掌握禁忌知识，追求力量。"
+    },
+    {
+      "id": "character_megumin",
+      "type": "character",
+      "name": "惠惠",
+      "aliases": [
+        "爆裂魔法使"
+      ],
+      "brief": "红魔族的魔法师，极度执着于爆裂魔法的中二少女。"
+    },
+    {
+      "id": "character_mimi",
+      "type": "character",
+      "name": "美美",
+      "aliases": [
+        "兔兔剑士"
+      ],
+      "brief": "小小甜心公会成员，天真烂漫的兔耳族少女。"
+    },
+    {
+      "id": "character_kyouka",
+      "type": "character",
+      "name": "镜华",
+      "aliases": [],
+      "brief": "小小甜心公会成员，早熟的森人优等生魔术师。"
+    },
+    {
+      "id": "character_misogi",
+      "type": "character",
+      "name": "未奏希",
+      "aliases": [],
+      "brief": "小小甜心公会成员，喜欢恶作剧和陷阱的人类斥候。"
+    },
+    {
+      "id": "character_albedo",
+      "type": "character",
+      "name": "雅儿贝德",
+      "aliases": [
+        "甘露猎手"
+      ],
+      "brief": "潜伏在风俗街的魅魔，寻找“最初之人”。"
+    },
+    {
+      "id": "character_rimuru",
+      "type": "character",
+      "name": "利姆露",
+      "aliases": [
+        "史莱姆"
+      ],
+      "brief": "转生为史莱姆的原人类，拥有吞噬和拟态能力，与哥布林杀手合作。"
+    },
+    {
+      "id": "character_ashina_isshin",
+      "type": "character",
+      "name": "苇名一心",
+      "aliases": [
+        "剑圣"
+      ],
+      "brief": "鸣神群岛的传说剑圣，死后化为剑灵，追求武道极致。"
+    },
+    {
+      "id": "character_raiden_ei",
+      "type": "character",
+      "name": "雷电影",
+      "aliases": [
+        "雷电将军"
+      ],
+      "brief": "鸣神群岛的统治者，当代武圣，追求永恒与秩序。"
+    },
+    {
+      "id": "character_yae_miko",
+      "type": "character",
+      "name": "八重神子",
+      "aliases": [
+        "大神主"
+      ],
+      "brief": "鸣神大社的宫司，天狐一族，智慧与狡黠并存。"
+    },
+    {
+      "id": "character_elaina",
+      "type": "character",
+      "name": "伊蕾娜",
+      "aliases": [
+        "灰之魔女"
+      ],
+      "brief": "异世界的天才魔女旅人，性格自信自恋。"
+    },
+    {
+      "id": "character_fox_archer",
+      "type": "character",
+      "name": "狐族弓手",
+      "aliases": [],
+      "brief": "寻找失散族人的狐族游侠，性格纯真害羞。"
+    },
+    {
+      "id": "character_shire",
+      "type": "character",
+      "name": "夏尔",
+      "aliases": [],
+      "brief": "罕见的雄性半魅魔，伪装成少女在人类社会流浪。"
+    },
+    {
+      "id": "character_mana",
+      "type": "character",
+      "name": "玛塔",
+      "aliases": [
+        "百变妖狐",
+        "尤斯蒂亚娜"
+      ],
+      "brief": "篡夺兰德索尔王位的妖狐，渴望成为童话中的公主。"
+    },
+    {
+      "id": "character_karyl",
+      "type": "character",
+      "name": "凯露",
+      "aliases": [],
+      "brief": "猫族兽人魔法师，玛娜的下属，典型的傲娇性格。"
+    },
+    {
+      "id": "character_pecorine",
+      "type": "character",
+      "name": "佩可莉姆",
+      "aliases": [
+        "尤丝蒂亚娜"
+      ],
+      "brief": "兰德索尔真正的公主，贪吃的剑士，拥有强大的王家装备。"
+    },
+    {
+      "id": "character_bloody_baron",
+      "type": "character",
+      "name": "血腥男爵",
+      "aliases": [
+        "菲利普·斯特雷戈"
+      ],
+      "brief": "威伦的统治者，残暴但深爱家人的军阀。"
+    },
+    {
+      "id": "character_puti",
+      "type": "character",
+      "name": "普蒂",
+      "aliases": [],
+      "brief": "盘蛇旅店的半蛇人店主，性格勤劳体贴。"
+    },
+    {
+      "id": "character_kokkoro",
+      "type": "character",
+      "name": "可可萝",
+      "aliases": [],
+      "brief": "幻梦神爱梅斯的巫女，负责引导冒险者前往索尔之塔。"
+    },
+    {
+      "id": "character_leviathan",
+      "type": "character",
+      "name": "利维坦",
+      "aliases": [
+        "搁浅之鲸"
+      ],
+      "brief": "受困于此世的外神意识体，拥有无尽知识的不可名状存在。"
+    },
+    {
+      "id": "deity_earth_mother",
+      "type": "deity",
+      "name": "地母神",
+      "aliases": [
+        "丰饶之母"
+      ],
+      "brief": "掌管农业、生命与慈悲的神祇。"
+    },
+    {
+      "id": "deity_supreme_god",
+      "type": "deity",
+      "name": "至高神",
+      "aliases": [
+        "天平之主"
+      ],
+      "brief": "掌管法律与正义的神祇。"
+    },
+    {
+      "id": "deity_slaanesh",
+      "type": "deity",
+      "name": "色孽",
+      "aliases": [
+        "黑暗王子",
+        "欢愉之神"
+      ],
+      "brief": "掌管快感、刺激与堕落的混沌邪神。"
+    },
+    {
+      "id": "deity_yaldabaoth",
+      "type": "deity",
+      "name": "亚大伯斯",
+      "aliases": [
+        "欲肉圣尊",
+        "血肉之神"
+      ],
+      "brief": "掌管本能、吞噬与血肉重铸的混沌神祇。"
+    },
+    {
+      "id": "deity_ameth",
+      "type": "deity",
+      "name": "爱梅斯",
+      "aliases": [
+        "幻梦神"
+      ],
+      "brief": "掌管梦境与指引的神祇，索尔之塔的创造者。"
+    },
+    {
+      "id": "location_frontier_town",
+      "type": "location",
+      "name": "边境小镇",
+      "aliases": [],
+      "brief": "故事的主要舞台，位于王国边境，设有冒险者公会。"
+    },
+    {
+      "id": "location_water_town",
+      "type": "location",
+      "name": "水之都",
+      "aliases": [],
+      "brief": "繁华的贸易都市，建于遗迹之上，拥有复杂的地下水道。"
+    },
+    {
+      "id": "location_landosol",
+      "type": "location",
+      "name": "兰德索尔",
+      "aliases": [],
+      "brief": "位于大陆南部的冒险者王国，索尔之塔所在地。"
+    },
+    {
+      "id": "location_narukami_archipelago",
+      "type": "location",
+      "name": "鸣神群岛",
+      "aliases": [],
+      "brief": "与世隔绝的东方群岛，拥有独特的武士文化。"
+    },
+    {
+      "id": "faction_adventurers_guild",
+      "type": "faction",
+      "name": "冒险者公会",
+      "aliases": [],
+      "brief": "管理冒险者、发布委托的中立组织。"
+    },
+    {
+      "id": "faction_little_lyrical",
+      "type": "faction",
+      "name": "小小甜心",
+      "aliases": [],
+      "brief": "由美美、镜华、未奏希组成的非官方冒险者小队。"
+    },
+    {
+      "id": "monster_goblin",
+      "type": "monster",
+      "name": "哥布林",
+      "aliases": [
+        "小鬼"
+      ],
+      "brief": "数量众多、生性残忍的低级魔物，是边境的主要威胁。"
+    }
+  ],
+  "key_relations": [
+    {
+      "source": "character_priestess",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_high_elf_archer",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_dwarf_shaman",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_lizard_priest",
+      "target": "character_goblin_slayer",
+      "relation": "companion_of"
+    },
+    {
+      "source": "character_cow_girl",
+      "target": "character_goblin_slayer",
+      "relation": "ally_of"
+    },
+    {
+      "source": "character_guild_girl",
+      "target": "character_goblin_slayer",
+      "relation": "ally_of"
+    },
+    {
+      "source": "character_priestess",
+      "target": "deity_earth_mother",
+      "relation": "worships"
+    },
+    {
+      "source": "character_sword_maiden",
+      "target": "deity_supreme_god",
+      "relation": "worships"
+    },
+    {
+      "source": "character_sword_maiden",
+      "target": "location_water_town",
+      "relation": "rules"
+    },
+    {
+      "source": "character_goblin_slayer",
+      "target": "location_frontier_town",
+      "relation": "located_at"
+    },
+    {
+      "source": "character_goblin_slayer",
+      "target": "monster_goblin",
+      "relation": "enemy_of"
+    },
+    {
+      "source": "character_mimi",
+      "target": "faction_little_lyrical",
+      "relation": "member_of"
+    },
+    {
+      "source": "character_kyouka",
+      "target": "faction_little_lyrical",
+      "relation": "member_of"
+    },
+    {
+      "source": "character_misogi",
+      "target": "faction_little_lyrical",
+      "relation": "member_of"
+    },
+    {
+      "source": "character_raiden_ei",
+      "target": "location_narukami_archipelago",
+      "relation": "rules"
+    },
+    {
+      "source": "character_yae_miko",
+      "target": "character_raiden_ei",
+      "relation": "ally_of"
+    },
+    {
+      "source": "character_kokkoro",
+      "target": "deity_ameth",
+      "relation": "worships"
+    },
+    {
+      "source": "character_karyl",
+      "target": "character_mana",
+      "relation": "ally_of"
+    },
+    {
+      "source": "character_pecorine",
+      "target": "location_landosol",
+      "relation": "native_to"
+    },
+    {
+      "source": "character_bloody_baron",
+      "target": "location_velen",
+      "relation": "rules"
+    },
+    {
+      "source": "character_sanguinius",
+      "target": "deity_slaanesh",
+      "relation": "enemy_of"
+    }
+  ]
+}

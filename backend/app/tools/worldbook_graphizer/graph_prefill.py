@@ -356,6 +356,12 @@ class GraphPrefiller:
                 "objectives": ch.get("objectives", []),
                 "trigger_conditions": ch.get("trigger_conditions", {}),
                 "completion_conditions": ch.get("completion_conditions", {}),
+                # v2 剧情编排字段
+                "events": ch.get("events", []),
+                "transitions": ch.get("transitions", []),
+                "pacing": ch.get("pacing", {}),
+                "entry_conditions": ch.get("entry_conditions"),
+                "tags": ch.get("tags", []),
             })
 
     # ---- internal: camp ----

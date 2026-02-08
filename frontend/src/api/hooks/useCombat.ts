@@ -12,6 +12,7 @@ import { useCombatStore } from '../../stores/combatStore';
 import type {
   CombatActionRequest,
   CombatActionResponse,
+  CombatState,
   TriggerCombatRequest,
   TriggerCombatResponse,
   CombatResolveRequest,
@@ -65,7 +66,7 @@ export function useStartCombat() {
     onSuccess: (response: TriggerCombatResponse) => {
       setCombatId(response.combat_id);
       // combat_state from trigger is a Dict, adapt to CombatState if needed
-      setCombatState(response.combat_state as any);
+      setCombatState(response.combat_state as unknown as CombatState);
 
       queryClient.invalidateQueries({
         queryKey: ['combat', worldId, sessionId],

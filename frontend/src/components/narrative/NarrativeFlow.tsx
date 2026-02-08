@@ -5,9 +5,9 @@ import React, { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence } from 'framer-motion';
 import { Landmark } from 'lucide-react';
-import { useChatStore, useGameStore } from '../../stores';
+import { useChatStore, useGameStore, useCombatStore } from '../../stores';
 import NarrativeMessage from './NarrativeMessage';
-import ActionButtons from './ActionButtons';
+import CombatTriggerCard from '../combat/CombatTriggerCard';
 import LoadingSpinner from '../shared/LoadingSpinner';
 
 interface NarrativeFlowProps {
@@ -19,7 +19,8 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
 }) => {
   const { t } = useTranslation();
   const { messages, isLoading } = useChatStore();
-  const { availableActions } = useGameStore();
+  const { combatId } = useGameStore();
+  const { isActive: isCombatActive } = useCombatStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -83,16 +84,8 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
         </div>
       )}
 
-      {/* Available actions */}
-      {!isLoading && availableActions.length > 0 && (
-        <div className="mt-6 pt-4">
-          <div className="g-divider -mt-4 mb-4"><span className="text-g-gold text-xs">&#9670;</span></div>
-          <h4 className="text-xs g-text-muted uppercase tracking-wide mb-3 font-body">
-            {t('actions.title')}
-          </h4>
-          <ActionButtons actions={availableActions} />
-        </div>
-      )}
+      {/* Combat trigger card */}
+      {combatId && !isCombatActive && <CombatTriggerCard />}
 
       {/* Scroll anchor */}
       <div ref={bottomRef} />

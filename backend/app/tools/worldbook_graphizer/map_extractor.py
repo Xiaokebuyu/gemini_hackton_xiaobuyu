@@ -27,7 +27,7 @@ class MapExtractor:
             api_key: API 密钥（默认使用配置）
         """
         self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
-        self.model = model or "gemini-2.0-flash"  # 使用支持 1M context 的模型
+        self.model = model or "gemini-3-pro-preview"  # 使用支持 1M context 的模型
         self.prompt_template = self._load_prompt_template()
 
     def _load_prompt_template(self) -> str:

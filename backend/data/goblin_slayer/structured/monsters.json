@@ -1,0 +1,5970 @@
+{
+  "monsters": [
+    {
+      "id": "世界生态系统_-_魔物的层级与威胁",
+      "name": "世界生态系统 - 魔物的层级与威胁",
+      "type": "system_rule",
+      "challenge_rating": "N/A",
+      "description": "用于界定世界上各类魔物威胁等级与规模的标准化评估框架，包含基于个体实力的威胁层级和基于聚落组织的巢穴规模。",
+      "stats": {
+        "hp": 0,
+        "ac": 0,
+        "str": 0,
+        "dex": 0,
+        "con": 0,
+        "int": 0,
+        "wis": 0,
+        "cha": 0
+      },
+      "stats_confidence": 1.0,
+      "skills": [],
+      "special_abilities": [
+        "威胁层级-宏大叙事级灾害 (Cosmic Disaster): 指代龙、恶魔、魔神王等足以轻易毁灭国家的顶级存在，需要最高等级英雄对抗。",
+        "威胁层级-区域级威胁 (Regional Threat): 指代食人魔、巨魔等能对区域构成威胁的魔物，是大多数冒险者小队的目标。",
+        "威胁层级-害虫级瘟疫 (Vermin Plague): 指代哥布林等底层威胁，个体弱小但繁殖迅速，是边境新手的日常业务。",
+        "巢穴规模-漂泊者 (Wanderer): 独行魔物，涵盖从落单哥布林到流浪巨龙。",
+        "巢穴规模-一级营寨 (Encampment): 仅能栖身的临时据点，无功能分区，常规委托。",
+        "巢穴规模-二级巢穴 (Lair): 拥有育种室和指挥中心，具备长期盘踞潜力，常规委托。",
+        "巢穴规模-三级据点 (Stronghold): 具备功能性建筑，可能雇佣强力保镖，需重新评估报酬。",
+        "巢穴规模-四级要塞 (Fortress): 完备社会体系，需集结公会支部力量或申请军队介入。",
+        "巢穴规模-五级军队 (Army): 足以控制资源的魔物军队，王国将派遣正规军征讨。"
+      ],
+      "attacks": [],
+      "loot": []
+    },
+    {
+      "id": "怪物生态_-_哥布林类",
+      "name": "怪物生态 - 哥布林类",
+      "type": "humanoid",
+      "challenge_rating": "白瓷",
+      "description": "群居于阴暗巢穴的邪恶类人生物，依靠掠夺和陷阱为生，具有严格的等级制度。",
+      "stats": {
+        "hp": 7,
+        "ac": 13,
+        "str": 8,
+        "dex": 14,
+        "con": 10,
+        "int": 10,
+        "wis": 8,
+        "cha": 8
+      },
+      "stats_confidence": 0.8,
+      "skills": [
+        {
+          "name": "潜行",
+          "level": "中级"
+        },
+        {
+          "name": "陷阱制作",
+          "level": "高级"
+        },
+        {
+          "name": "骑术",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "暗视 (Darkvision)",
+        "灵巧动作 (Nimble Escape)",
+        "群体战术 (Pack Tactics)",
+        "寄生繁殖 (Parasitic Reproduction)"
+      ],
+      "attacks": [
+        {
+          "name": "粗制弯刀",
+          "damage": "1d6+2"
+        },
+        {
+          "name": "短弓",
+          "damage": "1d6+2"
+        }
+      ],
+      "loot": [
+        "哥布林的耳朵",
+        "粗制的武器",
+        "肮脏的饰品",
+        "兽骨法杖",
+        "奇怪的草药包",
+        "部落图腾"
+      ]
+    },
+    {
+      "id": "怪物生态_-_巨人族",
+      "name": "怪物生态 - 巨人族",
+      "type": "giant",
+      "challenge_rating": "黄金",
+      "description": "栖息于荒原雪山的巨大生物，力量惊人，领地意识极强，包含巨魔、独眼巨人与雪人等。",
+      "stats": {
+        "hp": 126,
+        "ac": 14,
+        "str": 21,
+        "dex": 9,
+        "con": 19,
+        "int": 6,
+        "wis": 10,
+        "cha": 7
+      },
+      "stats_confidence": 0.6,
+      "skills": [
+        {
+          "name": "运动",
+          "level": "高级"
+        },
+        {
+          "name": "生存",
+          "level": "中级"
+        },
+        {
+          "name": "察觉",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "投掷巨石",
+        "雪地伪装 (雪人特有)",
+        "敏锐嗅觉",
+        "畏惧魔法 (独眼巨人特有)"
+      ],
+      "attacks": [
+        {
+          "name": "巨型武器横扫",
+          "damage": "3d8+5"
+        },
+        {
+          "name": "投掷巨石",
+          "damage": "3d10+5"
+        }
+      ],
+      "loot": [
+        "巨魔獠牙",
+        "巨魔心脏",
+        "巨魔毛皮",
+        "巨魔之血",
+        "粗糙的巨型武器",
+        "独眼巨人眼球",
+        "独眼巨人皮肤",
+        "独眼巨人巨棍",
+        "雪人毛皮",
+        "寒霜战斧",
+        "寒霜核心"
+      ]
+    },
+    {
+      "id": "怪物生态_-_魔法生物",
+      "name": "怪物生态 - 魔法生物",
+      "type": "monstrosity",
+      "challenge_rating": "青铜",
+      "description": "栖息于古老森林、遗迹或高耸峭壁的魔法掠食者群体，包含鸡蛇、蝎狮与狮鹫等。它们通常独居或以小家庭为单位，具有极强的领地意识和魔法特质。",
+      "stats": {
+        "hp": 68,
+        "ac": 14,
+        "str": 17,
+        "dex": 15,
+        "con": 16,
+        "int": 5,
+        "wis": 13,
+        "cha": 8
+      },
+      "stats_confidence": 0.3,
+      "skills": [
+        {
+          "name": "察觉 (Perception)",
+          "level": "高级"
+        },
+        {
+          "name": "生存 (Survival)",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "飞行 (Flight): 狮鹫与蝎狮拥有强大的飞行能力，善于高空巡视。",
+        "石化诅咒 (Petrification): 鸡蛇特有的魔法能力，通过接触或凝视造成石化。",
+        "毒液陷阱 (Venom Trap): 蝎狮会在巢穴附近布置毒液。",
+        "空中优势 (Aerial Superiority): 对地面爬行生物（如巨蛇）有攻击加成。"
+      ],
+      "attacks": [
+        {
+          "name": "利爪与喙击 (Claws and Beak)",
+          "damage": "2d6+3"
+        },
+        {
+          "name": "毒刺 (Stinger)",
+          "damage": "1d8+3 + 2d6 poison"
+        }
+      ],
+      "loot": [
+        "鸡蛇羽毛 (抵抗石化材料)",
+        "石化毒囊",
+        "蝎狮毒刺 (毒药/解毒剂材料)",
+        "坚韧的翼膜",
+        "狮鹫羽毛 (魔法箭矢材料)",
+        "狮鹫利爪"
+      ]
+    },
+    {
+      "id": "怪物生态_-_动物",
+      "name": "怪物生态 - 动物",
+      "type": "beast",
+      "challenge_rating": "白瓷",
+      "description": "巨大化或变异的野兽，包括巨鼠、巨蝠、巨狼和巨蛙。它们广泛分布于各类环境，遵循本能捕食，常携带疾病或被哥布林驯养。",
+      "stats": {
+        "hp": 13,
+        "ac": 13,
+        "str": 12,
+        "dex": 14,
+        "con": 12,
+        "int": 3,
+        "wis": 12,
+        "cha": 6
+      },
+      "stats_confidence": 0.6,
+      "skills": [
+        {
+          "name": "感知",
+          "level": "中级"
+        },
+        {
+          "name": "潜行",
+          "level": "初级"
+        },
+        {
+          "name": "生存",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "敏锐感官 (Keen Senses)",
+        "狼群战术 (Pack Tactics - 仅限巨狼)",
+        "疾病携带 (Disease Carrier - 巨鼠/大蝙蝠)",
+        "两栖 (Amphibious - 仅限巨蛙)"
+      ],
+      "attacks": [
+        {
+          "name": "啃咬",
+          "damage": "1d6+2"
+        },
+        {
+          "name": "爪击",
+          "damage": "1d4+2"
+        }
+      ],
+      "loot": [
+        "狼皮",
+        "狼牙",
+        "带有病菌的牙齿",
+        "劣质的毛皮",
+        "蝙蝠翼膜",
+        "声波腺体",
+        "有粘性的舌头",
+        "毒腺"
+      ]
+    },
+    {
+      "id": "怪物生态_-_特殊生物",
+      "name": "怪物生态 - 特殊生物",
+      "type": "monstrosity",
+      "challenge_rating": "青铜",
+      "description": "栖息于古代遗迹与地下城的特殊生物群落，包含史莱姆、巨大昆虫及石像鬼等构造体，通常作为环境守卫或陷阱存在。",
+      "stats": {
+        "hp": 45,
+        "ac": 14,
+        "str": 14,
+        "dex": 12,
+        "con": 14,
+        "int": 8,
+        "wis": 10,
+        "cha": 6
+      },
+      "stats_confidence": 0.1,
+      "skills": [
+        {
+          "name": "侦察",
+          "level": "中级"
+        },
+        {
+          "name": "隐匿",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "环境伪装 (构造体静止时如同雕像)",
+        "分裂增殖 (史莱姆特性)",
+        "主从共生 (邪眼驱使构造体)"
+      ],
+      "attacks": [
+        {
+          "name": "酸液腐蚀/毒液",
+          "damage": "1d6+2"
+        },
+        {
+          "name": "重击/撞击",
+          "damage": "1d8+3"
+        }
+      ],
+      "loot": [
+        "核心凝胶",
+        "坚硬的甲壳",
+        "毒液",
+        "主眼球",
+        "小型眼球",
+        "魔法石块",
+        "粘土核心"
+      ]
+    },
+    {
+      "id": "怪物生态_-_不死族",
+      "name": "怪物生态 - 不死族",
+      "type": "undead",
+      "challenge_rating": "青铜",
+      "description": "亵渎生命的亡灵集合体，从无脑骷髅到高阶吸血鬼，栖息于阴暗之地，憎恶一切生者。",
+      "stats": {
+        "hp": 45,
+        "ac": 13,
+        "str": 14,
+        "dex": 10,
+        "con": 14,
+        "int": 8,
+        "wis": 10,
+        "cha": 6
+      },
+      "stats_confidence": 0.1,
+      "skills": [
+        {
+          "name": "潜行",
+          "level": "初级"
+        },
+        {
+          "name": "威吓",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "亡灵体质 (不需要饮食、睡眠，免疫毒素)",
+        "黑暗视觉",
+        "恐惧灵气 (高阶亡灵特有)"
+      ],
+      "attacks": [
+        {
+          "name": "腐败爪击",
+          "damage": "1d6+2"
+        },
+        {
+          "name": "生锈武器",
+          "damage": "1d8+2"
+        }
+      ],
+      "loot": [
+        "灵质残渣",
+        "生前的破旧装备",
+        "浸满诅咒之力的裹尸布",
+        "古老的护身符",
+        "麻痹爪的指甲",
+        "被污染的血液样本",
+        "吸血鬼之牙",
+        "受诅咒的贵重衣物或珠宝",
+        "吸血鬼尘埃",
+        "腐肉碎片",
+        "黑暗魔法残骸",
+        "远古守卫之骨",
+        "忠魂印记",
+        "梦魇战马蹄铁",
+        "堕骑士护甲碎片",
+        "哀伤精华",
+        "怨念结晶体",
+        "缝合尸线",
+        "瘟疫囊",
+        "黑暗能量核心",
+        "贵族车厢饰物",
+        "高贵血牙",
+        "骑士徽章",
+        "血龙甲片",
+        "兽化毛发",
+        "野蛮爪刃",
+        "巨骨碎片",
+        "死亡天幕尘埃"
+      ]
+    },
+    {
+      "id": "怪物生态_-_魔神与亚人类",
+      "name": "怪物生态 - 魔神与亚人类",
+      "type": "fiend",
+      "challenge_rating": "白银",
+      "description": "包含来自异界的魔神军团与拥有独立文明的亚人类（如暗人、蜥蜴人），生态习性与社会结构各异。",
+      "stats": {
+        "hp": 60,
+        "ac": 15,
+        "str": 16,
+        "dex": 14,
+        "con": 14,
+        "int": 12,
+        "wis": 10,
+        "cha": 14
+      },
+      "stats_confidence": 0.1,
+      "skills": [
+        {
+          "name": "欺瞒",
+          "level": "高级"
+        },
+        {
+          "name": "威吓",
+          "level": "中级"
+        },
+        {
+          "name": "生存",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "位面穿越 (Planar Travel)",
+        "变形伪装 (Shapechanger - 梦魔)",
+        "精神腐化 (Corruption)",
+        "军事化等级制度 (Hierarchy)"
+      ],
+      "attacks": [
+        {
+          "name": "符文武器攻击",
+          "damage": "1d8+3"
+        },
+        {
+          "name": "精气吸取",
+          "damage": "2d6 psychic"
+        }
+      ],
+      "loot": [
+        "魔神心脏",
+        "混沌精华",
+        "邪恶符文武器碎片",
+        "梦魔之心",
+        "梦境精华",
+        "带有魅惑魔力的衣物碎片",
+        "暗人毒药配方",
+        "蜥蜴人鳞甲制作工艺",
+        "鹰身女妖的歌谣乐谱"
+      ]
+    },
+    {
+      "id": "怪物生态_-_龙族",
+      "name": "怪物生态 - 龙族",
+      "type": "dragon",
+      "challenge_rating": "白金",
+      "description": "传说中的顶级掠食者，拥有极高智慧与漫长寿命。它们通常独居于险地守护财宝，是绝对力量与终极灾难的化身。",
+      "stats": {
+        "hp": 256,
+        "ac": 19,
+        "str": 27,
+        "dex": 10,
+        "con": 25,
+        "int": 16,
+        "wis": 13,
+        "cha": 21
+      },
+      "stats_confidence": 0.6,
+      "skills": [
+        {
+          "name": "威吓",
+          "level": "高级"
+        },
+        {
+          "name": "察觉",
+          "level": "高级"
+        },
+        {
+          "name": "历史",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "龙威 (Frightful Presence)",
+        "吐息武器 (Breath Weapon)",
+        "传奇抗性",
+        "飞行"
+      ],
+      "attacks": [
+        {
+          "name": "啃咬",
+          "damage": "2d10+8"
+        },
+        {
+          "name": "爪击",
+          "damage": "2d6+8"
+        },
+        {
+          "name": "元素吐息",
+          "damage": "18d6"
+        }
+      ],
+      "loot": [
+        "龙鳞 (制作抗性护甲)",
+        "龙牙/龙爪 (制作武器)",
+        "龙心 (顶级炼金材料)",
+        "龙之宝库 (大量金币与魔法物品)"
+      ]
+    },
+    [
+      {
+        "id": "slaanesh_forsaken",
+        "name": "色孽遗弃者 (Forsaken of Slaanesh)",
+        "type": "fiend",
+        "challenge_rating": "青玉等级（高阶）",
+        "description": "被色孽遗弃的变异战士，身穿盔甲，在战场上陷入疯狂的杀戮状态。",
+        "stats": {
+          "hp": 66,
+          "ac": 16,
+          "str": 24,
+          "dex": 18,
+          "con": 14,
+          "int": 12,
+          "wis": 14,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "盔甲",
+            "level": "普通"
+          },
+          {
+            "name": "狂暴",
+            "level": "普通"
+          },
+          {
+            "name": "心灵免疫",
+            "level": "普通"
+          },
+          {
+            "name": "破甲",
+            "level": "普通"
+          }
+        ],
+        "special_abilities": [
+          "狂暴：作战时无视自身伤势，同时每次攻击进行两次。",
+          "心灵免疫：对心灵类效果免疫。",
+          "破甲：攻击造成伤害时，忽略对方2点护甲。"
+        ],
+        "attacks": [
+          {
+            "name": "变异武器攻击",
+            "damage": "2d8+7"
+          }
+        ],
+        "loot": [
+          "破损的混沌盔甲",
+          "变异肢体"
+        ]
+      },
+      {
+        "id": "slaanesh_daemonette",
+        "name": "色孽欲魔 (Daemonette of Slaanesh)",
+        "type": "fiend",
+        "challenge_rating": "红玉等级（高阶）",
+        "description": "色孽的低阶恶魔，拥有极高的敏捷与魅力，擅长通过魅惑与偷袭撕碎敌人。",
+        "stats": {
+          "hp": 56,
+          "ac": 17,
+          "str": 16,
+          "dex": 24,
+          "con": 6,
+          "int": 14,
+          "wis": 20,
+          "cha": 26
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "恐惧光环",
+            "level": "初级"
+          },
+          {
+            "name": "破甲",
+            "level": "普通"
+          },
+          {
+            "name": "偷袭专精",
+            "level": "普通"
+          },
+          {
+            "name": "魅惑",
+            "level": "普通"
+          }
+        ],
+        "special_abilities": [
+          "恐惧光环（初级）：受影响的敌人力量与敏捷判定获得-1减值。",
+          "偷袭专精：发起偷袭攻击时，使用敏捷进行判定，造成伤害+2。",
+          "破甲：攻击造成伤害时，忽略对方2点护甲。"
+        ],
+        "attacks": [
+          {
+            "name": "利爪撕扯",
+            "damage": "1d8+7"
+          }
+        ],
+        "loot": [
+          "恶魔之角",
+          "丝绸碎片"
+        ]
+      },
+      {
+        "id": "slaanesh_seeker",
+        "name": "色孽寻觅者 (Seeker of Slaanesh)",
+        "type": "fiend",
+        "challenge_rating": "青铜等级（高阶）",
+        "description": "骑乘着色孽马的欲魔骑兵，速度极快，擅长冲锋与涂毒攻击。",
+        "stats": {
+          "hp": 46,
+          "ac": 19,
+          "str": 22,
+          "dex": 28,
+          "con": 6,
+          "int": 14,
+          "wis": 22,
+          "cha": 24
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "恐惧光环",
+            "level": "初级"
+          },
+          {
+            "name": "色孽马",
+            "level": "普通"
+          },
+          {
+            "name": "冲锋",
+            "level": "中级"
+          },
+          {
+            "name": "破甲",
+            "level": "普通"
+          },
+          {
+            "name": "偷袭专精",
+            "level": "普通"
+          },
+          {
+            "name": "涂毒武器",
+            "level": "普通"
+          }
+        ],
+        "special_abilities": [
+          "恐惧光环（初级）：受影响的敌人力量与敏捷判定获得-1减值。",
+          "偷袭专精：发起偷袭攻击时，使用敏捷进行判定，造成伤害+2。",
+          "破甲：攻击造成伤害时，忽略对方2点护甲。",
+          "涂毒武器：攻击附带毒素伤害。"
+        ],
+        "attacks": [
+          {
+            "name": "毒刃冲锋",
+            "damage": "2d6+9"
+          }
+        ],
+        "loot": [
+          "色孽马缰绳",
+          "剧毒匕首"
+        ]
+      },
+      {
+        "id": "slaanesh_chaos_spawn",
+        "name": "色孽混沌卵 (Chaos Spawn of Slaanesh)",
+        "type": "aberration",
+        "challenge_rating": "白银等级（高阶）",
+        "description": "体型巨大的混沌变异生物，拥有极高的生命值和再生能力，散发着催眠麝香。",
+        "stats": {
+          "hp": 166,
+          "ac": 14,
+          "str": 28,
+          "dex": 18,
+          "con": 20,
+          "int": 14,
+          "wis": 16,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "沉重触须",
+            "level": "中级"
+          },
+          {
+            "name": "心灵免疫",
+            "level": "普通"
+          },
+          {
+            "name": "再生",
+            "level": "普通"
+          },
+          {
+            "name": "狂暴",
+            "level": "普通"
+          },
+          {
+            "name": "催眠麝香",
+            "level": "普通"
+          },
+          {
+            "name": "反步兵",
+            "level": "普通"
+          }
+        ],
+        "special_abilities": [
+          "反步兵：对步兵单位攻击时伤害+3，攻击判定+3（对基因原体无效）。",
+          "催眠麝香：受影响的敌人更容易被魅惑。",
+          "狂暴：作战时无视自身伤势，同时每次攻击进行两次。",
+          "再生：每回合恢复一定生命值。"
+        ],
+        "attacks": [
+          {
+            "name": "触须鞭挞",
+            "damage": "3d6+9"
+          }
+        ],
+        "loot": [
+          "变异器官",
+          "混沌精华"
+        ]
+      },
+      {
+        "id": "syll_esske",
+        "name": "希尔·埃斯克 (Syll'Esske)",
+        "type": "fiend",
+        "challenge_rating": "黄金等级（高阶）",
+        "description": "色孽的传奇恶魔领主，由恶魔王子希尔和欲魔先驱埃斯克共生而成，魔武双修。",
+        "stats": {
+          "hp": 366,
+          "ac": 22,
+          "str": 30,
+          "dex": 34,
+          "con": 22,
+          "int": 22,
+          "wis": 36,
+          "cha": 42
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "武器：双手剑",
+            "level": "高级"
+          },
+          {
+            "name": "格斗",
+            "level": "高级"
+          },
+          {
+            "name": "一体两魂",
+            "level": "普通"
+          },
+          {
+            "name": "再生",
+            "level": "普通"
+          },
+          {
+            "name": "无甲",
+            "level": "普通"
+          },
+          {
+            "name": "恐惧光环",
+            "level": "中级"
+          },
+          {
+            "name": "统御力",
+            "level": "普通"
+          }
+        ],
+        "special_abilities": [
+          "一体两魂：攻击时，埃克斯以近战发起物理攻击，希尔以法术发起远程魔法攻击。",
+          "恐惧光环（中级）：受影响的敌人力量与敏捷判定获得-1减值。",
+          "再生：拥有强大的自我恢复能力。"
+        ],
+        "attacks": [
+          {
+            "name": "复仇双手剑",
+            "damage": "4d6+10"
+          },
+          {
+            "name": "色孽魔法",
+            "damage": "4d8+16"
+          }
+        ],
+        "loot": [
+          "传奇双手剑",
+          "恶魔王子的冠冕"
+        ]
+      }
+    ],
+    {
+      "id": "---怪物系统---",
+      "name": "---怪物系统---",
+      "type": "construct",
+      "challenge_rating": "白瓷",
+      "description": "原始描述缺失或为占位符，无法提取具体生物特征。被识别为系统默认构造体。",
+      "stats": {
+        "hp": 10,
+        "ac": 10,
+        "str": 10,
+        "dex": 10,
+        "con": 10,
+        "int": 10,
+        "wis": 10,
+        "cha": 10
+      },
+      "stats_confidence": 0.0,
+      "skills": [],
+      "special_abilities": [
+        "数据缺失: 无法解析特殊能力"
+      ],
+      "attacks": [
+        {
+          "name": "基础攻击",
+          "damage": "1d4"
+        }
+      ],
+      "loot": []
+    },
+    {
+      "id": "---/怪物系统---",
+      "name": "---/怪物系统---",
+      "type": "humanoid",
+      "challenge_rating": "白瓷",
+      "description": "未提供有效的原始描述信息，无法生成具体生态或外貌描述。",
+      "stats": {
+        "hp": 4,
+        "ac": 10,
+        "str": 10,
+        "dex": 10,
+        "con": 10,
+        "int": 10,
+        "wis": 10,
+        "cha": 10
+      },
+      "stats_confidence": 0.0,
+      "skills": [],
+      "special_abilities": [],
+      "attacks": [
+        {
+          "name": "徒手打击",
+          "damage": "1"
+        }
+      ],
+      "loot": []
+    },
+    {
+      "id": "世界观_-_怪物图鉴总览",
+      "name": "世界观 - 怪物图鉴总览",
+      "type": "monstrosity",
+      "challenge_rating": "白瓷",
+      "description": "涵盖世界各地的威胁生物，从群居的哥布林到顶点的龙族，详述了各类怪物的生态、习性及社会结构。",
+      "stats": {
+        "hp": 10,
+        "ac": 10,
+        "str": 10,
+        "dex": 10,
+        "con": 10,
+        "int": 10,
+        "wis": 10,
+        "cha": 10
+      },
+      "stats_confidence": 0.0,
+      "skills": [
+        {
+          "name": "怪物知识",
+          "level": "高级"
+        },
+        {
+          "name": "生态调查",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "哥布林类 (Goblinoids): 群居洞穴，社会性强，擅长利用巨狼。",
+        "巨人族 (Giants): 力量恐怖，领地意识强，包含巨魔、独眼巨人、雪人。",
+        "魔法生物 (Magical Creatures): 身体是珍贵炼金材料，如狮鹫与巨蛇。",
+        "特殊生物 (Special Creatures): 形态各异，如史莱姆、邪眼、石像鬼、泥魔像。",
+        "不死族 (Undead): 由死亡能量驱动，与生者为敌，高阶者可组建军团。",
+        "魔神 (Demons): 异次元混沌实体，军事化等级森严，包含魅魔/梦魔。",
+        "亚人类 (Demi-humans): 拥有独立文明，如暗人、鹰身女妖、蜥蜴人。",
+        "龙族 (Dragons): 生态链顶点，独居于宝藏之地，包含幼龙与红龙。",
+        "混沌腐化 (Corruption): 色孽信徒与血肉重铸产物，追求扭曲极乐与无尽吞噬。",
+        "食尸生物 (Necrophages): 敌视不死族，喜好人肉，常出没于战场墓园。"
+      ],
+      "attacks": [
+        {
+          "name": "随机遭遇",
+          "damage": "视具体怪物而定"
+        }
+      ],
+      "loot": [
+        "炼金材料",
+        "怪物素材",
+        "龙之宝藏",
+        "遗落的装备"
+      ]
+    },
+    [
+      {
+        "id": "怪物图鉴_-_哥布林类_哥布林",
+        "name": "哥布林 (Goblin)",
+        "type": "humanoid",
+        "challenge_rating": "白瓷等级",
+        "description": "最常见的哥布林，体型瘦小，性格狡诈，通常群体行动。",
+        "stats": {
+          "hp": 9,
+          "ac": 12,
+          "str": 8,
+          "dex": 12,
+          "con": 10,
+          "int": 8,
+          "wis": 10,
+          "cha": 8
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：棍棒",
+            "level": "初级"
+          },
+          {
+            "name": "小型投石索",
+            "level": "初级"
+          },
+          {
+            "name": "肮脏的策略",
+            "level": "种族特性"
+          },
+          {
+            "name": "视觉",
+            "level": "普通"
+          }
+        ],
+        "special_abilities": [
+          "黑暗视觉",
+          "尼姆布拉 (Nimble Escape)"
+        ],
+        "attacks": [
+          {
+            "name": "棍棒",
+            "damage": "1d6-1"
+          },
+          {
+            "name": "投石索",
+            "damage": "1d4+1"
+          }
+        ],
+        "loot": [
+          "破烂的棍棒",
+          "几枚铜币",
+          "肮脏的布袋"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_哥布林类_哥布林萨满",
+        "name": "哥布林萨满 (Goblin Shaman)",
+        "type": "humanoid",
+        "challenge_rating": "青玉石等级",
+        "description": "掌握了粗糙魔法的哥布林，智力和魔力较高，能使用火球术。",
+        "stats": {
+          "hp": 12,
+          "ac": 11,
+          "str": 8,
+          "dex": 10,
+          "con": 10,
+          "int": 14,
+          "wis": 12,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：棍棒",
+            "level": "初级"
+          },
+          {
+            "name": "魔术师",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "魔法韧性 (+1)",
+          "施法能力"
+        ],
+        "attacks": [
+          {
+            "name": "棍棒",
+            "damage": "1d6-1"
+          },
+          {
+            "name": "火球术",
+            "damage": "8d6 (范围火焰伤害)"
+          }
+        ],
+        "loot": [
+          "法术材料包",
+          "骨制图腾",
+          "卷轴"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_哥布林类_大哥布林",
+        "name": "大哥布林 (Hobgoblin)",
+        "type": "humanoid",
+        "challenge_rating": "青玉石等级",
+        "description": "体格强壮的哥布林亚种，具有较高的力量和物理抗性，常担任小队头目。",
+        "stats": {
+          "hp": 35,
+          "ac": 14,
+          "str": 16,
+          "dex": 12,
+          "con": 14,
+          "int": 10,
+          "wis": 10,
+          "cha": 10
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：单手剑",
+            "level": "初级"
+          },
+          {
+            "name": "武器：战斧",
+            "level": "初级"
+          },
+          {
+            "name": "投掷",
+            "level": "初级"
+          },
+          {
+            "name": "首领气概",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "物理韧性 (+3)",
+          "武德 (Martial Advantage)"
+        ],
+        "attacks": [
+          {
+            "name": "单手剑",
+            "damage": "1d8+3"
+          },
+          {
+            "name": "战斧",
+            "damage": "1d8+3"
+          }
+        ],
+        "loot": [
+          "铁制长剑",
+          "链甲衫",
+          "银币"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_哥布林类_哥布林骑手",
+        "name": "哥布林骑手 (Goblin Rider)",
+        "type": "humanoid",
+        "challenge_rating": "钢铁等级",
+        "description": "骑乘座狼或其他野兽的哥布林，机动性极强。",
+        "stats": {
+          "hp": 15,
+          "ac": 13,
+          "str": 12,
+          "dex": 16,
+          "con": 12,
+          "int": 8,
+          "wis": 10,
+          "cha": 10
+        },
+        "stats_confidence": 0.85,
+        "skills": [
+          {
+            "name": "骑乘",
+            "level": "初级"
+          },
+          {
+            "name": "武器：短枪",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "物理韧性 (+2)",
+          "骑乘战斗"
+        ],
+        "attacks": [
+          {
+            "name": "短枪",
+            "damage": "1d6+1"
+          }
+        ],
+        "loot": [
+          "骑兽鞍具",
+          "短矛",
+          "兽皮"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_哥布林类_哥布林英雄",
+        "name": "哥布林英雄 (Goblin Hero)",
+        "type": "humanoid",
+        "challenge_rating": "青铜等级",
+        "description": "身经百战的哥布林精锐，装备精良，拥有极高的生命值和防御力。",
+        "stats": {
+          "hp": 85,
+          "ac": 18,
+          "str": 18,
+          "dex": 14,
+          "con": 16,
+          "int": 12,
+          "wis": 12,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：单手剑",
+            "level": "中级"
+          },
+          {
+            "name": "强韧",
+            "level": "初级"
+          },
+          {
+            "name": "首领气概",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "物理韧性 (+4)",
+          "多重攻击"
+        ],
+        "attacks": [
+          {
+            "name": "精制单手剑",
+            "damage": "1d8+4"
+          }
+        ],
+        "loot": [
+          "全身板甲",
+          "精制武器",
+          "金币"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_哥布林类_哥布林圣骑士",
+        "name": "哥布林圣骑士 (Goblin Paladin)",
+        "type": "humanoid",
+        "challenge_rating": "青铜等级",
+        "description": "罕见的拥有信仰之力的哥布林，智勇双全，能使用治愈神术。",
+        "stats": {
+          "hp": 85,
+          "ac": 18,
+          "str": 20,
+          "dex": 18,
+          "con": 16,
+          "int": 18,
+          "wis": 14,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：双手剑",
+            "level": "中级"
+          },
+          {
+            "name": "治愈术",
+            "level": "神术"
+          },
+          {
+            "name": "智慧",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "物理韧性 (+4)",
+          "魔法韧性 (+2)",
+          "圣疗"
+        ],
+        "attacks": [
+          {
+            "name": "双手巨剑",
+            "damage": "2d6+5"
+          }
+        ],
+        "loot": [
+          "全身板甲",
+          "双手巨剑",
+          "圣徽",
+          "宝石"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_哥布林类_哥布林王",
+        "name": "哥布林王 (Goblin King)",
+        "type": "humanoid",
+        "challenge_rating": "青铜等级",
+        "description": "哥布林族群的统治者，拥有极高的魅力和统御能力。",
+        "stats": {
+          "hp": 70,
+          "ac": 16,
+          "str": 15,
+          "dex": 16,
+          "con": 14,
+          "int": 13,
+          "wis": 12,
+          "cha": 20
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：长剑",
+            "level": "中级"
+          },
+          {
+            "name": "统御",
+            "level": "特殊"
+          },
+          {
+            "name": "智慧",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "物理韧性 (+3)",
+          "魔法韧性 (+1)",
+          "王者光环 (提升友军士气)"
+        ],
+        "attacks": [
+          {
+            "name": "长剑",
+            "damage": "1d8+2"
+          }
+        ],
+        "loot": [
+          "王冠",
+          "权杖",
+          "大量财宝"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_巨人族_雪人",
+        "name": "雪人 (Yeti)",
+        "type": "giant",
+        "challenge_rating": "翠玉等级",
+        "description": "生活在寒冷地区的巨人生物，拥有敏锐的嗅觉，但畏惧火焰。",
+        "stats": {
+          "hp": 80,
+          "ac": 1,
+          "str": 7,
+          "dex": 4,
+          "con": 2,
+          "int": 3,
+          "wis": 6,
+          "cha": 2
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "敏锐嗅觉",
+            "level": "初级"
+          },
+          {
+            "name": "畏火",
+            "level": "被动"
+          },
+          {
+            "name": "狂暴",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "狂暴: 不会因受伤降低属性，反而会展现出更大的攻击性",
+          "畏火: 对火焰攻击表现出恐惧或受到额外伤害"
+        ],
+        "attacks": [
+          {
+            "name": "爪击",
+            "damage": "1d6+4 (攻击检定+4)"
+          }
+        ],
+        "loot": [
+          "雪人毛皮",
+          "未消化的骨头"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_巨人族_独眼巨人",
+        "name": "独眼巨人 (Cyclops)",
+        "type": "giant",
+        "challenge_rating": "红玉等级",
+        "description": "只有一只眼睛的巨人，智力较低，畏惧魔法，擅长投掷岩石。",
+        "stats": {
+          "hp": 80,
+          "ac": 1,
+          "str": 10,
+          "dex": 3,
+          "con": 3,
+          "int": 1,
+          "wis": 2,
+          "cha": 1
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "掷石",
+            "level": "中级"
+          },
+          {
+            "name": "畏惧魔法",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "掷石: 扔出一块巨大的岩石，对单体敌人造成[10+2d6]的伤害，需通过DC12敏捷豁免，否则眩晕",
+          "畏惧魔法: 面对魔法攻击时可能陷入恐慌"
+        ],
+        "attacks": [
+          {
+            "name": "巨棒",
+            "damage": "1d8+10 (攻击检定+6)"
+          },
+          {
+            "name": "掷石",
+            "damage": "2d6+10"
+          }
+        ],
+        "loot": [
+          "巨大的眼球",
+          "粗制巨棒"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_巨人族_霜巨人",
+        "name": "霜巨人 (Frost Giant)",
+        "type": "giant",
+        "challenge_rating": "青铜等级",
+        "description": "强大的寒系巨人，手持巨斧，性格狂暴且畏惧火焰。",
+        "stats": {
+          "hp": 100,
+          "ac": 3,
+          "str": 12,
+          "dex": 4,
+          "con": 2,
+          "int": 3,
+          "wis": 4,
+          "cha": 4
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "掷石",
+            "level": "中级"
+          },
+          {
+            "name": "狂暴",
+            "level": "中级"
+          },
+          {
+            "name": "畏火",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "狂暴: 不会因受伤降低属性，反而会展现出更大的攻击性",
+          "掷石: 扔出一块巨大的岩石，对单体敌人造成[12+2d6]的伤害，需通过DC12敏捷豁免，否则眩晕"
+        ],
+        "attacks": [
+          {
+            "name": "巨斧",
+            "damage": "1d12+12 (攻击检定+6)"
+          },
+          {
+            "name": "掷石",
+            "damage": "2d6+12"
+          }
+        ],
+        "loot": [
+          "霜巨人战斧",
+          "寒冰碎片"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_巨人族_巨魔",
+        "name": "巨魔 (Troll)",
+        "type": "giant",
+        "challenge_rating": "白银等级",
+        "description": "拥有极强再生能力的巨人，能使用特殊的火球魔法，拥有全方位视觉。",
+        "stats": {
+          "hp": 150,
+          "ac": 2,
+          "str": 12,
+          "dex": 4,
+          "con": 4,
+          "int": 4,
+          "wis": 6,
+          "cha": 6
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "巨魔火球",
+            "level": "高级"
+          },
+          {
+            "name": "再生",
+            "level": "高级"
+          },
+          {
+            "name": "全方位视觉",
+            "level": "被动"
+          }
+        ],
+        "special_abilities": [
+          "再生: 被破坏的身体部位会迅速再生，免疫肢体破坏减益",
+          "全方位视觉: 能观察所有在场敌人的行动，不会被偷袭",
+          "巨魔火球: 第一次攻击必定释放。造成[16+2d6]火焰伤害，DC18敏捷豁免减半"
+        ],
+        "attacks": [
+          {
+            "name": "锤斧重击",
+            "damage": "2d6+12 (DC18敏捷豁免否则倒地)"
+          },
+          {
+            "name": "巨魔火球",
+            "damage": "2d6+16 (火焰)"
+          }
+        ],
+        "loot": [
+          "巨魔之血",
+          "巨大的锤斧"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_巨人族_巨魔_主线",
+        "name": "巨魔 (主线 Boss)",
+        "type": "giant",
+        "challenge_rating": "金等级",
+        "description": "剧情关键敌人，拥有极高的属性和特殊的剧情保护机制。",
+        "stats": {
+          "hp": 300,
+          "ac": 2,
+          "str": 15,
+          "dex": 6,
+          "con": 8,
+          "int": 6,
+          "wis": 6,
+          "cha": 6
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "巨魔火球",
+            "level": "高级"
+          },
+          {
+            "name": "再生",
+            "level": "高级"
+          },
+          {
+            "name": "主线保护",
+            "level": "特殊"
+          }
+        ],
+        "special_abilities": [
+          "主线: 造成的伤害无法致死，最多将敌人攻击至1血",
+          "再生: 被破坏的身体部位会迅速再生，免疫肢体破坏减益",
+          "全方位视觉: 不会被偷袭",
+          "巨魔火球: 造成[24+2d6]火焰伤害，DC18敏捷豁免减半"
+        ],
+        "attacks": [
+          {
+            "name": "锤斧重击",
+            "damage": "2d6+15 (DC18敏捷豁免否则倒地)"
+          },
+          {
+            "name": "巨魔火球",
+            "damage": "2d6+24 (火焰)"
+          }
+        ],
+        "loot": [
+          "剧情道具",
+          "巨魔心脏"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_巨人族_巨恶雪人",
+        "name": "巨恶雪人 (Abominable Yeti)",
+        "type": "giant",
+        "challenge_rating": "金等级",
+        "description": "极为强大的雪人变种，拥有冻结吐息和凝视能力。",
+        "stats": {
+          "hp": 240,
+          "ac": 1,
+          "str": 12,
+          "dex": 6,
+          "con": 3,
+          "int": 5,
+          "wis": 6,
+          "cha": 3
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "寒颤凝视",
+            "level": "高级"
+          },
+          {
+            "name": "冷冻吐息",
+            "level": "高级"
+          },
+          {
+            "name": "敏锐嗅觉",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "寒颤凝视: 每日1次",
+          "冷冻吐息: 每日1次",
+          "畏火: 受到火焰伤害增加"
+        ],
+        "attacks": [
+          {
+            "name": "爪击",
+            "damage": "1d8+12 (攻击检定+6)"
+          },
+          {
+            "name": "冷冻吐息",
+            "damage": "范围冰冻伤害"
+          }
+        ],
+        "loot": [
+          "极寒冰晶",
+          "巨恶雪人皮毛"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_魔法生物_鸡蛇",
+        "name": "鸡蛇 (Cockatrice)",
+        "type": "monstrosity",
+        "challenge_rating": "翠玉等级",
+        "description": "一种拥有公鸡头和蛇尾的魔法生物，其凝视具有石化效果，虽然体型不大但极其危险。",
+        "stats": {
+          "hp": 28,
+          "ac": 12,
+          "str": 8,
+          "dex": 14,
+          "con": 12,
+          "int": 4,
+          "wis": 10,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "飞行",
+            "level": "N/A"
+          },
+          {
+            "name": "视觉",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "石化凝视 (Petrifying Gaze): 视线接触可能导致石化",
+          "魔法韧性: 2"
+        ],
+        "attacks": [
+          {
+            "name": "啄击",
+            "damage": "1d4+2"
+          }
+        ],
+        "loot": [
+          "鸡蛇的羽毛",
+          "石化腺体"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_魔法生物_蝎狮",
+        "name": "蝎狮 (Manticore)",
+        "type": "monstrosity",
+        "challenge_rating": "红玉石等级",
+        "description": "拥有狮身、人面和蝎尾的凶猛怪兽，尾部的毒刺是其致命武器。",
+        "stats": {
+          "hp": 70,
+          "ac": 15,
+          "str": 18,
+          "dex": 16,
+          "con": 16,
+          "int": 6,
+          "wis": 12,
+          "cha": 8
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "飞行",
+            "level": "N/A"
+          },
+          {
+            "name": "视觉",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "毒尾 (Poison Tail): 尾刺攻击附带剧毒",
+          "物理韧性: 2",
+          "魔法韧性: 1"
+        ],
+        "attacks": [
+          {
+            "name": "爪击",
+            "damage": "2d6+4"
+          },
+          {
+            "name": "尾刺射击",
+            "damage": "1d8+3"
+          }
+        ],
+        "loot": [
+          "蝎狮的毒囊",
+          "坚硬的皮毛"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_魔法生物_狮鹫",
+        "name": "狮鹫 (Griffin)",
+        "type": "monstrosity",
+        "challenge_rating": "红玉石等级",
+        "description": "狮身鹰首的强大掠食者，拥有极高的力量和敏捷，是空中的霸主。",
+        "stats": {
+          "hp": 75,
+          "ac": 15,
+          "str": 20,
+          "dex": 18,
+          "con": 18,
+          "int": 5,
+          "wis": 14,
+          "cha": 8
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "中级"
+          },
+          {
+            "name": "飞行",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性: 2",
+          "俯冲攻击"
+        ],
+        "attacks": [
+          {
+            "name": "利爪撕扯",
+            "damage": "2d6+5"
+          },
+          {
+            "name": "喙击",
+            "damage": "1d10+5"
+          }
+        ],
+        "loot": [
+          "狮鹫的羽毛",
+          "狮鹫蛋"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_自然造物_自然守卫",
+        "name": "自然守卫 (Nature Guardian)",
+        "type": "construct",
+        "challenge_rating": "白银等级",
+        "description": "强大的自然构造体，拥有极高的物理力量和召唤元素的能力，通常守护着重要遗迹。",
+        "stats": {
+          "hp": 100,
+          "ac": 18,
+          "str": 24,
+          "dex": 10,
+          "con": 20,
+          "int": 6,
+          "wis": 12,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "召唤火元素",
+            "level": "N/A"
+          },
+          {
+            "name": "召唤水元素",
+            "level": "N/A"
+          },
+          {
+            "name": "大地震撼",
+            "level": "N/A"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性: 5 (高额减伤)",
+          "元素召唤: 可呼唤元素生物助战",
+          "大地震撼: 范围击倒与伤害"
+        ],
+        "attacks": [
+          {
+            "name": "重拳猛击",
+            "damage": "3d8+7"
+          }
+        ],
+        "loot": [
+          "魔力核心",
+          "古代石板"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_自然造物_元素",
+        "name": "火元素/水元素 (Elemental)",
+        "type": "elemental",
+        "challenge_rating": "红玉石等级",
+        "description": "由纯粹元素能量构成的生物，物理力量较弱但敏捷且具有高魔法抗性。",
+        "stats": {
+          "hp": 50,
+          "ac": 14,
+          "str": 8,
+          "dex": 18,
+          "con": 14,
+          "int": 6,
+          "wis": 14,
+          "cha": 6
+        },
+        "stats_confidence": 0.85,
+        "skills": [
+          {
+            "name": "元素攻击",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性: 5",
+          "元素形态: 免疫普通物理伤害或特定状态"
+        ],
+        "attacks": [
+          {
+            "name": "元素触击",
+            "damage": "2d6+4 (火焰/寒冷)"
+          }
+        ],
+        "loot": [
+          "元素微粒",
+          "纯净之水/永燃灰烬"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_自然造物_缄默之伊乌塔",
+        "name": "缄默之伊乌塔 (Iuta of Silence)",
+        "type": "construct",
+        "challenge_rating": "黄金等级",
+        "description": "极其强大的高阶守卫，全属性极高，擅长控制与精神攻击，能封锁魔法。",
+        "stats": {
+          "hp": 130,
+          "ac": 20,
+          "str": 22,
+          "dex": 24,
+          "con": 22,
+          "int": 20,
+          "wis": 22,
+          "cha": 24
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "沉默领域",
+            "level": "高级"
+          },
+          {
+            "name": "痛觉共鸣",
+            "level": "高级"
+          },
+          {
+            "name": "束缚术",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "沉默领域: 大范围压制施法效果",
+          "痛觉共鸣: 精神类攻击，无视护甲造成剧痛",
+          "物理/魔法韧性: 8 (极高抗性)"
+        ],
+        "attacks": [
+          {
+            "name": "丝线切割",
+            "damage": "3d10+6"
+          },
+          {
+            "name": "精神冲击",
+            "damage": "4d6心灵伤害"
+          }
+        ],
+        "loot": [
+          "伊乌塔的沉默面具",
+          "黄金级魔导器",
+          "高阶魔法卷轴"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_动物_巨狼",
+        "name": "巨狼",
+        "type": "beast",
+        "challenge_rating": "青玉石等级",
+        "description": "一种危险的掠食性野兽，拥有敏锐的感官和强壮的体魄，常在森林中成群活动。",
+        "stats": {
+          "hp": 25,
+          "ac": 14,
+          "str": 6,
+          "dex": 5,
+          "con": 4,
+          "int": 1,
+          "wis": 3,
+          "cha": 2
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "嗅觉",
+            "level": "N/A"
+          },
+          {
+            "name": "视觉",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性：1"
+        ],
+        "attacks": [
+          {
+            "name": "撕咬 (格斗)",
+            "damage": "2d6+2"
+          }
+        ],
+        "loot": [
+          "狼皮",
+          "狼牙"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_动物_巨大老鼠",
+        "name": "巨大老鼠",
+        "type": "beast",
+        "challenge_rating": "白瓷等级",
+        "description": "体型异常巨大的啮齿类动物，常出没于下水道或废墟，携带病菌。",
+        "stats": {
+          "hp": 5,
+          "ac": 12,
+          "str": 1,
+          "dex": 3,
+          "con": 2,
+          "int": 1,
+          "wis": 2,
+          "cha": 1
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "疾病",
+            "level": "N/A"
+          },
+          {
+            "name": "视觉",
+            "level": "N/A"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性：1",
+          "带菌撕咬"
+        ],
+        "attacks": [
+          {
+            "name": "撕咬",
+            "damage": "1d4"
+          }
+        ],
+        "loot": [
+          "老鼠尾巴",
+          "被污染的毛皮"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_动物_大蝙蝠",
+        "name": "大蝙蝠",
+        "type": "beast",
+        "challenge_rating": "黑曜石等级",
+        "description": "栖息在洞穴中的大型飞行生物，依靠回声定位捕猎，具有吸血习性。",
+        "stats": {
+          "hp": 8,
+          "ac": 13,
+          "str": 2,
+          "dex": 4,
+          "con": 2,
+          "int": 1,
+          "wis": 3,
+          "cha": 1
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "吸血",
+            "level": "N/A"
+          },
+          {
+            "name": "飞行",
+            "level": "N/A"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "N/A"
+          },
+          {
+            "name": "反响定位",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性：0",
+          "回声定位"
+        ],
+        "attacks": [
+          {
+            "name": "吸血撕咬",
+            "damage": "1d6"
+          }
+        ],
+        "loot": [
+          "蝙蝠翅膀",
+          "鸟粪"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_动物_巨蛙",
+        "name": "巨蛙",
+        "type": "beast",
+        "challenge_rating": "钢铁等级",
+        "description": "潜伏在沼泽或水边的巨大两栖动物，能用长舌瞬间捕捉猎物。",
+        "stats": {
+          "hp": 22,
+          "ac": 12,
+          "str": 4,
+          "dex": 3,
+          "con": 3,
+          "int": 1,
+          "wis": 2,
+          "cha": 1
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "舌头攻击",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "物理/魔法韧性：0",
+          "两栖",
+          "吞咽"
+        ],
+        "attacks": [
+          {
+            "name": "舌头缠绕",
+            "damage": "1d6+1"
+          },
+          {
+            "name": "撞击",
+            "damage": "1d8+1"
+          }
+        ],
+        "loot": [
+          "巨蛙粘液",
+          "蛙腿"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_特殊生物_史莱姆",
+        "name": "史莱姆 (Slime)",
+        "type": "ooze",
+        "challenge_rating": "钢铁等级",
+        "description": "一种常见的泥状生物，身体由酸性粘液构成。虽然移动缓慢，但具有极高的物理抗性，能腐蚀装备。",
+        "stats": {
+          "hp": 40,
+          "ac": 8,
+          "str": 14,
+          "dex": 6,
+          "con": 16,
+          "int": 4,
+          "wis": 6,
+          "cha": 4
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "酸性体液",
+            "level": "固有"
+          },
+          {
+            "name": "分裂",
+            "level": "固有"
+          }
+        ],
+        "special_abilities": [
+          "物理免疫 (Physical Resistance 100)",
+          "分裂 (Split)",
+          "酸性腐蚀"
+        ],
+        "attacks": [
+          {
+            "name": "酸液触击",
+            "damage": "1d6+2 (酸性)"
+          }
+        ],
+        "loot": [
+          "粘液",
+          "未消化的硬币"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_特殊生物_巨大百足",
+        "name": "巨大百足 (Giant Centipede)",
+        "type": "beast",
+        "challenge_rating": "红宝石等级",
+        "description": "体型巨大的虫类怪物，拥有坚硬的甲壳和剧毒。生命力极其顽强，是高等级冒险者的劲敌。",
+        "stats": {
+          "hp": 200,
+          "ac": 18,
+          "str": 16,
+          "dex": 12,
+          "con": 20,
+          "int": 4,
+          "wis": 10,
+          "cha": 4
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "毒",
+            "level": "固有"
+          },
+          {
+            "name": "装甲",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "高级装甲 (High AC)",
+          "剧毒攻击"
+        ],
+        "attacks": [
+          {
+            "name": "毒牙撕咬",
+            "damage": "2d8+3 + 毒素伤害"
+          }
+        ],
+        "loot": [
+          "百足虫甲壳",
+          "毒囊"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_特殊生物_邪眼",
+        "name": "邪眼 (Evil Eye)",
+        "type": "aberration",
+        "challenge_rating": "红玉石等级",
+        "description": "漂浮在空中的球状构造体/异怪，拥有巨大的主眼和多方位的视觉，擅长使用魔法力量。",
+        "stats": {
+          "hp": 65,
+          "ac": 14,
+          "str": 14,
+          "dex": 8,
+          "con": 14,
+          "int": 18,
+          "wis": 16,
+          "cha": 16
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "魔眼",
+            "level": "固有"
+          },
+          {
+            "name": "飞行",
+            "level": "固有"
+          },
+          {
+            "name": "多方位视觉",
+            "level": "固有"
+          }
+        ],
+        "special_abilities": [
+          "飞行 (Hover)",
+          "全域视野 (无法被偷袭)",
+          "魔法抗性"
+        ],
+        "attacks": [
+          {
+            "name": "眼波射线",
+            "damage": "2d6 (力场/死灵)"
+          }
+        ],
+        "loot": [
+          "眼球晶体",
+          "魔力粉尘"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_特殊生物_石像鬼",
+        "name": "石像鬼 (Gargoyle)",
+        "type": "construct",
+        "challenge_rating": "青玉石等级",
+        "description": "伪装成石像的飞行构造体，常用于守卫。拥有坚硬的皮肤和黑暗视觉，擅长突袭。",
+        "stats": {
+          "hp": 35,
+          "ac": 15,
+          "str": 16,
+          "dex": 12,
+          "con": 14,
+          "int": 6,
+          "wis": 10,
+          "cha": 6
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "装甲",
+            "level": "初级"
+          },
+          {
+            "name": "伪装",
+            "level": "固有"
+          },
+          {
+            "name": "飞行",
+            "level": "初级"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "伪装 (False Appearance)",
+          "飞行",
+          "伤害减免 (非魔法武器)"
+        ],
+        "attacks": [
+          {
+            "name": "爪击",
+            "damage": "1d6+3"
+          }
+        ],
+        "loot": [
+          "石像碎片",
+          "魔法核心(低级)"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_特殊生物_泥魔像",
+        "name": "泥魔像 (Mud Golem)",
+        "type": "construct",
+        "challenge_rating": "红玉石等级",
+        "description": "由泥土构成的强大魔像，力量惊人且具有自我修复能力。对物理和魔法都有一定抗性。",
+        "stats": {
+          "hp": 120,
+          "ac": 13,
+          "str": 22,
+          "dex": 8,
+          "con": 18,
+          "int": 4,
+          "wis": 8,
+          "cha": 4
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "再生",
+            "level": "初级"
+          },
+          {
+            "name": "魔法耐性",
+            "level": "初级"
+          },
+          {
+            "name": "物理耐性",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "再生 (Regeneration)",
+          "魔法抗性",
+          "非魔法物理伤害抗性"
+        ],
+        "attacks": [
+          {
+            "name": "重拳猛击",
+            "damage": "2d10+6"
+          }
+        ],
+        "loot": [
+          "魔像核心",
+          "稀有粘土"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_魔神_下位",
+        "name": "下位魔神 (Lower Demon)",
+        "type": "fiend",
+        "challenge_rating": "翠玉",
+        "description": "来自异界的下级恶魔，拥有多方位视觉和飞行能力，常作为魔神军队的步兵出现。",
+        "stats": {
+          "hp": 55,
+          "ac": 14,
+          "str": 14,
+          "dex": 10,
+          "con": 12,
+          "int": 8,
+          "wis": 8,
+          "cha": 10
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "长枪掌握",
+            "level": "初级"
+          },
+          {
+            "name": "魔术师",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "飞行",
+          "多方位视觉 (难以被偷袭)"
+        ],
+        "attacks": [
+          {
+            "name": "长枪突刺",
+            "damage": "1d8+2"
+          },
+          {
+            "name": "初级魔法弹",
+            "damage": "1d6"
+          }
+        ],
+        "loot": [
+          "魔神之角",
+          "破损的长枪"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_魔神_上位",
+        "name": "上位魔神 (Upper Demon)",
+        "type": "fiend",
+        "challenge_rating": "青铜",
+        "description": "强大的上位恶魔，具备再生能力和坚硬的皮肤，能够熟练使用双手剑和中级魔法。",
+        "stats": {
+          "hp": 90,
+          "ac": 17,
+          "str": 18,
+          "dex": 14,
+          "con": 16,
+          "int": 10,
+          "wis": 10,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "双手剑掌握",
+            "level": "初级"
+          },
+          {
+            "name": "魔术师",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "再生 (每回合恢复生命)",
+          "装甲 (物理减伤)",
+          "飞行",
+          "多方位视觉"
+        ],
+        "attacks": [
+          {
+            "name": "双手剑重斩",
+            "damage": "2d6+4"
+          },
+          {
+            "name": "中级破坏魔法",
+            "damage": "2d8"
+          }
+        ],
+        "loot": [
+          "魔神的心脏",
+          "精良的双手剑",
+          "魔法宝石"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_魔神_将",
+        "name": "魔神将 (Demon General)",
+        "type": "fiend",
+        "challenge_rating": "黄金",
+        "description": "统领魔神军队的恐怖存在，拥有极高的各项属性，精通上级魔法与武技，是凡人难以企及的对手。",
+        "stats": {
+          "hp": 250,
+          "ac": 20,
+          "str": 24,
+          "dex": 16,
+          "con": 22,
+          "int": 14,
+          "wis": 14,
+          "cha": 18
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "长枪掌握",
+            "level": "中级"
+          },
+          {
+            "name": "魔术师",
+            "level": "上级"
+          }
+        ],
+        "special_abilities": [
+          "再生 (初级)",
+          "装甲 (高额减伤)",
+          "飞行",
+          "魔法抗性"
+        ],
+        "attacks": [
+          {
+            "name": "魔枪连击",
+            "damage": "2d10+7"
+          },
+          {
+            "name": "上级毁灭魔法",
+            "damage": "4d8"
+          }
+        ],
+        "loot": [
+          "魔神将的首级",
+          "魔枪",
+          "古代魔法书",
+          "大量黄金"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_魔神_魅魔",
+        "name": "魅魔/梦魔 (Succubus/Incubus)",
+        "type": "fiend",
+        "challenge_rating": "青玉",
+        "description": "擅长精神控制与变形的恶魔，物理防御脆弱但魅力极高，通过梦境和接触吸取生命力。",
+        "stats": {
+          "hp": 70,
+          "ac": 12,
+          "str": 10,
+          "dex": 16,
+          "con": 12,
+          "int": 14,
+          "wis": 14,
+          "cha": 24
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "变形术",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "魅惑之吻 (控制/伤害)",
+          "梦境入侵",
+          "精气榨取 (吸血)",
+          "魔法韧性"
+        ],
+        "attacks": [
+          {
+            "name": "爪击",
+            "damage": "1d6"
+          },
+          {
+            "name": "吸取之触",
+            "damage": "2d6 (HP吸取)"
+          }
+        ],
+        "loot": [
+          "魅魔的指甲",
+          "迷幻香粉"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_亚人类与龙族_暗人",
+        "name": "暗人 (Dark Elf/Darkling)",
+        "type": "humanoid",
+        "challenge_rating": "青玉石",
+        "description": "居住于黑暗中的亚人种族，身手敏捷，擅长使用细剑与魔法，对毒药有深入了解。",
+        "stats": {
+          "hp": 35,
+          "ac": 15,
+          "str": 10,
+          "dex": 16,
+          "con": 12,
+          "int": 16,
+          "wis": 14,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：细剑",
+            "level": "初级"
+          },
+          {
+            "name": "魔术师",
+            "level": "初级"
+          },
+          {
+            "name": "斥候",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "毒知识",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "细剑刺击",
+            "damage": "1d8+3"
+          },
+          {
+            "name": "初级魔法飞弹",
+            "damage": "1d4+1"
+          }
+        ],
+        "loot": [
+          "细剑",
+          "毒药瓶",
+          "魔法书残页"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亚人类与龙族_鹰身女妖",
+        "name": "鹰身女妖 (Harpy)",
+        "type": "monstrosity",
+        "challenge_rating": "钢铁",
+        "description": "拥有女性面孔与鸟类身体的怪物，利用歌声迷惑猎物，并从空中发动袭击。",
+        "stats": {
+          "hp": 18,
+          "ac": 13,
+          "str": 10,
+          "dex": 16,
+          "con": 10,
+          "int": 8,
+          "wis": 10,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "歌声 (魅惑)",
+          "飞行",
+          "敏锐视觉"
+        ],
+        "attacks": [
+          {
+            "name": "利爪抓挠",
+            "damage": "1d6+3"
+          }
+        ],
+        "loot": [
+          "肮脏的羽毛",
+          "受害者的饰品"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亚人类与龙族_蜥蜴人",
+        "name": "蜥蜴人 (Lizardman)",
+        "type": "humanoid",
+        "challenge_rating": "青玉石",
+        "description": "覆盖着坚硬鳞片的沼泽战士，拥有强壮的体魄，部分个体能使用龙神赐予的原始神术。",
+        "stats": {
+          "hp": 40,
+          "ac": 16,
+          "str": 16,
+          "dex": 14,
+          "con": 16,
+          "int": 8,
+          "wis": 12,
+          "cha": 10
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：战斧",
+            "level": "初级"
+          },
+          {
+            "name": "武器：短枪",
+            "level": "初级"
+          },
+          {
+            "name": "龙祭司",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "鳞片皮肤 (天生护甲)",
+          "视觉",
+          "龙神神术"
+        ],
+        "attacks": [
+          {
+            "name": "战斧劈砍",
+            "damage": "1d8+3"
+          },
+          {
+            "name": "短枪刺击",
+            "damage": "1d6+3"
+          },
+          {
+            "name": "牙齿撕咬",
+            "damage": "1d6+3"
+          }
+        ],
+        "loot": [
+          "战斧",
+          "蜥蜴人鳞片",
+          "骨制图腾"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亚人类与龙族_幼龙",
+        "name": "幼龙 (Young Dragon)",
+        "type": "dragon",
+        "challenge_rating": "黄金",
+        "description": "虽然是幼体但已具备毁灭性力量的龙族，拥有极高的物理与魔法抗性，能喷吐致命龙息。",
+        "stats": {
+          "hp": 300,
+          "ac": 20,
+          "str": 24,
+          "dex": 18,
+          "con": 24,
+          "int": 18,
+          "wis": 18,
+          "cha": 20
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "中级"
+          },
+          {
+            "name": "再生",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "龙息",
+          "装甲 (高额减伤)",
+          "多方位视觉",
+          "物理/魔法极高韧性"
+        ],
+        "attacks": [
+          {
+            "name": "龙爪撕裂",
+            "damage": "2d8+7"
+          },
+          {
+            "name": "龙息喷吐",
+            "damage": "10d8"
+          },
+          {
+            "name": "尾击",
+            "damage": "2d6+7"
+          }
+        ],
+        "loot": [
+          "龙鳞",
+          "龙牙",
+          "龙血",
+          "财宝堆"
+        ]
+      }
+    ],
+    {
+      "id": "第二卷:第九章:不可以说出名称的怪物",
+      "name": "第二卷:第九章:不可以说出名称的怪物",
+      "type": "aberration",
+      "challenge_rating": "白银",
+      "description": "来自异界的巨大眼球构造体，被称为“凝视者”。主眼拥有反魔法力场，触手眼能发射分解射线，是极度危险的魔法生物。",
+      "stats": {
+        "hp": 150,
+        "ac": 18,
+        "str": 10,
+        "dex": 14,
+        "con": 16,
+        "int": 18,
+        "wis": 17,
+        "cha": 15
+      },
+      "stats_confidence": 0.8,
+      "skills": [
+        {
+          "name": "侦察",
+          "level": "高级"
+        },
+        {
+          "name": "魔法感知",
+          "level": "高级"
+        }
+      ],
+      "special_abilities": [
+        "反魔法力场 (主眼)",
+        "悬浮飞行",
+        "全方位视野"
+      ],
+      "attacks": [
+        {
+          "name": "分解射线",
+          "damage": "8d8 force"
+        },
+        {
+          "name": "高热射线",
+          "damage": "4d6 fire"
+        }
+      ],
+      "loot": [
+        "眼球怪的残骸",
+        "古代魔镜 (传送门)"
+      ]
+    },
+    {
+      "id": "规定-色孽怪物与人物触发",
+      "name": "规定-色孽怪物与人物触发",
+      "type": "special",
+      "challenge_rating": "白瓷",
+      "description": "用于判定色孽派系怪物与特定角色剧情触发的规则集合实体。定义了信徒献祭召唤恶魔的逻辑，以及在城镇和遗迹不同区域的遭遇判定机制。",
+      "stats": {
+        "hp": 1,
+        "ac": 10,
+        "str": 10,
+        "dex": 10,
+        "con": 10,
+        "int": 10,
+        "wis": 10,
+        "cha": 10
+      },
+      "stats_confidence": 0.0,
+      "skills": [],
+      "special_abilities": [
+        "角色触发逻辑: 若用户在水之都且艾迪娜·冯.海因里希在关系列表，且未处于事件中，判定进入抉择卷：第一章。",
+        "派系怪物名录: 色孽遗弃者(青玉)、色孽欲魔(红玉)、色孽寻觅者(青铜)、色孽混沌卵(白银)、希尔·埃斯克(黄金)。",
+        "信徒怪物名录: 色孽贵族信徒(红玉)、色孽贵族大祭司(黄金)、色孽艺术家信徒(青铜)、色孽艺术家大祭司(白银)。",
+        "召唤法则: 色孽派系怪物必须通过信徒献祭召唤，不可凭空生成。",
+        "区域遭遇逻辑: 城镇区域仅触发信徒；遗迹区域先触发信徒，战斗结束后触发派系怪物。"
+      ],
+      "attacks": [],
+      "loot": []
+    },
+    [
+      {
+        "id": "神代怪物-百臂巨人",
+        "name": "百臂巨人 (Hecatoncheires)",
+        "type": "elemental",
+        "challenge_rating": "白金",
+        "description": "由无数执矛巨臂构成的活体山脉，秩序诞生前的混沌化身。每一只手臂都拥有独立意志，是所有巨人族的始祖。",
+        "stats": {
+          "hp": 850,
+          "ac": 25,
+          "str": 30,
+          "dex": 10,
+          "con": 30,
+          "int": 18,
+          "wis": 24,
+          "cha": 16
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "运动",
+            "level": "高级"
+          },
+          {
+            "name": "察觉",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "万物投掷: 能够将视界内任何非神造的物体（山峰、湖泊）作为投射物掷出。",
+          "不谐律动: 攻击无法预测，扰乱因果，使预知法术失效。",
+          "混沌之核: 除非同时摧毁所有手臂，否则单一伤害会被分担并瞬间再生。"
+        ],
+        "attacks": [
+          {
+            "name": "百臂连击",
+            "damage": "10d10+10"
+          },
+          {
+            "name": "山峰投掷",
+            "damage": "8d12+10"
+          }
+        ],
+        "loot": [
+          "混沌原石",
+          "泰坦之血"
+        ]
+      },
+      {
+        "id": "神代怪物-哥布林大君",
+        "name": "哥布林大君 (Goblin Overlord)",
+        "type": "fey",
+        "challenge_rating": "黄金",
+        "description": "体型不定的阴影精怪，最初的欺诈者。它不事生产，以玩弄凡人为乐，是所有哥布林狡诈天性的源头。",
+        "stats": {
+          "hp": 220,
+          "ac": 20,
+          "str": 14,
+          "dex": 26,
+          "con": 18,
+          "int": 22,
+          "wis": 18,
+          "cha": 24
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "潜行",
+            "level": "高级"
+          },
+          {
+            "name": "欺瞒",
+            "level": "高级"
+          },
+          {
+            "name": "洞察",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "概念侵蚀: 扭曲生物对安全与危险的认知，混淆盟友与怪物。",
+          "阴影国度: 将区域拖入光线法则扭曲的半位面，阴影成为其肢体延伸。",
+          "恶意具象化: 将恐惧具象化为临时怪物仆从。"
+        ],
+        "attacks": [
+          {
+            "name": "阴影背刺",
+            "damage": "4d6+8"
+          },
+          {
+            "name": "精神崩溃",
+            "damage": "3d8心灵伤害"
+          }
+        ],
+        "loot": [
+          "欺诈者面具",
+          "无形匕首"
+        ]
+      },
+      {
+        "id": "神代怪物-原初黏体",
+        "name": "原初黏体 (Progenitor Slime)",
+        "type": "ooze",
+        "challenge_rating": "白金",
+        "description": "覆盖广袤区域的原生质海洋，拥有集体意识。能吞噬并完美解析一切物质与记忆，是神明创造生命的失败初版。",
+        "stats": {
+          "hp": 600,
+          "ac": 12,
+          "str": 24,
+          "dex": 10,
+          "con": 30,
+          "int": 24,
+          "wis": 16,
+          "cha": 10
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "自然",
+            "level": "高级"
+          },
+          {
+            "name": "欺瞒",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "完美同化: 瞬间解析并储存被吞噬者的物理结构、魔法特性及记忆。",
+          "记忆回响: 重构被吞噬者的样貌与能力进行战斗。",
+          "无尽增殖: 在有水源处可理论上无限扩张。"
+        ],
+        "attacks": [
+          {
+            "name": "吞噬浪潮",
+            "damage": "6d8+7酸蚀"
+          },
+          {
+            "name": "伪装突袭",
+            "damage": "4d10+7"
+          }
+        ],
+        "loot": [
+          "万能溶剂",
+          "记忆结晶"
+        ]
+      },
+      {
+        "id": "神代怪物-龙之始祖",
+        "name": "龙之始祖 (The Progenitor Wyrm)",
+        "type": "dragon",
+        "challenge_rating": "白金",
+        "description": "世界创伤的具象化，没有固定形态的天灾化身。它是所有龙类的共同祖先，代表着原始且狂暴的毁灭之力。",
+        "stats": {
+          "hp": 950,
+          "ac": 28,
+          "str": 30,
+          "dex": 14,
+          "con": 30,
+          "int": 20,
+          "wis": 22,
+          "cha": 26
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "威吓",
+            "level": "高级"
+          },
+          {
+            "name": "奥秘",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "熔火之心: 血液即是流动的火山，能将大地化为熔岩。",
+          "风暴之翼: 振翅卷起毁灭性风暴，吐息为凝结雷云。",
+          "山崩之咆: 咆哮引发剧烈地震，改变地貌。"
+        ],
+        "attacks": [
+          {
+            "name": "天灾吐息",
+            "damage": "20d10混合伤害"
+          },
+          {
+            "name": "裂地爪击",
+            "damage": "4d12+10"
+          }
+        ],
+        "loot": [
+          "始祖龙鳞",
+          "世界之核碎片"
+        ]
+      },
+      {
+        "id": "神代怪物-千喉之织者",
+        "name": "千喉之织者 (The Weaver of a Thousand Maws)",
+        "type": "aberration",
+        "challenge_rating": "白金",
+        "description": "虫类与蛛类的始祖，由无数扭曲肢体与口器构成的活体巢穴。代表无尽的饥饿，旨在将万物分解为原始能量。",
+        "stats": {
+          "hp": 700,
+          "ac": 22,
+          "str": 26,
+          "dex": 18,
+          "con": 26,
+          "int": 16,
+          "wis": 18,
+          "cha": 8
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "生存",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "熵之毒: 其毒液并非化学物质，而是能直接分解物质结构的熵力。",
+          "异形生物学: 身体结构违背常理，免疫重击与变形效果。",
+          "万物分解: 接触到的有机物会被迅速转化为能量被其吸收。"
+        ],
+        "attacks": [
+          {
+            "name": "千肢撕咬",
+            "damage": "6d8+8"
+          },
+          {
+            "name": "熵解喷吐",
+            "damage": "8d8黯蚀"
+          }
+        ],
+        "loot": [
+          "虚空甲壳",
+          "分解腺体"
+        ]
+      }
+    ],
+    {
+      "id": "怪物建造序列",
+      "name": "怪物建造序列",
+      "type": "humanoid",
+      "challenge_rating": "白银",
+      "description": "基于哥布林生态的聚落发展系统，包含军事、经济、隐藏三大序列，通过掠夺资源解锁巨狼、萨满及英雄单位，形成高威胁度的怪物巢穴。",
+      "stats": {
+        "hp": 85,
+        "ac": 16,
+        "str": 14,
+        "dex": 16,
+        "con": 14,
+        "int": 12,
+        "wis": 11,
+        "cha": 13
+      },
+      "stats_confidence": 0.2,
+      "skills": [
+        {
+          "name": "生存",
+          "level": "高级"
+        },
+        {
+          "name": "隐匿",
+          "level": "中级"
+        },
+        {
+          "name": "驯兽",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "序列专精 (Sequence Specialization): 巢穴专注于某一序列（军事/经济/隐藏）发展时，相关单位能力显著提升。",
+        "陷阱工坊 (Trap Workshop): 巢穴区域布满淬毒竹签与落石，入侵者在区域内移动需进行敏捷豁免。",
+        "毒物实验室 (Poison Lab): 巢穴内所有哥布林单位的武器攻击附带额外毒素伤害。",
+        "英雄祭坛 (Hero's Altar): 巢穴达到LV10时，诞生哥布林英雄或圣骑士，拥有光环效果提升周围友军战斗力。"
+      ],
+      "attacks": [
+        {
+          "name": "淬毒突袭",
+          "damage": "1d6+3 (穿刺) + 1d4 (毒)"
+        },
+        {
+          "name": "巨狼撕咬",
+          "damage": "2d4+2 (穿刺)"
+        },
+        {
+          "name": "萨满火球",
+          "damage": "2d6 (火焰)"
+        }
+      ],
+      "loot": [
+        "生锈的武器",
+        "被掠夺的物资",
+        "金属废料",
+        "致幻蘑菇",
+        "智慧生物的眼球"
+      ]
+    },
+    {
+      "id": "怪物图鉴-巫婆-沼泽",
+      "name": "怪物图鉴-巫婆-沼泽",
+      "type": "giant",
+      "challenge_rating": "白银",
+      "description": "栖身于沼泽地带的智慧魔物，擅长炼金术并统御哥布林等魔物。常使用变形术伪装成少女诱骗冒险者，是极具威胁的区域首领。",
+      "stats": {
+        "hp": 120,
+        "ac": 16,
+        "str": 20,
+        "dex": 8,
+        "con": 18,
+        "int": 17,
+        "wis": 12,
+        "cha": 14
+      },
+      "stats_confidence": 0.85,
+      "skills": [
+        {
+          "name": "炼金术",
+          "level": "高级"
+        },
+        {
+          "name": "奥秘",
+          "level": "中级"
+        },
+        {
+          "name": "强韧",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "再生 (Regeneration)",
+        "变形术 (Polymorph)",
+        "视觉强化 (Visual Enhancement)",
+        "炼金专精 (制作毒气弹/炸弹/狂暴药剂)",
+        "火球术 (Fireball)"
+      ],
+      "attacks": [
+        {
+          "name": "巫婆法杖 (Staff)",
+          "damage": "1d8+5"
+        },
+        {
+          "name": "炼金炸弹 (Alchemical Bomb)",
+          "damage": "3d6 fire/acid"
+        },
+        {
+          "name": "火球术 (Fireball)",
+          "damage": "8d6 fire"
+        }
+      ],
+      "loot": [
+        "河巨魔头皮",
+        "巫婆法杖",
+        "狂暴药剂",
+        "炼金炸弹",
+        "魔物用进化药"
+      ]
+    },
+    [
+      {
+        "id": "怪物图鉴-色孽信徒-贵族-普通",
+        "name": "色孽贵族信徒",
+        "type": "humanoid",
+        "challenge_rating": "红玉石",
+        "description": "潜伏在贵族阶层的色孽信徒，利用权力和地位掩盖堕落的信仰，擅长通过伪装的慈善和宴会引诱他人堕落。",
+        "stats": {
+          "hp": 50,
+          "ac": 12,
+          "str": 12,
+          "dex": 12,
+          "con": 10,
+          "int": 10,
+          "wis": 8,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "地位伪装",
+            "level": "初级"
+          },
+          {
+            "name": "欲望引诱",
+            "level": "初级"
+          },
+          {
+            "name": "礼仪之刃",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "地位伪装：利用贵族头衔干扰高阶感知，降低被识破概率，阻碍调查。",
+          "欲望引诱：定制诱惑方案，削减目标信仰值，累计3次可转化中阶信徒。",
+          "毒素：命中后目标感知-1，识破谎言需判定。"
+        ],
+        "attacks": [
+          {
+            "name": "礼仪之刃",
+            "damage": "1d6+1 (穿刺) + 毒素效果"
+          }
+        ],
+        "loot": [
+          "贵族服饰",
+          "礼仪匕首",
+          "少量宝石",
+          "色孽护符"
+        ]
+      },
+      {
+        "id": "怪物图鉴-色孽信徒-贵族-大祭司",
+        "name": "色孽贵族大祭司",
+        "type": "humanoid",
+        "challenge_rating": "黄金",
+        "description": "色孽教派的高层领导者，能够通过奢华的祭祀仪式召唤恶魔，并拥有极高的魅力来统御信徒和腐化高层。",
+        "stats": {
+          "hp": 130,
+          "ac": 15,
+          "str": 14,
+          "dex": 14,
+          "con": 14,
+          "int": 14,
+          "wis": 12,
+          "cha": 20
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "奢华祭祀",
+            "level": "高级"
+          },
+          {
+            "name": "权力腐化",
+            "level": "高级"
+          },
+          {
+            "name": "双魂统御",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "奢华祭祀：召唤2-3只王室欲魔，获得吸收30伤害的欲望护盾，护盾破碎造成周围眩晕。",
+          "权力腐化：永久削减目标对色孽的抗性，增加自身生命上限，制造欲望傀儡。",
+          "双魂统御：强化5名信徒，共享魅力加成并提高其力量。"
+        ],
+        "attacks": [
+          {
+            "name": "权杖重击",
+            "damage": "1d8+2 (钝击)"
+          },
+          {
+            "name": "召唤王室欲魔",
+            "damage": "特殊召唤"
+          }
+        ],
+        "loot": [
+          "华丽的祭祀法袍",
+          "大贵族印章",
+          "召唤卷轴",
+          "大量金币"
+        ]
+      },
+      {
+        "id": "怪物图鉴-色孽信徒-艺术家-普通",
+        "name": "色孽艺术家信徒",
+        "type": "humanoid",
+        "challenge_rating": "青铜",
+        "description": "沉溺于感官刺激的堕落艺术家，通过绘画、雕塑或音乐传播疯狂，手中的创作工具也是致命的武器。",
+        "stats": {
+          "hp": 45,
+          "ac": 11,
+          "str": 8,
+          "dex": 12,
+          "con": 10,
+          "int": 14,
+          "wis": 10,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "艺术伪装",
+            "level": "中级"
+          },
+          {
+            "name": "感官魅惑",
+            "level": "中级"
+          },
+          {
+            "name": "创作之刃",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "艺术伪装：通过作品引发观赏者的占有欲或献祭冲动。",
+          "感官魅惑：视觉/听觉判定失败会导致失神，叠加3次陷入长时间混乱。",
+          "毁灭幻象：武器毒素导致目标敏捷-2，并可能误伤友军。"
+        ],
+        "attacks": [
+          {
+            "name": "灵魂画笔/命运刻刀",
+            "damage": "1d4+2 (穿刺) + 幻象毒素"
+          }
+        ],
+        "loot": [
+          "奇异的画具",
+          "未完成的腐化画作",
+          "致幻颜料"
+        ]
+      },
+      {
+        "id": "怪物图鉴-色孽信徒-艺术家-大祭司",
+        "name": "色孽艺术家大祭司",
+        "type": "humanoid",
+        "challenge_rating": "白银",
+        "description": "将亵渎视为最高艺术的狂人，能够将活人制成欲望巨像，或通过窃取灵感来释放毁灭性的精神冲击。",
+        "stats": {
+          "hp": 90,
+          "ac": 14,
+          "str": 10,
+          "dex": 18,
+          "con": 12,
+          "int": 18,
+          "wis": 16,
+          "cha": 18
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "亵渎创作",
+            "level": "高级"
+          },
+          {
+            "name": "灵感窃取",
+            "level": "高级"
+          },
+          {
+            "name": "信徒召集",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "亵渎创作：制造欲望巨像释放冲击波（混乱敌我），被毁时造成腐蚀伤害并制造减速沼泽。",
+          "灵感窃取：窃取目标知识属性，强化自身技能范围和召唤能力。",
+          "信徒召集：召唤精英信徒（油画家/雕塑家/指挥家），死亡时分别触发幻视领域、凝固气场或噪音风暴。"
+        ],
+        "attacks": [
+          {
+            "name": "欲望冲击波",
+            "damage": "范围精神控制判定"
+          },
+          {
+            "name": "腐蚀爆发",
+            "damage": "10 (酸蚀/腐蚀)"
+          }
+        ],
+        "loot": [
+          "大师级艺术工具",
+          "亵渎的乐谱",
+          "人皮画布",
+          "魔法颜料"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "tentacle_larva",
+        "name": "触手幼体",
+        "type": "aberration",
+        "challenge_rating": "钢铁",
+        "description": "由触手构成的幼体生物，虽然弱小但具有极大的灵活性，能攀爬墙壁并钻入缝隙。",
+        "stats": {
+          "hp": 34,
+          "ac": 12,
+          "str": 8,
+          "dex": 12,
+          "con": 10,
+          "int": 2,
+          "wis": 4,
+          "cha": 2
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "缠绕",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "振动感知",
+          "灵活触手: 每条触手独立动作，可攀爬",
+          "触手身躯: 物理伤害减半，可钻入狭窄缝隙"
+        ],
+        "attacks": [
+          {
+            "name": "触手拍打",
+            "damage": "1d4-1"
+          },
+          {
+            "name": "缠绕",
+            "damage": "1d4"
+          }
+        ],
+        "loot": [
+          "触手粘液",
+          "微量魔石碎片"
+        ]
+      },
+      {
+        "id": "lesser_mimic_tentacle",
+        "name": "低等拟态触手",
+        "type": "aberration",
+        "challenge_rating": "翠玉",
+        "description": "一滩不定型的触手生物，能够拟态成任何已知的物体，表层可以硬化以抵御攻击。",
+        "stats": {
+          "hp": 100,
+          "ac": 15,
+          "str": 15,
+          "dex": 8,
+          "con": 12,
+          "int": 2,
+          "wis": 8,
+          "cha": 2
+        },
+        "stats_confidence": 0.85,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "缠绕",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "任意拟态: 改变外观模仿物体",
+          "硬化: 停止形变增加护甲",
+          "振动感知",
+          "触手身躯: 物理伤害减半"
+        ],
+        "attacks": [
+          {
+            "name": "硬化触手鞭打",
+            "damage": "1d8+2"
+          },
+          {
+            "name": "拟态突袭",
+            "damage": "2d6+2"
+          }
+        ],
+        "loot": [
+          "拟态表皮",
+          "未消化的装备"
+        ]
+      },
+      {
+        "id": "flesh_abomination",
+        "name": "血肉畸体",
+        "type": "aberration",
+        "challenge_rating": "青铜",
+        "description": "扭曲的血肉怪物，虽然生命力看似不强，但具有再生能力和毒性。",
+        "stats": {
+          "hp": 32,
+          "ac": 12,
+          "str": 10,
+          "dex": 14,
+          "con": 8,
+          "int": 2,
+          "wis": 6,
+          "cha": 4
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "毒素攻击",
+          "再生: 每回合恢复生命",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "带毒爪击",
+            "damage": "1d6 + 毒素豁免"
+          }
+        ],
+        "loot": [
+          "畸变的器官",
+          "毒囊"
+        ]
+      },
+      {
+        "id": "limb_cluster",
+        "name": "肢团",
+        "type": "aberration",
+        "challenge_rating": "白银",
+        "description": "完全由扭曲的猩红肢体构成的巨大躯体，能同时攻击多个目标并吞噬生物恢复自身。",
+        "stats": {
+          "hp": 250,
+          "ac": 14,
+          "str": 20,
+          "dex": 12,
+          "con": 16,
+          "int": 4,
+          "wis": 12,
+          "cha": 4
+        },
+        "stats_confidence": 0.85,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "高级"
+          },
+          {
+            "name": "再生",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "多重行动: 同时攻击2-3个目标",
+          "吞噬滋养: 吞下生物并消化回血",
+          "振动感知"
+        ],
+        "attacks": [
+          {
+            "name": "多重肢体殴打",
+            "damage": "2d8+5"
+          },
+          {
+            "name": "吞噬",
+            "damage": "3d6+5"
+          }
+        ],
+        "loot": [
+          "大量受害者遗物",
+          "高级魔石",
+          "扭曲的肢体精华"
+        ]
+      },
+      {
+        "id": "scarlet_brain_stinger",
+        "name": "猩红脑蜇",
+        "type": "aberration",
+        "challenge_rating": "青铜",
+        "description": "形似水母的漂浮生物，能隐形并控制受害者的大脑使其攻击队友。",
+        "stats": {
+          "hp": 70,
+          "ac": 13,
+          "str": 12,
+          "dex": 12,
+          "con": 10,
+          "int": 8,
+          "wis": 10,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "脑奸操控: 插入大脑控制受害者",
+          "隐形",
+          "近地飞行"
+        ],
+        "attacks": [
+          {
+            "name": "触手刺击",
+            "damage": "1d6+1"
+          },
+          {
+            "name": "精神控制",
+            "damage": "特殊效果"
+          }
+        ],
+        "loot": [
+          "透明的神经索",
+          "脑髓液"
+        ]
+      },
+      {
+        "id": "flesh_weaver",
+        "name": "织肉者",
+        "type": "aberration",
+        "challenge_rating": "青铜",
+        "description": "无数细小血肉纤维的集合体，能将生物缝合成巨大的功能性结构。",
+        "stats": {
+          "hp": 50,
+          "ac": 12,
+          "str": 10,
+          "dex": 14,
+          "con": 10,
+          "int": 10,
+          "wis": 10,
+          "cha": 8
+        },
+        "stats_confidence": 0.6,
+        "skills": [
+          {
+            "name": "血肉编织",
+            "level": "特殊"
+          }
+        ],
+        "special_abilities": [
+          "血肉编织者: 缝合生物",
+          "可变属性: 根据素材变化",
+          "可变攻击手段"
+        ],
+        "attacks": [
+          {
+            "name": "纤维穿刺",
+            "damage": "1d6"
+          },
+          {
+            "name": "缝合手术",
+            "damage": "特殊"
+          }
+        ],
+        "loot": [
+          "强韧的肌腱束",
+          "手术工具"
+        ]
+      },
+      {
+        "id": "barnacle_tentacle",
+        "name": "藤壶触手",
+        "type": "aberration",
+        "challenge_rating": "翠玉",
+        "description": "固定在墙面或天花板的巨型藤壶状生物，拥有巨大的空腔和触手，擅长伏击和吞噬。",
+        "stats": {
+          "hp": 50,
+          "ac": 16,
+          "str": 12,
+          "dex": 4,
+          "con": 16,
+          "int": 4,
+          "wis": 8,
+          "cha": 4
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "丸吞捕获",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "伪装: 静止时难以察觉",
+          "丸吞捕获: 吞入腔体并卸除装备",
+          "人质威胁: 利用体内受害者"
+        ],
+        "attacks": [
+          {
+            "name": "突袭触手",
+            "damage": "1d8+1"
+          },
+          {
+            "name": "吞噬",
+            "damage": "束缚+持续伤害"
+          }
+        ],
+        "loot": [
+          "藤壶硬壳",
+          "被消化的冒险者装备"
+        ]
+      },
+      {
+        "id": "spawning_tentacle",
+        "name": "产卵触手",
+        "type": "aberration",
+        "challenge_rating": "翠玉",
+        "description": "触手生态的繁育单位，能将触手卵注入受害者体内孵化，并分泌菌毯固定猎物。",
+        "stats": {
+          "hp": 45,
+          "ac": 11,
+          "str": 14,
+          "dex": 10,
+          "con": 8,
+          "int": 4,
+          "wis": 8,
+          "cha": 4
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "缠绕",
+            "level": "N/A"
+          }
+        ],
+        "special_abilities": [
+          "触手产卵: 寄生孵化",
+          "菌毯固定: 结合地形困住目标",
+          "振动感知",
+          "触手身躯"
+        ],
+        "attacks": [
+          {
+            "name": "注卵触手",
+            "damage": "1d6+2"
+          },
+          {
+            "name": "强力缠绕",
+            "damage": "1d6+2"
+          }
+        ],
+        "loot": [
+          "触手卵",
+          "催情毒素"
+        ]
+      },
+      {
+        "id": "greater_mimic_tentacle",
+        "name": "高等拟态触手",
+        "type": "aberration",
+        "challenge_rating": "白银",
+        "description": "由低等触手进化而来，兼具血肉与触手特性，拥有极高的物理抗性。",
+        "stats": {
+          "hp": 180,
+          "ac": 18,
+          "str": 18,
+          "dex": 10,
+          "con": 18,
+          "int": 6,
+          "wis": 10,
+          "cha": 6
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "极高物理韧性",
+          "魔法抗性",
+          "可变属性: 个体差异大",
+          "任意拟态",
+          "硬化"
+        ],
+        "attacks": [
+          {
+            "name": "巨型拟态重击",
+            "damage": "2d10+4"
+          }
+        ],
+        "loot": [
+          "完美的拟态核心",
+          "稀有金属（拟态残留）"
+        ]
+      },
+      {
+        "id": "stealing_flesh",
+        "name": "窃形畸肉",
+        "type": "aberration",
+        "challenge_rating": "青铜",
+        "description": "寄生在人体内的血肉怪物，能控制心智并最终替换宿主，继承记忆和形态。",
+        "stats": {
+          "hp": 40,
+          "ac": 10,
+          "str": 10,
+          "dex": 10,
+          "con": 14,
+          "int": 10,
+          "wis": 10,
+          "cha": 10
+        },
+        "stats_confidence": 0.5,
+        "skills": [
+          {
+            "name": "伪装",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "寄生窃皮者: 替换宿主",
+          "可变属性: 基于宿主+额外韧性",
+          "可变攻击手段: 模仿宿主",
+          "振动感知"
+        ],
+        "attacks": [
+          {
+            "name": "宿主武器攻击",
+            "damage": "视宿主而定"
+          },
+          {
+            "name": "突变肢体",
+            "damage": "1d8+2"
+          }
+        ],
+        "loot": [
+          "宿主的遗物",
+          "寄生肉块"
+        ]
+      },
+      {
+        "id": "dread_flesh_grinder",
+        "name": "惊惧肉碾虫",
+        "type": "aberration",
+        "challenge_rating": "翠玉",
+        "description": "拥有极高韧性的血肉生物，如同活体绞肉机。",
+        "stats": {
+          "hp": 200,
+          "ac": 14,
+          "str": 12,
+          "dex": 10,
+          "con": 20,
+          "int": 2,
+          "wis": 8,
+          "cha": 2
+        },
+        "stats_confidence": 0.85,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "高韧性"
+        ],
+        "attacks": [
+          {
+            "name": "碾压",
+            "damage": "2d8+1"
+          }
+        ],
+        "loot": [
+          "坚硬的甲壳",
+          "大量血肉"
+        ]
+      }
+    ],
+    {
+      "id": "怪物生态-血肉重铸",
+      "name": "怪物生态-血肉重铸",
+      "type": "aberration",
+      "challenge_rating": "青铜",
+      "description": "血肉之神的无意识造物，包含血肉与触手生物。它们作为外来侵入者，凭本能吞噬、同化环境或寄生繁殖，形态多变且令人作呕。",
+      "stats": {
+        "hp": 45,
+        "ac": 13,
+        "str": 16,
+        "dex": 12,
+        "con": 16,
+        "int": 4,
+        "wis": 10,
+        "cha": 6
+      },
+      "stats_confidence": 0.2,
+      "skills": [
+        {
+          "name": "运动 (Athletics)",
+          "level": "中级"
+        },
+        {
+          "name": "潜行 (Stealth)",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "不定形态: 个体间差异巨大，可能拥有拟态、躯体拼接或寄生能力。",
+        "寄生同化: 特定个体可寄生于生物体内或体表，汲取生命力或控制心智。",
+        "血肉再生: 作为血肉之神的造物，具有较强的生命恢复能力。"
+      ],
+      "attacks": [
+        {
+          "name": "触手缠绕",
+          "damage": "1d6+3"
+        },
+        {
+          "name": "吞噬",
+          "damage": "2d4+3"
+        }
+      ],
+      "loot": [
+        "触手粘液",
+        "扭曲肉块",
+        "畸体角质层"
+      ]
+    },
+    {
+      "id": "怪物生态-_亡灵船",
+      "name": "怪物生态- 亡灵船",
+      "type": "undead",
+      "challenge_rating": "白银",
+      "description": "漂流于海洋与河道的诅咒船只，由吸血鬼船长统御，载满僵尸水手与深海魔物，通过劫掠生者扩充亡灵舰队。",
+      "stats": {
+        "hp": 130,
+        "ac": 16,
+        "str": 18,
+        "dex": 16,
+        "con": 16,
+        "int": 14,
+        "wis": 12,
+        "cha": 16
+      },
+      "stats_confidence": 0.5,
+      "skills": [
+        {
+          "name": "航海术",
+          "level": "高级"
+        },
+        {
+          "name": "统御",
+          "level": "高级"
+        },
+        {
+          "name": "威吓",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "亡灵统御 (绝对控制僵尸水手与甲板枪手)",
+        "吸血鬼体质 (再生能力与日光弱点)",
+        "召唤船员 (呼叫腐化魔蟹射手或深海守卫支援)",
+        "诅咒海域光环 (周围环境视为黑暗区域)"
+      ],
+      "attacks": [
+        {
+          "name": "吸血鬼佩剑",
+          "damage": "1d8+4"
+        },
+        {
+          "name": "吸血撕咬",
+          "damage": "1d6+3"
+        },
+        {
+          "name": "甲板火枪齐射 (船员支援)",
+          "damage": "2d10"
+        }
+      ],
+      "loot": [
+        "血海贵族之牙",
+        "受诅咒的航海图",
+        "亡灵统御之戒 (仅司令掉落)",
+        "巨大的诅咒蟹壳碎片",
+        "骨质弩炮部件",
+        "瘟疫与腐烂能量核心",
+        "锈蚀的亡灵火枪",
+        "大量财宝 (金币/银币)"
+      ]
+    },
+    [
+      {
+        "id": "怪物图鉴_-_亡灵船_01",
+        "name": "僵尸海盗水手",
+        "type": "undead",
+        "challenge_rating": "黑曜石等级",
+        "description": "复活的溺亡水手，动作僵硬，手持生前使用的斧头或钩爪，能在黑暗中视物。",
+        "stats": {
+          "hp": 22,
+          "ac": 11,
+          "str": 14,
+          "dex": 10,
+          "con": 12,
+          "int": 6,
+          "wis": 8,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：船工斧/钩爪",
+            "level": "初级"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "初级"
+          },
+          {
+            "name": "水中迟缓",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "亡灵体质",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "船工斧",
+            "damage": "1d6+2"
+          },
+          {
+            "name": "钩爪",
+            "damage": "1d4+2"
+          }
+        ],
+        "loot": [
+          "生锈的武器",
+          "少量铜币"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_02",
+        "name": "僵尸海盗甲板枪手",
+        "type": "undead",
+        "challenge_rating": "钢铁等级",
+        "description": "拥有一定射击技巧的僵尸，装备着火药枪和弯刀，比普通僵尸更具威胁。",
+        "stats": {
+          "hp": 28,
+          "ac": 13,
+          "str": 13,
+          "dex": 14,
+          "con": 12,
+          "int": 8,
+          "wis": 10,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：火药枪",
+            "level": "初级"
+          },
+          {
+            "name": "武器：弯刀",
+            "level": "初级"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "初级"
+          },
+          {
+            "name": "水中迟缓",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "亡灵体质",
+          "装填火药"
+        ],
+        "attacks": [
+          {
+            "name": "火药枪",
+            "damage": "1d10+2"
+          },
+          {
+            "name": "弯刀",
+            "damage": "1d6+1"
+          }
+        ],
+        "loot": [
+          "火药粉",
+          "弯刀",
+          "银币"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_03",
+        "name": "巨物行尸",
+        "type": "undead",
+        "challenge_rating": "红玉石等级",
+        "description": "体型巨大的肿胀行尸，挥舞着巨大的船锚，散发着令人恐惧的气息。",
+        "stats": {
+          "hp": 110,
+          "ac": 14,
+          "str": 18,
+          "dex": 8,
+          "con": 18,
+          "int": 6,
+          "wis": 8,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：巨锚挥击",
+            "level": "中级"
+          },
+          {
+            "name": "再生",
+            "level": "初级"
+          },
+          {
+            "name": "恐惧灵气",
+            "level": "初级"
+          },
+          {
+            "name": "破甲",
+            "level": "初级"
+          },
+          {
+            "name": "水中适应",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "再生 (每回合回复少量HP)",
+          "恐惧灵气 (周围敌人需进行意志检定)",
+          "破甲 (攻击降低目标AC)"
+        ],
+        "attacks": [
+          {
+            "name": "巨锚挥击",
+            "damage": "2d8+4"
+          }
+        ],
+        "loot": [
+          "腐烂的肉块",
+          "巨大的铁锚"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_04",
+        "name": "腐化魔蟹射手",
+        "type": "aberration",
+        "challenge_rating": "青铜等级",
+        "description": "与海洋生物融合的亡灵怪物，拥有坚硬的甲壳和骨质弩炮，擅长水下作战。",
+        "stats": {
+          "hp": 85,
+          "ac": 17,
+          "str": 16,
+          "dex": 16,
+          "con": 16,
+          "int": 10,
+          "wis": 12,
+          "cha": 8
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：骨质弩炮",
+            "level": "中级"
+          },
+          {
+            "name": "重甲（甲壳）",
+            "level": "中级"
+          },
+          {
+            "name": "再生",
+            "level": "中级"
+          },
+          {
+            "name": "潜水",
+            "level": "中级"
+          },
+          {
+            "name": "黑暗视觉",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "天然护甲",
+          "水陆两栖",
+          "再生"
+        ],
+        "attacks": [
+          {
+            "name": "骨质弩炮",
+            "damage": "2d6+3"
+          },
+          {
+            "name": "蟹钳",
+            "damage": "1d8+3"
+          }
+        ],
+        "loot": [
+          "坚硬甲壳",
+          "魔化骨骼"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_05",
+        "name": "深海守卫",
+        "type": "undead",
+        "challenge_rating": "青铜等级",
+        "description": "身披重甲的精英亡灵战士，手持长戟，拥有恐怖的再生能力和不屈的意志。",
+        "stats": {
+          "hp": 120,
+          "ac": 18,
+          "str": 19,
+          "dex": 12,
+          "con": 18,
+          "int": 10,
+          "wis": 10,
+          "cha": 8
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：长戟",
+            "level": "中级"
+          },
+          {
+            "name": "重甲",
+            "level": "中级"
+          },
+          {
+            "name": "不屈",
+            "level": "无"
+          },
+          {
+            "name": "冲撞",
+            "level": "中级"
+          },
+          {
+            "name": "恐怖再生",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "不屈 (生命值归零时有几率存活)",
+          "恐怖再生 (快速回复生命)",
+          "冲锋"
+        ],
+        "attacks": [
+          {
+            "name": "长戟",
+            "damage": "1d10+4"
+          }
+        ],
+        "loot": [
+          "破损的板甲",
+          "精制长戟"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_06",
+        "name": "吸血鬼海盗船长",
+        "type": "undead",
+        "challenge_rating": "白银等级",
+        "description": "高阶亡灵，拥有极高的魅力和敏捷，擅长剑术与火枪，能统帅亡灵船员。",
+        "stats": {
+          "hp": 180,
+          "ac": 17,
+          "str": 18,
+          "dex": 18,
+          "con": 16,
+          "int": 16,
+          "wis": 14,
+          "cha": 18
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器：西洋剑",
+            "level": "高级"
+          },
+          {
+            "name": "武器：火药枪",
+            "level": "高级"
+          },
+          {
+            "name": "魔术师",
+            "level": "初级"
+          },
+          {
+            "name": "再生",
+            "level": "高级"
+          },
+          {
+            "name": "魅惑之眼",
+            "level": "无"
+          },
+          {
+            "name": "区域统帅（亡灵船员）",
+            "level": "无"
+          }
+        ],
+        "special_abilities": [
+          "吸血鬼再生",
+          "魅惑凝视",
+          "指挥光环 (提升友军命中)",
+          "施法能力"
+        ],
+        "attacks": [
+          {
+            "name": "西洋剑多重攻击",
+            "damage": "1d8+4 (x2)"
+          },
+          {
+            "name": "火药枪射击",
+            "damage": "1d10+4"
+          }
+        ],
+        "loot": [
+          "华丽的西洋剑",
+          "魔法火枪",
+          "大量金币",
+          "吸血鬼之尘"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_07",
+        "name": "吸血鬼舰队司令",
+        "type": "undead",
+        "challenge_rating": "黄金等级",
+        "description": "亡灵舰队的最高统帅，精通深渊魔法与剑术，拥有毁灭性的区域魔法能力。",
+        "stats": {
+          "hp": 350,
+          "ac": 19,
+          "str": 20,
+          "dex": 20,
+          "con": 18,
+          "int": 20,
+          "wis": 18,
+          "cha": 20
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "武器：剑",
+            "level": "高级"
+          },
+          {
+            "name": "武器：诅咒三管火枪",
+            "level": "精通"
+          },
+          {
+            "name": "魔术师：深渊学派",
+            "level": "高级"
+          },
+          {
+            "name": "再生",
+            "level": "高级"
+          },
+          {
+            "name": "魅惑之眼",
+            "level": "无"
+          },
+          {
+            "name": "舰队统帅",
+            "level": "无"
+          },
+          {
+            "name": "死亡之风",
+            "level": "区域魔法"
+          },
+          {
+            "name": "利维坦之握",
+            "level": "无"
+          }
+        ],
+        "special_abilities": [
+          "传奇抗性",
+          "深渊魔法",
+          "死亡之风 (大范围死灵伤害)",
+          "利维坦之握 (强力控制)",
+          "诅咒射击"
+        ],
+        "attacks": [
+          {
+            "name": "传奇剑术",
+            "damage": "1d8+5 + 2d6死灵伤害"
+          },
+          {
+            "name": "诅咒三管火枪",
+            "damage": "3d10+5"
+          }
+        ],
+        "loot": [
+          "传奇武器",
+          "深渊魔法书",
+          "舰队宝藏钥匙",
+          "司令徽章"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_亡灵船_08",
+        "name": "死灵巨像",
+        "type": "construct",
+        "challenge_rating": "黄金等级",
+        "description": "由无数尸体与船骸构成的巨型魔法构装体，是攻城略地的终极兵器。",
+        "stats": {
+          "hp": 450,
+          "ac": 20,
+          "str": 26,
+          "dex": 6,
+          "con": 24,
+          "int": 6,
+          "wis": 10,
+          "cha": 6
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "武器：巨像重拳",
+            "level": "高级"
+          },
+          {
+            "name": "火炮齐射",
+            "level": "无"
+          },
+          {
+            "name": "魔法构装体",
+            "level": "无"
+          },
+          {
+            "name": "区域践踏",
+            "level": "无"
+          },
+          {
+            "name": "攻城单位",
+            "level": "无"
+          },
+          {
+            "name": "对魔法抗性",
+            "level": "无"
+          }
+        ],
+        "special_abilities": [
+          "魔法抗性",
+          "攻城怪物 (对建筑物双倍伤害)",
+          "火炮齐射 (远程范围伤害)",
+          "践踏"
+        ],
+        "attacks": [
+          {
+            "name": "巨像重拳",
+            "damage": "4d10+8"
+          },
+          {
+            "name": "火炮齐射",
+            "damage": "6d6火焰伤害"
+          }
+        ],
+        "loot": [
+          "魔法核心",
+          "精金",
+          "古代火炮残骸"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "slaanesh_noble_cultist",
+        "name": "色孽贵族信徒（普通）",
+        "type": "humanoid",
+        "challenge_rating": "青铜",
+        "description": "伪装成子爵或男爵的色孽追随者，利用权力和金钱编织腐化网络，心灵已被欲望完全束缚。",
+        "stats": {
+          "hp": 35,
+          "ac": 13,
+          "str": 10,
+          "dex": 12,
+          "con": 11,
+          "int": 14,
+          "wis": 10,
+          "cha": 16
+        },
+        "stats_confidence": 0.6,
+        "skills": [
+          {
+            "name": "欺瞒",
+            "level": "高级"
+          },
+          {
+            "name": "说服",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "欲望引诱 (Desire Seduction): 在社交场合逐步腐化目标意志",
+          "权力护盾: 利用社会地位使冒险者难以直接对其出手"
+        ],
+        "attacks": [
+          {
+            "name": "精制刺剑",
+            "damage": "1d8+1"
+          },
+          {
+            "name": "袖藏毒匕",
+            "damage": "1d4+2"
+          }
+        ],
+        "loot": [
+          "装有很多金币和些许珠宝的袋子"
+        ]
+      },
+      {
+        "id": "slaanesh_noble_high_priest",
+        "name": "色孽贵族大祭司",
+        "type": "humanoid",
+        "challenge_rating": "白银",
+        "description": "贵族分支的核心统领，掌握奢华祭祀仪式，能召唤欲魔，是扭曲地方法案与权力体系的幕后黑手。",
+        "stats": {
+          "hp": 85,
+          "ac": 15,
+          "str": 10,
+          "dex": 14,
+          "con": 14,
+          "int": 16,
+          "wis": 14,
+          "cha": 20
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "宗教知识",
+            "level": "高级"
+          },
+          {
+            "name": "威吓",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "奢华祭祀 (Luxurious Sacrifice): 召唤王室欲魔协助战斗或渗透",
+          "权力压制: 动用大贵族核心圈层力量进行精神施压"
+        ],
+        "attacks": [
+          {
+            "name": "仪式权杖",
+            "damage": "1d6+2"
+          },
+          {
+            "name": "腐化能量束",
+            "damage": "2d8"
+          }
+        ],
+        "loot": [
+          "多到快要扑出来的塞满金币和名贵珠宝的袋子"
+        ]
+      },
+      {
+        "id": "slaanesh_artist_cultist",
+        "name": "色孽艺术家信徒（普通）",
+        "type": "humanoid",
+        "challenge_rating": "青铜",
+        "description": "以国宝级艺术家身份为掩护的信徒，通过蕴含色孽能量的作品引发观众的极端欲望与献祭冲动。",
+        "stats": {
+          "hp": 28,
+          "ac": 14,
+          "str": 9,
+          "dex": 16,
+          "con": 10,
+          "int": 12,
+          "wis": 8,
+          "cha": 17
+        },
+        "stats_confidence": 0.6,
+        "skills": [
+          {
+            "name": "表演",
+            "level": "高级"
+          },
+          {
+            "name": "巧手",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "艺术伪装 (Artistic Camouflage): 隐藏腐化意图于艺术作品中",
+          "诱惑旋律: 将痛苦哀嚎转化为降低警惕的旋律"
+        ],
+        "attacks": [
+          {
+            "name": "锋利刻刀",
+            "damage": "1d4+3"
+          },
+          {
+            "name": "精神尖啸",
+            "damage": "1d6 psychic"
+          }
+        ],
+        "loot": [
+          "装有很多钱的袋子"
+        ]
+      },
+      {
+        "id": "slaanesh_artist_high_priest",
+        "name": "色孽艺术家大祭司",
+        "type": "humanoid",
+        "challenge_rating": "白银",
+        "description": "艺术家分支的最高统御者，能以灵魂为材料进行亵渎创作，将整座城邦转化为色孽的享乐殖民地。",
+        "stats": {
+          "hp": 75,
+          "ac": 16,
+          "str": 10,
+          "dex": 18,
+          "con": 12,
+          "int": 15,
+          "wis": 12,
+          "cha": 22
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "奥秘",
+            "level": "高级"
+          },
+          {
+            "name": "洞察",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "亵渎创作 (Profane Creation): 制作强力腐化艺术品或构装体",
+          "灵感加持: 强化周围低阶信徒的狂热程度"
+        ],
+        "attacks": [
+          {
+            "name": "灵魂虹吸",
+            "damage": "2d6 necrotic"
+          },
+          {
+            "name": "狂乱之舞",
+            "damage": "3d6 psychic"
+          }
+        ],
+        "loot": [
+          "多到快要扑出来的塞满钱币的袋子"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "slaanesh_forsaken",
+        "name": "色孽遗弃者",
+        "type": "aberration",
+        "challenge_rating": "钢铁",
+        "description": "受到色孽赐福的低阶信徒，身体发生变异，心灵破碎，只剩下空洞的欲望驱动躯壳。",
+        "stats": {
+          "hp": 32,
+          "ac": 13,
+          "str": 16,
+          "dex": 12,
+          "con": 14,
+          "int": 6,
+          "wis": 8,
+          "cha": 6
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "狂乱攻击",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "变异躯体: 身体部位随机变异，难以预测攻击模式",
+          "无心之欲: 对精神控制类法术有一定抗性"
+        ],
+        "attacks": [
+          {
+            "name": "变异钳刃",
+            "damage": "1d8+3"
+          }
+        ],
+        "loot": [
+          "遗弃者的钳刃"
+        ]
+      },
+      {
+        "id": "slaanesh_daemonette",
+        "name": "色孽欲魔",
+        "type": "fiend",
+        "challenge_rating": "青铜",
+        "description": "色孽的恶魔步兵，外表如美丽的少女，拥有如刀锋般的利爪，能令敌人陷入昏睡。",
+        "stats": {
+          "hp": 45,
+          "ac": 15,
+          "str": 12,
+          "dex": 18,
+          "con": 12,
+          "int": 12,
+          "wis": 12,
+          "cha": 18
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "魅惑",
+            "level": "中级"
+          },
+          {
+            "name": "杂技",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "昏睡灵气: 周围的敌人需通过意志检定否则陷入昏睡",
+          "破甲利爪: 攻击无视部分护甲"
+        ],
+        "attacks": [
+          {
+            "name": "刀锋利爪",
+            "damage": "2d6+4"
+          }
+        ],
+        "loot": [
+          "欲魔的利爪"
+        ]
+      },
+      {
+        "id": "slaanesh_seeker",
+        "name": "色孽寻觅者",
+        "type": "fiend",
+        "challenge_rating": "翠玉",
+        "description": "骑乘迅捷恶魔坐骑的欲魔，作为色孽的先驱和女猎手，擅长伏击弱者。",
+        "stats": {
+          "hp": 68,
+          "ac": 16,
+          "str": 14,
+          "dex": 20,
+          "con": 14,
+          "int": 12,
+          "wis": 14,
+          "cha": 18
+        },
+        "stats_confidence": 0.75,
+        "skills": [
+          {
+            "name": "潜行",
+            "level": "高级"
+          },
+          {
+            "name": "察觉",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "迅捷伏击: 在第一轮战斗中拥有巨大的速度优势",
+          "骑乘战斗: 坐骑与骑手可同时发动攻击"
+        ],
+        "attacks": [
+          {
+            "name": "骑枪突刺",
+            "damage": "1d10+5"
+          },
+          {
+            "name": "坐骑撕咬",
+            "damage": "1d8+2"
+          }
+        ],
+        "loot": [
+          "色孽马的鳞片",
+          "欲魔的利爪"
+        ]
+      },
+      {
+        "id": "slaanesh_chaos_spawn",
+        "name": "色孽混沌卵",
+        "type": "aberration",
+        "challenge_rating": "白银",
+        "description": "承受过多赐福而崩溃的信徒，躯体不断翻腾生长，在痛苦的哀嚎中疯狂攻击。",
+        "stats": {
+          "hp": 95,
+          "ac": 14,
+          "str": 20,
+          "dex": 10,
+          "con": 20,
+          "int": 4,
+          "wis": 8,
+          "cha": 4
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "威吓",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "不定性躯体: 免疫重击，每回合恢复生命值",
+          "痛苦哀嚎: 附近的生物必须进行意志检定，否则陷入恐惧"
+        ],
+        "attacks": [
+          {
+            "name": "触须鞭挞",
+            "damage": "3d6+5"
+          }
+        ],
+        "loot": [
+          "混沌卵的触须"
+        ]
+      },
+      {
+        "id": "syll_esske",
+        "name": "希尔·埃斯克",
+        "type": "fiend",
+        "challenge_rating": "黄金",
+        "description": "复仇忠侣，由色孽军锋希尔与大魔埃斯克组成的共生体，一体双魂，并肩作战。",
+        "stats": {
+          "hp": 220,
+          "ac": 19,
+          "str": 24,
+          "dex": 20,
+          "con": 22,
+          "int": 18,
+          "wis": 16,
+          "cha": 24
+        },
+        "stats_confidence": 0.6,
+        "skills": [
+          {
+            "name": "奥秘",
+            "level": "高级"
+          },
+          {
+            "name": "近战专家",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "一体双魂: 在一轮中拥有两次完整的行动回合（物理与魔法）",
+          "复仇誓言: 当其中一方受到伤害，另一方的攻击力大幅提升",
+          "色孽大魔光环: 周围凡人需通过高难度的意志检定否则被魅惑或恐惧"
+        ],
+        "attacks": [
+          {
+            "name": "埃斯克巨斧",
+            "damage": "3d12+7"
+          },
+          {
+            "name": "希尔魔法鞭",
+            "damage": "2d10+5"
+          }
+        ],
+        "loot": [
+          "埃斯克的眼球",
+          "传奇恶魔武器"
+        ]
+      }
+    ],
+    {
+      "id": "边境的魔物饭卷-（作者tata）",
+      "name": "边境的魔物饭卷-（作者tata）",
+      "type": "construct",
+      "challenge_rating": "黑曜石",
+      "description": "一种伪装成边境美食的奇异魔法构装体，实际上承载着剧情引导的功能。它散发着诱人的香气，常出现在哥布林巢穴等危险区域作为诱饵或特殊的补给点。",
+      "stats": {
+        "hp": 15,
+        "ac": 10,
+        "str": 8,
+        "dex": 6,
+        "con": 12,
+        "int": 10,
+        "wis": 12,
+        "cha": 14
+      },
+      "stats_confidence": 0.1,
+      "skills": [
+        {
+          "name": "伪装",
+          "level": "高级"
+        },
+        {
+          "name": "叙事引导",
+          "level": "高级"
+        }
+      ],
+      "special_abilities": [
+        "章节触发：按顺序引导冒险者经历五个阶段的剧情",
+        "诱人香气：吸引饥饿的生物靠近"
+      ],
+      "attacks": [
+        {
+          "name": "烫嘴喷溅",
+          "damage": "1d4火焰"
+        },
+        {
+          "name": "噎住",
+          "damage": "1d6钝击"
+        }
+      ],
+      "loot": [
+        "精美食材",
+        "未完的剧本",
+        "哥布林的小金库"
+      ]
+    },
+    {
+      "id": "边境的魔物饭卷_第一章：开胃菜",
+      "name": "边境的魔物饭卷 第一章：开胃菜",
+      "type": "monstrosity",
+      "challenge_rating": "黄金",
+      "description": "被定为红玉级的壮年蝎狮，肌肉发达，爪痕深邃。拥有弯曲的喙部和光泽的剧毒尾针，翅膀肉质紧实，是薇欧拉眼中的顶级食材。",
+      "stats": {
+        "hp": 85,
+        "ac": 15,
+        "str": 19,
+        "dex": 16,
+        "con": 18,
+        "int": 7,
+        "wis": 12,
+        "cha": 8
+      },
+      "stats_confidence": 0.8,
+      "skills": [
+        {
+          "name": "运动",
+          "level": "高级"
+        },
+        {
+          "name": "侦查",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "飞行",
+        "剧毒尾刺",
+        "强壮体魄"
+      ],
+      "attacks": [
+        {
+          "name": "利爪撕扯",
+          "damage": "2d6+4"
+        },
+        {
+          "name": "毒刺蛰击",
+          "damage": "1d8+4"
+        }
+      ],
+      "loot": [
+        "富含胶质的蝎狮尾肉",
+        "蝎狮毒腺",
+        "蝎狮肝脏",
+        "有嚼劲的翅肉"
+      ]
+    },
+    {
+      "id": "边境的魔物饭卷_第二章：迷途与主食",
+      "name": "边境的魔物饭卷 第二章：迷途与主食",
+      "type": "beast",
+      "challenge_rating": "钢铁",
+      "description": "潜伏在潮湿阴暗钟乳石洞中的巨大百足魔物。拥有坚硬的外壳和强壮的分节肌肉，虽然外表狰狞，但在生存专家眼中是优质的“长纤维蛋白质”来源。",
+      "stats": {
+        "hp": 45,
+        "ac": 14,
+        "str": 15,
+        "dex": 14,
+        "con": 13,
+        "int": 2,
+        "wis": 10,
+        "cha": 3
+      },
+      "stats_confidence": 0.7,
+      "skills": [
+        {
+          "name": "潜行",
+          "level": "中级"
+        },
+        {
+          "name": "攀爬",
+          "level": "高级"
+        }
+      ],
+      "special_abilities": [
+        "洞穴攀爬: 可以在墙壁和天花板上自由移动，不受困难地形影响。",
+        "长纤维蛋白质: 尸体经过专业处理（剥壳、水洗、裹粉油炸）后可转化为美味的“百足天妇罗”，提供大量营养并安抚精神。"
+      ],
+      "attacks": [
+        {
+          "name": "大颚撕咬",
+          "damage": "1d8+2"
+        },
+        {
+          "name": "缠绕",
+          "damage": "1d6+2"
+        }
+      ],
+      "loot": [
+        "巨大百足的甲壳",
+        "优质长纤维蛋白质 (百足肉)",
+        "百足毒腺"
+      ]
+    },
+    {
+      "id": "边境的魔物饭卷_第三章：哥布林巢穴与副菜",
+      "name": "边境的魔物饭卷 第三章：哥布林巢穴与副菜",
+      "type": "beast",
+      "challenge_rating": "黑曜石",
+      "description": "哥布林巢穴中驯养的彪悍巨狼，作为坐骑与看门兽。后腿肌肉发达肉质紧实，虽因饲料低劣带有腥味，但在薇欧拉眼中是绝境中的优质食材。",
+      "stats": {
+        "hp": 37,
+        "ac": 14,
+        "str": 17,
+        "dex": 15,
+        "con": 15,
+        "int": 4,
+        "wis": 12,
+        "cha": 6
+      },
+      "stats_confidence": 0.8,
+      "skills": [
+        {
+          "name": "感知 (Perception)",
+          "level": "中级"
+        },
+        {
+          "name": "运动 (Athletics)",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "灵敏嗅觉与听觉",
+        "集群战术",
+        "食材化：可被烹饪为'哥布林巢穴特供'烤狼里脊"
+      ],
+      "attacks": [
+        {
+          "name": "撕咬",
+          "damage": "2d6+3"
+        }
+      ],
+      "loot": [
+        "巨狼精华里脊肉",
+        "绝望浆果 (酸味蘸酱原料)",
+        "哥布林长矛 (可作烤签)"
+      ]
+    },
+    {
+      "id": "边境的魔物饭卷_第四章：意外的盟友与生路",
+      "name": "边境的魔物饭卷 第四章：意外的盟友与生路",
+      "type": "giant",
+      "challenge_rating": "白银",
+      "description": "本章最终BOSS。盘踞在出口通道尽头的手持巨棒的巨魔，体型如山，阻挡了逃生之路。其膝盖后弯的筋腱是支撑弱点，被击倒后其尸体可作为食材资源。",
+      "stats": {
+        "hp": 84,
+        "ac": 15,
+        "str": 18,
+        "dex": 13,
+        "con": 20,
+        "int": 7,
+        "wis": 9,
+        "cha": 7
+      },
+      "stats_confidence": 0.5,
+      "skills": [
+        {
+          "name": "威吓",
+          "level": "中级"
+        },
+        {
+          "name": "察觉",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "弱点暴露：膝弯筋腱 (被攻击该部位时容易失去平衡)",
+        "再生 (巨魔种族特性，需火焰或酸液抑制)",
+        "巨力挥舞 (使用巨棒进行大范围攻击)"
+      ],
+      "attacks": [
+        {
+          "name": "巨棒重击",
+          "damage": "2d8+4"
+        },
+        {
+          "name": "徒手撕扯",
+          "damage": "2d6+4"
+        }
+      ],
+      "loot": [
+        "巨魔筋腱 (薇欧拉眼中的上好肉干材料)",
+        "巨魔肉块 (风味独特的食材)",
+        "粗制巨棒"
+      ]
+    },
+    {
+      "id": "边境的魔物饭卷_第五章：魔物饭",
+      "name": "边境的魔物饭卷 第五章：魔物饭",
+      "type": "monstrosity",
+      "challenge_rating": "钢铁",
+      "description": "本章主要遭遇的敌对生物是盘踞在岩石区的鸡蛇（Cockatrice）。这种魔物拥有致命的石化凝视，其巢穴中的蛋被薇欧拉视为制作顶级甜品的珍贵食材。",
+      "stats": {
+        "hp": 27,
+        "ac": 11,
+        "str": 6,
+        "dex": 12,
+        "con": 12,
+        "int": 2,
+        "wis": 13,
+        "cha": 5
+      },
+      "stats_confidence": 0.8,
+      "skills": [
+        {
+          "name": "察觉 (Perception)",
+          "level": "中级"
+        }
+      ],
+      "special_abilities": [
+        "石化凝视 (Petrifying Gaze): 视线接触或物理攻击可能导致目标逐渐石化。",
+        "剧毒生态: 蛋液含有微毒，需特殊处理后方可食用。"
+      ],
+      "attacks": [
+        {
+          "name": "喙击 (Bite)",
+          "damage": "1d4+1"
+        }
+      ],
+      "loot": [
+        "鸡蛇蛋 (Cockatrice Egg)",
+        "鸡蛇的羽毛"
+      ]
+    },
+    [
+      {
+        "id": "怪物图鉴-东方沙漠_01",
+        "name": "沙虫幼体",
+        "type": "beast",
+        "challenge_rating": "白瓷",
+        "description": "生活在东方沙漠的幼年沙虫，虽然弱小但具有酸液喷吐能力，常潜伏在沙下突袭。",
+        "stats": {
+          "hp": 8,
+          "ac": 1,
+          "str": 3,
+          "dex": 3,
+          "con": 2,
+          "int": 1,
+          "wis": 2,
+          "cha": 1
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "啃咬",
+            "level": "初级"
+          },
+          {
+            "name": "酸液喷吐",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "火焰免疫: 免疫一切火系伤害",
+          "突袭: 从沙漠钻出时强制对方进行敏捷豁免(DC 15)，失败造成恐慌"
+        ],
+        "attacks": [
+          {
+            "name": "啃咬",
+            "damage": "3 + 2d6 (附带流血)"
+          },
+          {
+            "name": "酸液喷吐",
+            "damage": "3 (无视护甲)"
+          }
+        ],
+        "loot": [
+          "沙虫皮",
+          "酸液囊"
+        ]
+      },
+      {
+        "id": "怪物图鉴-东方沙漠_02",
+        "name": "亡命恶犬",
+        "type": "beast",
+        "challenge_rating": "黑曜",
+        "description": "凶猛的沙漠野兽，攻击带有毒性，受伤后会变得更加狂暴。",
+        "stats": {
+          "hp": 20,
+          "ac": 0,
+          "str": 5,
+          "dex": 6,
+          "con": 2,
+          "int": 2,
+          "wis": 4,
+          "cha": 2
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "初级"
+          },
+          {
+            "name": "狂暴",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "毒牙: 攻击未被豁免会造成中毒",
+          "狂暴: 不会因受伤降低属性，反而展现更大攻击性"
+        ],
+        "attacks": [
+          {
+            "name": "啃咬",
+            "damage": "5 + 2d6 (附带流血)"
+          }
+        ],
+        "loot": [
+          "兽牙",
+          "兽皮"
+        ]
+      },
+      {
+        "id": "怪物图鉴-东方沙漠_03",
+        "name": "沙匪",
+        "type": "humanoid",
+        "challenge_rating": "钢铁",
+        "description": "游荡在沙漠中的强盗，擅长使用弯刀和绳索，群体行动时较为棘手。",
+        "stats": {
+          "hp": 25,
+          "ac": 1,
+          "str": 6,
+          "dex": 5,
+          "con": 2,
+          "int": 3,
+          "wis": 4,
+          "cha": 3
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "武器:弯刀",
+            "level": "中级"
+          },
+          {
+            "name": "近战精通",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "乌合之众: 同伴死亡时陷入恐慌(伤害减半)",
+          "投掷绳索: 敏捷豁免(DC 15)失败造成束缚"
+        ],
+        "attacks": [
+          {
+            "name": "弯刀攻击",
+            "damage": "1d6 + 6"
+          },
+          {
+            "name": "投掷绳索",
+            "damage": "无伤害 (束缚效果)"
+          }
+        ],
+        "loot": [
+          "弯刀",
+          "绳索",
+          "少量金币"
+        ]
+      },
+      {
+        "id": "怪物图鉴-东方沙漠_04",
+        "name": "巨型沙虫",
+        "type": "monstrosity",
+        "challenge_rating": "青铜",
+        "description": "体型巨大的沙漠捕食者，能够一口吞下猎物，表皮对火焰免疫。",
+        "stats": {
+          "hp": 60,
+          "ac": 0,
+          "str": 7,
+          "dex": 6,
+          "con": 5,
+          "int": 2,
+          "wis": 8,
+          "cha": 3
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "吞噬",
+            "level": "特殊"
+          }
+        ],
+        "special_abilities": [
+          "火焰免疫: 免疫一切火系伤害",
+          "突袭: 从沙漠钻出时强制对方进行敏捷豁免(DC 15)，失败造成恐慌",
+          "吞噬: 首次攻击必定触发，力量豁免(DC 10)失败被吞入"
+        ],
+        "attacks": [
+          {
+            "name": "啃咬",
+            "damage": "7 + 2d6 (附带流血)"
+          },
+          {
+            "name": "酸液喷吐",
+            "damage": "7 (无视护甲)"
+          }
+        ],
+        "loot": [
+          "巨型沙虫甲壳",
+          "未消化的宝物"
+        ]
+      },
+      {
+        "id": "怪物图鉴-东方沙漠_05",
+        "name": "木乃伊领主",
+        "type": "undead",
+        "challenge_rating": "白银",
+        "description": "古老墓穴的守护者，拥有强大的再生能力和诅咒力量，能召唤随从。",
+        "stats": {
+          "hp": 80,
+          "ac": 2,
+          "str": 8,
+          "dex": 4,
+          "con": 5,
+          "int": 6,
+          "wis": 6,
+          "cha": 6
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "高级"
+          },
+          {
+            "name": "强韧",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "再生: 肢体破坏后迅速再生，无视肢体破坏减益",
+          "咒病: 攻击造成极度疲劳",
+          "木乃伊召唤: 身边无木乃伊时必定召唤两只",
+          "传奇动作-沙旋风: 血量<40时触发，攻击所有敌人"
+        ],
+        "attacks": [
+          {
+            "name": "腐烂攻击",
+            "damage": "8 + 2d6"
+          },
+          {
+            "name": "沙旋风",
+            "damage": "16 + 2d6 (AOE)"
+          }
+        ],
+        "loot": [
+          "古代饰品",
+          "绷带",
+          "诅咒金币"
+        ]
+      },
+      {
+        "id": "怪物图鉴-东方沙漠_06",
+        "name": "红龙",
+        "type": "dragon",
+        "challenge_rating": "黄金",
+        "description": "沙漠中的顶级掠食者，拥有极高的智慧和毁灭性的火焰吐息。",
+        "stats": {
+          "hp": 450,
+          "ac": 6,
+          "str": 15,
+          "dex": 8,
+          "con": 10,
+          "int": 12,
+          "wis": 6,
+          "cha": 12
+        },
+        "stats_confidence": 0.95,
+        "skills": [
+          {
+            "name": "格斗",
+            "level": "传奇"
+          }
+        ],
+        "special_abilities": [
+          "火焰免疫: 免疫一切火系伤害",
+          "骇人威仪: 苏醒时强制全场魅力豁免(DC 16)，失败造成恐慌",
+          "传奇动作-振翅攻击: 苏醒后必定释放，造成伤害并击倒"
+        ],
+        "attacks": [
+          {
+            "name": "爪击",
+            "damage": "15 + 2d6 (附带晕眩)"
+          },
+          {
+            "name": "火焰吐息",
+            "damage": "36 + 2d6 (火焰伤害, 敏捷豁免DC 18半伤)"
+          },
+          {
+            "name": "振翅攻击",
+            "damage": "30 + 2d6 (AOE, 附带倒地)"
+          }
+        ],
+        "loot": [
+          "龙鳞",
+          "龙骨",
+          "巨额财宝",
+          "魔法物品"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物生态-东方沙漠_sand_worm_larva",
+        "name": "沙虫幼体",
+        "type": "beast",
+        "challenge_rating": "白瓷",
+        "description": "隐藏在沙地下前进的幼年沙虫，习惯在猎物身前破沙而出进行偷袭。",
+        "stats": {
+          "hp": 12,
+          "ac": 12,
+          "str": 12,
+          "dex": 14,
+          "con": 12,
+          "int": 2,
+          "wis": 10,
+          "cha": 4
+        },
+        "stats_confidence": 0.6,
+        "skills": [
+          {
+            "name": "潜行",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "潜沙: 在沙地中移动不留痕迹",
+          "突袭: 破沙而出时首轮攻击优势"
+        ],
+        "attacks": [
+          {
+            "name": "撕咬",
+            "damage": "1d6+1"
+          }
+        ],
+        "loot": []
+      },
+      {
+        "id": "怪物生态-东方沙漠_desperate_hound",
+        "name": "亡命恶犬",
+        "type": "fiend",
+        "challenge_rating": "钢铁",
+        "description": "栖息在沙漠的双头猎犬，内心燃烧着憎恨，唾液带有污秽病菌。",
+        "stats": {
+          "hp": 35,
+          "ac": 13,
+          "str": 16,
+          "dex": 12,
+          "con": 14,
+          "int": 5,
+          "wis": 12,
+          "cha": 6
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "察觉",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "双头: 在对抗目盲、魅惑等状态时有优势",
+          "腐烂唾液: 造成伤口感染"
+        ],
+        "attacks": [
+          {
+            "name": "带毒撕咬",
+            "damage": "1d8+3 + 腐烂效果"
+          }
+        ],
+        "loot": [
+          "恶犬毒牙",
+          "恶犬肉"
+        ]
+      },
+      {
+        "id": "怪物生态-东方沙漠_sand_bandit",
+        "name": "沙匪",
+        "type": "humanoid",
+        "challenge_rating": "钢铁",
+        "description": "装备精良且行动迅捷的劫掠者，贪财好色但性格懦弱，容易溃逃。",
+        "stats": {
+          "hp": 22,
+          "ac": 14,
+          "str": 11,
+          "dex": 16,
+          "con": 12,
+          "int": 10,
+          "wis": 10,
+          "cha": 9
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "威吓",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "迅捷行动: 可以在回合内进行额外的移动",
+          "士气崩溃: 目睹同伴死亡需进行意志检定，失败则逃跑"
+        ],
+        "attacks": [
+          {
+            "name": "弯刀",
+            "damage": "1d6+3"
+          }
+        ],
+        "loot": [
+          "普通弯刀",
+          "少量钱币"
+        ]
+      },
+      {
+        "id": "怪物生态-东方沙漠_sand_bandit_leader",
+        "name": "沙匪头目",
+        "type": "humanoid",
+        "challenge_rating": "青铜",
+        "description": "更强壮的沙匪首领，虽然属性较高但依然贪生怕死。",
+        "stats": {
+          "hp": 55,
+          "ac": 15,
+          "str": 14,
+          "dex": 16,
+          "con": 14,
+          "int": 12,
+          "wis": 11,
+          "cha": 13
+        },
+        "stats_confidence": 0.7,
+        "skills": [
+          {
+            "name": "指挥",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "士气崩溃: 目睹同伴死亡需进行意志检定，失败则逃跑"
+        ],
+        "attacks": [
+          {
+            "name": "精良弯刀多重攻击",
+            "damage": "2d6+3"
+          }
+        ],
+        "loot": [
+          "精良级别的沙匪弯刀",
+          "10-30银币"
+        ]
+      },
+      {
+        "id": "怪物生态-东方沙漠_giant_sand_worm",
+        "name": "巨型沙虫",
+        "type": "monstrosity",
+        "challenge_rating": "白银",
+        "description": "身长十余米的沙虫终极形态，能轻易吞噬受害者。",
+        "stats": {
+          "hp": 160,
+          "ac": 16,
+          "str": 24,
+          "dex": 8,
+          "con": 20,
+          "int": 2,
+          "wis": 10,
+          "cha": 4
+        },
+        "stats_confidence": 0.6,
+        "skills": [],
+        "special_abilities": [
+          "吞咽: 攻击命中后可吞下体型小于自己的生物",
+          "震颤感知: 感知地面的震动"
+        ],
+        "attacks": [
+          {
+            "name": "巨口吞噬",
+            "damage": "4d8+7"
+          }
+        ],
+        "loot": [
+          "精良级别的武器",
+          "精良级别的饰品"
+        ]
+      },
+      {
+        "id": "怪物生态-东方沙漠_mummy_lord",
+        "name": "木乃伊领主",
+        "type": "undead",
+        "challenge_rating": "黄金",
+        "description": "沉睡在华丽石棺中的强大亡灵，能操控沙暴并支配其他木乃伊。",
+        "stats": {
+          "hp": 130,
+          "ac": 17,
+          "str": 18,
+          "dex": 10,
+          "con": 18,
+          "int": 14,
+          "wis": 18,
+          "cha": 16
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "宗教",
+            "level": "高级"
+          },
+          {
+            "name": "历史",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "亡灵支配: 召唤或控制下级木乃伊",
+          "沙旋风: 愤怒时制造强大的范围沙暴伤害",
+          "魔法抗性"
+        ],
+        "attacks": [
+          {
+            "name": "腐烂之触",
+            "damage": "3d6+4 + 诅咒"
+          }
+        ],
+        "loot": [
+          "史诗级的饰品/护甲 (位于棺中)"
+        ]
+      },
+      {
+        "id": "怪物生态-东方沙漠_red_dragon",
+        "name": "红龙",
+        "type": "dragon",
+        "challenge_rating": "白金",
+        "description": "傲慢且贪婪的顶级掠食者，居住在沙漠火山洞穴中，坐拥无数财宝。",
+        "stats": {
+          "hp": 350,
+          "ac": 19,
+          "str": 27,
+          "dex": 10,
+          "con": 25,
+          "int": 16,
+          "wis": 13,
+          "cha": 21
+        },
+        "stats_confidence": 0.8,
+        "skills": [
+          {
+            "name": "察觉",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "龙威: 散发让生物战栗的气场",
+          "火焰吐息: 喷吐锥形火焰",
+          "飞行"
+        ],
+        "attacks": [
+          {
+            "name": "爪击与撕咬",
+            "damage": "2d10+8 / 2d6+8"
+          }
+        ],
+        "loot": [
+          "龙鳞",
+          "龙牙",
+          "传说级的武器",
+          "大量财宝"
+        ]
+      }
+    ],
+    [
+      {
+        "id": "怪物图鉴_-_食尸生物_食尸魔",
+        "name": "食尸魔 (Phougefiend)",
+        "type": "undead",
+        "challenge_rating": "白瓷等级",
+        "description": "佝偻无毛的生物，如同人与无皮犬的粗暴结合。四肢着地行动，周身散发令人眩晕的恶臭尸瘴。",
+        "stats": {
+          "hp": 18,
+          "ac": 11,
+          "str": 14,
+          "dex": 13,
+          "con": 10,
+          "int": 11,
+          "wis": 12,
+          "cha": 11
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "潜行",
+            "level": "初级"
+          }
+        ],
+        "special_abilities": [
+          "食尸魔恶臭: 周身散发尸瘴，近身可能导致眩晕和恶心。",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "撕咬",
+            "damage": "1d6 + 2 (附带毒素)"
+          },
+          {
+            "name": "利爪",
+            "damage": "1d4 + 2 (附带毒素)"
+          }
+        ],
+        "loot": [
+          "食尸魔的牙齿",
+          "有毒腺体"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_食尸生物_巨食尸魔",
+        "name": "巨食尸魔 (Alphougefiend)",
+        "type": "undead",
+        "challenge_rating": "青玉等级",
+        "description": "体型庞大的食尸魔变种，通常站立行动，能够使用巨大的条状物作为武器。",
+        "stats": {
+          "hp": 58,
+          "ac": 14,
+          "str": 18,
+          "dex": 14,
+          "con": 14,
+          "int": 11,
+          "wis": 16,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "威慑",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "食尸恢复: 吞食尸体后快速恢复生命值。",
+          "食尸魔恶臭",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "尸鬼重击",
+            "damage": "2d8 + 4 (使用树干等重物)"
+          },
+          {
+            "name": "有毒爪牙",
+            "damage": "1d8 + 4 (附带毒素)"
+          }
+        ],
+        "loot": [
+          "巨食尸魔的诱变物",
+          "巨大的骨头"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_食尸生物_墓穴女巫",
+        "name": "墓穴女巫 (Phougefiend Hag)",
+        "type": "undead",
+        "challenge_rating": "红玉等级",
+        "description": "变异的雌性食尸魔，长有长发并直立行走。通常独自居住，能号令少量食尸魔。",
+        "stats": {
+          "hp": 48,
+          "ac": 16,
+          "str": 16,
+          "dex": 18,
+          "con": 12,
+          "int": 13,
+          "wis": 16,
+          "cha": 14
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "魔法",
+            "level": "初级"
+          },
+          {
+            "name": "统御",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "长舌撕裂: 弹射舌头缠住或鞭打对手，造成伤害并中毒。",
+          "魔术师: 能够使用初级魔法。",
+          "魔法韧性: 对魔法攻击有较高抗性。",
+          "食尸恢复",
+          "食尸魔恶臭",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "长舌鞭挞",
+            "damage": "1d8 + 4 (穿刺/毒素)"
+          },
+          {
+            "name": "有毒爪牙",
+            "damage": "1d6 + 4 (附带毒素)"
+          }
+        ],
+        "loot": [
+          "女巫的舌头",
+          "魔法粉尘",
+          "食尸魔之血"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_食尸生物_水鬼",
+        "name": "水鬼 (Drowner)",
+        "type": "undead",
+        "challenge_rating": "黑曜等级",
+        "description": "栖息于水边的食尸生物，青色皮肤。在水中行动敏捷，但在干燥地面上行动笨拙。",
+        "stats": {
+          "hp": 24,
+          "ac": 14,
+          "str": 14,
+          "dex": 16,
+          "con": 12,
+          "int": 11,
+          "wis": 13,
+          "cha": 11
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "游泳",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "水下行动: 在水中没有行动惩罚。",
+          "陆行困难: 在完全无水的地面环境中敏捷降低。",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "有毒爪牙",
+            "damage": "1d6 + 2 (附带毒素)"
+          }
+        ],
+        "loot": [
+          "水鬼的脑",
+          "被水浸泡的杂物"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_食尸生物_沼泽鬼婆",
+        "name": "沼泽鬼婆 (Water Hag)",
+        "type": "undead",
+        "challenge_rating": "翠玉等级",
+        "description": "变异的雌性水鬼，青色皮肤，佝偻干瘪，长有水草般的头发。能驱使水鬼并投掷泥团。",
+        "stats": {
+          "hp": 45,
+          "ac": 15,
+          "str": 16,
+          "dex": 16,
+          "con": 14,
+          "int": 14,
+          "wis": 15,
+          "cha": 15
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "投掷",
+            "level": "中级"
+          },
+          {
+            "name": "统御水鬼",
+            "level": "中级"
+          }
+        ],
+        "special_abilities": [
+          "泥泞投掷: 命中头部致盲，命中足部减速。",
+          "水下行动",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "有毒爪牙",
+            "damage": "1d8 + 3 (附带毒素)"
+          },
+          {
+            "name": "泥团",
+            "damage": "1d4 (特殊效果)"
+          }
+        ],
+        "loot": [
+          "沼泽鬼婆的牙齿",
+          "水生精华"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_食尸生物_食腐魔",
+        "name": "食腐魔 (Rotfiend)",
+        "type": "undead",
+        "challenge_rating": "青玉等级",
+        "description": "形似被剥皮的腐烂尸体，周身散逸毒雾。濒死时会发生剧烈爆炸。",
+        "stats": {
+          "hp": 35,
+          "ac": 13,
+          "str": 16,
+          "dex": 14,
+          "con": 12,
+          "int": 12,
+          "wis": 13,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "自爆",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "食腐魔瘴气: 近距离持续降低非食尸生物的体力与专注。",
+          "腐瘴自爆: 濒死或被击杀时爆炸，溅射腐毒与碎肉。",
+          "食尸恢复",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "有毒爪牙",
+            "damage": "1d6 + 3 (附带毒素)"
+          },
+          {
+            "name": "自爆伤害",
+            "damage": "3d6 (范围腐蚀伤害)"
+          }
+        ],
+        "loot": [
+          "腐烂的血肉",
+          "不稳定的毒囊"
+        ]
+      },
+      {
+        "id": "怪物图鉴_-_食尸生物_小雾妖",
+        "name": "小雾妖 (Foglet)",
+        "type": "undead",
+        "challenge_rating": "红玉等级",
+        "description": "具有精灵耳和犬脸的佝偻生物。能制造浓雾并在其中制造幻象或化为虚体。",
+        "stats": {
+          "hp": 35,
+          "ac": 13,
+          "str": 16,
+          "dex": 14,
+          "con": 12,
+          "int": 12,
+          "wis": 13,
+          "cha": 12
+        },
+        "stats_confidence": 0.9,
+        "skills": [
+          {
+            "name": "幻术",
+            "level": "中级"
+          },
+          {
+            "name": "潜行",
+            "level": "高级"
+          }
+        ],
+        "special_abilities": [
+          "制造浓雾: 制造大范围浓雾覆盖环境。",
+          "迷雾幻象: 在雾中制造分身误导方位。",
+          "雾妖遁术: 化为雾气虚体，免疫物理伤害但无法攻击，可高速移动。",
+          "毒素抗性",
+          "黑暗视觉"
+        ],
+        "attacks": [
+          {
+            "name": "有毒爪牙",
+            "damage": "1d8 + 3 (附带毒素)"
+          }
+        ],
+        "loot": [
+          "雾妖的牙齿",
+          "幻象精华"
+        ]
+      }
+    ],
+    {
+      "id": "怪物生态_-_食尸生物",
+      "name": "怪物生态 - 食尸生物",
+      "type": "monstrosity",
+      "challenge_rating": "钢铁",
+      "description": "栖息于阴暗腐败之地的食尸生物，以腐肉为食，厌恶阳光，常成群结队或在首领带领下袭击生者。",
+      "stats": {
+        "hp": 27,
+        "ac": 13,
+        "str": 14,
+        "dex": 13,
+        "con": 14,
+        "int": 5,
+        "wis": 10,
+        "cha": 6
+      },
+      "stats_confidence": 0.6,
+      "skills": [
+        {
+          "name": "察觉 (嗅觉)",
+          "level": "中级"
+        },
+        {
+          "name": "潜行",
+          "level": "初级"
+        },
+        {
+          "name": "生存",
+          "level": "初级"
+        }
+      ],
+      "special_abilities": [
+        "日光敏感 (Sunlight Sensitivity)",
+        "毒素抗性 (Poison Resistance)",
+        "群体战术 (Pack Tactics)",
+        "食尸恢复 (Corpse Feeding)"
+      ],
+      "attacks": [
+        {
+          "name": "腐败爪击",
+          "damage": "2d4+2"
+        },
+        {
+          "name": "感染撕咬",
+          "damage": "2d6+2"
+        }
+      ],
+      "loot": [
+        "食尸魔心头血",
+        "劣质的施法媒介",
+        "墓穴女巫长舌",
+        "水鬼脑",
+        "水鬼舌",
+        "沼泽鬼婆的牙齿",
+        "食腐魔血液",
+        "小雾妖牙齿"
+      ]
+    }
+  ]
+}

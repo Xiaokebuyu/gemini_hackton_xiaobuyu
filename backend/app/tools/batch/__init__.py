@@ -1,14 +1,10 @@
 """
-Batch processing tools for worldbook import.
+[DEPRECATED] Batch processing tools for worldbook import.
 
-This package provides tools for converting worldbook JSON files
-(e.g., SillyTavern Lorebook format) into graph data using
-Gemini Batch API for cost-efficient processing.
+本目录是旧的分步 Batch 工具链，功能已被以下模块完全替代：
+- graph_extractor.py (内置 Batch API 全流程)
+- batch_helper.py (通用 Batch 执行器)
+- unified_pipeline.py (统一管线编排)
 
-Workflow:
-1. lorebook_prep: Parse Lorebook JSON into processable format
-2. global_summary: Generate global entity summary (1M context)
-3. request_generator: Generate Batch API request JSONL
-4. job_manager: Submit/monitor/download batch jobs
-5. result_processor: Process results and merge graphs
+请使用 `python -m app.tools.init_world_cli extract` 命令。
 """

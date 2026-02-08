@@ -15,6 +15,12 @@
 - 时间：{time}
 - 状态：{current_state}
 
+## 当前章节
+- 章节：{chapter_name}
+- 章节目标：{chapter_goals}
+
+（编排上下文时优先考虑与当前章节目标相关的信息。）
+
 ## 操作执行结果
 {execution_summary}
 

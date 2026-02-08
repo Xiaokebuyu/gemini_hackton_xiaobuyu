@@ -73,6 +73,40 @@ class WorldInitializer:
                 print(f"ERROR: {error}")
             return results
 
+        # strict-v2：完整导入前先校验章节编排数据，避免半初始化状态
+        prefill_path = data_dir / "prefilled_graph.json"
+        chapters_path = data_dir / "chapters_v2.json"
+        mainlines_path = data_dir / "mainlines.json"
+        if (
+            settings.narrative_v2_strict_mode
+            and prefill_path.exists()
+            and chapters_path.exists()
+            and mainlines_path.exists()
+        ):
+            try:
+                chapters_v2 = json.loads(chapters_path.read_text(encoding="utf-8"))
+                mainlines_payload = json.loads(mainlines_path.read_text(encoding="utf-8"))
+                mainlines_raw = (
+                    mainlines_payload.get("mainlines", [])
+                    if isinstance(mainlines_payload, dict)
+                    else []
+                )
+                chapters_v2, mainlines_raw = GraphPrefillLoader.upgrade_narrative_v2_artifacts(
+                    chapters_v2=chapters_v2,
+                    mainlines_raw=mainlines_raw,
+                )
+                GraphPrefillLoader.validate_narrative_v2_artifacts(
+                    chapters_v2=chapters_v2,
+                    mainlines_raw=mainlines_raw,
+                    data_dir=data_dir,
+                )
+            except Exception as e:
+                error = f"Strict v2 validation failed before initialization: {e}"
+                results["errors"].append(error)
+                if verbose:
+                    print(f"ERROR: {error}")
+                return results
+
         # 阶段 1: 加载地图
         maps_path = data_dir / "maps.json"
         if maps_path.exists():
@@ -198,6 +232,7 @@ class WorldInitializer:
                 print(f"Graph prefill: {gp.get('nodes_written', 0)} nodes, "
                       f"{gp.get('edges_written', 0)} edges, "
                       f"{gp.get('chapters_meta_written', 0)} chapter metas, "
+                      f"{gp.get('mainlines_meta_written', 0)} mainline metas, "
                       f"{gp.get('dispositions_written', 0)} dispositions")
             if results["errors"]:
                 print(f"\nErrors: {len(results['errors'])}")

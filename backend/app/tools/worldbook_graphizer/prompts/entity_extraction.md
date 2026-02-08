@@ -1,4 +1,4 @@
-# 实体提取任务
+# [DEPRECATED] 实体提取任务 — graph_extractor.py 已改用内联 prompt
 
 你是一个知识图谱构建助手。请从以下世界书条目中提取实体信息。
 

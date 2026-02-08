@@ -8,12 +8,10 @@ Area Navigator - 区域导航系统
 - 旅行可行性检查
 - 子地点导航（Module 2）
 """
-import json
 import heapq
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import firestore
@@ -113,9 +111,13 @@ class MapConnection:
         connection_type_raw = str(data.get("connection_type", "travel")).strip().lower()
         if connection_type_raw == "walk":
             connection_type_raw = "travel"
+        try:
+            connection_type = ConnectionType(connection_type_raw)
+        except ValueError:
+            connection_type = ConnectionType.TRAVEL
         return cls(
             target_map_id=data["target_map_id"],
-            connection_type=ConnectionType(connection_type_raw),
+            connection_type=connection_type,
             travel_time=data.get("travel_time", "30分钟"),
             requirements=data.get("requirements"),
             description=data.get("description"),
@@ -232,67 +234,40 @@ class AreaNavigator:
         "extreme": 0.50,
     }
 
-    def __init__(self, world_id: str, maps_data: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        world_id: str,
+        maps_data: Optional[Dict[str, Any]] = None,
+        firestore_client: Optional[firestore.Client] = None,
+    ):
         """
         初始化导航器
 
         Args:
             world_id: 世界ID
-            maps_data: 地图数据（可选，不提供则从文件加载）
+            maps_data: 地图数据（可选，用于测试或显式注入）
+            firestore_client: Firestore 客户端（可选）
         """
         self.world_id = world_id
         self.maps: Dict[str, MapArea] = {}
         self._adjacency: Dict[str, List[str]] = {}
+        self.db = firestore_client or firestore.Client(database=settings.firestore_database)
 
         if maps_data:
             self._load_maps(maps_data)
         else:
-            self._load_maps_from_file()
-
-    def _load_maps_from_file(self) -> None:
-        """从文件加载地图数据"""
-        project_root = Path(__file__).resolve().parents[2]
-        candidate_paths = [
-            Path(f"data/{self.world_id}/structured/maps.json"),
-            project_root / "data" / self.world_id / "structured" / "maps.json",
-        ]
-
-        # 去重后按顺序尝试（优先 cwd 相对路径）
-        seen = set()
-        unique_paths = []
-        for p in candidate_paths:
-            key = str(p.resolve()) if p.exists() else str(p)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique_paths.append(p)
-
-        for maps_path in unique_paths:
-            if not maps_path.exists():
-                continue
-            try:
-                with open(maps_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self._load_maps(data)
-                break
-            except Exception as exc:
-                logger.warning("加载本地地图文件失败(%s)，将继续尝试其他来源: %s", maps_path, exc)
-
-        # 本地文件不存在/加载失败/内容为空时，回退 Firestore
-        if not self.maps:
             self._load_maps_from_firestore()
 
     def _load_maps_from_firestore(self) -> None:
-        """从 Firestore 加载地图数据（fallback）。"""
-        try:
-            db = firestore.Client(database=settings.firestore_database)
-            maps_ref = (
-                db.collection("worlds")
-                .document(self.world_id)
-                .collection("maps")
-            )
+        """从 Firestore 加载地图数据（唯一数据源）。"""
+        maps_ref = (
+            self.db.collection("worlds")
+            .document(self.world_id)
+            .collection("maps")
+        )
 
-            maps_data: List[Dict[str, Any]] = []
+        maps_data: List[Dict[str, Any]] = []
+        try:
             for map_doc in maps_ref.stream():
                 info_doc = map_doc.reference.collection("info").document("data").get()
                 if not info_doc.exists:
@@ -305,11 +280,22 @@ class AreaNavigator:
                 # Firestore 的 map_id 在文档 ID 上，运行时需要补回到数据体。
                 map_payload = {"id": map_doc.id, **info}
                 maps_data.append(map_payload)
-
-            if maps_data:
-                self._load_maps({"maps": maps_data})
         except Exception as exc:
-            logger.warning("Firestore 地图回退加载失败: %s", exc)
+            raise RuntimeError(
+                f"加载 Firestore 地图数据失败: world={self.world_id}"
+            ) from exc
+
+        if not maps_data:
+            raise ValueError(
+                f"世界 '{self.world_id}' 未初始化地图数据（Firestore: worlds/{self.world_id}/maps）"
+            )
+
+        try:
+            self._load_maps({"maps": maps_data})
+        except Exception as exc:
+            raise ValueError(
+                f"解析 Firestore 地图数据失败: world={self.world_id}"
+            ) from exc
 
     def _load_maps(self, data: Dict[str, Any]) -> None:
         """加载地图数据"""

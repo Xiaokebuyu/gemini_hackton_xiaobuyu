@@ -4,7 +4,10 @@
 import React, { useState } from 'react';
 import type { NarrativeMessage as NarrativeMessageType } from '../../types';
 import TypewriterText from './TypewriterText';
+import GMOptions from './GMOptions';
 import { MessageBubble } from '../ui';
+import { parseGMNarration } from '../../utils/narrationParser';
+import { useGameInput } from '../../api';
 
 interface NarrativeMessageProps {
   message: NarrativeMessageType;
@@ -17,18 +20,50 @@ export const NarrativeMessage: React.FC<NarrativeMessageProps> = ({
   isLatest = false,
   animateEntry = true,
 }) => {
-  const [, setIsTypingComplete] = useState(!isLatest);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [isTypingComplete, setIsTypingComplete] = useState(!isLatest);
+  const { sendInput } = useGameInput();
+
+  // Parse GM messages to split text from options
+  const parsed = message.type === 'gm' ? parseGMNarration(message.content) : null;
+  const narrativeText = parsed ? parsed.text : message.content;
+
+  const handleOptionSelect = (option: { id: string; label: string }) => {
+    setSelectedOption(option.id);
+    sendInput(option.label);
+  };
 
   // For GM messages, use typewriter effect when latest
   const content =
     isLatest && message.type === 'gm' ? (
-      <TypewriterText
-        text={message.content}
-        speed={15}
-        onComplete={() => setIsTypingComplete(true)}
-      />
+      <>
+        <TypewriterText
+          text={narrativeText}
+          speed={15}
+          onComplete={() => setIsTypingComplete(true)}
+        />
+        {isTypingComplete && parsed && parsed.options.length > 0 && (
+          <GMOptions
+            options={parsed.options}
+            onSelect={handleOptionSelect}
+            disabled={selectedOption != null}
+            selectedId={selectedOption}
+          />
+        )}
+      </>
     ) : (
-      <p className="whitespace-pre-wrap">{message.content}</p>
+      <>
+        <p className="whitespace-pre-wrap">{narrativeText}</p>
+        {/* Show selected option for historical GM messages */}
+        {parsed && parsed.options.length > 0 && !isLatest && (
+          <GMOptions
+            options={parsed.options}
+            onSelect={handleOptionSelect}
+            disabled={true}
+            selectedId={null}
+          />
+        )}
+      </>
     );
 
   return (

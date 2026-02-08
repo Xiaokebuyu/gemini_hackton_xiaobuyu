@@ -1,6 +1,7 @@
 """
 Unified Game V2 API routes (Flash-Only).
 """
+import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -37,6 +38,7 @@ from app.models.game import (
 )
 from app.services.admin.admin_coordinator import AdminCoordinator
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/game", tags=["Game V2"])
 
@@ -99,6 +101,8 @@ class RecoverableSessionItem(BaseModel):
     player_location: Optional[str] = None
     chapter_id: Optional[str] = None
     sub_location: Optional[str] = None
+    party_member_count: int = 0
+    party_members: List[str] = Field(default_factory=list)
 
 
 class RecoverableSessionsResponse(BaseModel):
@@ -133,12 +137,23 @@ async def start_session(
             starting_time=payload.starting_time,
         )
         location_info = await coordinator.get_current_location(world_id, state.session_id)
+
+        # 生成开场叙述
+        opening_narration = ""
+        try:
+            opening_narration = await coordinator.generate_opening_narration(
+                world_id, state.session_id,
+            )
+        except Exception as exc:
+            logger.warning("开场叙述生成失败: %s", exc)
+
         return {
             "session_id": state.session_id,
             "world_id": world_id,
             "phase": "idle",
             "location": location_info,
             "time": state.game_time.model_dump() if state.game_time else None,
+            "opening_narration": opening_narration,
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -180,6 +195,34 @@ async def get_session(
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
     return session
+
+
+class ResumeSessionRequest(BaseModel):
+    """恢复会话请求"""
+
+    generate_narration: bool = True
+
+
+@router.post("/{world_id}/sessions/{session_id}/resume")
+async def resume_session(
+    world_id: str,
+    session_id: str,
+    payload: Optional[ResumeSessionRequest] = None,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """恢复游戏会话状态"""
+    try:
+        generate_narration = payload.generate_narration if payload else True
+        result = await coordinator.resume_session(
+            world_id=world_id,
+            session_id=session_id,
+            generate_narration=generate_narration,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{world_id}/sessions/{session_id}/context")
@@ -703,7 +746,9 @@ async def get_narrative_progress(
     """获取当前叙事进度"""
     try:
         progress = await coordinator.narrative_service.get_progress(world_id, session_id)
-        chapter_info = coordinator.narrative_service.get_chapter_info(progress.current_chapter)
+        chapter_info = coordinator.narrative_service.get_chapter_info(
+            world_id, progress.current_chapter,
+        )
         return {
             "current_mainline": progress.current_mainline,
             "current_chapter": progress.current_chapter,
@@ -712,6 +757,40 @@ async def get_narrative_progress(
             "events_triggered": progress.events_triggered,
             "chapters_completed": progress.chapters_completed,
         }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{world_id}/sessions/{session_id}/narrative/flow-board")
+async def get_narrative_flow_board(
+    world_id: str,
+    session_id: str,
+    lookahead: int = Query(3, ge=1, le=8),
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """获取基于世界书主线的流程编排板"""
+    try:
+        return await coordinator.narrative_service.get_flow_board(
+            world_id=world_id,
+            session_id=session_id,
+            lookahead=lookahead,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{world_id}/sessions/{session_id}/narrative/current-plan")
+async def get_narrative_current_plan(
+    world_id: str,
+    session_id: str,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """获取当前章节内容编排建议"""
+    try:
+        return await coordinator.narrative_service.get_current_chapter_plan(
+            world_id=world_id,
+            session_id=session_id,
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

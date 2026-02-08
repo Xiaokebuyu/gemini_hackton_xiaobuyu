@@ -7,9 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type {
   NarrativeMessage,
   MessageType,
-  PlayerInputResponse,
   CoordinatorResponse,
-  TeammateResponseResult,
 } from '../types';
 import type { HistoryMessage } from '../api/gameApi';
 
@@ -23,7 +21,6 @@ interface ChatStoreState {
   // Actions
   addMessage: (message: Omit<NarrativeMessage, 'id' | 'timestamp'>) => void;
   addPlayerMessage: (content: string) => void;
-  addGMResponse: (response: PlayerInputResponse) => void;
   addGMResponseV2: (response: CoordinatorResponse) => void;
   addSystemMessage: (content: string) => void;
   loadHistory: (messages: HistoryMessage[]) => void;
@@ -61,58 +58,6 @@ export const useChatStore = create<ChatStoreState>()(
         };
         set((state) => ({
           messages: [...state.messages, message],
-        }));
-      },
-
-      addGMResponse: (response: PlayerInputResponse) => {
-        const newMessages: NarrativeMessage[] = [];
-
-        // Determine message type based on response.type
-        let messageType: 'gm' | 'npc' | 'combat' | 'system' = 'gm';
-        if (response.type === 'dialogue' && response.npc_id) {
-          messageType = 'npc';
-        } else if (response.type === 'combat') {
-          messageType = 'combat';
-        } else if (response.type === 'system' || response.type === 'error') {
-          messageType = 'system';
-        }
-
-        // Add main response
-        if (response.response) {
-          newMessages.push({
-            id: uuidv4(),
-            speaker: response.speaker || 'GM',
-            content: response.response,
-            type: messageType,
-            timestamp: new Date(),
-            metadata: {
-              npc_id: response.npc_id || undefined,
-            },
-          });
-        }
-
-        // Add extra responses (chat room mode / teammate responses)
-        if (response.responses && response.responses.length > 0) {
-          response.responses.forEach((tr) => {
-            const teammateResponse = tr as TeammateResponseResult;
-            if (teammateResponse.response) {
-              newMessages.push({
-                id: uuidv4(),
-                speaker: teammateResponse.name || 'Unknown',
-                content: teammateResponse.response,
-                type: 'teammate',
-                timestamp: new Date(),
-                metadata: {
-                  reaction: teammateResponse.reaction,
-                  character_id: teammateResponse.character_id,
-                },
-              });
-            }
-          });
-        }
-
-        set((state) => ({
-          messages: [...state.messages, ...newMessages],
         }));
       },
 
