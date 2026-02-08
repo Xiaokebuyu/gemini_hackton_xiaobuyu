@@ -1,13 +1,14 @@
 /**
  * Location query hook
  */
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getLocation, getGameTime } from '../gameApi';
 import { useGameStore } from '../../stores/gameStore';
 import type { LocationResponse, GameTimeResponse } from '../../types';
 
 export function useLocation() {
-  const { worldId, sessionId } = useGameStore();
+  const { worldId, sessionId, setLocation } = useGameStore();
 
   const locationQuery = useQuery<LocationResponse>({
     queryKey: ['location', worldId, sessionId],
@@ -21,6 +22,13 @@ export function useLocation() {
     staleTime: 30000, // 30 seconds
     refetchOnWindowFocus: false,
   });
+
+  // Sync location data to gameStore so store-dependent components stay updated
+  useEffect(() => {
+    if (locationQuery.data) {
+      setLocation(locationQuery.data);
+    }
+  }, [locationQuery.data, setLocation]);
 
   return {
     location: locationQuery.data,

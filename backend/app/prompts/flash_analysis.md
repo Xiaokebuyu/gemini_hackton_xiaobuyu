@@ -50,7 +50,7 @@
 | enter_sub_location | 进入当前位置的子地点 | `{{"operation": "enter_sublocation", "parameters": {{"sub_location_id": "子地点ID"}}}}` |
 | leave_sub_location | 离开子地点 | 无需 operations |
 | npc_interaction | 与NPC交谈 | `{{"operation": "npc_dialogue", "parameters": {{"npc_id": "NPC ID", "message": "对话内容"}}}}` |
-| team_interaction | 与队友交谈 | 无需 operations（由队友系统处理） |
+| team_interaction | 与**已在队伍中的**队友交谈（不包括邀请NPC入队） | 无需 operations（由队友系统处理） |
 | wait | 等待/消磨时间 | `{{"operation": "update_time", "parameters": {{"minutes": 30}}}}` |
 | start_combat | 发起战斗 | `{{"operation": "start_combat", "parameters": {{"enemies": []}}}}` |
 | system_command | 查询状态/任务等系统信息 | 见下方 system_command 映射 |
@@ -65,6 +65,25 @@
 | NPC表达加入意愿 / 玩家邀请NPC加入队伍 | `{{"operation": "add_teammate", "parameters": {{"character_id": "角色ID", "name": "角色名称", "role": "support", "personality": "性格描述", "response_tendency": 0.5}}}}` |
 | NPC离队 / 剧情需要 / 玩家要求队友离开 | `{{"operation": "remove_teammate", "parameters": {{"character_id": "角色ID", "name": "角色名称", "reason": "离队原因"}}}}` |
 | 剧情大转折导致队伍解散（被迫分离、任务结束、背叛等） | `{{"operation": "disband_party", "parameters": {{"reason": "解散原因"}}}}` |
+
+### 队伍伴随操作使用指南
+
+**重要区分：`team_interaction` vs `add_teammate`**
+- `team_interaction` 仅适用于与**已经在队伍中的**队友对话。
+- 当玩家**邀请NPC加入队伍**时，intent_type 应设为 `npc_interaction`（如果指定了NPC）或 `roleplay`，并在 operations 中附加 `add_teammate` 伴随操作。
+- 判断依据：如果对话对象**尚不在队伍中**（不在当前队友列表中），则不是 `team_interaction`。
+
+**主动触发 add_teammate 的场景（如果角色花名册中有合适人选）：**
+- 玩家使用"同伴""队友""帮手""一起""加入"等词汇
+- 玩家指名让某 NPC 加入
+- NPC 在对话中表达要同行、保护、帮忙的意愿
+- 剧情发展自然引出"结伴同行"（如接受任务后 NPC 主动说要跟随）
+
+**参数来源：**
+- `character_id` 和 `name`：从角色花名册中精确匹配
+- `role`：根据角色职业/定位推断（warrior/mage/healer/support/scout）
+- `personality`：从角色描述/对话风格推断，20字以内
+- `response_tendency`：默认 0.6（中等健谈），战士类 0.4，话痨型 0.8
 
 ### system_command 操作映射
 

@@ -349,8 +349,8 @@ export async function endDialogue(
 export async function getParty(
   worldId: string,
   sessionId: string
-): Promise<Party> {
-  const response = await apiClient.get<Party>(
+): Promise<Party | null> {
+  const response = await apiClient.get<Party | null>(
     `/api/game/${worldId}/sessions/${sessionId}/party`
   );
   return response.data;

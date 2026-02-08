@@ -1,7 +1,10 @@
 """
 Spreading activation and subgraph extraction.
 """
+import logging
 from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 from app.models.activation import SpreadingActivationConfig
 from app.models.graph import MemoryEdge, MemoryNode
@@ -84,9 +87,12 @@ def spread_activation(
         for node_id in graph.graph.nodes
         if node_id not in placeholder_ids
     }
-    for seed in seeds:
+    seed_list = list(seeds)
+    n_active_seeds = 0
+    for seed in seed_list:
         if seed in activation:
             activation[seed] = 1.0
+            n_active_seeds += 1
 
     if not activation:
         return {}
@@ -96,11 +102,15 @@ def spread_activation(
     for node_id in activation:
         node_props_cache[node_id] = _get_node_props(graph, node_id)
 
-    for _ in range(config.max_iterations):
+    fired_per_iter = []
+    converged_at = None
+    for iter_idx in range(config.max_iterations):
         new_activation = dict(activation)
+        fired_count = 0
         for node_id, act in activation.items():
             if act < config.fire_threshold:
                 continue
+            fired_count += 1
             degree = graph.degree(node_id)
             src_props = node_props_cache.get(node_id, {})
 
@@ -134,6 +144,8 @@ def spread_activation(
                     config.max_activation,
                 )
 
+        fired_per_iter.append(fired_count)
+
         if config.lateral_inhibition:
             new_activation = _apply_lateral_inhibition(
                 new_activation,
@@ -141,11 +153,24 @@ def spread_activation(
                 config.max_activation,
             )
         if _converged(activation, new_activation, config.convergence_threshold):
+            converged_at = iter_idx + 1
             activation = new_activation
             break
         activation = new_activation
 
-    return {node_id: act for node_id, act in activation.items() if act > config.output_threshold}
+    result = {node_id: act for node_id, act in activation.items() if act > config.output_threshold}
+
+    logger.info(
+        "[Activation] seeds=%d/%d nodes=%d placeholders=%d iters=%d fired=%s output=%d converged=%s",
+        n_active_seeds, len(seed_list), len(activation), len(placeholder_ids),
+        len(fired_per_iter), fired_per_iter, len(result),
+        converged_at or "no",
+    )
+    if result:
+        top = sorted(result.items(), key=lambda x: x[1], reverse=True)[:10]
+        logger.debug("[Activation] top: %s", ", ".join(f"{nid}={v:.3f}" for nid, v in top))
+
+    return result
 
 
 def extract_subgraph(

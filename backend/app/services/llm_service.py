@@ -1,6 +1,7 @@
 """
 LLM 服务模块 - 支持 Gemini 3 思考功能
 """
+import asyncio
 import json
 import re
 from typing import List, Dict, Any, Optional
@@ -383,6 +384,7 @@ Artifact 要求:
         prompt: str,
         model_override: Optional[str] = None,
         thinking_level: Optional[str] = None,
+        timeout: float = 30.0,
     ) -> str:
         """
         简单文本生成（使用 Gemini 3 Flash）
@@ -391,6 +393,7 @@ Artifact 要求:
             prompt: 提示文本
             model_override: 可选模型覆盖
             thinking_level: 思考层级 (lowest/low/medium/high)
+            timeout: 单次调用超时秒数
 
         Returns:
             生成的文本
@@ -400,10 +403,13 @@ Artifact 要求:
             config_kwargs: dict = {}
             if thinking_level:
                 config_kwargs["thinking_config"] = self._get_thinking_config(thinking_level)
-            response = self.client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
+                ),
+                timeout=timeout,
             )
 
             text = ""
@@ -416,6 +422,8 @@ Artifact 要求:
 
             return text.strip()
 
+        except asyncio.TimeoutError:
+            raise Exception(f"LLM 调用超时({timeout}s)")
         except Exception as e:
             raise Exception(f"文本生成失败: {str(e)}")
     

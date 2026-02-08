@@ -9,11 +9,16 @@
 - **性格**: {personality}
 - **当前情绪**: {current_mood}
 
+## 你知道的世界知识
+
+- **当前地点**: {location_name} — {location_description}
+- **可前往的地方**: {available_destinations}
+- **附近的子地点**: {sub_locations}
+
 ## 当前情况
 
 - **玩家说了**: {player_said}
 - **GM 叙述**: {gm_narration}
-- **地点**: {location_name}
 - **建议语气**: {suggested_tone}
 
 ## 之前的队友回复

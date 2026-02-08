@@ -116,7 +116,8 @@ class MemoryGraphizer:
             # 2. 获取已有的重要节点
             if existing_nodes is None:
                 existing_nodes = await self._get_important_nodes(
-                    request.world_id, request.npc_id, limit=50
+                    request.world_id, request.npc_id, limit=50,
+                    current_scene=request.current_scene,
                 )
 
             # 3. 转换消息为对话记录格式
@@ -231,7 +232,8 @@ class MemoryGraphizer:
 
 ## 已有的重要节点（优先引用，不要重复创建）
 {nodes_reference}
-如果对话中提到的人物/地点已存在于以上节点列表中，请直接引用其 ID 建立边连接，不要创建新节点。
+
+**重要**: 如果对话中提到的人物/地点/组织已存在于以上节点列表中（无论是角色节点还是世界通识节点），请直接引用其 ID 建立边连接，不要创建新节点。特别是世界通识节点中的地点和人物，请通过 edges 建立 located_in、mentions、concerns 等关系，这样你的记忆才能与世界知识相连。
 
 ## 输出要求
 
@@ -326,21 +328,35 @@ class MemoryGraphizer:
         return "\n".join(lines)
 
     def _format_nodes_for_prompt(self, nodes: List[Dict[str, Any]]) -> str:
-        """格式化节点列表供prompt使用"""
+        """格式化节点列表供prompt使用，区分角色节点和世界通识节点。"""
         if not nodes:
             return "（暂无已有节点）"
 
-        lines = []
-        for node in nodes[:30]:
+        char_lines = []
+        world_lines = []
+        for node in nodes:
             node_id = node.get("id", "unknown")
             node_type = node.get("type", "unknown")
             node_name = node.get("name", "unknown")
-            lines.append(f"- {node_id} ({node_type}): {node_name}")
+            line = f"- {node_id} ({node_type}): {node_name}"
+            if node.get("_scope") == "world":
+                world_lines.append(line)
+            else:
+                char_lines.append(line)
 
-        if len(nodes) > 30:
-            lines.append(f"... 还有 {len(nodes) - 30} 个节点")
+        parts = []
+        if char_lines:
+            parts.append("### 角色已有节点（你的记忆）")
+            parts.extend(char_lines[:30])
+            if len(char_lines) > 30:
+                parts.append(f"... 还有 {len(char_lines) - 30} 个节点")
+        if world_lines:
+            parts.append("### 世界通识节点（地点、组织、人物等公共知识）")
+            parts.extend(world_lines[:20])
+            if len(world_lines) > 20:
+                parts.append(f"... 还有 {len(world_lines) - 20} 个节点")
 
-        return "\n".join(lines)
+        return "\n".join(parts)
 
     def _create_fallback_extraction(
         self,
@@ -697,30 +713,102 @@ class MemoryGraphizer:
         world_id: str,
         npc_id: str,
         limit: int = 50,
+        current_scene: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """获取角色图谱中的重要节点"""
-        graph_data = await self.graph_store.load_graph_v2(
+        """获取角色图谱 + 世界图谱中的重要节点，供图谱化时引用。
+
+        同时加载世界图谱的高重要性节点，使 LLM 能引用世界级实体
+        （地点、组织、人物等），从而在角色图与世界图之间建立桥接边。
+
+        如果提供 current_scene，优先选取场景邻近节点，再用全局 importance 补充。
+        """
+        char_limit = min(limit, 30)
+        world_limit = limit - char_limit  # 剩余配额给世界图谱
+
+        # 1. 角色自己的重要节点
+        char_nodes: List[Dict[str, Any]] = []
+        char_data = await self.graph_store.load_graph_v2(
             world_id,
             GraphScope.character(npc_id),
         )
+        if char_data and char_data.nodes:
+            sorted_char = sorted(
+                char_data.nodes,
+                key=lambda n: n.importance,
+                reverse=True,
+            )
+            char_nodes = [
+                {
+                    "id": n.id,
+                    "type": n.type,
+                    "name": n.name,
+                    "importance": n.importance,
+                    "properties": n.properties,
+                    "_scope": "character",
+                }
+                for n in sorted_char[:char_limit]
+            ]
 
-        if not graph_data or not graph_data.nodes:
-            return []
+        # 2. 世界图谱节点 — 场景优先 + importance 补充
+        world_nodes: List[Dict[str, Any]] = []
+        seen_ids: set = set()
+        if world_limit > 0:
+            # 2a. 场景邻居优先
+            if current_scene:
+                try:
+                    subgraph = await self.graph_store.load_local_subgraph_v2(
+                        world_id, GraphScope.world(),
+                        seed_nodes=[current_scene], depth=2, direction="both",
+                    )
+                    if subgraph and subgraph.nodes:
+                        scene_nodes = sorted(subgraph.nodes, key=lambda n: n.importance, reverse=True)
+                        for n in scene_nodes[:min(10, world_limit)]:
+                            world_nodes.append({
+                                "id": n.id,
+                                "type": n.type,
+                                "name": n.name,
+                                "importance": n.importance,
+                                "properties": n.properties,
+                                "_scope": "world",
+                            })
+                            seen_ids.add(n.id)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "[MemoryGraphizer] 场景子图加载失败: %s", e
+                    )
 
-        # 按importance排序
-        sorted_nodes = sorted(
-            graph_data.nodes,
-            key=lambda n: n.importance,
-            reverse=True
-        )
+            # 2b. importance 补充
+            remaining = world_limit - len(world_nodes)
+            if remaining > 0:
+                try:
+                    world_data = await self.graph_store.load_graph_v2(
+                        world_id,
+                        GraphScope.world(),
+                    )
+                    if world_data and world_data.nodes:
+                        sorted_world = sorted(
+                            world_data.nodes,
+                            key=lambda n: n.importance,
+                            reverse=True,
+                        )
+                        for n in sorted_world:
+                            if n.id not in seen_ids:
+                                world_nodes.append({
+                                    "id": n.id,
+                                    "type": n.type,
+                                    "name": n.name,
+                                    "importance": n.importance,
+                                    "properties": n.properties,
+                                    "_scope": "world",
+                                })
+                                seen_ids.add(n.id)
+                                if len(world_nodes) >= world_limit:
+                                    break
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).debug(
+                        "[MemoryGraphizer] 世界图谱加载失败: %s", e
+                    )
 
-        return [
-            {
-                "id": n.id,
-                "type": n.type,
-                "name": n.name,
-                "importance": n.importance,
-                "properties": n.properties,
-            }
-            for n in sorted_nodes[:limit]
-        ]
+        return char_nodes + world_nodes

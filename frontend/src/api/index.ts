@@ -9,6 +9,7 @@ export * from './combatApi';
 // Hooks
 export { useGameInput } from './hooks/useGameInput';
 export { useLocation, useGameTime } from './hooks/useLocation';
+export { useParty } from './hooks/useParty';
 export {
   useCombatAction,
   useStartCombat,

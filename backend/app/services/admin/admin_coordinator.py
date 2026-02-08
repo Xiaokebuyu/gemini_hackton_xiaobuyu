@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -391,7 +392,7 @@ class AdminCoordinator:
         # 处理纯机械触发的事件
         pre_side_effects: List[Dict[str, Any]] = []
         for event in pre_directive.auto_fired_events:
-            await self.narrative_service.trigger_event(world_id, session_id, event.id)
+            await self.narrative_service.trigger_event(world_id, session_id, event.id, skip_advance=True)
             logger.info("[v2] StoryDirector pre-fire: %s", event.id)
             if event.side_effects:
                 pre_side_effects.extend(event.side_effects)
@@ -434,6 +435,24 @@ class AdminCoordinator:
             )
         )
 
+        # 提前启动队友记忆召回（Phase 2 并行）
+        teammate_recall_tasks: Dict[str, asyncio.Task] = {}
+        skip_teammate = intent.intent_type == IntentType.SYSTEM_COMMAND
+        if party and party.get_active_members() and not skip_teammate:
+            for member in party.get_active_members():
+                char_id = member.character_id
+                seeds = self._build_effective_seeds(
+                    analysis.memory_seeds, base_context, character_id=char_id
+                )
+                teammate_recall_tasks[char_id] = asyncio.create_task(
+                    self._recall_memory(
+                        world_id, char_id, seeds,
+                        intent_type=intent.intent_type.value,
+                        chapter_id=current_chapter_id,
+                        area_id=current_area_id,
+                    )
+                )
+
         flash_requests = analysis.operations or self._generate_default_flash_requests(intent, base_context)
         flash_results = await self._execute_flash_requests(
             world_id, session_id, flash_requests, generate_narration=False
@@ -472,29 +491,7 @@ class AdminCoordinator:
         if isinstance(analysis.story_progression, dict):
             context["story_progression"] = analysis.story_progression
 
-        # 4.5 第二轮 Flash：基于扩散激活结果编排 context_package
-        if memory_result and getattr(memory_result, "activated_nodes", None):
-            logger.info("[v2] 步骤4.5: Flash 上下文编排（第二轮）")
-            curated_package = await self.flash_cpu.curate_context(
-                player_input=player_input,
-                intent=intent,
-                memory_result=memory_result,
-                flash_results=flash_results,
-                context=context,
-            )
-            if curated_package:
-                merged_package = {}
-                if isinstance(context.get("context_package"), dict):
-                    merged_package.update(context["context_package"])
-                merged_package.update(curated_package)
-                context["context_package"] = merged_package
-                if isinstance(curated_package.get("story_progression"), dict):
-                    context["story_progression"] = curated_package["story_progression"]
-                logger.info("[v2] context_package 已生成（%d 个字段）", len(merged_package))
-            else:
-                logger.error("[v2] context_package 编排失败，curate_context 返回 None")
-
-        # 4.8 StoryDirector Post-Flash 评估
+        # 4.8 StoryDirector Post-Flash 评估（sync，无 LLM，只需 Flash 分析结果）
         flash_condition_results: Dict[str, bool] = {}
         story_prog = context.get("story_progression")
         if isinstance(story_prog, dict):
@@ -545,9 +542,10 @@ class AdminCoordinator:
 
         turn_story_events = list(pre_directive.auto_fired_events) + list(final_directive.fired_events)
 
-        # 落地 fired_events
+        # 落地 fired_events（直接操作本地 progress，由 save_progress 统一写入，避免中间 save 覆盖）
         for event in final_directive.fired_events:
-            await self.narrative_service.trigger_event(world_id, session_id, event.id)
+            if event.id not in progress.events_triggered:
+                progress.events_triggered.append(event.id)
             logger.info("[v2] StoryDirector post-fire: %s", event.id)
 
         # 注入叙述指令到 context 供 GM 叙述使用
@@ -555,9 +553,30 @@ class AdminCoordinator:
         if all_narrative_directives:
             context["story_narrative_directives"] = all_narrative_directives
 
-        # 更新回合计数
+        # 处理 Flash 自报的 story_events → 合并入 turn_story_events（在回合计数之前）
+        flash_story_prog = context.get("story_progression")
+        if not isinstance(flash_story_prog, dict):
+            flash_story_prog = (context.get("context_package") or {}).get("story_progression", {})
+        flash_story_events_raw = flash_story_prog.get("story_events", []) if isinstance(flash_story_prog, dict) else []
+        # 构建当前章节事件 ID → StoryEvent 映射
+        chapter_event_map: Dict[str, Any] = {}
+        for ch in active_story_chapters:
+            for e in ch.events:
+                chapter_event_map[e.id] = e
+        already_fired_ids = {e.id for e in turn_story_events}
+        if isinstance(flash_story_events_raw, list):
+            for ev_id in flash_story_events_raw:
+                if isinstance(ev_id, str) and ev_id.strip():
+                    ev_id = ev_id.strip()
+                    if ev_id in chapter_event_map and ev_id not in already_fired_ids:
+                        if ev_id not in progress.events_triggered:
+                            progress.events_triggered.append(ev_id)
+                        turn_story_events.append(chapter_event_map[ev_id])
+                        logger.info("[v2] Flash story event recorded: %s", ev_id)
+
+        # 更新回合计数（现在 has_progress 包含 flash 自报事件）
         progress.rounds_in_chapter += 1
-        has_progress = bool(final_directive.fired_events or pre_directive.auto_fired_events)
+        has_progress = bool(turn_story_events)
         if has_progress:
             progress.rounds_since_last_progress = 0
         else:
@@ -568,9 +587,10 @@ class AdminCoordinator:
                 npc_id = req.parameters.get("npc_id")
                 if npc_id:
                     progress.npc_interactions[npc_id] = progress.npc_interactions.get(npc_id, 0) + 1
-        # 冷却时间记录（以章节内回合作为基准）
+        # 冷却时间记录（现在包含 flash 自报事件）
         for event in turn_story_events:
             progress.event_cooldowns[event.id] = progress.rounds_in_chapter
+
         await self.narrative_service.save_progress(world_id, session_id, progress)
 
         # 处理章节转换（v2 StoryDirector 评估的 transitions）
@@ -618,28 +638,11 @@ class AdminCoordinator:
                     world_id, session_id, new_location
                 )
 
-        # 6. 生成叙述和角色回复（Flash 并发）
-        logger.info("[v2] 步骤6: Flash 叙述与角色回复")
+        # 6. 并行阶段：玩家curation + 队友curation + GM叙述
+        logger.info("[v2] 步骤6: 并行 curation + GM 叙述")
         execution_summary = self._build_execution_summary(flash_results)
 
-        # 为每个队友构建图谱上下文（Flash 第二轮编排）
-        if party and party.get_active_members():
-            teammate_context_packages, teammate_memory_summaries = await self._build_teammate_context_packages(
-                world_id=world_id,
-                party=party,
-                player_input=player_input,
-                intent=intent,
-                flash_results=flash_results,
-                base_context=context,
-                base_seeds=analysis.memory_seeds,
-                chapter_id=current_chapter_id,
-                area_id=current_area_id,
-            )
-            if teammate_context_packages:
-                context["teammate_context_packages"] = teammate_context_packages
-            if teammate_memory_summaries:
-                context["teammate_memory_summaries"] = teammate_memory_summaries
-
+        # (a) GM 叙述——不依赖 curation 结果，提前启动
         gm_task = asyncio.create_task(
             self.flash_cpu.generate_gm_narration(
                 player_input=player_input,
@@ -648,10 +651,93 @@ class AdminCoordinator:
             )
         )
 
+        # (b) 玩家 curation
+        async def _curate_player():
+            if not memory_result or not getattr(memory_result, "activated_nodes", None):
+                return None
+            return await self.flash_cpu.curate_context(
+                player_input=player_input,
+                intent=intent,
+                memory_result=memory_result,
+                flash_results=flash_results,
+                context=context,
+            )
+
+        # (c) 队友 curation（使用 Phase 2 提前完成的 recall）
+        async def _curate_all_teammates():
+            if not party or skip_teammate:
+                return {}, {}
+            active = party.get_active_members()
+            if not active:
+                return {}, {}
+
+            async def _curate_one(member):
+                char_id = member.character_id
+                task = teammate_recall_tasks.get(char_id)
+                if task:
+                    mem = await task  # 已完成，立即返回
+                else:
+                    seeds = self._build_effective_seeds(
+                        analysis.memory_seeds, base_context, character_id=char_id)
+                    mem = await self._recall_memory(
+                        world_id, char_id, seeds,
+                        intent_type=intent.intent_type.value,
+                        chapter_id=current_chapter_id, area_id=current_area_id)
+                if not mem or not getattr(mem, "activated_nodes", None):
+                    return char_id, None, ""
+                view = dict(context)
+                view["active_character_id"] = char_id
+                curated = await self.flash_cpu.curate_context(
+                    player_input=player_input, intent=intent,
+                    memory_result=mem, flash_results=flash_results, context=view)
+                summary = self._summarize_memory(mem)
+                return char_id, curated, summary
+
+            results = await asyncio.gather(
+                *(_curate_one(m) for m in active), return_exceptions=True)
+            packages, summaries = {}, {}
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error("[v2] 队友上下文编排失败: %s", r, exc_info=True)
+                    continue
+                cid, cur, summ = r
+                if cur:
+                    packages[cid] = cur
+                if summ:
+                    summaries[cid] = summ
+            return packages, summaries
+
+        # 全部并行执行
+        player_curated, (t_packages, t_summaries) = await asyncio.gather(
+            _curate_player(), _curate_all_teammates()
+        )
+
+        # 应用玩家 curation 结果到 context
+        if player_curated:
+            merged_package = {}
+            if isinstance(context.get("context_package"), dict):
+                merged_package.update(context["context_package"])
+            merged_package.update(player_curated)
+            context["context_package"] = merged_package
+            if isinstance(player_curated.get("story_progression"), dict):
+                context["story_progression"] = player_curated["story_progression"]
+            logger.info("[v2] context_package 已生成（%d 个字段）", len(merged_package))
+
+        # 应用队友 curation 结果到 context
+        if t_packages:
+            context["teammate_context_packages"] = t_packages
+        if t_summaries:
+            context["teammate_memory_summaries"] = t_summaries
+
+        # 步骤 7: 队友响应
+        # 注入上轮队友发言到 context，供 process_round 写入各自 ContextWindow
+        last_teammate_responses = history.get_last_teammate_responses()
+        if last_teammate_responses:
+            context["last_teammate_responses"] = last_teammate_responses
+
         teammate_task = None
-        if party and party.get_active_members():
+        if party and party.get_active_members() and not skip_teammate:
             logger.info("[v2] 步骤7: 队友响应（%d 个队友）", len(party.get_active_members()))
-            # 与 GM 并发：队友基于同轮执行摘要生成
             teammate_task = asyncio.create_task(
                 self.teammate_response_service.process_round(
                     party=party,
@@ -661,9 +747,13 @@ class AdminCoordinator:
                 )
             )
         else:
-            logger.debug("[v2] 步骤7: 跳过（无队友）")
+            logger.debug("[v2] 步骤7: 跳过（无队友或系统命令）")
 
-        gm_narration = await gm_task
+        try:
+            gm_narration = await gm_task
+        except Exception as e:
+            logger.error("[v2] GM 叙述生成失败: %s", e, exc_info=True)
+            gm_narration = "（旁白沉默了片刻……你的行动已被记录，但叙述暂时无法生成。请继续你的冒险。）"
         logger.info("[v2] 叙述完成: %s...", gm_narration[:50])
 
         if v2_transition_result and v2_transition_result.get("new_chapter"):
@@ -692,8 +782,8 @@ class AdminCoordinator:
                         "latency_ms": resp.latency_ms,
                     })
 
-        # 8. 分发事件到队友图谱（如果有队友且启用事件共享）
-        if party and party.share_events:
+        # 8. 分发事件到队友图谱（如果有队友且启用事件共享，system_command 跳过）
+        if party and party.share_events and not skip_teammate:
             logger.info("[v2] 步骤8: 分发事件到队友图谱")
             await self._distribute_event_to_party(
                 world_id=world_id,
@@ -703,19 +793,6 @@ class AdminCoordinator:
                 context=context,
             )
             logger.info("[v2] 事件分发完成")
-
-        # 8.5 strict-v2: 仅记录 Flash 自报事件用于调试（不再走 legacy fallback）
-        story_prog = context.get("story_progression")
-        if not isinstance(story_prog, dict):
-            story_prog = (context.get("context_package") or {}).get("story_progression", {})
-        flash_story_events: List[str] = []
-        story_events_raw = story_prog.get("story_events", []) if isinstance(story_prog, dict) else []
-        if isinstance(story_events_raw, list):
-            for event_id in story_events_raw:
-                if isinstance(event_id, str) and event_id.strip():
-                    flash_story_events.append(event_id.strip())
-        if flash_story_events:
-            logger.debug("[v2] Flash self-reported story events: %s", flash_story_events)
 
         # 9. 记录对话到 SessionHistory + 触发图谱化
         round_stats = history.record_round(
@@ -1050,64 +1127,6 @@ class AdminCoordinator:
         if not effective_seeds:
             effective_seeds.append("player")
         return list(dict.fromkeys(s for s in effective_seeds if s))
-
-    async def _build_teammate_context_packages(
-        self,
-        world_id: str,
-        party: "Party",
-        player_input: str,
-        intent: Any,
-        flash_results: List[FlashResponse],
-        base_context: Dict[str, Any],
-        base_seeds: Optional[List[str]],
-        chapter_id: Optional[str],
-        area_id: Optional[str],
-    ) -> tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
-        """为每个队友生成基于图谱召回的 Flash 上下文包。"""
-        packages: Dict[str, Dict[str, Any]] = {}
-        memory_summaries: Dict[str, str] = {}
-        members = party.get_active_members()
-        if not members:
-            return packages, memory_summaries
-
-        async def _build_for_member(member) -> tuple[str, Optional[Dict[str, Any]], str]:
-            char_id = member.character_id
-            seeds = self._build_effective_seeds(base_seeds, base_context, character_id=char_id)
-            memory_result = await self._recall_memory(
-                world_id=world_id,
-                character_id=char_id,
-                seed_nodes=seeds,
-                intent_type=intent.intent_type.value,
-                chapter_id=chapter_id,
-                area_id=area_id,
-            )
-            if not memory_result or not getattr(memory_result, "activated_nodes", None):
-                return char_id, None, ""
-
-            teammate_view = dict(base_context)
-            teammate_view["active_character_id"] = char_id
-            curated = await self.flash_cpu.curate_context(
-                player_input=player_input,
-                intent=intent,
-                memory_result=memory_result,
-                flash_results=flash_results,
-                context=teammate_view,
-            )
-            summary = self._summarize_memory(memory_result)
-            return char_id, curated, summary
-
-        results = await asyncio.gather(*(_build_for_member(m) for m in members), return_exceptions=True)
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error("[v2] 队友上下文编排失败: %s", result, exc_info=True)
-                continue
-            char_id, curated, summary = result
-            if curated:
-                packages[char_id] = curated
-            if summary:
-                memory_summaries[char_id] = summary
-
-        return packages, memory_summaries
 
     # ==================== 游戏状态恢复 ====================
 
@@ -1947,6 +1966,13 @@ class AdminCoordinator:
         merged = MemoryGraph.from_multi_scope(scoped_data)
         await self._inject_disposition_edges(world_id, character_id, merged)
 
+        logger.info(
+            "[v2] 记忆图谱合并: %d 个 scope, %d 节点, %d 边",
+            len(scoped_data),
+            len(merged.graph.nodes),
+            len(merged.graph.edges),
+        )
+
         # 8) 扩展 seeds 为多候选（兼容 prefill 无前缀 + LLM 有前缀）
         expanded_seeds = []
         for seed in seed_nodes:
@@ -1957,6 +1983,10 @@ class AdminCoordinator:
                 else:
                     expanded_seeds.append(f"{prefix}{seed}")
         valid_seeds = [s for s in expanded_seeds if merged.has_node(s)]
+        logger.info(
+            "[v2] 记忆种子: original=%s → valid=%s (expanded %d, matched %d)",
+            seed_nodes, valid_seeds, len(expanded_seeds), len(valid_seeds),
+        )
         if not valid_seeds:
             logger.error(
                 "[v2] 记忆召回跳过：无有效种子 (character=%s, original=%s, expanded=%d)",
@@ -1975,6 +2005,12 @@ class AdminCoordinator:
         activated = spread_activation(merged, valid_seeds, config)
 
         subgraph_graph = extract_subgraph(merged, activated)
+        logger.info(
+            "[v2] 扩散结果: %d 个激活节点, 子图 %d 节点 %d 边",
+            len(activated),
+            len(subgraph_graph.graph.nodes),
+            len(subgraph_graph.graph.edges),
+        )
         subgraph = subgraph_graph.to_graph_data()
         subgraph.nodes = [
             n for n in subgraph.nodes
@@ -2462,6 +2498,59 @@ class AdminCoordinator:
                 parameters={},
             )]
 
+        if intent_type == IntentType.TEAM_INTERACTION:
+            teammates = (context or {}).get("teammates") or []
+            # 双匹配：character_id + name（大小写归一）
+            teammate_keys = set()
+            for t in teammates:
+                if isinstance(t, dict):
+                    cid = (t.get("character_id") or "").lower()
+                    cname = (t.get("name") or "").lower()
+                    if cid:
+                        teammate_keys.add(cid)
+                    if cname:
+                        teammate_keys.add(cname)
+
+            target = (intent.target or "").strip()
+            target_lower = target.lower()
+
+            # 支持多目标: "A, B" / "A、B" / "A和B"
+            target_parts = [p.strip().lower() for p in re.split(r'[,，、]|和', target) if p.strip()]
+            if not target_parts:
+                target_parts = [target_lower] if target_lower else []
+
+            if target_parts and any(p not in teammate_keys for p in target_parts):
+                # 至少一个目标不在队伍中 → fallback npc_dialogue
+                logger.warning(
+                    "team_interaction 目标 '%s' 不在队伍中，fallback 到 npc_dialogue",
+                    target,
+                )
+                return [FlashRequest(
+                    operation=FlashOperation.NPC_DIALOGUE,
+                    parameters={
+                        "npc_id": target,
+                        "message": intent.raw_input,
+                    },
+                )]
+
+            if not target:
+                # target 为空，检查 active_npc + 招募关键词
+                recruit_keywords = {"加入", "入队", "同行", "招募", "组队", "一起", "队伍", "同伴"}
+                has_recruit_intent = any(kw in (intent.raw_input or "") for kw in recruit_keywords)
+                active_npc = (context or {}).get("active_npc")
+                if has_recruit_intent and active_npc:
+                    logger.warning(
+                        "team_interaction target 为空但检测到招募意图，fallback 到 active_npc '%s'",
+                        active_npc,
+                    )
+                    return [FlashRequest(
+                        operation=FlashOperation.NPC_DIALOGUE,
+                        parameters={
+                            "npc_id": active_npc,
+                            "message": intent.raw_input,
+                        },
+                    )]
+
         # 其他类型不需要默认请求
         return []
 
@@ -2876,34 +2965,12 @@ class AdminCoordinator:
         self,
         world_id: str,
         session_id: str,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """获取队伍信息"""
         party = await self.party_service.get_party(world_id, session_id)
         if not party:
-            return {
-                "has_party": False,
-                "party_id": None,
-                "members": [],
-            }
-
-        return {
-            "has_party": True,
-            "party_id": party.party_id,
-            "leader_id": party.leader_id,
-            "current_location": party.current_location,
-            "members": [
-                {
-                    "character_id": m.character_id,
-                    "name": m.name,
-                    "role": m.role.value,
-                    "personality": m.personality,
-                    "is_active": m.is_active,
-                    "current_mood": m.current_mood,
-                    "response_tendency": m.response_tendency,
-                }
-                for m in party.members
-            ],
-        }
+            return None
+        return party.model_dump(mode="json")
 
     async def load_predefined_teammates(
         self,

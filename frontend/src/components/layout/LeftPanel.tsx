@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useUIStore } from '../../stores';
+import { useLocation } from '../../api/hooks/useLocation';
 import PanelFrame from './PanelFrame';
 import MiniMap from '../map/MiniMap';
 import LocationCard from '../map/LocationCard';
@@ -24,6 +25,7 @@ interface LeftPanelProps {
 export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
   const { t } = useTranslation();
   const { leftPanelCollapsed, toggleLeftPanel } = useUIStore();
+  const { location } = useLocation();
   const [activeTab, setActiveTab] = useState<LeftTab>('map');
 
   const tabs: { key: LeftTab; label: string }[] = [
@@ -102,7 +104,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
                         {t('navigation.subLocations')}
                       </h3>
                       <div className="flex-1 overflow-y-auto g-scrollbar px-3 pb-3">
-                        <SubLocationList />
+                        <SubLocationList subLocations={location?.available_sub_locations} />
                         <div className="mt-3 pt-3 border-t border-g-border">
                           <DestinationList />
                         </div>

@@ -694,6 +694,7 @@ class NarrativeService:
         world_id: str,
         session_id: str,
         event_id: str,
+        skip_advance: bool = False,
     ) -> Dict[str, Any]:
         """
         触发叙事事件，检查章节完成
@@ -702,6 +703,8 @@ class NarrativeService:
             world_id: 世界ID
             session_id: 会话ID
             event_id: 事件ID
+            skip_advance: 为 True 时只记录事件，不检查完成条件/推进章节
+                          （v2 流程由 StoryDirector 控制章节转换）
 
         Returns:
             {
@@ -718,6 +721,16 @@ class NarrativeService:
         if event_id not in progress.events_triggered:
             progress.events_triggered.append(event_id)
             event_recorded = True
+
+        # v2 流程跳过 legacy 自动推进（由 StoryDirector 控制）
+        if skip_advance:
+            await self.save_progress(world_id, session_id, progress)
+            return {
+                "event_recorded": event_recorded,
+                "chapter_completed": False,
+                "new_chapter": None,
+                "new_maps_unlocked": [],
+            }
 
         # 检查章节完成条件
         chapter = self._world_chapters(world_id).get(progress.current_chapter)

@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useUIStore } from '../../stores';
+import { useParty } from '../../api/hooks/useParty';
 import PanelFrame from './PanelFrame';
 import PlayerStatus from '../party/PlayerStatus';
 import PartyPanel from '../party/PartyPanel';
@@ -20,6 +21,7 @@ interface RightPanelProps {
 export const RightPanel: React.FC<RightPanelProps> = ({ className = '' }) => {
   const { t } = useTranslation();
   const { rightPanelCollapsed, toggleRightPanel } = useUIStore();
+  useParty();
   const [activeTab, setActiveTab] = useState<RightTab>('party');
 
   const tabs: { key: RightTab; label: string }[] = [

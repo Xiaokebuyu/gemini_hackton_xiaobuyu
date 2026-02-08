@@ -127,7 +127,7 @@ class SessionHistory:
         self._window.add_message(
             role="system",
             content=f"[{name}] {response}",
-            metadata={"source": "teammate", "character_id": character_id},
+            metadata={"source": "teammate", "character_id": character_id, "name": name},
         )
 
         # Fire-and-forget Firestore persistence
@@ -184,6 +184,38 @@ class SessionHistory:
             accumulated_tokens += msg.token_count
 
         return "\n".join(lines)
+
+    def get_last_teammate_responses(self) -> List[Dict[str, str]]:
+        """
+        Get teammate responses from the most recent round.
+
+        Scans messages backwards from the end, collecting teammate responses
+        until hitting a non-teammate message (player input or GM response),
+        which marks the boundary of the current/last round.
+
+        Returns:
+            List of dicts with character_id, name, response.
+        """
+        results: List[Dict[str, str]] = []
+        for msg in reversed(self._window.messages):
+            meta = msg.metadata or {}
+            if meta.get("source") == "teammate":
+                name = meta.get("name", "")
+                # 剥离 [name] 前缀，提取纯文本 response（避免跨轮注入时双重前缀）
+                content = msg.content
+                prefix = f"[{name}] " if name else ""
+                if prefix and content.startswith(prefix):
+                    content = content[len(prefix):]
+                results.append({
+                    "character_id": meta.get("character_id", ""),
+                    "name": name,
+                    "response": content,
+                })
+            elif msg.role in ("user", "assistant"):
+                # Hit player/GM message — we've gone past the latest round
+                break
+        results.reverse()
+        return results
 
     def get_recent_messages(self, count: int = 10) -> List[Dict[str, str]]:
         """Get recent messages as list of dicts for API context."""

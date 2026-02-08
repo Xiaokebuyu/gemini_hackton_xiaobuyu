@@ -1,13 +1,11 @@
 /**
- * Center Panel - Narrative & Input
+ * Center Panel - Galgame-style fixed display
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import PanelFrame from './PanelFrame';
-import NarrativeFlow from '../narrative/NarrativeFlow';
+import GalgameDisplay from '../narrative/GalgameDisplay';
 import ActionButtons from '../narrative/ActionButtons';
-import ChatInput from '../input/ChatInput';
-import QuickActions from '../input/QuickActions';
 import { useGameStore } from '../../stores';
 
 interface CenterPanelProps {
@@ -20,9 +18,9 @@ export const CenterPanel: React.FC<CenterPanelProps> = ({ className = '' }) => {
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
-      {/* Narrative Flow */}
+      {/* Galgame Display (includes ChatInput + QuickActions) */}
       <PanelFrame className="flex-1 min-h-0 overflow-hidden">
-        <NarrativeFlow />
+        <GalgameDisplay />
       </PanelFrame>
 
       {/* Available Actions */}
@@ -38,16 +36,6 @@ export const CenterPanel: React.FC<CenterPanelProps> = ({ className = '' }) => {
           </PanelFrame>
         </div>
       )}
-
-      {/* Input Area */}
-      <div className="flex-shrink-0 mt-3">
-        <PanelFrame>
-          <div className="p-4">
-            <ChatInput />
-            <QuickActions className="mt-3" />
-          </div>
-        </PanelFrame>
-      </div>
     </div>
   );
 };

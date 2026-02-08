@@ -129,12 +129,14 @@ class TeammateVisibilityManager:
         self,
         location: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """过滤位置信息"""
+        """过滤位置信息（队友也知道能去哪里、有哪些子地点）"""
         return {
             "location_id": location.get("location_id"),
             "location_name": location.get("location_name"),
             "atmosphere": location.get("atmosphere"),
             "npcs_present": location.get("npcs_present", []),
+            "available_destinations": location.get("available_destinations", []),
+            "sub_locations": location.get("available_sub_locations", location.get("sub_locations", [])),
         }
 
     def _get_visible_party_info(

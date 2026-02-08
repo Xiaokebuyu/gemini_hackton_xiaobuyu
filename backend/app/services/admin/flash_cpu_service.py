@@ -524,7 +524,7 @@ class FlashCPUService:
         result = await self.llm_service.generate_simple(
             filled_prompt,
             model_override=settings.admin_flash_model,
-            thinking_level=settings.admin_flash_thinking_level,
+            thinking_level="low",
         )
         parsed = self.llm_service.parse_json(result)
         if not parsed:
@@ -590,7 +590,8 @@ class FlashCPUService:
         )
         narration = (result or "").strip()
         if not narration:
-            raise RuntimeError("Flash GM narration empty")
+            logger.warning("Flash GM narration returned empty, using fallback")
+            return "……"
         return narration
 
     def _build_chapter_guidance(self, context: Dict[str, Any]) -> str:
@@ -719,7 +720,7 @@ class FlashCPUService:
             if op == FlashOperation.TRIGGER_NARRATIVE_EVENT:
                 if not self.narrative_service:
                     return FlashResponse(success=False, operation=op, error="叙事系统未初始化")
-                result = await self.narrative_service.trigger_event(world_id, session_id, params.get("event_id"))
+                result = await self.narrative_service.trigger_event(world_id, session_id, params.get("event_id"), skip_advance=True)
                 payload = result if isinstance(result, dict) else {"raw": result}
                 success = isinstance(payload, dict) and not payload.get("error")
                 error_message = payload.get("error") if not success else None
@@ -742,7 +743,7 @@ class FlashCPUService:
                 npc_id = params.get("npc_id")
                 message = params.get("message", "")
                 # 通过 InstanceManager 维护 NPC 对话上下文
-                if self.instance_manager and npc_id:
+                if self.instance_manager is not None and npc_id:
                     response_text = await self._npc_dialogue_with_instance(
                         world_id, npc_id, message,
                     )
@@ -822,7 +823,7 @@ class FlashCPUService:
                 if not character_id:
                     return FlashResponse(success=False, operation=op, error="missing character_id")
                 # 图谱化并持久化该队友的实例（保存对话记忆）
-                if self.instance_manager and self.instance_manager.has(world_id, character_id):
+                if self.instance_manager is not None and self.instance_manager.has(world_id, character_id):
                     try:
                         await self.instance_manager.maybe_graphize_instance(world_id, character_id)
                         instance = self.instance_manager.get(world_id, character_id)
@@ -850,7 +851,7 @@ class FlashCPUService:
                     return FlashResponse(success=False, operation=op, error="当前没有队伍")
                 saved_members = []
                 for member in party.get_active_members():
-                    if self.instance_manager and self.instance_manager.has(world_id, member.character_id):
+                    if self.instance_manager is not None and self.instance_manager.has(world_id, member.character_id):
                         try:
                             await self.instance_manager.maybe_graphize_instance(world_id, member.character_id)
                             inst = self.instance_manager.get(world_id, member.character_id)
@@ -1043,7 +1044,7 @@ class FlashCPUService:
         return text
 
     async def _npc_respond(self, world_id: str, session_id: str, npc_id: str, message: str) -> Dict[str, Any]:
-        if self.instance_manager:
+        if self.instance_manager is not None:
             response = await self._npc_dialogue_with_instance(world_id, npc_id, message)
         else:
             response = await self._npc_dialogue_direct_flash(npc_id, message)

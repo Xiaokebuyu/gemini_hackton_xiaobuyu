@@ -1,6 +1,7 @@
 """
 Unified Game V2 API routes (Flash-Only).
 """
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -281,14 +282,21 @@ async def process_input_v2(
 ) -> CoordinatorResponse:
     """处理玩家输入（Flash-Only v2）"""
     try:
-        return await coordinator.process_player_input_v2(
-            world_id=world_id,
-            session_id=session_id,
-            player_input=payload.input,
+        return await asyncio.wait_for(
+            coordinator.process_player_input_v2(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=payload.input,
+            ),
+            timeout=110.0,
         )
+    except asyncio.TimeoutError:
+        logger.error("[input] 请求处理超时(110s)")
+        raise HTTPException(status_code=504, detail="请求处理超时，请稍后再试")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("[input] 处理失败: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
