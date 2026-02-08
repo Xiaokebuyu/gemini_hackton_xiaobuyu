@@ -28,6 +28,7 @@ export const PanelFrame: React.FC<PanelFrameProps> = ({
 
   const containerClass = `
     relative
+    flex flex-col
     bg-g-bg-surface
     border border-g-border
     ${variantBar[variant]}
@@ -49,7 +50,7 @@ export const PanelFrame: React.FC<PanelFrameProps> = ({
       )}
 
       {/* Content */}
-      <div className={`relative z-10 ${title ? 'mt-2' : ''}`}>{children}</div>
+      <div className={`relative z-10 flex-1 min-h-0 ${title ? 'mt-2' : ''}`}>{children}</div>
     </div>
   );
 

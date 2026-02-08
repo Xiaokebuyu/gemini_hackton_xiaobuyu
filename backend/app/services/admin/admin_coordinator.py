@@ -142,6 +142,8 @@ class AdminCoordinator:
         # 世界背景 / 角色花名册缓存
         self._world_background_cache: Dict[str, str] = {}
         self._character_roster_cache: Dict[str, str] = {}
+        self._character_ids_cache: Dict[str, set] = {}
+        self._area_chapter_cache: Dict[str, Dict[str, str]] = {}
 
     @dataclass
     class AdminContextView:
@@ -437,6 +439,10 @@ class AdminCoordinator:
             world_id, session_id, flash_requests, generate_narration=False
         )
         logger.info("[v2] Flash 结果: %d 个操作", len(flash_results))
+
+        # 检测 Flash 操作是否改变了队伍
+        party_ops = {FlashOperation.ADD_TEAMMATE, FlashOperation.REMOVE_TEAMMATE, FlashOperation.DISBAND_PARTY}
+        flash_changed_party = any(r.success and r.operation in party_ops for r in flash_results)
         for r in flash_results:
             logger.debug("[v2]   操作=%s 成功=%s 错误=%s", r.operation, r.success, r.error)
 
@@ -518,8 +524,24 @@ class AdminCoordinator:
             )
 
         # 执行副作用
+        post_changed_party = False
         if final_directive.side_effects:
             await self._execute_side_effects(world_id, session_id, final_directive.side_effects)
+            post_changed_party = any(
+                e.get("type") in ("add_teammate", "remove_teammate")
+                for e in final_directive.side_effects
+            )
+
+        # 统一刷新 party（Flash ops / pre side_effects / post side_effects 任一改变了队伍）
+        pre_changed_party = any(
+            e.get("type") in ("add_teammate", "remove_teammate")
+            for e in pre_side_effects
+        ) if pre_side_effects else False
+
+        if flash_changed_party or pre_changed_party or post_changed_party:
+            party = await self.party_service.get_party(world_id, session_id)
+            logger.info("[v2] party 已刷新 (flash=%s, pre=%s, post=%s)",
+                        flash_changed_party, pre_changed_party, post_changed_party)
 
         turn_story_events = list(pre_directive.auto_fired_events) + list(final_directive.fired_events)
 
@@ -1462,6 +1484,43 @@ class AdminCoordinator:
         self._character_roster_cache[world_id] = result
         return result
 
+    async def _get_character_id_set(self, world_id: str) -> set:
+        """获取世界所有角色 ID 集合（缓存）"""
+        if world_id in self._character_ids_cache:
+            return self._character_ids_cache[world_id]
+
+        char_ids: set = set()
+        try:
+            chars_ref = self.graph_store.db.collection("worlds").document(world_id).collection("characters")
+            for doc in chars_ref.stream():
+                char_ids.add(doc.id)
+        except Exception as exc:
+            logger.debug("[character_id_set] Firestore 读取失败: %s", exc)
+
+        self._character_ids_cache[world_id] = char_ids
+        return char_ids
+
+    async def _get_area_chapter_map(self, world_id: str) -> Dict[str, str]:
+        """获取 area→首次出现 chapter 映射（缓存）。"""
+        if world_id in self._area_chapter_cache:
+            return self._area_chapter_cache[world_id]
+
+        mapping: Dict[str, str] = {}
+        try:
+            chapters_ref = self.graph_store.db.collection("worlds").document(world_id).collection("chapters")
+            for doc in chapters_ref.stream():
+                ch_data = doc.to_dict() or {}
+                ch_id = ch_data.get("id") or doc.id
+                areas = ch_data.get("available_areas") or ch_data.get("available_maps") or []
+                for area_id in areas:
+                    if area_id not in mapping:
+                        mapping[area_id] = ch_id
+        except Exception as exc:
+            logger.debug("[area_chapter_map] Firestore 读取失败: %s", exc)
+
+        self._area_chapter_cache[world_id] = mapping
+        return mapping
+
     async def _build_context(self, world_id: str, session_id: str) -> Dict[str, Any]:
         """构建当前上下文"""
         context = {"world_id": world_id}
@@ -1829,12 +1888,23 @@ class AdminCoordinator:
         char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
         scoped_data.append((char_scope, char_data))
 
-        # 2) 当前区域叙述图谱（可选）
+        # 2) 当前区域叙述图谱（可选，含跨章节回退）
         if chapter_id and area_id:
             area_scope = GraphScope(
                 scope_type="area", chapter_id=chapter_id, area_id=area_id,
             )
             area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
+            # 回退：如果当前 chapter 下没数据，尝试 area 的原始 chapter
+            if not area_data.nodes:
+                area_chapter_map = await self._get_area_chapter_map(world_id)
+                original_chapter = area_chapter_map.get(area_id)
+                if original_chapter and original_chapter != chapter_id:
+                    area_scope = GraphScope(
+                        scope_type="area", chapter_id=original_chapter, area_id=area_id,
+                    )
+                    area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
+                    logger.info("[v2] area scope 回退: %s:%s → %s:%s",
+                                chapter_id, area_id, original_chapter, area_id)
             scoped_data.append((area_scope, area_data))
 
         # 3) 章节叙述图谱（可选）
@@ -1852,6 +1922,26 @@ class AdminCoordinator:
         world_scope = GraphScope(scope_type="world")
         world_data = await self.graph_store.load_graph_v2(world_id, world_scope)
         scoped_data.append((world_scope, world_data))
+
+        # 6) 加载种子中引用的角色 scope（让角色节点参与扩散）
+        known_char_ids = await self._get_character_id_set(world_id)
+        loaded_chars = {character_id}  # 已加载的（避免重复）
+        for seed in seed_nodes:
+            # 尝试原始形式和去前缀形式
+            candidates = [seed]
+            for prefix in ("person_", "character_", "location_", "area_"):
+                if seed.startswith(prefix):
+                    candidates.append(seed[len(prefix):])
+            for candidate in candidates:
+                if candidate in known_char_ids and candidate not in loaded_chars:
+                    loaded_chars.add(candidate)
+                    char_scope = GraphScope(scope_type="character", character_id=candidate)
+                    char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
+                    scoped_data.append((char_scope, char_data))
+                    break  # 一个 seed 最多加载一个角色 scope
+        if len(loaded_chars) > 1:
+            logger.info("[v2] 记忆召回：额外加载 %d 个角色 scope: %s",
+                        len(loaded_chars) - 1, loaded_chars - {character_id})
 
         # 7) 注入好感度动态边权重
         merged = MemoryGraph.from_multi_scope(scoped_data)
