@@ -1,3 +1,5 @@
+**中文** | [English](README_EN.md)
+
 # AI RPG Game Engine Backend
 
 AI 驱动的互动式 TRPG 游戏后端，具备智能记忆管理、知识图谱和动态叙事编排能力。
