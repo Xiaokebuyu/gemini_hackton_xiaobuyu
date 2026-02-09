@@ -4,7 +4,7 @@
 
 An AI-powered interactive TRPG game backend with intelligent memory management, knowledge graphs, and dynamic narrative orchestration.
 
-Built on a **Flash-Only v2 architecture** — a single Gemini Flash model handles intent analysis, operation execution, and narrative generation in one call, balancing low latency with narrative coherence.
+Built on an **Agentic v3 architecture** — the model autonomously calls MCP tools (navigation, dialogue, combat, graph operations, etc.) within a single agentic session while generating narration, backed by tool execution enforcement and auto-repair mechanisms that balance autonomy with controllability.
 
 ## Tech Stack
 
@@ -134,58 +134,61 @@ backend/
 
 ## Core Architecture
 
-### Flash-Only v2 Data Flow
+### Agentic v3 Data Flow
 
-Entry point: `AdminCoordinator.process_player_input_v2()`
+Entry point: `AdminCoordinator.process_player_input_v3()`
 
 ```
 Player Input
     │
     ▼
 ┌─────────────────────────────────────────────────┐
-│ 1. Collect Base Context                         │
-│    World state · Session · Scene · Party · Chapter │
+│ A. Pre-processing                               │
+│                                                  │
+│ 1. Collect base context                          │
+│    World state · Session · Scene · Party · Chapter│
+│                                                  │
+│ 2. StoryDirector pre-evaluation                  │
+│    Mechanical conditions → auto_fired_events     │
+│    Semantic conditions  → pending_flash_conditions│
+│                                                  │
+│ 3. Prefill memory recall (parallel)              │
+│    Player + each teammate spreading activation   │
 └────────────────────┬────────────────────────────┘
                      ▼
 ┌─────────────────────────────────────────────────┐
-│ 2. StoryDirector Pre-Evaluation                 │
-│    Mechanical conditions → auto_fired_events    │
-│    Semantic conditions  → pending_flash_conditions │
+│ B. Agentic Session (core)                       │
+│                                                  │
+│    Model autonomously calls MCP tools:           │
+│    navigate · npc_dialogue · start_combat ·      │
+│    recall_memory · add_item · ability_check ...  │
+│                                                  │
+│    While generating GM narration                 │
+│                                                  │
+│ ┌─────────────────────────────────────────┐      │
+│ │ Tool Execution Enforcement              │      │
+│ │ Detect missing required tool calls      │      │
+│ │ → Auto-repair: call missing tools +     │      │
+│ │   regenerate narration                  │      │
+│ └─────────────────────────────────────────┘      │
 └────────────────────┬────────────────────────────┘
                      ▼
 ┌─────────────────────────────────────────────────┐
-│ 3. Flash One-Shot Analysis                      │
-│    intent + operations + memory_seeds           │
-│    + Flash condition evaluation + context_package │
-└────────────────────┬────────────────────────────┘
-                     ▼
-         ┌───────────┴───────────┐
-         ▼                       ▼
-┌──────────────────┐  ┌──────────────────────┐
-│ 4a. Memory Recall │  │ 4b. Execute Flash Ops │
-│ Spreading activ.  │  │ MCP tool calls        │
-│ Multi-scope merge │  │ State updates         │
-└────────┬─────────┘  └──────────┬───────────┘
-         └───────────┬───────────┘
-                     ▼
-┌─────────────────────────────────────────────────┐
-│ 5. StoryDirector Post-Evaluation                │
-│    Merge results → fired_events + chapter_transition │
-└────────────────────┬────────────────────────────┘
-                     ▼
-┌─────────────────────────────────────────────────┐
-│ 6. Flash GM Narration (2–4 sentences)           │
-│    Full context + execution summary + memories  │
-└────────────────────┬────────────────────────────┘
-                     ▼
-┌─────────────────────────────────────────────────┐
-│ 7. Concurrent Teammate Responses                │
-│    Each teammate decides whether to respond → reply │
-└────────────────────┬────────────────────────────┘
-                     ▼
-┌─────────────────────────────────────────────────┐
-│ 8. Event Distribution to Teammate Graphs        │
-│    (perspective-aware transformation)           │
+│ C. Post-processing                              │
+│                                                  │
+│ 4. Context curation (memory + teammate injection)│
+│                                                  │
+│ 5. StoryDirector post-evaluation                 │
+│    Merge results → fired_events +                │
+│    chapter_transition                            │
+│                                                  │
+│ 6. Chapter transition handling (if triggered)    │
+│                                                  │
+│ 7. Concurrent teammate responses                 │
+│    Each decides whether to respond → reply       │
+│                                                  │
+│ 8. Event distribution to teammate graphs         │
+│    (perspective-aware transformation)            │
 └────────────────────┬────────────────────────────┘
                      ▼
              CoordinatorResponse → Frontend
@@ -442,7 +445,7 @@ python -m app.tools.gm_natural_cli               # GM narration testing
 
 ## Design Highlights
 
-1. **Flash-Only Architecture**: A single model call handles intent analysis + operation planning + condition evaluation, reducing latency and multi-model orchestration complexity
+1. **Agentic Architecture**: The model autonomously calls MCP tools and generates narration in a single session, with tool execution enforcement and auto-repair balancing autonomy and controllability
 2. **Dual-Layer NPC Cognition**: Working memory (real-time conversation) + long-term memory graph (semantic retrieval), with auto-graphization enabling unlimited conversation capacity
 3. **GraphScope Unified Addressing**: 6 hierarchical scopes covering world → chapter → area → location → character → camp, with one API for all graph operations
 4. **Spreading Activation Retrieval**: Graph-theory-based memory recall with cross-perspective/cross-chapter decay, capturing narrative causality better than vector similarity
