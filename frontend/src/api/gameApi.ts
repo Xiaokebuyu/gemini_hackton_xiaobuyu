@@ -10,6 +10,8 @@ import type {
   PlayerInputResponse,
   CoordinatorResponse,
   LocationResponse,
+  Destination,
+  SubLocation,
   NavigateRequest,
   NavigateResponse,
   GameTimeResponse,
@@ -35,6 +37,125 @@ import type {
   CharacterCreationRequest,
   CharacterCreationResponse,
 } from '../types';
+
+type DestinationLike = Partial<Destination> & {
+  id?: string;
+  travel_time?: string;
+  is_locked?: boolean;
+};
+
+type SubLocationLike = Partial<SubLocation> & {
+  is_locked?: boolean;
+};
+
+function normalizeDangerLevel(value: unknown): Destination['danger_level'] {
+  if (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'extreme'
+  ) {
+    return value;
+  }
+  return 'low';
+}
+
+function normalizeDestination(dest: DestinationLike): Destination {
+  const isAccessible =
+    typeof dest.is_accessible === 'boolean'
+      ? dest.is_accessible
+      : typeof dest.is_locked === 'boolean'
+      ? !dest.is_locked
+      : true;
+
+  return {
+    location_id: dest.location_id ?? dest.id ?? dest.name ?? '',
+    name: dest.name ?? '',
+    description: dest.description ?? '',
+    distance: dest.distance ?? dest.travel_time ?? '',
+    danger_level: normalizeDangerLevel(dest.danger_level),
+    is_accessible: isAccessible,
+  };
+}
+
+function normalizeSubLocation(subLoc: SubLocationLike): SubLocation {
+  const isAccessible =
+    typeof subLoc.is_accessible === 'boolean'
+      ? subLoc.is_accessible
+      : typeof subLoc.is_locked === 'boolean'
+      ? !subLoc.is_locked
+      : true;
+
+  return {
+    id: subLoc.id ?? subLoc.name ?? '',
+    name: subLoc.name ?? '',
+    description: subLoc.description ?? '',
+    is_accessible: isAccessible,
+  };
+}
+
+function normalizeLocationResponse(location: LocationResponse): LocationResponse {
+  const rawLocation = location as LocationResponse & {
+    available_destinations?: DestinationLike[];
+    available_sub_locations?: SubLocationLike[];
+    sub_locations?: SubLocationLike[];
+  };
+
+  const destinations = Array.isArray(rawLocation.available_destinations)
+    ? rawLocation.available_destinations
+    : [];
+  const subLocationsRaw = rawLocation.available_sub_locations ?? rawLocation.sub_locations ?? [];
+  const subLocations = Array.isArray(subLocationsRaw) ? subLocationsRaw : [];
+
+  return {
+    ...location,
+    available_destinations: destinations.map(normalizeDestination),
+    available_sub_locations: subLocations.map(normalizeSubLocation),
+  };
+}
+
+function normalizeSubLocationsResponse(response: SubLocationsResponse): SubLocationsResponse {
+  const rawResponse = response as SubLocationsResponse & {
+    available_sub_locations?: SubLocationLike[];
+    sub_locations?: SubLocationLike[];
+  };
+  const subLocationsRaw = rawResponse.available_sub_locations ?? rawResponse.sub_locations ?? [];
+  const subLocations = Array.isArray(subLocationsRaw) ? subLocationsRaw : [];
+
+  return {
+    ...response,
+    available_sub_locations: subLocations.map(normalizeSubLocation),
+  };
+}
+
+function normalizeAvailableMapIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const ids: string[] = [];
+  for (const entry of value) {
+    if (typeof entry === 'string') {
+      const trimmed = entry.trim();
+      if (trimmed) ids.push(trimmed);
+      continue;
+    }
+
+    if (entry && typeof entry === 'object') {
+      const obj = entry as Record<string, unknown>;
+      const candidate =
+        typeof obj.id === 'string'
+          ? obj.id
+          : typeof obj.map_id === 'string'
+          ? obj.map_id
+          : typeof obj.location_id === 'string'
+          ? obj.location_id
+          : '';
+      const trimmed = candidate.trim();
+      if (trimmed) ids.push(trimmed);
+    }
+  }
+
+  return Array.from(new Set(ids));
+}
 
 // =============================================================================
 // Worlds
@@ -69,7 +190,10 @@ export async function createSession(
     `/api/game/${worldId}/sessions`,
     request
   );
-  return response.data;
+  return {
+    ...response.data,
+    location: normalizeLocationResponse(response.data.location),
+  };
 }
 
 /**
@@ -217,7 +341,7 @@ export async function getLocation(
   const response = await apiClient.get<LocationResponse>(
     `/api/game/${worldId}/sessions/${sessionId}/location`
   );
-  return response.data;
+  return normalizeLocationResponse(response.data);
 }
 
 /**
@@ -234,7 +358,12 @@ export async function navigate(
     `/api/game/${worldId}/sessions/${sessionId}/navigate`,
     request
   );
-  return response.data;
+  return {
+    ...response.data,
+    new_location: response.data.new_location
+      ? normalizeLocationResponse(response.data.new_location)
+      : response.data.new_location,
+  };
 }
 
 // =============================================================================
@@ -253,7 +382,7 @@ export async function getSubLocations(
   const response = await apiClient.get<SubLocationsResponse>(
     `/api/game/${worldId}/sessions/${sessionId}/sub-locations`
   );
-  return response.data;
+  return normalizeSubLocationsResponse(response.data);
 }
 
 /**
@@ -518,11 +647,17 @@ export async function getCurrentPlan(
 export async function getAvailableMaps(
   worldId: string,
   sessionId: string
-): Promise<{ available_maps: Record<string, unknown>[]; all_unlocked: boolean }> {
-  const response = await apiClient.get(
+): Promise<{ available_maps: string[]; all_unlocked: boolean }> {
+  const response = await apiClient.get<{
+    available_maps?: unknown;
+    all_unlocked?: unknown;
+  }>(
     `/api/game/${worldId}/sessions/${sessionId}/narrative/available-maps`
   );
-  return response.data;
+  return {
+    available_maps: normalizeAvailableMapIds(response.data.available_maps),
+    all_unlocked: Boolean(response.data.all_unlocked),
+  };
 }
 
 /**

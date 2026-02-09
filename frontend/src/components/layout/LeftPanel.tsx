@@ -5,7 +5,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useUIStore } from '../../stores';
+import { useUIStore, useGameStore } from '../../stores';
 import { useLocation } from '../../api/hooks/useLocation';
 import PanelFrame from './PanelFrame';
 import MiniMap from '../map/MiniMap';
@@ -21,7 +21,9 @@ interface LeftPanelProps {
 export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
   const { t } = useTranslation();
   const { leftPanelCollapsed, toggleLeftPanel } = useUIStore();
-  const { location } = useLocation();
+  const { location: fetchedLocation } = useLocation();
+  const { location: storeLocation } = useGameStore();
+  const location = fetchedLocation ?? storeLocation;
 
   return (
     <div className={`relative flex ${className}`}>
@@ -75,7 +77,7 @@ export const LeftPanel: React.FC<LeftPanelProps> = ({ className = '' }) => {
                   <div className="flex-1 overflow-y-auto g-scrollbar px-3 pb-3">
                     <SubLocationList subLocations={location?.available_sub_locations} />
                     <div className="mt-3 pt-3 border-t border-g-border">
-                      <DestinationList />
+                      <DestinationList destinations={location?.available_destinations} />
                     </div>
                   </div>
                 </div>

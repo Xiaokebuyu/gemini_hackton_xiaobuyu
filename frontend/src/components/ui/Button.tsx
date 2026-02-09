@@ -67,11 +67,12 @@ export const Button: React.FC<ButtonProps> = ({
         rounded-lg
         transition-all duration-200
         disabled:opacity-50 disabled:cursor-not-allowed
+        focus-visible:ring-2 focus-visible:ring-g-gold/30 focus-visible:ring-offset-1
         ${variantStyles[variant]}
         ${sizeStyles[size]}
         ${className}
       `}
-      whileHover={disabled ? {} : { scale: 1.01, y: -1 }}
+      whileHover={disabled ? {} : { scale: 1.02, y: -1 }}
       whileTap={disabled ? {} : { scale: 0.98 }}
     >
       {children}

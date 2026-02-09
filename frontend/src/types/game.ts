@@ -256,6 +256,29 @@ export interface LocationData {
   npcs_present: string[];
 }
 
+export interface MapGraphNode {
+  id: string;
+  name: string;
+  danger_level: 'low' | 'medium' | 'high' | 'extreme';
+  is_current: boolean;
+  is_unlocked: boolean;
+  is_reachable_from_current: boolean;
+  last_seen_at: number;
+}
+
+export interface MapGraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  travel_time?: string;
+  is_active: boolean;
+}
+
+export interface MapGraphState {
+  nodes: Record<string, MapGraphNode>;
+  edges: Record<string, MapGraphEdge>;
+}
+
 // =============================================================================
 // 消息类型 (前端专用)
 // =============================================================================

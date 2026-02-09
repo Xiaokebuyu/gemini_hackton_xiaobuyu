@@ -295,3 +295,22 @@
   100% { opacity: 1; transform: scaleX(1); }
 }
 .animate-ornament-reveal { animation: ornamentReveal 0.8s ease-out forwards; }
+
+/* Button press flash — quick golden flash on press */
+@keyframes btnPressFlash {
+  0% { box-shadow: 0 0 0 0 rgba(196, 154, 42, 0.4); }
+  50% { box-shadow: 0 0 12px 4px rgba(196, 154, 42, 0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(196, 154, 42, 0); }
+}
+.btn-press-flash {
+  animation: btnPressFlash 0.3s ease-out;
+}
+
+/* Tab crossfade — opacity + scale combo for tab switching */
+@keyframes tabCrossfade {
+  0% { opacity: 0; transform: scale(0.98); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.tab-crossfade {
+  animation: tabCrossfade 0.15s ease-out forwards;
+}

@@ -145,27 +145,35 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
       <AnimatePresence mode="wait">
         <motion.div
           key={roundId}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.25 }}
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
           className="flex-1 min-h-0 flex flex-col"
         >
           {/* ---- Player action summary bar ---- */}
           {round.playerMessage && (
-            <div className="flex-shrink-0 flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-g-gold/10 border border-g-gold/30">
+            <motion.div
+              initial={{ opacity: 0, x: -12 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.25, delay: 0.05 }}
+              className="flex-shrink-0 flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-g-gold/10 border border-g-gold/30">
               <User className="w-4 h-4 text-g-gold flex-shrink-0" />
               <span className="text-sm text-g-gold font-medium truncate">
                 {round.playerMessage.content}
               </span>
-            </div>
+            </motion.div>
           )}
 
           {/* ---- GM narration area ---- */}
           <div className="flex-1 min-h-0 overflow-y-auto g-scrollbar">
             {isLoading && !round.gmNarration && (
-              <div className="flex items-center gap-3 py-4">
-                <LoadingSpinner size="sm" />
+              <div className="bg-[var(--g-bubble-gm-bg)] border-l-[3px] border-l-[var(--g-accent-gold)] rounded-xl px-6 py-5 min-h-[80px] shadow-g-gold animate-pulse flex items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-g-gold animate-bounce" style={{ animationDelay: '0s' }} />
+                  <span className="w-2 h-2 rounded-full bg-g-gold animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  <span className="w-2 h-2 rounded-full bg-g-gold animate-bounce" style={{ animationDelay: '0.4s' }} />
+                </div>
                 <span className="text-g-text-secondary text-sm italic font-body">
                   {t('narrative.gmThinking')}
                 </span>
@@ -173,11 +181,11 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
             )}
 
             {round.gmNarration && (
-              <div className="bg-[var(--g-bubble-gm-bg)] border-l-[3px] border-l-[var(--g-accent-gold)] rounded-xl p-5 shadow-[var(--g-shadow-sm)]">
+              <div className="bg-[var(--g-bubble-gm-bg)] border-l-[3px] border-l-[var(--g-accent-gold)] rounded-xl px-6 py-5 min-h-[120px] shadow-g-gold g-inner-glow">
                 {/* GM label */}
-                <div className="flex items-center gap-2 mb-3">
-                  <BookOpen className="w-4 h-4 text-[var(--g-accent-gold)]" />
-                  <span className="text-xs font-semibold text-[var(--g-accent-gold)] tracking-wide">
+                <div className="flex items-center gap-2 mb-4 pb-2 border-b border-[var(--g-accent-gold)]/20">
+                  <BookOpen className="w-5 h-5 text-[var(--g-accent-gold)]" />
+                  <span className="text-sm font-semibold text-[var(--g-accent-gold)] tracking-wide">
                     {t('speaker.gm')}
                   </span>
                 </div>
@@ -185,7 +193,7 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
                 <div className="whitespace-pre-wrap text-[var(--g-text-primary)] font-body leading-relaxed">
                   {isGmStreaming ? (
                     <>
-                      {round.gmNarration.content}
+                      {parseGMNarration(round.gmNarration.content).text}
                       <span className="inline-block w-2 h-4 ml-0.5 bg-g-gold/70 animate-pulse align-text-bottom" />
                     </>
                   ) : (
@@ -212,6 +220,20 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
 
             {/* Combat trigger card */}
             {combatId && !isCombatActive && <CombatTriggerCard />}
+
+            {/* Teammate thinking indicator */}
+            {isTypingComplete && round.teammateResponses.length === 0 && isLoading && (
+              <div className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-g-bubble-teammate-bg border border-g-bubble-teammate-border">
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-g-bubble-teammate-border animate-bounce" style={{ animationDelay: '0s' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-g-bubble-teammate-border animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-g-bubble-teammate-border animate-bounce" style={{ animationDelay: '0.4s' }} />
+                </div>
+                <span className="text-xs text-g-text-muted italic font-body">
+                  {t('narrative.teammateThinking', '队友正在思考...')}
+                </span>
+              </div>
+            )}
 
             {/* ---- Teammate response zone (after GM content, before input) ---- */}
             <GalgameTeammateZone

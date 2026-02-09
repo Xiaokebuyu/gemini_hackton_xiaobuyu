@@ -74,6 +74,7 @@ export function useGameInput(options?: UseGameInputOptions) {
 
       // Invalidate location, time, and party queries to refresh sidebar
       queryClient.invalidateQueries({ queryKey: ['location'] });
+      queryClient.invalidateQueries({ queryKey: ['availableMaps', worldId, sessionId] });
       queryClient.invalidateQueries({ queryKey: ['gameTime'] });
       queryClient.invalidateQueries({ queryKey: ['party'] });
       queryClient.invalidateQueries({ queryKey: ['narrativeProgress', worldId, sessionId] });
@@ -227,6 +228,7 @@ export function useStreamGameInput() {
                   setAvailableActions(event.available_actions as GameAction[]);
                 }
                 queryClient.invalidateQueries({ queryKey: ['location'] });
+                queryClient.invalidateQueries({ queryKey: ['availableMaps', worldId, sessionId] });
                 queryClient.invalidateQueries({ queryKey: ['gameTime'] });
                 queryClient.invalidateQueries({ queryKey: ['party'] });
                 queryClient.invalidateQueries({ queryKey: ['narrativeProgress', worldId, sessionId] });

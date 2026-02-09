@@ -26,6 +26,7 @@ export const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
         border-t-g-gold
         rounded-full
         animate-spin
+        shadow-g-gold
         ${className}
       `}
     />

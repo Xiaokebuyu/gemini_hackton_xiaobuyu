@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { ParsedOption } from '../../utils/narrationParser';
 
 interface GMOptionsProps {
@@ -46,37 +46,42 @@ export const GMOptions: React.FC<GMOptionsProps> = ({
       <p className="text-xs text-g-text-muted uppercase tracking-wide font-body">
         {t('options.choose')}
       </p>
-      {options.map((opt) => {
-        const isSelected = selectedId === opt.id;
-        const isDisabled = disabled || (selectedId != null && !isSelected);
-        return (
-          <motion.button
-            key={opt.id}
-            variants={item}
-            whileHover={!isDisabled ? { scale: 1.01 } : undefined}
-            whileTap={!isDisabled ? { scale: 0.99 } : undefined}
-            onClick={() => !isDisabled && onSelect(opt)}
-            disabled={isDisabled}
-            className={`
-              w-full text-left px-4 py-3
-              bg-g-bg-surface border rounded-lg
-              transition-all duration-200
-              font-body text-sm
-              ${isSelected
-                ? 'border-g-gold bg-g-gold/10 text-g-gold'
-                : isDisabled
-                  ? 'border-g-border opacity-40 cursor-not-allowed'
-                  : 'border-g-border hover:border-g-gold cursor-pointer'
-              }
-            `}
-          >
-            <span className="font-medium">{opt.label}</span>
-            {opt.description && (
-              <span className="text-g-text-secondary ml-2">{opt.description}</span>
-            )}
-          </motion.button>
-        );
-      })}
+      <AnimatePresence>
+        {options.map((opt) => {
+          const isSelected = selectedId === opt.id;
+          const isDisabled = disabled || (selectedId != null && !isSelected);
+          const isUnselected = selectedId != null && !isSelected;
+          return (
+            <motion.button
+              key={opt.id}
+              variants={item}
+              whileHover={!isDisabled ? { scale: 1.01 } : undefined}
+              whileTap={!isDisabled ? { scale: 0.99 } : undefined}
+              animate={isUnselected ? { opacity: 0, scale: 0.95 } : { opacity: 1, scale: 1 }}
+              transition={{ duration: 0.2 }}
+              onClick={() => !isDisabled && onSelect(opt)}
+              disabled={isDisabled}
+              className={`
+                w-full text-left px-4 py-3
+                bg-g-bg-surface border rounded-lg
+                transition-all duration-200
+                font-body text-sm
+                ${isSelected
+                  ? 'border-g-gold bg-g-gold/10 text-g-gold animate-pulse-ring'
+                  : isDisabled
+                    ? 'border-g-border opacity-40 cursor-not-allowed'
+                    : 'border-g-border hover:border-g-gold cursor-pointer'
+                }
+              `}
+            >
+              <span className="font-medium">{opt.label}</span>
+              {opt.description && (
+                <span className="text-g-text-secondary ml-2">{opt.description}</span>
+              )}
+            </motion.button>
+          );
+        })}
+      </AnimatePresence>
     </motion.div>
   );
 };

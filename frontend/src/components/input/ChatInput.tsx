@@ -16,6 +16,7 @@ interface ChatInputProps {
 export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
   const { t } = useTranslation();
   const [input, setInput] = useState('');
+  const [showPulse, setShowPulse] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { isLoading } = useChatStore();
   const { sendInput } = useStreamGameInput();
@@ -41,6 +42,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
     if (trimmedInput && !isLoading) {
       sendInput(trimmedInput);
       setInput('');
+      // Trigger pulse confirmation flash
+      setShowPulse(true);
+      setTimeout(() => setShowPulse(false), 500);
       // Reset textarea height
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
@@ -67,7 +71,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
             border-2
             rounded-xl
             transition-all duration-200
-            border-g-border-strong focus-within:border-g-gold
+            border-g-border-strong focus-within:border-g-gold focus-within:shadow-g-gold
             bg-g-bg-input
           "
         >
@@ -89,7 +93,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
           onClick={handleSubmit}
           disabled={!input.trim() || isLoading}
           variant={input.trim() && !isLoading ? 'primary' : 'secondary'}
-          className="w-12 h-12 flex items-center justify-center"
+          className={`w-12 h-12 flex items-center justify-center ${input.trim() && !isLoading ? 'shadow-g-gold' : ''} ${showPulse ? 'animate-pulse-ring' : ''}`}
           title={t('chat.send')}
         >
           {isLoading ? (

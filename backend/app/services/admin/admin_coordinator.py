@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional, Dict, Tuple
 
 from app.config import settings
 from app.services.admin.flash_cpu_service import FlashCPUService
@@ -403,7 +403,11 @@ class AdminCoordinator:
         history = self.session_history_manager.get_or_create(world_id, session_id)
 
         # 1. 收集上下文
-        base_context = await self._build_context(world_id, session_id)
+        base_context = await self._build_context(
+            world_id,
+            session_id,
+            player_character=pc,
+        )
 
         # 1.5 注入对话历史到上下文（上下文连续性）
         # Flash 侧优先使用大上下文窗口（1M）
@@ -535,6 +539,25 @@ class AdminCoordinator:
         if isinstance(analysis.story_progression, dict):
             context["story_progression"] = analysis.story_progression
 
+        curation_task = asyncio.create_task(
+            self._run_curation_pipeline(
+                world_id=world_id,
+                player_input=player_input,
+                intent=intent,
+                memory_result=memory_result,
+                flash_results=flash_results,
+                context=dict(context),
+                party=party,
+                skip_teammate=skip_teammate,
+                analysis_memory_seeds=analysis.memory_seeds,
+                base_context=base_context,
+                chapter_id=current_chapter_id,
+                area_id=current_area_id,
+                teammate_recall_tasks=teammate_recall_tasks,
+            )
+        )
+        curation_task.add_done_callback(self._consume_background_task_exception)
+
         # 4.8 StoryDirector Post-Flash 评估（sync，无 LLM，只需 Flash 分析结果）
         flash_condition_results: Dict[str, bool] = {}
         story_prog = context.get("story_progression")
@@ -543,8 +566,13 @@ class AdminCoordinator:
                 if isinstance(eval_item, dict) and "id" in eval_item:
                     flash_condition_results[str(eval_item["id"])] = bool(eval_item.get("result", False))
 
-        # 刷新进度（Pre-Flash 可能触发了事件）
-        progress = await self.narrative_service.get_progress(world_id, session_id)
+        # 仅在可能产生进度变化时刷新进度（减少重复读取）
+        progress_needs_refresh = bool(pre_side_effects) or any(
+            result.success and result.operation == FlashOperation.TRIGGER_NARRATIVE_EVENT
+            for result in flash_results
+        )
+        if progress_needs_refresh:
+            progress = await self.narrative_service.get_progress(world_id, session_id)
         active_story_chapters = self._resolve_story_chapters(world_id, progress)
         current_chapter = active_story_chapters[0] if active_story_chapters else None
         game_ctx_updated = self._build_game_context(context, progress, session_id, player_input)
@@ -725,66 +753,14 @@ class AdminCoordinator:
             )
         )
 
-        # (b) 玩家 curation
-        async def _curate_player():
-            if not memory_result or not getattr(memory_result, "activated_nodes", None):
-                return None
-            return await self.flash_cpu.curate_context(
-                player_input=player_input,
-                intent=intent,
-                memory_result=memory_result,
-                flash_results=flash_results,
-                context=context,
-            )
-
-        # (c) 队友 curation（使用 Phase 2 提前完成的 recall）
-        async def _curate_all_teammates():
-            if not party or skip_teammate:
-                return {}, {}
-            active = party.get_active_members()
-            if not active:
-                return {}, {}
-
-            async def _curate_one(member):
-                char_id = member.character_id
-                task = teammate_recall_tasks.get(char_id)
-                if task:
-                    mem = await task  # 已完成，立即返回
-                else:
-                    seeds = self._build_effective_seeds(
-                        analysis.memory_seeds, base_context, character_id=char_id)
-                    mem = await self._recall_memory(
-                        world_id, char_id, seeds,
-                        intent_type=intent.intent_type.value,
-                        chapter_id=current_chapter_id, area_id=current_area_id)
-                if not mem or not getattr(mem, "activated_nodes", None):
-                    return char_id, None, ""
-                view = dict(context)
-                view["active_character_id"] = char_id
-                curated = await self.flash_cpu.curate_context(
-                    player_input=player_input, intent=intent,
-                    memory_result=mem, flash_results=flash_results, context=view)
-                summary = self._summarize_memory(mem)
-                return char_id, curated, summary
-
-            results = await asyncio.gather(
-                *(_curate_one(m) for m in active), return_exceptions=True)
-            packages, summaries = {}, {}
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.error("[v2] 队友上下文编排失败: %s", r, exc_info=True)
-                    continue
-                cid, cur, summ = r
-                if cur:
-                    packages[cid] = cur
-                if summ:
-                    summaries[cid] = summ
-            return packages, summaries
-
-        # 全部并行执行
-        player_curated, (t_packages, t_summaries) = await asyncio.gather(
-            _curate_player(), _curate_all_teammates()
-        )
+        # (b) 读取并行 curation 结果（任务已在 post-eval 前启动）
+        player_curated: Optional[Dict[str, Any]] = None
+        t_packages: Dict[str, Dict[str, Any]] = {}
+        t_summaries: Dict[str, str] = {}
+        try:
+            player_curated, t_packages, t_summaries = await curation_task
+        except Exception as exc:
+            logger.error("[v2] curation 失败: %s", exc, exc_info=True)
 
         # 应用玩家 curation 结果到 context
         if player_curated:
@@ -1004,6 +980,7 @@ class AdminCoordinator:
             "skip_reasons": [],
         }
         memory_task: Optional[asyncio.Task] = None
+        curation_task: Optional[asyncio.Task] = None
         teammate_recall_tasks: Dict[str, asyncio.Task] = {}
 
         try:
@@ -1022,7 +999,11 @@ class AdminCoordinator:
             party = await self.party_service.get_party(world_id, session_id)
             history = self.session_history_manager.get_or_create(world_id, session_id)
 
-            base_context = await self._build_context(world_id, session_id)
+            base_context = await self._build_context(
+                world_id,
+                session_id,
+                player_character=pc,
+            )
             conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
             if conversation_history:
                 base_context["conversation_history"] = conversation_history
@@ -1135,6 +1116,25 @@ class AdminCoordinator:
                 context["is_private"] = True
                 context["private_target"] = private_target
 
+            curation_task = asyncio.create_task(
+                self._run_curation_pipeline(
+                    world_id=world_id,
+                    player_input=player_input,
+                    intent=intent,
+                    memory_result=memory_result,
+                    flash_results=flash_results,
+                    context=dict(context),
+                    party=party,
+                    skip_teammate=skip_teammate,
+                    analysis_memory_seeds=analysis.memory_seeds,
+                    base_context=base_context,
+                    chapter_id=current_chapter_id,
+                    area_id=current_area_id,
+                    teammate_recall_tasks=teammate_recall_tasks,
+                )
+            )
+            curation_task.add_done_callback(self._consume_background_task_exception)
+
             # StoryDirector Post-Flash
             flash_condition_results: Dict[str, bool] = {}
             story_prog = context.get("story_progression")
@@ -1143,7 +1143,12 @@ class AdminCoordinator:
                     if isinstance(eval_item, dict) and "id" in eval_item:
                         flash_condition_results[str(eval_item["id"])] = bool(eval_item.get("result", False))
 
-            progress = await self.narrative_service.get_progress(world_id, session_id)
+            progress_needs_refresh = bool(pre_side_effects) or any(
+                result.success and result.operation == FlashOperation.TRIGGER_NARRATIVE_EVENT
+                for result in flash_results
+            )
+            if progress_needs_refresh:
+                progress = await self.narrative_service.get_progress(world_id, session_id)
             active_story_chapters = self._resolve_story_chapters(world_id, progress)
             current_chapter = active_story_chapters[0] if active_story_chapters else None
             game_ctx_updated = self._build_game_context(context, progress, session_id, player_input)
@@ -1281,60 +1286,14 @@ class AdminCoordinator:
 
             # Curation
             execution_summary = self._build_execution_summary(flash_results)
-
-            async def _curate_player():
-                if not memory_result or not getattr(memory_result, "activated_nodes", None):
-                    return None
-                return await self.flash_cpu.curate_context(
-                    player_input=player_input, intent=intent,
-                    memory_result=memory_result, flash_results=flash_results, context=context,
-                )
-
-            async def _curate_all_teammates():
-                if not party or skip_teammate:
-                    return {}, {}
-                active = party.get_active_members()
-                if not active:
-                    return {}, {}
-
-                async def _curate_one(member):
-                    char_id = member.character_id
-                    task = teammate_recall_tasks.get(char_id)
-                    if task:
-                        mem = await task
-                    else:
-                        seeds = self._build_effective_seeds(
-                            analysis.memory_seeds, base_context, character_id=char_id)
-                        mem = await self._recall_memory(
-                            world_id, char_id, seeds,
-                            intent_type=intent.intent_type.value,
-                            chapter_id=current_chapter_id, area_id=current_area_id)
-                    if not mem or not getattr(mem, "activated_nodes", None):
-                        return char_id, None, ""
-                    view = dict(context)
-                    view["active_character_id"] = char_id
-                    curated = await self.flash_cpu.curate_context(
-                        player_input=player_input, intent=intent,
-                        memory_result=mem, flash_results=flash_results, context=view)
-                    summary = self._summarize_memory(mem)
-                    return char_id, curated, summary
-
-                results = await asyncio.gather(
-                    *(_curate_one(m) for m in active), return_exceptions=True)
-                packages, summaries = {}, {}
-                for r in results:
-                    if isinstance(r, Exception):
-                        continue
-                    cid, cur, summ = r
-                    if cur:
-                        packages[cid] = cur
-                    if summ:
-                        summaries[cid] = summ
-                return packages, summaries
-
-            player_curated, (t_packages, t_summaries) = await asyncio.gather(
-                _curate_player(), _curate_all_teammates()
-            )
+            player_curated: Optional[Dict[str, Any]] = None
+            t_packages: Dict[str, Dict[str, Any]] = {}
+            t_summaries: Dict[str, str] = {}
+            if curation_task:
+                try:
+                    player_curated, t_packages, t_summaries = await curation_task
+                except Exception as exc:
+                    logger.error("[v2-stream] curation 失败: %s", exc, exc_info=True)
             if player_curated:
                 merged_package = {}
                 if isinstance(context.get("context_package"), dict):
@@ -1487,6 +1446,8 @@ class AdminCoordinator:
             pending_tasks: List[asyncio.Task] = []
             if memory_task is not None:
                 pending_tasks.append(memory_task)
+            if curation_task is not None:
+                pending_tasks.append(curation_task)
             pending_tasks.extend(teammate_recall_tasks.values())
             for task in pending_tasks:
                 if task and not task.done():
@@ -2276,23 +2237,53 @@ class AdminCoordinator:
         self._area_chapter_cache[world_id] = mapping
         return mapping
 
-    async def _build_context(self, world_id: str, session_id: str) -> Dict[str, Any]:
-        """构建当前上下文"""
+    async def _build_context(
+        self,
+        world_id: str,
+        session_id: str,
+        player_character: Any = None,
+    ) -> Dict[str, Any]:
+        """构建当前上下文（并行读取只读依赖）。"""
         context = {"world_id": world_id}
 
-        # 获取位置信息
-        location = await self._world_runtime.get_current_location(world_id, session_id)
+        task_map: Dict[str, Any] = {
+            "location": self._world_runtime.get_current_location(world_id, session_id),
+            "time": self._world_runtime.get_game_time(world_id, session_id),
+            "state": self._state_manager.get_state(world_id, session_id),
+            "party": self.party_service.get_party(world_id, session_id),
+            "world_background": self._get_world_background(world_id, session_id),
+            "character_roster": self._get_character_roster(world_id),
+        }
+        if player_character is None:
+            task_map["player_character"] = self.character_store.get_character(world_id, session_id)
+
+        task_keys = list(task_map.keys())
+        task_results = await asyncio.gather(
+            *(task_map[key] for key in task_keys),
+            return_exceptions=True,
+        )
+        result_map = dict(zip(task_keys, task_results))
+
+        location = result_map.get("location")
+        if isinstance(location, Exception):
+            logger.debug("[_build_context] 位置信息加载失败: %s", location)
+            location = {}
+        if not isinstance(location, dict):
+            location = {}
         context["location"] = location
         context["available_destinations"] = location.get("available_destinations", [])
-        # 添加子地点信息（字段名是 available_sub_locations）
         context["sub_locations"] = location.get("available_sub_locations", [])
 
-        # 获取时间
-        time_info = await self._world_runtime.get_game_time(world_id, session_id)
-        context["time"] = time_info
+        time_info = result_map.get("time")
+        if isinstance(time_info, Exception):
+            logger.debug("[_build_context] 时间信息加载失败: %s", time_info)
+            time_info = {}
+        context["time"] = time_info if isinstance(time_info, dict) else {}
 
-        # 获取状态
-        state = await self._state_manager.get_state(world_id, session_id)
+        state = result_map.get("state")
+        if isinstance(state, Exception):
+            logger.debug("[_build_context] 状态加载失败: %s", state)
+            state = None
         if state:
             context["state"] = "in_dialogue" if state.active_dialogue_npc else (
                 "combat" if state.combat_id else "exploring"
@@ -2302,8 +2293,10 @@ class AdminCoordinator:
             context["state"] = "exploring"
             context["active_npc"] = None
 
-        # 队友信息
-        party = await self.party_service.get_party(world_id, session_id)
+        party = result_map.get("party")
+        if isinstance(party, Exception):
+            logger.debug("[_build_context] 队伍信息加载失败: %s", party)
+            party = None
         if party:
             context["party"] = party
             context["teammates"] = [
@@ -2319,9 +2312,12 @@ class AdminCoordinator:
         else:
             context["teammates"] = []
 
-        # 玩家角色
         try:
-            player_char = await self.character_store.get_character(world_id, session_id)
+            player_char = player_character
+            if player_char is None:
+                player_char = result_map.get("player_character")
+                if isinstance(player_char, Exception):
+                    raise player_char
             if player_char:
                 context["player_character"] = player_char
                 context["player_character_summary"] = player_char.to_summary_text()
@@ -2331,13 +2327,19 @@ class AdminCoordinator:
             logger.debug("[_build_context] 玩家角色加载失败: %s", exc)
             context["player_character_summary"] = "无玩家角色"
 
-        # 世界背景 + 角色花名册
-        context["world_background"] = await self._get_world_background(world_id, session_id)
-        context["character_roster"] = await self._get_character_roster(world_id)
+        world_background = result_map.get("world_background")
+        if isinstance(world_background, Exception):
+            logger.debug("[_build_context] 世界背景加载失败: %s", world_background)
+            world_background = "无"
+        context["world_background"] = world_background
 
-        # 章节信息
+        character_roster = result_map.get("character_roster")
+        if isinstance(character_roster, Exception):
+            logger.debug("[_build_context] 角色花名册加载失败: %s", character_roster)
+            character_roster = "无"
+        context["character_roster"] = character_roster
+
         await self._refresh_chapter_context(world_id, session_id, context)
-
         return context
 
     async def _refresh_chapter_context(
@@ -2892,51 +2894,84 @@ class AdminCoordinator:
         )
 
         # 角色（必选）+ 营地（必选）+ 章节/区域（可选）
-        scoped_data = []
+        scoped_data: List[Tuple[GraphScope, Any]] = []
+
+        mandatory_scopes: List[GraphScope] = []
+        mandatory_calls: List[Any] = []
 
         # 1) 角色个人图谱（必选）
         char_scope = GraphScope(scope_type="character", character_id=character_id)
-        char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
-        scoped_data.append((char_scope, char_data))
+        mandatory_scopes.append(char_scope)
+        mandatory_calls.append(self.graph_store.load_graph_v2(world_id, char_scope))
 
-        # 2) 当前区域叙述图谱（可选，含跨章节回退）
+        area_scope: Optional[GraphScope] = None
+        area_data: Optional[Any] = None
         if chapter_id and area_id:
             area_scope = GraphScope(
-                scope_type="area", chapter_id=chapter_id, area_id=area_id,
+                scope_type="area",
+                chapter_id=chapter_id,
+                area_id=area_id,
             )
-            area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
-            # 回退：如果当前 chapter 下没数据，尝试 area 的原始 chapter
-            if not area_data.nodes:
-                area_chapter_map = await self._get_area_chapter_map(world_id)
-                original_chapter = area_chapter_map.get(area_id)
-                if original_chapter and original_chapter != chapter_id:
-                    area_scope = GraphScope(
-                        scope_type="area", chapter_id=original_chapter, area_id=area_id,
-                    )
-                    area_data = await self.graph_store.load_graph_v2(world_id, area_scope)
-                    logger.info("[v2] area scope 回退: %s:%s → %s:%s",
-                                chapter_id, area_id, original_chapter, area_id)
-            scoped_data.append((area_scope, area_data))
+            mandatory_scopes.append(area_scope)
+            mandatory_calls.append(self.graph_store.load_graph_v2(world_id, area_scope))
 
-        # 3) 章节叙述图谱（可选）
         if chapter_id:
             chapter_scope = GraphScope(scope_type="chapter", chapter_id=chapter_id)
-            chapter_data = await self.graph_store.load_graph_v2(world_id, chapter_scope)
-            scoped_data.append((chapter_scope, chapter_data))
+            mandatory_scopes.append(chapter_scope)
+            mandatory_calls.append(self.graph_store.load_graph_v2(world_id, chapter_scope))
 
-        # 4) 营地图谱（必选）
         camp_scope = GraphScope(scope_type="camp")
-        camp_data = await self.graph_store.load_graph_v2(world_id, camp_scope)
-        scoped_data.append((camp_scope, camp_data))
+        mandatory_scopes.append(camp_scope)
+        mandatory_calls.append(self.graph_store.load_graph_v2(world_id, camp_scope))
 
-        # 5) 世界图谱（让世界书跨 scope 边参与扩散）
         world_scope = GraphScope(scope_type="world")
-        world_data = await self.graph_store.load_graph_v2(world_id, world_scope)
-        scoped_data.append((world_scope, world_data))
+        mandatory_scopes.append(world_scope)
+        mandatory_calls.append(self.graph_store.load_graph_v2(world_id, world_scope))
+
+        mandatory_results = await asyncio.gather(*mandatory_calls, return_exceptions=True)
+        for scope, result in zip(mandatory_scopes, mandatory_results):
+            if isinstance(result, Exception):
+                logger.warning("[v2] 图谱读取失败 scope=%s: %s", scope, result)
+                continue
+            scoped_data.append((scope, result))
+            if area_scope is not None and scope == area_scope:
+                area_data = result
+
+        # 当前 chapter 下没区域图谱时，回退到 area 的原始 chapter
+        if chapter_id and area_id and area_scope is not None and not getattr(area_data, "nodes", None):
+            area_chapter_map = await self._get_area_chapter_map(world_id)
+            original_chapter = area_chapter_map.get(area_id)
+            if original_chapter and original_chapter != chapter_id:
+                fallback_scope = GraphScope(
+                    scope_type="area",
+                    chapter_id=original_chapter,
+                    area_id=area_id,
+                )
+                try:
+                    fallback_data = await self.graph_store.load_graph_v2(world_id, fallback_scope)
+                    scoped_data = [
+                        (scope, data)
+                        for scope, data in scoped_data
+                        if not (
+                            scope.scope_type == "area"
+                            and getattr(scope, "area_id", None) == area_id
+                        )
+                    ]
+                    scoped_data.append((fallback_scope, fallback_data))
+                    logger.info(
+                        "[v2] area scope 回退: %s:%s → %s:%s",
+                        chapter_id,
+                        area_id,
+                        original_chapter,
+                        area_id,
+                    )
+                except Exception as exc:
+                    logger.warning("[v2] area scope 回退读取失败: %s", exc)
 
         # 6) 加载种子中引用的角色 scope（让角色节点参与扩散）
         known_char_ids = await self._get_character_id_set(world_id)
         loaded_chars = {character_id}  # 已加载的（避免重复）
+        extra_character_ids: List[str] = []
         for seed in seed_nodes:
             # 尝试原始形式和去前缀形式
             candidates = [seed]
@@ -2946,10 +2981,24 @@ class AdminCoordinator:
             for candidate in candidates:
                 if candidate in known_char_ids and candidate not in loaded_chars:
                     loaded_chars.add(candidate)
-                    char_scope = GraphScope(scope_type="character", character_id=candidate)
-                    char_data = await self.graph_store.load_graph_v2(world_id, char_scope)
-                    scoped_data.append((char_scope, char_data))
+                    extra_character_ids.append(candidate)
                     break  # 一个 seed 最多加载一个角色 scope
+
+        if extra_character_ids:
+            extra_scopes = [
+                GraphScope(scope_type="character", character_id=candidate)
+                for candidate in extra_character_ids
+            ]
+            extra_results = await asyncio.gather(
+                *(self.graph_store.load_graph_v2(world_id, scope) for scope in extra_scopes),
+                return_exceptions=True,
+            )
+            for scope, result in zip(extra_scopes, extra_results):
+                if isinstance(result, Exception):
+                    logger.warning("[v2] 额外角色图谱读取失败 scope=%s: %s", scope, result)
+                    continue
+                scoped_data.append((scope, result))
+
         if len(loaded_chars) > 1:
             logger.info("[v2] 记忆召回：额外加载 %d 个角色 scope: %s",
                         len(loaded_chars) - 1, loaded_chars - {character_id})
@@ -3056,6 +3105,110 @@ class AdminCoordinator:
                         "trust": disp_data.get("trust", 0),
                     },
                 ))
+
+    async def _run_curation_pipeline(
+        self,
+        world_id: str,
+        player_input: str,
+        intent: Any,
+        memory_result: Any,
+        flash_results: List[FlashResponse],
+        context: Dict[str, Any],
+        party: Any,
+        skip_teammate: bool,
+        analysis_memory_seeds: List[str],
+        base_context: Dict[str, Any],
+        chapter_id: Optional[str],
+        area_id: Optional[str],
+        teammate_recall_tasks: Dict[str, asyncio.Task],
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, str]]:
+        """并行执行玩家/队友 curation。"""
+
+        async def _curate_player() -> Optional[Dict[str, Any]]:
+            if not memory_result or not getattr(memory_result, "activated_nodes", None):
+                return None
+            return await self.flash_cpu.curate_context(
+                player_input=player_input,
+                intent=intent,
+                memory_result=memory_result,
+                flash_results=flash_results,
+                context=context,
+            )
+
+        async def _curate_all_teammates() -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+            if not party or skip_teammate:
+                return {}, {}
+            active = party.get_active_members()
+            if not active:
+                return {}, {}
+
+            async def _curate_one(member):
+                char_id = member.character_id
+                task = teammate_recall_tasks.get(char_id)
+                if task:
+                    mem = await task
+                else:
+                    seeds = self._build_effective_seeds(
+                        analysis_memory_seeds,
+                        base_context,
+                        character_id=char_id,
+                    )
+                    mem = await self._recall_memory(
+                        world_id,
+                        char_id,
+                        seeds,
+                        intent_type=intent.intent_type.value,
+                        chapter_id=chapter_id,
+                        area_id=area_id,
+                    )
+                if not mem or not getattr(mem, "activated_nodes", None):
+                    return char_id, None, ""
+
+                view = dict(context)
+                view["active_character_id"] = char_id
+                curated = await self.flash_cpu.curate_context(
+                    player_input=player_input,
+                    intent=intent,
+                    memory_result=mem,
+                    flash_results=flash_results,
+                    context=view,
+                )
+                summary = self._summarize_memory(mem)
+                return char_id, curated, summary
+
+            results = await asyncio.gather(
+                *(_curate_one(member) for member in active),
+                return_exceptions=True,
+            )
+            packages: Dict[str, Dict[str, Any]] = {}
+            summaries: Dict[str, str] = {}
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error("[v2] 队友上下文编排失败: %s", result, exc_info=True)
+                    continue
+                cid, cur, summ = result
+                if isinstance(cur, dict) and cur:
+                    packages[cid] = cur
+                if isinstance(summ, str) and summ:
+                    summaries[cid] = summ
+            return packages, summaries
+
+        player_curated, teammate_payload = await asyncio.gather(
+            _curate_player(),
+            _curate_all_teammates(),
+        )
+        teammate_packages, teammate_summaries = teammate_payload
+        return player_curated, teammate_packages, teammate_summaries
+
+    @staticmethod
+    def _consume_background_task_exception(task: asyncio.Task) -> None:
+        """避免后台任务在上层异常退出时产生未消费异常告警。"""
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            return
 
     async def _assemble_context(
         self,

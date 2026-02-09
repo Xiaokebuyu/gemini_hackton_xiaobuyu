@@ -83,18 +83,25 @@ export const RightPanel: React.FC = () => {
               </div>
 
               {/* Tab bar */}
-              <div className="flex gap-4">
+              <div className="flex gap-4 relative">
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`text-xs pb-2 border-b-2 transition-colors ${
+                    className={`text-xs pb-2 border-b-2 transition-colors relative ${
                       activeTab === tab.key
-                        ? 'text-g-gold border-g-gold font-semibold'
+                        ? 'text-g-gold border-transparent font-semibold'
                         : 'text-g-text-muted border-transparent hover:text-g-text'
                     }`}
                   >
                     {tab.label}
+                    {activeTab === tab.key && (
+                      <motion.div
+                        layoutId="tab-indicator"
+                        className="absolute bottom-0 left-0 right-0 h-0.5 bg-g-gold"
+                        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                      />
+                    )}
                   </button>
                 ))}
               </div>
@@ -102,34 +109,44 @@ export const RightPanel: React.FC = () => {
 
             {/* Tab content — scrollable area */}
             <div className="flex-1 min-h-0 overflow-y-auto g-scrollbar p-3">
-              {activeTab === 'party' && (
-                <div className="space-y-2">
-                  <PanelFrame className="flex-shrink-0">
-                    <PlayerStatus />
-                  </PanelFrame>
-                  <PanelFrame>
-                    <PartyPanel />
-                  </PanelFrame>
-                </div>
-              )}
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={activeTab}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  {activeTab === 'party' && (
+                    <div className="space-y-2">
+                      <PanelFrame className="flex-shrink-0">
+                        <PlayerStatus />
+                      </PanelFrame>
+                      <PanelFrame>
+                        <PartyPanel />
+                      </PanelFrame>
+                    </div>
+                  )}
 
-              {activeTab === 'inventory' && (
-                <PanelFrame>
-                  <InventoryPanel />
-                </PanelFrame>
-              )}
+                  {activeTab === 'inventory' && (
+                    <PanelFrame>
+                      <InventoryPanel />
+                    </PanelFrame>
+                  )}
 
-              {activeTab === 'quest' && (
-                <PanelFrame>
-                  <QuestPanel />
-                </PanelFrame>
-              )}
+                  {activeTab === 'quest' && (
+                    <PanelFrame>
+                      <QuestPanel />
+                    </PanelFrame>
+                  )}
 
-              {activeTab === 'history' && (
-                <PanelFrame>
-                  <HistoryPanel />
-                </PanelFrame>
-              )}
+                  {activeTab === 'history' && (
+                    <PanelFrame>
+                      <HistoryPanel />
+                    </PanelFrame>
+                  )}
+                </motion.div>
+              </AnimatePresence>
             </div>
           </motion.div>
         </>

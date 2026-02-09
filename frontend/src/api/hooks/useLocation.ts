@@ -3,12 +3,12 @@
  */
 import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getLocation, getGameTime } from '../gameApi';
+import { getLocation, getGameTime, getAvailableMaps } from '../gameApi';
 import { useGameStore } from '../../stores/gameStore';
 import type { LocationResponse, GameTimeResponse } from '../../types';
 
 export function useLocation() {
-  const { worldId, sessionId, setLocation } = useGameStore();
+  const { worldId, sessionId, mergeLocationIntoMapGraph } = useGameStore();
 
   const locationQuery = useQuery<LocationResponse>({
     queryKey: ['location', worldId, sessionId],
@@ -23,12 +23,29 @@ export function useLocation() {
     refetchOnWindowFocus: false,
   });
 
+  const availableMapsQuery = useQuery({
+    queryKey: ['availableMaps', worldId, sessionId],
+    queryFn: async () => {
+      if (!worldId || !sessionId) {
+        throw new Error('No active session');
+      }
+      return getAvailableMaps(worldId, sessionId);
+    },
+    enabled: !!worldId && !!sessionId,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
+  });
+
   // Sync location data to gameStore so store-dependent components stay updated
   useEffect(() => {
     if (locationQuery.data) {
-      setLocation(locationQuery.data);
+      mergeLocationIntoMapGraph(
+        locationQuery.data,
+        availableMapsQuery.data?.available_maps,
+        availableMapsQuery.data?.all_unlocked,
+      );
     }
-  }, [locationQuery.data, setLocation]);
+  }, [locationQuery.data, availableMapsQuery.data, mergeLocationIntoMapGraph]);
 
   return {
     location: locationQuery.data,

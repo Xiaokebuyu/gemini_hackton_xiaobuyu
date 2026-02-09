@@ -4,7 +4,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Navigation, AlertTriangle, Lock } from 'lucide-react';
-import { useGameStore } from '../../stores';
 import { useStreamGameInput } from '../../api';
 import type { Destination } from '../../types';
 
@@ -31,13 +30,13 @@ export const DestinationList: React.FC<DestinationListProps> = ({
   destinations,
   className = '',
 }) => {
-  const { location } = useGameStore();
   const { sendInput, isLoading } = useStreamGameInput();
 
-  const dests = destinations || location?.available_destinations || [];
+  const dests = destinations || [];
+  const isDestinationAccessible = (dest: Destination) => dest.is_accessible !== false;
 
   const handleTravel = (dest: Destination) => {
-    if (dest.is_accessible && !isLoading) {
+    if (isDestinationAccessible(dest) && !isLoading) {
       sendInput(`[前往${dest.name}]`);
     }
   };
@@ -55,90 +54,96 @@ export const DestinationList: React.FC<DestinationListProps> = ({
       <h4 className="text-xs text-[var(--g-text-muted)] uppercase tracking-wide mb-2">
         Travel To
       </h4>
-      {dests.map((dest, index) => (
-        <motion.button
-          key={dest.location_id}
-          initial={{ opacity: 0, x: -10 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: index * 0.05 }}
-          onClick={() => handleTravel(dest)}
-          disabled={!dest.is_accessible || isLoading}
-          className={`
-            w-full
-            flex items-center gap-3
-            p-2
-            rounded-lg
-            text-left
-            transition-all duration-200
-            ${
-              dest.is_accessible
-                ? 'bg-g-bg-surface-alt hover:bg-g-bg-surface-alt/80 border border-transparent hover:border-g-gold/50'
-                : 'bg-g-bg-sidebar opacity-50 cursor-not-allowed border border-transparent'
-            }
-          `}
-        >
-          {/* Icon */}
-          <div
+      {dests.map((dest, index) => {
+        const isAccessible = isDestinationAccessible(dest);
+        return (
+          <motion.button
+            key={dest.location_id || dest.name}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.05 }}
+            onClick={() => handleTravel(dest)}
+            disabled={!isAccessible || isLoading}
+            whileHover={isAccessible ? { x: 4 } : undefined}
+            whileTap={isAccessible ? { scale: 0.97 } : undefined}
             className={`
-              w-8 h-8 rounded-lg
-              flex items-center justify-center
-              ${dest.is_accessible ? 'bg-g-gold/20' : 'bg-g-bg-sidebar'}
+              w-full
+              flex items-center gap-3
+              p-2
+              rounded-lg
+              text-left
+              transition-all duration-200
+              ${
+                isAccessible
+                  ? 'bg-g-bg-surface-alt hover:bg-g-bg-surface-alt/80 border border-transparent hover:border-g-gold/50'
+                  : 'bg-g-bg-sidebar opacity-50 cursor-not-allowed border border-transparent'
+              }
             `}
           >
-            {dest.is_accessible ? (
-              <Navigation className="w-4 h-4 text-g-gold" />
-            ) : (
-              <Lock className="w-4 h-4 text-[var(--g-text-muted)]" />
-            )}
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span
-                className={`
-                  text-sm font-medium truncate
-                  ${
-                    dest.is_accessible
-                      ? 'text-[var(--g-text-primary)]'
-                      : 'text-[var(--g-text-muted)]'
-                  }
-                `}
-              >
-                {dest.name}
-              </span>
-              {dest.distance && (
-                <span className="text-xs text-[var(--g-text-muted)]">
-                  {dest.distance}
-                </span>
-              )}
-            </div>
-            {dest.description && (
-              <div className="text-xs text-[var(--g-text-muted)] truncate">
-                {dest.description}
-              </div>
-            )}
-          </div>
-
-          {/* Danger indicator */}
-          {dest.danger_level && dest.danger_level !== 'low' && (
+            {/* Icon */}
             <div
               className={`
-                flex items-center gap-1
-                px-2 py-1
-                rounded
-                text-xs
-                border
-                ${dangerColors[dest.danger_level]}
+                w-8 h-8 rounded-lg
+                flex items-center justify-center
+                ${isAccessible ? 'bg-g-gold/20' : 'bg-g-bg-sidebar'}
               `}
-              title={`Danger: ${dangerLabels[dest.danger_level]}`}
             >
-              <AlertTriangle className="w-3 h-3" />
-              <span>{dangerLabels[dest.danger_level]}</span>
+              {isAccessible ? (
+                <Navigation className="w-4 h-4 text-g-gold" />
+              ) : (
+                <Lock className="w-4 h-4 text-[var(--g-text-muted)]" />
+              )}
             </div>
-          )}
-        </motion.button>
-      ))}
+
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`
+                    text-sm font-medium truncate
+                    ${
+                      isAccessible
+                        ? 'text-[var(--g-text-primary)]'
+                        : 'text-[var(--g-text-muted)]'
+                    }
+                  `}
+                >
+                  {dest.name}
+                </span>
+                {dest.distance && (
+                  <span className="text-xs text-[var(--g-text-muted)]">
+                    {dest.distance}
+                  </span>
+                )}
+              </div>
+              {dest.description && (
+                <div className="text-xs text-[var(--g-text-muted)] truncate">
+                  {dest.description}
+                </div>
+              )}
+            </div>
+
+            {/* Danger indicator */}
+            {dest.danger_level && dest.danger_level !== 'low' && (
+              <div
+                className={`
+                  flex items-center gap-1
+                  px-2 py-1
+                  rounded
+                  text-xs
+                  border
+                  ${dangerColors[dest.danger_level]}
+                  ${(dest.danger_level === 'high' || dest.danger_level === 'extreme') ? 'animate-pulse-glow' : ''}
+                `}
+                title={`Danger: ${dangerLabels[dest.danger_level]}`}
+              >
+                <AlertTriangle className="w-3 h-3" />
+                <span>{dangerLabels[dest.danger_level]}</span>
+              </div>
+            )}
+          </motion.button>
+        );
+      })}
     </div>
   );
 };

@@ -3,6 +3,7 @@
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Sun, Moon, Sunrise, Sunset } from 'lucide-react';
 import { useGameStore } from '../../stores';
 import type { GameTimeState } from '../../types';
@@ -71,19 +72,26 @@ export const GameTimeDisplay: React.FC<GameTimeDisplayProps> = ({
         </div>
 
         {/* Period indicator */}
-        <div
-          className={`
-            flex items-center gap-2
-            px-3 py-2
-            rounded-lg
-            ${config.bgColor}
-          `}
-        >
-          <span className={config.color}>{config.icon}</span>
-          <span className={`text-sm font-medium ${config.color}`}>
-            {t(config.labelKey)}
-          </span>
-        </div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={period}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.2 }}
+            className={`
+              flex items-center gap-2
+              px-3 py-2
+              rounded-lg
+              ${config.bgColor}
+            `}
+          >
+            <span className={`${config.color} animate-breathe`}>{config.icon}</span>
+            <span className={`text-sm font-medium ${config.color}`}>
+              {t(config.labelKey)}
+            </span>
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {/* Visual time bar */}

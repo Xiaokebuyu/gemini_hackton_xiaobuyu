@@ -108,6 +108,10 @@ async def start_combat_session(
     """
     开始战斗并写入会话状态
     """
+    existing_session = await session_store.get_session(world_id, session_id)
+    if not existing_session:
+        return json.dumps({"error": "session not found"}, ensure_ascii=False)
+
     session = combat_engine.start_combat(
         enemies=enemies,
         player_state=player_state,

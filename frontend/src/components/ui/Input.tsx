@@ -24,6 +24,7 @@ export const Input = forwardRef<HTMLTextAreaElement, InputProps>(
           rounded-lg
           focus:border-g-border-focus
           focus:ring-2 focus:ring-g-gold/20
+          focus:shadow-g-gold
           focus:outline-none
           resize-none
           transition-all duration-200

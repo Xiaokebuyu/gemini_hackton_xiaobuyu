@@ -84,6 +84,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
         hover:border-g-border-strong
         hover:shadow-g-md
         transition-all duration-200
+        card-hover
         ${!member.is_active ? 'opacity-50' : ''}
         ${className}
       `}
@@ -123,9 +124,11 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
 
         {/* Action buttons */}
         <div className="flex gap-1">
-          <button
+          <motion.button
             onClick={handleTalk}
             disabled={!member.is_active || isLoading}
+            whileHover={member.is_active && !isLoading ? { scale: 1.05 } : undefined}
+            whileTap={member.is_active && !isLoading ? { scale: 0.95 } : undefined}
             className="
               p-2
               bg-g-bg-sidebar
@@ -138,10 +141,12 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
             title={t('party.talkTo', { name: member.name })}
           >
             <MessageCircle className="w-4 h-4 text-g-gold" />
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             onClick={handlePrivateChat}
             disabled={!member.is_active}
+            whileHover={member.is_active ? { scale: 1.05 } : undefined}
+            whileTap={member.is_active ? { scale: 0.95 } : undefined}
             className="
               p-2
               bg-g-bg-sidebar
@@ -154,13 +159,13 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
             title={`${member.name} 私聊`}
           >
             <MessageSquare className="w-4 h-4 text-g-purple" />
-          </button>
+          </motion.button>
         </div>
       </div>
 
       {/* Personality snippet */}
       {member.personality && (
-        <p className="text-xs text-g-text-muted italic line-clamp-2 font-body">
+        <p className="text-xs text-g-text-muted italic line-clamp-2 font-body bg-g-bg-surface-alt rounded-lg px-2 py-1.5">
           "{member.personality}"
         </p>
       )}
@@ -174,7 +179,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
               <div
                 key={i}
                 className={`
-                  w-2 h-2 rounded-full
+                  w-2.5 h-2.5 rounded-full
                   ${
                     i <= Math.round(member.response_tendency * 5)
                       ? 'bg-g-green'

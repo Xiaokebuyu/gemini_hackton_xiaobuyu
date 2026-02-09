@@ -3,6 +3,7 @@
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { motion } from 'framer-motion';
 import { Eye, Clock, Search, HelpCircle } from 'lucide-react';
 import { useStreamGameInput } from '../../api';
 import { useChatStore } from '../../stores';
@@ -60,25 +61,42 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
   };
 
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
+    <motion.div
+      initial="hidden"
+      animate="show"
+      variants={{
+        hidden: { opacity: 0 },
+        show: { opacity: 1, transition: { staggerChildren: 0.06 } },
+      }}
+      className={`flex items-center gap-2 ${className}`}
+    >
       <span className="text-xs text-g-text-muted mr-2 font-body">
         {t('actions.quick')}:
       </span>
-      {quickActionsConfig.map((action) => (
-        <Button
+      {quickActionsConfig.map((action, index) => (
+        <motion.div
           key={action.id}
-          onClick={() => handleAction(action)}
-          disabled={isLoading || chatLoading}
-          variant="ghost"
-          size="sm"
-          title={t(action.labelKey)}
-          className="flex items-center gap-1.5"
+          variants={{
+            hidden: { opacity: 0, y: 8 },
+            show: { opacity: 1, y: 0 },
+          }}
+          whileHover={{ scale: 1.03, y: -1 }}
+          whileTap={{ scale: 0.97 }}
         >
-          {action.icon}
-          <span>{t(action.labelKey)}</span>
-        </Button>
+          <Button
+            onClick={() => handleAction(action)}
+            disabled={isLoading || chatLoading}
+            variant="ghost"
+            size="sm"
+            title={t(action.labelKey)}
+            className="flex items-center gap-1.5 btn-fantasy"
+          >
+            {action.icon}
+            <span>{t(action.labelKey)}</span>
+          </Button>
+        </motion.div>
       ))}
-    </div>
+    </motion.div>
   );
 };
 

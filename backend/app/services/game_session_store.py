@@ -114,6 +114,10 @@ class GameSessionStore:
             # Use update() for dot notation support
             self._session_ref(world_id, session_id).update(updates)
         else:
+            # Merge writes may create documents; always include identity fields
+            # to keep session documents schema-valid.
+            updates.setdefault("session_id", session_id)
+            updates.setdefault("world_id", world_id)
             # Use set(merge=True) for simple updates
             self._session_ref(world_id, session_id).set(updates, merge=True)
 
@@ -132,6 +136,8 @@ class GameSessionStore:
         combat_id: str,
         combat_context: CombatContext,
     ) -> None:
+        if not self._session_exists(world_id, session_id):
+            raise ValueError("session not found")
         await self.update_session(
             world_id,
             session_id,

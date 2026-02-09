@@ -154,6 +154,74 @@ class MCPClientPool:
         text = str(error).lower()
         return "timeout" in text or "timed out" in text
 
+    @staticmethod
+    def _iter_related_errors(error: BaseException | None):
+        if error is None:
+            return
+        stack: list[BaseException] = [error]
+        seen: set[int] = set()
+        while stack:
+            current = stack.pop()
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            yield current
+
+            if isinstance(current, BaseExceptionGroup):
+                stack.extend(list(current.exceptions))
+            cause = getattr(current, "__cause__", None)
+            if isinstance(cause, BaseException):
+                stack.append(cause)
+            context = getattr(current, "__context__", None)
+            if isinstance(context, BaseException):
+                stack.append(context)
+
+    def _is_service_unavailable_error(self, error: Exception | None) -> bool:
+        if error is None:
+            return False
+
+        # Tool timeout is handled separately; do not classify it as unavailable.
+        if self._is_timeout_error(error):
+            return False
+
+        keywords = (
+            "connecterror",
+            "all connection attempts failed",
+            "connection refused",
+            "connection reset",
+            "connection aborted",
+            "network is unreachable",
+            "name or service not known",
+            "failed to establish a new connection",
+            "server disconnected",
+            "connection closed",
+            "mcp service unavailable",
+        )
+
+        for exc in self._iter_related_errors(error):
+            if isinstance(exc, MCPServiceUnavailableError):
+                return True
+
+            if isinstance(
+                exc,
+                (
+                    httpx.ConnectError,
+                    httpx.ConnectTimeout,
+                    httpx.NetworkError,
+                    httpx.ReadError,
+                    httpx.WriteError,
+                    httpx.RemoteProtocolError,
+                ),
+            ):
+                return True
+
+            text = f"{type(exc).__name__}: {exc}".lower()
+            if any(keyword in text for keyword in keywords):
+                return True
+
+        return False
+
     def _resolve_tool_timeout(self, server_type: str, tool_name: str) -> float:
         server_cfg = self._tool_timeouts.get(server_type, {})
         timeout = server_cfg.get(tool_name, self._tool_timeout_seconds)
@@ -289,7 +357,13 @@ class MCPClientPool:
     ) -> Dict[str, Any]:
         """Call a tool with automatic reconnection on failure."""
         if self._in_cooldown(server_type):
-            raise RuntimeError(f"MCP server in cooldown: {server_type}")
+            config = self._configs.get(server_type)
+            endpoint = config.endpoint if config else ""
+            raise MCPServiceUnavailableError(
+                server_type=server_type,
+                endpoint=endpoint,
+                detail="server in cooldown",
+            )
 
         last_error: Optional[Exception] = None
         call_lock = self._get_lock(self._call_locks, server_type)
@@ -326,6 +400,14 @@ class MCPClientPool:
             self._mark_cooldown(server_type, last_error)
         if isinstance(last_error, MCPServiceUnavailableError):
             raise last_error
+        if self._is_service_unavailable_error(last_error):
+            config = self._configs.get(server_type)
+            endpoint = config.endpoint if config else ""
+            raise MCPServiceUnavailableError(
+                server_type=server_type,
+                endpoint=endpoint,
+                detail=f"{type(last_error).__name__}: {last_error}",
+            ) from last_error
         raise RuntimeError(
             f"Tool call failed after {max_retries + 1} attempts ({tool_name}): "
             f"{type(last_error).__name__ if last_error else 'UnknownError'}: {last_error!r}"

@@ -41,7 +41,7 @@ export const LocationCard: React.FC<LocationCardProps> = ({
   }
 
   return (
-    <div className={`p-3 ${className}`}>
+    <div className={`p-3 panel-hover ${className}`}>
       {/* Location header */}
       <div className="flex items-start gap-2 mb-2">
         <MapPin className="w-5 h-5 text-g-gold flex-shrink-0 mt-0.5" />
@@ -59,8 +59,10 @@ export const LocationCard: React.FC<LocationCardProps> = ({
                 disabled={isLoading}
                 className="
                   flex items-center gap-1
+                  px-2 py-0.5 rounded
                   text-xs text-g-cyan
-                  hover:underline
+                  bg-g-cyan/10 hover:bg-g-cyan/20
+                  transition-all
                   disabled:opacity-50
                 "
               >

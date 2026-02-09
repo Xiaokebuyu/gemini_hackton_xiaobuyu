@@ -32,7 +32,7 @@ export const GalgameTeammateZone: React.FC<GalgameTeammateZoneProps> = ({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
           transition={{ duration: 0.3 }}
-          className="mt-4 space-y-3"
+          className="mt-4 space-y-2"
         >
           {messages.map((msg, i) => {
             const isStreaming = streamingMessageId === msg.id;
@@ -40,13 +40,14 @@ export const GalgameTeammateZone: React.FC<GalgameTeammateZoneProps> = ({
             return (
               <motion.div
                 key={msg.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25, delay: i * 0.08 }}
-                className="w-full bg-g-bubble-teammate-bg border border-g-bubble-teammate-border rounded-lg px-5 py-3.5"
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.25, delay: i * 0.12 }}
+                whileHover={{ scale: 1.01, boxShadow: 'var(--g-shadow-md)' }}
+                className="w-full bg-g-bubble-teammate-bg border border-g-bubble-teammate-border rounded-lg px-4 py-2.5 card-hover"
               >
                 {/* Top: name label row */}
-                <div className="flex items-center gap-1.5 mb-2">
+                <div className="flex items-center gap-1.5 mb-1.5">
                   <MessageCircle className="w-3.5 h-3.5 text-g-bubble-teammate-border" />
                   <span className="text-xs font-semibold text-g-bubble-teammate-border whitespace-nowrap">
                     {msg.speaker}
@@ -58,7 +59,7 @@ export const GalgameTeammateZone: React.FC<GalgameTeammateZoneProps> = ({
                   )}
                 </div>
                 {/* Bottom: content */}
-                <p className="text-base text-[var(--g-text-primary)] whitespace-pre-wrap leading-relaxed">
+                <p className="text-sm text-[var(--g-text-primary)] whitespace-pre-wrap leading-relaxed">
                   {msg.content}
                   {isStreaming && (
                     <span className="inline-block w-2 h-4 ml-0.5 bg-g-gold/70 animate-pulse align-text-bottom" />

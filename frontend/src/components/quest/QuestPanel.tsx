@@ -280,13 +280,13 @@ export const QuestPanel: React.FC = () => {
           {t('quest.chapterProgress', '章节进度')}
         </p>
         <div className="flex items-center gap-2">
-          <div className="flex-1 h-2 bg-g-bg-dark rounded-full overflow-hidden">
+          <div className="flex-1 h-3 bg-g-bg-dark rounded-full overflow-hidden">
             <div
-              className="h-full bg-g-gold rounded-full transition-all duration-300"
+              className="h-full bg-gradient-to-r from-g-gold-dark to-g-gold-light rounded-full transition-all duration-300 shadow-g-gold"
               style={{ width: `${progressPct}%` }}
             />
           </div>
-          <span className="text-xs text-g-text-muted whitespace-nowrap">
+          <span className="text-sm font-semibold text-g-text-muted whitespace-nowrap">
             {chaptersCompleted}/{totalChapters}
           </span>
         </div>
