@@ -33,7 +33,7 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
           <h3 className="text-sm font-heading text-g-gold">{t('party.title')}</h3>
         </div>
         {currentParty && (
-          <span className="text-xs g-text-muted font-body">
+          <span className="text-xs text-g-text-muted font-body">
             {activeMembers.length}/{currentParty.max_size}
           </span>
         )}
@@ -51,12 +51,12 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
                 mb-4
               "
             >
-              <UserPlus className="w-8 h-8 g-text-muted" />
+              <UserPlus className="w-8 h-8 text-g-text-muted" />
             </div>
-            <h4 className="text-sm font-medium g-text-secondary mb-1 font-body">
+            <h4 className="text-sm font-medium text-g-text-secondary mb-1 font-body">
               {t('party.empty')}
             </h4>
-            <p className="text-xs g-text-muted max-w-[200px] font-body">
+            <p className="text-xs text-g-text-muted max-w-[200px] font-body">
               {t('party.addMember')}
             </p>
           </div>
@@ -76,7 +76,7 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
               <>
                 <div className="flex items-center gap-2 mt-4">
                   <div className="flex-1 h-px bg-g-border" />
-                  <span className="text-xs g-text-muted font-body">
+                  <span className="text-xs text-g-text-muted font-body">
                     {t('party.inactive')}
                   </span>
                   <div className="flex-1 h-px bg-g-border" />
@@ -97,7 +97,7 @@ export const PartyPanel: React.FC<PartyPanelProps> = ({
       {/* Party info (read-only) */}
       {currentParty && (
         <div className="px-3 py-2 border-t border-g-border">
-          <div className="flex items-center gap-2 text-[10px] g-text-muted font-body">
+          <div className="flex items-center gap-2 text-[10px] text-g-text-muted font-body">
             <span className="flex items-center gap-1">
               {currentParty.auto_follow ? (
                 <><Footprints className="w-3 h-3" /> Following</>

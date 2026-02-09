@@ -7,7 +7,7 @@ import TypewriterText from './TypewriterText';
 import GMOptions from './GMOptions';
 import { MessageBubble } from '../ui';
 import { parseGMNarration } from '../../utils/narrationParser';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 
 interface NarrativeMessageProps {
   message: NarrativeMessageType;
@@ -22,7 +22,7 @@ export const NarrativeMessage: React.FC<NarrativeMessageProps> = ({
 }) => {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isTypingComplete, setIsTypingComplete] = useState(!isLatest);
-  const { sendInput } = useGameInput();
+  const { sendInput } = useStreamGameInput();
 
   // Parse GM messages to split text from options
   const parsed = message.type === 'gm' ? parseGMNarration(message.content) : null;

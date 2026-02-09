@@ -53,6 +53,9 @@ from app.services.party_store import PartyStore
 from app.services.teammate_response_service import TeammateResponseService
 from app.services.teammate_visibility_manager import TeammateVisibilityManager
 from app.models.graph_scope import GraphScope
+from app.services.character_store import CharacterStore
+from app.services.character_service import CharacterService
+from app.services.mcp_client_pool import MCPServiceUnavailableError
 
 
 class AdminCoordinator:
@@ -126,10 +129,20 @@ class AdminCoordinator:
         self.party_service = party_service or PartyService(self.graph_store, self.party_store)
         # 补充注入 party_service 到 flash_cpu（flash_cpu 创建早于 party_service）
         self.flash_cpu.party_service = self.party_service
+        # 补充注入 character_service / character_store 到 flash_cpu
+        self.flash_cpu.character_service = None  # placeholder, set after character_service created
+        self.flash_cpu.character_store = None
         self.teammate_response_service = teammate_response_service or TeammateResponseService(
             instance_manager=self.instance_manager,
         )
         self.visibility_manager = visibility_manager or TeammateVisibilityManager()
+
+        # 角色系统
+        self.character_store = CharacterStore()
+        self.character_service = CharacterService(store=self.character_store)
+        # 补充注入到 flash_cpu
+        self.flash_cpu.character_service = self.character_service
+        self.flash_cpu.character_store = self.character_store
 
         # 会话历史 + 图谱化
         self.session_history_manager = SessionHistoryManager(
@@ -188,7 +201,13 @@ class AdminCoordinator:
         session_id: str,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """从 Firestore 获取会话聊天历史"""
+        """获取会话聊天历史（优先内存实时数据，回退 Firestore）。"""
+        in_memory = self.session_history_manager.get(world_id, session_id)
+        if in_memory:
+            live_messages = in_memory.get_recent_messages_for_api(limit)
+            if live_messages:
+                return live_messages
+
         return await self.session_history_manager.load_history_from_firestore(
             world_id, session_id, limit, self.graph_store.db,
         )
@@ -243,6 +262,16 @@ class AdminCoordinator:
             except Exception:
                 pass
 
+            # 角色创建状态：以 character_store 为准（player_character 存在于 session 顶层字段）
+            has_character = False
+            try:
+                has_character = bool(
+                    await self.character_store.get_character(world_id, session.session_id)
+                )
+            except Exception:
+                # 回退兼容：历史数据可能写在 metadata 中
+                has_character = bool(metadata.get("player_character"))
+
             recoverable.append(
                 {
                     "session_id": session.session_id,
@@ -255,6 +284,7 @@ class AdminCoordinator:
                     "sub_location": admin_state.get("sub_location"),
                     "party_member_count": party_member_count,
                     "party_members": party_members_names,
+                    "needs_character_creation": not has_character,
                 }
             )
 
@@ -358,6 +388,11 @@ class AdminCoordinator:
         Returns:
             CoordinatorResponse: 完整响应
         """
+        # Phase 守卫：角色必须存在
+        pc = await self.character_store.get_character(world_id, session_id)
+        if not pc:
+            raise ValueError("请先创建角色后再开始冒险。")
+
         # 预检查：位置上下文必须可用，避免进入"未知地点"伪成功叙述
         location_check = await self._world_runtime.get_current_location(world_id, session_id)
         if location_check.get("error"):
@@ -454,9 +489,18 @@ class AdminCoordinator:
                 )
 
         flash_requests = analysis.operations or self._generate_default_flash_requests(intent, base_context)
-        flash_results = await self._execute_flash_requests(
-            world_id, session_id, flash_requests, generate_narration=False
-        )
+        try:
+            flash_results = await self._execute_flash_requests(
+                world_id, session_id, flash_requests, generate_narration=False
+            )
+        except Exception:
+            pending_tasks: List[asyncio.Task] = [memory_task, *teammate_recall_tasks.values()]
+            for task in pending_tasks:
+                if task and not task.done():
+                    task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+            raise
         logger.info("[v2] Flash 结果: %d 个操作", len(flash_results))
 
         # 检测 Flash 操作是否改变了队伍
@@ -574,6 +618,26 @@ class AdminCoordinator:
                         turn_story_events.append(chapter_event_map[ev_id])
                         logger.info("[v2] Flash story event recorded: %s", ev_id)
 
+        # 关键修复：flash_story_events 合并后，基于更新后的进度再次评估章节转换。
+        # 避免“本回合刚完成关键事件，但要下一回合才切章”的滞后。
+        if not final_directive.chapter_transition:
+            reevaluated_transition = self._reevaluate_transition_after_progress(
+                context=context,
+                progress=progress,
+                session_id=session_id,
+                player_input=player_input,
+                chapters=active_story_chapters,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+            )
+            if reevaluated_transition:
+                final_directive.chapter_transition = reevaluated_transition
+                logger.info(
+                    "[v2] StoryDirector transition re-evaluated after event merge: -> %s (%s)",
+                    reevaluated_transition.target_chapter_id,
+                    reevaluated_transition.transition_type,
+                )
+
         # 更新回合计数（现在 has_progress 包含 flash 自报事件）
         progress.rounds_in_chapter += 1
         has_progress = bool(turn_story_events)
@@ -614,6 +678,13 @@ class AdminCoordinator:
             )
             if state and v2_transition_result.get("new_chapter"):
                 state.chapter_id = v2_transition_result["new_chapter"]
+                # 更新玩家位置到新章节的首个可用区域
+                new_maps = v2_transition_result.get("new_maps_unlocked", [])
+                if new_maps:
+                    navigator = self._world_runtime._get_navigator_ready(world_id)
+                    if navigator and new_maps[0] in navigator.maps:
+                        state.area_id = new_maps[0]
+                        state.player_location = new_maps[0]
                 await self._state_manager.set_state(world_id, session_id, state)
 
         # StoryDirector 同回合强一致写图（失败阻断回合）
@@ -628,6 +699,9 @@ class AdminCoordinator:
                 party=party,
                 progress=progress,
             )
+
+        # 章节可能在本回合推进/切换，刷新章节引导以驱动当回合 GM 叙述。
+        await self._refresh_chapter_context(world_id, session_id, context)
 
         # 5. 导航后同步队友位置
         if intent.intent_type == IntentType.NAVIGATION and party:
@@ -766,10 +840,27 @@ class AdminCoordinator:
             if transition_text:
                 gm_narration += f"\n\n{transition_text}"
 
+        output_anomaly_meta = self._detect_output_anomalies(gm_narration)
+        if output_anomaly_meta["output_anomalies"]:
+            logger.warning(
+                "[v2] output anomaly detected world=%s session=%s anomalies=%s excerpt=%s",
+                world_id,
+                session_id,
+                output_anomaly_meta["output_anomalies"],
+                output_anomaly_meta["output_anomaly_excerpt"],
+            )
+
         teammate_responses = []
+        teammate_debug = {
+            "total": 0,
+            "skipped": 0,
+            "skip_reasons": [],
+        }
         if teammate_task:
             teammate_result = await teammate_task
             logger.info("[v2] 队友响应完成: %d 个响应", len(teammate_result.responses))
+            teammate_debug["total"] = len(teammate_result.responses)
+            teammate_skip_reasons = set()
             for resp in teammate_result.responses:
                 if resp.response:  # 只包含实际回复的
                     teammate_responses.append({
@@ -781,6 +872,11 @@ class AdminCoordinator:
                         "thinking_level": resp.thinking_level,
                         "latency_ms": resp.latency_ms,
                     })
+                else:
+                    teammate_debug["skipped"] += 1
+                    if resp.reaction:
+                        teammate_skip_reasons.add(resp.reaction)
+            teammate_debug["skip_reasons"] = sorted(teammate_skip_reasons)
 
         # 8. 分发事件到队友图谱（如果有队友且启用事件共享，system_command 跳过）
         if party and party.share_events and not skip_teammate:
@@ -810,6 +906,7 @@ class AdminCoordinator:
                     if v2_transition_result and v2_transition_result.get("new_chapter")
                     else progress.current_chapter
                 ),
+                **output_anomaly_meta,
             },
         )
         for tr in teammate_responses:
@@ -837,6 +934,16 @@ class AdminCoordinator:
         state_delta = self._merge_state_deltas(flash_results)
 
         available_actions = await self._get_available_actions(world_id, session_id, context)
+        chapter_info_payload = self._build_chapter_response_payload(
+            context=context,
+            progress=progress,
+            final_directive=final_directive,
+        )
+        story_director_meta = self._build_story_director_metadata(
+            pre_directive=pre_directive,
+            final_directive=final_directive,
+            turn_story_events=turn_story_events,
+        )
 
         return CoordinatorResponse(
             narration=gm_narration,
@@ -852,14 +959,621 @@ class AdminCoordinator:
                 "session_history": round_stats,
                 "source": "flash_gm",
                 "model": "flash",
+                "story_director": story_director_meta,
+                "teammate_debug": teammate_debug,
+                **output_anomaly_meta,
             },
             story_events=[e.id for e in turn_story_events] if turn_story_events else [],
             pacing_action=final_directive.pacing_action if final_directive else None,
-            chapter_info={
-                "id": progress.current_chapter,
-                "transition": final_directive.chapter_transition.target_chapter_id
-            } if (final_directive and final_directive.chapter_transition) else None,
+            chapter_info=chapter_info_payload,
         )
+
+    async def process_player_input_v2_stream(
+        self,
+        world_id: str,
+        session_id: str,
+        player_input: str,
+        is_private: bool = False,
+        private_target: Optional[str] = None,
+    ):
+        """
+        流式 Flash-Only 玩家输入处理（异步生成器）。
+
+        前置阶段（1-4.5）与 v2 相同，随后流式输出 GM 叙述和队友响应。
+
+        Yields:
+            dict: SSE 事件 (phase/gm_start/gm_chunk/gm_end/teammate_*/complete/error/time_event)
+        """
+        gm_narration = ""
+        teammate_responses = []
+        history = None
+        context = {}
+        intent = None
+        flash_results = []
+        turn_story_events = []
+        pre_directive = None
+        final_directive = None
+        v2_transition_result = None
+        progress = None
+        party = None
+        round_stats = None
+        output_anomaly_meta = {"output_anomalies": [], "output_anomaly_excerpt": None}
+        teammate_debug = {
+            "total": 0,
+            "skipped": 0,
+            "skip_reasons": [],
+        }
+        memory_task: Optional[asyncio.Task] = None
+        teammate_recall_tasks: Dict[str, asyncio.Task] = {}
+
+        try:
+            # Phase 守卫：角色必须存在
+            pc = await self.character_store.get_character(world_id, session_id)
+            if not pc:
+                yield {"type": "error", "error": "请先创建角色后再开始冒险。"}
+                return
+
+            # === 预生成阶段（复用 v2 逻辑） ===
+            location_check = await self._world_runtime.get_current_location(world_id, session_id)
+            if location_check.get("error"):
+                yield {"type": "error", "error": location_check["error"]}
+                return
+
+            party = await self.party_service.get_party(world_id, session_id)
+            history = self.session_history_manager.get_or_create(world_id, session_id)
+
+            base_context = await self._build_context(world_id, session_id)
+            conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
+            if conversation_history:
+                base_context["conversation_history"] = conversation_history
+
+            # 注入私密信息到上下文
+            if is_private:
+                base_context["is_private"] = True
+                base_context["private_target"] = private_target
+
+            # StoryDirector Pre-Flash
+            progress = await self.narrative_service.get_progress(world_id, session_id)
+            active_story_chapters = self._resolve_story_chapters(world_id, progress)
+            current_chapter = active_story_chapters[0] if active_story_chapters else None
+            game_ctx = self._build_game_context(base_context, progress, session_id, player_input)
+
+            if len(active_story_chapters) > 1:
+                pre_directive = self.story_director.pre_evaluate_multi(game_ctx, active_story_chapters)
+            else:
+                pre_directive = self.story_director.pre_evaluate(game_ctx, current_chapter)
+
+            pre_side_effects: List[Dict[str, Any]] = []
+            for event in pre_directive.auto_fired_events:
+                await self.narrative_service.trigger_event(world_id, session_id, event.id, skip_advance=True)
+                if event.side_effects:
+                    pre_side_effects.extend(event.side_effects)
+            if pre_side_effects:
+                await self._execute_side_effects(world_id, session_id, pre_side_effects)
+
+            base_context["story_directives"] = pre_directive.narrative_injections
+            base_context["pending_flash_conditions"] = [
+                {"id": c.condition_id, "prompt": c.condition_prompt, "event_id": c.event_id}
+                for c in pre_directive.pending_flash_conditions
+            ]
+
+            # Flash 分析
+            analysis = await self.flash_cpu.analyze_and_plan(player_input, base_context)
+            intent = analysis.intent
+
+            # 注入私密标记到 intent
+            if is_private:
+                intent.is_private = True
+                intent.private_target = private_target
+
+            # 记忆召回 + 操作执行
+            state = await self._state_manager.get_state(world_id, session_id)
+            current_chapter_id = getattr(state, "chapter_id", None) if state else None
+            current_area_id = getattr(state, "area_id", None) if state else None
+
+            effective_seeds = self._build_effective_seeds(
+                analysis.memory_seeds, base_context, character_id="player",
+            )
+            memory_task = asyncio.create_task(
+                self._recall_memory(
+                    world_id, "player", effective_seeds,
+                    intent_type=intent.intent_type.value,
+                    chapter_id=current_chapter_id,
+                    area_id=current_area_id,
+                )
+            )
+
+            skip_teammate = intent.intent_type == IntentType.SYSTEM_COMMAND
+            if party and party.get_active_members() and not skip_teammate:
+                for member in party.get_active_members():
+                    char_id = member.character_id
+                    seeds = self._build_effective_seeds(
+                        analysis.memory_seeds, base_context, character_id=char_id
+                    )
+                    teammate_recall_tasks[char_id] = asyncio.create_task(
+                        self._recall_memory(
+                            world_id, char_id, seeds,
+                            intent_type=intent.intent_type.value,
+                            chapter_id=current_chapter_id,
+                            area_id=current_area_id,
+                        )
+                    )
+
+            flash_requests = analysis.operations or self._generate_default_flash_requests(intent, base_context)
+            flash_results = await self._execute_flash_requests(
+                world_id, session_id, flash_requests, generate_narration=False
+            )
+
+            party_ops = {FlashOperation.ADD_TEAMMATE, FlashOperation.REMOVE_TEAMMATE, FlashOperation.DISBAND_PARTY}
+            flash_changed_party = any(r.success and r.operation in party_ops for r in flash_results)
+
+            if intent.intent_type == IntentType.LEAVE_SUB_LOCATION:
+                try:
+                    leave_result = await self._world_runtime.leave_sub_location(world_id, session_id)
+                    flash_results.append(FlashResponse(
+                        success=leave_result.get("success", False),
+                        operation=FlashOperation.ENTER_SUBLOCATION,
+                        result=leave_result,
+                        error=leave_result.get("error") if not leave_result.get("success") else None,
+                    ))
+                except Exception as e:
+                    logger.error("[v2-stream] 离开子地点失败: %s", e)
+
+            memory_result = await memory_task if memory_task else None
+
+            context = await self._assemble_context(
+                base_context, memory_result, flash_results, world_id, session_id
+            )
+
+            if isinstance(analysis.context_package, dict) and analysis.context_package:
+                context["context_package"] = dict(analysis.context_package)
+            if isinstance(analysis.story_progression, dict):
+                context["story_progression"] = analysis.story_progression
+
+            # 注入私密上下文
+            if is_private:
+                context["is_private"] = True
+                context["private_target"] = private_target
+
+            # StoryDirector Post-Flash
+            flash_condition_results: Dict[str, bool] = {}
+            story_prog = context.get("story_progression")
+            if isinstance(story_prog, dict):
+                for eval_item in story_prog.get("condition_evaluations", []):
+                    if isinstance(eval_item, dict) and "id" in eval_item:
+                        flash_condition_results[str(eval_item["id"])] = bool(eval_item.get("result", False))
+
+            progress = await self.narrative_service.get_progress(world_id, session_id)
+            active_story_chapters = self._resolve_story_chapters(world_id, progress)
+            current_chapter = active_story_chapters[0] if active_story_chapters else None
+            game_ctx_updated = self._build_game_context(context, progress, session_id, player_input)
+
+            if len(active_story_chapters) > 1:
+                final_directive = self.story_director.post_evaluate_multi(
+                    game_ctx_updated,
+                    chapters=active_story_chapters,
+                    flash_condition_results=flash_condition_results,
+                    pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+                )
+            else:
+                final_directive = self.story_director.post_evaluate(
+                    game_ctx_updated,
+                    chapter=current_chapter,
+                    flash_condition_results=flash_condition_results,
+                    pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+                )
+
+            post_changed_party = False
+            if final_directive.side_effects:
+                await self._execute_side_effects(world_id, session_id, final_directive.side_effects)
+                post_changed_party = any(
+                    e.get("type") in ("add_teammate", "remove_teammate")
+                    for e in final_directive.side_effects
+                )
+
+            pre_changed_party = any(
+                e.get("type") in ("add_teammate", "remove_teammate")
+                for e in pre_side_effects
+            ) if pre_side_effects else False
+
+            if flash_changed_party or pre_changed_party or post_changed_party:
+                party = await self.party_service.get_party(world_id, session_id)
+
+            turn_story_events = list(pre_directive.auto_fired_events) + list(final_directive.fired_events)
+            for event in final_directive.fired_events:
+                if event.id not in progress.events_triggered:
+                    progress.events_triggered.append(event.id)
+
+            all_narrative_directives = pre_directive.narrative_injections + final_directive.narrative_injections
+            if all_narrative_directives:
+                context["story_narrative_directives"] = all_narrative_directives
+
+            # Flash story events
+            flash_story_prog = context.get("story_progression")
+            if not isinstance(flash_story_prog, dict):
+                flash_story_prog = (context.get("context_package") or {}).get("story_progression", {})
+            flash_story_events_raw = flash_story_prog.get("story_events", []) if isinstance(flash_story_prog, dict) else []
+            chapter_event_map: Dict[str, Any] = {}
+            for ch in active_story_chapters:
+                for e in ch.events:
+                    chapter_event_map[e.id] = e
+            already_fired_ids = {e.id for e in turn_story_events}
+            if isinstance(flash_story_events_raw, list):
+                for ev_id in flash_story_events_raw:
+                    if isinstance(ev_id, str) and ev_id.strip():
+                        ev_id = ev_id.strip()
+                        if ev_id in chapter_event_map and ev_id not in already_fired_ids:
+                            if ev_id not in progress.events_triggered:
+                                progress.events_triggered.append(ev_id)
+                            turn_story_events.append(chapter_event_map[ev_id])
+
+            # 关键修复：flash_story_events 合并后，再次评估章节转换（流式同回合生效）。
+            if not final_directive.chapter_transition:
+                reevaluated_transition = self._reevaluate_transition_after_progress(
+                    context=context,
+                    progress=progress,
+                    session_id=session_id,
+                    player_input=player_input,
+                    chapters=active_story_chapters,
+                    flash_condition_results=flash_condition_results,
+                    pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+                )
+                if reevaluated_transition:
+                    final_directive.chapter_transition = reevaluated_transition
+                    logger.info(
+                        "[v2-stream] transition re-evaluated after event merge: -> %s (%s)",
+                        reevaluated_transition.target_chapter_id,
+                        reevaluated_transition.transition_type,
+                    )
+
+            progress.rounds_in_chapter += 1
+            has_progress = bool(turn_story_events)
+            if has_progress:
+                progress.rounds_since_last_progress = 0
+            else:
+                progress.rounds_since_last_progress += 1
+            for req, res in zip(flash_requests, flash_results):
+                if res.success and res.operation == FlashOperation.NPC_DIALOGUE:
+                    npc_id = req.parameters.get("npc_id")
+                    if npc_id:
+                        progress.npc_interactions[npc_id] = progress.npc_interactions.get(npc_id, 0) + 1
+            for event in turn_story_events:
+                progress.event_cooldowns[event.id] = progress.rounds_in_chapter
+
+            await self.narrative_service.save_progress(world_id, session_id, progress)
+
+            # 章节转换
+            v2_transition_result = None
+            if final_directive.chapter_transition:
+                trans = final_directive.chapter_transition
+                if trans.narrative_hint:
+                    context.setdefault("story_narrative_directives", []).append(trans.narrative_hint)
+                v2_transition_result = await self.narrative_service.transition_to_chapter(
+                    world_id=world_id,
+                    session_id=session_id,
+                    target_chapter_id=trans.target_chapter_id,
+                    transition_type=trans.transition_type,
+                )
+                if state and v2_transition_result.get("new_chapter"):
+                    state.chapter_id = v2_transition_result["new_chapter"]
+                    await self._state_manager.set_state(world_id, session_id, state)
+
+            if settings.story_event_graph_sync and (turn_story_events or (final_directive and final_directive.chapter_transition)):
+                await self._sync_story_director_graph(
+                    world_id=world_id,
+                    session_id=session_id,
+                    events=turn_story_events,
+                    chapter_transition=final_directive.chapter_transition if final_directive else None,
+                    context=context,
+                    player_input=player_input,
+                    party=party,
+                    progress=progress,
+                )
+
+            # 章节可能在本回合推进/切换，刷新章节引导用于当回合流式叙述。
+            await self._refresh_chapter_context(world_id, session_id, context)
+
+            # 导航后同步队友位置
+            if intent.intent_type == IntentType.NAVIGATION and party:
+                new_location = context.get("location", {}).get("location_id")
+                if new_location:
+                    await self.party_service.sync_locations(world_id, session_id, new_location)
+
+            # Curation
+            execution_summary = self._build_execution_summary(flash_results)
+
+            async def _curate_player():
+                if not memory_result or not getattr(memory_result, "activated_nodes", None):
+                    return None
+                return await self.flash_cpu.curate_context(
+                    player_input=player_input, intent=intent,
+                    memory_result=memory_result, flash_results=flash_results, context=context,
+                )
+
+            async def _curate_all_teammates():
+                if not party or skip_teammate:
+                    return {}, {}
+                active = party.get_active_members()
+                if not active:
+                    return {}, {}
+
+                async def _curate_one(member):
+                    char_id = member.character_id
+                    task = teammate_recall_tasks.get(char_id)
+                    if task:
+                        mem = await task
+                    else:
+                        seeds = self._build_effective_seeds(
+                            analysis.memory_seeds, base_context, character_id=char_id)
+                        mem = await self._recall_memory(
+                            world_id, char_id, seeds,
+                            intent_type=intent.intent_type.value,
+                            chapter_id=current_chapter_id, area_id=current_area_id)
+                    if not mem or not getattr(mem, "activated_nodes", None):
+                        return char_id, None, ""
+                    view = dict(context)
+                    view["active_character_id"] = char_id
+                    curated = await self.flash_cpu.curate_context(
+                        player_input=player_input, intent=intent,
+                        memory_result=mem, flash_results=flash_results, context=view)
+                    summary = self._summarize_memory(mem)
+                    return char_id, curated, summary
+
+                results = await asyncio.gather(
+                    *(_curate_one(m) for m in active), return_exceptions=True)
+                packages, summaries = {}, {}
+                for r in results:
+                    if isinstance(r, Exception):
+                        continue
+                    cid, cur, summ = r
+                    if cur:
+                        packages[cid] = cur
+                    if summ:
+                        summaries[cid] = summ
+                return packages, summaries
+
+            player_curated, (t_packages, t_summaries) = await asyncio.gather(
+                _curate_player(), _curate_all_teammates()
+            )
+            if player_curated:
+                merged_package = {}
+                if isinstance(context.get("context_package"), dict):
+                    merged_package.update(context["context_package"])
+                merged_package.update(player_curated)
+                context["context_package"] = merged_package
+            if t_packages:
+                context["teammate_context_packages"] = t_packages
+            if t_summaries:
+                context["teammate_memory_summaries"] = t_summaries
+
+            last_teammate_responses = history.get_last_teammate_responses()
+            if last_teammate_responses:
+                context["last_teammate_responses"] = last_teammate_responses
+
+            # === 预处理完成，开始流式输出 ===
+            yield {"type": "phase", "phase": "generating"}
+
+            # --- 流式 GM 叙述 ---
+            yield {"type": "gm_start"}
+            gm_narration = ""
+            try:
+                async for chunk in self.flash_cpu.generate_gm_narration_stream(
+                    player_input=player_input,
+                    execution_summary=execution_summary,
+                    context=context,
+                ):
+                    if chunk["type"] == "answer":
+                        gm_narration += chunk["text"]
+                        yield {"type": "gm_chunk", "text": chunk["text"], "chunk_type": "answer"}
+                    elif chunk["type"] == "thought":
+                        yield {"type": "gm_chunk", "text": chunk["text"], "chunk_type": "thought"}
+            except Exception as e:
+                logger.error("[v2-stream] GM 叙述流式生成失败: %s", e, exc_info=True)
+                gm_narration = "（旁白沉默了片刻……你的行动已被记录。请继续你的冒险。）"
+
+            if not gm_narration.strip():
+                gm_narration = "……"
+
+            # 章节转换叙述
+            if v2_transition_result and v2_transition_result.get("new_chapter"):
+                transition_text = await self._generate_chapter_transition(
+                    world_id,
+                    session_id,
+                    v2_transition_result.get("new_chapter"),
+                    v2_transition_result.get("new_maps_unlocked", []),
+                )
+                if transition_text:
+                    gm_narration += f"\n\n{transition_text}"
+                    yield {"type": "gm_chunk", "text": f"\n\n{transition_text}", "chunk_type": "answer"}
+
+            output_anomaly_meta = self._detect_output_anomalies(gm_narration)
+            if output_anomaly_meta["output_anomalies"]:
+                logger.warning(
+                    "[v2-stream] output anomaly detected world=%s session=%s anomalies=%s excerpt=%s",
+                    world_id,
+                    session_id,
+                    output_anomaly_meta["output_anomalies"],
+                    output_anomaly_meta["output_anomaly_excerpt"],
+                )
+
+            yield {"type": "gm_end", "full_text": gm_narration}
+
+            # --- 对话/战斗时间推进 ---
+            time_events = []
+            has_npc_dialogue = any(
+                r.success and r.operation == FlashOperation.NPC_DIALOGUE
+                for r in flash_results
+            )
+            has_combat = any(
+                r.success and r.operation == FlashOperation.START_COMBAT
+                for r in flash_results
+            )
+            if has_npc_dialogue or has_combat or (intent and intent.intent_type in (IntentType.TEAM_INTERACTION, IntentType.ROLEPLAY)):
+                advance_minutes = 6 if has_npc_dialogue else (2 if has_combat else 5)
+                try:
+                    state = await self._state_manager.get_state(world_id, session_id)
+                    if state and state.game_time:
+                        from app.services.time_manager import TimeManager as _TM, GameTime as _GT
+                        gt = _GT(day=state.game_time.day, hour=state.game_time.hour, minute=state.game_time.minute)
+                        tm = _TM(initial_time=gt)
+                        time_events = tm.tick(advance_minutes)
+                        from app.models.state_delta import GameTimeState
+                        td = tm.to_dict()
+                        state.game_time = GameTimeState(**td)
+                        await self._state_manager.set_state(world_id, session_id, state)
+                        await self._world_runtime.persist_state(state)
+                        context["time"] = td
+                except Exception as e:
+                    logger.warning("[v2-stream] 时间推进失败: %s", e)
+
+            # 时段切换事件
+            for te in time_events:
+                if te.event_type == "period_change":
+                    yield {
+                        "type": "time_event",
+                        "event_type": te.event_type,
+                        "description": te.description,
+                        "data": te.data,
+                    }
+
+            # --- 流式队友响应 ---
+            if party and party.get_active_members() and not skip_teammate:
+                async for event in self.teammate_response_service.process_round_stream(
+                    party=party,
+                    player_input=player_input,
+                    gm_response=execution_summary,
+                    context=context,
+                ):
+                    yield event
+                    if event["type"] == "teammate_skip":
+                        teammate_debug["total"] += 1
+                        teammate_debug["skipped"] += 1
+                        reason = event.get("reason")
+                        if isinstance(reason, str) and reason.strip():
+                            teammate_debug["skip_reasons"].append(reason.strip())
+                    elif event["type"] == "teammate_end":
+                        teammate_debug["total"] += 1
+                        if event.get("response"):
+                            teammate_responses.append({
+                                "character_id": event["character_id"],
+                                "name": event["name"],
+                                "response": event["response"],
+                                "reaction": event.get("reaction", ""),
+                            })
+                        else:
+                            teammate_debug["skipped"] += 1
+                            reaction = event.get("reaction")
+                            if isinstance(reaction, str) and reaction.strip():
+                                teammate_debug["skip_reasons"].append(reaction.strip())
+
+            # 事件分发
+            if party and party.share_events and not skip_teammate:
+                await self._distribute_event_to_party(
+                    world_id=world_id,
+                    party=party,
+                    player_input=player_input,
+                    gm_response=gm_narration,
+                    context=context,
+                )
+
+        except asyncio.CancelledError:
+            logger.info("[v2-stream] 流式处理被取消 world=%s session=%s", world_id, session_id)
+            raise
+        except Exception as e:
+            logger.exception("[v2-stream] 流式处理失败: %s", e)
+            yield {"type": "error", "error": str(e)}
+            return
+        finally:
+            pending_tasks: List[asyncio.Task] = []
+            if memory_task is not None:
+                pending_tasks.append(memory_task)
+            pending_tasks.extend(teammate_recall_tasks.values())
+            for task in pending_tasks:
+                if task and not task.done():
+                    task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+            # 后处理：历史记录 + 图谱化（必须执行）
+            if history and gm_narration and intent:
+                try:
+                    visibility = "private" if is_private else "public"
+                    round_stats = history.record_round(
+                        player_input=player_input,
+                        gm_response=gm_narration,
+                        metadata={
+                            "intent_type": intent.intent_type.value,
+                            "story_events": [event.id for event in turn_story_events] if turn_story_events else [],
+                            "visibility": visibility,
+                            "private_target": private_target if is_private else None,
+                            **output_anomaly_meta,
+                        },
+                    )
+                    for tr in teammate_responses:
+                        history.record_teammate_response(
+                            character_id=tr["character_id"],
+                            name=tr["name"],
+                            response=tr["response"],
+                        )
+                    if round_stats and round_stats.get("should_graphize"):
+                        game_day = context.get("time", {}).get("day", 1)
+                        location_id = context.get("location", {}).get("location_id")
+                        asyncio.create_task(
+                            self._run_graphization(history, game_day, location_id)
+                        )
+                except Exception as exc:
+                    logger.error("[v2-stream] 后处理失败: %s", exc, exc_info=True)
+
+        # 最终 complete 事件
+        state_delta = self._merge_state_deltas(flash_results) if flash_results else None
+
+        # 注入更新后的时间到 state_delta（对话/战斗时间推进更新了 context["time"]，但未进 state_delta）
+        updated_time = context.get("time")
+        if updated_time:
+            if state_delta:
+                state_delta.changes["game_time"] = updated_time
+            else:
+                from app.models.state_delta import StateDelta as _SD
+                from datetime import datetime as _dt
+                state_delta = _SD(
+                    delta_id=f"time_{_dt.now().isoformat()}",
+                    timestamp=_dt.now(),
+                    operation="time_update",
+                    changes={"game_time": updated_time},
+                )
+
+        available_actions = await self._get_available_actions(world_id, session_id, context)
+        chapter_info_payload = self._build_chapter_response_payload(
+            context=context,
+            progress=progress,
+            final_directive=final_directive,
+        )
+        story_director_meta = self._build_story_director_metadata(
+            pre_directive=pre_directive,
+            final_directive=final_directive,
+            turn_story_events=turn_story_events,
+        )
+        teammate_debug["skip_reasons"] = sorted(set(teammate_debug["skip_reasons"]))
+
+        yield {
+            "type": "complete",
+            "state_delta": state_delta.model_dump() if state_delta else None,
+            "metadata": {
+                "intent_type": intent.intent_type.value if intent else "unknown",
+                "teammate_count": len(teammate_responses),
+                "source": "flash_gm_stream",
+                "is_private": is_private,
+                "time": context.get("time"),
+                "story_director": story_director_meta,
+                "teammate_debug": teammate_debug,
+                **output_anomaly_meta,
+            },
+            "available_actions": available_actions,
+            "story_events": [e.id for e in turn_story_events] if turn_story_events else [],
+            "teammate_responses": teammate_responses,
+            "pacing_action": final_directive.pacing_action if final_directive else None,
+            "chapter_info": chapter_info_payload,
+        }
 
     async def _distribute_event_to_party(
         self,
@@ -1210,9 +1924,14 @@ class AdminCoordinator:
                 history=history,
             )
 
+        # Determine phase based on character existence
+        has_character = bool(await self.character_store.get_character(world_id, session_id))
+        phase = "active" if has_character else "character_creation"
+
         return {
             "session_id": session_id,
             "restored": True,
+            "phase": phase,
             "state": state_dict,
             "location": location,
             "party": party_info,
@@ -1312,6 +2031,14 @@ class AdminCoordinator:
             chapter_name = chapter_obj.get("name", "序章")
             chapter_description = chapter_obj.get("description", "")
             chapter_goals = chapter_plan.get("goals", [])
+            event_directives = chapter_plan.get("event_directives", [])
+            first_event_directive = event_directives[0] if event_directives else "探索当前环境"
+
+            # {{user}} 占位符替换
+            _sanitize = lambda t: (t or "").replace("{{user}}", "冒险者").replace("{{char}}", "")
+            chapter_name = _sanitize(chapter_name)
+            chapter_description = _sanitize(chapter_description)
+            first_event_directive = _sanitize(first_event_directive)
 
             # 队友
             party = await self.party_service.get_party(world_id, session_id)
@@ -1321,15 +2048,23 @@ class AdminCoordinator:
                 if names:
                     teammates = ", ".join(names)
 
+            # 玩家角色信息
+            player_char = await self.character_store.get_character(world_id, session_id)
+            player_character_text = player_char.to_summary_text() if player_char else "无玩家角色"
+
             # 加载 prompt
             prompt_path = Path("app/prompts/opening_narration.md")
             if prompt_path.exists():
                 prompt_template = prompt_path.read_text(encoding="utf-8")
                 prompt = prompt_template.format(
+                    player_character=player_character_text,
                     world_background=world_background or "未知世界",
                     chapter_name=chapter_name,
-                    chapter_description=chapter_description[:300] or "冒险的开始",
-                    chapter_goals="、".join(chapter_goals[:3]) if chapter_goals else "探索世界",
+                    chapter_description=chapter_description[:600] or "冒险的开始",
+                    chapter_goals="、".join(
+                        _sanitize(g) for g in chapter_goals[:3]
+                    ) if chapter_goals else "探索世界",
+                    first_event_directive=first_event_directive,
                     location_name=location_name,
                     location_atmosphere=location_atmosphere or "平静",
                     npcs_present=npcs_present,
@@ -1453,7 +2188,8 @@ class AdminCoordinator:
                 logger.debug("[world_background] chapter 读取失败: %s", exc)
 
         blocks = [b for b in (base_text, chapter_block) if b]
-        return "\n".join(blocks)
+        result = "\n".join(blocks)
+        return result.replace("{{user}}", "冒险者").replace("{{char}}", "")
 
     async def _get_character_roster(self, world_id: str) -> str:
         """获取世界角色花名册（缓存）"""
@@ -1583,19 +2319,275 @@ class AdminCoordinator:
         else:
             context["teammates"] = []
 
+        # 玩家角色
+        try:
+            player_char = await self.character_store.get_character(world_id, session_id)
+            if player_char:
+                context["player_character"] = player_char
+                context["player_character_summary"] = player_char.to_summary_text()
+            else:
+                context["player_character_summary"] = "无玩家角色"
+        except Exception as exc:
+            logger.debug("[_build_context] 玩家角色加载失败: %s", exc)
+            context["player_character_summary"] = "无玩家角色"
+
         # 世界背景 + 角色花名册
         context["world_background"] = await self._get_world_background(world_id, session_id)
         context["character_roster"] = await self._get_character_roster(world_id)
 
         # 章节信息
-        try:
-            chapter_plan = await self.narrative_service.get_current_chapter_plan(world_id, session_id)
-            context["chapter_info"] = chapter_plan
-        except Exception as exc:
-            logger.debug("[_build_context] 章节信息获取失败: %s", exc)
-            context["chapter_info"] = {}
+        await self._refresh_chapter_context(world_id, session_id, context)
 
         return context
+
+    async def _refresh_chapter_context(
+        self,
+        world_id: str,
+        session_id: str,
+        context: Dict[str, Any],
+    ) -> None:
+        """刷新上下文中的章节编排信息。"""
+        try:
+            chapter_plan = await self.narrative_service.get_current_chapter_plan(
+                world_id, session_id
+            )
+            if not isinstance(chapter_plan, dict):
+                context["chapter_info"] = {}
+                return
+
+            chapter_info = dict(chapter_plan)
+            progress = await self.narrative_service.get_progress(world_id, session_id)
+
+            triggered_events = [
+                event_id
+                for event_id in (getattr(progress, "events_triggered", []) or [])
+                if isinstance(event_id, str) and event_id.strip()
+            ]
+            triggered_set = set(triggered_events)
+            required_event_summaries_raw = chapter_info.get("required_event_summaries", [])
+            required_event_summaries: List[Dict[str, Any]] = []
+            if isinstance(required_event_summaries_raw, list):
+                for item in required_event_summaries_raw:
+                    if not isinstance(item, dict):
+                        continue
+                    event_id = item.get("id")
+                    if not isinstance(event_id, str) or not event_id.strip():
+                        continue
+                    normalized = dict(item)
+                    normalized["id"] = event_id.strip()
+                    normalized["completed"] = normalized["id"] in triggered_set
+                    required_event_summaries.append(normalized)
+
+            required_events_raw = chapter_info.get("required_events", [])
+            required_events_from_ids = [
+                event_id
+                for event_id in required_events_raw
+                if isinstance(event_id, str) and event_id.strip()
+            ]
+            required_events_from_summaries = [
+                item["id"] for item in required_event_summaries
+                if isinstance(item.get("id"), str) and item["id"].strip()
+            ]
+            required_events = required_events_from_ids or required_events_from_summaries
+            pending_required_events = [
+                event_id for event_id in required_events if event_id not in triggered_set
+            ]
+            event_total = len(required_events)
+            event_completed = event_total - len(pending_required_events)
+            event_completion_pct = (
+                round((event_completed / event_total) * 100, 2) if event_total > 0 else 0.0
+            )
+            all_required_events_completed = event_total > 0 and event_completed >= event_total
+            waiting_transition = bool(
+                all_required_events_completed and not chapter_info.get("current_event")
+            )
+
+            chapter_info["events_triggered"] = triggered_events
+            chapter_info["required_event_summaries"] = required_event_summaries
+            chapter_info["pending_required_events"] = pending_required_events
+            chapter_info["event_total"] = event_total
+            chapter_info["event_completed"] = event_completed
+            chapter_info["event_completion_pct"] = event_completion_pct
+            chapter_info["all_required_events_completed"] = all_required_events_completed
+            chapter_info["waiting_transition"] = waiting_transition
+            context["chapter_info"] = chapter_info
+        except Exception as exc:
+            logger.debug("[_refresh_chapter_context] 章节信息获取失败: %s", exc)
+            context["chapter_info"] = {}
+
+    @staticmethod
+    def _build_chapter_response_payload(
+        context: Dict[str, Any],
+        progress: Any,
+        final_directive: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """构建返回给前端的章节信息摘要。"""
+        payload: Dict[str, Any] = {}
+
+        chapter_info = context.get("chapter_info") or {}
+        chapter_obj = chapter_info.get("chapter") if isinstance(chapter_info, dict) else {}
+        chapter_id = chapter_obj.get("id") if isinstance(chapter_obj, dict) else None
+        chapter_name = chapter_obj.get("name") if isinstance(chapter_obj, dict) else None
+        chapter_description = (
+            chapter_obj.get("description") if isinstance(chapter_obj, dict) else None
+        )
+
+        if not chapter_id:
+            chapter_id = getattr(progress, "current_chapter", None)
+
+        if chapter_id:
+            payload["id"] = chapter_id
+        if chapter_name:
+            payload["name"] = chapter_name
+        if chapter_description:
+            payload["description"] = chapter_description
+
+        if isinstance(chapter_info, dict):
+            for key in (
+                "goals",
+                "required_events",
+                "required_event_summaries",
+                "pending_required_events",
+                "events_triggered",
+                "suggested_maps",
+                "event_directives",
+                "current_event",
+                "next_chapter",
+                "event_total",
+                "event_completed",
+                "event_completion_pct",
+                "all_required_events_completed",
+                "waiting_transition",
+            ):
+                value = chapter_info.get(key)
+                if value not in (None, "", []):
+                    payload[key] = value
+
+        transition = (
+            getattr(getattr(final_directive, "chapter_transition", None), "target_chapter_id", None)
+            if final_directive
+            else None
+        )
+        if transition:
+            payload["transition"] = transition
+
+        pacing_action = (
+            getattr(final_directive, "pacing_action", None)
+            if final_directive
+            else None
+        )
+        if pacing_action:
+            payload["pacing_action"] = pacing_action
+
+        return payload or None
+
+    def _reevaluate_transition_after_progress(
+        self,
+        context: Dict[str, Any],
+        progress: Any,
+        session_id: str,
+        player_input: str,
+        chapters: List[Any],
+        flash_condition_results: Dict[str, bool],
+        pre_auto_fired_ids: List[str],
+    ) -> Optional[Any]:
+        """在进度更新后重新评估是否应当发生章节转换。"""
+        if not chapters:
+            return None
+
+        game_ctx_updated = self._build_game_context(context, progress, session_id, player_input)
+        if len(chapters) > 1:
+            reevaluated = self.story_director.post_evaluate_multi(
+                game_ctx_updated,
+                chapters=chapters,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=pre_auto_fired_ids,
+            )
+        else:
+            reevaluated = self.story_director.post_evaluate(
+                game_ctx_updated,
+                chapter=chapters[0],
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=pre_auto_fired_ids,
+            )
+        return getattr(reevaluated, "chapter_transition", None)
+
+    @staticmethod
+    def _detect_output_anomalies(narration: str) -> Dict[str, Any]:
+        """检测疑似 thought/草稿泄露，仅用于可观测性记录，不改写正文。"""
+        if not isinstance(narration, str) or not narration.strip():
+            return {"output_anomalies": [], "output_anomaly_excerpt": None}
+
+        text = narration.strip()
+        lowered = text.lower()
+        markers = [
+            "thought",
+            "draft 1",
+            "final polish",
+            "self-correction",
+            "refining",
+            "revised narrative",
+            "player character (pc)",
+            "current scenario",
+            "recent action",
+            "context:",
+            "follow him into",
+        ]
+        marker_hits = sum(1 for marker in markers if marker in lowered)
+        bullet_lines = len(re.findall(r"(?m)^\s*[\*\-]\s{0,3}", text))
+        has_thought_header = bool(re.search(r"(?im)^\s*thought\s*$", text))
+        has_leak = has_thought_header or marker_hits >= 3 or (
+            "player character (pc)" in lowered and bullet_lines >= 3
+        )
+
+        if not has_leak:
+            return {"output_anomalies": [], "output_anomaly_excerpt": None}
+
+        compact = re.sub(r"\s+", " ", text)
+        return {
+            "output_anomalies": ["thought_leak_suspected"],
+            "output_anomaly_excerpt": compact[:240],
+        }
+
+    @staticmethod
+    def _build_story_director_metadata(
+        pre_directive: Any,
+        final_directive: Any,
+        turn_story_events: List[Any],
+    ) -> Dict[str, Any]:
+        """构建 StoryDirector 可观测性摘要。"""
+        pre_auto_fired = [
+            event.id
+            for event in getattr(pre_directive, "auto_fired_events", []) or []
+            if getattr(event, "id", None)
+        ]
+        post_fired = [
+            event.id
+            for event in getattr(final_directive, "fired_events", []) or []
+            if getattr(event, "id", None)
+        ]
+        turn_story_event_ids = [
+            event.id
+            for event in turn_story_events or []
+            if getattr(event, "id", None)
+        ]
+
+        transition = getattr(final_directive, "chapter_transition", None) if final_directive else None
+        transition_target = getattr(transition, "target_chapter_id", None) if transition else None
+        transition_type = getattr(transition, "transition_type", None) if transition else None
+
+        pre_injections = len(getattr(pre_directive, "narrative_injections", []) or [])
+        post_injections = len(getattr(final_directive, "narrative_injections", []) or [])
+
+        return {
+            "pre_auto_fired": pre_auto_fired,
+            "post_fired": post_fired,
+            "turn_story_events": turn_story_event_ids,
+            "pacing_action": getattr(final_directive, "pacing_action", None) if final_directive else None,
+            "transition_target": transition_target,
+            "transition_type": transition_type,
+            "narrative_directive_count": pre_injections + post_injections,
+        }
 
     def _resolve_story_chapters(self, world_id: str, progress: Any) -> List[Any]:
         """解析当前激活章节（主章节 + 并行章节）。"""
@@ -2083,7 +3075,7 @@ class AdminCoordinator:
             FlashOperation.NAVIGATE,
             FlashOperation.ENTER_SUBLOCATION,
         }
-        refresh_time = FlashOperation.UPDATE_TIME in ops
+        refresh_time = bool(ops & {FlashOperation.UPDATE_TIME, FlashOperation.NAVIGATE})
         refresh_state = ops & {
             FlashOperation.NPC_DIALOGUE,
             FlashOperation.START_COMBAT,
@@ -2403,6 +3395,10 @@ class AdminCoordinator:
                 )
                 logger.info("Flash 请求 %d 完成: success=%s", i+1, result.success)
                 results.append(result)
+            except asyncio.CancelledError:
+                raise
+            except MCPServiceUnavailableError:
+                raise
             except Exception as e:
                 logger.error("Flash 请求 %d 异常: %s", i+1, e, exc_info=True)
                 results.append(FlashResponse(
@@ -2772,6 +3768,11 @@ class AdminCoordinator:
                 session_id,
                 CombatResolveRequest(combat_id=combat_id, use_engine=True, dispatch=True),
             )
+            # Sync combat results (HP/XP/gold) to player character
+            final_result = payload.get("final_result") or {}
+            await self.flash_cpu.sync_combat_result_to_character(
+                world_id, session_id, {"final_result": final_result},
+            )
             await self.flash_cpu._apply_delta(world_id, session_id, self.flash_cpu._build_state_delta("end_combat", {"combat_id": None}))
             return {
                 "type": "combat",
@@ -2832,10 +3833,20 @@ class AdminCoordinator:
         state = await self._world_runtime.get_state(world_id, session_id)
         if state:
             known_chars = state.metadata.get("known_characters", []) if state.metadata else []
+            # Derive phase from state
+            has_character = bool(await self.character_store.get_character(world_id, session_id))
+            if not has_character:
+                phase = GamePhase.CHARACTER_CREATION
+            elif state.combat_id:
+                phase = GamePhase.COMBAT
+            elif state.active_dialogue_npc:
+                phase = GamePhase.DIALOGUE
+            else:
+                phase = GamePhase.IDLE
             return self.AdminContextView(
                 world_id=world_id,
                 session_id=session_id,
-                phase=GamePhase.IDLE,
+                phase=phase,
                 game_day=state.game_time.day,
                 current_scene=None,
                 current_npc=state.active_dialogue_npc,
@@ -3116,3 +4127,96 @@ class AdminCoordinator:
                 })
 
         return updates
+
+    # ==================== Private Chat ====================
+
+    async def process_private_chat_stream(
+        self,
+        world_id: str,
+        session_id: str,
+        target_character_id: str,
+        player_input: str,
+    ):
+        """
+        私聊流式处理 -- 直接与角色对话，跳过 Flash 分析和 GM 叙述。
+
+        Yields:
+            dict: SSE 事件 (chat_start/chat_chunk/chat_end/error)
+        """
+        try:
+            # Phase 守卫：角色必须存在
+            pc = await self.character_store.get_character(world_id, session_id)
+            if not pc:
+                yield {"type": "error", "error": "请先创建角色后再开始冒险。"}
+                return
+
+            # 1. 获取或创建 NPC 实例
+            instance = await self.instance_manager.get_or_create(
+                target_character_id, world_id
+            )
+            character_name = (
+                instance.config.name if instance.config else target_character_id
+            )
+
+            yield {
+                "type": "chat_start",
+                "character_id": target_character_id,
+                "name": character_name,
+            }
+
+            # 2. 将玩家消息注入实例上下文
+            instance.context_window.add_message("user", player_input)
+
+            # 3. 构建 prompt：系统提示 + 对话历史
+            system_prompt = instance.context_window.get_system_prompt()
+            recent_messages = instance.context_window.get_all_messages()
+            conversation_lines = []
+            for msg in recent_messages[-20:]:
+                role_label = "玩家" if msg.role == "user" else character_name
+                conversation_lines.append(f"{role_label}: {msg.content}")
+            conversation_text = "\n".join(conversation_lines)
+
+            prompt = f"""{system_prompt}
+
+---
+以下是最近的对话：
+{conversation_text}
+
+---
+请以 {character_name} 的身份，直接回复玩家。保持角色性格和说话风格。只输出对话内容，不要加任何前缀或标记。"""
+
+            # 4. 流式生成
+            from app.services.llm_service import LLMService
+            llm = LLMService()
+            full_text = ""
+
+            async for chunk in llm.generate_simple_stream(prompt):
+                if chunk["type"] == "answer":
+                    full_text += chunk["text"]
+                    yield {
+                        "type": "chat_chunk",
+                        "text": chunk["text"],
+                    }
+                elif chunk["type"] == "error":
+                    yield {"type": "error", "error": chunk["text"]}
+                    return
+
+            # 5. 将角色回复写回上下文
+            instance.context_window.add_message("assistant", full_text)
+
+            yield {
+                "type": "chat_end",
+                "full_text": full_text,
+            }
+
+            # 6. 检查是否需要图谱化
+            try:
+                await self.instance_manager.maybe_graphize_instance(
+                    world_id, target_character_id
+                )
+            except Exception as e:
+                logger.debug("[私聊] 图谱化检查失败: %s", e)
+
+        except Exception as exc:
+            logger.exception("[私聊] 处理失败: %s", exc)
+            yield {"type": "error", "error": str(exc)}

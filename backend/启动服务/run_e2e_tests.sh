@@ -31,6 +31,29 @@ echo_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 echo_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 echo_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+check_tcp_port() {
+    local host="$1"
+    local port="$2"
+
+    if command -v nc >/dev/null 2>&1; then
+        nc -z "$host" "$port" >/dev/null 2>&1
+        return $?
+    fi
+
+    "$PY" - "$host" "$port" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+try:
+    with socket.create_connection((host, port), timeout=1.5):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
 # 检查前置条件
 check_prerequisites() {
     echo_info "检查前置条件..."
@@ -44,7 +67,7 @@ check_prerequisites() {
     echo_info "Python: $PY"
 
     # 检查 MCP Game Tools 服务
-    if ! nc -z "$HOST" "$TOOLS_PORT" 2>/dev/null; then
+    if ! check_tcp_port "$HOST" "$TOOLS_PORT"; then
         echo_error "Game Tools MCP 未运行 (端口 $TOOLS_PORT)"
         echo "请先启动 MCP 服务: bash 启动服务/run_mcp_services.sh"
         return 1
@@ -52,7 +75,7 @@ check_prerequisites() {
     echo_info "Game Tools MCP: http://$HOST:$TOOLS_PORT/mcp ✓"
 
     # 检查 Combat MCP 服务
-    if ! nc -z "$HOST" "$COMBAT_PORT" 2>/dev/null; then
+    if ! check_tcp_port "$HOST" "$COMBAT_PORT"; then
         echo_error "Combat MCP 未运行 (端口 $COMBAT_PORT)"
         echo "请先启动 MCP 服务: bash 启动服务/run_mcp_services.sh"
         return 1

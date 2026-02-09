@@ -14,7 +14,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { useGameStore } from '../../stores';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 import type { GameAction, ActionCategory } from '../../types';
 
 interface ActionButtonsProps {
@@ -58,7 +58,7 @@ const categoryConfig: Record<
   },
   system: {
     icon: <Settings className="w-4 h-4" />,
-    color: 'g-text-secondary border-g-border-strong hover:bg-g-bg-sidebar',
+    color: 'text-g-text-secondary border-g-border-strong hover:bg-g-bg-sidebar',
     labelKey: 'actions.category.system',
   },
 };
@@ -69,7 +69,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
 }) => {
   const { t } = useTranslation();
   const { availableActions } = useGameStore();
-  const { sendInput, isLoading } = useGameInput();
+  const { sendInput, isLoading } = useStreamGameInput();
 
   const actionsToShow = actions || availableActions;
 
@@ -110,7 +110,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
             className="space-y-2"
           >
             {/* Category label */}
-            <div className="flex items-center gap-2 text-xs g-text-muted font-body">
+            <div className="flex items-center gap-2 text-xs text-g-text-muted font-body">
               {config.icon}
               <span className="uppercase tracking-wide">
                 {t(config.labelKey)}
@@ -133,7 +133,7 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
                     border
                     text-sm font-body
                     transition-all duration-200
-                    ${action.enabled ? config.color : 'g-text-muted border-g-border opacity-50 cursor-not-allowed'}
+                    ${action.enabled ? config.color : 'text-g-text-muted border-g-border opacity-50 cursor-not-allowed'}
                   `}
                   style={{ borderRadius: '8px' }}
                   title={action.description || action.display_name}

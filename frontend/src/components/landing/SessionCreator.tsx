@@ -1,13 +1,16 @@
 /**
- * Session creator form - world selection and session creation
+ * Session creator - dual-mode world selection and session creation/resume
  */
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Loader2, ChevronDown } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { createSession, listRecoverableSessions, listWorlds } from '../../api';
-import type { RecoverableSessionItem, CreateGameSessionResponse } from '../../types';
+import type { RecoverableSessionItem, CreateGameSessionResponse, CharacterCreationResponse } from '../../types';
+import { CharacterCreation } from '../character/CharacterCreation';
 
 interface SessionCreatorProps {
+  mode: 'new' | 'continue';
   onSessionCreated: (worldId: string, sessionId: string, createResponse?: CreateGameSessionResponse) => void;
 }
 
@@ -17,15 +20,38 @@ interface WorldInfo {
   description: string;
 }
 
-export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated }) => {
+function formatRelativeTime(raw: string): string {
+  const time = new Date(raw);
+  if (Number.isNaN(time.getTime())) return raw;
+  const diffMs = Date.now() - time.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return time.toLocaleDateString();
+}
+
+export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionCreated }) => {
+  const { t } = useTranslation();
   const [worldId, setWorldId] = useState('');
   const [userId, setUserId] = useState('player-001');
+  const [customWorldId, setCustomWorldId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingWorlds, setIsLoadingWorlds] = useState(true);
   const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [recoverableSessions, setRecoverableSessions] = useState<RecoverableSessionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [creationState, setCreationState] = useState<{
+    worldId: string;
+    sessionId: string;
+    location: any;
+    time: any;
+  } | null>(null);
 
   // Load available worlds on mount
   useEffect(() => {
@@ -55,17 +81,60 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
     return () => { cancelled = true; };
   }, []);
 
+  // Auto-load sessions when world changes in continue mode
+  useEffect(() => {
+    if (mode !== 'continue' || !worldId.trim() || !userId.trim()) return;
+    let cancelled = false;
+
+    const loadSessions = async () => {
+      setIsLoadingSessions(true);
+      setError(null);
+      setRecoverableSessions([]);
+      try {
+        const response = await listRecoverableSessions(worldId.trim(), userId.trim(), 20);
+        if (!cancelled) {
+          setRecoverableSessions(response.sessions);
+          if (response.sessions.length === 0) {
+            setError(t('landing.noSessions'));
+          }
+        }
+      } catch (err) {
+        console.error('List sessions failed:', err);
+        if (!cancelled) {
+          setError('Failed to load sessions.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingSessions(false);
+        }
+      }
+    };
+
+    loadSessions();
+    return () => { cancelled = true; };
+  }, [mode, worldId, userId, t]);
+
   const handleCreate = async () => {
-    if (!worldId.trim() || !userId.trim()) return;
+    const effectiveWorldId = customWorldId.trim() || worldId.trim();
+    if (!effectiveWorldId || !userId.trim()) return;
 
     setIsCreating(true);
     setError(null);
 
     try {
-      const response = await createSession(worldId, {
+      const response = await createSession(effectiveWorldId, {
         user_id: userId,
       });
-      onSessionCreated(response.world_id, response.session_id, response);
+      if (response.phase === 'character_creation') {
+        setCreationState({
+          worldId: response.world_id,
+          sessionId: response.session_id,
+          location: response.location,
+          time: response.time,
+        });
+      } else {
+        onSessionCreated(response.world_id, response.session_id, response);
+      }
     } catch (err) {
       console.error('Session creation failed:', err);
       const detail =
@@ -82,229 +151,321 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ onSessionCreated
     }
   };
 
-  const handleLoadSessions = async () => {
-    if (!worldId.trim() || !userId.trim()) return;
-
-    setIsLoadingSessions(true);
-    setError(null);
-    setRecoverableSessions([]);
-
-    try {
-      const response = await listRecoverableSessions(worldId.trim(), userId.trim(), 20);
-      setRecoverableSessions(response.sessions);
-      if (response.sessions.length === 0) {
-        setError('No recoverable sessions found for this world and user.');
-      }
-    } catch (err) {
-      console.error('List sessions failed:', err);
-      const detail =
-        typeof err === 'object' &&
-        err !== null &&
-        'response' in err &&
-        typeof (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail ===
-          'string'
-          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-          : null;
-      setError(detail || 'Failed to load recoverable sessions.');
-    } finally {
-      setIsLoadingSessions(false);
-    }
+  const handleCharacterCreated = (charResponse: CharacterCreationResponse) => {
+    const fullResponse = {
+      session_id: creationState!.sessionId,
+      world_id: creationState!.worldId,
+      location: creationState!.location,
+      time: creationState!.time,
+      opening_narration: charResponse.opening_narration,
+      phase: 'active' as const,
+    };
+    onSessionCreated(fullResponse.world_id, fullResponse.session_id, fullResponse as CreateGameSessionResponse);
   };
 
-  const formatTime = (raw: string): string => {
-    const time = new Date(raw);
-    if (Number.isNaN(time.getTime())) {
-      return raw;
-    }
-    return time.toLocaleString();
-  };
+  // If in character creation flow, show the creation UI
+  if (creationState) {
+    return (
+      <div
+        className="
+          w-full
+          bg-[var(--g-title-bg-surface)]
+          backdrop-blur-md
+          border border-[var(--g-title-border)]
+          border-t-2 border-t-[var(--g-accent-gold)]
+          rounded-xl
+          shadow-g-title-glow
+          overflow-y-auto max-h-[80vh]
+          g-scrollbar
+        "
+      >
+        <CharacterCreation
+          worldId={creationState.worldId}
+          sessionId={creationState.sessionId}
+          onComplete={handleCharacterCreated}
+        />
+      </div>
+    );
+  }
+
+  const panelTitle = mode === 'new' ? t('landing.chooseWorld') : t('landing.resumeJourney');
 
   return (
     <div
       className="
-        w-[360px]
-        bg-g-bg-surface
-        border border-g-border-strong
+        w-full
+        bg-[var(--g-title-bg-surface)]
+        backdrop-blur-md
+        border border-[var(--g-title-border)]
+        border-t-2 border-t-[var(--g-accent-gold)]
         rounded-xl
-        shadow-g-lg
+        shadow-g-title-glow
         p-6
       "
     >
+      {/* Panel title */}
+      <h2 className="font-heading text-lg text-[var(--g-accent-gold)] mb-5 text-center flex items-center justify-center gap-3">
+        <span className="h-px w-8 bg-gradient-to-r from-transparent to-[var(--g-accent-gold)]/60" />
+        <span className="text-xs opacity-60">✦</span>
+        <span>{panelTitle}</span>
+        <span className="text-xs opacity-60">✦</span>
+        <span className="h-px w-8 bg-gradient-to-l from-transparent to-[var(--g-accent-gold)]/60" />
+      </h2>
+
       {/* World selection */}
-      <label className="block mb-4">
-        <span className="text-sm font-heading text-g-text-secondary mb-2 block">
-          World
-        </span>
+      <div className="mb-5">
         <div className="space-y-2">
           {isLoadingWorlds ? (
-            <div className="flex items-center justify-center py-4 text-g-text-muted text-sm">
+            <div className="flex items-center justify-center py-6 text-[var(--g-title-text-muted)] text-sm">
               <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              Loading worlds...
+              {t('landing.loadingWorlds')}
             </div>
           ) : worlds.length > 0 ? (
-            worlds.map((world) => (
+            worlds.map((world, index) => (
               <motion.button
                 key={world.id}
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.08, duration: 0.3 }}
+                whileTap={{ scale: 0.98 }}
                 onClick={() => setWorldId(world.id)}
                 className={`
-                  w-full text-left
-                  p-3 rounded-lg border
+                  group w-full text-left
+                  flex items-start gap-3
+                  p-4 rounded-lg border
                   transition-all duration-200
                   ${
                     worldId === world.id
-                      ? 'border-g-gold bg-g-bg-hover shadow-g-sm'
-                      : 'border-g-border bg-g-bg-input hover:border-g-border-strong'
+                      ? 'border-[var(--g-title-border-strong)] bg-[rgba(196,154,42,0.08)] shadow-g-card-glow'
+                      : 'border-[var(--g-title-border)] bg-transparent hover:border-[var(--g-title-border-strong)]'
                   }
                 `}
               >
-                <div className="font-body text-sm font-medium text-g-text-primary">
-                  {world.name}
-                </div>
-                {world.description && (
-                  <div className="font-body text-xs text-g-text-muted mt-0.5">
-                    {world.description.length > 80
-                      ? world.description.slice(0, 80) + '...'
-                      : world.description}
+                {/* Gold left bar */}
+                <div className={`
+                  w-1 self-stretch rounded-full shrink-0
+                  transition-colors duration-200
+                  ${worldId === world.id ? 'bg-[var(--g-accent-gold)]' : 'bg-[var(--g-title-border)] group-hover:bg-[var(--g-title-border-strong)]'}
+                `} />
+                <div className="min-w-0">
+                  <div className="font-heading text-sm text-[var(--g-title-text-primary)]">
+                    {world.name}
                   </div>
-                )}
+                  {world.description && (
+                    <div className="font-body text-xs text-[var(--g-title-text-muted)] mt-1 leading-relaxed">
+                      {world.description.length > 120
+                        ? world.description.slice(0, 120) + '...'
+                        : world.description}
+                    </div>
+                  )}
+                </div>
               </motion.button>
             ))
           ) : (
             <div className="text-xs text-g-red py-2">
-              No worlds available in Firestore.
+              No worlds available.
             </div>
           )}
         </div>
-        {/* Custom world input */}
-        <input
-          type="text"
-          value={worldId}
-          onChange={(e) => setWorldId(e.target.value)}
-          className="
-            mt-2 w-full
-            px-3 py-2
-            font-body text-sm
-            bg-g-bg-input
-            text-g-text-primary
-            border border-g-border-strong
-            rounded-lg
-            focus:border-g-gold
-            focus:outline-none
-            transition-colors
-          "
-          placeholder="Or enter custom world_id..."
-        />
-      </label>
-
-      {/* User ID */}
-      <label className="block mb-5">
-        <span className="text-sm font-heading text-g-text-secondary mb-2 block">
-          Player ID
-        </span>
-        <input
-          type="text"
-          value={userId}
-          onChange={(e) => setUserId(e.target.value)}
-          className="
-            w-full
-            px-3 py-2
-            font-body text-sm
-            bg-g-bg-input
-            text-g-text-primary
-            border border-g-border-strong
-            rounded-lg
-            focus:border-g-gold
-            focus:outline-none
-            transition-colors
-          "
-          placeholder="Your player ID"
-        />
-      </label>
+      </div>
 
       {/* Error */}
       {error && (
         <p className="text-xs text-g-red mb-3">{error}</p>
       )}
 
-      {/* Submit - primary action */}
-      <motion.button
-        whileHover={isCreating ? {} : { scale: 1.02, y: -1 }}
-        whileTap={isCreating ? {} : { scale: 0.98 }}
-        onClick={handleCreate}
-        disabled={isCreating || !worldId.trim() || !userId.trim()}
-        className="
-          w-full mb-4
-          px-4 py-3
-          bg-g-gold hover:bg-g-gold-dark
-          text-white
-          font-heading text-base
-          rounded-lg
-          border border-g-gold
-          shadow-g-sm
-          hover:shadow-g-gold
-          disabled:opacity-50 disabled:cursor-not-allowed
-          transition-all duration-200
-          flex items-center justify-center gap-2
-        "
-      >
-        {isCreating ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Creating...</span>
-          </>
-        ) : (
-          <span>Enter World</span>
-        )}
-      </motion.button>
-
-      {/* Recoverable sessions - secondary action */}
-      <div>
-        <button
-          onClick={handleLoadSessions}
-          disabled={isLoadingSessions || !worldId.trim() || !userId.trim()}
+      {/* New Adventure: Enter World button */}
+      {mode === 'new' && (
+        <motion.button
+          whileHover={isCreating ? {} : { scale: 1.02, y: -1 }}
+          whileTap={isCreating ? {} : { scale: 0.98 }}
+          onClick={handleCreate}
+          disabled={isCreating || (!worldId.trim() && !customWorldId.trim()) || !userId.trim()}
           className="
-            w-full mb-2
-            px-3 py-2
-            bg-g-bg-input
-            text-g-text-primary
-            border border-g-border-strong
+            w-full mb-4
+            px-4 py-3
+            bg-[var(--g-accent-gold)] hover:bg-[var(--g-accent-gold-dark)]
+            text-white
+            font-heading text-base
             rounded-lg
-            text-sm font-body
-            hover:border-g-gold
+            border border-[var(--g-accent-gold)]
+            shadow-g-gold
             disabled:opacity-50 disabled:cursor-not-allowed
-            transition-colors
+            transition-all duration-200
+            flex items-center justify-center gap-2
           "
         >
-          {isLoadingSessions ? 'Loading sessions...' : 'Load Recoverable Sessions'}
+          {isCreating ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>{t('landing.creating')}</span>
+            </>
+          ) : (
+            <span>{t('landing.enterWorld')}</span>
+          )}
+        </motion.button>
+      )}
+
+      {/* Continue Journey: Session list */}
+      {mode === 'continue' && (
+        <div className="mb-4">
+          {isLoadingSessions ? (
+            <div className="flex items-center justify-center py-4 text-[var(--g-title-text-muted)] text-sm">
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              {t('landing.searchingSessions')}
+            </div>
+          ) : recoverableSessions.length > 0 ? (
+            <div className="space-y-2 max-h-48 overflow-y-auto g-scrollbar">
+              <div className="text-xs font-body text-[var(--g-title-text-muted)] mb-2 uppercase tracking-wider">
+                {t('landing.savedSessions')}
+              </div>
+              {recoverableSessions.map((session, index) => (
+                <motion.button
+                  key={session.session_id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05, duration: 0.25 }}
+                  onClick={() => {
+                    if (session.needs_character_creation) {
+                      setCreationState({
+                        worldId: session.world_id,
+                        sessionId: session.session_id,
+                        location: null,
+                        time: null,
+                      });
+                    } else {
+                      onSessionCreated(session.world_id, session.session_id);
+                    }
+                  }}
+                  className="
+                    w-full text-left
+                    flex items-start gap-3
+                    p-3 rounded-lg
+                    bg-[rgba(26,21,16,0.6)]
+                    border border-[var(--g-title-border)]
+                    hover:border-[var(--g-accent-gold)]
+                    hover:shadow-g-card-glow
+                    transition-all duration-200
+                  "
+                >
+                  {/* Gold left indicator bar */}
+                  <div className="w-1 self-stretch rounded-full shrink-0 bg-[var(--g-title-border)] group-hover:bg-[var(--g-accent-gold)] transition-colors duration-200" />
+                  <div className="flex-1 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-body text-sm text-[var(--g-title-text-primary)] truncate">
+                        {session.player_location || t('landing.unknownLocation')}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        {session.chapter_id && (
+                          <span className="
+                            text-[10px] font-body px-1.5 py-0.5 rounded
+                            bg-[rgba(196,154,42,0.15)] text-[var(--g-accent-gold)]
+                          ">
+                            {session.chapter_id}
+                          </span>
+                        )}
+                        {session.sub_location && (
+                          <span className="text-[11px] font-body text-[var(--g-title-text-muted)]">
+                            {session.sub_location}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-body text-[var(--g-title-text-muted)] shrink-0">
+                      {formatRelativeTime(session.updated_at)}
+                    </span>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* Advanced Options */}
+      <div className="border-t border-[var(--g-title-border)] pt-3">
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="
+            flex items-center gap-1.5
+            text-xs font-body
+            text-[var(--g-title-text-muted)]
+            hover:text-[var(--g-accent-gold)]
+            transition-colors duration-200
+          "
+        >
+          <motion.span
+            animate={{ rotate: showAdvanced ? 180 : 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </motion.span>
+          {t('landing.advancedOptions')}
         </button>
 
-        {recoverableSessions.length > 0 && (
-          <div className="max-h-36 overflow-y-auto space-y-2 g-scrollbar">
-            {recoverableSessions.map((session) => (
-              <button
-                key={session.session_id}
-                onClick={() => onSessionCreated(session.world_id, session.session_id)}
-                className="
-                  w-full text-left
-                  p-2 rounded-lg
-                  bg-g-bg-input
-                  border border-g-border
-                  hover:border-g-gold
-                  transition-colors
-                "
-              >
-                <div className="text-xs font-body text-g-text-primary truncate">
-                  {session.session_id}
-                </div>
-                <div className="text-[11px] font-body text-g-text-muted mt-0.5">
-                  {session.player_location || 'Unknown location'} · {formatTime(session.updated_at)}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+        <AnimatePresence>
+          {showAdvanced && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25 }}
+              className="overflow-hidden"
+            >
+              <div className="pt-3 space-y-3">
+                {/* Player ID */}
+                <label className="block">
+                  <span className="text-xs font-body text-[var(--g-title-text-muted)] mb-1 block">
+                    {t('landing.playerId')}
+                  </span>
+                  <input
+                    type="text"
+                    value={userId}
+                    onChange={(e) => setUserId(e.target.value)}
+                    className="
+                      w-full px-3 py-2
+                      font-body text-sm
+                      bg-[rgba(26,21,16,0.6)]
+                      text-[var(--g-title-text-primary)]
+                      border border-[var(--g-title-border)]
+                      rounded-lg
+                      focus:border-[var(--g-accent-gold)]
+                      focus:outline-none
+                      transition-colors
+                      placeholder:text-[var(--g-title-text-muted)]
+                    "
+                    placeholder="player-001"
+                  />
+                </label>
+
+                {/* Custom World ID */}
+                <label className="block">
+                  <span className="text-xs font-body text-[var(--g-title-text-muted)] mb-1 block">
+                    {t('landing.customWorldId')}
+                  </span>
+                  <input
+                    type="text"
+                    value={customWorldId}
+                    onChange={(e) => setCustomWorldId(e.target.value)}
+                    className="
+                      w-full px-3 py-2
+                      font-body text-sm
+                      bg-[rgba(26,21,16,0.6)]
+                      text-[var(--g-title-text-primary)]
+                      border border-[var(--g-title-border)]
+                      rounded-lg
+                      focus:border-[var(--g-accent-gold)]
+                      focus:outline-none
+                      transition-colors
+                      placeholder:text-[var(--g-title-text-muted)]
+                    "
+                    placeholder="custom-world-id..."
+                  />
+                </label>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

@@ -1,8 +1,16 @@
-from fastapi.testclient import TestClient
+import pytest
 
-from app.dependencies import get_coordinator
-from app.main import app
 from app.models.admin_protocol import CoordinatorResponse
+from app.routers.game_v2 import (
+    AddTeammateRequest,
+    CreatePartyRequest,
+    PlayerInputRequest,
+    add_teammate,
+    create_party,
+    get_party_info,
+    process_input_v2,
+    remove_teammate,
+)
 
 
 class FakeCoordinator:
@@ -58,57 +66,53 @@ class FakeCoordinator:
         return {"success": True, "character_id": character_id}
 
 
-def test_game_v2_input_route():
+@pytest.mark.asyncio
+async def test_game_v2_input_route():
     fake = FakeCoordinator()
-    app.dependency_overrides[get_coordinator] = lambda: fake
-    client = TestClient(app)
-    try:
-        response = client.post(
-            "/api/game/test_world/sessions/test_session/input",
-            json={"input": "观察周围"},
-        )
-        assert response.status_code == 200
-        payload = response.json()
-        assert payload["narration"] == "ok:观察周围"
-        assert payload["speaker"] == "GM"
-    finally:
-        app.dependency_overrides.clear()
+    response = await process_input_v2(
+        world_id="test_world",
+        session_id="test_session",
+        payload=PlayerInputRequest(input="观察周围"),
+        coordinator=fake,
+    )
+    assert response.narration == "ok:观察周围"
+    assert response.speaker == "GM"
 
 
-def test_game_v2_party_routes():
+@pytest.mark.asyncio
+async def test_game_v2_party_routes():
     fake = FakeCoordinator()
-    app.dependency_overrides[get_coordinator] = lambda: fake
-    client = TestClient(app)
-    try:
-        create_resp = client.post(
-            "/api/game/test_world/sessions/test_session/party",
-            json={"leader_id": "player"},
-        )
-        assert create_resp.status_code == 200
+    world_id = "test_world"
+    session_id = "test_session"
 
-        add_resp = client.post(
-            "/api/game/test_world/sessions/test_session/party/add",
-            json={
-                "character_id": "ally_1",
-                "name": "Ally",
-                "role": "support",
-            },
-        )
-        assert add_resp.status_code == 200
-        assert add_resp.json()["success"] is True
+    create_resp = await create_party(
+        world_id=world_id,
+        session_id=session_id,
+        payload=CreatePartyRequest(leader_id="player"),
+        coordinator=fake,
+    )
+    assert create_resp["party_id"] == "party_1"
 
-        info_resp = client.get(
-            "/api/game/test_world/sessions/test_session/party",
-        )
-        assert info_resp.status_code == 200
-        info_payload = info_resp.json()
-        assert info_payload["has_party"] is True
-        assert len(info_payload["members"]) == 1
+    add_resp = await add_teammate(
+        world_id=world_id,
+        session_id=session_id,
+        payload=AddTeammateRequest(character_id="ally_1", name="Ally", role="support"),
+        coordinator=fake,
+    )
+    assert add_resp["success"] is True
 
-        remove_resp = client.delete(
-            "/api/game/test_world/sessions/test_session/party/ally_1",
-        )
-        assert remove_resp.status_code == 200
-        assert remove_resp.json()["success"] is True
-    finally:
-        app.dependency_overrides.clear()
+    info_resp = await get_party_info(
+        world_id=world_id,
+        session_id=session_id,
+        coordinator=fake,
+    )
+    assert info_resp["has_party"] is True
+    assert len(info_resp["members"]) == 1
+
+    remove_resp = await remove_teammate(
+        world_id=world_id,
+        session_id=session_id,
+        character_id="ally_1",
+        coordinator=fake,
+    )
+    assert remove_resp["success"] is True

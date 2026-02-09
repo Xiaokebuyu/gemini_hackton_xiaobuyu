@@ -20,13 +20,30 @@ class GameSessionStore:
     def _session_ref(self, world_id: str, session_id: str) -> firestore.DocumentReference:
         return self.db.collection("worlds").document(world_id).collection("sessions").document(session_id)
 
+    def _session_exists(self, world_id: str, session_id: str) -> bool:
+        doc = self._session_ref(world_id, session_id).get()
+        return bool(doc.exists)
+
     async def create_session(
         self,
         world_id: str,
         session_id: Optional[str] = None,
         participants: Optional[list] = None,
     ) -> GameSessionState:
-        session_id = session_id or f"sess_{uuid.uuid4().hex[:8]}"
+        if session_id:
+            if self._session_exists(world_id, session_id):
+                raise ValueError(
+                    f"session_id '{session_id}' already exists; use resume endpoint or a new session_id"
+                )
+        else:
+            for _ in range(8):
+                candidate = f"sess_{uuid.uuid4().hex[:8]}"
+                if not self._session_exists(world_id, candidate):
+                    session_id = candidate
+                    break
+            if not session_id:
+                raise RuntimeError("failed to allocate unique session_id")
+
         state = GameSessionState(
             session_id=session_id,
             world_id=world_id,

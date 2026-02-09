@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import {
   MessageCircle,
+  MessageSquare,
   Sword,
   Heart,
   Sparkles,
@@ -15,7 +16,8 @@ import {
   BookOpen,
 } from 'lucide-react';
 import type { PartyMember, TeammateRole } from '../../types';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
+import { usePrivateChatStore } from '../../stores/privateChatStore';
 
 interface TeammateCardProps {
   member: PartyMember;
@@ -33,7 +35,7 @@ const roleConfig: Record<
   rogue: { icon: <Crosshair className="w-5 h-5" />, color: 'text-g-blue', labelKey: 'party.role.rogue' },
   support: { icon: <Shield className="w-5 h-5" />, color: 'text-g-gold', labelKey: 'party.role.support' },
   scout: { icon: <Eye className="w-5 h-5" />, color: 'text-g-cyan', labelKey: 'party.role.scout' },
-  scholar: { icon: <BookOpen className="w-5 h-5" />, color: 'g-text-secondary', labelKey: 'party.role.scholar' },
+  scholar: { icon: <BookOpen className="w-5 h-5" />, color: 'text-g-text-secondary', labelKey: 'party.role.scholar' },
 };
 
 const moodConfig: Record<string, { color: string; label: string }> = {
@@ -53,7 +55,8 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
   className = '',
 }) => {
   const { t } = useTranslation();
-  const { sendInput, isLoading } = useGameInput();
+  const { sendInput, isLoading } = useStreamGameInput();
+  const openChat = usePrivateChatStore((s) => s.openChat);
   const roleInfo = roleConfig[member.role];
   const mood = moodConfig[member.current_mood] || moodConfig.neutral;
 
@@ -61,6 +64,10 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
     if (!isLoading) {
       sendInput(`[和${member.name}交谈]`);
     }
+  };
+
+  const handlePrivateChat = () => {
+    openChat(member.character_id, member.name);
   };
 
   return (
@@ -106,7 +113,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
               title={t(`party.mood.${member.current_mood}`, mood.label)}
             />
           </div>
-          <div className="flex items-center gap-2 text-xs g-text-muted font-body">
+          <div className="flex items-center gap-2 text-xs text-g-text-muted font-body">
             <span>{t(roleInfo.labelKey)}</span>
             {!member.is_active && (
               <span className="text-g-red">({t('party.inactive')})</span>
@@ -114,28 +121,46 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
           </div>
         </div>
 
-        {/* Talk button */}
-        <button
-          onClick={handleTalk}
-          disabled={!member.is_active || isLoading}
-          className="
-            p-2
-            bg-g-bg-sidebar
-            border border-g-border
-            hover:bg-g-gold/20
-            disabled:opacity-50 disabled:cursor-not-allowed
-            transition-colors
-          "
-          style={{ borderRadius: '8px' }}
-          title={t('party.talkTo', { name: member.name })}
-        >
-          <MessageCircle className="w-4 h-4 text-g-gold" />
-        </button>
+        {/* Action buttons */}
+        <div className="flex gap-1">
+          <button
+            onClick={handleTalk}
+            disabled={!member.is_active || isLoading}
+            className="
+              p-2
+              bg-g-bg-sidebar
+              border border-g-border
+              hover:bg-g-gold/20
+              disabled:opacity-50 disabled:cursor-not-allowed
+              transition-colors
+            "
+            style={{ borderRadius: '8px' }}
+            title={t('party.talkTo', { name: member.name })}
+          >
+            <MessageCircle className="w-4 h-4 text-g-gold" />
+          </button>
+          <button
+            onClick={handlePrivateChat}
+            disabled={!member.is_active}
+            className="
+              p-2
+              bg-g-bg-sidebar
+              border border-g-border
+              hover:bg-g-purple/20
+              disabled:opacity-50 disabled:cursor-not-allowed
+              transition-colors
+            "
+            style={{ borderRadius: '8px' }}
+            title={`${member.name} 私聊`}
+          >
+            <MessageSquare className="w-4 h-4 text-g-purple" />
+          </button>
+        </div>
       </div>
 
       {/* Personality snippet */}
       {member.personality && (
-        <p className="text-xs g-text-muted italic line-clamp-2 font-body">
+        <p className="text-xs text-g-text-muted italic line-clamp-2 font-body">
           "{member.personality}"
         </p>
       )}
@@ -143,7 +168,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
       {/* Response tendency indicator */}
       <div className="mt-2 pt-2 border-t border-g-border">
         <div className="flex items-center justify-between text-xs">
-          <span className="g-text-muted font-body">{t('party.chattiness')}</span>
+          <span className="text-g-text-muted font-body">{t('party.chattiness')}</span>
           <div className="flex gap-0.5">
             {[1, 2, 3, 4, 5].map((i) => (
               <div

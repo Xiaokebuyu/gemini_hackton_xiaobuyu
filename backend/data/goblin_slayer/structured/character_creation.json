@@ -1,0 +1,452 @@
+{
+  "races": {
+    "human": {
+      "name": "人类",
+      "name_en": "Human",
+      "description": "适应力极强的种族，在四方世界中数量最多。人类冒险者遍布各个职业。",
+      "ability_bonuses": { "str": 1, "dex": 1, "con": 1, "int": 1, "wis": 1, "cha": 1 },
+      "speed": 30,
+      "racial_traits": ["versatile_heritage"],
+      "trait_descriptions": {
+        "versatile_heritage": "多才多艺：所有属性+1，额外获得一项技能熟练。"
+      },
+      "bonus_skill_proficiency": 1,
+      "languages": ["common"]
+    },
+    "elf": {
+      "name": "精灵",
+      "name_en": "Elf",
+      "description": "长寿而优雅的种族，与自然有深厚的联系。精灵拥有敏锐的感官和天生的魔法亲和力。",
+      "ability_bonuses": { "dex": 2, "int": 1 },
+      "speed": 30,
+      "racial_traits": ["darkvision", "keen_senses", "fey_ancestry", "trance"],
+      "trait_descriptions": {
+        "darkvision": "黑暗视觉：在黑暗中可看到60尺范围。",
+        "keen_senses": "敏锐感官：获得感知（察觉）熟练。",
+        "fey_ancestry": "精类血统：对魅惑效果的豁免检定具有优势。",
+        "trance": "出神：不需要睡眠，冥想4小时等同于8小时休息。"
+      },
+      "bonus_skill_proficiency": 0,
+      "free_proficiencies": ["perception"],
+      "languages": ["common", "elvish"]
+    },
+    "dwarf": {
+      "name": "矮人",
+      "name_en": "Dwarf",
+      "description": "坚韧顽强的山地种族，以锻造技艺和战斗意志闻名。矮人是可靠的战友和出色的工匠。",
+      "ability_bonuses": { "con": 2, "str": 1 },
+      "speed": 25,
+      "racial_traits": ["darkvision", "dwarven_resilience", "stonecunning", "dwarven_combat_training"],
+      "trait_descriptions": {
+        "darkvision": "黑暗视觉：在黑暗中可看到60尺范围。",
+        "dwarven_resilience": "矮人韧性：对毒素的豁免检定具有优势，且对毒素伤害具有抗性。",
+        "stonecunning": "岩石知识：关于石质建筑来源的历史检定有双倍熟练加值。",
+        "dwarven_combat_training": "矮人战斗训练：熟练使用战斧、手斧、轻锤和战锤。"
+      },
+      "bonus_skill_proficiency": 0,
+      "languages": ["common", "dwarvish"]
+    },
+    "rhea": {
+      "name": "圃内",
+      "name_en": "Rhea",
+      "description": "身材矮小但灵巧勇敢的种族，类似半身人。擅长潜行和投掷，天生幸运。",
+      "ability_bonuses": { "dex": 2, "cha": 1 },
+      "speed": 25,
+      "racial_traits": ["lucky", "brave", "nimble", "naturally_stealthy"],
+      "trait_descriptions": {
+        "lucky": "幸运：当攻击检定、属性检定或豁免检定掷出1时，可重新投掷。",
+        "brave": "勇敢：对抗恐惧的豁免检定具有优势。",
+        "nimble": "灵巧：可以穿过比自己大一号的生物占据的空间。",
+        "naturally_stealthy": "天生潜行：可以在比自己大一号的生物身后进行躲藏。"
+      },
+      "bonus_skill_proficiency": 0,
+      "languages": ["common", "rhean"]
+    },
+    "lizardman": {
+      "name": "蜥蜴人",
+      "name_en": "Lizardman",
+      "description": "强壮的爬行类种族，拥有天然的厚实鳞甲和水中呼吸能力。冷静而务实的战士。",
+      "ability_bonuses": { "str": 2, "con": 1 },
+      "speed": 30,
+      "racial_traits": ["natural_armor", "bite", "hold_breath", "hunters_lore"],
+      "trait_descriptions": {
+        "natural_armor": "天然护甲：不穿护甲时，AC等于13+敏捷修正值。",
+        "bite": "撕咬：可以用撕咬进行徒手攻击，造成1d6+力量修正值穿刺伤害。",
+        "hold_breath": "屏息：可以屏住呼吸长达15分钟。",
+        "hunters_lore": "猎手知识：获得以下技能中两项的熟练：驯兽、自然、感知、隐匿。"
+      },
+      "bonus_skill_proficiency": 0,
+      "bonus_skill_choices": {
+        "count": 2,
+        "from": ["animal_handling", "nature", "perception", "stealth"]
+      },
+      "languages": ["common", "draconic"]
+    },
+    "padfoot": {
+      "name": "圈外人",
+      "name_en": "Padfoot",
+      "description": "流浪的兽耳种族，有狗或猫般的特征。机敏灵活，擅长侦察和社交。",
+      "ability_bonuses": { "dex": 1, "wis": 1, "cha": 1 },
+      "speed": 35,
+      "racial_traits": ["keen_smell", "darkvision", "fleet_of_foot", "pack_tactics"],
+      "trait_descriptions": {
+        "keen_smell": "敏锐嗅觉：依赖嗅觉的感知（察觉）检定具有优势。",
+        "darkvision": "黑暗视觉：在黑暗中可看到60尺范围。",
+        "fleet_of_foot": "快步：基础速度为35尺。",
+        "pack_tactics": "群体战术：当盟友在目标5尺内时，攻击检定具有优势。"
+      },
+      "bonus_skill_proficiency": 0,
+      "languages": ["common", "padfoot"]
+    }
+  },
+
+  "classes": {
+    "fighter": {
+      "name": "战士",
+      "name_en": "Fighter",
+      "description": "精通各种武器和护甲的战斗专家，是队伍中最可靠的前线力量。",
+      "hit_die": 10,
+      "primary_ability": "str",
+      "saving_throws": ["str", "con"],
+      "armor_proficiencies": ["light", "medium", "heavy", "shields"],
+      "weapon_proficiencies": ["simple", "martial"],
+      "skill_choices": {
+        "count": 2,
+        "from": ["acrobatics", "animal_handling", "athletics", "history", "insight", "intimidation", "perception", "survival"]
+      },
+      "class_features": ["fighting_style", "second_wind"],
+      "feature_descriptions": {
+        "fighting_style": "战斗风格：选择一种战斗风格获得持续加成。",
+        "second_wind": "恢复活力：每次短休息可使用一次，以附赠动作回复1d10+战士等级的生命值。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_chain_mail" },
+        { "slot": "main_hand", "item_id": "item_category_standard_melee_weapon" },
+        { "slot": "off_hand", "item_id": "shield_knight" }
+      ],
+      "starting_gold": 15,
+      "spellcasting": false
+    },
+    "priest": {
+      "name": "神官",
+      "name_en": "Priest",
+      "description": "侍奉神明的治疗者和守护者，能施展神圣法术治愈伤病、驱散不死。",
+      "hit_die": 8,
+      "primary_ability": "wis",
+      "saving_throws": ["wis", "cha"],
+      "armor_proficiencies": ["light", "medium", "shields"],
+      "weapon_proficiencies": ["simple"],
+      "skill_choices": {
+        "count": 2,
+        "from": ["history", "insight", "medicine", "persuasion", "religion"]
+      },
+      "class_features": ["spellcasting_divine", "holy_symbol"],
+      "feature_descriptions": {
+        "spellcasting_divine": "神术施法：以感知为施法属性施展神术。",
+        "holy_symbol": "圣徽：作为施法材料使用。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_chain_shirt" },
+        { "slot": "main_hand", "item_id": "item_category_simple_weapon" },
+        { "slot": "off_hand", "item_id": "shield_knight" }
+      ],
+      "starting_gold": 15,
+      "spellcasting": true,
+      "spell_slots_at_level_1": { "1": 2 },
+      "spellcasting_ability": "wis",
+      "cantrips_known": 3,
+      "spells_prepared": "wis_mod + level"
+    },
+    "mage": {
+      "name": "魔法师",
+      "name_en": "Mage",
+      "description": "通过研习奥术知识获得强大法术力量的施法者。脆弱但拥有毁灭性的攻击法术。",
+      "hit_die": 6,
+      "primary_ability": "int",
+      "saving_throws": ["int", "wis"],
+      "armor_proficiencies": [],
+      "weapon_proficiencies": ["daggers", "darts", "slings", "quarterstaffs"],
+      "skill_choices": {
+        "count": 2,
+        "from": ["arcana", "history", "insight", "investigation", "medicine", "religion"]
+      },
+      "class_features": ["spellcasting_arcane", "arcane_recovery"],
+      "feature_descriptions": {
+        "spellcasting_arcane": "奥术施法：以智力为施法属性施展奥术。",
+        "arcane_recovery": "奥术恢复：每天一次短休息时可恢复部分法术位。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_basic_clothing" },
+        { "slot": "main_hand", "item_id": "item_category_simple_weapon" }
+      ],
+      "starting_gold": 10,
+      "spellcasting": true,
+      "spell_slots_at_level_1": { "1": 2 },
+      "spellcasting_ability": "int",
+      "cantrips_known": 3,
+      "spells_known": 6
+    },
+    "ranger": {
+      "name": "游侠",
+      "name_en": "Ranger",
+      "description": "荒野中的猎手和追踪者，精通弓术和野外生存。与自然为伴的战士。",
+      "hit_die": 10,
+      "primary_ability": "dex",
+      "saving_throws": ["str", "dex"],
+      "armor_proficiencies": ["light", "medium", "shields"],
+      "weapon_proficiencies": ["simple", "martial"],
+      "skill_choices": {
+        "count": 3,
+        "from": ["animal_handling", "athletics", "insight", "investigation", "nature", "perception", "stealth", "survival"]
+      },
+      "class_features": ["favored_enemy", "natural_explorer"],
+      "feature_descriptions": {
+        "favored_enemy": "宿敌：选择一种宿敌类型，对其有追踪和知识优势。",
+        "natural_explorer": "自然探索者：在特定地形中获得旅行和觅食优势。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_leather" },
+        { "slot": "main_hand", "item_id": "item_category_standard_melee_weapon" },
+        { "slot": "ranged", "item_id": "item_category_heavy_ranged_weapon" }
+      ],
+      "starting_gold": 10,
+      "spellcasting": false
+    },
+    "scout": {
+      "name": "斥候",
+      "name_en": "Scout",
+      "description": "擅长潜行、开锁和侦察的专家。在战斗中利用偷袭造成致命伤害。",
+      "hit_die": 8,
+      "primary_ability": "dex",
+      "saving_throws": ["dex", "int"],
+      "armor_proficiencies": ["light"],
+      "weapon_proficiencies": ["simple", "hand_crossbows", "longswords", "rapiers", "shortswords"],
+      "skill_choices": {
+        "count": 4,
+        "from": ["acrobatics", "athletics", "deception", "insight", "intimidation", "investigation", "perception", "performance", "persuasion", "sleight_of_hand", "stealth"]
+      },
+      "class_features": ["sneak_attack", "thieves_cant"],
+      "feature_descriptions": {
+        "sneak_attack": "偷袭：每回合一次，当拥有优势或盟友在目标旁时，额外造成1d6伤害。",
+        "thieves_cant": "盗贼暗语：盗贼间的秘密语言和暗号。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_leather" },
+        { "slot": "main_hand", "item_id": "item_category_light_melee_weapon" },
+        { "slot": "off_hand", "item_id": "item_category_light_melee_weapon" }
+      ],
+      "starting_gold": 10,
+      "spellcasting": false
+    },
+    "monk": {
+      "name": "武僧",
+      "name_en": "Monk",
+      "description": "修炼身心合一的武道家，以气驱动拳脚创造奇迹。不依赖武器和护甲。",
+      "hit_die": 8,
+      "primary_ability": "dex",
+      "saving_throws": ["str", "dex"],
+      "armor_proficiencies": [],
+      "weapon_proficiencies": ["simple", "shortswords"],
+      "skill_choices": {
+        "count": 2,
+        "from": ["acrobatics", "athletics", "history", "insight", "religion", "stealth"]
+      },
+      "class_features": ["unarmored_defense", "martial_arts"],
+      "feature_descriptions": {
+        "unarmored_defense": "无甲防御：不穿护甲时，AC等于10+敏捷修正值+感知修正值。",
+        "martial_arts": "武术：使用武僧武器或徒手攻击时可使用敏捷替代力量，且可以附赠动作进行徒手打击。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_basic_clothing" },
+        { "slot": "main_hand", "item_id": "item_category_simple_weapon" }
+      ],
+      "starting_gold": 5,
+      "spellcasting": false
+    },
+    "swordsman": {
+      "name": "剑士",
+      "name_en": "Swordsman",
+      "description": "追求剑术极致的武人，以精湛的剑技和迅捷的身法闻名。攻守兼备的近战专家。",
+      "hit_die": 10,
+      "primary_ability": "str",
+      "saving_throws": ["str", "dex"],
+      "armor_proficiencies": ["light", "medium"],
+      "weapon_proficiencies": ["simple", "martial"],
+      "skill_choices": {
+        "count": 2,
+        "from": ["acrobatics", "athletics", "history", "insight", "intimidation", "perception"]
+      },
+      "class_features": ["blade_mastery", "riposte"],
+      "feature_descriptions": {
+        "blade_mastery": "剑术精通：使用剑类武器时攻击检定+1。",
+        "riposte": "还击：当敌人对你的近战攻击未命中时，可以使用反应进行一次近战攻击。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_leather" },
+        { "slot": "main_hand", "item_id": "item_category_standard_melee_weapon" }
+      ],
+      "starting_gold": 15,
+      "spellcasting": false
+    },
+    "shaman": {
+      "name": "萨满",
+      "name_en": "Shaman",
+      "description": "与精灵和自然力量交流的原始施法者。擅长召唤、辅助和元素法术。",
+      "hit_die": 8,
+      "primary_ability": "wis",
+      "saving_throws": ["wis", "cha"],
+      "armor_proficiencies": ["light", "medium"],
+      "weapon_proficiencies": ["simple"],
+      "skill_choices": {
+        "count": 2,
+        "from": ["animal_handling", "insight", "medicine", "nature", "perception", "religion", "survival"]
+      },
+      "class_features": ["spirit_bond", "primal_casting"],
+      "feature_descriptions": {
+        "spirit_bond": "精灵契约：与一种元素精灵建立联系，获得相关的戏法和抗性。",
+        "primal_casting": "原始施法：以感知为施法属性施展原始法术。"
+      },
+      "starting_equipment": [
+        { "slot": "armor", "item_id": "armor_leather" },
+        { "slot": "main_hand", "item_id": "item_category_simple_weapon" },
+        { "slot": "off_hand", "item_id": "shield_knight" }
+      ],
+      "starting_gold": 10,
+      "spellcasting": true,
+      "spell_slots_at_level_1": { "1": 2 },
+      "spellcasting_ability": "wis",
+      "cantrips_known": 2,
+      "spells_known": 4
+    }
+  },
+
+  "backgrounds": {
+    "adventurer": {
+      "name": "冒险者",
+      "name_en": "Adventurer",
+      "description": "在冒险者公会登记的冒险者，从最低等级的白瓷级开始。",
+      "skill_proficiencies": ["athletics", "survival"],
+      "starting_gold_bonus": 5,
+      "feature": "guild_membership",
+      "feature_description": "公会成员：可以在冒险者公会接取任务、获取情报和借宿。"
+    },
+    "scholar": {
+      "name": "学者",
+      "name_en": "Scholar",
+      "description": "在神殿或学院研习知识的学者，拥有渊博的学识。",
+      "skill_proficiencies": ["arcana", "history"],
+      "starting_gold_bonus": 10,
+      "feature": "researcher",
+      "feature_description": "研究者：知道从何处以及向何人获取特定的知识和传说。"
+    },
+    "soldier": {
+      "name": "士兵",
+      "name_en": "Soldier",
+      "description": "曾在军队中服役的老兵，经历过战场的洗礼。",
+      "skill_proficiencies": ["athletics", "intimidation"],
+      "starting_gold_bonus": 10,
+      "feature": "military_rank",
+      "feature_description": "军衔：来自旧部队的士兵仍然认可你的权威和影响力。"
+    },
+    "merchant": {
+      "name": "商人",
+      "name_en": "Merchant",
+      "description": "走南闯北的行商，善于交涉和讨价还价。",
+      "skill_proficiencies": ["insight", "persuasion"],
+      "starting_gold_bonus": 20,
+      "feature": "trade_contacts",
+      "feature_description": "商业人脉：在各个城镇都有贸易伙伴，能以更好的价格买卖物品。"
+    },
+    "acolyte": {
+      "name": "侍祭",
+      "name_en": "Acolyte",
+      "description": "在神殿中侍奉神明的修行者，虔诚而慈悲。",
+      "skill_proficiencies": ["insight", "religion"],
+      "starting_gold_bonus": 5,
+      "feature": "shelter_of_the_faithful",
+      "feature_description": "信仰庇护：你和同伴可以在同一信仰的神殿中获得免费的治疗和照顾。"
+    },
+    "outlander": {
+      "name": "化外之民",
+      "name_en": "Outlander",
+      "description": "在文明边境之外成长的野地居民，熟悉荒野的一切。",
+      "skill_proficiencies": ["athletics", "survival"],
+      "starting_gold_bonus": 5,
+      "feature": "wanderer",
+      "feature_description": "流浪者：对地理和地形有极佳的记忆力，总能找到食物和水源。"
+    }
+  },
+
+  "skills": {
+    "acrobatics": { "name": "特技", "ability": "dex", "description": "翻滚、平衡和杂技动作。" },
+    "animal_handling": { "name": "驯兽", "ability": "wis", "description": "安抚、驾驭和理解动物。" },
+    "arcana": { "name": "奥秘", "ability": "int", "description": "关于法术、魔法物品和奥术传统的知识。" },
+    "athletics": { "name": "运动", "ability": "str", "description": "攀爬、跳跃和游泳等体力活动。" },
+    "deception": { "name": "欺骗", "ability": "cha", "description": "误导他人、隐瞒真相。" },
+    "history": { "name": "历史", "ability": "int", "description": "关于历史事件、传说和文明的知识。" },
+    "insight": { "name": "洞察", "ability": "wis", "description": "判断他人的真实意图和情绪。" },
+    "intimidation": { "name": "威吓", "ability": "cha", "description": "通过威胁、敌意和暴力来影响他人。" },
+    "investigation": { "name": "调查", "ability": "int", "description": "搜索线索、推理和推断。" },
+    "medicine": { "name": "医药", "ability": "wis", "description": "稳定伤者、诊断疾病。" },
+    "nature": { "name": "自然", "ability": "int", "description": "关于地形、植物、动物和天气的知识。" },
+    "perception": { "name": "察觉", "ability": "wis", "description": "用感官发现隐藏的事物。" },
+    "performance": { "name": "表演", "ability": "cha", "description": "歌唱、舞蹈、演讲等表演活动。" },
+    "persuasion": { "name": "说服", "ability": "cha", "description": "通过外交、善意和礼仪来影响他人。" },
+    "religion": { "name": "宗教", "ability": "int", "description": "关于神明、仪式和宗教传统的知识。" },
+    "sleight_of_hand": { "name": "巧手", "ability": "dex", "description": "偷窃、隐藏物品和手上戏法。" },
+    "stealth": { "name": "隐匿", "ability": "dex", "description": "避免被发现、潜行。" },
+    "survival": { "name": "求生", "ability": "wis", "description": "追踪猎物、觅食、在荒野中导航。" }
+  },
+
+  "point_buy": {
+    "total_points": 27,
+    "min_score": 8,
+    "max_score": 15,
+    "cost_table": {
+      "8": 0,
+      "9": 1,
+      "10": 2,
+      "11": 3,
+      "12": 4,
+      "13": 5,
+      "14": 7,
+      "15": 9
+    },
+    "abilities": ["str", "dex", "con", "int", "wis", "cha"],
+    "ability_names": {
+      "str": "力量",
+      "dex": "敏捷",
+      "con": "体质",
+      "int": "智力",
+      "wis": "感知",
+      "cha": "魅力"
+    }
+  },
+
+  "leveling": {
+    "xp_thresholds": {
+      "1": 0,
+      "2": 300,
+      "3": 900,
+      "4": 2700,
+      "5": 6500,
+      "6": 14000,
+      "7": 23000,
+      "8": 34000,
+      "9": 48000,
+      "10": 64000
+    },
+    "proficiency_by_level": {
+      "1": 2,
+      "2": 2,
+      "3": 2,
+      "4": 2,
+      "5": 3,
+      "6": 3,
+      "7": 3,
+      "8": 3,
+      "9": 4,
+      "10": 4
+    }
+  }
+}

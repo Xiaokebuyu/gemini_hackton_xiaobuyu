@@ -64,6 +64,8 @@ class Settings(BaseModel):
     mcp_combat_args: str = os.getenv("MCP_COMBAT_ARGS", "-m app.combat.combat_mcp_server")
     mcp_tool_timeout_seconds: float = float(os.getenv("MCP_TOOL_TIMEOUT_SECONDS", "20"))
     mcp_npc_tool_timeout_seconds: float = float(os.getenv("MCP_NPC_TOOL_TIMEOUT_SECONDS", "90"))
+    mcp_startup_fail_fast: bool = os.getenv("MCP_STARTUP_FAIL_FAST", "true").lower() in ("1", "true", "yes")
+    mcp_probe_timeout_seconds: float = float(os.getenv("MCP_PROBE_TIMEOUT_SECONDS", "2"))
     
     # 热记忆配置
     active_window_size: int = 20

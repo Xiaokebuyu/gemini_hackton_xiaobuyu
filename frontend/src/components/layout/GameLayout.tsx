@@ -1,14 +1,16 @@
 /**
- * Main Game Layout - Three Column Design
+ * Main Game Layout - Left panel + Center + Right overlay panel
  * Uses golden theme
  */
 import React from 'react';
-import { RotateCcw } from 'lucide-react';
-import { useGameStore, useCombatStore, useChatStore, toast } from '../../stores';
+import { useTranslation } from 'react-i18next';
+import { RotateCcw, Backpack } from 'lucide-react';
+import { useGameStore, useCombatStore, useChatStore, useUIStore, toast } from '../../stores';
 import LeftPanel from './LeftPanel';
 import CenterPanel from './CenterPanel';
 import RightPanel from './RightPanel';
 import CombatOverlay from '../combat/CombatOverlay';
+import PrivateChatPanel from '../party/PrivateChatPanel';
 import { LanguageSwitch } from '../shared';
 
 interface GameLayoutProps {
@@ -16,9 +18,11 @@ interface GameLayoutProps {
 }
 
 export const GameLayout: React.FC<GameLayoutProps> = () => {
+  const { t } = useTranslation();
   const { combatId, clearSession } = useGameStore();
   const { isActive: isCombatActive, clearCombat } = useCombatStore();
   const { clearMessages } = useChatStore();
+  const { rightPanelCollapsed, toggleRightPanel } = useUIStore();
 
   const handleReselectSession = () => {
     clearCombat();
@@ -49,6 +53,27 @@ export const GameLayout: React.FC<GameLayoutProps> = () => {
           <RotateCcw className="w-3.5 h-3.5" />
           <span>重新选择对话</span>
         </button>
+
+        {/* Open right panel button — always visible, gold accent */}
+        <button
+          onClick={toggleRightPanel}
+          className={`
+            px-3 py-1.5
+            rounded-lg
+            border
+            text-xs font-body
+            transition-all duration-200
+            flex items-center gap-1.5
+            ${rightPanelCollapsed
+              ? 'border-g-gold/40 bg-g-gold/5 text-g-gold hover:bg-g-gold/15 hover:border-g-gold hover:shadow-[0_0_8px_rgba(196,154,42,0.2)]'
+              : 'border-g-gold bg-g-gold/10 text-g-gold shadow-[0_0_8px_rgba(196,154,42,0.15)]'
+            }
+          `}
+        >
+          <Backpack className="w-4 h-4" />
+          <span>{t('ui.rightPanel')}</span>
+        </button>
+
         {/* Language switch */}
         <LanguageSwitch />
       </div>
@@ -60,13 +85,16 @@ export const GameLayout: React.FC<GameLayoutProps> = () => {
 
         {/* Center Panel - Narrative */}
         <CenterPanel className="flex-1 min-w-0 h-full p-3" />
-
-        {/* Right Panel - Status & Party */}
-        <RightPanel className="flex-shrink-0 h-full" />
       </div>
+
+      {/* Right Panel - Overlay */}
+      <RightPanel />
 
       {/* Combat Overlay */}
       {combatId && isCombatActive && <CombatOverlay />}
+
+      {/* Private Chat Overlay */}
+      <PrivateChatPanel />
     </div>
   );
 };

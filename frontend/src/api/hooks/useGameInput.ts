@@ -1,13 +1,26 @@
 /**
- * Core game input mutation hook
+ * Core game input mutation hooks
  *
- * 对应后端 POST /api/gm/{world_id}/sessions/{session_id}/input_v2
+ * useGameInput      — legacy non-streaming (POST /input)
+ * useStreamGameInput — SSE streaming   (POST /input/stream)
  */
+import { useCallback, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { sendGameInputV2 } from '../gameApi';
+import { streamGameInput } from '../sseClient';
 import { useGameStore } from '../../stores/gameStore';
 import { useChatStore } from '../../stores/chatStore';
-import type { PlayerInputRequest, CoordinatorResponse, GameAction } from '../../types';
+import type {
+  PlayerInputRequest,
+  CoordinatorResponse,
+  GameAction,
+  StateDelta,
+  CoordinatorChapterInfo,
+} from '../../types';
+
+// =============================================================================
+// Legacy non-streaming hook (kept for backward-compat)
+// =============================================================================
 
 interface UseGameInputOptions {
   onSuccess?: (response: CoordinatorResponse) => void;
@@ -16,7 +29,13 @@ interface UseGameInputOptions {
 
 export function useGameInput(options?: UseGameInputOptions) {
   const queryClient = useQueryClient();
-  const { worldId, sessionId, setAvailableActions, updateFromStateDelta } =
+  const {
+    worldId,
+    sessionId,
+    setAvailableActions,
+    setNarrativeSnapshot,
+    updateFromStateDelta,
+  } =
     useGameStore();
   const { addPlayerMessage, addGMResponseV2, setLoading, addSystemMessage } = useChatStore();
 
@@ -47,11 +66,20 @@ export function useGameInput(options?: UseGameInputOptions) {
       if (response.state_delta) {
         updateFromStateDelta(response.state_delta);
       }
+      setNarrativeSnapshot(
+        response.chapter_info ?? null,
+        response.story_events ?? [],
+        response.pacing_action ?? null,
+      );
 
       // Invalidate location, time, and party queries to refresh sidebar
       queryClient.invalidateQueries({ queryKey: ['location'] });
       queryClient.invalidateQueries({ queryKey: ['gameTime'] });
       queryClient.invalidateQueries({ queryKey: ['party'] });
+      queryClient.invalidateQueries({ queryKey: ['narrativeProgress', worldId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['flowBoard', worldId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['currentPlan', worldId, sessionId] });
+      queryClient.invalidateQueries({ queryKey: ['sessionHistory', worldId, sessionId] });
 
       // Update available actions
       if (response.available_actions && response.available_actions.length > 0) {
@@ -93,4 +121,158 @@ export function useGameInput(options?: UseGameInputOptions) {
     error: mutation.error,
     reset: mutation.reset,
   };
+}
+
+// =============================================================================
+// SSE streaming hook (preferred)
+// =============================================================================
+
+export function useStreamGameInput() {
+  const queryClient = useQueryClient();
+  const {
+    worldId,
+    sessionId,
+    setAvailableActions,
+    setNarrativeSnapshot,
+    updateFromStateDelta,
+  } =
+    useGameStore();
+  const {
+    addPlayerMessage,
+    setLoading,
+    addSystemMessage,
+    isLoading,
+    startStreamingMessage,
+    appendToStreamingMessage,
+    finalizeStreamingMessage,
+  } = useChatStore();
+
+  const abortRef = useRef<AbortController | null>(null);
+
+  const sendInput = useCallback(
+    async (content: string) => {
+      if (!worldId || !sessionId) return;
+
+      addPlayerMessage(content);
+      setLoading(true);
+      abortRef.current = new AbortController();
+
+      let currentGmId: string | null = null;
+      const teammateIds: Record<string, string> = {};
+
+      try {
+        await streamGameInput(
+          worldId,
+          sessionId,
+          { input: content },
+          (event) => {
+            switch (event.type) {
+              case 'gm_start':
+                currentGmId = startStreamingMessage('GM', 'gm');
+                break;
+
+              case 'gm_chunk':
+                if (currentGmId && event.chunk_type === 'answer') {
+                  appendToStreamingMessage(currentGmId, event.text as string);
+                }
+                break;
+
+              case 'gm_end':
+                if (currentGmId) {
+                  finalizeStreamingMessage(currentGmId, event.full_text as string);
+                  currentGmId = null;
+                }
+                break;
+
+              case 'teammate_start': {
+                const charId = event.character_id as string;
+                const name = event.name as string;
+                teammateIds[charId] = startStreamingMessage(name, 'teammate', {
+                  character_id: charId,
+                });
+                break;
+              }
+
+              case 'teammate_chunk': {
+                const tmId = teammateIds[event.character_id as string];
+                if (tmId) appendToStreamingMessage(tmId, event.text as string);
+                break;
+              }
+
+              case 'teammate_end': {
+                const endId = teammateIds[event.character_id as string];
+                if (endId) {
+                  finalizeStreamingMessage(endId, event.response as string);
+                }
+                break;
+              }
+
+              case 'complete': {
+                if (event.state_delta) {
+                  updateFromStateDelta(event.state_delta as StateDelta);
+                }
+                const chapterInfo = event.chapter_info as CoordinatorChapterInfo | undefined;
+                const storyEvents = Array.isArray(event.story_events)
+                  ? (event.story_events as string[])
+                  : [];
+                setNarrativeSnapshot(
+                  chapterInfo || null,
+                  storyEvents,
+                  (event.pacing_action as string | null) || null,
+                );
+                if (
+                  event.available_actions &&
+                  (event.available_actions as GameAction[]).length > 0
+                ) {
+                  setAvailableActions(event.available_actions as GameAction[]);
+                }
+                queryClient.invalidateQueries({ queryKey: ['location'] });
+                queryClient.invalidateQueries({ queryKey: ['gameTime'] });
+                queryClient.invalidateQueries({ queryKey: ['party'] });
+                queryClient.invalidateQueries({ queryKey: ['narrativeProgress', worldId, sessionId] });
+                queryClient.invalidateQueries({ queryKey: ['flowBoard', worldId, sessionId] });
+                queryClient.invalidateQueries({ queryKey: ['currentPlan', worldId, sessionId] });
+                queryClient.invalidateQueries({ queryKey: ['sessionHistory', worldId, sessionId] });
+                break;
+              }
+
+              case 'error':
+                addSystemMessage(
+                  (event.error as string) || '发生了未知错误',
+                );
+                break;
+            }
+          },
+          abortRef.current.signal,
+        );
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') {
+          console.error('Stream game input error:', err);
+          addSystemMessage('请求失败，请重试');
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      worldId,
+      sessionId,
+      addPlayerMessage,
+      setLoading,
+      addSystemMessage,
+      startStreamingMessage,
+      appendToStreamingMessage,
+      finalizeStreamingMessage,
+      updateFromStateDelta,
+      setAvailableActions,
+      setNarrativeSnapshot,
+      queryClient,
+    ],
+  );
+
+  const abort = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  return { sendInput, isLoading, abort };
 }

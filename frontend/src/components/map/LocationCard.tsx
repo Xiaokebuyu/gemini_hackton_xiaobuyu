@@ -5,7 +5,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { MapPin, ArrowUp } from 'lucide-react';
 import { useGameStore } from '../../stores';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 import type { LocationResponse } from '../../types';
 
 interface LocationCardProps {
@@ -19,7 +19,7 @@ export const LocationCard: React.FC<LocationCardProps> = ({
 }) => {
   const { t } = useTranslation();
   const { location: storeLocation, subLocation } = useGameStore();
-  const { sendInput, isLoading } = useGameInput();
+  const { sendInput, isLoading } = useStreamGameInput();
 
   const currentLocation = location || storeLocation;
 

@@ -21,11 +21,7 @@
     "completion_conditions": {
       "events_required": [
         "ch_4_1_event_1",
-        "ch_4_1_event_2",
-        "ch_4_1_event_3",
-        "ch_4_1_event_4",
-        "ch_4_1_event_5",
-        "ch_4_1_event_6"
+        "ch_4_1_event_2"
       ]
     },
     "events": [
@@ -583,22 +579,14 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_1_章节事件：冒险的开端：白瓷与誓言",
-        "ch_1_1_章节事件：轻率的组队：初出茅庐的同行者",
-        "ch_1_1_章节事件：深入黑暗：无知的洞穴探索",
-        "ch_1_1_章节事件：柜台小姐的告知",
-        "ch_1_1_章节事件：绝望的伏击：新手的末路",
-        "ch_1_1_章节事件：不祥的救星：哥布林杀手的登场",
-        "ch_1_1_章节事件：冰冷的战术：压倒性的剿灭",
-        "ch_1_1_章节事件：幸存者的抉择：踏上新的道路",
-        "ch_1_1_冒险的开端：白瓷与誓言",
-        "ch_1_1_轻率的组队：初出茅庐的同行者",
-        "ch_1_1_深入黑暗：无知的洞穴探索",
-        "ch_1_1_柜台小姐的告知",
-        "ch_1_1_绝望的伏击：新手的末路",
-        "ch_1_1_不祥的救星：哥布林杀手的登场",
-        "ch_1_1_冰冷的战术：压倒性的剿灭",
-        "ch_1_1_幸存者的抉择：踏上新的道路"
+        "ch_1_1_event_1",
+        "ch_1_1_event_2",
+        "ch_1_1_event_3",
+        "ch_1_1_event_4",
+        "ch_1_1_event_5",
+        "ch_1_1_event_6",
+        "ch_1_1_event_7",
+        "ch_1_1_event_8"
       ]
     },
     "events": [
@@ -817,15 +805,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_2_2.1_章节事件：清晨的相遇_(An_Encounter_a",
-        "ch_1_2_2.2_章节事件：公会的异类_(The_Outcast_of",
-        "ch_1_2_2.3_章节事件：旁观者的视角_(A_Spectator's",
-        "ch_1_2_2.4_章节事件：酒馆里的传闻_(Whispers_in_t",
-        "ch_1_2_清晨的相遇_(An_Encounter_at_Dawn)",
-        "ch_1_2_公会的异类_(The_Outcast_of_the_Guil",
-        "ch_1_2_旁观者的视角_(A_Spectator's_View)",
-        "ch_1_2_酒馆里的传闻_(Whispers_in_the_Tavern",
-        "ch_1_2_清晨的相遇_(An_Encounter_at_Dawn)"
+        "ch_1_2_event_1",
+        "ch_1_2_event_2",
+        "ch_1_2_event_3",
+        "ch_1_2_event_4"
       ]
     },
     "events": [
@@ -969,12 +952,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_3_绝望的请求_(A_Desperate_Plea)",
-        "ch_1_3_体系的无奈_(The_System's_Cruelty)",
-        "ch_1_3_唯一的解药_(The_Only_Cure)",
-        "ch_1_3_“我即是哥布林”_(I_Am_Goblin)",
-        "ch_1_3_以公会之名_(In_the_Name_of_the_Guil",
-        "ch_1_3_绝望的请求_(A_Desperate_Plea)"
+        "ch_1_3_event_1",
+        "ch_1_3_event_2",
+        "ch_1_3_event_3",
+        "ch_1_3_event_4",
+        "ch_1_3_event_5"
       ]
     },
     "events": [
@@ -1132,7 +1114,8 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_4_山谷中的凝视_(A_Gaze_in_the_Valley)"
+        "ch_1_4_event_1",
+        "ch_1_4_event_2"
       ]
     },
     "events": [
@@ -1228,11 +1211,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_5_喧嚣中的异乡人_(Strangers_in_the_Guil",
-        "ch_1_5_高塔上的密谈_(Whispers_from_the_Top)",
-        "ch_1_5_专家的选择_(The_Specialist's_Choice",
-        "ch_1_5_你的抉择_(Your_Own_Path)",
-        "ch_1_5_喧嚣中的异乡人_(Strangers_in_the_Guil"
+        "ch_1_5_event_1",
+        "ch_1_5_event_2",
+        "ch_1_5_event_3",
+        "ch_1_5_event_4"
       ]
     },
     "events": [
@@ -1364,11 +1346,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_6_荒野上的队列_(A_March_through_the_Wi",
-        "ch_1_6_篝火旁的试探_(A_Trial_by_Fire_and_Fo",
-        "ch_1_6_你的故事_(Your_Story_to_Tell)",
-        "ch_1_6_月下的同伴_(Companions_under_the_Mo",
-        "ch_1_6_荒野上的队列_(A_March_through_the_Wi"
+        "ch_1_6_event_1",
+        "ch_1_6_event_2",
+        "ch_1_6_event_3",
+        "ch_1_6_event_4"
       ]
     },
     "events": [
@@ -1492,11 +1473,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_7_入口的攻防_(The_Entrance_Breach)",
-        "ch_1_7_螺旋地狱_(The_Spiral_Hell)",
-        "ch_1_7_秽物之间的活地狱_(The_Living_Hell_in_F",
-        "ch_1_7_你的职责_(Your_Duty)",
-        "ch_1_7_入口的攻防_(The_Entrance_Breach)"
+        "ch_1_7_event_1",
+        "ch_1_7_event_2",
+        "ch_1_7_event_3",
+        "ch_1_7_event_4"
       ]
     },
     "events": [
@@ -1622,10 +1602,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_8_短暂的重整_(A_Moment_to_Regroup)",
-        "ch_1_8_沉默的盛宴_(The_Silent_Feast_of_Bla",
-        "ch_1_8_不祥的震动_(An_Unwelcome_Tremor)",
-        "ch_1_8_短暂的重整_(A_Moment_to_Regroup)"
+        "ch_1_8_event_1",
+        "ch_1_8_event_2",
+        "ch_1_8_event_3"
       ]
     },
     "events": [
@@ -1734,11 +1713,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_9_初次交锋：力量的绝望_(First_Clash:_The_D",
-        "ch_1_9_团队的挣扎_(The_Team's_Struggle)",
-        "ch_1_9_最后的王牌_(The_Last_Trump_Card)",
-        "ch_1_9_海潮的葬礼_(A_Funeral_by_the_Ocean'",
-        "ch_1_9_初次交锋：力量的绝望_(First_Clash:_The_D"
+        "ch_1_9_event_1",
+        "ch_1_9_event_2",
+        "ch_1_9_event_3",
+        "ch_1_9_event_4"
       ]
     },
     "events": [
@@ -1865,13 +1843,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_10_无甲的清晨：迟到的阳光",
-        "ch_1_10_笨拙的体贴：乡间路上的独白",
-        "ch_1_10_陌生的熟人：公会中的新日常",
-        "ch_1_10_铁匠的认可：看不见的价值",
-        "ch_1_10_黑曜石的荣耀：无法回应的感谢",
-        "ch_1_10_牧草地的膝枕：冒险者的梦想",
-        "ch_1_10_无甲的清晨：迟到的阳光"
+        "ch_1_10_event_1",
+        "ch_1_10_event_2",
+        "ch_1_10_event_3",
+        "ch_1_10_event_4",
+        "ch_1_10_event_5",
+        "ch_1_10_event_6"
       ]
     },
     "events": [
@@ -2052,13 +2029,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_11_王的足迹：日常的终结",
-        "ch_1_11_不走的理由：“不想让你无家可归”",
-        "ch_1_11_公会中央的请求：一个人的战争宣言",
-        "ch_1_11_赌上一切的酬劳：“我的性命不能由我决定”",
-        "ch_1_11_第一滴酒的承诺：英雄的响应",
-        "ch_1_11_集结的号角：为了金币与荣光",
-        "ch_1_11_王的足迹：日常的终结"
+        "ch_1_11_event_1",
+        "ch_1_11_event_2",
+        "ch_1_11_event_3",
+        "ch_1_11_event_4",
+        "ch_1_11_event_5",
+        "ch_1_11_event_6"
       ]
     },
     "events": [
@@ -2246,13 +2222,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_12_开战的狼烟：战术的初演",
-        "ch_1_12_阵地上的乱舞：各显神通的强者们",
-        "ch_1_12_声东击西：被预判的逃亡",
-        "ch_1_12_王与杀手的对决：复仇者的末路",
-        "ch_1_12_圣壁的囚笼：来自后方的致命一击",
-        "ch_1_12_肮脏的终结：我即是哥布林杀手",
-        "ch_1_12_开战的狼烟：战术的初演"
+        "ch_1_12_event_1",
+        "ch_1_12_event_2",
+        "ch_1_12_event_3",
+        "ch_1_12_event_4",
+        "ch_1_12_event_5",
+        "ch_1_12_event_6"
       ]
     },
     "events": [
@@ -2420,16 +2395,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_1_13_胜利的飨宴：金币",
-        "ch_1_13_麦酒与欢呼",
-        "ch_1_13_一枚金币的酬劳：角落里的对话",
-        "ch_1_13_冒险者的梦想：“我想当",
-        "ch_1_13_冒险者”",
-        "ch_1_13_最后的请求：摘下头盔的脸",
-        "ch_1_13_迟来的相见：一个平凡的青年",
-        "ch_1_13_无尽的冒险：故事的开始",
-        "ch_1_13_胜利的飨宴：金币",
-        "ch_1_13_麦酒与欢呼"
+        "ch_1_13_event_1",
+        "ch_1_13_event_2",
+        "ch_1_13_event_3",
+        "ch_1_13_event_4",
+        "ch_1_13_event_5",
+        "ch_1_13_event_6"
       ]
     },
     "events": [
@@ -2599,12 +2570,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_1_熟悉的拌嘴与冰冷的专注_(Familiar_Banter",
-        "ch_2_1_Cold_Focus)",
-        "ch_2_1_专家的清扫方式_(The_Specialist's_Meth",
-        "ch_2_1_来自水之都的召唤_(The_Call_from_the_Wa",
-        "ch_2_1_熟悉的拌嘴与冰冷的专注_(Familiar_Banter",
-        "ch_2_1_Cold_Focus)"
+        "ch_2_1_event_1",
+        "ch_2_1_event_2",
+        "ch_2_1_event_3"
       ]
     },
     "events": [
@@ -2712,10 +2680,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_2_繁华下的暗流_（Currents_under_the_Spl",
-        "ch_2_2_剑之圣女_（The_Sword_Maiden）",
-        "ch_2_2_英雄的请求与阴影_（The_Hero's_Plea_and_",
-        "ch_2_2_繁华下的暗流_（Currents_under_the_Spl"
+        "ch_2_2_event_1",
+        "ch_2_2_event_2",
+        "ch_2_2_event_3"
       ]
     },
     "events": [
@@ -2837,10 +2804,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_3_污秽中的死斗_（A_Struggle_in_the_Filt",
-        "ch_2_3_雨中的喘息与伏击_（Respite_and_Ambush_i",
-        "ch_2_3_鳄鱼与哥布林_（The_Alligator_and_the_",
-        "ch_2_3_污秽中的死斗_（A_Struggle_in_the_Filt"
+        "ch_2_3_event_1",
+        "ch_2_3_event_2",
+        "ch_2_3_event_3"
       ]
     },
     "events": [
@@ -2954,11 +2920,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_4_圣女的伤痕_（The_Saint's_Scars）",
-        "ch_2_4_专家的工具",
-        "ch_2_4_冰品的甜美与苦涩_（The_Sweetness_and_Bi",
-        "ch_2_4_意外的援军_（Unexpected_Reinforcemen",
-        "ch_2_4_圣女的伤痕_（The_Saint's_Scars）"
+        "ch_2_4_event_1",
+        "ch_2_4_event_2",
+        "ch_2_4_event_3",
+        "ch_2_4_event_4"
       ]
     },
     "events": [
@@ -3092,11 +3057,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_5_金丝雀与地下墓穴_（The_Canary_and_the_C",
-        "ch_2_5_致命的诱饵_（The_Deadly_Lure）",
-        "ch_2_5_围城绝境_（The_Desperate_Siege）",
-        "ch_2_5_英雄之陨_（The_Hero's_Fall）",
-        "ch_2_5_金丝雀与地下墓穴_（The_Canary_and_the_C"
+        "ch_2_5_event_1",
+        "ch_2_5_event_2",
+        "ch_2_5_event_3",
+        "ch_2_5_event_4"
       ]
     },
     "events": [
@@ -3220,11 +3184,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_6_冰窟中的师徒_（The_Master_and_Apprent",
-        "ch_2_6_生存的谜题_（The_Riddles_of_Survival",
-        "ch_2_6_无解的答案_（The_Unanswered_Question",
-        "ch_2_6_死里逃生（A_Narrow_Escape）",
-        "ch_2_6_冰窟中的师徒_（The_Master"
+        "ch_2_6_event_1",
+        "ch_2_6_event_2",
+        "ch_2_6_event_3",
+        "ch_2_6_event_4"
       ]
     },
     "events": [
@@ -3350,12 +3313,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_7_苏生神迹_（The_Miracle_of_Resurrect",
-        "ch_2_7_圣女的视线_（The_Saint's_Gaze）[原创事件]",
-        "ch_2_7_三度敲门__(The_Third_Knock)_[原创事件]",
-        "ch_2_7_英雄的告白_（The_Hero's_Confession）",
-        "ch_2_7_旅人的承诺__(The_Traveler's_Promise",
-        "ch_2_7_苏生神迹_（The_Miracle_of_Resurrect"
+        "ch_2_7_event_1",
+        "ch_2_7_event_2",
+        "ch_2_7_event_3",
+        "ch_2_7_event_4",
+        "ch_2_7_event_5"
       ]
     },
     "events": [
@@ -3513,9 +3475,8 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_8_回归的同伴_（The_Returning_Companion",
-        "ch_2_8_以你的名义_（In_Your_Nam",
-        "ch_2_8_回归的同伴_（The_Returning_Companion"
+        "ch_2_8_event_1",
+        "ch_2_8_event_2"
       ]
     },
     "events": [
@@ -3611,10 +3572,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_9_邪眼之威_（The_Terror_of_the_Evil_E",
-        "ch_2_9_粉尘爆炸_（The_Dust_Explosion）",
-        "ch_2_9_镜子的秘密_（The_Secret_of_the_Mirro",
-        "ch_2_9_邪眼之威_（The_Terror_of_the_Evil_E"
+        "ch_2_9_event_1",
+        "ch_2_9_event_2",
+        "ch_2_9_event_3"
       ]
     },
     "events": [
@@ -3722,10 +3682,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_10_最后的围攻_（The_Last_Siege）",
-        "ch_2_10_英雄归来_（The_Hero's_Return）",
-        "ch_2_10_崩塌的葬礼_（A_Funeral_of_Collapse）",
-        "ch_2_10_最后的围攻_（The_Last_Siege）"
+        "ch_2_10_event_1",
+        "ch_2_10_event_2",
+        "ch_2_10_event_3"
       ]
     },
     "events": [
@@ -3834,9 +3793,8 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_2_11_旅人的告别_（The_Traveler's_Farewell",
-        "ch_2_11_归途_（The_Journey_Home）",
-        "ch_2_11_旅人的告别_（The_Traveler's_Farewell"
+        "ch_2_11_event_1",
+        "ch_2_11_event_2"
       ]
     },
     "events": [
@@ -3940,11 +3898,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_1_矿坑的清剿_(The_Mine_Extermination)",
-        "ch_3_1_酒馆的漩涡_(The_Vortex_of_the_Guild",
-        "ch_3_1_不愉快的审查_(An_Unpleasant_Examinat",
-        "ch_3_1_收获祭的代理人战争_(The_Harvest_Festiva",
-        "ch_3_1_矿坑的清剿_(The_Mine_Extermination)"
+        "ch_3_1_event_1",
+        "ch_3_1_event_3",
+        "ch_3_1_event_4",
+        "ch_3_1_event_5"
       ]
     },
     "events": [
@@ -4101,10 +4058,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_2_工坊的智囊_(The_Sage_of_the_Worksho",
-        "ch_3_2_庆典的工匠_(The_Craftsman_of_the_Fe",
-        "ch_3_2_暗夜的伏笔_(The_Prelude_in_the_Dark",
-        "ch_3_2_工坊的智囊_(The_Sage_of_the_Worksho"
+        "ch_3_2_event_1",
+        "ch_3_2_event_2",
+        "ch_3_2_event_3"
       ]
     },
     "events": [
@@ -4219,10 +4175,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_3_上午的日常_(The_Morning's_Routine)_",
-        "ch_3_3_指环的重量_(The_Weight_of_the_Ring)",
-        "ch_3_3_下午的答谢_(The_Afternoon's_Gratitu",
-        "ch_3_3_上午的日常_(The_Morning's_Routine)"
+        "ch_3_3_event_1",
+        "ch_3_3_event_2",
+        "ch_3_3_event_3"
       ]
     },
     "events": [
@@ -4349,10 +4304,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_4_精心准备的向导_（The_Well-Prepared_Gui",
-        "ch_3_4_塔顶的祈祷_（A_Prayer_from_the_Top）",
-        "ch_3_4_庆典的终焉_（A_Blade_in_the_Silence）",
-        "ch_3_4_精心准备的向导_（A"
+        "ch_3_4_event_1",
+        "ch_3_4_event_2",
+        "ch_3_4_event_3"
       ]
     },
     "events": [
@@ -4479,9 +4433,8 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_5_猎手集结_(The_Hunters_Gather)",
-        "ch_3_5_陷阱的交响_(A_Symphony_of_Traps)",
-        "ch_3_5_猎手集结_(The_Hunters_Gather)"
+        "ch_3_5_event_1",
+        "ch_3_5_event_2"
       ]
     },
     "events": [
@@ -4577,10 +4530,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_6_幕后黑手的反击_(The_Mastermind's_Coun",
-        "ch_3_6_混沌的化身_(Avatar_of_Chaos)",
-        "ch_3_6_终结的一击_(The_Finishing_Blow)",
-        "ch_3_6_幕后黑手的反击_(The_Mastermind's_Coun"
+        "ch_3_6_event_1",
+        "ch_3_6_event_2",
+        "ch_3_6_event_3"
       ]
     },
     "events": [
@@ -4694,8 +4646,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_7_膝枕与花语_(The_Lap_Pillow_and_the_",
-        "ch_3_7_膝枕与花语_(The_Lap_Pillow_and_the_"
+        "ch_3_7_event_1",
+        "ch_3_7_event_2",
+        "ch_3_7_event_3"
       ]
     },
     "events": [
@@ -4817,15 +4770,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_1_2_1.1章节事件：公会的奇事：奇怪的高额委托",
-        "ch_3_1_2_1.2章节事件：小队的分歧：能否说服同行者",
-        "ch_3_1_2_1.3章节事件：森林的邀约：妖精法师登场",
-        "ch_3_1_2_1.4章节事件：不可言说的诅咒：生命的倒计时",
-        "ch_3_1_2_公会的奇事：奇怪的高额委托",
-        "ch_3_1_2_小队的分歧：能否说服同行者",
-        "ch_3_1_2_森林的邀约：妖精法师登场",
-        "ch_3_1_2_不可言说的诅咒：生命的倒计时",
-        "ch_3_1_2_公会的奇事：奇怪的高额委托"
+        "ch_3_1_2_event_1",
+        "ch_3_1_2_event_2",
+        "ch_3_1_2_event_3",
+        "ch_3_1_2_event_4"
       ]
     },
     "events": [
@@ -4971,17 +4919,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_2_2_2.1章节事件：湖边初探：妖精法师引路，镜湖初现",
-        "ch_3_2_2_2.2章节事件：战斗之中：控制之舞与英雄本色",
-        "ch_3_2_2_2.3章节事件：部落之邀：蜥蜴人沼泽的传说",
-        "ch_3_2_2_2.4章节事件：夜宿沼泽：篝火夜谈与微妙情愫",
-        "ch_3_2_2_湖边初探：妖精法师引路",
-        "ch_3_2_2_镜湖初现",
-        "ch_3_2_2_战斗之中：控制之舞与英雄本色",
-        "ch_3_2_2_部落之邀：蜥蜴人沼泽的传说",
-        "ch_3_2_2_夜宿沼泽：篝火夜谈与微妙情愫",
-        "ch_3_2_2_湖边初探：妖精法师引路",
-        "ch_3_2_2_镜湖初现"
+        "ch_3_2_2_event_1",
+        "ch_3_2_2_event_2",
+        "ch_3_2_2_event_3",
+        "ch_3_2_2_event_4"
       ]
     },
     "events": [
@@ -5113,15 +5054,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_3_2_3.1章节事件：湖底之门：幻门开启与柔情片刻",
-        "ch_3_3_2_3.2章节事件：分岔三路：三重试炼之选",
-        "ch_3_3_2_3.3章节事件：智慧的回应：自然使者的提问",
-        "ch_3_3_2_3.4章节事件：归于主洞：谜团核心与隐秘传承",
-        "ch_3_3_2_湖底之门：幻门开启与柔情片刻",
-        "ch_3_3_2_分岔三路：三重试炼之选",
-        "ch_3_3_2_智慧的回应：自然使者的提问",
-        "ch_3_3_2_归于主洞：谜团核心与隐秘传承",
-        "ch_3_3_2_湖底之门：幻门开启与柔情片刻"
+        "ch_3_3_2_event_1",
+        "ch_3_3_2_event_2",
+        "ch_3_3_2_event_3",
+        "ch_3_3_2_event_4"
       ]
     },
     "events": [
@@ -5254,17 +5190,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_4_2_4.1章节事件：抵达神殿：绿色圆顶与智慧之像",
-        "ch_3_4_2_4.2章节事件：图腾解读：妖精法师的惊喜与依恋",
-        "ch_3_4_2_4.3章节事件：圆盘试炼：银泪揭晓与石像降落",
-        "ch_3_4_2_4.4章节事件：Boss战（条件分歧）：缄默之伊乌塔",
-        "ch_3_4_2_4.5章节事件：诅咒转移：泪之剑与最终抉择",
-        "ch_3_4_2_抵达神殿：绿色圆顶与智慧之像",
-        "ch_3_4_2_图腾解读：妖精法师的惊喜与依恋",
-        "ch_3_4_2_圆盘试炼：银泪揭晓与石像降落",
-        "ch_3_4_2_Boss战（条件分歧）：缄默之伊乌塔",
-        "ch_3_4_2_诅咒转移：泪之剑与最终抉择",
-        "ch_3_4_2_抵达神殿：绿色圆顶与智慧之像"
+        "ch_3_4_2_event_1",
+        "ch_3_4_2_event_2",
+        "ch_3_4_2_event_3",
+        "ch_3_4_2_event_4",
+        "ch_3_4_2_event_5"
       ]
     },
     "events": [
@@ -5408,10 +5338,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_5_2_血与剑的抉择",
-        "ch_3_5_2_爱与镜影的结局",
-        "ch_3_5_2_妖精的未来与{{user}}的选择",
-        "ch_3_5_2_血与剑的抉择"
+        "ch_3_5_2_event_1",
+        "ch_3_5_2_event_2",
+        "ch_3_5_2_event_3"
       ]
     },
     "events": [
@@ -5520,15 +5449,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_3_6_2_6.1章节事件：离开镜子湖：诅咒解除与妖精法师的依赖",
-        "ch_3_6_2_6.2章节事件：回归边境小镇：冒险者公会的惊艳目光",
-        "ch_3_6_2_6.3章节事件：聚餐提议：妖精法师灌酒戏码",
-        "ch_3_6_2_6.4章节事件：醉酒送归：妖精法师的贴心守护",
-        "ch_3_6_2_离开镜子湖：诅咒解除与妖精法师的依赖",
-        "ch_3_6_2_回归边境小镇：冒险者公会的惊艳目光",
-        "ch_3_6_2_聚餐提议：妖精法师灌酒戏码",
-        "ch_3_6_2_醉酒送归：妖精法师的贴心守护",
-        "ch_3_6_2_离开镜子湖：诅咒解除与妖精法师的依赖"
+        "ch_3_6_2_event_1",
+        "ch_3_6_2_event_2",
+        "ch_3_6_2_event_3",
+        "ch_3_6_2_event_4"
       ]
     },
     "events": [
@@ -5666,10 +5590,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_4_1_2_挣扎的白瓷_(The_Struggling_Porcelai",
-        "ch_4_1_2_前辈的援手_(The_Veteran's_Intervent",
-        "ch_4_1_2_黑虫杀手_(The_Roach_Killer)",
-        "ch_4_1_2_挣扎的白瓷_(The_Struggling_Porcelai"
+        "ch_4_1_2_event_1",
+        "ch_4_1_2_event_2",
+        "ch_4_1_2_event_3"
       ]
     },
     "events": [
@@ -5790,10 +5713,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_4_2_女服务生的挑战_(The_Waitress's_Challe",
-        "ch_4_2_队长的智囊团_(The_Captain's_Council_",
-        "ch_4_2_心领神会的败北_(A_Defeat_with_Underst",
-        "ch_4_2_女服务生的挑战_(The_Waitress's_Challe"
+        "ch_4_2_event_1",
+        "ch_4_2_event_2",
+        "ch_4_2_event_3"
       ]
     },
     "events": [
@@ -5915,12 +5837,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_4_3_假日的主动权_(Taking_the_Initiative_",
-        "ch_4_3_内衣裤攻防战_(The_Underwear_Skirmish",
-        "ch_4_3_连接两个世界_(Connecting_Two_Worlds)",
-        "ch_4_3_少女们的冒险_(The_Girls'_Adventure)",
-        "ch_4_3_桌面上的世界末日_(The_Tabletop_Apocaly",
-        "ch_4_3_假日的主动权_(Taking_the_Initiative_"
+        "ch_4_3_event_1",
+        "ch_4_3_event_2",
+        "ch_4_3_event_3",
+        "ch_4_3_event_4",
+        "ch_4_3_event_5"
       ]
     },
     "events": [
@@ -6065,10 +5986,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_4_4_圣女的密令_(The_Saint's_Secret_Orde",
-        "ch_4_4_战术家的攀登_(The_Tactician's_Ascent",
-        "ch_4_4_智慧的终结_(The_End_of_Cunning)",
-        "ch_4_4_圣女的密令_(The_Saint's_Secret_Orde"
+        "ch_4_4_event_1",
+        "ch_4_4_event_2",
+        "ch_4_4_event_3"
       ]
     },
     "events": [
@@ -6176,10 +6096,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_4_5_酒馆的追忆_(Tavern_of_Reminiscence)",
-        "ch_4_5_种族的偏见_(Prejudices_of_the_Races",
-        "ch_4_5_远征的开端_(The_Beginning_of_the_Ex",
-        "ch_4_5_酒馆的追忆_(Tavern_of_Reminiscence)"
+        "ch_4_5_event_1",
+        "ch_4_5_event_2",
+        "ch_4_5_event_3"
       ]
     },
     "events": [
@@ -6294,10 +6213,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_4_6_归途的喧嚣_(The_Bustling_Way_Home)",
-        "ch_4_6_金币与玉米_(Coins_and_Corn)",
-        "ch_4_6_家的味道_(The_Taste_of_Home)",
-        "ch_4_6_归途的喧嚣_(The_Bustling_Way_Home)"
+        "ch_4_6_event_1",
+        "ch_4_6_event_2",
+        "ch_4_6_event_3"
       ]
     },
     "events": [
@@ -6417,10 +6335,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_1_千金的委托_(The_Noble's_Request)",
-        "ch_5_1_团队的抉择_(The_Party's_Decision)",
-        "ch_5_1_北境的集结_(Assembling_for_the_Nort",
-        "ch_5_1_千金的委托_(The_Noble's_Request)"
+        "ch_5_1_event_1",
+        "ch_5_1_event_2",
+        "ch_5_1_event_3"
       ]
     },
     "events": [
@@ -6541,11 +6458,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_2_2_北上的旅途与恶毒的巧思_(The_Northern_Jour",
-        "ch_5_2_2_燃烧的村庄_(The_Burning_Village)",
-        "ch_5_2_2_双线作战_(Two-Front_Battle)",
-        "ch_5_2_2_战后的喘息与情报收集_(A_Respite_After_Ba",
-        "ch_5_2_2_北上的旅途与恶毒的巧思_(The_Northern_Jour"
+        "ch_5_2_2_event_1",
+        "ch_5_2_2_event_2",
+        "ch_5_2_2_event_3",
+        "ch_5_2_2_event_4"
       ]
     },
     "events": [
@@ -6669,10 +6585,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_3_2_冰冷的迎候_(A_Frigid_Welcome)",
-        "ch_5_3_2_陷阱与诡计_(Traps_and_Tricks)",
-        "ch_5_3_2_祭坛上的囚徒_(The_Prisoner_on_the_Al",
-        "ch_5_3_2_冰冷的迎候_(A_Frigid_Welcome)"
+        "ch_5_3_2_event_1",
+        "ch_5_3_2_event_2",
+        "ch_5_3_2_event_3"
       ]
     },
     "events": [
@@ -6780,10 +6695,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_4_2_幸存者的证言_(The_Survivor's_Testimo",
-        "ch_5_4_2_战术家的议会_(The_Tactician's_Counci",
-        "ch_5_4_2_复仇者的誓言_(The_Avenger's_Pledge)",
-        "ch_5_4_2_幸存者的证言_(The_Survivor's_Testimo"
+        "ch_5_4_2_event_1",
+        "ch_5_4_2_event_2",
+        "ch_5_4_2_event_3"
       ]
     },
     "events": [
@@ -6895,10 +6809,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_5_邪神的伪装_(The_Heretic's_Guise)",
-        "ch_5_5_地牢的惨状_(The_Horror_of_the_Dunge",
-        "ch_5_5_失控的复仇者_(The_Unchained_Avenger)",
-        "ch_5_5_邪神的伪装_(The_Heretic's_Guise)"
+        "ch_5_5_event_1",
+        "ch_5_5_event_2",
+        "ch_5_5_event_3"
       ]
     },
     "events": [
@@ -7004,10 +6917,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_6_双线作战的部署_(Deploying_the_Two-Fro",
-        "ch_5_6_亵渎神明的王座_(The_Blasphemous_Thron",
-        "ch_5_6_崩落的天空_(The_Collapsing_Sky)",
-        "ch_5_6_双线作战的部署_(Deploying_the_Two-Fro"
+        "ch_5_6_event_1",
+        "ch_5_6_event_2",
+        "ch_5_6_event_3"
       ]
     },
     "events": [
@@ -7113,10 +7025,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_7_绝境合流_(Merging_in_Despair)",
-        "ch_5_7_圣骑士的复仇_(The_Paladin's_Revenge)",
-        "ch_5_7_最后的疯狂_(The_Final_Madness)",
-        "ch_5_7_绝境合流_(Merging_in_Despair)"
+        "ch_5_7_event_1",
+        "ch_5_7_event_2",
+        "ch_5_7_event_3"
       ]
     },
     "events": [
@@ -7222,11 +7133,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_8_雪中苏醒_(Waking_in_the_Snow)",
-        "ch_5_8_复仇的终焉_(The_End_of_Vengeance)",
-        "ch_5_8_新年的第一缕光_(The_First_Light_of_th",
-        "ch_5_8_雪中苏醒_(Waking_in_the_Snow)",
-        "ch_5_8_复仇的终焉_(The_End_of_Vengeance)"
+        "ch_5_8_event_1",
+        "ch_5_8_event_2",
+        "ch_5_8_event_3"
       ]
     },
     "events": [
@@ -7605,7 +7514,8 @@
       "events_required": [
         "ch_5_3_3_event_1",
         "ch_5_3_3_event_2",
-        "ch_5_3_3_event_3"
+        "ch_5_3_3_event_3",
+        "ch_5_3_3_event_4"
       ]
     },
     "events": [
@@ -7970,15 +7880,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_1_3_1.1章节事件：公会的“美食家”委托",
-        "ch_5_1_3_1.2章节事件：出发前的冷笑话",
-        "ch_5_1_3_1.3章节事件：追踪与食材分析",
-        "ch_5_1_3_1.4章节事件：战斗后的盛宴",
-        "ch_5_1_3_公会的“美食家”委托",
-        "ch_5_1_3_出发前的冷笑话",
-        "ch_5_1_3_追踪与食材分析",
-        "ch_5_1_3_战斗后的盛宴",
-        "ch_5_1_3_公会的“美食家”委托"
+        "ch_5_1_3_event_1",
+        "ch_5_1_3_event_2",
+        "ch_5_1_3_event_3",
+        "ch_5_1_3_event_4"
       ]
     },
     "events": [
@@ -8110,17 +8015,9 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_2_4_2.1章节事件：自信的捷径",
-        "ch_5_2_4_2.2章节事件：坠落的晚餐",
-        "ch_5_2_4_2.3章节事件：地下的“长纤维蛋白质”",
-        "ch_5_2_4_2.4章节事件：篝火与食谱的意义",
-        "ch_5_2_4_自信的捷径",
-        "ch_5_2_4_坠落的晚餐",
-        "ch_5_2_4_地下的“长纤维蛋白质”",
-        "ch_5_2_4_篝火与食谱的意义",
-        "ch_5_2_4_自信的捷径",
-        "ch_5_2_4_坠落的晚餐",
-        "ch_5_2_4_地下的“长纤维蛋白质”"
+        "ch_5_2_4_event_1",
+        "ch_5_2_4_event_2",
+        "ch_5_2_4_event_3"
       ]
     },
     "events": [
@@ -8235,16 +8132,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_3_4_3.1章节事件：唯一的出路",
-        "ch_5_3_4_3.2章节事件：潜行与“肉源”勘察",
-        "ch_5_3_4_3.3章节事件：混乱的突围战",
-        "ch_5_3_4_3.4章节事件：巢穴深处的“副菜”",
-        "ch_5_3_4_唯一的出路",
-        "ch_5_3_4_潜行与“肉源”勘察",
-        "ch_5_3_4_混乱的突围战",
-        "ch_5_3_4_巢穴深处的“副菜”",
-        "ch_5_3_4_唯一的出路",
-        "ch_5_3_4_潜行与“肉源”勘察"
+        "ch_5_3_4_event_1",
+        "ch_5_3_4_event_2",
+        "ch_5_3_4_event_3",
+        "ch_5_3_4_event_4"
       ]
     },
     "events": [
@@ -8368,15 +8259,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_4_4_4.1_章节事件：囚笼中的线索",
-        "ch_5_4_4_4.2_章节事件：刀刃下的救援",
-        "ch_5_4_4_4.3_章节事件：抉择之门与巨魔",
-        "ch_5_4_4_4.4_章节事件：部落的炉火与战术资源交换",
-        "ch_5_4_4_囚笼中的线索",
-        "ch_5_4_4_刀刃下的救援",
-        "ch_5_4_4_抉择之门与巨魔",
-        "ch_5_4_4_部落的炉火与战术资源交换",
-        "ch_5_4_4_囚笼中的线索"
+        "ch_5_4_4_event_1",
+        "ch_5_4_4_event_2",
+        "ch_5_4_4_event_3",
+        "ch_5_4_4_event_4"
       ]
     },
     "events": [
@@ -8503,13 +8389,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_5_3_重返阳光之地_(The_Sunlit_Return)",
-        "ch_5_5_3_甜蜜的致命诱惑_(The_Sweet_Deadly_Temp",
-        "ch_5_5_3_关键抉择_(The_Critical_Choice_Poin",
-        "ch_5_5_3_共饮石化之蜜_(Shared_Stone-Sweet_Nec",
-        "ch_5_5_3_食谱",
-        "ch_5_5_3_与新的约定_(Recipe_and_New_Oath)",
-        "ch_5_5_3_重返阳光之地_(The_Sunlit_Return)"
+        "ch_5_5_3_event_1",
+        "ch_5_5_3_event_2",
+        "ch_5_5_3_event_3",
+        "ch_5_5_3_event_4",
+        "ch_5_5_3_event_5"
       ]
     },
     "events": [
@@ -8661,7 +8545,10 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_5_1_4_event_1"
+        "ch_5_1_4_event_1",
+        "ch_5_1_4_event_2",
+        "ch_5_1_4_event_3",
+        "ch_5_1_4_event_4"
       ]
     },
     "events": [
@@ -8796,7 +8683,9 @@
     "completion_conditions": {
       "events_required": [
         "ch_5_2_5_event_1",
-        "ch_5_2_5_event_2"
+        "ch_5_2_5_event_2",
+        "ch_5_2_5_event_3",
+        "ch_5_2_5_event_4"
       ]
     },
     "events": [
@@ -9053,12 +8942,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_1_公会的喧嚣_(The_Guild's_Bustle)",
-        "ch_6_1_堆积的委托_(The_Piling_Quests)",
-        "ch_6_1_最初的血腥_(First_Blood)",
-        "ch_6_1_河畔的洞窟_(The_Riverside_Cavern)",
-        "ch_6_1_绝境的洪流_(The_Desperate_Deluge)",
-        "ch_6_1_公会的喧嚣_(The_Guild's_Bustle)"
+        "ch_6_1_event_1",
+        "ch_6_1_event_2",
+        "ch_6_1_event_3",
+        "ch_6_1_event_4",
+        "ch_6_1_event_5"
       ]
     },
     "events": [
@@ -9209,12 +9097,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_2_深夜的对峙_(The_Midnight_Standoff)",
-        "ch_6_2_队长的决断_(The_Captain's_Decision)",
-        "ch_6_2_月下的同行_(The_Moonlit_Walk)",
-        "ch_6_2_牧场的门槛_(The_Farm's_Threshold)",
-        "ch_6_2_监护的誓言_(The_Guardian's_Vow)",
-        "ch_6_2_深夜的对峙_(The_Midnight_Standoff)"
+        "ch_6_2_event_1",
+        "ch_6_2_event_2",
+        "ch_6_2_event_3",
+        "ch_6_2_event_4",
+        "ch_6_2_event_5"
       ]
     },
     "events": [
@@ -9384,12 +9271,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_3_训练场的朝阳_(The_Training_Ground's_",
-        "ch_6_3_失败的晋升_(The_Failed_Promotion)",
-        "ch_6_3_少年的挑衅_(The_Boy's_Provocation)",
-        "ch_6_3_骑士的介入_(The_Knight's_Interventi",
-        "ch_6_3_队长的豪赌_(The_Captain's_Gambit)",
-        "ch_6_3_训练场的朝阳_(The_Training_Ground's_"
+        "ch_6_3_event_1",
+        "ch_6_3_event_2",
+        "ch_6_3_event_3",
+        "ch_6_3_event_4",
+        "ch_6_3_event_5"
       ]
     },
     "events": [
@@ -9538,13 +9424,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_4_门槛前的第一道命令_(The_First_Command_a",
-        "ch_6_4_谨慎的步伐_(The_Cautious_Advance)",
-        "ch_6_4_焦躁的火种_(The_Seed_of_Impatience)",
-        "ch_6_4_一触即发的陷阱_(The_Triggered_Trap)",
-        "ch_6_4_绝望的尖叫_(The_Scream_of_Despair)",
-        "ch_6_4_分崩离析的阵型_(The_Fractured_Formati",
-        "ch_6_4_门槛前的第一道命令_(The_First_Command_a"
+        "ch_6_4_event_1",
+        "ch_6_4_event_2",
+        "ch_6_4_event_3",
+        "ch_6_4_event_4",
+        "ch_6_4_event_5",
+        "ch_6_4_event_6"
       ]
     },
     "events": [
@@ -9706,12 +9591,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_5_2_队长的怒吼_(The_Captain's_Roar)",
-        "ch_6_5_2_临危受命_(Appointed_in_Crisis)",
-        "ch_6_5_2_追猎的足迹_(The_Hunter's_Trail)",
-        "ch_6_5_2_拷问室的惨剧_(The_Torture_Chamber_Tr",
-        "ch_6_5_2_巨魔的咆哮_(The_Troll's_Bellow)",
-        "ch_6_5_2_队长的怒吼_(The_Captain's_Roar)"
+        "ch_6_5_2_event_1",
+        "ch_6_5_2_event_2",
+        "ch_6_5_2_event_3",
+        "ch_6_5_2_event_4",
+        "ch_6_5_2_event_5"
       ]
     },
     "events": [
@@ -9860,13 +9744,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_6_绝境的汇合_(Reunion_in_Despair)",
-        "ch_6_6_队长的奇谋_(The_Captain's_Ingenuity",
-        "ch_6_6_各自的战场_(Their_Respective_Battle",
-        "ch_6_6_火焰的洗礼_(The_Baptism_of_Fire)",
-        "ch_6_6_崩坏的巨人_(The_Crumbling_Giant)",
-        "ch_6_6_最后的指令_(The_Final_Order)",
-        "ch_6_6_绝境的汇合_(Reunion_in_Despair)"
+        "ch_6_6_event_1",
+        "ch_6_6_event_2",
+        "ch_6_6_event_3",
+        "ch_6_6_event_4",
+        "ch_6_6_event_5",
+        "ch_6_6_event_6"
       ]
     },
     "events": [
@@ -10028,12 +9911,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_7_公会的报告与奖赏_(The_Report_and_the_R",
-        "ch_6_7_庆功的祝酒_(A_Toast_to_Celebration)",
-        "ch_6_7_醉后的独白_(A_Drunken_Monologue)",
-        "ch_6_7_破碎的铁面_(The_Shattered_Iron_Mask",
-        "ch_6_7_伤痕的小巷_(The_Alley_of_Scars)",
-        "ch_6_7_公会的报告与奖赏_(The_Report_and_the_R"
+        "ch_6_7_event_1",
+        "ch_6_7_event_2",
+        "ch_6_7_event_3",
+        "ch_6_7_event_4",
+        "ch_6_7_event_5"
       ]
     },
     "events": [
@@ -10197,12 +10079,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_8_白日的操练_(The_Daytime_Drills)",
-        "ch_6_8_投石索的教学_(The_Slingshot_Lesson)",
-        "ch_6_8_午后的闲暇_(The_Afternoon_Leisure)",
-        "ch_6_8_河边的夜谈_(The_Riverside_Night_Tal",
-        "ch_6_8_黑暗中的猎食_(The_Hunt_in_the_Dark)",
-        "ch_6_8_白日的操练_(The_Daytime_Drills)"
+        "ch_6_8_event_1",
+        "ch_6_8_event_2",
+        "ch_6_8_event_3",
+        "ch_6_8_event_4",
+        "ch_6_8_event_5"
       ]
     },
     "events": [
@@ -10352,13 +10233,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_9_警报与集结_(The_Alarm_and_the_Rally",
-        "ch_6_9_行政楼前的壁垒_(The_Bulwark_Before_th",
-        "ch_6_9_各自的战线_(Their_Respective_Frontl",
-        "ch_6_9_女神官的防线_(The_Priestess's_Defens",
-        "ch_6_9_巨人之击_(The_Giant's_Strike)",
-        "ch_6_9_摇摇欲坠的防线_(The_Faltering_Line_of",
-        "ch_6_9_警报与集结_(The_Alarm_and_the_Rally"
+        "ch_6_9_event_1",
+        "ch_6_9_event_2",
+        "ch_6_9_event_4",
+        "ch_6_9_event_5",
+        "ch_6_9_event_6"
       ]
     },
     "events": [
@@ -10533,12 +10412,11 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_10_崩溃的边缘_(The_Brink_of_Collapse)",
-        "ch_6_10_少年的觉醒_(The_Boy's_Awakening)",
-        "ch_6_10_不只是火球_(More_Than_Just_a_Fireba",
-        "ch_6_10_声波的冲击_(The_Sonic_Boom)",
-        "ch_6_10_最后的嘱托_(The_Final_Entrustment)",
-        "ch_6_10_崩溃的边缘_(The_Brink_of_Collapse)"
+        "ch_6_10_event_1",
+        "ch_6_10_event_2",
+        "ch_6_10_event_3",
+        "ch_6_10_event_4",
+        "ch_6_10_event_5"
       ]
     },
     "events": [
@@ -10682,15 +10560,12 @@
     "trigger_conditions": {},
     "completion_conditions": {
       "events_required": [
-        "ch_6_11_反击的号角_(The_Horn_of_Counteratta",
-        "ch_6_11_地道中的猎杀_(The_Hunt_in_the_Tunnel",
-        "ch_6_11_萨满的王座_(The_Shaman's_Throne)",
-        "ch_6_11_故乡的池塘_(The_Pond_of_the_Hometow",
-        "ch_6_11_最后的清算_(The_Final_Reckoning)",
-        "ch_6_11_接着",
-        "ch_6_11_前往冒险_(And_Then",
-        "ch_6_11_to_Adventure)",
-        "ch_6_11_反击的号角_(The_Horn_of_Counteratta"
+        "ch_6_11_event_1",
+        "ch_6_11_event_2",
+        "ch_6_11_event_3",
+        "ch_6_11_event_4",
+        "ch_6_11_event_5",
+        "ch_6_11_event_6"
       ]
     },
     "events": [
@@ -10986,7 +10861,10 @@
     "completion_conditions": {
       "events_required": [
         "ch_6_82_event_1",
-        "ch_6_82_event_2"
+        "ch_6_82_event_2",
+        "ch_6_82_event_3",
+        "ch_6_82_event_4",
+        "ch_6_82_event_5"
       ]
     },
     "events": [

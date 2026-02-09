@@ -2,11 +2,13 @@
 Unified Game V2 API routes (Flash-Only).
 """
 import asyncio
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_coordinator
@@ -38,10 +40,17 @@ from app.models.game import (
     TriggerCombatResponse,
 )
 from app.services.admin.admin_coordinator import AdminCoordinator
+from app.services.mcp_client_pool import MCPServiceUnavailableError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/game", tags=["Game V2"])
+
+
+def _map_exception_to_http(exc: Exception) -> HTTPException:
+    if isinstance(exc, MCPServiceUnavailableError):
+        return HTTPException(status_code=503, detail=str(exc))
+    return HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/worlds")
@@ -104,6 +113,7 @@ class RecoverableSessionItem(BaseModel):
     sub_location: Optional[str] = None
     party_member_count: int = 0
     party_members: List[str] = Field(default_factory=list)
+    needs_character_creation: bool = False
 
 
 class RecoverableSessionsResponse(BaseModel):
@@ -139,23 +149,34 @@ async def start_session(
         )
         location_info = await coordinator.get_current_location(world_id, state.session_id)
 
-        # 生成开场叙述
-        opening_narration = ""
-        try:
-            opening_narration = await coordinator.generate_opening_narration(
-                world_id, state.session_id,
-            )
-        except Exception as exc:
-            logger.warning("开场叙述生成失败: %s", exc)
-
-        return {
-            "session_id": state.session_id,
-            "world_id": world_id,
-            "phase": "idle",
-            "location": location_info,
-            "time": state.game_time.model_dump() if state.game_time else None,
-            "opening_narration": opening_narration,
-        }
+        # 检查是否已有角色（恢复/重建场景）
+        player_char = await coordinator.character_store.get_character(world_id, state.session_id)
+        if player_char:
+            # 已有角色，直接生成开场叙述
+            opening_narration = ""
+            try:
+                opening_narration = await coordinator.generate_opening_narration(
+                    world_id, state.session_id,
+                )
+            except Exception as exc:
+                logger.warning("开场叙述生成失败: %s", exc)
+            return {
+                "session_id": state.session_id,
+                "world_id": world_id,
+                "phase": "active",
+                "location": location_info,
+                "time": state.game_time.model_dump() if state.game_time else None,
+                "opening_narration": opening_narration,
+            }
+        else:
+            # 无角色，进入角色创建阶段（不生成叙述）
+            return {
+                "session_id": state.session_id,
+                "world_id": world_id,
+                "phase": "character_creation",
+                "location": location_info,
+                "time": state.game_time.model_dump() if state.game_time else None,
+            }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -224,6 +245,104 @@ async def resume_session(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ==================== Character Creation ====================
+
+
+@router.get("/{world_id}/character-creation/options")
+async def get_character_creation_options(
+    world_id: str,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """获取角色创建选项（种族、职业、背景、技能、点数购买规则）"""
+    try:
+        config = await coordinator.character_store.get_creation_config(world_id)
+        if not config:
+            raise HTTPException(status_code=404, detail="Character creation config not found for this world")
+        return config
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _map_exception_to_http(exc) from exc
+
+
+class CharacterCreateRequest(BaseModel):
+    """角色创建请求"""
+
+    name: str
+    race: str
+    character_class: str
+    background: str = ""
+    ability_scores: Dict[str, int]
+    skill_proficiencies: List[str] = Field(default_factory=list)
+    backstory: str = ""
+
+
+@router.post("/{world_id}/sessions/{session_id}/character")
+async def create_character(
+    world_id: str,
+    session_id: str,
+    payload: CharacterCreateRequest,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """创建玩家角色并生成开场叙述"""
+    try:
+        # 幂等检查：如果角色已存在，返回现有角色
+        existing = await coordinator.character_store.get_character(world_id, session_id)
+        if existing:
+            return {
+                "character": existing.model_dump(mode="json"),
+                "opening_narration": "",
+                "phase": "active",
+            }
+
+        from app.models.character_creation import CharacterCreationRequest
+        request = CharacterCreationRequest(
+            name=payload.name,
+            race=payload.race,
+            character_class=payload.character_class,
+            background=payload.background,
+            ability_scores=payload.ability_scores,
+            skill_proficiencies=payload.skill_proficiencies,
+            backstory=payload.backstory,
+        )
+        character = await coordinator.character_service.create_character(
+            world_id, session_id, request,
+        )
+
+        # 生成开场叙述（此时有角色信息可注入）
+        opening_narration = ""
+        try:
+            opening_narration = await coordinator.generate_opening_narration(
+                world_id, session_id,
+            )
+        except Exception as exc:
+            logger.warning("角色创建后开场叙述生成失败: %s", exc)
+
+        return {
+            "character": character.model_dump(mode="json"),
+            "opening_narration": opening_narration,
+            "phase": "active",
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[character] 角色创建失败: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{world_id}/sessions/{session_id}/character")
+async def get_character(
+    world_id: str,
+    session_id: str,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """获取当前角色信息"""
+    character = await coordinator.character_store.get_character(world_id, session_id)
+    if not character:
+        raise HTTPException(status_code=404, detail="No character found")
+    return {"character": character.model_dump(mode="json")}
 
 
 @router.get("/{world_id}/sessions/{session_id}/context")
@@ -297,7 +416,49 @@ async def process_input_v2(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("[input] 处理失败: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
+
+
+@router.post("/{world_id}/sessions/{session_id}/input/stream")
+async def process_input_v2_stream(
+    world_id: str,
+    session_id: str,
+    payload: PlayerInputRequest,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """流式处理玩家输入（SSE）"""
+
+    async def event_generator():
+        try:
+            async for event in coordinator.process_player_input_v2_stream(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=payload.input,
+                is_private=payload.is_private,
+                private_target=payload.private_target,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        except asyncio.CancelledError:
+            logger.debug("[input/stream] 客户端断开，终止流 world=%s session=%s", world_id, session_id)
+            raise
+        except Exception as exc:
+            logger.exception("[input/stream] 流式处理失败: %s", exc)
+            error_event = {
+                "type": "error",
+                "error": str(exc),
+                "status_code": 503 if isinstance(exc, MCPServiceUnavailableError) else 500,
+            }
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{world_id}/sessions/{session_id}/location")
@@ -315,7 +476,7 @@ async def get_location(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/navigate")
@@ -349,7 +510,7 @@ async def navigate(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 @router.get("/{world_id}/sessions/{session_id}/time")
@@ -367,7 +528,7 @@ async def get_time(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 class AdvanceTimeRequest(BaseModel):
@@ -561,7 +722,7 @@ async def trigger_combat(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/combat/action")
@@ -593,7 +754,7 @@ async def execute_combat_action(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/combat/start")
@@ -609,7 +770,7 @@ async def start_combat(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/combat/resolve")
@@ -625,7 +786,7 @@ async def resolve_combat(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise _map_exception_to_http(exc) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/advance-day")
@@ -838,6 +999,13 @@ async def trigger_narrative_event(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class PrivateChatRequest(BaseModel):
+    """私聊请求"""
+
+    target_character_id: str
+    input: str
+
+
 class PasserbyDialogueRequest(BaseModel):
     """路人对话请求"""
 
@@ -981,3 +1149,44 @@ async def get_session_history(
         return {"messages": messages}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/{world_id}/sessions/{session_id}/private-chat/stream")
+async def private_chat_stream(
+    world_id: str,
+    session_id: str,
+    payload: PrivateChatRequest,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """私聊流式端点 - 直接与角色对话，跳过GM叙述"""
+
+    async def event_generator():
+        try:
+            async for event in coordinator.process_private_chat_stream(
+                world_id=world_id,
+                session_id=session_id,
+                target_character_id=payload.target_character_id,
+                player_input=payload.input,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        except asyncio.CancelledError:
+            logger.debug("[private-chat/stream] 客户端断开，终止流 world=%s session=%s", world_id, session_id)
+            raise
+        except Exception as exc:
+            logger.exception("[private-chat/stream] 私聊流式处理失败: %s", exc)
+            error_event = {
+                "type": "error",
+                "error": str(exc),
+                "status_code": 503 if isinstance(exc, MCPServiceUnavailableError) else 500,
+            }
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

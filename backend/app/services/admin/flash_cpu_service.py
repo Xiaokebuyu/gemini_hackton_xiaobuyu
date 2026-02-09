@@ -29,7 +29,7 @@ from app.services.game_session_store import GameSessionStore
 from app.services.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
 from app.services.llm_service import LLMService
-from app.services.mcp_client_pool import MCPClientPool
+from app.services.mcp_client_pool import MCPClientPool, MCPServiceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ class FlashCPUService:
         analysis_prompt_path: Optional[Path] = None,
         instance_manager: Optional[Any] = None,
         party_service: Optional[Any] = None,
+        character_service: Optional[Any] = None,
+        character_store: Optional[Any] = None,
     ) -> None:
         self.state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
@@ -62,6 +64,8 @@ class FlashCPUService:
         self.analysis_prompt_path = analysis_prompt_path or Path("app/prompts/flash_analysis.md")
         self.instance_manager = instance_manager
         self.party_service = party_service
+        self.character_service = character_service
+        self.character_store = character_store
 
     def _load_analysis_prompt(self) -> str:
         if self.analysis_prompt_path.exists():
@@ -214,6 +218,12 @@ class FlashCPUService:
                 "add_teammate": "add_teammate",
                 "remove_teammate": "remove_teammate",
                 "disband_party": "disband_party",
+                "heal_player": "heal_player",
+                "damage_player": "damage_player",
+                "add_xp": "add_xp",
+                "add_item": "add_item",
+                "remove_item": "remove_item",
+                "ability_check": "ability_check",
             }
             op_key = op_aliases.get(op_key, op_key)
             operation = None
@@ -329,6 +339,7 @@ class FlashCPUService:
             pending_flash_text = "无"
 
         filled_prompt = prompt.format(
+            player_character=context.get("player_character_summary", "无玩家角色"),
             location_name=location.get("location_name", "未知地点"),
             available_destinations=", ".join(
                 d.get("name", d.get("id", str(d)))
@@ -351,9 +362,9 @@ class FlashCPUService:
             player_input=player_input,
             conversation_history=context.get("conversation_history", "无"),
             character_roster=context.get("character_roster", "无"),
-            chapter_name=chapter_obj.get("name", "未知"),
-            chapter_goals="、".join(chapter_goals) if chapter_goals else "无",
-            chapter_description=chapter_obj.get("description", "")[:200] or "无",
+            chapter_name=self._sanitize_tavern_text(chapter_obj.get("name", "未知")),
+            chapter_goals="、".join(self._sanitize_tavern_text(g) for g in chapter_goals) if chapter_goals else "无",
+            chapter_description=self._build_enriched_chapter_description(chapter_obj, chapter_info),
             chapter_events="、".join(chapter_events) if chapter_events else "无",
             story_directives=story_directives_text,
             pending_flash_conditions=pending_flash_text,
@@ -567,6 +578,7 @@ class FlashCPUService:
 
         prompt_template = self._load_gm_narration_prompt()
         prompt = prompt_template.format(
+            player_character=context.get("player_character_summary", "无玩家角色"),
             location_name=location.get("location_name", "未知地点"),
             location_atmosphere=location.get("atmosphere", ""),
             time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
@@ -594,6 +606,79 @@ class FlashCPUService:
             return "……"
         return narration
 
+    async def generate_gm_narration_stream(
+        self,
+        player_input: str,
+        execution_summary: str,
+        context: Dict[str, Any],
+    ):
+        """流式生成 GM 叙述，yield {"type": "thought"/"answer", "text": str}。"""
+        location = context.get("location") or {}
+        time_info = context.get("time") or {}
+        teammates = context.get("teammates") or []
+        conversation_history = context.get("conversation_history") or "无"
+        world_background = context.get("world_background") or "无"
+        memory_summary = context.get("memory_summary") or "无"
+        context_package = context.get("context_package") or {}
+
+        teammate_lines = []
+        for teammate in teammates:
+            if not isinstance(teammate, dict):
+                continue
+            teammate_lines.append(
+                f"- {teammate.get('name', '?')}({teammate.get('role', '?')}, 情绪:{teammate.get('current_mood', '未知')})"
+            )
+        teammates_text = "\n".join(teammate_lines) if teammate_lines else "无"
+
+        story_directives_list = context.get("story_narrative_directives") or context.get("story_directives") or []
+        story_directives_text = "\n".join(story_directives_list) if story_directives_list else "无"
+
+        prompt_template = self._load_gm_narration_prompt()
+        prompt = prompt_template.format(
+            player_character=context.get("player_character_summary", "无玩家角色"),
+            location_name=location.get("location_name", "未知地点"),
+            location_atmosphere=location.get("atmosphere", ""),
+            time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
+            current_state=context.get("state", "exploring"),
+            active_npc=context.get("active_npc") or "无",
+            world_background=world_background,
+            chapter_guidance=self._build_chapter_guidance(context),
+            story_directives=story_directives_text,
+            teammates=teammates_text,
+            conversation_history=conversation_history,
+            memory_summary=memory_summary,
+            context_package=json.dumps(context_package, ensure_ascii=False) if context_package else "无",
+            execution_summary=execution_summary or "无",
+            player_input=player_input,
+        )
+
+        async for chunk in self.llm_service.generate_simple_stream(
+            prompt,
+            model_override=settings.admin_flash_model,
+            thinking_level=settings.admin_flash_thinking_level,
+        ):
+            yield chunk
+
+    @staticmethod
+    def _sanitize_tavern_text(text: str) -> str:
+        """替换 SillyTavern 占位符为通用称谓。"""
+        if not text:
+            return text
+        return text.replace("{{user}}", "冒险者").replace("{{char}}", "")
+
+    def _build_enriched_chapter_description(
+        self, chapter_obj: Dict[str, Any], chapter_info: Dict[str, Any]
+    ) -> str:
+        """构建增强的章节描述，包含事件引导。"""
+        chapter_desc_raw = chapter_obj.get("description", "")[:400] or "无"
+        chapter_description_text = self._sanitize_tavern_text(chapter_desc_raw)
+        event_dirs = chapter_info.get("event_directives", [])
+        if event_dirs:
+            chapter_description_text += "\n\n即将到来的事件引导：\n" + "\n".join(
+                f"  {self._sanitize_tavern_text(d)}" for d in event_dirs[:3]
+            )
+        return chapter_description_text
+
     def _build_chapter_guidance(self, context: Dict[str, Any]) -> str:
         """构建章节引导文本"""
         chapter_info = context.get("chapter_info") or {}
@@ -602,9 +687,31 @@ class FlashCPUService:
         if not chapter_name:
             return "无"
         goals = chapter_info.get("goals", [])
-        parts = [f"当前章节：{chapter_name}"]
+        event_dirs = chapter_info.get("event_directives", [])
+        current_event = chapter_info.get("current_event") or {}
+        pending_required_events = chapter_info.get("pending_required_events") or []
+        required_events = chapter_info.get("required_events") or []
+
+        parts = [f"当前章节：{self._sanitize_tavern_text(chapter_name)}"]
+        if isinstance(current_event, dict) and (current_event.get("name") or current_event.get("id")):
+            event_name = current_event.get("name") or current_event.get("id")
+            parts.append(f"当前事件焦点：{self._sanitize_tavern_text(str(event_name))}")
+            event_desc = current_event.get("description")
+            if isinstance(event_desc, str) and event_desc.strip():
+                parts.append(f"当前事件描述：{self._sanitize_tavern_text(event_desc.strip())[:120]}")
         if goals:
-            parts.append(f"推进目标：{'、'.join(goals[:3])}")
+            sanitized_goals = [self._sanitize_tavern_text(g) for g in goals[:3]]
+            parts.append(f"推进目标：{'、'.join(sanitized_goals)}")
+        if pending_required_events:
+            pending_text = "、".join(str(e) for e in pending_required_events[:4])
+            parts.append(f"待触发关键事件：{pending_text}")
+        elif required_events:
+            parts.append("章节关键事件已全部触发，可准备章节收束或过渡。")
+        if event_dirs:
+            parts.append("即将到来的事件：")
+            for d in event_dirs[:2]:
+                parts.append(f"  {self._sanitize_tavern_text(d)}")
+        parts.append("本回合叙述要求：至少给出一个可执行的推进线索，并与当前事件保持一致。")
         return "\n".join(parts)
 
     async def execute_request(
@@ -696,13 +803,22 @@ class FlashCPUService:
                 )
 
             if op == FlashOperation.START_COMBAT:
+                # Auto-fill player_state from character data if not provided
+                player_state = params.get("player_state") or {}
+                if not player_state and self.character_store:
+                    try:
+                        character = await self.character_store.get_character(world_id, session_id)
+                        if character:
+                            player_state = character.to_combat_player_state()
+                    except Exception as exc:
+                        logger.warning("[start_combat] Failed to auto-fill player_state: %s", exc)
                 result = await self._call_combat_tool(
                     "start_combat_session",
                     {
                         "world_id": world_id,
                         "session_id": session_id,
                         "enemies": params.get("enemies", []),
-                        "player_state": params.get("player_state", {}),
+                        "player_state": player_state,
                         "environment": params.get("environment"),
                         "allies": params.get("allies"),
                         "combat_context": params.get("combat_context"),
@@ -870,7 +986,103 @@ class FlashCPUService:
                     error=None if success else "解散队伍失败",
                 )
 
+            if op == FlashOperation.HEAL_PLAYER:
+                if not self.character_service or not self.character_store:
+                    return FlashResponse(success=False, operation=op, error="character_service not initialized")
+                character = await self.character_store.get_character(world_id, session_id)
+                if not character:
+                    return FlashResponse(success=False, operation=op, error="no player character found")
+                amount = int(params.get("amount", 0))
+                old_hp = character.current_hp
+                character.current_hp = min(character.current_hp + amount, character.max_hp)
+                character.updated_at = datetime.utcnow()
+                await self.character_store.save_character(world_id, session_id, character)
+                return FlashResponse(
+                    success=True, operation=op,
+                    result={"hp": character.current_hp, "max_hp": character.max_hp, "healed": character.current_hp - old_hp},
+                )
+
+            if op == FlashOperation.DAMAGE_PLAYER:
+                if not self.character_service or not self.character_store:
+                    return FlashResponse(success=False, operation=op, error="character_service not initialized")
+                character = await self.character_store.get_character(world_id, session_id)
+                if not character:
+                    return FlashResponse(success=False, operation=op, error="no player character found")
+                amount = int(params.get("amount", 0))
+                old_hp = character.current_hp
+                character.current_hp = max(character.current_hp - amount, 0)
+                character.updated_at = datetime.utcnow()
+                await self.character_store.save_character(world_id, session_id, character)
+                return FlashResponse(
+                    success=True, operation=op,
+                    result={"hp": character.current_hp, "max_hp": character.max_hp, "damage_taken": old_hp - character.current_hp},
+                )
+
+            if op == FlashOperation.ADD_XP:
+                if not self.character_service:
+                    return FlashResponse(success=False, operation=op, error="character_service not initialized")
+                amount = int(params.get("amount", 0))
+                result = await self.character_service.add_xp(world_id, session_id, amount)
+                return FlashResponse(success=True, operation=op, result=result)
+
+            if op == FlashOperation.ADD_ITEM:
+                if not self.character_store:
+                    return FlashResponse(success=False, operation=op, error="character_store not initialized")
+                character = await self.character_store.get_character(world_id, session_id)
+                if not character:
+                    return FlashResponse(success=False, operation=op, error="no player character found")
+                item_id = params.get("item_id", "unknown_item")
+                item_name = params.get("item_name", item_id)
+                quantity = int(params.get("quantity", 1))
+                properties = params.get("properties")
+                character.add_item(item_id, item_name, quantity, properties)
+                character.updated_at = datetime.utcnow()
+                await self.character_store.save_character(world_id, session_id, character)
+                return FlashResponse(
+                    success=True, operation=op,
+                    result={"item_id": item_id, "item_name": item_name, "quantity": quantity},
+                )
+
+            if op == FlashOperation.REMOVE_ITEM:
+                if not self.character_store:
+                    return FlashResponse(success=False, operation=op, error="character_store not initialized")
+                character = await self.character_store.get_character(world_id, session_id)
+                if not character:
+                    return FlashResponse(success=False, operation=op, error="no player character found")
+                item_id = params.get("item_id", "")
+                quantity = int(params.get("quantity", 1))
+                removed = character.remove_item(item_id, quantity)
+                if removed:
+                    character.updated_at = datetime.utcnow()
+                    await self.character_store.save_character(world_id, session_id, character)
+                return FlashResponse(
+                    success=removed, operation=op,
+                    result={"item_id": item_id, "removed": removed},
+                    error=None if removed else f"item {item_id} not found in inventory",
+                )
+
+            if op == FlashOperation.ABILITY_CHECK:
+                from app.services.ability_check_service import AbilityCheckService
+                check_service = AbilityCheckService(store=self.character_store)
+                result = await check_service.perform_check(
+                    world_id=world_id,
+                    session_id=session_id,
+                    ability=params.get("ability"),
+                    skill=params.get("skill"),
+                    dc=int(params.get("dc", 10)),
+                )
+                success = result.get("success", False) and "error" not in result
+                return FlashResponse(
+                    success=True, operation=op,
+                    result=result,
+                    error=result.get("error"),
+                )
+
             return FlashResponse(success=False, operation=op, error=f"unsupported operation: {op}")
+        except asyncio.CancelledError:
+            raise
+        except MCPServiceUnavailableError:
+            raise
         except Exception as exc:
             return FlashResponse(success=False, operation=op, error=str(exc))
 
@@ -988,6 +1200,57 @@ class FlashCPUService:
         if self.world_runtime:
             await self.world_runtime.persist_state(state)
 
+    async def sync_combat_result_to_character(
+        self,
+        world_id: str,
+        session_id: str,
+        combat_payload: Dict[str, Any],
+    ) -> None:
+        """Sync combat results (HP/XP/gold) back to player character."""
+        if not self.character_store or not self.character_service:
+            return
+        character = await self.character_store.get_character(world_id, session_id)
+        if not character:
+            return
+
+        try:
+            # Sync HP from combat result
+            player_state = combat_payload.get("player_state") or {}
+            hp_remaining = player_state.get("hp_remaining")
+            if hp_remaining is not None:
+                character.current_hp = max(0, min(int(hp_remaining), character.max_hp))
+
+            # Extract final_result for rewards
+            final_result = combat_payload.get("final_result") or combat_payload.get("result") or {}
+            if isinstance(final_result, dict):
+                result_type = final_result.get("result", "")
+                rewards = final_result.get("rewards") or {}
+
+                if result_type == "victory" and rewards:
+                    # XP reward (use add_xp for level-up logic)
+                    xp = int(rewards.get("xp", 0))
+                    if xp > 0:
+                        await self.character_service.add_xp(world_id, session_id, xp)
+                        # Re-fetch after add_xp (it saves internally)
+                        character = await self.character_store.get_character(world_id, session_id)
+                        if not character:
+                            return
+
+                    # Gold reward
+                    gold = int(rewards.get("gold", 0))
+                    if gold > 0:
+                        character.gold += gold
+
+                    # Item rewards
+                    for item_id in rewards.get("items", []):
+                        character.add_item(item_id, item_id, 1)
+
+            character.updated_at = datetime.utcnow()
+            await self.character_store.save_character(world_id, session_id, character)
+            logger.info("[combat_sync] Synced combat results to character for %s/%s", world_id, session_id)
+        except Exception as exc:
+            logger.error("[combat_sync] Failed to sync combat results: %s", exc, exc_info=True)
+
     async def _npc_dialogue_with_instance(
         self, world_id: str, npc_id: str, message: str,
     ) -> str:
@@ -1078,6 +1341,10 @@ class FlashCPUService:
                 "resolve_combat_session",
                 {"world_id": world_id, "session_id": session_id, "combat_id": combat_id, "dispatch": True},
             )
+            # Sync combat results (HP/XP/gold) to player character
+            sync_data = dict(resolve_payload) if isinstance(resolve_payload, dict) else {}
+            sync_data["final_result"] = payload.get("final_result")
+            await self.sync_combat_result_to_character(world_id, session_id, sync_data)
             await self._apply_delta(world_id, session_id, self._build_state_delta("end_combat", {"combat_id": None}))
             return {
                 "type": "combat",
@@ -1114,11 +1381,14 @@ class FlashCPUService:
             pool = await MCPClientPool.get_instance()
             return await pool.call_tool(MCPClientPool.COMBAT, tool_name, arguments)
         except asyncio.CancelledError as exc:
-            logger.error("[FlashCPU] combat MCP 调用被取消: %s", exc)
-            return {"error": str(exc) or "combat mcp call cancelled"}
+            logger.info("[FlashCPU] combat MCP 调用被取消: %s", exc)
+            raise
+        except MCPServiceUnavailableError as exc:
+            logger.error("[FlashCPU] combat MCP 服务不可用: %s", exc)
+            raise
         except Exception as exc:
             logger.error("[FlashCPU] combat MCP 调用失败: %s", exc)
-            return {"error": str(exc)}
+            raise
 
     async def call_combat_tool(self, tool_name: str, arguments: Dict[str, Any]):
         return await self._call_combat_tool(tool_name, arguments)

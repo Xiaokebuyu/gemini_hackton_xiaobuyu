@@ -1,10 +1,14 @@
 /**
- * Galgame-style teammate response zone — full-width vertical bar layout
+ * Galgame-style teammate response zone — vertical card layout
+ *
+ * Supports streaming: shows cards even for empty-content messages (streaming in progress),
+ * with a blinking cursor indicator.
  */
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageCircle } from 'lucide-react';
 import type { NarrativeMessage } from '../../types';
+import { useChatStore } from '../../stores';
 
 interface GalgameTeammateZoneProps {
   messages: NarrativeMessage[];
@@ -15,9 +19,10 @@ export const GalgameTeammateZone: React.FC<GalgameTeammateZoneProps> = ({
   messages,
   visible,
 }) => {
-  // Only show teammates that actually have content
-  const withContent = messages.filter((m) => m.content.trim());
-  if (withContent.length === 0) return null;
+  const { streamingMessageId } = useChatStore();
+
+  // Show all messages — including empty ones that are currently streaming
+  if (messages.length === 0) return null;
 
   return (
     <AnimatePresence>
@@ -27,34 +32,41 @@ export const GalgameTeammateZone: React.FC<GalgameTeammateZoneProps> = ({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
           transition={{ duration: 0.3 }}
-          className="mt-4 space-y-2"
+          className="mt-4 space-y-3"
         >
-          {withContent.map((msg, i) => (
-            <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, delay: i * 0.08 }}
-              className="w-full flex items-start gap-3 bg-g-bubble-teammate-bg border border-g-bubble-teammate-border rounded-lg px-4 py-2.5"
-            >
-              {/* Left: name label */}
-              <div className="flex items-center gap-1.5 flex-shrink-0 pt-0.5">
-                <MessageCircle className="w-3.5 h-3.5 text-g-bubble-teammate-border" />
-                <span className="text-xs font-medium text-g-bubble-teammate-border whitespace-nowrap">
-                  {msg.speaker}
-                </span>
-                {msg.metadata?.reaction && (
-                  <span className="text-xs g-text-muted italic">
-                    {msg.metadata.reaction}
+          {messages.map((msg, i) => {
+            const isStreaming = streamingMessageId === msg.id;
+
+            return (
+              <motion.div
+                key={msg.id}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, delay: i * 0.08 }}
+                className="w-full bg-g-bubble-teammate-bg border border-g-bubble-teammate-border rounded-lg px-5 py-3.5"
+              >
+                {/* Top: name label row */}
+                <div className="flex items-center gap-1.5 mb-2">
+                  <MessageCircle className="w-3.5 h-3.5 text-g-bubble-teammate-border" />
+                  <span className="text-xs font-semibold text-g-bubble-teammate-border whitespace-nowrap">
+                    {msg.speaker}
                   </span>
-                )}
-              </div>
-              {/* Right: content */}
-              <p className="text-sm text-[var(--g-text-primary)] whitespace-pre-wrap flex-1 min-w-0">
-                {msg.content}
-              </p>
-            </motion.div>
-          ))}
+                  {msg.metadata?.reaction && (
+                    <span className="text-xs text-g-text-muted italic ml-1">
+                      {msg.metadata.reaction}
+                    </span>
+                  )}
+                </div>
+                {/* Bottom: content */}
+                <p className="text-base text-[var(--g-text-primary)] whitespace-pre-wrap leading-relaxed">
+                  {msg.content}
+                  {isStreaming && (
+                    <span className="inline-block w-2 h-4 ml-0.5 bg-g-gold/70 animate-pulse align-text-bottom" />
+                  )}
+                </p>
+              </motion.div>
+            );
+          })}
         </motion.div>
       )}
     </AnimatePresence>

@@ -4,7 +4,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Eye, Clock, Search, HelpCircle } from 'lucide-react';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 import { useChatStore } from '../../stores';
 import { Button } from '../ui';
 
@@ -50,7 +50,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
   className = '',
 }) => {
   const { t } = useTranslation();
-  const { sendInput, isLoading } = useGameInput();
+  const { sendInput, isLoading } = useStreamGameInput();
   const { isLoading: chatLoading } = useChatStore();
 
   const handleAction = (action: QuickAction) => {
@@ -61,7 +61,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      <span className="text-xs g-text-muted mr-2 font-body">
+      <span className="text-xs text-g-text-muted mr-2 font-body">
         {t('actions.quick')}:
       </span>
       {quickActionsConfig.map((action) => (

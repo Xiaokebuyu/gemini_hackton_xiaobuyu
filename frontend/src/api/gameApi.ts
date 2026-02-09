@@ -31,6 +31,9 @@ import type {
   CreatePartyRequest,
   AddTeammateRequest,
   LoadTeammatesRequest,
+  CharacterCreationOptions,
+  CharacterCreationRequest,
+  CharacterCreationResponse,
 } from '../types';
 
 // =============================================================================
@@ -117,6 +120,41 @@ export async function getGameContext(
 ): Promise<GameContextResponse> {
   const response = await apiClient.get<GameContextResponse>(
     `/api/game/${worldId}/sessions/${sessionId}/context`
+  );
+  return response.data;
+}
+
+// =============================================================================
+// Character Creation
+// =============================================================================
+
+/**
+ * 获取角色创建选项
+ *
+ * GET /api/game/{world_id}/character-creation/options
+ */
+export async function getCharacterCreationOptions(
+  worldId: string
+): Promise<CharacterCreationOptions> {
+  const response = await apiClient.get<CharacterCreationOptions>(
+    `/api/game/${worldId}/character-creation/options`
+  );
+  return response.data;
+}
+
+/**
+ * 创建角色
+ *
+ * POST /api/game/{world_id}/sessions/{session_id}/character
+ */
+export async function createCharacter(
+  worldId: string,
+  sessionId: string,
+  request: CharacterCreationRequest
+): Promise<CharacterCreationResponse> {
+  const response = await apiClient.post<CharacterCreationResponse>(
+    `/api/game/${worldId}/sessions/${sessionId}/character`,
+    request
   );
   return response.data;
 }

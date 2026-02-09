@@ -60,6 +60,8 @@ bash 启动服务/run_fastapi.sh
 | `MCP_TOOLS_ENDPOINT` | - | Game Tools MCP 端点 |
 | `MCP_COMBAT_TRANSPORT` | `stdio` | Combat MCP 传输方式 |
 | `MCP_COMBAT_ENDPOINT` | - | Combat MCP 端点 |
+| `CHECK_MCP` | `true` | 启动 FastAPI 前是否检查 MCP 端点可达性 |
+| `MCP_PROBE_TIMEOUT_SECONDS` | `2` | MCP 端点探测超时秒数 |
 | `MCP_HOST` | `127.0.0.1` | MCP 服务监听地址 |
 | `MCP_TOOLS_PORT` | `9101` | Game Tools 端口 |
 | `MCP_COMBAT_PORT` | `9102` | Combat 端口 |

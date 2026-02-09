@@ -158,6 +158,59 @@ export interface TeammateResponseResult {
   latency_ms: number;
 }
 
+export interface StoryEventSummary {
+  id?: string;
+  name?: string;
+  description?: string;
+  completed?: boolean;
+}
+
+export interface CoordinatorChapterInfo {
+  id: string;
+  name?: string;
+  description?: string;
+  transition?: string | null;
+  pacing_action?: string | null;
+  goals?: string[];
+  required_events?: string[];
+  required_event_summaries?: StoryEventSummary[];
+  pending_required_events?: string[];
+  events_triggered?: string[];
+  event_total?: number;
+  event_completed?: number;
+  event_completion_pct?: number;
+  all_required_events_completed?: boolean;
+  waiting_transition?: boolean;
+  suggested_maps?: string[];
+  event_directives?: string[];
+  current_event?: StoryEventSummary | null;
+  next_chapter?: {
+    id?: string;
+    name?: string;
+  } | null;
+}
+
+export interface StoryDirectorMetadata {
+  pre_auto_fired?: string[];
+  post_fired?: string[];
+  turn_story_events?: string[];
+  pacing_action?: string | null;
+  transition_target?: string | null;
+  transition_type?: string | null;
+  narrative_directive_count?: number;
+}
+
+export interface TeammateDebugMetadata {
+  total?: number;
+  skipped?: number;
+  skip_reasons?: string[];
+}
+
+export interface CoordinatorMetadata extends Record<string, unknown> {
+  story_director?: StoryDirectorMetadata;
+  teammate_debug?: TeammateDebugMetadata;
+}
+
 // =============================================================================
 // 协调器响应 (对应 app/models/admin_protocol.py)
 // =============================================================================
@@ -171,7 +224,7 @@ export interface CoordinatorResponse {
   metadata: Record<string, unknown>;
   story_events?: string[];
   pacing_action?: string | null;
-  chapter_info?: { id: string; transition?: string | null } | null;
+  chapter_info?: CoordinatorChapterInfo | null;
 }
 
 // =============================================================================
@@ -240,7 +293,26 @@ export interface NarrativeMessage {
 export interface PlayerInputRequest {
   input: string;
   input_type?: 'narration' | 'dialogue' | 'combat' | 'system' | null;
+  is_private?: boolean;
+  private_target?: string | null;
 }
+
+// =============================================================================
+// SSE 事件类型 (对应 process_player_input_v2_stream yields)
+// =============================================================================
+
+export type SSEEventType =
+  | 'phase'
+  | 'gm_start'
+  | 'gm_chunk'
+  | 'gm_end'
+  | 'teammate_start'
+  | 'teammate_chunk'
+  | 'teammate_end'
+  | 'teammate_skip'
+  | 'time_event'
+  | 'complete'
+  | 'error';
 
 /**
  * 玩家输入响应 (对应 PlayerInputResponse)
@@ -399,7 +471,7 @@ export interface CreateGameSessionResponse {
   phase: string;
   location: LocationResponse;
   time: GameTimeResponse | null;
-  opening_narration: string;
+  opening_narration?: string;
 }
 
 /**
@@ -414,6 +486,7 @@ export interface RecoverableSessionItem {
   player_location?: string | null;
   chapter_id?: string | null;
   sub_location?: string | null;
+  needs_character_creation?: boolean;
 }
 
 /**
@@ -428,7 +501,7 @@ export interface RecoverableSessionsResponse {
 /**
  * 游戏阶段
  */
-export type GamePhase = 'idle' | 'scene' | 'dialogue' | 'combat' | 'ended';
+export type GamePhase = 'idle' | 'scene' | 'dialogue' | 'combat' | 'character_creation' | 'ended';
 
 /**
  * 游戏上下文响应 (对应 GameContextResponse)
@@ -539,6 +612,102 @@ export interface AddTeammateRequest {
  */
 export interface LoadTeammatesRequest {
   teammates: Record<string, unknown>[];
+}
+
+// =============================================================================
+// Character Creation Types
+// =============================================================================
+
+export interface CharacterCreationOptions {
+  races: Record<string, {
+    name: string;
+    name_zh?: string;
+    name_en?: string;
+    description: string;
+    ability_bonuses: Record<string, number>;
+    racial_traits: string[];
+    speed: number;
+  }>;
+  classes: Record<string, {
+    name: string;
+    name_zh?: string;
+    name_en?: string;
+    description: string;
+    hit_die?: number;
+    hit_dice?: string;
+    starting_hp_base?: number;
+    primary_ability: string;
+    saving_throws: string[];
+    skill_count?: number;
+    skill_choices: string[] | {
+      count?: number;
+      from?: string[];
+    };
+    armor_proficiencies: string[];
+    weapon_proficiencies: string[];
+    starting_equipment: Array<{
+      slot: string;
+      item_id: string;
+    }> | Record<string, string>;
+    features?: string[];
+    class_features?: string[];
+    spellcasting?: boolean;
+  }>;
+  backgrounds: Record<string, {
+    name: string;
+    name_zh?: string;
+    name_en?: string;
+    description: string;
+    skill_proficiencies: string[];
+    starting_gold?: number;
+    starting_gold_bonus?: number;
+  }>;
+  skills: Record<string, {
+    name?: string;
+    name_zh?: string;
+    name_en?: string;
+    ability: string;
+  }>;
+  point_buy: {
+    total_points: number;
+    min?: number;
+    max?: number;
+    min_score?: number;
+    max_score?: number;
+    cost_table: Record<string, number>;
+  };
+}
+
+export interface CharacterCreationRequest {
+  name: string;
+  race: string;
+  character_class: string;
+  background: string;
+  ability_scores: Record<string, number>;
+  skill_proficiencies: string[];
+  backstory?: string;
+}
+
+export interface CharacterCreationResponse {
+  character: PlayerCharacterData;
+  opening_narration: string;
+  phase: 'active';
+}
+
+export interface PlayerCharacterData {
+  character_id: string;
+  name: string;
+  race: string;
+  character_class: string;
+  level: number;
+  max_hp: number;
+  current_hp: number;
+  ac: number;
+  abilities: Record<string, number>;
+  skill_proficiencies: string[];
+  equipment: Record<string, string | null>;
+  class_features: string[];
+  racial_traits: string[];
 }
 
 // 保留旧的别名以兼容

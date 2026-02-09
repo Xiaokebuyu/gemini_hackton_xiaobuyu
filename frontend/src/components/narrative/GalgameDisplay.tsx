@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Landmark, User } from 'lucide-react';
+import { BookOpen, Landmark, User } from 'lucide-react';
 import { useChatStore, useGameStore, useCombatStore } from '../../stores';
 import type { NarrativeMessage } from '../../types';
 import TypewriterText from './TypewriterText';
@@ -17,7 +17,7 @@ import LoadingSpinner from '../shared/LoadingSpinner';
 import ChatInput from '../input/ChatInput';
 import QuickActions from '../input/QuickActions';
 import { parseGMNarration } from '../../utils/narrationParser';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,10 +61,10 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
   className = '',
 }) => {
   const { t } = useTranslation();
-  const { messages, isLoading } = useChatStore();
+  const { messages, isLoading, streamingMessageId } = useChatStore();
   const { combatId } = useGameStore();
   const { isActive: isCombatActive } = useCombatStore();
-  const { sendInput } = useGameInput();
+  const { sendInput } = useStreamGameInput();
 
   const round = useMemo(() => getCurrentRound(messages), [messages]);
   const roundId = round.playerMessage?.id ?? round.gmNarration?.id ?? '__empty__';
@@ -73,11 +73,30 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
   const [isTypingComplete, setIsTypingComplete] = useState(false);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
 
+  // Is the current GM message being streamed right now?
+  const isGmStreaming = !!(round.gmNarration && streamingMessageId === round.gmNarration.id);
+
+  // Track whether the current GM message was delivered via streaming
+  // so we skip the typewriter re-animation when SSE ends
+  const wasStreamedRef = React.useRef(false);
+
   // Reset typing state whenever the round changes
   useEffect(() => {
     setIsTypingComplete(false);
     setSelectedOption(null);
+    wasStreamedRef.current = false;
   }, [roundId]);
+
+  // When GM streaming finishes, mark typing complete immediately (skip typewriter animation)
+  const prevGmStreamingRef = React.useRef(false);
+  useEffect(() => {
+    if (prevGmStreamingRef.current && !isGmStreaming) {
+      // Was streaming, now done — mark complete immediately
+      setIsTypingComplete(true);
+      wasStreamedRef.current = true;
+    }
+    prevGmStreamingRef.current = isGmStreaming;
+  }, [isGmStreaming]);
 
   // Parse GM narration
   const parsed = round.gmNarration?.type === 'gm'
@@ -102,7 +121,7 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
             <h2 className="font-heading text-2xl text-g-gold mb-3">
               {t('narrative.welcome')}
             </h2>
-            <p className="g-text-secondary max-w-md font-body">
+            <p className="text-g-text-secondary max-w-md font-body">
               {t('narrative.welcomeHint')}
             </p>
             <div className="g-divider mt-6">
@@ -147,19 +166,37 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
             {isLoading && !round.gmNarration && (
               <div className="flex items-center gap-3 py-4">
                 <LoadingSpinner size="sm" />
-                <span className="g-text-secondary text-sm italic font-body">
+                <span className="text-g-text-secondary text-sm italic font-body">
                   {t('narrative.gmThinking')}
                 </span>
               </div>
             )}
 
             {round.gmNarration && (
-              <div className="whitespace-pre-wrap text-[var(--g-text-primary)] font-body leading-relaxed">
-                <TypewriterText
-                  text={narrativeText}
-                  speed={15}
-                  onComplete={() => setIsTypingComplete(true)}
-                />
+              <div className="bg-[var(--g-bubble-gm-bg)] border-l-[3px] border-l-[var(--g-accent-gold)] rounded-xl p-5 shadow-[var(--g-shadow-sm)]">
+                {/* GM label */}
+                <div className="flex items-center gap-2 mb-3">
+                  <BookOpen className="w-4 h-4 text-[var(--g-accent-gold)]" />
+                  <span className="text-xs font-semibold text-[var(--g-accent-gold)] tracking-wide">
+                    {t('speaker.gm')}
+                  </span>
+                </div>
+                {/* Narration text */}
+                <div className="whitespace-pre-wrap text-[var(--g-text-primary)] font-body leading-relaxed">
+                  {isGmStreaming ? (
+                    <>
+                      {round.gmNarration.content}
+                      <span className="inline-block w-2 h-4 ml-0.5 bg-g-gold/70 animate-pulse align-text-bottom" />
+                    </>
+                  ) : (
+                    <TypewriterText
+                      text={narrativeText}
+                      speed={15}
+                      skipAnimation={wasStreamedRef.current}
+                      onComplete={() => setIsTypingComplete(true)}
+                    />
+                  )}
+                </div>
               </div>
             )}
 

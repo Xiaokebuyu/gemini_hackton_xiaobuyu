@@ -35,6 +35,52 @@ def _firestore_messages_path(world_id: str, session_id: str) -> str:
     return f"worlds/{world_id}/sessions/{session_id}/messages"
 
 
+def _normalize_message_for_api(
+    role: str,
+    content: str,
+    metadata: Optional[Dict[str, Any]],
+    timestamp: Any,
+) -> Dict[str, Any]:
+    """Normalize raw history message for API/front-end consumption."""
+    meta = metadata or {}
+    source = meta.get("source")
+    is_teammate = source == "teammate"
+
+    if hasattr(timestamp, "isoformat"):
+        ts_str = timestamp.isoformat()
+    else:
+        ts_str = str(timestamp) if timestamp else None
+
+    if is_teammate:
+        speaker = meta.get("name") or meta.get("character_id") or "队友"
+        message_type = "teammate"
+        normalized_role = "assistant"
+    elif role == "user":
+        speaker = "玩家"
+        message_type = "player"
+        normalized_role = role
+    elif role == "assistant":
+        speaker = "GM"
+        message_type = "gm"
+        normalized_role = role
+    else:
+        speaker = "系统"
+        message_type = "system"
+        normalized_role = role
+
+    return {
+        # Preserve original role for backward compatibility with existing front-end parsers.
+        "role": role,
+        "original_role": role,
+        "normalized_role": normalized_role,
+        "content": content or "",
+        "timestamp": ts_str,
+        "metadata": meta,
+        "message_type": message_type,
+        "speaker": speaker,
+    }
+
+
 class SessionHistory:
     """
     Per-session conversation accumulator with graphization trigger.
@@ -76,6 +122,8 @@ class SessionHistory:
         Record a single game round (player input + GM response).
 
         Returns a dict with token stats and whether graphization is needed.
+        Supports visibility marker: metadata may contain "visibility": "private"
+        and "private_target" for private conversations.
         """
         user_result = self._window.add_message(
             role="user",
@@ -222,6 +270,19 @@ class SessionHistory:
         messages = self._window.get_recent_messages(count)
         return [
             {"role": msg.role, "content": msg.content}
+            for msg in messages
+        ]
+
+    def get_recent_messages_for_api(self, count: int = 50) -> List[Dict[str, Any]]:
+        """Get recent messages with normalized fields for front-end display."""
+        messages = self._window.get_recent_messages(count)
+        return [
+            _normalize_message_for_api(
+                role=msg.role,
+                content=msg.content,
+                metadata=msg.metadata,
+                timestamp=msg.timestamp,
+            )
             for msg in messages
         ]
 
@@ -413,19 +474,14 @@ class SessionHistoryManager:
             data = doc.to_dict()
             if not data:
                 continue
-            ts = data.get("timestamp")
-            if hasattr(ts, "isoformat"):
-                ts_str = ts.isoformat()
-            else:
-                ts_str = str(ts) if ts else None
-
-            metadata = data.get("metadata") or {}
-            messages.append({
-                "role": data.get("role", "system"),
-                "content": data.get("content", ""),
-                "timestamp": ts_str,
-                "metadata": metadata,
-            })
+            messages.append(
+                _normalize_message_for_api(
+                    role=data.get("role", "system"),
+                    content=data.get("content", ""),
+                    metadata=data.get("metadata") or {},
+                    timestamp=data.get("timestamp"),
+                )
+            )
 
         messages.reverse()  # oldest first
         return messages

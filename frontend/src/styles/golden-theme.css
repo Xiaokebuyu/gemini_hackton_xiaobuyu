@@ -100,6 +100,23 @@
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
   --transition-slow: 400ms ease;
+
+  /* Title Screen Dark Theme */
+  --g-title-bg-deep: #0A0908;
+  --g-title-bg-mid: #1A1510;
+  --g-title-bg-surface: rgba(26, 21, 16, 0.85);
+  --g-title-text-primary: #E8DFD0;
+  --g-title-text-muted: #8B7E6A;
+  --g-title-border: rgba(196, 154, 42, 0.3);
+  --g-title-border-strong: rgba(196, 154, 42, 0.5);
+}
+
+.title-screen-bg {
+  background:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"),
+    radial-gradient(ellipse at center, transparent 30%, rgba(0,0,0,0.7) 100%),
+    radial-gradient(ellipse at 50% 20%, rgba(196,154,42,0.12) 0%, transparent 60%),
+    linear-gradient(180deg, #0D0B08 0%, #1A1510 40%, #0D0B08 100%);
 }
 
 /* Golden scrollbar */

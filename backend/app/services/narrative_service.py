@@ -759,7 +759,7 @@ class NarrativeService:
         progress: NarrativeProgress,
     ) -> bool:
         """检查章节完成条件"""
-        required_events = chapter.completion_conditions.get("events_required", [])
+        required_events = self._extract_required_events(chapter)
         if not required_events:
             return False  # 没有完成条件
 
@@ -932,7 +932,7 @@ class NarrativeService:
     def _extract_content_beats(self, chapter: Chapter, limit: int = 4) -> List[str]:
         """从章节信息提取可用于当前轮叙事编排的内容要点。"""
         if chapter.objectives:
-            return [obj.description for obj in chapter.objectives[:limit]]
+            return [self._sanitize_chapter_text(obj.description) for obj in chapter.objectives[:limit]]
 
         text = (chapter.description or "").strip()
         if not text:
@@ -967,8 +967,8 @@ class NarrativeService:
                 break
         return beats
 
-    @staticmethod
     def _objectives_with_status(
+        self,
         objectives: List[ChapterObjective],
         completed_ids: List[str],
     ) -> List[Dict[str, Any]]:
@@ -976,21 +976,29 @@ class NarrativeService:
         return [
             {
                 "id": obj.id,
-                "description": obj.description,
+                "description": self._sanitize_chapter_text(obj.description),
                 "completed": obj.id in completed_set,
             }
             for obj in objectives
         ]
 
     @staticmethod
-    def _extract_required_events(completion_conditions: Dict[str, Any]) -> List[str]:
-        events_required = completion_conditions.get("events_required", [])
+    def _sanitize_chapter_text(text: str) -> str:
+        """替换 SillyTavern 占位符为通用称谓。"""
+        if not text:
+            return text
+        return text.replace("{{user}}", "冒险者").replace("{{char}}", "")
+
+    @staticmethod
+    def _extract_required_events(chapter: "Chapter") -> List[str]:
+        """从章节 events 数组提取 is_required=True 的事件 ID。
+        优先使用 events（始终包含正确 ID），events 为空时回退 completion_conditions。
+        """
+        if chapter.events:
+            return [ev.id for ev in chapter.events if ev.is_required]
+        events_required = chapter.completion_conditions.get("events_required", [])
         if isinstance(events_required, list):
-            return [
-                str(event_id).strip()
-                for event_id in events_required
-                if isinstance(event_id, str) and event_id.strip()
-            ]
+            return [str(eid).strip() for eid in events_required if isinstance(eid, str) and eid.strip()]
         return []
 
     async def get_flow_board(
@@ -1033,8 +1041,8 @@ class NarrativeService:
             return {
                 "current_mainline": {
                     "id": mainline.id,
-                    "name": mainline.name,
-                    "description": mainline.description,
+                    "name": self._sanitize_chapter_text(mainline.name),
+                    "description": self._sanitize_chapter_text(mainline.description),
                 },
                 "current_chapter": None,
                 "progress": {},
@@ -1069,12 +1077,12 @@ class NarrativeService:
             steps.append(
                 {
                     "id": chapter.id,
-                    "name": chapter.name,
-                    "description": chapter.description,
+                    "name": self._sanitize_chapter_text(chapter.name),
+                    "description": self._sanitize_chapter_text(chapter.description),
                     "status": status,
                     "index": idx + 1,
                     "available_maps": chapter.available_maps,
-                    "required_events": self._extract_required_events(chapter.completion_conditions),
+                    "required_events": self._extract_required_events(chapter),
                     "objectives": objectives,
                     "content_beats": self._extract_content_beats(chapter),
                 }
@@ -1093,14 +1101,14 @@ class NarrativeService:
         return {
             "current_mainline": {
                 "id": mainline.id,
-                "name": mainline.name,
-                "description": mainline.description,
+                "name": self._sanitize_chapter_text(mainline.name),
+                "description": self._sanitize_chapter_text(mainline.description),
             },
             "current_chapter": {
                 "id": current_chapter.id,
-                "name": current_chapter.name,
-                "description": current_chapter.description,
-                "required_events": self._extract_required_events(current_chapter.completion_conditions),
+                "name": self._sanitize_chapter_text(current_chapter.name),
+                "description": self._sanitize_chapter_text(current_chapter.description),
+                "required_events": self._extract_required_events(current_chapter),
                 "content_beats": self._extract_content_beats(current_chapter),
             },
             "progress": {
@@ -1154,18 +1162,96 @@ class NarrativeService:
         if not pending_goals:
             pending_goals = self._extract_content_beats(chapter_data)
 
-        required_events = self._extract_required_events(chapter_data.completion_conditions)
+        required_events = self._extract_required_events(chapter_data)
+        triggered_event_set = set(progress.events_triggered or [])
+        required_event_summaries: List[Dict[str, Any]] = []
+        if chapter_data.events:
+            for ev in chapter_data.events:
+                if not ev.is_required:
+                    continue
+                required_event_summaries.append(
+                    {
+                        "id": ev.id,
+                        "name": self._sanitize_chapter_text(ev.name),
+                        "description": self._sanitize_chapter_text(ev.description),
+                        "completed": ev.id in triggered_event_set,
+                    }
+                )
+
+        if not required_event_summaries and required_events:
+            # fallback: 仅有 required_events id 时也提供可追踪结构
+            required_event_summaries = [
+                {
+                    "id": event_id,
+                    "name": event_id,
+                    "description": "",
+                    "completed": event_id in triggered_event_set,
+                }
+                for event_id in required_events
+            ]
+
+        # 提取即将到来的事件叙事指令（最多 3 个未触发事件）
+        event_directives = []
+        if chapter_data.events:
+            for ev in chapter_data.events:
+                if ev.id not in progress.events_triggered and getattr(ev, 'narrative_directive', None):
+                    event_directives.append(f"[{ev.name}] {ev.narrative_directive}")
+                if len(event_directives) >= 3:
+                    break
+
+        # 提取当前事件（第一个未触发的事件）
+        current_event = None
+        if chapter_data.events:
+            for ev in chapter_data.events:
+                if ev.id not in progress.events_triggered:
+                    current_event = {
+                        "id": ev.id,
+                        "name": self._sanitize_chapter_text(ev.name),
+                        "description": self._sanitize_chapter_text(ev.description),
+                    }
+                    break
+
+        event_total = len(required_event_summaries)
+        event_completed = sum(
+            1 for event_item in required_event_summaries if event_item.get("completed")
+        )
+        event_completion_pct = (
+            round((event_completed / event_total) * 100, 2) if event_total > 0 else 0.0
+        )
+        all_required_events_completed = event_total > 0 and event_completed >= event_total
+        waiting_transition = bool(
+            all_required_events_completed and not current_event
+        )
+        pending_required_events = [
+            event_item.get("id")
+            for event_item in required_event_summaries
+            if event_item.get("id") and not event_item.get("completed")
+        ]
 
         return {
             "chapter": {
                 "id": chapter_data.id,
-                "name": chapter_data.name,
-                "description": chapter_data.description,
+                "name": self._sanitize_chapter_text(chapter_data.name),
+                "description": self._sanitize_chapter_text(chapter_data.description),
             },
-            "goals": pending_goals[:4],
+            "goals": [self._sanitize_chapter_text(g) for g in pending_goals[:4]],
             "required_events": required_events,
+            "pending_required_events": pending_required_events,
+            "required_event_summaries": required_event_summaries,
+            "events_triggered": [
+                event_id
+                for event_id in progress.events_triggered
+                if isinstance(event_id, str) and event_id.strip()
+            ],
+            "event_total": event_total,
+            "event_completed": event_completed,
+            "event_completion_pct": event_completion_pct,
+            "all_required_events_completed": all_required_events_completed,
+            "waiting_transition": waiting_transition,
             "suggested_maps": chapter_data.available_maps,
             "next_chapter": flow_board.get("progress", {}).get("next_chapter"),
+            "event_directives": [self._sanitize_chapter_text(d) for d in event_directives],
+            "current_event": current_event,
         }
 
     def get_chapter_info(self, world_id: str, chapter_id: str) -> Optional[Dict[str, Any]]:
@@ -1176,10 +1262,10 @@ class NarrativeService:
 
         return {
             "id": chapter.id,
-            "name": chapter.name,
-            "description": chapter.description,
+            "name": self._sanitize_chapter_text(chapter.name),
+            "description": self._sanitize_chapter_text(chapter.description),
             "objectives": [
-                {"id": obj.id, "description": obj.description}
+                {"id": obj.id, "description": self._sanitize_chapter_text(obj.description)}
                 for obj in chapter.objectives
             ],
             "available_maps": chapter.available_maps,

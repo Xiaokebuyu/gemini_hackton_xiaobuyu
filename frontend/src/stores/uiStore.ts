@@ -57,7 +57,7 @@ export const useUIStore = create<UIStoreState>()(
       (set, get) => ({
         // Initial state
         leftPanelCollapsed: false,
-        rightPanelCollapsed: false,
+        rightPanelCollapsed: true,
         activeModal: null,
         modalData: {},
         toasts: [],

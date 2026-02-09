@@ -91,6 +91,8 @@ export default {
         'g-lg': 'var(--g-shadow-lg)',
         'g-gold': 'var(--g-shadow-gold)',
         'glow-red': '0 0 10px rgba(217, 79, 79, 0.3)',
+        'g-title-glow': '0 0 30px rgba(196,154,42,0.15), 0 0 60px rgba(196,154,42,0.05)',
+        'g-card-glow': '0 0 15px rgba(196,154,42,0.1), inset 0 1px 0 rgba(196,154,42,0.1)',
       },
       backdropBlur: {
         'glass': '8px',

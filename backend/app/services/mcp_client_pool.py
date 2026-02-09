@@ -16,7 +16,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -25,6 +27,18 @@ from mcp.client.streamable_http import streamable_http_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class MCPServiceUnavailableError(RuntimeError):
+    """Raised when an MCP service endpoint is unavailable."""
+
+    def __init__(self, server_type: str, endpoint: str, detail: str) -> None:
+        self.server_type = server_type
+        self.endpoint = endpoint
+        self.detail = detail
+        super().__init__(
+            f"MCP service unavailable ({server_type}) at {endpoint or '<unset>'}: {detail}"
+        )
 
 
 @dataclass
@@ -151,6 +165,105 @@ class MCPClientPool:
             return sys.executable
         return command
 
+    @staticmethod
+    def _replace_url_path(url: str, path: str) -> str:
+        parsed = urlsplit(url)
+        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+    async def _probe_http_endpoint(self, url: str, timeout_seconds: float) -> Dict[str, Any]:
+        try:
+            timeout = httpx.Timeout(max(0.5, float(timeout_seconds)))
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(url, headers={"Accept": "application/json"})
+            return {
+                "ok": response.status_code < 500,
+                "url": url,
+                "status_code": response.status_code,
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "url": url,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+
+    async def probe(
+        self,
+        server_type: str,
+        timeout_seconds: float = 2.0,
+    ) -> Dict[str, Any]:
+        """Probe a configured MCP dependency without creating a client session."""
+        if server_type not in self._configs:
+            raise ValueError(f"Unknown server type: {server_type}")
+
+        config = self._configs[server_type]
+        transport = (config.transport or "stdio").lower()
+        endpoint = (config.endpoint or "").strip()
+        result: Dict[str, Any] = {
+            "ok": False,
+            "server_type": server_type,
+            "name": config.name,
+            "transport": transport,
+            "endpoint": endpoint,
+        }
+
+        if transport in {"streamable-http", "streamable_http"}:
+            if not endpoint:
+                result["error"] = "missing endpoint"
+                return result
+
+            health_url = self._replace_url_path(endpoint, "/health")
+            health_probe = await self._probe_http_endpoint(health_url, timeout_seconds)
+            result["health_probe"] = health_probe
+            if health_probe.get("ok"):
+                result["ok"] = True
+                return result
+
+            endpoint_probe = await self._probe_http_endpoint(endpoint, timeout_seconds)
+            result["endpoint_probe"] = endpoint_probe
+            result["ok"] = bool(endpoint_probe.get("ok"))
+            if not result["ok"]:
+                result["error"] = (
+                    endpoint_probe.get("error")
+                    or health_probe.get("error")
+                    or "endpoint probe failed"
+                )
+            return result
+
+        if transport in {"sse"}:
+            if not endpoint:
+                result["error"] = "missing endpoint"
+                return result
+            endpoint_probe = await self._probe_http_endpoint(endpoint, timeout_seconds)
+            result["endpoint_probe"] = endpoint_probe
+            result["ok"] = bool(endpoint_probe.get("ok"))
+            if not result["ok"]:
+                result["error"] = endpoint_probe.get("error") or "endpoint probe failed"
+            return result
+
+        if transport in {"stdio"}:
+            # stdio transport cannot be probed externally; we validate it lazily on first tool call.
+            result["ok"] = True
+            result["note"] = "stdio probe skipped"
+            return result
+
+        result["error"] = f"unsupported transport: {transport}"
+        return result
+
+    async def probe_dependencies(
+        self,
+        timeout_seconds: float = 2.0,
+        server_types: Optional[list[str]] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        targets = server_types or list(self._configs.keys())
+        results: Dict[str, Dict[str, Any]] = {}
+        for server_type in targets:
+            results[server_type] = await self.probe(
+                server_type=server_type,
+                timeout_seconds=timeout_seconds,
+            )
+        return results
+
     async def get_session(self, server_type: str) -> ClientSession:
         """Get a healthy session for the specified server type."""
         if server_type not in self._configs:
@@ -191,6 +304,8 @@ class MCPClientPool:
                         timeout=timeout,
                     )
                     return self._decode_tool_result(result)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
                     last_error = exc
                     logger.warning(
@@ -209,6 +324,8 @@ class MCPClientPool:
         # 对话类工具超时可能是慢而非挂，超时不进入全局 cooldown，避免把整个工具服务封死。
         if not self._is_timeout_error(last_error):
             self._mark_cooldown(server_type, last_error)
+        if isinstance(last_error, MCPServiceUnavailableError):
+            raise last_error
         raise RuntimeError(
             f"Tool call failed after {max_retries + 1} attempts ({tool_name}): "
             f"{type(last_error).__name__ if last_error else 'UnknownError'}: {last_error!r}"
@@ -268,10 +385,17 @@ class MCPClientPool:
 
             logger.info("[MCPPool] Connected to %s", config.name)
             return session
+        except asyncio.CancelledError:
+            await exit_stack.aclose()
+            raise
         except Exception as exc:
             await exit_stack.aclose()
             self._mark_cooldown(server_type, exc)
-            raise RuntimeError(f"Failed to connect to {config.name}: {exc}") from exc
+            raise MCPServiceUnavailableError(
+                server_type=server_type,
+                endpoint=config.endpoint,
+                detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
 
     async def _check_health(self, session: ClientSession) -> bool:
         """Check if a session is healthy via ping."""

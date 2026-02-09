@@ -10,6 +10,7 @@ import type {
   LocationResponse,
   GameAction,
   StateDelta,
+  CoordinatorChapterInfo,
   Party,
 } from '../types';
 
@@ -36,6 +37,9 @@ interface GameStoreState {
 
   // Actions
   availableActions: GameAction[];
+  latestChapterInfo: CoordinatorChapterInfo | null;
+  latestStoryEvents: string[];
+  latestPacingAction: string | null;
 
   // Actions
   setSession: (worldId: string, sessionId: string) => void;
@@ -47,6 +51,11 @@ interface GameStoreState {
   setCombatId: (combatId: string | null) => void;
   setParty: (party: Party | null) => void;
   setAvailableActions: (actions: GameAction[]) => void;
+  setNarrativeSnapshot: (
+    chapterInfo: CoordinatorChapterInfo | null,
+    storyEvents?: string[],
+    pacingAction?: string | null,
+  ) => void;
   updateFromStateDelta: (delta: StateDelta) => void;
   updateFromGameState: (state: GameState) => void;
 }
@@ -73,6 +82,9 @@ export const useGameStore = create<GameStoreState>()(
         combatId: null,
         party: null,
         availableActions: [],
+        latestChapterInfo: null,
+        latestStoryEvents: [],
+        latestPacingAction: null,
 
         // Actions
         setSession: (worldId: string, sessionId: string) => {
@@ -88,6 +100,9 @@ export const useGameStore = create<GameStoreState>()(
             combatId: null,
             party: null,
             availableActions: [],
+            latestChapterInfo: null,
+            latestStoryEvents: [],
+            latestPacingAction: null,
           });
         },
 
@@ -102,6 +117,9 @@ export const useGameStore = create<GameStoreState>()(
             combatId: null,
             party: null,
             availableActions: [],
+            latestChapterInfo: null,
+            latestStoryEvents: [],
+            latestPacingAction: null,
           });
         },
 
@@ -139,6 +157,18 @@ export const useGameStore = create<GameStoreState>()(
 
         setAvailableActions: (availableActions: GameAction[]) => {
           set({ availableActions });
+        },
+
+        setNarrativeSnapshot: (
+          chapterInfo: CoordinatorChapterInfo | null,
+          storyEvents: string[] = [],
+          pacingAction: string | null = null,
+        ) => {
+          set({
+            latestChapterInfo: chapterInfo,
+            latestStoryEvents: storyEvents,
+            latestPacingAction: pacingAction,
+          });
         },
 
         updateFromStateDelta: (delta: StateDelta) => {

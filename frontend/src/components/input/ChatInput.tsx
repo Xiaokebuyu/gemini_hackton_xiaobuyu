@@ -4,7 +4,7 @@
 import React, { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, Loader2 } from 'lucide-react';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 import { useChatStore } from '../../stores';
 import { Input } from '../ui';
 import { Button } from '../ui';
@@ -18,7 +18,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { isLoading } = useChatStore();
-  const { sendInput } = useGameInput();
+  const { sendInput } = useStreamGameInput();
 
   // Auto-resize textarea
   useEffect(() => {
@@ -101,7 +101,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ className = '' }) => {
       </div>
 
       {/* Hint */}
-      <div className="mt-2 text-xs g-text-muted font-body">
+      <div className="mt-2 text-xs text-g-text-muted font-body">
         {t('chat.sendHint')}
       </div>
     </div>

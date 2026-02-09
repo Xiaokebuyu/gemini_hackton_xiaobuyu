@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 class GamePhase(str, Enum):
     """游戏阶段"""
+    CHARACTER_CREATION = "character_creation"
     IDLE = "idle"
     SCENE = "scene"
     DIALOGUE = "dialogue"
@@ -130,6 +131,8 @@ class PlayerInputRequest(BaseModel):
     input: str
     input_type: Optional[str] = None  # narration/dialogue/combat/system
     mode: Optional[str] = None  # think/say（可选，覆盖当前模式）
+    is_private: bool = False  # 私密对话模式
+    private_target: Optional[str] = None  # 私密对话目标队友 character_id
 
 
 class PlayerInputResponse(BaseModel):

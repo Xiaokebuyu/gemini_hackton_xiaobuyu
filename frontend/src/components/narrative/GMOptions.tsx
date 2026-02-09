@@ -43,7 +43,7 @@ export const GMOptions: React.FC<GMOptionsProps> = ({
       animate="show"
       className="mt-3 space-y-2"
     >
-      <p className="text-xs g-text-muted uppercase tracking-wide font-body">
+      <p className="text-xs text-g-text-muted uppercase tracking-wide font-body">
         {t('options.choose')}
       </p>
       {options.map((opt) => {
@@ -72,7 +72,7 @@ export const GMOptions: React.FC<GMOptionsProps> = ({
           >
             <span className="font-medium">{opt.label}</span>
             {opt.description && (
-              <span className="g-text-secondary ml-2">{opt.description}</span>
+              <span className="text-g-text-secondary ml-2">{opt.description}</span>
             )}
           </motion.button>
         );

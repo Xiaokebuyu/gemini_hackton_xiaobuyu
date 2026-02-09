@@ -5,7 +5,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Navigation, AlertTriangle, Lock } from 'lucide-react';
 import { useGameStore } from '../../stores';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 import type { Destination } from '../../types';
 
 interface DestinationListProps {
@@ -32,7 +32,7 @@ export const DestinationList: React.FC<DestinationListProps> = ({
   className = '',
 }) => {
   const { location } = useGameStore();
-  const { sendInput, isLoading } = useGameInput();
+  const { sendInput, isLoading } = useStreamGameInput();
 
   const dests = destinations || location?.available_destinations || [];
 

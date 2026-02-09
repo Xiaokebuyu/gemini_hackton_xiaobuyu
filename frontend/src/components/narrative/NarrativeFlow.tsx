@@ -52,7 +52,7 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
             <h2 className="font-heading text-2xl text-g-gold mb-3">
               {t('narrative.welcome')}
             </h2>
-            <p className="g-text-secondary max-w-md font-body">
+            <p className="text-g-text-secondary max-w-md font-body">
               {t('narrative.welcomeHint')}
             </p>
             <div className="g-divider mt-6">
@@ -78,7 +78,7 @@ export const NarrativeFlow: React.FC<NarrativeFlowProps> = ({
       {isLoading && (
         <div className="flex items-center gap-3 py-4">
           <LoadingSpinner size="sm" />
-          <span className="g-text-secondary text-sm italic font-body">
+          <span className="text-g-text-secondary text-sm italic font-body">
             {t('narrative.gmThinking')}
           </span>
         </div>

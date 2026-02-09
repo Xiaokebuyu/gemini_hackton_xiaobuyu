@@ -4,9 +4,11 @@ google-cloud-firestore==2.14.0
 google-genai>=1.0.0
 python-dotenv==1.0.0
 pydantic==2.10.0
-httpx==0.26.0
+httpx==0.28.1
+httpcore==1.0.9
+anyio==4.12.1
 numpy==1.26.3
 tiktoken>=0.7.0
 networkx==3.2.1
 # MCP (Model Context Protocol) 标准协议支持
-mcp>=1.2.0
+mcp==1.25.0

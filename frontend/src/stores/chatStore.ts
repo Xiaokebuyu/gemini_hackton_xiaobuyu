@@ -18,6 +18,9 @@ interface ChatStoreState {
   // Loading state
   isLoading: boolean;
 
+  // Streaming state
+  streamingMessageId: string | null;
+
   // Actions
   addMessage: (message: Omit<NarrativeMessage, 'id' | 'timestamp'>) => void;
   addPlayerMessage: (content: string) => void;
@@ -27,6 +30,11 @@ interface ChatStoreState {
   setLoading: (loading: boolean) => void;
   clearMessages: () => void;
   removeMessage: (id: string) => void;
+
+  // Streaming actions
+  startStreamingMessage: (speaker: string, type: MessageType, metadata?: NarrativeMessage['metadata']) => string;
+  appendToStreamingMessage: (id: string, text: string) => void;
+  finalizeStreamingMessage: (id: string, fullText?: string) => void;
 }
 
 export const useChatStore = create<ChatStoreState>()(
@@ -35,6 +43,7 @@ export const useChatStore = create<ChatStoreState>()(
       // Initial state
       messages: [],
       isLoading: false,
+      streamingMessageId: null,
 
       // Actions
       addMessage: (message) => {
@@ -154,6 +163,44 @@ export const useChatStore = create<ChatStoreState>()(
       removeMessage: (id: string) => {
         set((state) => ({
           messages: state.messages.filter((m) => m.id !== id),
+        }));
+      },
+
+      // --- Streaming actions ---
+
+      startStreamingMessage: (speaker: string, type: MessageType, metadata?: NarrativeMessage['metadata']): string => {
+        const id = uuidv4();
+        const message: NarrativeMessage = {
+          id,
+          speaker,
+          content: '',
+          type,
+          timestamp: new Date(),
+          metadata,
+        };
+        set((state) => ({
+          messages: [...state.messages, message],
+          streamingMessageId: id,
+        }));
+        return id;
+      },
+
+      appendToStreamingMessage: (id: string, text: string) => {
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === id ? { ...m, content: m.content + text } : m,
+          ),
+        }));
+      },
+
+      finalizeStreamingMessage: (id: string, fullText?: string) => {
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === id
+              ? { ...m, content: fullText !== undefined ? fullText : m.content }
+              : m,
+          ),
+          streamingMessageId: state.streamingMessageId === id ? null : state.streamingMessageId,
         }));
       },
     }),

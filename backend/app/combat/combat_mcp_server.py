@@ -213,6 +213,7 @@ async def resolve_combat_session(
             "combat_id": combat_id,
             "event_id": response.event_id,
             "dispatched": response.dispatched,
+            "player_state": result_payload.get("player_state"),
         },
         ensure_ascii=False,
         indent=2,

@@ -131,6 +131,22 @@ class AdminWorldRuntime:
             if not current_location:
                 raise ValueError(f"无效起始地点: {starting_location}")
 
+        # 优先从当前章节的 available_areas 确定起始位置
+        if not current_location:
+            try:
+                progress = await self.narrative_service.get_progress(world_id, session_id)
+                chapter_id = getattr(progress, "current_chapter", None)
+                if chapter_id:
+                    chapter_info = self.narrative_service.get_chapter_info(world_id, chapter_id)
+                    if chapter_info:
+                        areas = chapter_info.get("available_maps") or []
+                        for area in areas:
+                            if area in navigator.maps:
+                                current_location = area
+                                break
+            except Exception:
+                pass  # 回退到原有逻辑
+
         if not current_location:
             for area_id, area in navigator.maps.items():
                 if area.danger_level == "low":
@@ -161,6 +177,7 @@ class AdminWorldRuntime:
 
         await self.state_manager.set_state(world_id, state.session_id, admin_state)
         await self.persist_state(admin_state)
+        await self.narrative_service.save_progress(world_id, state.session_id, progress)
         logger.info("会话启动完成: session=%s, location=%s", admin_state.session_id, current_location)
         return admin_state
 
@@ -457,6 +474,18 @@ class AdminWorldRuntime:
         sub_loc = navigator.get_sub_location(state.player_location, sub_location_id)
         if not sub_loc:
             return {"success": False, "error": f"子地点不存在: {sub_location_id}"}
+
+        # 营业时间检查：商店类子地点在非营业时间不可进入
+        from app.services.area_navigator import InteractionType
+        if hasattr(sub_loc, "interaction_type") and sub_loc.interaction_type == InteractionType.SHOP:
+            time_manager = self._time_manager_from_state(state)
+            if not time_manager.is_shop_open():
+                hour = state.game_time.hour if state.game_time else 0
+                return {
+                    "success": False,
+                    "error": f"{sub_loc.name}已打烊，营业时间: 08:00-20:00（当前: {hour:02d}:00）",
+                    "time_blocked": True,
+                }
 
         state.sub_location = sub_location_id
         await self.state_manager.set_state(world_id, session_id, state)

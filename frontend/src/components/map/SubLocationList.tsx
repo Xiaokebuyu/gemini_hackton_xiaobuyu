@@ -5,7 +5,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { DoorOpen, Lock } from 'lucide-react';
 import { useGameStore } from '../../stores';
-import { useGameInput } from '../../api';
+import { useStreamGameInput } from '../../api';
 import type { SubLocation } from '../../types';
 
 interface SubLocationListProps {
@@ -18,7 +18,7 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
   className = '',
 }) => {
   const { subLocation: currentSubLocation } = useGameStore();
-  const { sendInput, isLoading } = useGameInput();
+  const { sendInput, isLoading } = useStreamGameInput();
 
   // Note: LocationResponse doesn't have sub_locations field
   // Sub-locations must be passed explicitly via props

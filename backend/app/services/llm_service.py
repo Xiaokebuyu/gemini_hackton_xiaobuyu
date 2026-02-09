@@ -378,7 +378,45 @@ Artifact 要求:
             return existing_artifact
     
     # ==================== MCP 扩展方法 ====================
-    
+
+    async def generate_simple_stream(
+        self,
+        prompt: str,
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+    ):
+        """
+        流式文本生成（异步生成器）。
+
+        与 generate_simple() 对标，但逐 chunk 返回。
+
+        Yields:
+            dict: {"type": "thought"/"answer", "text": str}
+        """
+        try:
+            model = model_override or self.flash_model
+            config_kwargs: dict = {}
+            if thinking_level:
+                config_kwargs["thinking_config"] = self._get_thinking_config(thinking_level)
+
+            async for chunk in await self.client.aio.models.generate_content_stream(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(**config_kwargs) if config_kwargs else None,
+            ):
+                if not hasattr(chunk, 'candidates') or not chunk.candidates:
+                    continue
+                for part in chunk.candidates[0].content.parts:
+                    if not hasattr(part, 'text') or not part.text:
+                        continue
+                    if hasattr(part, 'thought') and part.thought:
+                        yield {"type": "thought", "text": part.text}
+                    else:
+                        yield {"type": "answer", "text": part.text}
+
+        except Exception as e:
+            yield {"type": "error", "text": f"流式生成出错: {str(e)}"}
+
     async def generate_simple(
         self,
         prompt: str,

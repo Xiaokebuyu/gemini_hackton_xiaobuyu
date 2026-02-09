@@ -64,6 +64,10 @@ class ParsedIntent(BaseModel):
     interpretation: Optional[str] = None  # 对玩家意图的解读
     player_emotion: Optional[str] = None  # 推测的玩家情绪
 
+    # 私密对话
+    is_private: bool = False  # 是否私密对话
+    private_target: Optional[str] = None  # 私密对话目标队友 character_id
+
     # 生成的 Flash 请求
     flash_requests: List["FlashRequest"] = Field(default_factory=list)
 
@@ -113,6 +117,14 @@ class FlashOperation(str, Enum):
     # 查询类
     GET_PROGRESS = "get_progress"
     GET_STATUS = "get_status"
+    # 角色状态
+    HEAL_PLAYER = "heal_player"
+    DAMAGE_PLAYER = "damage_player"
+    ADD_XP = "add_xp"
+    ADD_ITEM = "add_item"
+    REMOVE_ITEM = "remove_item"
+    # 属性检定
+    ABILITY_CHECK = "ability_check"
 
 
 class NPCReaction(BaseModel):

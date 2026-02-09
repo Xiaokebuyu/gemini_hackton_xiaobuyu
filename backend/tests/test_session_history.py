@@ -80,6 +80,26 @@ class TestSessionHistory:
         assert len(messages) == 3  # last 3 of 4
         assert messages[-1]["content"] == "输出2"
 
+    def test_get_recent_messages_for_api_normalizes_teammate(self):
+        """API messages should mark teammate responses with front-end friendly fields."""
+        history = SessionHistory(world_id="test_world", session_id="test_session")
+        history.record_round("你好", "你好，冒险者。")
+        history.record_teammate_response(
+            character_id="priestess",
+            name="女神官",
+            response="我们先观察四周。",
+        )
+
+        messages = history.get_recent_messages_for_api(count=10)
+        assert len(messages) == 3
+
+        teammate_msg = messages[-1]
+        assert teammate_msg["message_type"] == "teammate"
+        assert teammate_msg["role"] == "system"
+        assert teammate_msg["normalized_role"] == "assistant"
+        assert teammate_msg["original_role"] == "system"
+        assert teammate_msg["speaker"] == "女神官"
+
     def test_stats(self):
         """Verify stats output."""
         history = SessionHistory(world_id="w1", session_id="s1")

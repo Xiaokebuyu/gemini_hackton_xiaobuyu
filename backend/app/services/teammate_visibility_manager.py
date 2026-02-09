@@ -28,6 +28,7 @@ class TeammateVisibilityManager:
         3. 队友知道：自己图谱中已有的信息
         4. 队友不知道：其他 NPC 的私下对话（除非在场）
         5. 队友不知道：玩家的系统操作细节
+        6. 私密模式下非目标队友不知道玩家说了什么
 
         Args:
             teammate: 队友信息
@@ -39,6 +40,10 @@ class TeammateVisibilityManager:
         """
         filtered = {}
 
+        is_private = full_context.get("is_private", False)
+        private_target = full_context.get("private_target")
+        is_target = (private_target == teammate.character_id) if private_target else False
+
         # 位置信息（队友总是知道当前位置）
         if "location" in full_context:
             filtered["location"] = self._filter_location_info(
@@ -49,10 +54,19 @@ class TeammateVisibilityManager:
         if "time" in full_context:
             filtered["time"] = full_context["time"]
 
-        # 玩家输入（SAY 模式）
+        # 玩家输入
         if "player_input" in full_context:
-            # 队友能听到玩家说的话
-            filtered["player_said"] = full_context["player_input"]
+            if is_private and not is_target:
+                # 私密模式下非目标队友：不知道玩家说了什么
+                pass
+            elif is_private and is_target:
+                # 私密模式下目标队友：知道玩家私下说了什么
+                filtered["player_said_privately"] = full_context["player_input"]
+                filtered["player_said"] = full_context["player_input"]
+                filtered["is_private_to_me"] = True
+            else:
+                # 公开模式
+                filtered["player_said"] = full_context["player_input"]
 
         # GM 叙述（公开部分）
         if "gm_response" in full_context:

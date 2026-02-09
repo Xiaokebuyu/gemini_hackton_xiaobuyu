@@ -28,7 +28,7 @@ export const CenterPanel: React.FC<CenterPanelProps> = ({ className = '' }) => {
         <div className="flex-shrink-0 mt-3">
           <PanelFrame>
             <div className="p-4">
-              <h4 className="text-xs g-text-muted uppercase tracking-wide mb-3 font-body">
+              <h4 className="text-xs text-g-text-muted uppercase tracking-wide mb-3 font-body">
                 {t('actions.title')}
               </h4>
               <ActionButtons actions={availableActions} />

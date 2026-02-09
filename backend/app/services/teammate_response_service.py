@@ -121,11 +121,18 @@ class TeammateResponseService:
                         )
 
             # 2b. 注入本轮公共信息（玩家输入 + GM 叙述）
+            # 私密模式下跳过非目标队友的玩家输入注入
+            is_private = context.get("is_private", False)
+            private_target = context.get("private_target")
+
             async def _inject(member: PartyMember):
+                inject_player = player_input
+                if is_private and private_target and member.character_id != private_target:
+                    inject_player = ""  # 非目标队友不注入玩家输入
                 history_text = await self._inject_round_to_instance(
                     member=member,
                     world_id=world_id,
-                    player_input=player_input,
+                    player_input=inject_player,
                     gm_response=gm_response,
                 )
                 return member.character_id, history_text
@@ -230,9 +237,10 @@ class TeammateResponseService:
         player_input: str,
         gm_response: str,
         context: Dict[str, Any],
+        members_override: Optional[List[PartyMember]] = None,
     ) -> List[TeammateResponseDecision]:
         """决定每个队友是否回复"""
-        members = party.get_active_members()
+        members = members_override or party.get_active_members()
         tasks = [
             self._decide_single_response(
                 member=member,
@@ -283,11 +291,22 @@ class TeammateResponseService:
             },
         )
 
+        # 使用 filtered context 中的 player_said（支持私密模式）
+        effective_player_input = filtered_context.get("player_said", player_input)
+        # 私密模式下非目标队友没有 player_said，不应触发响应
+        if context.get("is_private") and not filtered_context.get("player_said"):
+            return TeammateResponseDecision(
+                character_id=member.character_id,
+                should_respond=False,
+                reason="私密对话中，无法听到玩家",
+                priority=0,
+            )
+
         # 加载并填充提示词
         prompt_template = self._load_prompt(self.decision_prompt_path)
         if not prompt_template:
             # 无提示词，使用简单规则
-            return self._simple_decision(member, player_input, gm_response, context)
+            return self._simple_decision(member, effective_player_input, gm_response, context)
 
         location = context.get("location") or {}
         present_characters = ", ".join(
@@ -300,7 +319,7 @@ class TeammateResponseService:
             personality=member.personality,
             current_mood=member.current_mood,
             response_tendency=member.response_tendency,
-            player_said=player_input,
+            player_said=effective_player_input,
             gm_narration=gm_response[:200],  # 限制长度
             location_name=location.get("location_name", "未知"),
             present_characters=present_characters or "无",
@@ -322,7 +341,7 @@ class TeammateResponseService:
                     suggested_tone=parsed.get("suggested_tone"),
                 )
         except Exception as e:
-            print(f"[TeammateResponse] 决策失败 ({member.name}): {e}")
+            logger.warning("[TeammateResponse] LLM决策失败 (%s), fallback到简单规则: %s", member.name, e)
 
         # 决策失败，使用简单规则
         return self._simple_decision(member, player_input, gm_response, context)
@@ -368,7 +387,7 @@ class TeammateResponseService:
             "support": ["帮忙", "支援", "配合", "support"],
         }
         for keyword in role_keywords.get(member.role.value, []):
-            if keyword in merged_text and member.response_tendency >= 0.3:
+            if keyword in merged_text and member.response_tendency >= 0.5:
                 return TeammateResponseDecision(
                     character_id=member.character_id,
                     should_respond=True,
@@ -378,7 +397,7 @@ class TeammateResponseService:
 
         # 玩家问句，更可能触发队友发言
         question_cues = ("?", "？", "吗", "如何", "怎么", "为什么", "是否", "要不要", "谁")
-        if any(cue in (player_input or "") for cue in question_cues) and member.response_tendency >= 0.45:
+        if any(cue in (player_input or "") for cue in question_cues) and member.response_tendency >= 0.65:
             return TeammateResponseDecision(
                 character_id=member.character_id,
                 should_respond=True,
@@ -397,7 +416,7 @@ class TeammateResponseService:
             )
 
         # 高健谈角色可主动补充
-        if member.response_tendency >= 0.8:
+        if member.response_tendency >= 0.9:
             return TeammateResponseDecision(
                 character_id=member.character_id,
                 should_respond=True,
@@ -541,12 +560,23 @@ class TeammateResponseService:
         else:
             sub_locs_text = str(sub_locs) or "无"
 
+        # 使用 filtered context 的 player_said（支持私密模式）
+        filtered_context = self.visibility_manager.filter_context_for_teammate(
+            teammate=member,
+            full_context={
+                "player_input": player_input,
+                "gm_response": gm_response,
+                **context,
+            },
+        )
+        effective_player_input = filtered_context.get("player_said", player_input)
+
         prompt = prompt_template.format(
             name=member.name,
             role=member.role.value,
             personality=member.personality,
             current_mood=member.current_mood,
-            player_said=player_input,
+            player_said=effective_player_input,
             gm_narration=gm_response[:300],
             location_name=location.get("location_name", "未知"),
             location_description=location_desc,
@@ -624,6 +654,273 @@ class TeammateResponseService:
                 model_used="error",
                 thinking_level=thinking_level,
             )
+
+    # =========================================================================
+    # 流式生成
+    # =========================================================================
+
+    async def process_round_stream(
+        self,
+        party: Party,
+        player_input: str,
+        gm_response: str,
+        context: Dict[str, Any],
+    ):
+        """
+        流式队友响应（异步生成器）。
+
+        Yields:
+            dict: teammate_start / teammate_chunk / teammate_end / teammate_skip
+        """
+        active_members = party.get_active_members()
+        if not active_members:
+            return
+
+        world_id = context.get("world_id") or party.world_id
+        is_private = context.get("is_private", False)
+        private_target = context.get("private_target")
+
+        # 消息注入（复用同步逻辑）
+        preloaded_histories: Dict[str, Optional[str]] = {}
+        if self.instance_manager is not None and world_id:
+            last_responses = context.get("last_teammate_responses", [])
+            if last_responses:
+                for member in active_members:
+                    try:
+                        instance = await self.instance_manager.get_or_create(
+                            member.character_id, world_id
+                        )
+                        for resp in last_responses:
+                            if resp.get("character_id") != member.character_id and resp.get("response"):
+                                resp_name = resp.get("name", resp.get("character_id", "队友"))
+                                instance.context_window.add_message(
+                                    "system",
+                                    f"[队友 {resp_name}] {resp['response']}"
+                                )
+                    except Exception as e:
+                        logger.debug("[TeammateResponse] 跨轮注入失败 (%s): %s", member.name, e)
+
+            # 注入本轮信息（私密模式下跳过非目标队友）
+            for member in active_members:
+                if is_private and private_target and member.character_id != private_target:
+                    continue
+                try:
+                    history_text = await self._inject_round_to_instance(
+                        member=member,
+                        world_id=world_id,
+                        player_input=player_input,
+                        gm_response=gm_response,
+                    )
+                    preloaded_histories[member.character_id] = history_text
+                except Exception as e:
+                    logger.error("[TeammateResponse] 轮次注入失败 (%s): %s", member.name, e)
+
+        # 决策（私密模式仅目标参与决策）
+        if is_private and private_target:
+            members_for_decision = [m for m in active_members if m.character_id == private_target]
+        else:
+            members_for_decision = active_members
+
+        decisions = await self.decide_responses(
+            party=party,
+            player_input=player_input,
+            gm_response=gm_response,
+            context=context,
+            members_override=members_for_decision,
+        )
+        decision_by_char = {d.character_id: d for d in decisions}
+
+        # 流式生成
+        collected_responses: List[Dict[str, Any]] = []
+        for member in active_members:
+            # 私密模式下跳过非目标
+            if is_private and private_target and member.character_id != private_target:
+                yield {
+                    "type": "teammate_skip",
+                    "character_id": member.character_id,
+                    "name": member.name,
+                    "reason": "私密对话",
+                }
+                continue
+
+            decision = decision_by_char.get(member.character_id) or self._simple_decision(
+                member=member,
+                player_input=player_input,
+                gm_response=gm_response,
+                context=context,
+            )
+
+            if not decision.should_respond:
+                yield {
+                    "type": "teammate_skip",
+                    "character_id": member.character_id,
+                    "name": member.name,
+                    "reason": decision.reason or "无关话题",
+                }
+                continue
+
+            yield {
+                "type": "teammate_start",
+                "character_id": member.character_id,
+                "name": member.name,
+            }
+
+            # 流式生成单个队友响应
+            full_text = ""
+            reaction = ""
+            try:
+                preloaded_history = preloaded_histories.get(member.character_id)
+                async for chunk in self._generate_single_response_stream(
+                    member=member,
+                    player_input=player_input,
+                    gm_response=gm_response,
+                    context=context,
+                    decision=decision,
+                    previous_responses=collected_responses,
+                    preloaded_history=preloaded_history,
+                    inject_round=(self.instance_manager is not None and preloaded_history is None),
+                ):
+                    if chunk["type"] == "answer":
+                        full_text += chunk["text"]
+                        yield {
+                            "type": "teammate_chunk",
+                            "character_id": member.character_id,
+                            "text": chunk["text"],
+                        }
+
+                # 流式完成后，解析结构化数据（从完整文本提取 reaction/mood）
+                parsed = self.llm_service.parse_json(full_text)
+                if parsed:
+                    response_text = parsed.get("response", full_text)
+                    reaction = parsed.get("reaction", "")
+                    if parsed.get("updated_mood"):
+                        member.current_mood = parsed["updated_mood"]
+                else:
+                    response_text = full_text
+
+                if response_text:
+                    collected_responses.append({
+                        "name": member.name,
+                        "response": response_text,
+                        "reaction": reaction,
+                    })
+                    await self._write_response_to_instance(member, world_id, response_text)
+
+                yield {
+                    "type": "teammate_end",
+                    "character_id": member.character_id,
+                    "name": member.name,
+                    "response": response_text,
+                    "reaction": reaction,
+                }
+            except Exception as e:
+                logger.error("[TeammateResponse] 流式生成失败 (%s): %s", member.name, e, exc_info=True)
+                yield {
+                    "type": "teammate_end",
+                    "character_id": member.character_id,
+                    "name": member.name,
+                    "response": None,
+                    "reaction": "",
+                }
+
+    async def _generate_single_response_stream(
+        self,
+        member: PartyMember,
+        player_input: str,
+        gm_response: str,
+        context: Dict[str, Any],
+        decision: TeammateResponseDecision,
+        previous_responses: List[Dict[str, Any]],
+        preloaded_history: Optional[str] = None,
+        inject_round: bool = True,
+    ):
+        """流式生成单个队友回复，yield {"type": "thought"/"answer", "text": str}。"""
+        prompt_template = self._load_prompt(self.response_prompt_path)
+        if not prompt_template:
+            return
+
+        location = context.get("location") or {}
+        world_id = context.get("world_id") or ""
+
+        instance_history = preloaded_history
+        if inject_round:
+            instance_history = await self._inject_round_to_instance(
+                member, world_id, player_input, gm_response,
+            )
+
+        prev_responses_text = ""
+        if previous_responses:
+            prev_responses_text = "\n".join(
+                f"- {r['name']}: {r['response']} ({r['reaction']})"
+                for r in previous_responses
+            )
+        else:
+            prev_responses_text = "（还没有其他队友发言）"
+
+        location_desc = location.get("atmosphere") or location.get("description") or ""
+        available_dests = location.get("available_destinations", [])
+        if isinstance(available_dests, list):
+            available_dests_text = ", ".join(
+                d.get("name", d) if isinstance(d, dict) else str(d)
+                for d in available_dests
+            ) or "未知"
+        else:
+            available_dests_text = str(available_dests) or "未知"
+        sub_locs = location.get("available_sub_locations", location.get("sub_locations", []))
+        if isinstance(sub_locs, list):
+            sub_locs_text = ", ".join(
+                s.get("name", s) if isinstance(s, dict) else str(s)
+                for s in sub_locs
+            ) or "无"
+        else:
+            sub_locs_text = str(sub_locs) or "无"
+
+        # 使用 filtered context 中的 player_said（支持私密模式）
+        effective_player_input = player_input
+        filtered_context = context.get("_filtered_context", {})
+        if filtered_context.get("player_said_privately"):
+            effective_player_input = filtered_context["player_said_privately"]
+        elif filtered_context.get("player_said"):
+            effective_player_input = filtered_context["player_said"]
+
+        prompt = prompt_template.format(
+            name=member.name,
+            role=member.role.value,
+            personality=member.personality,
+            current_mood=member.current_mood,
+            player_said=effective_player_input,
+            gm_narration=gm_response[:300],
+            location_name=location.get("location_name", "未知"),
+            location_description=location_desc,
+            available_destinations=available_dests_text,
+            sub_locations=sub_locs_text,
+            suggested_tone=decision.suggested_tone or "自然",
+            previous_responses=prev_responses_text,
+        )
+
+        if instance_history:
+            prompt += f"\n\n## 你的近期记忆\n{instance_history}\n"
+
+        teammate_packages = context.get("teammate_context_packages") or {}
+        teammate_package = teammate_packages.get(member.character_id)
+        if isinstance(teammate_package, dict) and teammate_package:
+            pkg_text = self._format_context_package(teammate_package)
+            prompt += f"\n\n## 你的图谱上下文（Flash编排）\n{pkg_text}\n"
+
+        teammate_memory_summaries = context.get("teammate_memory_summaries") or {}
+        memory_summary = teammate_memory_summaries.get(member.character_id)
+        if memory_summary:
+            prompt += f"\n\n## 你的记忆摘要\n{memory_summary}\n"
+
+        model = settings.admin_flash_model
+        thinking_level = "low"
+
+        async for chunk in self.llm_service.generate_simple_stream(
+            prompt,
+            model_override=model,
+            thinking_level=thinking_level,
+        ):
+            yield chunk
 
     def _format_context_package(self, package: Dict[str, Any]) -> str:
         """将 Flash context_package 转成紧凑文本，避免提示词膨胀。"""
