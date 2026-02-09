@@ -54,6 +54,18 @@ class Settings(BaseModel):
     admin_flash_thinking_level: Literal["lowest", "low", "medium", "high"] = os.getenv(
         "ADMIN_FLASH_THINKING_LEVEL", "high"
     )
+    use_agentic_mode: bool = os.getenv("USE_AGENTIC_MODE", "true").lower() in ("1", "true", "yes")
+    admin_agentic_model: str = os.getenv("ADMIN_AGENTIC_MODEL", "gemini-3-flash-preview")
+    admin_agentic_max_remote_calls: int = int(os.getenv("ADMIN_AGENTIC_MAX_REMOTE_CALLS", "24"))
+    admin_agentic_tool_timeout_seconds: float = float(os.getenv("ADMIN_AGENTIC_TOOL_TIMEOUT_SECONDS", "25"))
+    admin_agentic_history_max_chars: int = int(os.getenv("ADMIN_AGENTIC_HISTORY_MAX_CHARS", "120000"))
+    admin_agentic_background_max_chars: int = int(os.getenv("ADMIN_AGENTIC_BACKGROUND_MAX_CHARS", "30000"))
+    admin_agentic_memory_max_chars: int = int(os.getenv("ADMIN_AGENTIC_MEMORY_MAX_CHARS", "40000"))
+    admin_agentic_strict_tools: bool = os.getenv("ADMIN_AGENTIC_STRICT_TOOLS", "true").lower() in ("1", "true", "yes")
+    fixed_world_id: str = os.getenv("FIXED_WORLD_ID", "final-world")
+    image_generation_enabled: bool = os.getenv("IMAGE_GENERATION_ENABLED", "true").lower() in ("1", "true", "yes")
+    image_generation_model: str = os.getenv("IMAGE_GENERATION_MODEL", "gemini-2.5-flash-image")
+    image_generation_timeout_seconds: float = float(os.getenv("IMAGE_GENERATION_TIMEOUT_SECONDS", "60"))
     mcp_tools_transport: str = os.getenv("MCP_TOOLS_TRANSPORT", "stdio")
     mcp_tools_endpoint: str = os.getenv("MCP_TOOLS_ENDPOINT", "stdio://game_tools_server")
     mcp_tools_command: str = os.getenv("MCP_TOOLS_COMMAND", "python")
@@ -66,6 +78,13 @@ class Settings(BaseModel):
     mcp_npc_tool_timeout_seconds: float = float(os.getenv("MCP_NPC_TOOL_TIMEOUT_SECONDS", "90"))
     mcp_startup_fail_fast: bool = os.getenv("MCP_STARTUP_FAIL_FAST", "true").lower() in ("1", "true", "yes")
     mcp_probe_timeout_seconds: float = float(os.getenv("MCP_PROBE_TIMEOUT_SECONDS", "2"))
+    mcp_http_probe_mode: Literal["tcp", "handshake"] = os.getenv("MCP_HTTP_PROBE_MODE", "handshake")
+    mcp_http_handshake_timeout_seconds: float = float(os.getenv("MCP_HTTP_HANDSHAKE_TIMEOUT_SECONDS", "5"))
+    mcp_http_recover_on_session_error: bool = os.getenv("MCP_HTTP_RECOVER_ON_SESSION_ERROR", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     
     # 热记忆配置
     active_window_size: int = 20

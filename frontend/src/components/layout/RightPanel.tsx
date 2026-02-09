@@ -8,24 +8,24 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
 import { useUIStore } from '../../stores';
 import { useParty } from '../../api/hooks/useParty';
-import PanelFrame from './PanelFrame';
 import PlayerStatus from '../party/PlayerStatus';
 import PartyPanel from '../party/PartyPanel';
 import InventoryPanel from '../inventory/InventoryPanel';
 import QuestPanel from '../quest/QuestPanel';
 import HistoryPanel from '../history/HistoryPanel';
 
-type RightTab = 'party' | 'inventory' | 'quest' | 'history';
+type RightTab = 'status' | 'party' | 'inventory' | 'quest' | 'history';
 
 export const RightPanel: React.FC = () => {
   const { t } = useTranslation();
   const { rightPanelCollapsed, toggleRightPanel } = useUIStore();
   useParty();
-  const [activeTab, setActiveTab] = useState<RightTab>('party');
+  const [activeTab, setActiveTab] = useState<RightTab>('status');
 
   const isOpen = !rightPanelCollapsed;
 
   const tabs: { key: RightTab; label: string }[] = [
+    { key: 'status', label: t('tabs.status', '状态') },
     { key: 'party', label: t('tabs.party', '队伍') },
     { key: 'inventory', label: t('tabs.inventory', '背包') },
     { key: 'quest', label: t('tabs.quest', '任务') },
@@ -42,7 +42,7 @@ export const RightPanel: React.FC = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 top-12 bg-black/20 z-40"
+            className="fixed inset-0 top-12 bg-black/30 z-40"
             onClick={toggleRightPanel}
           />
 
@@ -54,26 +54,24 @@ export const RightPanel: React.FC = () => {
             transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             className="
               fixed top-12 right-0 bottom-0 w-1/2
-              bg-g-bg-surface
-              border-l border-g-border
-              shadow-g-lg
+              bg-[var(--g-bg-base)]
+              border-l border-[var(--g-accent-gold)]/20
               z-50
               flex flex-col
             "
           >
-            {/* Header with close button and tabs */}
-            <div className="flex-shrink-0 border-b border-g-border px-4 pt-3 pb-0">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-heading text-g-gold">
+            {/* Header */}
+            <div className="flex-shrink-0 px-5 pt-4 pb-0">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-heading text-base text-[var(--g-accent-gold)] tracking-wider uppercase">
                   {t('ui.rightPanel')}
                 </h2>
                 <button
                   onClick={toggleRightPanel}
                   className="
-                    w-7 h-7 rounded-lg
+                    w-7 h-7
                     flex items-center justify-center
-                    text-g-text-muted hover:text-g-gold
-                    hover:bg-g-bg-hover
+                    text-g-text-muted hover:text-[var(--g-accent-gold)]
                     transition-colors
                   "
                   aria-label="Close panel"
@@ -83,22 +81,24 @@ export const RightPanel: React.FC = () => {
               </div>
 
               {/* Tab bar */}
-              <div className="flex gap-4 relative">
+              <div className="flex gap-6 border-b border-[var(--g-accent-gold)]/15">
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setActiveTab(tab.key)}
-                    className={`text-xs pb-2 border-b-2 transition-colors relative ${
-                      activeTab === tab.key
-                        ? 'text-g-gold border-transparent font-semibold'
-                        : 'text-g-text-muted border-transparent hover:text-g-text'
-                    }`}
+                    className={`
+                      text-xs pb-2.5 relative transition-colors tracking-wide
+                      ${activeTab === tab.key
+                        ? 'text-[var(--g-accent-gold)] font-semibold'
+                        : 'text-g-text-muted hover:text-g-text-secondary'
+                      }
+                    `}
                   >
                     {tab.label}
                     {activeTab === tab.key && (
                       <motion.div
                         layoutId="tab-indicator"
-                        className="absolute bottom-0 left-0 right-0 h-0.5 bg-g-gold"
+                        className="absolute bottom-0 left-0 right-0 h-[2px] bg-[var(--g-accent-gold)]"
                         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                       />
                     )}
@@ -107,44 +107,22 @@ export const RightPanel: React.FC = () => {
               </div>
             </div>
 
-            {/* Tab content — scrollable area */}
-            <div className="flex-1 min-h-0 overflow-y-auto g-scrollbar p-3">
+            {/* Tab content */}
+            <div className="flex-1 min-h-0 overflow-y-auto g-scrollbar">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeTab}
-                  initial={{ opacity: 0, y: 6 }}
+                  initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
+                  exit={{ opacity: 0, y: -4 }}
                   transition={{ duration: 0.15 }}
+                  className="h-full"
                 >
-                  {activeTab === 'party' && (
-                    <div className="space-y-2">
-                      <PanelFrame className="flex-shrink-0">
-                        <PlayerStatus />
-                      </PanelFrame>
-                      <PanelFrame>
-                        <PartyPanel />
-                      </PanelFrame>
-                    </div>
-                  )}
-
-                  {activeTab === 'inventory' && (
-                    <PanelFrame>
-                      <InventoryPanel />
-                    </PanelFrame>
-                  )}
-
-                  {activeTab === 'quest' && (
-                    <PanelFrame>
-                      <QuestPanel />
-                    </PanelFrame>
-                  )}
-
-                  {activeTab === 'history' && (
-                    <PanelFrame>
-                      <HistoryPanel />
-                    </PanelFrame>
-                  )}
+                  {activeTab === 'status' && <PlayerStatus />}
+                  {activeTab === 'party' && <PartyPanel />}
+                  {activeTab === 'inventory' && <InventoryPanel />}
+                  {activeTab === 'quest' && <QuestPanel />}
+                  {activeTab === 'history' && <HistoryPanel />}
                 </motion.div>
               </AnimatePresence>
             </div>

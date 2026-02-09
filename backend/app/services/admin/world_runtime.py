@@ -110,6 +110,7 @@ class AdminWorldRuntime:
         starting_time: Optional[dict] = None,
     ) -> GameState:
         logger.info("会话启动: world=%s, session=%s", world_id, session_id)
+        await self.narrative_service.load_narrative_data(world_id, force_reload=True)
         navigator = self._get_navigator_ready(world_id)
         if not navigator.maps:
             raise ValueError(
@@ -473,7 +474,19 @@ class AdminWorldRuntime:
         navigator = self._get_navigator_ready(world_id)
         sub_loc = navigator.get_sub_location(state.player_location, sub_location_id)
         if not sub_loc:
-            return {"success": False, "error": f"子地点不存在: {sub_location_id}"}
+            # 列出可用子地点帮助 LLM 自我纠正
+            available = navigator.get_sub_locations(state.player_location)
+            available_text = ", ".join(
+                f"{s.name}({s.id})" for s in available
+            ) if available else "无"
+            return {
+                "success": False,
+                "error": f"子地点不存在: {sub_location_id}",
+                "available_sub_locations": [
+                    {"id": s.id, "name": s.name} for s in available
+                ],
+                "hint": f"可用子地点: {available_text}",
+            }
 
         # 营业时间检查：商店类子地点在非营业时间不可进入
         from app.services.area_navigator import InteractionType

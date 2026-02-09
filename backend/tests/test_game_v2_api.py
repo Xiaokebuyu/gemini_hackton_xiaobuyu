@@ -7,6 +7,7 @@ from app.routers.game_v2 import (
     PlayerInputRequest,
     add_teammate,
     create_party,
+    get_agentic_trace_viewer,
     get_party_info,
     process_input_v2,
     remove_teammate,
@@ -16,10 +17,36 @@ from app.routers.game_v2 import (
 class FakeCoordinator:
     def __init__(self) -> None:
         self.party_members = []
+        self.v3_called = False
 
-    async def process_player_input_v2(self, world_id: str, session_id: str, player_input: str):
+    async def process_player_input_v2(
+        self,
+        world_id: str,
+        session_id: str,
+        player_input: str,
+        is_private: bool = False,
+        private_target: str | None = None,
+    ):
         return CoordinatorResponse(
             narration=f"ok:{player_input}",
+            speaker="GM",
+            teammate_responses=[],
+            available_actions=[],
+            state_delta=None,
+            metadata={"world_id": world_id, "session_id": session_id},
+        )
+
+    async def process_player_input_v3(
+        self,
+        world_id: str,
+        session_id: str,
+        player_input: str,
+        is_private: bool = False,
+        private_target: str | None = None,
+    ):
+        self.v3_called = True
+        return CoordinatorResponse(
+            narration=f"v3:{player_input}",
             speaker="GM",
             teammate_responses=[],
             available_actions=[],
@@ -66,6 +93,25 @@ class FakeCoordinator:
         return {"success": True, "character_id": character_id}
 
 
+class FakeCoordinatorV2Only:
+    async def process_player_input_v2(
+        self,
+        world_id: str,
+        session_id: str,
+        player_input: str,
+        is_private: bool = False,
+        private_target: str | None = None,
+    ):
+        return CoordinatorResponse(
+            narration=f"v2:{player_input}",
+            speaker="GM",
+            teammate_responses=[],
+            available_actions=[],
+            state_delta=None,
+            metadata={"world_id": world_id, "session_id": session_id},
+        )
+
+
 @pytest.mark.asyncio
 async def test_game_v2_input_route():
     fake = FakeCoordinator()
@@ -75,8 +121,21 @@ async def test_game_v2_input_route():
         payload=PlayerInputRequest(input="观察周围"),
         coordinator=fake,
     )
-    assert response.narration == "ok:观察周围"
+    assert response.narration == "v3:观察周围"
     assert response.speaker == "GM"
+    assert fake.v3_called is True
+
+
+@pytest.mark.asyncio
+async def test_game_v2_input_route_fallback_v2():
+    fake = FakeCoordinatorV2Only()
+    response = await process_input_v2(
+        world_id="test_world",
+        session_id="test_session",
+        payload=PlayerInputRequest(input="观察周围"),
+        coordinator=fake,
+    )
+    assert response.narration == "v2:观察周围"
 
 
 @pytest.mark.asyncio
@@ -116,3 +175,11 @@ async def test_game_v2_party_routes():
         coordinator=fake,
     )
     assert remove_resp["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_agentic_trace_viewer_route_returns_html():
+    response = await get_agentic_trace_viewer()
+    assert response.status_code == 200
+    html = response.body.decode("utf-8")
+    assert "GM Agentic Trace Viewer" in html

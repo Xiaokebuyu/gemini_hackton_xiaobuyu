@@ -1,5 +1,5 @@
 /**
- * History Panel - Compact message log for current session
+ * History Panel — compact message log
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -11,17 +11,17 @@ import { getSessionHistory, type HistoryMessage } from '../../api/gameApi';
 const speakerIcon = (type: string) => {
   switch (type) {
     case 'player':
-      return <User className="w-3 h-3 text-g-cyan flex-shrink-0" />;
+      return <User className="w-3 h-3 text-[var(--g-cyan)] flex-shrink-0" />;
     case 'gm':
-      return <Shield className="w-3 h-3 text-g-gold flex-shrink-0" />;
+      return <Shield className="w-3 h-3 text-[var(--g-accent-gold)] flex-shrink-0" />;
     case 'teammate':
-      return <Users className="w-3 h-3 text-green-400 flex-shrink-0" />;
+      return <Users className="w-3 h-3 text-g-green flex-shrink-0" />;
     default:
-      return <Info className="w-3 h-3 text-g-text-muted flex-shrink-0" />;
+      return <Info className="w-3 h-3 text-g-text-muted/50 flex-shrink-0" />;
   }
 };
 
-const truncate = (text: string, maxLen = 50) =>
+const truncate = (text: string, maxLen = 60) =>
   text.length > maxLen ? text.slice(0, maxLen) + '...' : text;
 
 const formatTime = (date: Date) => {
@@ -106,8 +106,8 @@ export const HistoryPanel: React.FC = () => {
 
   if (reversed.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 text-g-text-muted">
-        <Info className="w-8 h-8 mb-2" />
+      <div className="flex flex-col items-center justify-center py-16 text-g-text-muted">
+        <Info className="w-8 h-8 mb-3 opacity-40" />
         <p className="text-xs">{t('history.noHistory', '暂无记录')}</p>
       </div>
     );
@@ -115,30 +115,31 @@ export const HistoryPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto g-scrollbar">
-        <div className="space-y-1 p-2">
-          {reversed.map((msg) => (
-            <div
-              key={msg.id}
-              className="flex items-start gap-2 px-2 py-1.5 rounded-lg hover:bg-g-bg-hover transition-colors"
-            >
-              <div className="mt-0.5">{speakerIcon(msg.type)}</div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline justify-between gap-1">
-                  <span className="text-xs font-semibold text-g-text truncate">
-                    {msg.speaker}
-                  </span>
-                  <span className="text-[10px] text-g-text-muted flex-shrink-0">
-                    {formatTime(msg.timestamp)}
-                  </span>
-                </div>
-                <p className="text-xs text-g-text-muted leading-snug mt-0.5">
-                  {truncate(msg.content)}
-                </p>
+      <div className="flex-1 overflow-y-auto g-scrollbar px-5 py-3">
+        {reversed.map((msg, index) => (
+          <div
+            key={msg.id}
+            className={`
+              flex items-start gap-3 py-2.5
+              ${index < reversed.length - 1 ? 'border-b border-[var(--g-accent-gold)]/8' : ''}
+            `}
+          >
+            <div className="mt-1">{speakerIcon(msg.type)}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-xs font-medium text-[var(--g-text-primary)] truncate">
+                  {msg.speaker}
+                </span>
+                <span className="text-[10px] text-g-text-muted/50 flex-shrink-0 tabular-nums">
+                  {formatTime(msg.timestamp)}
+                </span>
               </div>
+              <p className="text-[11px] text-g-text-muted leading-relaxed mt-0.5">
+                {truncate(msg.content)}
+              </p>
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </div>
   );

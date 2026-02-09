@@ -20,26 +20,28 @@ MCP_COMBAT_TRANSPORT="${MCP_COMBAT_TRANSPORT:-streamable-http}"
 MCP_COMBAT_ENDPOINT="${MCP_COMBAT_ENDPOINT:-http://127.0.0.1:9102/mcp}"
 
 probe_endpoint() {
-  local endpoint="$1"
-  "$PY" - "$endpoint" "$PROBE_TIMEOUT" <<'PY'
-import socket
+  local server_type="$1"
+  "$PY" - "$server_type" "$PROBE_TIMEOUT" <<'PY'
+import asyncio
+import json
 import sys
-from urllib.parse import urlsplit
 
-endpoint = sys.argv[1]
+from app.services.mcp_client_pool import MCPClientPool
+
+server_type = sys.argv[1]
 timeout = float(sys.argv[2])
-parsed = urlsplit(endpoint)
-host = parsed.hostname
-if not host:
-    raise SystemExit(2)
-port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-try:
-    with socket.create_connection((host, port), timeout=timeout):
-        pass
-except OSError as exc:
-    print(f"{type(exc).__name__}: {exc}")
-    raise SystemExit(1)
+async def main() -> None:
+    pool = await MCPClientPool.get_instance()
+    try:
+        result = await pool.probe(server_type=server_type, timeout_seconds=timeout)
+        print(json.dumps(result, ensure_ascii=False))
+        if not result.get("ok"):
+            raise SystemExit(1)
+    finally:
+        await MCPClientPool.shutdown()
+
+asyncio.run(main())
 PY
 }
 
@@ -55,7 +57,7 @@ fi
 
 if [ "$CHECK_MCP" = "true" ]; then
   if needs_http_probe "$MCP_TOOLS_TRANSPORT"; then
-    if ! probe_endpoint "$MCP_TOOLS_ENDPOINT"; then
+    if ! probe_endpoint "game_tools"; then
       echo "Game Tools MCP 不可用: $MCP_TOOLS_ENDPOINT"
       echo "请先启动: bash 启动服务/run_mcp_services.sh"
       exit 1
@@ -63,7 +65,7 @@ if [ "$CHECK_MCP" = "true" ]; then
   fi
 
   if needs_http_probe "$MCP_COMBAT_TRANSPORT"; then
-    if ! probe_endpoint "$MCP_COMBAT_ENDPOINT"; then
+    if ! probe_endpoint "combat"; then
       echo "Combat MCP 不可用: $MCP_COMBAT_ENDPOINT"
       echo "请先启动: bash 启动服务/run_mcp_services.sh"
       exit 1

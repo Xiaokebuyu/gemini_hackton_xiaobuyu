@@ -95,6 +95,7 @@ class TeammateResponseService:
             )
 
         world_id = context.get("world_id") or party.world_id
+        gm_narration_full = str(context.get("gm_narration_full") or gm_response or "")
 
         # 2. 所有队友先接收本轮消息（即使后续不发言，也会更新独立上下文）
         preloaded_histories: Dict[str, Optional[str]] = {}
@@ -133,7 +134,7 @@ class TeammateResponseService:
                     member=member,
                     world_id=world_id,
                     player_input=inject_player,
-                    gm_response=gm_response,
+                    gm_response=gm_narration_full,
                 )
                 return member.character_id, history_text
 
@@ -190,7 +191,7 @@ class TeammateResponseService:
                 result = await self._generate_single_response(
                     member=member,
                     player_input=player_input,
-                    gm_response=gm_response,
+                    gm_response=gm_narration_full,
                     context=context,
                     decision=decision,
                     previous_responses=collected_responses,
@@ -387,7 +388,7 @@ class TeammateResponseService:
             "support": ["帮忙", "支援", "配合", "support"],
         }
         for keyword in role_keywords.get(member.role.value, []):
-            if keyword in merged_text and member.response_tendency >= 0.5:
+            if keyword in merged_text and member.response_tendency >= 0.3:
                 return TeammateResponseDecision(
                     character_id=member.character_id,
                     should_respond=True,
@@ -397,7 +398,7 @@ class TeammateResponseService:
 
         # 玩家问句，更可能触发队友发言
         question_cues = ("?", "？", "吗", "如何", "怎么", "为什么", "是否", "要不要", "谁")
-        if any(cue in (player_input or "") for cue in question_cues) and member.response_tendency >= 0.65:
+        if any(cue in (player_input or "") for cue in question_cues) and member.response_tendency >= 0.4:
             return TeammateResponseDecision(
                 character_id=member.character_id,
                 should_respond=True,
@@ -415,8 +416,8 @@ class TeammateResponseService:
                 priority=8,
             )
 
-        # 高健谈角色可主动补充
-        if member.response_tendency >= 0.9:
+        # 健谈角色可主动补充
+        if member.response_tendency >= 0.7:
             return TeammateResponseDecision(
                 character_id=member.character_id,
                 should_respond=True,
@@ -679,6 +680,7 @@ class TeammateResponseService:
         world_id = context.get("world_id") or party.world_id
         is_private = context.get("is_private", False)
         private_target = context.get("private_target")
+        gm_narration_full = str(context.get("gm_narration_full") or gm_response or "")
 
         # 消息注入（复用同步逻辑）
         preloaded_histories: Dict[str, Optional[str]] = {}
@@ -709,7 +711,7 @@ class TeammateResponseService:
                         member=member,
                         world_id=world_id,
                         player_input=player_input,
-                        gm_response=gm_response,
+                        gm_response=gm_narration_full,
                     )
                     preloaded_histories[member.character_id] = history_text
                 except Exception as e:
@@ -773,7 +775,7 @@ class TeammateResponseService:
                 async for chunk in self._generate_single_response_stream(
                     member=member,
                     player_input=player_input,
-                    gm_response=gm_response,
+                    gm_response=gm_narration_full,
                     context=context,
                     decision=decision,
                     previous_responses=collected_responses,

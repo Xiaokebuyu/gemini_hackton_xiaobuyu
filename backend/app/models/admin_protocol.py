@@ -169,6 +169,35 @@ class FlashResponse(BaseModel):
 
 
 # =============================================================================
+# Agentic 模型
+# =============================================================================
+
+
+class AgenticToolCall(BaseModel):
+    """单次 agentic 工具调用记录。"""
+
+    name: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+    success: bool = True
+    duration_ms: int = 0
+    error: Optional[str] = None
+    result: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AgenticResult(BaseModel):
+    """Agentic 会话结果。"""
+
+    narration: str
+    thinking_summary: str = ""
+    tool_calls: List[AgenticToolCall] = Field(default_factory=list)
+    flash_results: List[FlashResponse] = Field(default_factory=list)
+    story_condition_results: Dict[str, bool] = Field(default_factory=dict)
+    image_data: Optional[Dict[str, Any]] = None
+    usage: Dict[str, Any] = Field(default_factory=dict)
+    finish_reason: Optional[str] = None
+
+
+# =============================================================================
 # 协调器响应模型
 # =============================================================================
 
@@ -196,6 +225,7 @@ class CoordinatorResponse(BaseModel):
     story_events: List[str] = Field(default_factory=list)
     pacing_action: Optional[str] = None
     chapter_info: Optional[Dict[str, Any]] = None
+    image_data: Optional[Dict[str, Any]] = None
 
 
 # 解决前向引用

@@ -43,13 +43,12 @@ export const GalgameTeammateZone: React.FC<GalgameTeammateZoneProps> = ({
                 initial={{ opacity: 0, y: 8, scale: 0.98 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.25, delay: i * 0.12 }}
-                whileHover={{ scale: 1.01, boxShadow: 'var(--g-shadow-md)' }}
-                className="w-full bg-g-bubble-teammate-bg border border-g-bubble-teammate-border rounded-lg px-4 py-2.5 card-hover"
+                className="w-full border-t border-b border-[var(--g-cyan)]/40 bg-transparent px-6 py-3"
               >
                 {/* Top: name label row */}
                 <div className="flex items-center gap-1.5 mb-1.5">
-                  <MessageCircle className="w-3.5 h-3.5 text-g-bubble-teammate-border" />
-                  <span className="text-xs font-semibold text-g-bubble-teammate-border whitespace-nowrap">
+                  <MessageCircle className="w-3.5 h-3.5 text-[var(--g-cyan)]" />
+                  <span className="text-xs font-semibold text-[var(--g-cyan)] whitespace-nowrap">
                     {msg.speaker}
                   </span>
                   {msg.metadata?.reaction && (

@@ -5,10 +5,11 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_coordinator
@@ -40,6 +41,7 @@ from app.models.game import (
     TriggerCombatResponse,
 )
 from app.services.admin.admin_coordinator import AdminCoordinator
+from app.services.admin.agentic_enforcement import AgenticToolExecutionRequiredError
 from app.services.mcp_client_pool import MCPServiceUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -47,9 +49,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/game", tags=["Game V2"])
 
 
+def _validate_fixed_world(world_id: Optional[str] = None) -> None:
+    """Enforce single world deployment in this environment."""
+    from app.config import settings
+
+    if world_id is None:
+        return
+    expected = settings.fixed_world_id
+    if world_id != expected:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported world_id='{world_id}', this environment only supports '{expected}'",
+        )
+
+
+router.dependencies.append(Depends(_validate_fixed_world))
+
+
 def _map_exception_to_http(exc: Exception) -> HTTPException:
     if isinstance(exc, MCPServiceUnavailableError):
         return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, AgenticToolExecutionRequiredError):
+        return HTTPException(status_code=422, detail=exc.to_http_detail())
     return HTTPException(status_code=500, detail=str(exc))
 
 
@@ -58,6 +79,16 @@ async def list_worlds(coordinator=Depends(get_coordinator)):
     """列出所有可用世界"""
     worlds = await coordinator.list_worlds()
     return {"worlds": worlds}
+
+
+@router.get("/agentic-trace-viewer", response_class=HTMLResponse)
+async def get_agentic_trace_viewer():
+    """GM agentic trace 可视化调试页。"""
+    viewer_path = Path(__file__).resolve().parent.parent / "static" / "agentic_trace_viewer.html"
+    try:
+        return HTMLResponse(content=viewer_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"trace viewer load failed: {exc}") from exc
 
 
 class CreateGameSessionRequest(BaseModel):
@@ -399,13 +430,18 @@ async def process_input_v2(
     payload: PlayerInputRequest,
     coordinator: AdminCoordinator = Depends(get_coordinator),
 ) -> CoordinatorResponse:
-    """处理玩家输入（Flash-Only v2）"""
+    """处理玩家输入（默认 Agentic v3，兼容回退 v2）"""
     try:
+        process_fn = getattr(coordinator, "process_player_input_v3", None)
+        if process_fn is None:
+            process_fn = coordinator.process_player_input_v2
         return await asyncio.wait_for(
-            coordinator.process_player_input_v2(
+            process_fn(
                 world_id=world_id,
                 session_id=session_id,
                 player_input=payload.input,
+                is_private=payload.is_private,
+                private_target=payload.private_target,
             ),
             timeout=110.0,
         )
@@ -426,11 +462,14 @@ async def process_input_v2_stream(
     payload: PlayerInputRequest,
     coordinator: AdminCoordinator = Depends(get_coordinator),
 ):
-    """流式处理玩家输入（SSE）"""
+    """流式处理玩家输入（默认 Agentic v3，兼容回退 v2）"""
 
     async def event_generator():
         try:
-            async for event in coordinator.process_player_input_v2_stream(
+            process_stream_fn = getattr(coordinator, "process_player_input_v3_stream", None)
+            if process_stream_fn is None:
+                process_stream_fn = coordinator.process_player_input_v2_stream
+            async for event in process_stream_fn(
                 world_id=world_id,
                 session_id=session_id,
                 player_input=payload.input,
@@ -443,10 +482,12 @@ async def process_input_v2_stream(
             raise
         except Exception as exc:
             logger.exception("[input/stream] 流式处理失败: %s", exc)
+            mapped_exc = _map_exception_to_http(exc)
             error_event = {
                 "type": "error",
                 "error": str(exc),
-                "status_code": 503 if isinstance(exc, MCPServiceUnavailableError) else 500,
+                "status_code": mapped_exc.status_code,
+                "detail": mapped_exc.detail,
             }
             yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
@@ -914,6 +955,7 @@ async def get_narrative_progress(
 ):
     """获取当前叙事进度"""
     try:
+        await coordinator.narrative_service.load_narrative_data(world_id, force_reload=True)
         progress = await coordinator.narrative_service.get_progress(world_id, session_id)
         chapter_info = coordinator.narrative_service.get_chapter_info(
             world_id, progress.current_chapter,
@@ -939,6 +981,7 @@ async def get_narrative_flow_board(
 ):
     """获取基于世界书主线的流程编排板"""
     try:
+        await coordinator.narrative_service.load_narrative_data(world_id, force_reload=True)
         return await coordinator.narrative_service.get_flow_board(
             world_id=world_id,
             session_id=session_id,
@@ -956,6 +999,7 @@ async def get_narrative_current_plan(
 ):
     """获取当前章节内容编排建议"""
     try:
+        await coordinator.narrative_service.load_narrative_data(world_id, force_reload=True)
         return await coordinator.narrative_service.get_current_chapter_plan(
             world_id=world_id,
             session_id=session_id,
@@ -972,6 +1016,7 @@ async def get_available_maps(
 ):
     """获取当前章节可用的地图"""
     try:
+        await coordinator.narrative_service.load_narrative_data(world_id, force_reload=True)
         available_maps = await coordinator.narrative_service.get_available_maps(
             world_id, session_id
         )
@@ -992,6 +1037,7 @@ async def trigger_narrative_event(
 ):
     """触发叙事事件"""
     try:
+        await coordinator.narrative_service.load_narrative_data(world_id, force_reload=True)
         return await coordinator.narrative_service.trigger_event(
             world_id, session_id, payload.event_id
         )

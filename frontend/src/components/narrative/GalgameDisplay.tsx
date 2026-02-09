@@ -6,16 +6,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
-import { BookOpen, Landmark, User } from 'lucide-react';
+import { BookOpen, Image as ImageIcon, Landmark, User } from 'lucide-react';
 import { useChatStore, useGameStore, useCombatStore } from '../../stores';
 import type { NarrativeMessage } from '../../types';
 import TypewriterText from './TypewriterText';
 import GMOptions from './GMOptions';
 import GalgameTeammateZone from './GalgameTeammateZone';
+import AgenticTracePanel from './AgenticTracePanel';
 import CombatTriggerCard from '../combat/CombatTriggerCard';
-import LoadingSpinner from '../shared/LoadingSpinner';
 import ChatInput from '../input/ChatInput';
-import QuickActions from '../input/QuickActions';
+
 import { parseGMNarration } from '../../utils/narrationParser';
 import { useStreamGameInput } from '../../api';
 
@@ -62,7 +62,7 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
 }) => {
   const { t } = useTranslation();
   const { messages, isLoading, streamingMessageId } = useChatStore();
-  const { combatId } = useGameStore();
+  const { combatId, latestImageData } = useGameStore();
   const { isActive: isCombatActive } = useCombatStore();
   const { sendInput } = useStreamGameInput();
 
@@ -103,6 +103,11 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
     ? parseGMNarration(round.gmNarration.content)
     : null;
   const narrativeText = parsed ? parsed.text : (round.gmNarration?.content ?? '');
+  const imageSrc = useMemo(() => {
+    if (!latestImageData?.base64) return null;
+    const mimeType = latestImageData.mime_type || 'image/png';
+    return `data:${mimeType};base64,${latestImageData.base64}`;
+  }, [latestImageData]);
 
   const handleOptionSelect = (option: { id: string; label: string }) => {
     setSelectedOption(option.id);
@@ -133,7 +138,6 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
         {/* Input even in empty state */}
         <div className="flex-shrink-0 mt-4">
           <ChatInput />
-          <QuickActions className="mt-3" />
         </div>
       </div>
     );
@@ -168,7 +172,7 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
           {/* ---- GM narration area ---- */}
           <div className="flex-1 min-h-0 overflow-y-auto g-scrollbar">
             {isLoading && !round.gmNarration && (
-              <div className="bg-[var(--g-bubble-gm-bg)] border-l-[3px] border-l-[var(--g-accent-gold)] rounded-xl px-6 py-5 min-h-[80px] shadow-g-gold animate-pulse flex items-center gap-3">
+              <div className="border-t border-b border-[var(--g-accent-gold)]/40 bg-transparent px-6 py-5 min-h-[80px] animate-pulse flex items-center gap-3">
                 <div className="flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-g-gold animate-bounce" style={{ animationDelay: '0s' }} />
                   <span className="w-2 h-2 rounded-full bg-g-gold animate-bounce" style={{ animationDelay: '0.2s' }} />
@@ -181,9 +185,9 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
             )}
 
             {round.gmNarration && (
-              <div className="bg-[var(--g-bubble-gm-bg)] border-l-[3px] border-l-[var(--g-accent-gold)] rounded-xl px-6 py-5 min-h-[120px] shadow-g-gold g-inner-glow">
+              <div className="border-t border-b border-[var(--g-accent-gold)]/40 bg-transparent px-6 py-5 min-h-[120px]">
                 {/* GM label */}
-                <div className="flex items-center gap-2 mb-4 pb-2 border-b border-[var(--g-accent-gold)]/20">
+                <div className="flex items-center gap-2 mb-3">
                   <BookOpen className="w-5 h-5 text-[var(--g-accent-gold)]" />
                   <span className="text-sm font-semibold text-[var(--g-accent-gold)] tracking-wide">
                     {t('speaker.gm')}
@@ -208,6 +212,36 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
               </div>
             )}
 
+            {round.gmNarration && imageSrc && (
+              <motion.figure
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22 }}
+                className="mt-3 rounded-xl border border-g-border overflow-hidden bg-g-bg-surface-alt"
+              >
+                <div className="px-3 py-2 border-b border-g-border flex items-center gap-2 text-xs text-g-text-muted">
+                  <ImageIcon className="w-3.5 h-3.5 text-g-gold" />
+                  <span>{t('narrative.sceneImage', '场景插图')}</span>
+                </div>
+                <img
+                  src={imageSrc}
+                  alt={latestImageData?.prompt || 'scene image'}
+                  className="w-full max-h-[420px] object-contain bg-black/20"
+                  loading="lazy"
+                />
+                {(latestImageData?.style || latestImageData?.prompt) && (
+                  <figcaption className="px-3 py-2 text-[11px] text-g-text-muted leading-relaxed">
+                    {latestImageData?.style && (
+                      <span className="mr-2">{latestImageData.style}</span>
+                    )}
+                    {latestImageData?.prompt || ''}
+                  </figcaption>
+                )}
+              </motion.figure>
+            )}
+
+            <AgenticTracePanel />
+
             {/* GM options — show after typing completes */}
             {isTypingComplete && parsed && parsed.options.length > 0 && (
               <GMOptions
@@ -223,11 +257,11 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
 
             {/* Teammate thinking indicator */}
             {isTypingComplete && round.teammateResponses.length === 0 && isLoading && (
-              <div className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg bg-g-bubble-teammate-bg border border-g-bubble-teammate-border">
+              <div className="mt-3 flex items-center gap-2 px-6 py-2 border-t border-b border-[var(--g-cyan)]/40 bg-transparent">
                 <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-g-bubble-teammate-border animate-bounce" style={{ animationDelay: '0s' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-g-bubble-teammate-border animate-bounce" style={{ animationDelay: '0.2s' }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-g-bubble-teammate-border animate-bounce" style={{ animationDelay: '0.4s' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--g-cyan)] animate-bounce" style={{ animationDelay: '0s' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--g-cyan)] animate-bounce" style={{ animationDelay: '0.2s' }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--g-cyan)] animate-bounce" style={{ animationDelay: '0.4s' }} />
                 </div>
                 <span className="text-xs text-g-text-muted italic font-body">
                   {t('narrative.teammateThinking', '队友正在思考...')}
@@ -247,7 +281,6 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
       {/* ---- Input area (outside AnimatePresence — persistent across rounds) ---- */}
       <div className="flex-shrink-0 mt-3">
         <ChatInput />
-        <QuickActions className="mt-3" />
       </div>
     </div>
   );

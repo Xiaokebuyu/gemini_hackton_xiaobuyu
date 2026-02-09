@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentic Trace Viewer</title>
+  <style>
+    :root {
+      --bg: #f3f1ec;
+      --panel: #fffaf1;
+      --ink: #1e1f24;
+      --muted: #6b6c74;
+      --line: #d6d0c2;
+      --accent: #0e7a6d;
+      --accent-soft: #d9f2ed;
+      --warn: #a33c12;
+      --ok: #1e6f37;
+      --shadow: 0 10px 30px rgba(21, 25, 33, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 15%, #f7e9d2 0%, rgba(247, 233, 210, 0) 48%),
+        radial-gradient(circle at 90% 10%, #d8ece7 0%, rgba(216, 236, 231, 0) 40%),
+        var(--bg);
+    }
+
+    .wrap {
+      max-width: 1360px;
+      margin: 24px auto;
+      padding: 0 16px 24px;
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .title {
+      margin: 0;
+      font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+      font-size: clamp(24px, 3vw, 36px);
+      letter-spacing: 0.02em;
+    }
+
+    .status {
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-weight: 600;
+      color: #083a34;
+      background: var(--accent-soft);
+      border: 1px solid #bddfd8;
+    }
+
+    .status.warn {
+      background: #ffe8dd;
+      border-color: #f3c6b1;
+      color: #723018;
+    }
+
+    .control {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+      padding: 9px 10px;
+      font: inherit;
+      resize: vertical;
+    }
+
+    textarea {
+      min-height: 72px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #dfdfdf;
+      color: #21242b;
+    }
+
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button.danger {
+      background: #cc5533;
+      color: #fff;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1.2fr 1fr 1fr;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel h2 {
+      margin: 0;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--line);
+      font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
+      font-size: 16px;
+      background: #fff3df;
+    }
+
+    .body {
+      padding: 12px 14px;
+      overflow: auto;
+      font-size: 14px;
+      line-height: 1.45;
+      flex: 1;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(90px, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .pill {
+      background: #f7eee0;
+      border: 1px solid #e8dcc8;
+      border-radius: 8px;
+      padding: 7px 9px;
+    }
+
+    .pill .k {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2px;
+    }
+
+    .pill .v {
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .tool-item {
+      border: 1px solid #e8dcc8;
+      border-left: 5px solid #bcc5c4;
+      border-radius: 10px;
+      margin-bottom: 9px;
+      background: #fffefb;
+      overflow: hidden;
+    }
+
+    .tool-item.ok {
+      border-left-color: var(--ok);
+    }
+
+    .tool-item.fail {
+      border-left-color: var(--warn);
+    }
+
+    .tool-head {
+      padding: 9px 11px;
+      border-bottom: 1px dashed #ebdfcc;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 13px;
+      background: #fdf6ea;
+    }
+
+    .tool-body {
+      padding: 9px 11px;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    details {
+      background: #fff;
+      border: 1px solid #ecdcc4;
+      border-radius: 7px;
+      padding: 5px 8px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: #46484f;
+      font-weight: 600;
+    }
+
+    .log-line {
+      border-bottom: 1px dashed #e9decd;
+      padding: 4px 0;
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+      font-size: 12px;
+    }
+
+    .log-line b {
+      color: #2d3039;
+    }
+
+    .thought {
+      background: #ecf7f4;
+      border: 1px solid #d1ebe4;
+      border-radius: 10px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+
+    .mono {
+      font-family: "IBM Plex Mono", "Consolas", monospace;
+    }
+
+    @media (max-width: 1100px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .row {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <h1 class="title">GM Agentic Trace Viewer</h1>
+      <div id="statusBadge" class="status">Idle</div>
+    </div>
+
+    <section class="control">
+      <div class="row">
+        <div class="field">
+          <label for="worldId">World ID</label>
+          <input id="worldId" type="text" value="goblin_slayer_world" />
+        </div>
+        <div class="field">
+          <label for="sessionId">Session ID</label>
+          <input id="sessionId" type="text" value="" placeholder="session_xxx" />
+        </div>
+        <div class="field">
+          <label for="privateMode">Private Mode</label>
+          <input id="privateMode" type="text" value="false" placeholder="true / false" />
+        </div>
+        <div class="field">
+          <label for="privateTarget">Private Target</label>
+          <input id="privateTarget" type="text" value="" placeholder="teammate_id / npc_id" />
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label for="playerInput">Player Input</label>
+        <textarea id="playerInput" placeholder="输入玩家本轮操作...">我想问问队友下一步该怎么推进主线？</textarea>
+      </div>
+      <div class="actions">
+        <button id="startBtn" class="primary">Start Stream</button>
+        <button id="stopBtn" class="danger" disabled>Stop</button>
+        <button id="clearBtn">Clear Panels</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>GM Output</h2>
+        <div id="gmBody" class="body"></div>
+      </article>
+
+      <article class="panel">
+        <h2>Thinking Summary</h2>
+        <div class="body">
+          <div id="kpiBox" class="kpi">
+            <div class="pill"><span class="k">Level</span><span id="kLevel" class="v">-</span></div>
+            <div class="pill"><span class="k">Tool Calls</span><span id="kCalls" class="v">0</span></div>
+            <div class="pill"><span class="k">Tokens</span><span id="kTokens" class="v">0</span></div>
+            <div class="pill"><span class="k">Finish</span><span id="kFinish" class="v">-</span></div>
+          </div>
+          <div id="thoughtSummary" class="thought">No thinking summary yet.</div>
+          <div>
+            <b>State Delta</b>
+            <pre id="stateDelta" class="mono"></pre>
+          </div>
+          <div>
+            <b>Chapter Info</b>
+            <pre id="chapterInfo" class="mono"></pre>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>Tool Timeline</h2>
+        <div id="toolBody" class="body"></div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-top:12px">
+      <h2>Event Log</h2>
+      <div id="logBody" class="body"></div>
+    </section>
+  </div>
+
+  <script>
+    const statusBadge = document.getElementById("statusBadge");
+    const gmBody = document.getElementById("gmBody");
+    const toolBody = document.getElementById("toolBody");
+    const logBody = document.getElementById("logBody");
+    const thoughtSummary = document.getElementById("thoughtSummary");
+    const stateDelta = document.getElementById("stateDelta");
+    const chapterInfo = document.getElementById("chapterInfo");
+    const kLevel = document.getElementById("kLevel");
+    const kCalls = document.getElementById("kCalls");
+    const kTokens = document.getElementById("kTokens");
+    const kFinish = document.getElementById("kFinish");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const clearBtn = document.getElementById("clearBtn");
+
+    let abortController = null;
+    let gmText = "";
+
+    const pretty = (value) => {
+      try {
+        if (value === undefined || value === null || value === "") return "";
+        if (typeof value === "string") return value;
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return String(value);
+      }
+    };
+
+    const setStatus = (text, warn = false) => {
+      statusBadge.textContent = text;
+      statusBadge.classList.toggle("warn", warn);
+    };
+
+    const appendLog = (event) => {
+      const row = document.createElement("div");
+      row.className = "log-line";
+      const now = new Date().toLocaleTimeString();
+      row.innerHTML = `<b>${now}</b> [${event.type || "event"}] ${escapeHtml(pretty(event.error || ""))}`;
+      logBody.prepend(row);
+    };
+
+    const escapeHtml = (text) => {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    };
+
+    const renderTools = (trace) => {
+      if (!trace || !Array.isArray(trace.tool_calls)) return;
+      toolBody.innerHTML = "";
+      for (const call of trace.tool_calls) {
+        const item = document.createElement("div");
+        item.className = `tool-item ${call.success ? "ok" : "fail"}`;
+        const err = call.error ? ` | error: ${escapeHtml(call.error)}` : "";
+        item.innerHTML = `
+          <div class="tool-head">
+            <span>#${call.index} ${escapeHtml(call.name || "")}</span>
+            <span>${call.success ? "OK" : "FAIL"} | ${call.duration_ms || 0}ms${err}</span>
+          </div>
+          <div class="tool-body">
+            <details>
+              <summary>args</summary>
+              <pre>${escapeHtml(pretty(call.args))}</pre>
+            </details>
+            <details>
+              <summary>result</summary>
+              <pre>${escapeHtml(pretty(call.result))}</pre>
+            </details>
+          </div>
+        `;
+        toolBody.appendChild(item);
+      }
+    };
+
+    const renderThinking = (trace) => {
+      if (!trace || !trace.thinking) return;
+      const t = trace.thinking;
+      kLevel.textContent = t.level || "-";
+      kCalls.textContent = String((trace.stats && trace.stats.count) || (trace.tool_calls || []).length || 0);
+      kTokens.textContent = String(t.total_token_count || 0);
+      kFinish.textContent = t.finish_reason || "-";
+      thoughtSummary.textContent = t.summary || "No thought summary in this round.";
+    };
+
+    const handleEvent = (event) => {
+      appendLog(event);
+      if (event.type === "phase") {
+        setStatus(`Phase: ${event.phase || "unknown"}`);
+        return;
+      }
+      if (event.type === "gm_start") {
+        gmText = "";
+        gmBody.textContent = "";
+        setStatus("Streaming GM output...");
+        return;
+      }
+      if (event.type === "gm_chunk") {
+        gmText += event.text || "";
+        gmBody.textContent = gmText;
+        gmBody.scrollTop = gmBody.scrollHeight;
+        return;
+      }
+      if (event.type === "agentic_trace") {
+        renderThinking(event.agentic_trace);
+        renderTools(event.agentic_trace);
+        return;
+      }
+      if (event.type === "complete") {
+        if (event.agentic_trace) {
+          renderThinking(event.agentic_trace);
+          renderTools(event.agentic_trace);
+        } else if (event.metadata && event.metadata.agentic_trace) {
+          renderThinking(event.metadata.agentic_trace);
+          renderTools(event.metadata.agentic_trace);
+        }
+        stateDelta.textContent = pretty(event.state_delta);
+        chapterInfo.textContent = pretty(event.chapter_info);
+        setStatus("Completed");
+        stopStream();
+        return;
+      }
+      if (event.type === "error") {
+        setStatus(`Error: ${event.error || "unknown"}`, true);
+        stopStream();
+      }
+    };
+
+    const parseSSEChunk = (raw, onEvent) => {
+      const blocks = raw.split("\n\n");
+      const remain = blocks.pop() || "";
+      for (const block of blocks) {
+        const lines = block.split("\n");
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload) continue;
+          try {
+            onEvent(JSON.parse(payload));
+          } catch (err) {
+            appendLog({ type: "parse_error", error: String(err) });
+          }
+        }
+      }
+      return remain;
+    };
+
+    const startStream = async () => {
+      if (abortController) return;
+      const worldId = document.getElementById("worldId").value.trim();
+      const sessionId = document.getElementById("sessionId").value.trim();
+      const input = document.getElementById("playerInput").value.trim();
+      const privateModeText = document.getElementById("privateMode").value.trim().toLowerCase();
+      const privateTarget = document.getElementById("privateTarget").value.trim();
+
+      if (!worldId || !sessionId || !input) {
+        setStatus("world/session/input 不能为空", true);
+        return;
+      }
+
+      abortController = new AbortController();
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus("Connecting...");
+
+      const body = {
+        input,
+        is_private: privateModeText === "true" || privateModeText === "1" || privateModeText === "yes",
+        private_target: privateTarget || null,
+      };
+
+      try {
+        const response = await fetch(`/api/game/${encodeURIComponent(worldId)}/sessions/${encodeURIComponent(sessionId)}/input/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          buffer = parseSSEChunk(buffer, handleEvent);
+        }
+      } catch (err) {
+        if (err && err.name === "AbortError") {
+          appendLog({ type: "abort", error: "stream aborted" });
+        } else {
+          setStatus(`Stream failed: ${err}`, true);
+          appendLog({ type: "stream_error", error: String(err) });
+        }
+      } finally {
+        stopStream();
+      }
+    };
+
+    const stopStream = () => {
+      if (abortController) {
+        abortController.abort();
+      }
+      abortController = null;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+
+    const clearPanels = () => {
+      gmText = "";
+      gmBody.textContent = "";
+      toolBody.textContent = "";
+      logBody.textContent = "";
+      thoughtSummary.textContent = "No thinking summary yet.";
+      stateDelta.textContent = "";
+      chapterInfo.textContent = "";
+      kLevel.textContent = "-";
+      kCalls.textContent = "0";
+      kTokens.textContent = "0";
+      kFinish.textContent = "-";
+      setStatus("Idle");
+    };
+
+    startBtn.addEventListener("click", startStream);
+    stopBtn.addEventListener("click", stopStream);
+    clearBtn.addEventListener("click", clearPanels);
+  </script>
+</body>
+</html>

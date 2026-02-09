@@ -67,6 +67,8 @@ class CombatEngine:
         player_state: dict,
         environment: Optional[dict] = None,
         allies: Optional[List[dict]] = None,
+        world_id: Optional[str] = None,
+        template_version: Optional[str] = None,
     ) -> CombatSession:
         """
         开始战斗
@@ -89,7 +91,12 @@ class CombatEngine:
         5. 返回会话
         """
         combat_id = f"combat_{uuid.uuid4().hex[:8]}"
-        session = CombatSession(combat_id=combat_id, environment=environment)
+        session_env = dict(environment or {})
+        if world_id:
+            session_env["world_id"] = world_id
+        if template_version:
+            session_env["template_version"] = template_version
+        session = CombatSession(combat_id=combat_id, environment=session_env)
 
         # 1. 创建玩家
         player = self._create_player_combatant(player_state)
@@ -103,7 +110,12 @@ class CombatEngine:
 
         # 3. 创建敌人
         for index, enemy_data in enumerate(enemies):
-            enemy = self._create_enemy_combatant(enemy_data, index=index + 1)
+            enemy = self._create_enemy_combatant(
+                enemy_data,
+                index=index + 1,
+                world_id=world_id,
+                template_version=template_version,
+            )
             session.combatants.append(enemy)
 
         # 初始化距离系统
@@ -351,7 +363,7 @@ class CombatEngine:
 
         # 10. 法术选项
         for spell_id in current_actor.spells_known:
-            template = SPELL_TEMPLATES.get(spell_id)
+            template = self._get_spell_template(session, spell_id)
             if not template:
                 continue
             cost_type = "bonus" if template.get("bonus_action") else "action"
@@ -378,7 +390,7 @@ class CombatEngine:
                     continue
                 actions.append(
                     ActionOption(
-                        action_id=f"spell_{spell_id}_{target.id}",
+                        action_id=self._build_spell_action_id(spell_id, target.id),
                         action_type=ActionType.SPELL,
                         display_name=f"施放 {template['name']} -> {target.name}",
                         description=f"施放{template['name']}",
@@ -543,11 +555,10 @@ class CombatEngine:
             else:
                 result = self._execute_disengage(session, current_actor)
         elif action_id.startswith("spell_"):
-            parts = action_id.split("_", 2)
-            if len(parts) < 3:
+            parsed = self._parse_spell_action_id(action_id, session)
+            if not parsed:
                 raise ValueError("Invalid spell action id")
-            spell_id = parts[1]
-            target_id = parts[2]
+            spell_id, target_id = parsed
             result = self._execute_spell(session, current_actor, spell_id, target_id)
         elif action_id.startswith("use_"):
             if not current_actor.consume_action(ACTION_COSTS[ActionType.USE_ITEM]):
@@ -1064,9 +1075,9 @@ class CombatEngine:
         self, session: CombatSession, caster: Combatant, spell_id: str, target_id: str
     ) -> ActionResult:
         """执行法术"""
-        template = SPELL_TEMPLATES.get(spell_id)
+        template = self._get_spell_template(session, spell_id)
         result = ActionResult(
-            action_id=f"spell_{spell_id}_{target_id}",
+            action_id=self._build_spell_action_id(spell_id, target_id),
             action_type=ActionType.SPELL,
             actor_id=caster.id,
             target_id=target_id,
@@ -1252,27 +1263,64 @@ class CombatEngine:
             speed=player_state.get("speed", 1),
         )
 
-    def _create_enemy_combatant(self, enemy_data: dict, index: int) -> Combatant:
+    def _create_enemy_combatant(
+        self,
+        enemy_data: dict,
+        index: int,
+        world_id: Optional[str] = None,
+        template_version: Optional[str] = None,
+    ) -> Combatant:
         """从敌人配置创建战斗单位"""
-        enemy_type = enemy_data["type"]
-        template = get_enemy_template(enemy_type)
+        enemy_type = str(
+            enemy_data.get("type")
+            or enemy_data.get("enemy_id")
+            or ""
+        ).strip()
+        if not enemy_type:
+            raise ValueError("Enemy entry missing 'type' or 'enemy_id'")
+
+        template_world = enemy_data.get("world_id") or world_id
+        template_ver = enemy_data.get("template_version") or template_version
+        template = get_enemy_template(
+            enemy_type,
+            world_id=template_world,
+            template_version=template_ver,
+        )
 
         if not template:
             raise ValueError(f"Unknown enemy type: {enemy_type}")
 
+        level = max(1, int(enemy_data.get("level", 1) or 1))
+        level_delta = max(0, level - 1)
+        hp = int(template["max_hp"] * (1 + 0.15 * level_delta))
+        attack_bonus = int(template["attack_bonus"]) + (level_delta // 2)
+        damage_bonus = int(template["damage_bonus"]) + (level_delta // 2)
+        initiative_bonus = int(template["initiative_bonus"]) + (level_delta // 3)
+        ac = int(template["ac"]) + (level_delta // 3)
+
+        overrides = enemy_data.get("overrides") if isinstance(enemy_data.get("overrides"), dict) else {}
+        hp = int(overrides.get("max_hp", hp))
+        ac = int(overrides.get("ac", ac))
+        attack_bonus = int(overrides.get("attack_bonus", attack_bonus))
+        damage_dice = str(overrides.get("damage_dice", template["damage_dice"]))
+        damage_bonus = int(overrides.get("damage_bonus", damage_bonus))
+        damage_type = str(overrides.get("damage_type", template.get("damage_type", "slashing")))
+
+        enemy_id_base = str(template.get("enemy_type") or enemy_type)
         return Combatant(
-            id=f"{enemy_type}_{index}",
+            id=f"{enemy_id_base}_{index}",
             name=f"{template['name']}{index}",
             combatant_type=CombatantType.ENEMY,
-            hp=template["max_hp"],
-            max_hp=template["max_hp"],
-            ac=template["ac"],
-            attack_bonus=template["attack_bonus"],
-            damage_dice=template["damage_dice"],
-            damage_bonus=template["damage_bonus"],
-            damage_type=template.get("damage_type", "slashing"),
-            initiative_bonus=template["initiative_bonus"],
+            hp=hp,
+            max_hp=hp,
+            ac=ac,
+            attack_bonus=attack_bonus,
+            damage_dice=damage_dice,
+            damage_bonus=damage_bonus,
+            damage_type=damage_type,
+            initiative_bonus=initiative_bonus,
             ai_personality=template.get("ai_personality", "aggressive"),
+            spells_known=template.get("spells_known", []),
             resistances=template.get("resistances", []),
             vulnerabilities=template.get("vulnerabilities", []),
             immunities=template.get("immunities", []),
@@ -1321,11 +1369,20 @@ class CombatEngine:
         items: list[str] = []
 
         # 遍历所有被击败的敌人
+        world_id = None
+        template_version = None
+        if isinstance(session.environment, dict):
+            world_id = session.environment.get("world_id")
+            template_version = session.environment.get("template_version")
         for combatant in session.combatants:
             if combatant.is_enemy() and not combatant.is_alive:
                 # 从模板读取奖励
                 enemy_type = combatant.id.rsplit("_", 1)[0]  # 去掉数字后缀
-                template = get_enemy_template(enemy_type)
+                template = get_enemy_template(
+                    enemy_type,
+                    world_id=world_id,
+                    template_version=template_version,
+                )
 
                 if template:
                     total_xp += template.get("xp_reward", 0)
@@ -1391,6 +1448,49 @@ class CombatEngine:
         except ValueError:
             max_band = DistanceBand.NEAR
         return RANGE_BANDS.index(distance) <= RANGE_BANDS.index(max_band)
+
+    def _get_spell_template(self, session: CombatSession, spell_id: str) -> Optional[dict]:
+        """Get spell template from session-scoped skill templates first, then built-ins."""
+        if isinstance(session.environment, dict):
+            skill_templates = session.environment.get("skill_templates")
+            if isinstance(skill_templates, dict) and spell_id in skill_templates:
+                return skill_templates.get(spell_id)
+        return SPELL_TEMPLATES.get(spell_id)
+
+    def _build_spell_action_id(self, spell_id: str, target_id: str) -> str:
+        """Keep a backward-compatible spell action id format."""
+        return f"spell_{spell_id}_{target_id}"
+
+    def _parse_spell_action_id(
+        self,
+        action_id: str,
+        session: CombatSession,
+    ) -> Optional[Tuple[str, str]]:
+        """Parse spell action id safely when spell/target ids include underscores."""
+        if not action_id.startswith("spell_"):
+            return None
+
+        body = action_id[len("spell_") :]
+        if not body:
+            return None
+
+        candidate_ids = sorted(
+            [combatant.id for combatant in session.combatants],
+            key=len,
+            reverse=True,
+        )
+        for target_id in candidate_ids:
+            suffix = f"_{target_id}"
+            if body.endswith(suffix):
+                spell_id = body[: -len(suffix)]
+                if spell_id:
+                    return spell_id, target_id
+
+        # Fallback: legacy split with fixed maxsplit
+        parts = action_id.split("_", 2)
+        if len(parts) >= 3 and parts[1] and parts[2]:
+            return parts[1], parts[2]
+        return None
 
     def _is_opponent(self, source: Combatant, target: Combatant) -> bool:
         if source.is_enemy() and (target.is_player() or target.is_ally()):

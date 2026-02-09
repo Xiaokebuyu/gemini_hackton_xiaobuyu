@@ -13,10 +13,12 @@ import os
 import shlex
 import sys
 import time
+import uuid
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any, Dict, Literal, Optional
 
 import httpx
 from mcp.client.session import ClientSession
@@ -78,6 +80,11 @@ class MCPClientPool:
         self._call_locks: Dict[str, asyncio.Lock] = {}
         self._connect_locks: Dict[str, asyncio.Lock] = {}
         self._cooldowns: Dict[str, float] = {}
+        self._session_epochs: Dict[str, int] = {}
+        self._last_protocol_check: Dict[str, float] = {}
+        self._recent_tool_calls: deque[Dict[str, Any]] = deque(maxlen=200)
+        self._recent_errors: deque[Dict[str, Any]] = deque(maxlen=200)
+        self._server_stats: Dict[str, Dict[str, int]] = {}
 
         self._cooldown_seconds = 30.0
         self._tool_timeout_seconds = float(settings.mcp_tool_timeout_seconds)
@@ -88,6 +95,7 @@ class MCPClientPool:
             },
         }
         self._ping_timeout_seconds = 2.0
+        self._protocol_health_check_interval_seconds = 5.0
 
         self._server_root = Path(__file__).resolve().parents[2]
 
@@ -234,17 +242,74 @@ class MCPClientPool:
         return command
 
     @staticmethod
-    def _replace_url_path(url: str, path: str) -> str:
-        parsed = urlsplit(url)
-        return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+    def _normalize_transport(transport: str) -> str:
+        value = (transport or "stdio").strip().lower()
+        if value == "streamable_http":
+            return "streamable-http"
+        return value
+
+    @classmethod
+    def _is_http_transport(cls, transport: str) -> bool:
+        return cls._normalize_transport(transport) in {"streamable-http", "sse"}
+
+    def _is_session_lifecycle_error(self, error: Exception | None) -> bool:
+        if error is None:
+            return False
+        keywords = (
+            "closedresourceerror",
+            "stream closed",
+            "missing session id",
+            "session id",
+            "asgi callable returned without completing response",
+            "sse response error",
+            "broken resource",
+            "connection closed",
+        )
+        for exc in self._iter_related_errors(error):
+            text = f"{type(exc).__name__}: {exc}".lower()
+            if any(keyword in text for keyword in keywords):
+                return True
+        return False
+
+    def _classify_probe_error(
+        self, error: Exception | None
+    ) -> Literal["timeout", "endpoint_unreachable", "session_lifecycle_error", "protocol_mismatch"]:
+        if self._is_timeout_error(error):
+            return "timeout"
+        if self._is_service_unavailable_error(error):
+            return "endpoint_unreachable"
+        if self._is_session_lifecycle_error(error):
+            return "session_lifecycle_error"
+        return "protocol_mismatch"
+
+    def _ensure_server_stats(self, server_type: str) -> Dict[str, int]:
+        if server_type not in self._server_stats:
+            self._server_stats[server_type] = {
+                "calls_total": 0,
+                "calls_success": 0,
+                "calls_failed": 0,
+                "session_errors": 0,
+                "forced_reconnects": 0,
+            }
+        return self._server_stats[server_type]
+
+    def _record_tool_call(self, event: Dict[str, Any]) -> None:
+        self._recent_tool_calls.append(event)
+
+    def _record_error(self, event: Dict[str, Any]) -> None:
+        self._recent_errors.append(event)
+
+    def _cooldown_remaining_seconds(self, server_type: str) -> float:
+        until = self._cooldowns.get(server_type, 0.0)
+        return max(0.0, until - time.monotonic())
 
     async def _probe_http_endpoint(self, url: str, timeout_seconds: float) -> Dict[str, Any]:
         try:
             timeout = httpx.Timeout(max(0.5, float(timeout_seconds)))
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url, headers={"Accept": "application/json"})
+                response = await client.get(url, headers={"Accept": "text/event-stream"})
             return {
-                "ok": response.status_code < 500,
+                "ok": response.status_code < 500 and response.status_code != 404,
                 "url": url,
                 "status_code": response.status_code,
             }
@@ -254,6 +319,55 @@ class MCPClientPool:
                 "url": url,
                 "error": f"{type(exc).__name__}: {exc}",
             }
+
+    async def _probe_mcp_handshake(
+        self,
+        *,
+        transport: str,
+        endpoint: str,
+        timeout_seconds: float,
+    ) -> Dict[str, Any]:
+        started = time.perf_counter()
+        normalized_transport = self._normalize_transport(transport)
+        timeout = max(0.5, float(timeout_seconds))
+        handshake: Dict[str, Any] = {
+            "ok": False,
+            "transport": normalized_transport,
+            "endpoint": endpoint,
+        }
+        exit_stack = contextlib.AsyncExitStack()
+        try:
+            if normalized_transport == "streamable-http":
+                read_stream, write_stream, _ = await asyncio.wait_for(
+                    exit_stack.enter_async_context(streamable_http_client(endpoint)),
+                    timeout=timeout,
+                )
+            elif normalized_transport == "sse":
+                read_stream, write_stream = await asyncio.wait_for(
+                    exit_stack.enter_async_context(sse_client(endpoint)),
+                    timeout=timeout,
+                )
+            else:
+                raise RuntimeError(f"unsupported transport: {normalized_transport}")
+
+            session = ClientSession(read_stream, write_stream)
+            await asyncio.wait_for(exit_stack.enter_async_context(session), timeout=timeout)
+            await asyncio.wait_for(session.initialize(), timeout=timeout)
+            await asyncio.wait_for(session.send_ping(), timeout=min(timeout, self._ping_timeout_seconds))
+            tools_result = await asyncio.wait_for(session.list_tools(), timeout=timeout)
+            tools = getattr(tools_result, "tools", None) or []
+
+            handshake["ok"] = True
+            handshake["tool_count"] = len(tools)
+        except Exception as exc:
+            handshake["error"] = f"{type(exc).__name__}: {exc}"
+            handshake["error_kind"] = self._classify_probe_error(exc)
+        finally:
+            with contextlib.suppress(Exception):
+                await exit_stack.aclose()
+            handshake["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+
+        return handshake
 
     async def probe(
         self,
@@ -265,51 +379,73 @@ class MCPClientPool:
             raise ValueError(f"Unknown server type: {server_type}")
 
         config = self._configs[server_type]
-        transport = (config.transport or "stdio").lower()
+        transport = self._normalize_transport(config.transport)
         endpoint = (config.endpoint or "").strip()
+        probe_mode = (settings.mcp_http_probe_mode or "handshake").strip().lower()
+        if probe_mode not in {"tcp", "handshake"}:
+            probe_mode = "handshake"
+        handshake_timeout = max(
+            0.5,
+            min(float(settings.mcp_http_handshake_timeout_seconds), float(timeout_seconds)),
+        )
         result: Dict[str, Any] = {
             "ok": False,
             "server_type": server_type,
             "name": config.name,
             "transport": transport,
             "endpoint": endpoint,
+            "probe_mode": probe_mode,
         }
 
-        if transport in {"streamable-http", "streamable_http"}:
+        if transport == "streamable-http":
             if not endpoint:
                 result["error"] = "missing endpoint"
                 return result
 
-            health_url = self._replace_url_path(endpoint, "/health")
-            health_probe = await self._probe_http_endpoint(health_url, timeout_seconds)
-            result["health_probe"] = health_probe
-            if health_probe.get("ok"):
-                result["ok"] = True
+            if probe_mode == "tcp":
+                endpoint_probe = await self._probe_http_endpoint(endpoint, timeout_seconds)
+                result["endpoint_probe"] = endpoint_probe
+                result["ok"] = bool(endpoint_probe.get("ok"))
+                if not result["ok"]:
+                    result["error"] = endpoint_probe.get("error") or "endpoint probe failed"
                 return result
 
-            endpoint_probe = await self._probe_http_endpoint(endpoint, timeout_seconds)
-            result["endpoint_probe"] = endpoint_probe
-            result["ok"] = bool(endpoint_probe.get("ok"))
+            handshake_probe = await self._probe_mcp_handshake(
+                transport=transport,
+                endpoint=endpoint,
+                timeout_seconds=handshake_timeout,
+            )
+            result["handshake_probe"] = handshake_probe
+            result["ok"] = bool(handshake_probe.get("ok"))
             if not result["ok"]:
-                result["error"] = (
-                    endpoint_probe.get("error")
-                    or health_probe.get("error")
-                    or "endpoint probe failed"
-                )
+                result["error"] = handshake_probe.get("error") or "mcp handshake probe failed"
             return result
 
-        if transport in {"sse"}:
+        if transport == "sse":
             if not endpoint:
                 result["error"] = "missing endpoint"
                 return result
-            endpoint_probe = await self._probe_http_endpoint(endpoint, timeout_seconds)
-            result["endpoint_probe"] = endpoint_probe
-            result["ok"] = bool(endpoint_probe.get("ok"))
+
+            if probe_mode == "tcp":
+                endpoint_probe = await self._probe_http_endpoint(endpoint, timeout_seconds)
+                result["endpoint_probe"] = endpoint_probe
+                result["ok"] = bool(endpoint_probe.get("ok"))
+                if not result["ok"]:
+                    result["error"] = endpoint_probe.get("error") or "endpoint probe failed"
+                return result
+
+            handshake_probe = await self._probe_mcp_handshake(
+                transport=transport,
+                endpoint=endpoint,
+                timeout_seconds=handshake_timeout,
+            )
+            result["handshake_probe"] = handshake_probe
+            result["ok"] = bool(handshake_probe.get("ok"))
             if not result["ok"]:
-                result["error"] = endpoint_probe.get("error") or "endpoint probe failed"
+                result["error"] = handshake_probe.get("error") or "mcp handshake probe failed"
             return result
 
-        if transport in {"stdio"}:
+        if transport == "stdio":
             # stdio transport cannot be probed externally; we validate it lazily on first tool call.
             result["ok"] = True
             result["note"] = "stdio probe skipped"
@@ -317,7 +453,6 @@ class MCPClientPool:
 
         result["error"] = f"unsupported transport: {transport}"
         return result
-
     async def probe_dependencies(
         self,
         timeout_seconds: float = 2.0,
@@ -338,13 +473,13 @@ class MCPClientPool:
             raise ValueError(f"Unknown server type: {server_type}")
 
         session = self._sessions.get(server_type)
-        if session and await self._check_health(session):
+        if session and await self._check_health(server_type, session):
             return session
 
         connect_lock = self._get_lock(self._connect_locks, server_type)
         async with connect_lock:
             session = self._sessions.get(server_type)
-            if session and await self._check_health(session):
+            if session and await self._check_health(server_type, session):
                 return session
             return await self._connect(server_type)
 
@@ -356,13 +491,28 @@ class MCPClientPool:
         max_retries: int = 2,
     ) -> Dict[str, Any]:
         """Call a tool with automatic reconnection on failure."""
+        stats = self._ensure_server_stats(server_type)
+        request_id = uuid.uuid4().hex[:12]
+        config = self._configs.get(server_type)
+        transport = self._normalize_transport(config.transport) if config else "unknown"
+        endpoint = (config.endpoint if config else "") or ""
+
         if self._in_cooldown(server_type):
-            config = self._configs.get(server_type)
-            endpoint = config.endpoint if config else ""
+            detail = "server in cooldown"
+            self._record_error(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "request_id": request_id,
+                    "server_type": server_type,
+                    "tool_name": tool_name,
+                    "error_type": "cooldown",
+                    "detail": detail,
+                }
+            )
             raise MCPServiceUnavailableError(
                 server_type=server_type,
                 endpoint=endpoint,
-                detail="server in cooldown",
+                detail=detail,
             )
 
         last_error: Optional[Exception] = None
@@ -370,28 +520,114 @@ class MCPClientPool:
 
         async with call_lock:
             for attempt in range(max_retries + 1):
+                started = time.perf_counter()
+                timeout = self._resolve_tool_timeout(server_type, tool_name)
+                session_epoch = self._session_epochs.get(server_type, 0)
+                logger.info(
+                    "[MCPPool] call start request_id=%s server=%s transport=%s endpoint=%s "
+                    "tool=%s attempt=%s/%s timeout=%.1fs session_epoch=%s",
+                    request_id,
+                    server_type,
+                    transport,
+                    endpoint,
+                    tool_name,
+                    attempt + 1,
+                    max_retries + 1,
+                    timeout,
+                    session_epoch,
+                )
                 try:
-                    timeout = self._resolve_tool_timeout(server_type, tool_name)
                     session = await self.get_session(server_type)
                     result = await asyncio.wait_for(
                         session.call_tool(tool_name, arguments),
                         timeout=timeout,
                     )
-                    return self._decode_tool_result(result)
+                    decoded = self._decode_tool_result(result)
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    stats["calls_total"] += 1
+                    stats["calls_success"] += 1
+                    self._record_tool_call(
+                        {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "request_id": request_id,
+                            "server_type": server_type,
+                            "tool_name": tool_name,
+                            "attempt": attempt + 1,
+                            "success": True,
+                            "elapsed_ms": elapsed_ms,
+                            "session_epoch": self._session_epochs.get(server_type, 0),
+                        }
+                    )
+                    logger.info(
+                        "[MCPPool] call success request_id=%s server=%s tool=%s elapsed_ms=%s attempt=%s/%s",
+                        request_id,
+                        server_type,
+                        tool_name,
+                        elapsed_ms,
+                        attempt + 1,
+                        max_retries + 1,
+                    )
+                    return decoded
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     last_error = exc
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    error_type = type(exc).__name__
                     logger.warning(
-                        "[MCPPool] Tool call failed (%s/%s, attempt %s/%s): %s: %r",
+                        "[MCPPool] call failed request_id=%s server=%s transport=%s endpoint=%s "
+                        "tool=%s attempt=%s/%s elapsed_ms=%s error=%s: %r",
+                        request_id,
                         server_type,
+                        transport,
+                        endpoint,
                         tool_name,
                         attempt + 1,
                         max_retries + 1,
-                        type(exc).__name__,
+                        elapsed_ms,
+                        error_type,
                         exc,
                     )
                     self._healthy[server_type] = False
+                    stats["calls_total"] += 1
+                    stats["calls_failed"] += 1
+                    self._record_tool_call(
+                        {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "request_id": request_id,
+                            "server_type": server_type,
+                            "tool_name": tool_name,
+                            "attempt": attempt + 1,
+                            "success": False,
+                            "elapsed_ms": elapsed_ms,
+                            "error_type": error_type,
+                            "error": str(exc),
+                            "session_epoch": self._session_epochs.get(server_type, 0),
+                        }
+                    )
+                    self._record_error(
+                        {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "request_id": request_id,
+                            "server_type": server_type,
+                            "tool_name": tool_name,
+                            "attempt": attempt + 1,
+                            "error_type": error_type,
+                            "detail": str(exc),
+                            "session_epoch": self._session_epochs.get(server_type, 0),
+                        }
+                    )
+
+                    if settings.mcp_http_recover_on_session_error and self._is_session_lifecycle_error(exc):
+                        stats["session_errors"] += 1
+                        stats["forced_reconnects"] += 1
+                        logger.warning(
+                            "[MCPPool] session lifecycle error; forcing reconnect request_id=%s server=%s",
+                            request_id,
+                            server_type,
+                        )
+                        await self._close_session(server_type)
+
                     if attempt < max_retries:
                         await asyncio.sleep(0.1 * (attempt + 1))
 
@@ -418,12 +654,12 @@ class MCPClientPool:
         await self._close_session(server_type)
 
         config = self._configs[server_type]
-        transport = (config.transport or "stdio").lower()
+        transport = self._normalize_transport(config.transport)
         args = shlex.split(config.args) if isinstance(config.args, str) else list(config.args)
 
         exit_stack = contextlib.AsyncExitStack()
         try:
-            if transport in {"stdio"}:
+            if transport == "stdio":
                 command = self._resolve_command(config.command)
                 env = os.environ.copy()
                 root_str = str(config.cwd)
@@ -443,13 +679,13 @@ class MCPClientPool:
                 read_stream, write_stream = await exit_stack.enter_async_context(
                     stdio_client(server_params)
                 )
-            elif transport in {"streamable-http", "streamable_http"}:
+            elif transport == "streamable-http":
                 if not config.endpoint:
                     raise RuntimeError(f"{config.name} missing endpoint for {transport}")
                 read_stream, write_stream, _ = await exit_stack.enter_async_context(
                     streamable_http_client(config.endpoint)
                 )
-            elif transport in {"sse"}:
+            elif transport == "sse":
                 if not config.endpoint:
                     raise RuntimeError(f"{config.name} missing endpoint for {transport}")
                 read_stream, write_stream = await exit_stack.enter_async_context(
@@ -460,12 +696,29 @@ class MCPClientPool:
             session = ClientSession(read_stream, write_stream)
             await exit_stack.enter_async_context(session)
             await session.initialize()
+            await asyncio.wait_for(
+                session.send_ping(),
+                timeout=self._ping_timeout_seconds,
+            )
+            if self._is_http_transport(transport):
+                await asyncio.wait_for(
+                    session.list_tools(),
+                    timeout=max(self._ping_timeout_seconds, 3.0),
+                )
+                self._last_protocol_check[server_type] = time.monotonic()
 
             self._sessions[server_type] = session
             self._exit_stacks[server_type] = exit_stack
             self._healthy[server_type] = True
+            self._session_epochs[server_type] = self._session_epochs.get(server_type, 0) + 1
 
-            logger.info("[MCPPool] Connected to %s", config.name)
+            logger.info(
+                "[MCPPool] Connected to %s (transport=%s endpoint=%s session_epoch=%s)",
+                config.name,
+                transport,
+                config.endpoint,
+                self._session_epochs[server_type],
+            )
             return session
         except asyncio.CancelledError:
             await exit_stack.aclose()
@@ -479,15 +732,37 @@ class MCPClientPool:
                 detail=f"{type(exc).__name__}: {exc}",
             ) from exc
 
-    async def _check_health(self, session: ClientSession) -> bool:
-        """Check if a session is healthy via ping."""
+    async def _check_health(self, server_type: str, session: ClientSession) -> bool:
+        """Check if a session is healthy."""
         try:
             await asyncio.wait_for(
                 session.send_ping(),
                 timeout=self._ping_timeout_seconds,
             )
+            config = self._configs.get(server_type)
+            transport = self._normalize_transport(config.transport) if config else "stdio"
+            if self._is_http_transport(transport):
+                now = time.monotonic()
+                last = self._last_protocol_check.get(server_type, 0.0)
+                if (now - last) >= self._protocol_health_check_interval_seconds:
+                    await asyncio.wait_for(
+                        session.list_tools(),
+                        timeout=max(self._ping_timeout_seconds, 3.0),
+                    )
+                    self._last_protocol_check[server_type] = now
             return True
-        except Exception:
+        except Exception as exc:
+            self._record_error(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "request_id": "health-check",
+                    "server_type": server_type,
+                    "tool_name": "",
+                    "error_type": type(exc).__name__,
+                    "detail": str(exc),
+                    "session_epoch": self._session_epochs.get(server_type, 0),
+                }
+            )
             return False
 
     async def _close_session(self, server_type: str) -> None:
@@ -501,11 +776,66 @@ class MCPClientPool:
                 self._sessions.pop(server_type, None)
                 self._exit_stacks.pop(server_type, None)
                 self._healthy[server_type] = False
+                self._last_protocol_check.pop(server_type, None)
 
     async def _close_all(self) -> None:
         """Close all sessions."""
         for server_type in list(self._sessions.keys()):
             await self._close_session(server_type)
+
+    async def get_diagnostics(
+        self,
+        *,
+        include_probe: bool = True,
+        timeout_seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        probe_timeout = (
+            float(timeout_seconds)
+            if timeout_seconds is not None
+            else float(settings.mcp_probe_timeout_seconds)
+        )
+        probes = (
+            await self.probe_dependencies(timeout_seconds=probe_timeout)
+            if include_probe
+            else {}
+        )
+
+        servers: Dict[str, Any] = {}
+        for server_type, config in self._configs.items():
+            transport = self._normalize_transport(config.transport)
+            cooldown_remaining = self._cooldown_remaining_seconds(server_type)
+            stats = self._ensure_server_stats(server_type)
+            last_protocol_check = self._last_protocol_check.get(server_type)
+            protocol_check_age = None
+            if last_protocol_check:
+                protocol_check_age = round(max(0.0, time.monotonic() - last_protocol_check), 3)
+
+            servers[server_type] = {
+                "name": config.name,
+                "transport": transport,
+                "endpoint": config.endpoint,
+                "connected": server_type in self._sessions,
+                "healthy": bool(self._healthy.get(server_type, False)),
+                "in_cooldown": cooldown_remaining > 0,
+                "cooldown_remaining_seconds": round(cooldown_remaining, 3),
+                "session_epoch": self._session_epochs.get(server_type, 0),
+                "last_protocol_check_age_seconds": protocol_check_age,
+                "stats": dict(stats),
+                "probe": probes.get(server_type),
+            }
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "settings": {
+                "probe_mode": settings.mcp_http_probe_mode,
+                "probe_timeout_seconds": probe_timeout,
+                "handshake_timeout_seconds": settings.mcp_http_handshake_timeout_seconds,
+                "recover_on_session_error": settings.mcp_http_recover_on_session_error,
+            },
+            "servers": servers,
+            "recent_errors": list(self._recent_errors)[-50:],
+            "recent_tool_calls": list(self._recent_tool_calls)[-100:],
+        }
 
     @staticmethod
     def _try_parse_json(text: Any) -> Any:

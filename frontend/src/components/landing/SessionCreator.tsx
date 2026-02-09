@@ -3,9 +3,9 @@
  */
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, ChevronDown } from 'lucide-react';
+import { Loader2, ChevronDown, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { createSession, listRecoverableSessions, listWorlds } from '../../api';
+import { createSession, listRecoverableSessions } from '../../api';
 import type { RecoverableSessionItem, CreateGameSessionResponse, CharacterCreationResponse } from '../../types';
 import { CharacterCreation } from '../character/CharacterCreation';
 
@@ -14,11 +14,7 @@ interface SessionCreatorProps {
   onSessionCreated: (worldId: string, sessionId: string, createResponse?: CreateGameSessionResponse) => void;
 }
 
-interface WorldInfo {
-  id: string;
-  name: string;
-  description: string;
-}
+const FIXED_WORLD_ID = 'final-world';
 
 function formatRelativeTime(raw: string): string {
   const time = new Date(raw);
@@ -36,13 +32,10 @@ function formatRelativeTime(raw: string): string {
 
 export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionCreated }) => {
   const { t } = useTranslation();
-  const [worldId, setWorldId] = useState('');
+  const worldId = FIXED_WORLD_ID;
   const [userId, setUserId] = useState('player-001');
-  const [customWorldId, setCustomWorldId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
-  const [isLoadingWorlds, setIsLoadingWorlds] = useState(true);
-  const [worlds, setWorlds] = useState<WorldInfo[]>([]);
   const [recoverableSessions, setRecoverableSessions] = useState<RecoverableSessionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -52,34 +45,6 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
     location: any;
     time: any;
   } | null>(null);
-
-  // Load available worlds on mount
-  useEffect(() => {
-    let cancelled = false;
-    const loadWorlds = async () => {
-      setIsLoadingWorlds(true);
-      try {
-        const response = await listWorlds();
-        if (!cancelled) {
-          setWorlds(response.worlds);
-          if (response.worlds.length > 0) {
-            setWorldId((current) => current || response.worlds[0].id);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load worlds:', err);
-        if (!cancelled) {
-          setError('Failed to load worlds. Is the backend running?');
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingWorlds(false);
-        }
-      }
-    };
-    loadWorlds();
-    return () => { cancelled = true; };
-  }, []);
 
   // Auto-load sessions when world changes in continue mode
   useEffect(() => {
@@ -115,7 +80,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
   }, [mode, worldId, userId, t]);
 
   const handleCreate = async () => {
-    const effectiveWorldId = customWorldId.trim() || worldId.trim();
+    const effectiveWorldId = worldId.trim();
     if (!effectiveWorldId || !userId.trim()) return;
 
     setIsCreating(true);
@@ -175,8 +140,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
           border-t-2 border-t-[var(--g-accent-gold)]
           rounded-xl
           shadow-g-title-glow
-          overflow-y-auto max-h-[80vh]
-          g-scrollbar
+          cursor-default
         "
       >
         <CharacterCreation
@@ -201,6 +165,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
         rounded-xl
         shadow-g-title-glow
         p-6
+        cursor-default
       "
     >
       {/* Panel title */}
@@ -214,58 +179,24 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
 
       {/* World selection */}
       <div className="mb-5">
-        <div className="space-y-2">
-          {isLoadingWorlds ? (
-            <div className="flex items-center justify-center py-6 text-[var(--g-title-text-muted)] text-sm">
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              {t('landing.loadingWorlds')}
+        <div
+          className="
+            flex items-center justify-between gap-3
+            p-4 rounded-lg border
+            border-[var(--g-title-border-strong)]
+            bg-[rgba(196,154,42,0.08)]
+            shadow-g-card-glow
+          "
+        >
+          <div className="min-w-0">
+            <div className="font-heading text-sm text-[var(--g-title-text-primary)]">
+              final-world
             </div>
-          ) : worlds.length > 0 ? (
-            worlds.map((world, index) => (
-              <motion.button
-                key={world.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.08, duration: 0.3 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setWorldId(world.id)}
-                className={`
-                  group w-full text-left
-                  flex items-start gap-3
-                  p-4 rounded-lg border
-                  transition-all duration-200
-                  ${
-                    worldId === world.id
-                      ? 'border-[var(--g-title-border-strong)] bg-[rgba(196,154,42,0.08)] shadow-g-card-glow'
-                      : 'border-[var(--g-title-border)] bg-transparent hover:border-[var(--g-title-border-strong)]'
-                  }
-                `}
-              >
-                {/* Gold left bar */}
-                <div className={`
-                  w-1 self-stretch rounded-full shrink-0
-                  transition-colors duration-200
-                  ${worldId === world.id ? 'bg-[var(--g-accent-gold)]' : 'bg-[var(--g-title-border)] group-hover:bg-[var(--g-title-border-strong)]'}
-                `} />
-                <div className="min-w-0">
-                  <div className="font-heading text-sm text-[var(--g-title-text-primary)]">
-                    {world.name}
-                  </div>
-                  {world.description && (
-                    <div className="font-body text-xs text-[var(--g-title-text-muted)] mt-1 leading-relaxed">
-                      {world.description.length > 120
-                        ? world.description.slice(0, 120) + '...'
-                        : world.description}
-                    </div>
-                  )}
-                </div>
-              </motion.button>
-            ))
-          ) : (
-            <div className="text-xs text-g-red py-2">
-              No worlds available.
+            <div className="font-body text-xs text-[var(--g-title-text-muted)] mt-1 leading-relaxed">
+              环境已锁定为生产世界，无法切换
             </div>
-          )}
+          </div>
+          <Lock className="w-4 h-4 text-[var(--g-accent-gold)] shrink-0" />
         </div>
       </div>
 
@@ -280,7 +211,7 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
           whileHover={isCreating ? {} : { scale: 1.02, y: -1 }}
           whileTap={isCreating ? {} : { scale: 0.98 }}
           onClick={handleCreate}
-          disabled={isCreating || (!worldId.trim() && !customWorldId.trim()) || !userId.trim()}
+          disabled={isCreating || !worldId.trim() || !userId.trim()}
           className="
             w-full mb-4
             px-4 py-3
@@ -435,31 +366,6 @@ export const SessionCreator: React.FC<SessionCreatorProps> = ({ mode, onSessionC
                       placeholder:text-[var(--g-title-text-muted)]
                     "
                     placeholder="player-001"
-                  />
-                </label>
-
-                {/* Custom World ID */}
-                <label className="block">
-                  <span className="text-xs font-body text-[var(--g-title-text-muted)] mb-1 block">
-                    {t('landing.customWorldId')}
-                  </span>
-                  <input
-                    type="text"
-                    value={customWorldId}
-                    onChange={(e) => setCustomWorldId(e.target.value)}
-                    className="
-                      w-full px-3 py-2
-                      font-body text-sm
-                      bg-[rgba(26,21,16,0.6)]
-                      text-[var(--g-title-text-primary)]
-                      border border-[var(--g-title-border)]
-                      rounded-lg
-                      focus:border-[var(--g-accent-gold)]
-                      focus:outline-none
-                      transition-colors
-                      placeholder:text-[var(--g-title-text-muted)]
-                    "
-                    placeholder="custom-world-id..."
                   />
                 </label>
               </div>

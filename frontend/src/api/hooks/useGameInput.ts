@@ -11,12 +11,31 @@ import { streamGameInput } from '../sseClient';
 import { useGameStore } from '../../stores/gameStore';
 import { useChatStore } from '../../stores/chatStore';
 import type {
+  AgenticTracePayload,
+  CoordinatorImageData,
   PlayerInputRequest,
   CoordinatorResponse,
   GameAction,
   StateDelta,
   CoordinatorChapterInfo,
 } from '../../types';
+
+function normalizeImageData(value: unknown): CoordinatorImageData | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.base64 !== 'string' || raw.base64.length === 0) return null;
+  return {
+    base64: raw.base64,
+    mime_type: typeof raw.mime_type === 'string' && raw.mime_type ? raw.mime_type : 'image/png',
+    ...(typeof raw.style === 'string' ? { style: raw.style } : {}),
+    ...(typeof raw.prompt === 'string' ? { prompt: raw.prompt } : {}),
+    ...(typeof raw.model === 'string' ? { model: raw.model } : {}),
+  };
+}
+
+function normalizeAgenticTrace(value: unknown): AgenticTracePayload | null {
+  return value && typeof value === 'object' ? (value as AgenticTracePayload) : null;
+}
 
 // =============================================================================
 // Legacy non-streaming hook (kept for backward-compat)
@@ -35,6 +54,8 @@ export function useGameInput(options?: UseGameInputOptions) {
     setAvailableActions,
     setNarrativeSnapshot,
     updateFromStateDelta,
+    setImageData,
+    setAgenticTrace,
   } =
     useGameStore();
   const { addPlayerMessage, addGMResponseV2, setLoading, addSystemMessage } = useChatStore();
@@ -71,6 +92,8 @@ export function useGameInput(options?: UseGameInputOptions) {
         response.story_events ?? [],
         response.pacing_action ?? null,
       );
+      setImageData(normalizeImageData(response.image_data) ?? null);
+      setAgenticTrace(normalizeAgenticTrace(response.metadata?.agentic_trace) ?? null);
 
       // Invalidate location, time, and party queries to refresh sidebar
       queryClient.invalidateQueries({ queryKey: ['location'] });
@@ -136,10 +159,13 @@ export function useStreamGameInput() {
     setAvailableActions,
     setNarrativeSnapshot,
     updateFromStateDelta,
+    setImageData,
+    setAgenticTrace,
   } =
     useGameStore();
   const {
     addPlayerMessage,
+    addMessage,
     setLoading,
     addSystemMessage,
     isLoading,
@@ -156,10 +182,13 @@ export function useStreamGameInput() {
 
       addPlayerMessage(content);
       setLoading(true);
+      setImageData(null);
+      setAgenticTrace(null);
       abortRef.current = new AbortController();
 
       let currentGmId: string | null = null;
       const teammateIds: Record<string, string> = {};
+      let receivedTeammateStreamingEvent = false;
 
       try {
         await streamGameInput(
@@ -186,6 +215,7 @@ export function useStreamGameInput() {
                 break;
 
               case 'teammate_start': {
+                receivedTeammateStreamingEvent = true;
                 const charId = event.character_id as string;
                 const name = event.name as string;
                 teammateIds[charId] = startStreamingMessage(name, 'teammate', {
@@ -195,18 +225,41 @@ export function useStreamGameInput() {
               }
 
               case 'teammate_chunk': {
+                receivedTeammateStreamingEvent = true;
                 const tmId = teammateIds[event.character_id as string];
                 if (tmId) appendToStreamingMessage(tmId, event.text as string);
                 break;
               }
 
               case 'teammate_end': {
+                receivedTeammateStreamingEvent = true;
                 const endId = teammateIds[event.character_id as string];
                 if (endId) {
                   finalizeStreamingMessage(endId, event.response as string);
                 }
                 break;
               }
+
+              case 'teammate_response': {
+                receivedTeammateStreamingEvent = true;
+                const responseText = typeof event.response === 'string' ? event.response : '';
+                if (responseText) {
+                  addMessage({
+                    speaker: (event.name as string) || 'Teammate',
+                    content: responseText,
+                    type: 'teammate',
+                    metadata: {
+                      reaction: typeof event.reaction === 'string' ? event.reaction : undefined,
+                      character_id: typeof event.character_id === 'string' ? event.character_id : undefined,
+                    },
+                  });
+                }
+                break;
+              }
+
+              case 'agentic_trace':
+                setAgenticTrace(normalizeAgenticTrace(event.agentic_trace) ?? null);
+                break;
 
               case 'complete': {
                 if (event.state_delta) {
@@ -221,6 +274,30 @@ export function useStreamGameInput() {
                   storyEvents,
                   (event.pacing_action as string | null) || null,
                 );
+                setImageData(normalizeImageData(event.image_data) ?? null);
+                const metadata = event.metadata as Record<string, unknown> | undefined;
+                const trace = normalizeAgenticTrace(event.agentic_trace)
+                  ?? normalizeAgenticTrace(metadata?.agentic_trace);
+                if (trace) {
+                  setAgenticTrace(trace);
+                }
+                if (!receivedTeammateStreamingEvent && Array.isArray(event.teammate_responses)) {
+                  for (const item of event.teammate_responses) {
+                    if (!item || typeof item !== 'object') continue;
+                    const row = item as Record<string, unknown>;
+                    const contentText = typeof row.response === 'string' ? row.response : '';
+                    if (!contentText) continue;
+                    addMessage({
+                      speaker: (typeof row.name === 'string' ? row.name : 'Teammate'),
+                      content: contentText,
+                      type: 'teammate',
+                      metadata: {
+                        reaction: typeof row.reaction === 'string' ? row.reaction : undefined,
+                        character_id: typeof row.character_id === 'string' ? row.character_id : undefined,
+                      },
+                    });
+                  }
+                }
                 if (
                   event.available_actions &&
                   (event.available_actions as GameAction[]).length > 0
@@ -260,6 +337,7 @@ export function useStreamGameInput() {
       worldId,
       sessionId,
       addPlayerMessage,
+      addMessage,
       setLoading,
       addSystemMessage,
       startStreamingMessage,
@@ -268,6 +346,8 @@ export function useStreamGameInput() {
       updateFromStateDelta,
       setAvailableActions,
       setNarrativeSnapshot,
+      setImageData,
+      setAgenticTrace,
       queryClient,
     ],
   );

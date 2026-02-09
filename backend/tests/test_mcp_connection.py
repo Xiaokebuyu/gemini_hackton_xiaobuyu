@@ -38,7 +38,7 @@ class TestMCPClientPool:
         session = await pool.get_session(MCPClientPool.GAME_TOOLS)
         assert session is not None
         # 验证健康检查
-        is_healthy = await pool._check_health(session)
+        is_healthy = await pool._check_health(MCPClientPool.GAME_TOOLS, session)
         assert is_healthy
 
     @pytest.mark.asyncio

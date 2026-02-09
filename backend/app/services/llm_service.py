@@ -30,6 +30,14 @@ class LLMResponse:
     raw_response: Any = None
 
 
+@dataclass
+class AgenticForcedCallRound:
+    """Forced tool-calling first round payload."""
+    function_calls: List[Dict[str, Any]] = field(default_factory=list)
+    response_content: Any = None
+    raw_response: Any = None
+
+
 class LLMService:
     """LLM 服务类 - 支持 Gemini 3 思考功能"""
     
@@ -95,6 +103,9 @@ class LLMService:
                     thoughts_summary += part.text
                 else:
                     answer_text += part.text
+
+        if not answer_text and hasattr(response, "text") and response.text:
+            answer_text = response.text
         
         thinking_meta = ThinkingMetadata(
             thinking_enabled=settings.thinking_enabled,
@@ -116,6 +127,44 @@ class LLMService:
             thinking=thinking_meta,
             raw_response=response
         )
+
+    def _extract_function_calls(self, response: Any) -> List[Dict[str, Any]]:
+        """Extract function-call suggestions from Gemini response."""
+        calls: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+
+        raw_calls = getattr(response, "function_calls", None) or []
+        for fn in raw_calls:
+            name = str(getattr(fn, "name", "") or "").strip()
+            if not name:
+                continue
+            args_obj = getattr(fn, "args", None)
+            args: Dict[str, Any] = dict(args_obj) if isinstance(args_obj, dict) else {}
+            call_key = f"{name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+            if call_key in seen:
+                continue
+            seen.add(call_key)
+            calls.append({"name": name, "args": args})
+
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return calls
+        parts = getattr(getattr(candidates[0], "content", None), "parts", None) or []
+        for part in parts:
+            fn = getattr(part, "function_call", None)
+            if not fn:
+                continue
+            name = str(getattr(fn, "name", "") or "").strip()
+            if not name:
+                continue
+            args_obj = getattr(fn, "args", None)
+            args: Dict[str, Any] = dict(args_obj) if isinstance(args_obj, dict) else {}
+            call_key = f"{name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+            if call_key in seen:
+                continue
+            seen.add(call_key)
+            calls.append({"name": name, "args": args})
+        return calls
     
     async def generate_response(
         self, 
@@ -164,6 +213,191 @@ class LLMService:
                     thinking_level=thinking_level or settings.thinking_level
                 )
             )
+
+    async def agentic_generate(
+        self,
+        *,
+        user_prompt: str,
+        system_instruction: str,
+        tools: List[Any],
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+        max_remote_calls: Optional[int] = None,
+        cached_content: Optional[str] = None,
+    ) -> LLMResponse:
+        """Run a single agentic session with automatic function calling.
+
+        IMPORTANT: Uses mode="AUTO" (default) so the model can freely mix
+        tool calls and text responses within the SDK's automatic loop.
+        mode="ANY" is incompatible with automatic_function_calling because
+        the model is forced to always return function calls and can never
+        produce the final text response, causing an infinite tool loop.
+        Post-hoc enforcement (admin_coordinator.evaluate_agentic_tool_usage)
+        handles the "must call required tools" constraint instead.
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+
+        thinking_config = self._get_thinking_config(thinking_level)
+        # mode="AUTO" lets the model decide when to call tools vs output text.
+        # Do NOT use mode="ANY" here — it creates an infinite loop with auto-FC.
+        model = model_override or settings.admin_agentic_model or self.main_model
+
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    thinking_config=thinking_config,
+                    tools=tools,
+                    cached_content=cached_content,
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                        disable=False,
+                        maximum_remote_calls=max_remote_calls or settings.admin_agentic_max_remote_calls,
+                    ),
+                ),
+            )
+
+            # --- AFC diagnostic: log any tool errors silently swallowed by SDK ---
+            afc_history = getattr(response, "automatic_function_calling_history", None)
+            if afc_history:
+                for content in afc_history:
+                    if not hasattr(content, "parts") or not content.parts:
+                        continue
+                    for part in content.parts:
+                        fn_resp = getattr(part, "function_response", None)
+                        if fn_resp is None:
+                            continue
+                        resp_data = getattr(fn_resp, "response", None) or {}
+                        name = getattr(fn_resp, "name", "unknown")
+                        if isinstance(resp_data, dict) and "error" in resp_data:
+                            _logger.warning(
+                                "[agentic_generate] AFC tool error: tool=%s error=%s",
+                                name, str(resp_data["error"])[:300],
+                            )
+
+            return self._extract_response(response, thinking_level)
+        except Exception as e:
+            _logger.error("agentic_generate failed (model=%s): %s", model, e, exc_info=True)
+            raise
+
+    async def agentic_force_tool_calls(
+        self,
+        *,
+        user_prompt: str,
+        system_instruction: str,
+        tools: List[Any],
+        allowed_function_names: List[str],
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Backward-compatible wrapper for forced function calls (mode=ANY)."""
+        round_payload = await self.agentic_force_tool_calls_round(
+            user_prompt=user_prompt,
+            system_instruction=system_instruction,
+            tools=tools,
+            allowed_function_names=allowed_function_names,
+            model_override=model_override,
+            thinking_level=thinking_level,
+        )
+        return round_payload.function_calls
+
+    async def agentic_force_tool_calls_round(
+        self,
+        *,
+        user_prompt: str,
+        system_instruction: str,
+        tools: List[Any],
+        allowed_function_names: List[str],
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+    ) -> AgenticForcedCallRound:
+        """Force one model round to output function calls and keep the response content."""
+        thinking_config = self._get_thinking_config(thinking_level)
+        model = model_override or settings.admin_agentic_model or self.main_model
+        allow_list = [str(name).strip() for name in (allowed_function_names or []) if str(name).strip()]
+        allow_list = list(dict.fromkeys(allow_list))
+        tool_config = types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode="ANY",
+                allowed_function_names=allow_list or None,
+            )
+        )
+
+        response = await self.client.aio.models.generate_content(
+            model=model,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                thinking_config=thinking_config,
+                tools=tools,
+                tool_config=tool_config,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+            ),
+        )
+        candidates = getattr(response, "candidates", None) or []
+        response_content = getattr(candidates[0], "content", None) if candidates else None
+        return AgenticForcedCallRound(
+            function_calls=self._extract_function_calls(response),
+            response_content=response_content,
+            raw_response=response,
+        )
+
+    async def agentic_finalize_with_function_responses(
+        self,
+        *,
+        user_prompt: str,
+        system_instruction: str,
+        forced_response_content: Any,
+        function_responses: List[Dict[str, Any]],
+        model_override: Optional[str] = None,
+        thinking_level: Optional[str] = None,
+    ) -> LLMResponse:
+        """Finalize a forced tool round by feeding function responses back to model."""
+        if forced_response_content is None:
+            raise ValueError("forced_response_content is required for finalize round")
+        if not function_responses:
+            raise ValueError("function_responses is required for finalize round")
+
+        thinking_config = self._get_thinking_config(thinking_level)
+        model = model_override or settings.admin_agentic_model or self.main_model
+
+        response_parts: List[Any] = []
+        for item in function_responses:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            payload = item.get("response")
+            if not isinstance(payload, dict):
+                payload = {"result": payload}
+            response_parts.append(
+                types.Part.from_function_response(
+                    name=name,
+                    response=payload,
+                )
+            )
+        if not response_parts:
+            raise ValueError("no valid function responses to finalize")
+
+        contents = [
+            types.Content(role="user", parts=[types.Part(text=user_prompt)]),
+            forced_response_content,
+            types.Content(role="user", parts=response_parts),
+        ]
+        response = await self.client.aio.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                thinking_config=thinking_config,
+            ),
+        )
+        return self._extract_response(response, thinking_level)
     
     async def generate_response_stream(
         self, 

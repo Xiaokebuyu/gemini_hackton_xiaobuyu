@@ -17,6 +17,7 @@ from .combat_session import (
     TurnRequest,
 )
 from .combat_result import CombatResult, CombatRewards, CombatPenalty
+from .v3 import EnemySpec, CombatActionOptionV3, CombatResolutionV3
 
 __all__ = [
     "Combatant",
@@ -37,4 +38,7 @@ __all__ = [
     "CombatResult",
     "CombatRewards",
     "CombatPenalty",
+    "EnemySpec",
+    "CombatActionOptionV3",
+    "CombatResolutionV3",
 ]

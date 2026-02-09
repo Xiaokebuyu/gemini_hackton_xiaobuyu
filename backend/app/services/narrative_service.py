@@ -143,7 +143,7 @@ class NarrativeService:
 
         return mainlines_raw, chapters_raw
 
-    async def load_narrative_data(self, world_id: str) -> None:
+    async def load_narrative_data(self, world_id: str, force_reload: bool = False) -> None:
         """
         加载主线数据
 
@@ -152,6 +152,11 @@ class NarrativeService:
         Args:
             world_id: 世界ID
         """
+        if force_reload and world_id in self._loaded_worlds:
+            self._loaded_worlds.discard(world_id)
+            self._mainlines_by_world.pop(world_id, None)
+            self._chapters_by_world.pop(world_id, None)
+
         if world_id in self._loaded_worlds:
             return
 

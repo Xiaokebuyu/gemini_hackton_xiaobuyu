@@ -57,6 +57,7 @@ class WorldInitializer:
             "maps": {},
             "characters": {},
             "world_map": False,
+            "combat_entities": {},
             "errors": [],
         }
 
@@ -214,6 +215,22 @@ class WorldInitializer:
             if verbose:
                 print(f"\n[Phase 4] Skipping graph prefill (file not found: {prefill_path})")
 
+        # 阶段 5: 加载战斗实体（monsters/skills/items）
+        if verbose:
+            print(f"\n[Phase 5] Loading combat entities from {data_dir}...")
+        try:
+            results["combat_entities"] = await self._load_combat_entities(
+                world_id=world_id,
+                data_dir=data_dir,
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+        except Exception as e:
+            error = f"Failed to load combat entities: {str(e)}"
+            results["errors"].append(error)
+            if verbose:
+                print(f"ERROR: {error}")
+
         # 打印总结
         if verbose:
             print("\n" + "=" * 50)
@@ -234,6 +251,14 @@ class WorldInitializer:
                       f"{gp.get('chapters_meta_written', 0)} chapter metas, "
                       f"{gp.get('mainlines_meta_written', 0)} mainline metas, "
                       f"{gp.get('dispositions_written', 0)} dispositions")
+            ce = results.get("combat_entities") or {}
+            if ce:
+                print(
+                    "Combat entities: "
+                    f"monsters={ce.get('monsters_loaded', 0)}, "
+                    f"skills={ce.get('skills_loaded', 0)}, "
+                    f"items={ce.get('items_loaded', 0)}"
+                )
             if results["errors"]:
                 print(f"\nErrors: {len(results['errors'])}")
                 for err in results["errors"]:
@@ -284,6 +309,76 @@ class WorldInitializer:
             dry_run=dry_run,
             verbose=verbose,
         )
+
+    @staticmethod
+    def _flatten_entity_entries(raw: Any) -> list[dict]:
+        entries: list[dict] = []
+        if isinstance(raw, dict):
+            looks_like_entry = any(
+                key in raw for key in ("id", "name", "type", "stats", "effect", "properties")
+            )
+            if looks_like_entry:
+                entries.append(raw)
+            else:
+                for value in raw.values():
+                    entries.extend(WorldInitializer._flatten_entity_entries(value))
+            return entries
+        if isinstance(raw, list):
+            for item in raw:
+                entries.extend(WorldInitializer._flatten_entity_entries(item))
+        return entries
+
+    async def _load_combat_entities(
+        self,
+        world_id: str,
+        data_dir: Path,
+        dry_run: bool = False,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """Load monsters/skills/items into Firestore combat_entities collection."""
+        stats: Dict[str, Any] = {
+            "monsters_loaded": 0,
+            "skills_loaded": 0,
+            "items_loaded": 0,
+            "errors": [],
+        }
+
+        world_ref = self.db.collection("worlds").document(world_id)
+        combat_ref = world_ref.collection("combat_entities")
+
+        for entity_type in ("monsters", "skills", "items"):
+            file_path = data_dir / f"{entity_type}.json"
+            if not file_path.exists():
+                if verbose:
+                    print(f"  - skip {entity_type}: file not found")
+                continue
+
+            try:
+                payload = json.loads(file_path.read_text(encoding="utf-8"))
+                entries = self._flatten_entity_entries(payload)
+                if verbose:
+                    print(f"  - {entity_type}: {len(entries)} entries")
+
+                if not dry_run:
+                    combat_ref.document(entity_type).set(
+                        {
+                            "entries": entries,
+                            "source_file": str(file_path),
+                            "version": "structured_new" if "structured_new" in str(file_path) else "structured",
+                            "entry_count": len(entries),
+                            "updated_at": firestore.SERVER_TIMESTAMP,
+                        },
+                        merge=True,
+                    )
+
+                stats[f"{entity_type}_loaded"] = len(entries)
+            except Exception as exc:
+                error_msg = f"{entity_type} load failed: {exc}"
+                stats["errors"].append(error_msg)
+                if verbose:
+                    print(f"    ERROR: {error_msg}")
+
+        return stats
 
     async def verify_initialization(
         self,

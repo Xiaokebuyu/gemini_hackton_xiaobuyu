@@ -1,10 +1,11 @@
 import pytest
 
+from app.config import settings
 from app.services.mcp_client_pool import MCPClientPool, ServerConfig
 
 
 @pytest.mark.asyncio
-async def test_probe_streamable_http_falls_back_to_endpoint(monkeypatch):
+async def test_probe_streamable_http_uses_handshake_mode(monkeypatch):
     pool = MCPClientPool()
     pool._configs[MCPClientPool.COMBAT] = ServerConfig(
         command="python",
@@ -14,18 +15,51 @@ async def test_probe_streamable_http_falls_back_to_endpoint(monkeypatch):
         transport="streamable-http",
         endpoint="http://127.0.0.1:9102/mcp",
     )
+    monkeypatch.setattr(settings, "mcp_http_probe_mode", "handshake")
+    monkeypatch.setattr(settings, "mcp_http_handshake_timeout_seconds", 1.5)
+
+    async def _fake_handshake(*, transport: str, endpoint: str, timeout_seconds: float):
+        return {
+            "ok": True,
+            "transport": transport,
+            "endpoint": endpoint,
+            "elapsed_ms": 12,
+            "tool_count": 4,
+            "timeout_seconds": timeout_seconds,
+        }
+
+    monkeypatch.setattr(pool, "_probe_mcp_handshake", _fake_handshake)
+    result = await pool.probe(MCPClientPool.COMBAT, timeout_seconds=0.5)
+
+    assert result["ok"] is True
+    assert result["probe_mode"] == "handshake"
+    assert result["handshake_probe"]["ok"] is True
+    assert result["handshake_probe"]["tool_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_probe_streamable_http_tcp_mode_uses_endpoint_probe(monkeypatch):
+    pool = MCPClientPool()
+    pool._configs[MCPClientPool.COMBAT] = ServerConfig(
+        command="python",
+        args="",
+        cwd=pool._server_root,
+        name="Combat MCP",
+        transport="streamable-http",
+        endpoint="http://127.0.0.1:9102/mcp",
+    )
+    monkeypatch.setattr(settings, "mcp_http_probe_mode", "tcp")
 
     async def _fake_probe(url: str, timeout_seconds: float):
-        if url.endswith("/health"):
-            return {"ok": False, "url": url, "error": "connection refused"}
-        return {"ok": True, "url": url, "status_code": 405}
+        return {"ok": True, "url": url, "status_code": 400}
 
     monkeypatch.setattr(pool, "_probe_http_endpoint", _fake_probe)
     result = await pool.probe(MCPClientPool.COMBAT, timeout_seconds=0.5)
 
     assert result["ok"] is True
-    assert result["health_probe"]["ok"] is False
+    assert result["probe_mode"] == "tcp"
     assert result["endpoint_probe"]["ok"] is True
+    assert "handshake_probe" not in result
 
 
 @pytest.mark.asyncio

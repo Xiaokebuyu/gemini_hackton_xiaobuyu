@@ -40,6 +40,7 @@ from app.models.admin_protocol import (
     FlashRequest,
     FlashResponse,
     IntentType,
+    ParsedIntent,
 )
 from app.services.game_session_store import GameSessionStore
 from app.services.flash_service import FlashService
@@ -56,6 +57,11 @@ from app.models.graph_scope import GraphScope
 from app.services.character_store import CharacterStore
 from app.services.character_service import CharacterService
 from app.services.mcp_client_pool import MCPServiceUnavailableError
+from app.services.admin.recall_orchestrator import RecallOrchestrator
+from app.services.admin.agentic_enforcement import (
+    AgenticToolExecutionRequiredError,
+    evaluate_agentic_tool_usage,
+)
 
 
 class AdminCoordinator:
@@ -158,6 +164,13 @@ class AdminCoordinator:
         self._character_roster_cache: Dict[str, str] = {}
         self._character_ids_cache: Dict[str, set] = {}
         self._area_chapter_cache: Dict[str, Dict[str, str]] = {}
+
+        self.recall_orchestrator = RecallOrchestrator(
+            graph_store=self.graph_store,
+            get_character_id_set=self._get_character_id_set,
+            get_area_chapter_map=self._get_area_chapter_map,
+        )
+        self.flash_cpu.recall_orchestrator = self.recall_orchestrator
 
     @dataclass
     class AdminContextView:
@@ -304,7 +317,7 @@ class AdminCoordinator:
         request: CombatStartRequest,
     ) -> CombatStartResponse:
         payload = await self.flash_cpu.call_combat_tool(
-            "start_combat_session",
+            "start_combat_v3",
             {
                 "world_id": world_id,
                 "session_id": session_id,
@@ -334,7 +347,7 @@ class AdminCoordinator:
         request: CombatResolveRequest,
     ) -> CombatResolveResponse:
         payload = await self.flash_cpu.call_combat_tool(
-            "resolve_combat_session",
+            "resolve_combat_session_v3",
             {
                 "world_id": world_id,
                 "session_id": session_id,
@@ -358,6 +371,800 @@ class AdminCoordinator:
             dispatched=payload.get("dispatched", False),
         )
 
+    def _infer_agentic_intent_type(
+        self,
+        player_input: str,
+        flash_results: List[FlashResponse],
+    ) -> IntentType:
+        """Infer intent type from executed operations in agentic mode."""
+        text = (player_input or "").strip()
+        lowered = text.lower()
+        if text.startswith("/"):
+            return IntentType.SYSTEM_COMMAND
+
+        # Prefer player-input semantics over read-tool outcomes to avoid
+        # circular classification (e.g., model calls get_status -> intent becomes system).
+        if any(k in text for k in ("组队", "队友", "加入队伍", "入队", "离队", "解散队伍")):
+            return IntentType.TEAM_INTERACTION
+        if any(k in text for k in ("对话", "交谈", "询问", "聊天", "聊聊", "对她说", "对他说")):
+            return IntentType.NPC_INTERACTION
+        if any(k in lowered for k in ("talk to", "speak to", "npc", "dialogue")):
+            return IntentType.NPC_INTERACTION
+        if any(k in text for k in ("攻击", "战斗", "开打", "交战", "冲锋")):
+            return IntentType.START_COMBAT
+        if any(k in text for k in ("进入", "前往", "移动", "赶往", "去")):
+            return IntentType.NAVIGATION
+        if any(k in text for k in ("等待", "休息", "睡", "快进", "过一会")):
+            return IntentType.WAIT
+        if any(k in text for k in ("状态", "进度", "任务", "目标", "地点", "时间", "当前位置", "背包", "血量")):
+            return IntentType.SYSTEM_COMMAND
+
+        for result in flash_results:
+            if not result.success:
+                continue
+            if result.operation == FlashOperation.NAVIGATE:
+                return IntentType.NAVIGATION
+            if result.operation == FlashOperation.ENTER_SUBLOCATION:
+                return IntentType.ENTER_SUB_LOCATION
+            if result.operation == FlashOperation.NPC_DIALOGUE:
+                return IntentType.NPC_INTERACTION
+            if result.operation == FlashOperation.START_COMBAT:
+                return IntentType.START_COMBAT
+            if result.operation == FlashOperation.UPDATE_TIME:
+                return IntentType.WAIT
+
+        return IntentType.ROLEPLAY
+
+    @staticmethod
+    def _ensure_fixed_world(world_id: str) -> None:
+        expected = settings.fixed_world_id
+        if world_id != expected:
+            raise ValueError(
+                f"unsupported world_id='{world_id}', this environment only supports '{expected}'"
+            )
+
+    # ==================== Agentic 架构 (v3) ====================
+
+    async def process_player_input_v3(
+        self,
+        world_id: str,
+        session_id: str,
+        player_input: str,
+        is_private: bool = False,
+        private_target: Optional[str] = None,
+    ) -> CoordinatorResponse:
+        """
+        v3 Agentic 流程。
+
+        A) 预处理：上下文收集 + StoryDirector pre 机械评估
+        B) 单次 agentic 会话：模型自主工具调用并生成叙述
+        C) 后处理：StoryDirector post + 队友响应 + 事件分发 + 历史记录
+        """
+        self._ensure_fixed_world(world_id)
+        if not settings.use_agentic_mode:
+            return await self.process_player_input_v2(
+                world_id,
+                session_id,
+                player_input,
+                is_private=is_private,
+                private_target=private_target,
+            )
+        await self.narrative_service.load_narrative_data(world_id, force_reload=True)
+
+        pc = await self.character_store.get_character(world_id, session_id)
+        if not pc:
+            raise ValueError("请先创建角色后再开始冒险。")
+
+        location_check = await self._world_runtime.get_current_location(world_id, session_id)
+        if location_check.get("error"):
+            raise ValueError(location_check["error"])
+
+        party = await self.party_service.get_party(world_id, session_id)
+        history = self.session_history_manager.get_or_create(world_id, session_id)
+        base_context = await self._build_context(
+            world_id,
+            session_id,
+            player_character=pc,
+        )
+        conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
+        if conversation_history:
+            base_context["conversation_history"] = conversation_history
+        if is_private:
+            base_context["is_private"] = True
+            base_context["private_target"] = private_target
+
+        progress = await self.narrative_service.get_progress(world_id, session_id)
+        active_story_chapters = self._resolve_story_chapters(world_id, progress)
+        current_chapter = active_story_chapters[0] if active_story_chapters else None
+        game_ctx = self._build_game_context(base_context, progress, session_id, player_input)
+
+        if len(active_story_chapters) > 1:
+            pre_directive = self.story_director.pre_evaluate_multi(game_ctx, active_story_chapters)
+        else:
+            pre_directive = self.story_director.pre_evaluate(game_ctx, current_chapter)
+
+        pre_side_effects: List[Dict[str, Any]] = []
+        for event in pre_directive.auto_fired_events:
+            await self.narrative_service.trigger_event(world_id, session_id, event.id, skip_advance=True)
+            logger.info("[v3] StoryDirector pre-fire: %s", event.id)
+            if event.side_effects:
+                pre_side_effects.extend(event.side_effects)
+        if pre_side_effects:
+            await self._execute_side_effects(world_id, session_id, pre_side_effects)
+
+        base_context["story_directives"] = pre_directive.narrative_injections
+        base_context["pending_flash_conditions"] = [
+            {"id": c.condition_id, "prompt": c.condition_prompt, "event_id": c.event_id}
+            for c in pre_directive.pending_flash_conditions
+        ]
+        base_context["story_pacing"] = {
+            "action": getattr(pre_directive, "pacing_action", None),
+            "detail": getattr(pre_directive, "pacing_detail", ""),
+        }
+
+        # v3 增强：预热扩散图谱结果，充分利用多图谱召回与队友记忆组件。
+        prefill_state = await self._state_manager.get_state(world_id, session_id)
+        chapter_id_prefill = getattr(prefill_state, "chapter_id", None) if prefill_state else None
+        area_id_prefill = getattr(prefill_state, "area_id", None) if prefill_state else None
+        prefill_player_seeds = self._build_effective_seeds([], base_context, character_id="player")
+        player_memory_task = asyncio.create_task(
+            self._recall_memory(
+                world_id=world_id,
+                character_id="player",
+                seed_nodes=prefill_player_seeds,
+                intent_type="roleplay",
+                chapter_id=chapter_id_prefill,
+                area_id=area_id_prefill,
+            )
+        )
+        teammate_prefill_tasks: Dict[str, asyncio.Task] = {}
+        if party and party.get_active_members():
+            for member in party.get_active_members():
+                teammate_seeds = self._build_effective_seeds(
+                    [],
+                    base_context,
+                    character_id=member.character_id,
+                )
+                teammate_prefill_tasks[member.character_id] = asyncio.create_task(
+                    self._recall_memory(
+                        world_id=world_id,
+                        character_id=member.character_id,
+                        seed_nodes=teammate_seeds,
+                        intent_type="roleplay",
+                        chapter_id=chapter_id_prefill,
+                        area_id=area_id_prefill,
+                    )
+                )
+
+        player_memory_result = None
+        try:
+            player_memory_result = await player_memory_task
+            if player_memory_result and getattr(player_memory_result, "activated_nodes", None):
+                base_context["memory_summary"] = self._summarize_memory(player_memory_result)
+                if hasattr(player_memory_result, "model_dump"):
+                    base_context["recalled_memory"] = player_memory_result.model_dump()
+        except Exception:
+            pending_teammate_tasks = [
+                task for task in teammate_prefill_tasks.values()
+                if task is not None and not task.done()
+            ]
+            for task in pending_teammate_tasks:
+                task.cancel()
+            if pending_teammate_tasks:
+                await asyncio.gather(*pending_teammate_tasks, return_exceptions=True)
+            raise
+
+        logger.info("[v3] 步骤B: agentic 会话")
+        try:
+            agentic_result = await self.flash_cpu.agentic_process(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=player_input,
+                context=base_context,
+            )
+        except Exception:
+            pending_teammate_tasks = [
+                task for task in teammate_prefill_tasks.values()
+                if task is not None and not task.done()
+            ]
+            for task in pending_teammate_tasks:
+                task.cancel()
+            if pending_teammate_tasks:
+                await asyncio.gather(*pending_teammate_tasks, return_exceptions=True)
+            raise
+        flash_results = agentic_result.flash_results
+        gm_narration = agentic_result.narration
+        intent_type = self._infer_agentic_intent_type(player_input, flash_results)
+        skip_teammate = intent_type == IntentType.SYSTEM_COMMAND
+        logger.info("[v3] agentic 完成: tools=%d ops=%d", len(agentic_result.tool_calls), len(flash_results))
+        agentic_enforcement = evaluate_agentic_tool_usage(
+            player_input=player_input,
+            inferred_intent=intent_type,
+            tool_calls=agentic_result.tool_calls,
+        )
+        repair_summary: Dict[str, Any] = {
+            "attempted": False,
+            "status": "not_needed" if agentic_enforcement.passed else "pending",
+            "requested_tools": list(agentic_enforcement.repair_tool_names or []),
+            "executed_tool_calls": 0,
+            "executed_tools": [],
+        }
+        if settings.admin_agentic_strict_tools and not agentic_enforcement.passed:
+            if agentic_enforcement.repair_allowed and agentic_enforcement.repair_tool_names:
+                repair_summary["attempted"] = True
+                repair_result = await self.flash_cpu.run_required_tool_repair(
+                    world_id=world_id,
+                    session_id=session_id,
+                    player_input=player_input,
+                    context=base_context,
+                    missing_requirements=agentic_enforcement.missing_requirements,
+                    repair_tool_names=agentic_enforcement.repair_tool_names,
+                    enforcement_reason=agentic_enforcement.reason,
+                )
+                if repair_result.tool_calls:
+                    agentic_result.tool_calls.extend(repair_result.tool_calls)
+                if repair_result.flash_results:
+                    agentic_result.flash_results.extend(repair_result.flash_results)
+                if repair_result.story_condition_results:
+                    agentic_result.story_condition_results.update(repair_result.story_condition_results)
+                if repair_result.image_data:
+                    agentic_result.image_data = repair_result.image_data
+                repair_narration = (repair_result.narration or "").strip()
+                if repair_narration:
+                    gm_narration = repair_narration
+                    repair_summary["narration_replaced"] = True
+                else:
+                    repair_summary["narration_replaced"] = False
+                repair_summary["narration_length"] = len(repair_narration)
+
+                repair_summary["executed_tool_calls"] = len(repair_result.tool_calls or [])
+                repair_summary["executed_tools"] = [
+                    call.name for call in (repair_result.tool_calls or []) if getattr(call, "name", "")
+                ]
+                repair_summary["tool_call_results"] = [
+                    {
+                        "name": str(getattr(call, "name", "") or ""),
+                        "success": bool(getattr(call, "success", False)),
+                        "error": str(getattr(call, "error", "") or ""),
+                    }
+                    for call in (repair_result.tool_calls or [])
+                ]
+                repair_summary["repair_usage"] = (
+                    dict(repair_result.usage)
+                    if isinstance(repair_result.usage, dict)
+                    else {}
+                )
+                repair_summary["finalize_status"] = str(
+                    repair_summary["repair_usage"].get("finalize_status", "")
+                ).strip()
+                if repair_result.finish_reason:
+                    repair_summary["finalize_finish_reason"] = str(repair_result.finish_reason)
+                agentic_enforcement = evaluate_agentic_tool_usage(
+                    player_input=player_input,
+                    inferred_intent=intent_type,
+                    tool_calls=agentic_result.tool_calls,
+                )
+                repair_summary["status"] = "repaired" if agentic_enforcement.passed else "failed"
+                repair_summary["post_check_passed"] = bool(agentic_enforcement.passed)
+            else:
+                repair_summary["status"] = "repair_not_allowed"
+
+            if not agentic_enforcement.passed:
+                pending_teammate_tasks = [
+                    task for task in teammate_prefill_tasks.values()
+                    if task is not None and not task.done()
+                ]
+                for task in pending_teammate_tasks:
+                    task.cancel()
+                if pending_teammate_tasks:
+                    await asyncio.gather(*pending_teammate_tasks, return_exceptions=True)
+                raise AgenticToolExecutionRequiredError(
+                    reason=agentic_enforcement.reason,
+                    expected_intent=agentic_enforcement.expected_intent,
+                    missing_requirements=agentic_enforcement.missing_requirements,
+                    called_tools=agentic_enforcement.called_tools,
+                    repair_attempted=bool(repair_summary.get("attempted")),
+                    repair_tool_names=agentic_enforcement.repair_tool_names,
+                    repair_summary=repair_summary,
+                )
+        elif not agentic_enforcement.passed:
+            # Non-strict mode fallback: preserve old behavior.
+            logger.warning(
+                "[v3] enforcement soft-fail: %s, missing=%s called=%s",
+                agentic_enforcement.reason,
+                agentic_enforcement.missing_requirements,
+                agentic_enforcement.called_tools,
+            )
+            repair_summary["status"] = "soft_failed"
+
+        agentic_trace = self._build_agentic_trace_payload(agentic_result)
+        enforcement_metadata = agentic_enforcement.to_metadata()
+        enforcement_metadata["strict_mode"] = bool(settings.admin_agentic_strict_tools)
+        enforcement_metadata["repair"] = repair_summary
+        agentic_trace["enforcement"] = enforcement_metadata
+
+        context = await self._assemble_context(
+            base_context=base_context,
+            memory_result=player_memory_result,
+            flash_results=flash_results,
+            world_id=world_id,
+            session_id=session_id,
+        )
+        if agentic_result.image_data:
+            context["image_data"] = agentic_result.image_data
+        if is_private:
+            context["is_private"] = True
+            context["private_target"] = private_target
+
+        state_snapshot = await self._state_manager.get_state(world_id, session_id)
+        current_chapter_id = getattr(state_snapshot, "chapter_id", None) if state_snapshot else None
+        current_area_id = getattr(state_snapshot, "area_id", None) if state_snapshot else None
+
+        agentic_memory_seeds: List[str] = []
+        for tool_call in agentic_result.tool_calls:
+            if tool_call.name != "recall_memory":
+                continue
+            seeds_raw = tool_call.args.get("seeds")
+            if isinstance(seeds_raw, list):
+                for seed in seeds_raw:
+                    text = str(seed).strip()
+                    if text:
+                        agentic_memory_seeds.append(text)
+        if agentic_memory_seeds:
+            agentic_memory_seeds = list(dict.fromkeys(agentic_memory_seeds))
+
+        # v3 对齐项：恢复队友记忆召回与上下文编排注入。
+        agentic_intent = ParsedIntent(
+            intent_type=intent_type,
+            confidence=1.0,
+            raw_input=player_input,
+            interpretation="agentic_inferred",
+            is_private=is_private,
+            private_target=private_target,
+        )
+        player_curated: Optional[Dict[str, Any]] = None
+        t_packages: Dict[str, Dict[str, Any]] = {}
+        t_summaries: Dict[str, str] = {}
+        try:
+            player_curated, t_packages, t_summaries = await self._run_curation_pipeline(
+                world_id=world_id,
+                player_input=player_input,
+                intent=agentic_intent,
+                memory_result=player_memory_result,
+                flash_results=flash_results,
+                context=dict(context),
+                party=party,
+                skip_teammate=skip_teammate,
+                analysis_memory_seeds=agentic_memory_seeds,
+                base_context=base_context,
+                chapter_id=current_chapter_id,
+                area_id=current_area_id,
+                teammate_recall_tasks=teammate_prefill_tasks,
+            )
+            if player_curated:
+                merged_package = {}
+                if isinstance(context.get("context_package"), dict):
+                    merged_package.update(context["context_package"])
+                merged_package.update(player_curated)
+                context["context_package"] = merged_package
+                if isinstance(player_curated.get("story_progression"), dict):
+                    context["story_progression"] = player_curated["story_progression"]
+            if t_packages:
+                context["teammate_context_packages"] = t_packages
+            if t_summaries:
+                context["teammate_memory_summaries"] = t_summaries
+        finally:
+            pending_teammate_tasks = [
+                task for task in teammate_prefill_tasks.values()
+                if task is not None and not task.done()
+            ]
+            for task in pending_teammate_tasks:
+                task.cancel()
+            if pending_teammate_tasks:
+                await asyncio.gather(*pending_teammate_tasks, return_exceptions=True)
+
+        flash_condition_results = dict(agentic_result.story_condition_results or {})
+        story_prog = context.get("story_progression")
+        if not isinstance(story_prog, dict):
+            story_prog = (context.get("context_package") or {}).get("story_progression", {})
+        if isinstance(story_prog, dict):
+            for eval_item in story_prog.get("condition_evaluations", []):
+                if not isinstance(eval_item, dict):
+                    continue
+                cond_id = str(eval_item.get("id", "")).strip()
+                if not cond_id or cond_id in flash_condition_results:
+                    continue
+                flash_condition_results[cond_id] = bool(eval_item.get("result", False))
+        progress_needs_refresh = bool(pre_side_effects) or any(
+            result.success and result.operation == FlashOperation.TRIGGER_NARRATIVE_EVENT
+            for result in flash_results
+        )
+        if progress_needs_refresh:
+            progress = await self.narrative_service.get_progress(world_id, session_id)
+        active_story_chapters = self._resolve_story_chapters(world_id, progress)
+        current_chapter = active_story_chapters[0] if active_story_chapters else None
+        game_ctx_updated = self._build_game_context(context, progress, session_id, player_input)
+
+        if len(active_story_chapters) > 1:
+            final_directive = self.story_director.post_evaluate_multi(
+                game_ctx_updated,
+                chapters=active_story_chapters,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+            )
+        else:
+            final_directive = self.story_director.post_evaluate(
+                game_ctx_updated,
+                chapter=current_chapter,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+            )
+
+        post_changed_party = False
+        if final_directive.side_effects:
+            await self._execute_side_effects(world_id, session_id, final_directive.side_effects)
+            post_changed_party = any(
+                effect.get("type") in ("add_teammate", "remove_teammate")
+                for effect in final_directive.side_effects
+            )
+
+        flash_changed_party = any(
+            result.success and result.operation in {
+                FlashOperation.ADD_TEAMMATE,
+                FlashOperation.REMOVE_TEAMMATE,
+                FlashOperation.DISBAND_PARTY,
+            }
+            for result in flash_results
+        )
+        pre_changed_party = any(
+            effect.get("type") in ("add_teammate", "remove_teammate")
+            for effect in pre_side_effects
+        ) if pre_side_effects else False
+        if flash_changed_party or pre_changed_party or post_changed_party:
+            party = await self.party_service.get_party(world_id, session_id)
+            logger.info(
+                "[v3] party 已刷新 (flash=%s, pre=%s, post=%s)",
+                flash_changed_party, pre_changed_party, post_changed_party,
+            )
+
+        turn_story_events = list(pre_directive.auto_fired_events) + list(final_directive.fired_events)
+        for event in final_directive.fired_events:
+            if event.id not in progress.events_triggered:
+                progress.events_triggered.append(event.id)
+                logger.info("[v3] StoryDirector post-fire: %s", event.id)
+
+        chapter_event_map: Dict[str, Any] = {}
+        for chapter in active_story_chapters:
+            for chapter_event in chapter.events:
+                chapter_event_map[chapter_event.id] = chapter_event
+
+        tool_trigger_event_ids: List[str] = []
+        for call in agentic_result.tool_calls:
+            if not call.success:
+                continue
+            if call.name != FlashOperation.TRIGGER_NARRATIVE_EVENT.value:
+                continue
+            event_id = str(call.args.get("event_id", "")).strip()
+            if event_id:
+                tool_trigger_event_ids.append(event_id)
+
+        existing_event_ids = {event.id for event in turn_story_events}
+        for event_id in dict.fromkeys(tool_trigger_event_ids):
+            chapter_event = chapter_event_map.get(event_id)
+            if chapter_event is None:
+                logger.warning("[v3] agentic trigger_event ignored, unknown event_id=%s", event_id)
+                continue
+            if event_id in existing_event_ids:
+                continue
+            if event_id not in progress.events_triggered:
+                progress.events_triggered.append(event_id)
+            turn_story_events.append(chapter_event)
+            existing_event_ids.add(event_id)
+            logger.info("[v3] agentic trigger_event recorded: %s", event_id)
+
+        all_narrative_directives = pre_directive.narrative_injections + final_directive.narrative_injections
+        if all_narrative_directives:
+            context["story_narrative_directives"] = all_narrative_directives
+
+        if not final_directive.chapter_transition:
+            reevaluated_transition = self._reevaluate_transition_after_progress(
+                context=context,
+                progress=progress,
+                session_id=session_id,
+                player_input=player_input,
+                chapters=active_story_chapters,
+                flash_condition_results=flash_condition_results,
+                pre_auto_fired_ids=[e.id for e in pre_directive.auto_fired_events],
+            )
+            if reevaluated_transition:
+                final_directive.chapter_transition = reevaluated_transition
+                logger.info(
+                    "[v3] StoryDirector transition re-evaluated: -> %s (%s)",
+                    reevaluated_transition.target_chapter_id,
+                    reevaluated_transition.transition_type,
+                )
+
+        progress.rounds_in_chapter += 1
+        has_progress = bool(turn_story_events)
+        progress.rounds_since_last_progress = 0 if has_progress else (progress.rounds_since_last_progress + 1)
+
+        npc_interactions: Dict[str, int] = {}
+        for call in agentic_result.tool_calls:
+            if not call.success:
+                continue
+            if call.name not in (FlashOperation.NPC_DIALOGUE.value, "npc_dialogue"):
+                continue
+            npc_id = str(call.args.get("npc_id", "")).strip()
+            if npc_id:
+                npc_interactions[npc_id] = npc_interactions.get(npc_id, 0) + 1
+        for npc_id, count in npc_interactions.items():
+            progress.npc_interactions[npc_id] = progress.npc_interactions.get(npc_id, 0) + count
+
+        for event in turn_story_events:
+            progress.event_cooldowns[event.id] = progress.rounds_in_chapter
+
+        await self.narrative_service.save_progress(world_id, session_id, progress)
+
+        v3_transition_result: Optional[Dict[str, Any]] = None
+        if final_directive.chapter_transition:
+            trans = final_directive.chapter_transition
+            logger.info(
+                "[v3] StoryDirector 章节转换: → %s (%s)",
+                trans.target_chapter_id,
+                trans.transition_type,
+            )
+            if trans.narrative_hint:
+                context.setdefault("story_narrative_directives", []).append(trans.narrative_hint)
+
+            v3_transition_result = await self.narrative_service.transition_to_chapter(
+                world_id=world_id,
+                session_id=session_id,
+                target_chapter_id=trans.target_chapter_id,
+                transition_type=trans.transition_type,
+            )
+            state = await self._state_manager.get_state(world_id, session_id)
+            if state and v3_transition_result.get("new_chapter"):
+                state.chapter_id = v3_transition_result["new_chapter"]
+                new_maps = v3_transition_result.get("new_maps_unlocked", [])
+                if new_maps:
+                    navigator = self._world_runtime._get_navigator_ready(world_id)
+                    if navigator and new_maps[0] in navigator.maps:
+                        state.area_id = new_maps[0]
+                        state.player_location = new_maps[0]
+                await self._state_manager.set_state(world_id, session_id, state)
+
+        if v3_transition_result and v3_transition_result.get("new_chapter"):
+            transition_text = await self._generate_chapter_transition(
+                world_id,
+                session_id,
+                v3_transition_result.get("new_chapter"),
+                v3_transition_result.get("new_maps_unlocked", []),
+            )
+            if transition_text:
+                gm_narration += f"\n\n{transition_text}"
+
+        if settings.story_event_graph_sync and (turn_story_events or final_directive.chapter_transition):
+            await self._sync_story_director_graph(
+                world_id=world_id,
+                session_id=session_id,
+                events=turn_story_events,
+                chapter_transition=final_directive.chapter_transition,
+                context=context,
+                player_input=player_input,
+                party=party,
+                progress=progress,
+            )
+
+        await self._refresh_chapter_context(world_id, session_id, context)
+
+        if any(result.success and result.operation == FlashOperation.NAVIGATE for result in flash_results) and party:
+            new_location = context.get("location", {}).get("location_id")
+            if new_location:
+                await self.party_service.sync_locations(world_id, session_id, new_location)
+
+        last_teammate_responses = history.get_last_teammate_responses()
+        if last_teammate_responses:
+            context["last_teammate_responses"] = last_teammate_responses
+
+        execution_summary = self._build_execution_summary(flash_results)
+        context["execution_summary"] = execution_summary
+        context["gm_narration_full"] = gm_narration
+
+        teammate_responses: List[Dict[str, Any]] = []
+        teammate_debug = {"total": 0, "skipped": 0, "skip_reasons": []}
+        if party and party.get_active_members() and not skip_teammate:
+            teammate_result = await self.teammate_response_service.process_round(
+                party=party,
+                player_input=player_input,
+                gm_response=execution_summary,
+                context=context,
+            )
+            teammate_debug["total"] = len(teammate_result.responses)
+            skip_reasons = set()
+            for resp in teammate_result.responses:
+                if resp.response:
+                    teammate_responses.append({
+                        "character_id": resp.character_id,
+                        "name": resp.name,
+                        "response": resp.response,
+                        "reaction": resp.reaction,
+                        "model_used": resp.model_used,
+                        "thinking_level": resp.thinking_level,
+                        "latency_ms": resp.latency_ms,
+                    })
+                else:
+                    teammate_debug["skipped"] += 1
+                    if resp.reaction:
+                        skip_reasons.add(resp.reaction)
+            teammate_debug["skip_reasons"] = sorted(skip_reasons)
+
+        if party and party.share_events and not skip_teammate:
+            await self._distribute_event_to_party(
+                world_id=world_id,
+                party=party,
+                player_input=player_input,
+                gm_response=gm_narration,
+                context=context,
+            )
+
+        output_anomaly_meta = self._detect_output_anomalies(gm_narration)
+        round_stats = history.record_round(
+            player_input=player_input,
+            gm_response=gm_narration,
+            metadata={
+                "intent_type": intent_type.value,
+                "story_events": [event.id for event in turn_story_events],
+                "transition": (
+                    final_directive.chapter_transition.target_chapter_id
+                    if final_directive.chapter_transition else ""
+                ),
+                "chapter_id": (
+                    v3_transition_result.get("new_chapter")
+                    if v3_transition_result and v3_transition_result.get("new_chapter")
+                    else progress.current_chapter
+                ),
+                "visibility": "private" if is_private else "public",
+                "private_target": private_target if is_private else None,
+                **output_anomaly_meta,
+            },
+        )
+        for teammate in teammate_responses:
+            history.record_teammate_response(
+                character_id=teammate["character_id"],
+                name=teammate["name"],
+                response=teammate["response"],
+            )
+        if round_stats["should_graphize"]:
+            game_day = context.get("time", {}).get("day", 1)
+            location_id = context.get("location", {}).get("location_id")
+            asyncio.create_task(self._run_graphization(history, game_day, location_id))
+
+        state_delta = self._merge_state_deltas(flash_results)
+        available_actions = await self._get_available_actions(world_id, session_id, context)
+        chapter_info_payload = self._build_chapter_response_payload(
+            context=context,
+            progress=progress,
+            final_directive=final_directive,
+        )
+        story_director_meta = self._build_story_director_metadata(
+            pre_directive=pre_directive,
+            final_directive=final_directive,
+            turn_story_events=turn_story_events,
+        )
+
+        return CoordinatorResponse(
+            narration=gm_narration,
+            speaker="GM",
+            teammate_responses=teammate_responses,
+            available_actions=available_actions,
+            state_delta=state_delta,
+            metadata={
+                "intent_type": intent_type.value,
+                "confidence": 1.0,
+                "teammate_count": len(teammate_responses),
+                "session_history": round_stats,
+                "source": "flash_agentic_v3",
+                "model": settings.admin_agentic_model,
+                "story_director": story_director_meta,
+                "teammate_debug": teammate_debug,
+                "agentic_usage": agentic_result.usage,
+                "agentic_finish_reason": agentic_result.finish_reason,
+                "agentic_tool_calls": len(agentic_result.tool_calls),
+                "agentic_trace": agentic_trace,
+                "agentic_enforcement": {
+                    **enforcement_metadata,
+                },
+                "agentic_mode": "strict_tools_v1",
+                "agentic_config": {
+                    "model": settings.admin_agentic_model,
+                    "thinking_level": settings.admin_flash_thinking_level,
+                    "max_remote_calls": settings.admin_agentic_max_remote_calls,
+                    "tool_timeout_seconds": settings.admin_agentic_tool_timeout_seconds,
+                    "cache_mode": "disabled",
+                    "context_budget_chars": {
+                        "history": settings.admin_agentic_history_max_chars,
+                        "background": settings.admin_agentic_background_max_chars,
+                        "memory_summary": settings.admin_agentic_memory_max_chars,
+                    },
+                },
+                "teammate_signal_mode": "execution_summary+gm_narration",
+                "event_accounting_mode": "tool_call_first",
+                "player_curation_applied": bool(player_curated),
+                "is_private": is_private,
+                "private_target": private_target if is_private else None,
+                **output_anomaly_meta,
+            },
+            story_events=[event.id for event in turn_story_events] if turn_story_events else [],
+            pacing_action=final_directive.pacing_action if final_directive else None,
+            chapter_info=chapter_info_payload,
+            image_data=agentic_result.image_data,
+        )
+
+    async def process_player_input_v3_stream(
+        self,
+        world_id: str,
+        session_id: str,
+        player_input: str,
+        is_private: bool = False,
+        private_target: Optional[str] = None,
+    ):
+        """v3 SSE 流：复用 v3 主流程并按事件输出。"""
+        self._ensure_fixed_world(world_id)
+        if not settings.use_agentic_mode:
+            async for event in self.process_player_input_v2_stream(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=player_input,
+                is_private=is_private,
+                private_target=private_target,
+            ):
+                yield event
+            return
+
+        try:
+            yield {"type": "phase", "phase": "generating"}
+            response = await self.process_player_input_v3(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=player_input,
+                is_private=is_private,
+                private_target=private_target,
+            )
+            agentic_trace = {}
+            if isinstance(response.metadata, dict):
+                raw_trace = response.metadata.get("agentic_trace")
+                if isinstance(raw_trace, dict):
+                    agentic_trace = raw_trace
+            if agentic_trace:
+                yield {"type": "agentic_trace", "agentic_trace": agentic_trace}
+            yield {"type": "gm_start"}
+            full_text = response.narration or ""
+            chunk_size = 120
+            for idx in range(0, len(full_text), chunk_size):
+                yield {"type": "gm_chunk", "text": full_text[idx:idx + chunk_size], "chunk_type": "answer"}
+            yield {"type": "gm_end", "full_text": full_text}
+
+            for teammate in response.teammate_responses:
+                yield {"type": "teammate_response", **teammate}
+
+            yield {
+                "type": "complete",
+                "state_delta": response.state_delta.model_dump() if response.state_delta else None,
+                "metadata": response.metadata,
+                "available_actions": response.available_actions,
+                "story_events": response.story_events,
+                "teammate_responses": response.teammate_responses,
+                "pacing_action": response.pacing_action,
+                "chapter_info": response.chapter_info,
+                "image_data": response.image_data,
+                "agentic_trace": agentic_trace,
+            }
+        except ValueError as exc:
+            yield {"type": "error", "error": str(exc)}
+        except Exception as exc:
+            logger.exception("[v3-stream] 处理失败: %s", exc)
+            yield {"type": "error", "error": str(exc)}
+
     # ==================== Flash-Only 架构 (v2) ====================
 
     async def process_player_input_v2(
@@ -365,9 +1172,11 @@ class AdminCoordinator:
         world_id: str,
         session_id: str,
         player_input: str,
+        is_private: bool = False,
+        private_target: Optional[str] = None,
     ) -> CoordinatorResponse:
         """
-        Flash-Only 架构的玩家输入处理流程（两轮 Flash）。
+        [LEGACY] Flash-Only 架构的玩家输入处理流程（两轮 Flash）。
 
         流程：
         1. 收集基础上下文
@@ -388,6 +1197,16 @@ class AdminCoordinator:
         Returns:
             CoordinatorResponse: 完整响应
         """
+        self._ensure_fixed_world(world_id)
+        if settings.use_agentic_mode:
+            return await self.process_player_input_v3(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=player_input,
+                is_private=is_private,
+                private_target=private_target,
+            )
+
         # Phase 守卫：角色必须存在
         pc = await self.character_store.get_character(world_id, session_id)
         if not pc:
@@ -953,13 +1772,25 @@ class AdminCoordinator:
         private_target: Optional[str] = None,
     ):
         """
-        流式 Flash-Only 玩家输入处理（异步生成器）。
+        [LEGACY] 流式 Flash-Only 玩家输入处理（异步生成器）。
 
         前置阶段（1-4.5）与 v2 相同，随后流式输出 GM 叙述和队友响应。
 
         Yields:
             dict: SSE 事件 (phase/gm_start/gm_chunk/gm_end/teammate_*/complete/error/time_event)
         """
+        self._ensure_fixed_world(world_id)
+        if settings.use_agentic_mode:
+            async for event in self.process_player_input_v3_stream(
+                world_id=world_id,
+                session_id=session_id,
+                player_input=player_input,
+                is_private=is_private,
+                private_target=private_target,
+            ):
+                yield event
+            return
+
         gm_narration = ""
         teammate_responses = []
         history = None
@@ -2861,7 +3692,7 @@ class AdminCoordinator:
         "navigation": {"depth": 1, "output_threshold": 0.3},
         "team_interaction": {"depth": 2, "output_threshold": 0.2},
         "roleplay": {"depth": 2, "output_threshold": 0.2},
-        "enter_sub_location": {"depth": 1, "output_threshold": 0.3},
+        "enter_sublocation": {"depth": 1, "output_threshold": 0.3},
         "leave_sub_location": {"depth": 1, "output_threshold": 0.3},
         "wait": {"depth": 1, "output_threshold": 0.3},
     }
@@ -2879,6 +3710,16 @@ class AdminCoordinator:
 
         仅 v2: 加载角色图谱 + 营地图谱，并按上下文可选叠加章节/区域图谱。
         """
+        if getattr(self, "recall_orchestrator", None) is not None:
+            return await self.recall_orchestrator.recall(
+                world_id=world_id,
+                character_id=character_id,
+                seed_nodes=seed_nodes,
+                intent_type=intent_type,
+                chapter_id=chapter_id,
+                area_id=area_id,
+            )
+
         from app.models.flash import RecallResponse
         from app.models.activation import SpreadingActivationConfig
         from app.services.memory_graph import MemoryGraph
@@ -3397,6 +4238,110 @@ class AdminCoordinator:
             changes=merged_changes,
         )
 
+    @classmethod
+    def _compact_agentic_value(
+        cls,
+        value: Any,
+        *,
+        depth: int = 0,
+        max_depth: int = 3,
+        max_items: int = 6,
+        max_str_len: int = 220,
+    ) -> Any:
+        """压缩工具参数/结果，避免前端 trace 负载过大。"""
+        if depth >= max_depth:
+            return "<truncated>"
+
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+
+        if isinstance(value, str):
+            return value if len(value) <= max_str_len else (value[:max_str_len] + "...")
+
+        if isinstance(value, list):
+            compacted = [
+                cls._compact_agentic_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    max_items=max_items,
+                    max_str_len=max_str_len,
+                )
+                for item in value[:max_items]
+            ]
+            if len(value) > max_items:
+                compacted.append(f"...(+{len(value) - max_items})")
+            return compacted
+
+        if isinstance(value, dict):
+            compacted: Dict[str, Any] = {}
+            items = list(value.items())
+            for key, item in items[:max_items]:
+                key_str = str(key)
+                lower_key = key_str.lower()
+                if (
+                    "base64" in lower_key
+                    or lower_key in {"subgraph", "recalled_memory", "graph_data"}
+                ):
+                    compacted[key_str] = "<omitted>"
+                    continue
+                compacted[key_str] = cls._compact_agentic_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    max_items=max_items,
+                    max_str_len=max_str_len,
+                )
+            if len(items) > max_items:
+                compacted["..."] = f"+{len(items) - max_items} keys"
+            return compacted
+
+        text = str(value)
+        return text if len(text) <= max_str_len else (text[:max_str_len] + "...")
+
+    def _build_agentic_trace_payload(self, agentic_result: Any) -> Dict[str, Any]:
+        """构建可视化用的 agentic trace 数据。"""
+        tool_calls = list(getattr(agentic_result, "tool_calls", []) or [])
+        timeline: List[Dict[str, Any]] = []
+        failed = 0
+        for idx, call in enumerate(tool_calls, start=1):
+            success = bool(getattr(call, "success", False))
+            if not success:
+                failed += 1
+            timeline.append(
+                {
+                    "index": idx,
+                    "name": str(getattr(call, "name", "")),
+                    "success": success,
+                    "duration_ms": int(getattr(call, "duration_ms", 0) or 0),
+                    "error": str(getattr(call, "error", "") or ""),
+                    "args": self._compact_agentic_value(getattr(call, "args", {}) or {}),
+                    "result": self._compact_agentic_value(getattr(call, "result", {}) or {}),
+                }
+            )
+
+        usage = getattr(agentic_result, "usage", {}) or {}
+        thought_summary = str(getattr(agentic_result, "thinking_summary", "") or "").strip()
+        if len(thought_summary) > 4000:
+            thought_summary = thought_summary[:4000] + "..."
+
+        return {
+            "thinking": {
+                "level": settings.admin_flash_thinking_level,
+                "summary": thought_summary,
+                "thoughts_token_count": int(usage.get("thoughts_token_count", 0) or 0),
+                "output_token_count": int(usage.get("output_token_count", 0) or 0),
+                "total_token_count": int(usage.get("total_token_count", 0) or 0),
+                "finish_reason": str(getattr(agentic_result, "finish_reason", "") or ""),
+            },
+            "tool_calls": timeline,
+            "stats": {
+                "count": len(timeline),
+                "failed": failed,
+                "success": len(timeline) - failed,
+            },
+        }
+
     def _build_execution_summary(self, flash_results: List[FlashResponse]) -> str:
         """构建执行结果摘要"""
         if not flash_results:
@@ -3874,7 +4819,7 @@ class AdminCoordinator:
         environment: Optional[dict] = None,
     ) -> Dict[str, Any]:
         payload = await self.flash_cpu.call_combat_tool(
-            "start_combat_session",
+            "start_combat_v3",
             {
                 "world_id": world_id,
                 "session_id": session_id,
@@ -3889,7 +4834,10 @@ class AdminCoordinator:
 
         combat_id = payload.get("combat_id", "")
         await self.flash_cpu._apply_delta(world_id, session_id, self.flash_cpu._build_state_delta("start_combat", {"combat_id": combat_id}))
-        actions_payload = await self.flash_cpu.call_combat_tool("get_available_actions", {"combat_id": combat_id})
+        actions_payload = await self.flash_cpu.call_combat_tool(
+            "get_available_actions_v3",
+            {"combat_id": combat_id},
+        )
         actions = actions_payload.get("actions", [])
         narration = combat_description or "战斗开始！"
         return {
@@ -3908,7 +4856,7 @@ class AdminCoordinator:
 
         combat_id = session_state.active_combat_id
         payload = await self.flash_cpu.call_combat_tool(
-            "execute_action",
+            "execute_action_v3",
             {"combat_id": combat_id, "action_id": action_id},
         )
         if payload.get("error"):
@@ -3934,7 +4882,10 @@ class AdminCoordinator:
                 "narration": payload.get("final_result", {}).get("summary", "战斗结束。"),
             }
 
-        actions_payload = await self.flash_cpu.call_combat_tool("get_available_actions", {"combat_id": combat_id})
+        actions_payload = await self.flash_cpu.call_combat_tool(
+            "get_available_actions_v3",
+            {"combat_id": combat_id},
+        )
         return {
             "type": "combat",
             "phase": "action",
@@ -3956,6 +4907,7 @@ class AdminCoordinator:
         starting_location: Optional[str] = None,
         starting_time: Optional[dict] = None,
     ):
+        self._ensure_fixed_world(world_id)
         return await self._world_runtime.start_session(
             world_id=world_id,
             session_id=session_id,

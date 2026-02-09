@@ -11,7 +11,14 @@ from typing import Any, Dict, List, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .combat_engine import CombatEngine
-from .enemy_registry import list_templates, register_archetype, register_template
+from .enemy_registry import (
+    list_templates,
+    load_world_templates,
+    register_archetype,
+    register_template,
+)
+from .data_repository import CombatDataRepository
+from .template_mapper import skill_to_spell_template, slugify
 from .models.combat_session import CombatState
 from app.models.event import Event, EventContent, EventType, GMEventIngestRequest
 from app.models.game import CombatContext
@@ -48,6 +55,107 @@ session_store = GameSessionStore()
 event_service = AdminEventService()
 
 
+def _normalize_enemy_specs(
+    enemies: List[Any],
+    *,
+    world_id: Optional[str] = None,
+    template_version: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Normalize mixed enemy inputs into engine-friendly enemy entries."""
+    normalized: List[Dict[str, Any]] = []
+
+    for raw in enemies or []:
+        if isinstance(raw, str):
+            spec: Dict[str, Any] = {"enemy_id": raw, "count": 1, "level": 1}
+        elif isinstance(raw, dict):
+            spec = dict(raw)
+        else:
+            continue
+
+        enemy_id = str(spec.get("enemy_id") or spec.get("type") or "").strip()
+        if not enemy_id:
+            continue
+
+        try:
+            count = int(spec.get("count", 1) or 1)
+        except (TypeError, ValueError):
+            count = 1
+        count = max(1, min(count, 20))
+
+        try:
+            level = int(spec.get("level", 1) or 1)
+        except (TypeError, ValueError):
+            level = 1
+        level = max(1, min(level, 20))
+
+        for _ in range(count):
+            normalized.append(
+                {
+                    "type": enemy_id,
+                    "enemy_id": enemy_id,
+                    "level": level,
+                    "variant": spec.get("variant"),
+                    "template_version": spec.get("template_version") or template_version,
+                    "world_id": spec.get("world_id") or world_id,
+                    "tags": list(spec.get("tags", []) or []),
+                    "overrides": dict(spec.get("overrides", {}) or {}),
+                }
+            )
+
+    return normalized
+
+
+def _build_world_skill_templates(
+    world_id: str,
+    template_version: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Build session-level skill templates from world skills."""
+    repository = CombatDataRepository(world_id=world_id, template_version=template_version)
+    templates: Dict[str, Dict[str, Any]] = {}
+
+    for skill in repository.list_skills():
+        mapped = skill_to_spell_template(skill)
+        if not mapped:
+            continue
+
+        mapped_id = str(mapped.get("id") or "").strip()
+        payload = dict(mapped)
+        payload.pop("id", None)
+        if mapped_id:
+            templates[mapped_id] = dict(payload)
+
+        # Also register aliases to improve spell_id compatibility.
+        source_id = str(skill.get("id") or "").strip()
+        if source_id:
+            templates[source_id] = dict(payload)
+
+        name_alias = slugify(str(skill.get("name") or ""))
+        if name_alias:
+            templates[name_alias] = dict(payload)
+
+    return templates
+
+
+def _to_action_v3(action: Dict[str, Any]) -> Dict[str, Any]:
+    """Extend legacy action payload into v3-friendly option shape."""
+    return {
+        "action_id": action.get("action_id"),
+        "action_type": action.get("type"),
+        "display_name": action.get("display_name", ""),
+        "description": action.get("description", ""),
+        "target_id": action.get("target_id"),
+        "requirements": {},
+        "resource_cost": {"type": action.get("cost_type")},
+        "hit_formula": None,
+        "damage_formula": action.get("damage_type"),
+        "effect_refs": [],
+        "metadata": {
+            "range_band": action.get("range_band"),
+            "success_rate": action.get("success_rate"),
+        },
+    }
+
+
 # ============================================
 # MCP 工具定义
 # ============================================
@@ -59,6 +167,7 @@ async def start_combat(
     player_state: Dict[str, Any],
     environment: Optional[Dict[str, Any]] = None,
     allies: Optional[List[Dict[str, Any]]] = None,
+    template_version: Optional[str] = None,
 ) -> str:
     """
     开始战斗
@@ -73,11 +182,16 @@ async def start_combat(
     Returns:
         str: JSON字符串，包含combat_id和初始状态
     """
+    normalized_enemies = _normalize_enemy_specs(
+        enemies,
+        template_version=template_version,
+    )
     session = combat_engine.start_combat(
-        enemies=enemies,
+        enemies=normalized_enemies,
         player_state=player_state,
         environment=environment,
         allies=allies,
+        template_version=template_version,
     )
 
     return json.dumps(
@@ -104,6 +218,9 @@ async def start_combat_session(
     environment: Optional[Dict[str, Any]] = None,
     allies: Optional[List[Dict[str, Any]]] = None,
     combat_context: Optional[Dict[str, Any]] = None,
+    template_version: Optional[str] = None,
+    use_world_templates: bool = True,
+    include_skill_templates: bool = True,
 ) -> str:
     """
     开始战斗并写入会话状态
@@ -112,11 +229,30 @@ async def start_combat_session(
     if not existing_session:
         return json.dumps({"error": "session not found"}, ensure_ascii=False)
 
+    normalized_enemies = _normalize_enemy_specs(
+        enemies,
+        world_id=world_id,
+        template_version=template_version,
+    )
+    if use_world_templates:
+        load_world_templates(world_id, template_version=template_version)
+
+    session_env = dict(environment or {})
+    if include_skill_templates:
+        skill_templates = _build_world_skill_templates(
+            world_id=world_id,
+            template_version=template_version,
+        )
+        if skill_templates:
+            session_env["skill_templates"] = skill_templates
+
     session = combat_engine.start_combat(
-        enemies=enemies,
+        enemies=normalized_enemies,
         player_state=player_state,
-        environment=environment,
+        environment=session_env,
         allies=allies,
+        world_id=world_id,
+        template_version=template_version,
     )
     context = CombatContext(**(combat_context or {}))
     await session_store.set_combat(world_id, session_id, session.combat_id, context)
@@ -223,6 +359,134 @@ async def resolve_combat_session(
         indent=2,
         default=str,
     )
+
+
+@combat_mcp.tool()
+async def start_combat_v3(
+    world_id: str,
+    session_id: str,
+    enemies: List[Dict[str, Any]],
+    player_state: Dict[str, Any],
+    environment: Optional[Dict[str, Any]] = None,
+    allies: Optional[List[Dict[str, Any]]] = None,
+    combat_context: Optional[Dict[str, Any]] = None,
+    template_version: Optional[str] = None,
+) -> str:
+    """Start combat using v3 enemy spec + world templates."""
+    raw = await start_combat_session(
+        world_id=world_id,
+        session_id=session_id,
+        enemies=enemies,
+        player_state=player_state,
+        environment=environment,
+        allies=allies,
+        combat_context=combat_context,
+        template_version=template_version,
+        use_world_templates=True,
+        include_skill_templates=True,
+    )
+    payload = json.loads(raw)
+    combat_id = payload.get("combat_id")
+    if combat_id:
+        actions_raw = await get_available_actions(combat_id=combat_id)
+        actions_payload = json.loads(actions_raw)
+        actions = actions_payload.get("actions", [])
+        payload["available_actions_v3"] = [_to_action_v3(action) for action in actions]
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+@combat_mcp.tool()
+async def get_available_actions_v3(
+    combat_id: str,
+    actor_id: Optional[str] = None,
+) -> str:
+    """Get v3 action options for current/selected actor."""
+    if actor_id:
+        raw = await get_available_actions_for_actor(combat_id=combat_id, actor_id=actor_id)
+    else:
+        raw = await get_available_actions(combat_id=combat_id)
+    payload = json.loads(raw)
+    actions = payload.get("actions", [])
+    payload["actions_v3"] = [_to_action_v3(action) for action in actions]
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+@combat_mcp.tool()
+async def execute_action_v3(
+    combat_id: str,
+    action_id: str,
+    actor_id: Optional[str] = None,
+) -> str:
+    """Execute action via actor-aware v3 wrapper."""
+    if actor_id:
+        raw = await execute_action_for_actor(
+            combat_id=combat_id,
+            actor_id=actor_id,
+            action_id=action_id,
+        )
+    else:
+        raw = await execute_action(combat_id=combat_id, action_id=action_id)
+    payload = json.loads(raw)
+    if payload.get("combat_state", {}).get("is_ended"):
+        final_result = payload.get("final_result", {})
+        if isinstance(final_result, dict):
+            payload["resolution_v3"] = {
+                "combat_id": combat_id,
+                "result": final_result.get("result"),
+                "summary": final_result.get("summary", ""),
+                "rewards": final_result.get("rewards", {}),
+                "player_state": final_result.get("player_state", {}),
+                "character_deltas": {},
+                "loot_events": [],
+                "relationship_impacts": [],
+                "event_payload_ref": None,
+            }
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+@combat_mcp.tool()
+async def resolve_combat_session_v3(
+    world_id: str,
+    session_id: str,
+    combat_id: Optional[str] = None,
+    use_engine: bool = True,
+    result_override: Optional[Dict[str, Any]] = None,
+    summary_override: Optional[str] = None,
+    dispatch: bool = True,
+    recipients: Optional[List[str]] = None,
+    per_character: Optional[Dict[str, Any]] = None,
+    write_indexes: bool = False,
+    validate: bool = False,
+    strict: bool = False,
+) -> str:
+    """Resolve combat and return v3-shaped resolution payload."""
+    raw = await resolve_combat_session(
+        world_id=world_id,
+        session_id=session_id,
+        combat_id=combat_id,
+        use_engine=use_engine,
+        result_override=result_override,
+        summary_override=summary_override,
+        dispatch=dispatch,
+        recipients=recipients,
+        per_character=per_character,
+        write_indexes=write_indexes,
+        validate=validate,
+        strict=strict,
+    )
+    payload = json.loads(raw)
+    payload["resolution_v3"] = {
+        "combat_id": payload.get("combat_id"),
+        "result": (result_override or {}).get("result") if isinstance(result_override, dict) else None,
+        "summary": summary_override or "",
+        "rewards": (result_override or {}).get("rewards", {}) if isinstance(result_override, dict) else {},
+        "player_state": payload.get("player_state", {}),
+        "character_deltas": {},
+        "loot_events": [],
+        "relationship_impacts": [],
+        "event_payload_ref": payload.get("event_id"),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
 
 @combat_mcp.tool()
@@ -467,12 +731,20 @@ async def register_enemy_archetype(spec: Dict[str, Any]) -> str:
 
 @combat_mcp.tool()
 async def list_enemy_templates(
-    scene: Optional[str] = None, tags: Optional[List[str]] = None
+    scene: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    world_id: Optional[str] = None,
+    template_version: Optional[str] = None,
 ) -> str:
     """
     列出敌人模板（可按场景/标签过滤）
     """
-    templates = list_templates(tags=tags, scene=scene)
+    templates = list_templates(
+        tags=tags,
+        scene=scene,
+        world_id=world_id,
+        template_version=template_version,
+    )
     return json.dumps(
         {"templates": templates},
         ensure_ascii=False,

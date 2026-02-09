@@ -1,13 +1,20 @@
 """Enemy template registry and archetype generator."""
+import logging
 import copy
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .rules import ENEMY_TEMPLATES
+from .data_repository import CombatDataRepository
+from .template_mapper import monster_to_enemy_template, slugify
 
 
 _BASE_TEMPLATES: Dict[str, Dict[str, Any]] = copy.deepcopy(ENEMY_TEMPLATES)
 _DYNAMIC_TEMPLATES: Dict[str, Dict[str, Any]] = {}
+_WORLD_TEMPLATES: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+_WORLD_ALIASES: Dict[Tuple[str, str], Dict[str, str]] = {}
+
+logger = logging.getLogger(__name__)
 
 _DICE_PATTERN = re.compile(r"^\d+d\d+([+-]\d+)?$")
 
@@ -297,12 +304,88 @@ def register_archetype(spec: Dict[str, Any]) -> Dict[str, Any]:
     return register_template(template)
 
 
-def get_template(enemy_type: str) -> Optional[Dict[str, Any]]:
+def load_world_templates(
+    world_id: str,
+    template_version: Optional[str] = None,
+    *,
+    force_reload: bool = False,
+    repository: Optional[CombatDataRepository] = None,
+) -> List[Dict[str, Any]]:
+    """Load world-scoped monster templates into in-memory cache."""
+    version = template_version or "default"
+    cache_key = (world_id, version)
+    if cache_key in _WORLD_TEMPLATES and not force_reload:
+        return [copy.deepcopy(t) for t in _WORLD_TEMPLATES[cache_key].values()]
+
+    repo = repository or CombatDataRepository(world_id=world_id, template_version=version)
+    monsters = repo.list_monsters()
+
+    mapped_templates: Dict[str, Dict[str, Any]] = {}
+    aliases: Dict[str, str] = {}
+    for monster in monsters:
+        mapped = monster_to_enemy_template(monster)
+        if not mapped:
+            continue
+
+        enemy_type = mapped["enemy_type"]
+        try:
+            normalized = _normalize_template(enemy_type, mapped)
+        except ValueError as exc:
+            logger.debug(
+                "Skip invalid world enemy template world=%s enemy=%s: %s",
+                world_id,
+                enemy_type,
+                exc,
+            )
+            continue
+
+        # Preserve worldbook-only extension fields.
+        normalized["source_id"] = str(monster.get("id", enemy_type))
+        normalized["spells_known"] = list(mapped.get("spells_known", []))
+        normalized["loot"] = list(mapped.get("loot", []))
+        mapped_templates[enemy_type] = normalized
+
+        for alias in (
+            slugify(str(monster.get("id", ""))),
+            slugify(str(monster.get("name", ""))),
+            slugify(enemy_type),
+        ):
+            if alias:
+                aliases[alias] = enemy_type
+
+    _WORLD_TEMPLATES[cache_key] = mapped_templates
+    _WORLD_ALIASES[cache_key] = aliases
+    return [copy.deepcopy(t) for t in mapped_templates.values()]
+
+
+def get_template(
+    enemy_type: str,
+    world_id: Optional[str] = None,
+    template_version: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Get a template by enemy type."""
+    lookup_key = slugify(enemy_type)
+    if world_id:
+        version = template_version or "default"
+        cache_key = (world_id, version)
+        if cache_key not in _WORLD_TEMPLATES:
+            load_world_templates(world_id, template_version=version)
+
+        world_templates = _WORLD_TEMPLATES.get(cache_key, {})
+        world_aliases = _WORLD_ALIASES.get(cache_key, {})
+        resolved = world_aliases.get(lookup_key, lookup_key)
+        if resolved in world_templates:
+            return copy.deepcopy(world_templates[resolved])
+
     if enemy_type in _DYNAMIC_TEMPLATES:
         return copy.deepcopy(_DYNAMIC_TEMPLATES[enemy_type])
+    if lookup_key in _DYNAMIC_TEMPLATES:
+        return copy.deepcopy(_DYNAMIC_TEMPLATES[lookup_key])
 
     base = _BASE_TEMPLATES.get(enemy_type)
+    if not base and lookup_key in _BASE_TEMPLATES:
+        enemy_type = lookup_key
+        base = _BASE_TEMPLATES.get(lookup_key)
     if not base:
         return None
 
@@ -310,11 +393,25 @@ def get_template(enemy_type: str) -> Optional[Dict[str, Any]]:
     return normalized
 
 
-def list_templates(tags: Optional[List[str]] = None, scene: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_templates(
+    tags: Optional[List[str]] = None,
+    scene: Optional[str] = None,
+    *,
+    world_id: Optional[str] = None,
+    template_version: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """List templates, optionally filtered by tags or scene tag."""
     merged: Dict[str, Dict[str, Any]] = {}
+    if world_id:
+        version = template_version or "default"
+        cache_key = (world_id, version)
+        if cache_key not in _WORLD_TEMPLATES:
+            load_world_templates(world_id, template_version=version)
+        for key, value in _WORLD_TEMPLATES.get(cache_key, {}).items():
+            merged[key] = copy.deepcopy(value)
+
     for key, value in _BASE_TEMPLATES.items():
-        merged[key] = _normalize_template(key, value)
+        merged.setdefault(key, _normalize_template(key, value))
     for key, value in _DYNAMIC_TEMPLATES.items():
         merged[key] = copy.deepcopy(value)
 

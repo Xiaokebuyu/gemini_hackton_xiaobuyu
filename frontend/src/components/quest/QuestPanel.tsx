@@ -1,5 +1,5 @@
 /**
- * Quest Panel - Shows narrative progress, current chapter, objectives
+ * Quest Panel — narrative progress, current chapter, objectives
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -98,8 +98,8 @@ export const QuestPanel: React.FC = () => {
 
   if (!worldId || !sessionId) {
     return (
-      <div className="flex flex-col items-center justify-center py-8 text-g-text-muted">
-        <BookOpen className="w-8 h-8 mb-2" />
+      <div className="flex flex-col items-center justify-center py-16 text-g-text-muted">
+        <BookOpen className="w-8 h-8 mb-3 opacity-40" />
         <p className="text-xs">{t('quest.noQuests', '暂无任务')}</p>
       </div>
     );
@@ -107,8 +107,8 @@ export const QuestPanel: React.FC = () => {
 
   if (progressLoading) {
     return (
-      <div className="flex items-center justify-center py-8">
-        <div className="w-5 h-5 border-2 border-g-gold border-t-transparent rounded-full animate-spin" />
+      <div className="flex items-center justify-center py-16">
+        <div className="w-5 h-5 border-2 border-[var(--g-accent-gold)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -229,40 +229,41 @@ export const QuestPanel: React.FC = () => {
   );
 
   return (
-    <div className="flex flex-col gap-3 p-3 h-full overflow-y-auto g-scrollbar">
+    <div className="px-5 py-4 h-full overflow-y-auto g-scrollbar">
       {/* Current chapter / event */}
       {(taskName || chapterName) && (
-        <div>
+        <div className="mb-5">
           {currentEvent && chapterName && (
-            <p className="text-[10px] text-g-text-muted mb-0.5">{chapterName}</p>
+            <p className="text-[10px] text-g-text-muted/60 mb-1 uppercase tracking-wider">{chapterName}</p>
           )}
-          <h4 className="text-xs font-heading text-g-gold mb-1">
+          <h4 className="text-xs font-heading text-[var(--g-accent-gold)] tracking-wide uppercase mb-2">
             {currentEvent
               ? t('quest.currentTask', '当前任务')
               : t('quest.currentChapter', '当前章节')}
           </h4>
-          <p className="text-sm text-g-text font-semibold">{taskName}</p>
+          <p className="text-sm text-[var(--g-text-primary)] font-medium">{taskName}</p>
           {taskDesc && (
-            <p className="text-xs text-g-text-muted mt-1 leading-relaxed">{taskDesc}</p>
+            <p className="text-xs text-g-text-muted mt-1.5 leading-relaxed">{taskDesc}</p>
           )}
         </div>
       )}
 
       {/* Objectives */}
       {objectives.length > 0 && (
-        <div>
-          <h4 className="text-xs font-heading text-g-gold mb-2">
+        <div className="mb-5">
+          <div className="h-px bg-[var(--g-accent-gold)]/12 mb-4" />
+          <h4 className="text-xs font-heading text-[var(--g-accent-gold)] tracking-wide uppercase mb-3">
             {t('quest.objectives', '目标')}
           </h4>
-          <ul className="space-y-1.5">
+          <ul className="space-y-2">
             {objectives.map((obj, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs">
+              <li key={i} className="flex items-start gap-2.5">
                 {obj.completed ? (
-                  <CheckCircle className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" />
+                  <CheckCircle className="w-3.5 h-3.5 text-g-green mt-0.5 flex-shrink-0" />
                 ) : (
-                  <Circle className="w-3.5 h-3.5 text-g-text-muted mt-0.5 flex-shrink-0" />
+                  <Circle className="w-3.5 h-3.5 text-g-text-muted/40 mt-0.5 flex-shrink-0" />
                 )}
-                <span className={obj.completed ? 'text-g-text-muted line-through' : 'text-g-text'}>
+                <span className={`text-xs leading-relaxed ${obj.completed ? 'text-g-text-muted line-through' : 'text-[var(--g-text-primary)]'}`}>
                   {obj.text}
                 </span>
               </li>
@@ -271,45 +272,53 @@ export const QuestPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Progress bar */}
+      {/* Progress */}
       <div>
-        <h4 className="text-xs font-heading text-g-gold mb-1">
+        <div className="h-px bg-[var(--g-accent-gold)]/12 mb-4" />
+        <h4 className="text-xs font-heading text-[var(--g-accent-gold)] tracking-wide uppercase mb-3">
           {t('quest.progress', '进度')}
         </h4>
-        <p className="text-[11px] text-g-text-muted mb-1">
-          {t('quest.chapterProgress', '章节进度')}
-        </p>
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-3 bg-g-bg-dark rounded-full overflow-hidden">
+
+        {/* Chapter progress */}
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] text-g-text-muted">
+              {t('quest.chapterProgress', '章节进度')}
+            </span>
+            <span className="text-[11px] text-g-text-muted tabular-nums">
+              {chaptersCompleted} / {totalChapters}
+            </span>
+          </div>
+          <div className="h-1.5 bg-[var(--g-bg-sidebar)] rounded-full overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-g-gold-dark to-g-gold-light rounded-full transition-all duration-300 shadow-g-gold"
+              className="h-full bg-[var(--g-accent-gold)] rounded-full transition-all duration-300"
               style={{ width: `${progressPct}%` }}
             />
           </div>
-          <span className="text-sm font-semibold text-g-text-muted whitespace-nowrap">
-            {chaptersCompleted}/{totalChapters}
-          </span>
         </div>
+
+        {/* Event progress */}
         {eventTotal > 0 && (
-          <>
-            <p className="text-[11px] text-g-text-muted mt-2 mb-1">
-              {t('quest.eventProgress', '事件进度')}
-            </p>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-2 bg-g-bg-dark rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-green-500 rounded-full transition-all duration-300"
-                  style={{ width: `${eventPct}%` }}
-                />
-              </div>
-              <span className="text-xs text-g-text-muted whitespace-nowrap">
-                {eventCompleted}/{eventTotal}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] text-g-text-muted">
+                {t('quest.eventProgress', '事件进度')}
+              </span>
+              <span className="text-[11px] text-g-text-muted tabular-nums">
+                {eventCompleted} / {eventTotal}
               </span>
             </div>
-          </>
+            <div className="h-1.5 bg-[var(--g-bg-sidebar)] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-g-green rounded-full transition-all duration-300"
+                style={{ width: `${eventPct}%` }}
+              />
+            </div>
+          </div>
         )}
+
         {waitingTransition && (
-          <p className="text-[11px] text-g-text-muted mt-2">
+          <p className="text-[11px] text-[var(--g-accent-gold)] mt-3 italic">
             {t('quest.waitingTransition', '章节事件已完成，正在进入下一章节...')}
           </p>
         )}
@@ -317,8 +326,8 @@ export const QuestPanel: React.FC = () => {
 
       {/* No quests fallback */}
       {!taskName && !chapterName && objectives.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-6 text-g-text-muted">
-          <BookOpen className="w-8 h-8 mb-2" />
+        <div className="flex flex-col items-center justify-center py-12 text-g-text-muted">
+          <BookOpen className="w-8 h-8 mb-3 opacity-40" />
           <p className="text-xs">{t('quest.noQuests', '暂无任务')}</p>
         </div>
       )}

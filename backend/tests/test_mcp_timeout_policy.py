@@ -25,6 +25,17 @@ class _ConnectFailSession:
         )
 
 
+class _SessionLifecycleFailThenSuccess:
+    def __init__(self):
+        self.calls = 0
+
+    async def call_tool(self, tool_name, arguments):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("ClosedResourceError: stream closed")
+        return type("Result", (), {"structuredContent": {"ok": True}, "content": []})()
+
+
 @pytest.mark.asyncio
 async def test_timeout_failure_does_not_enter_cooldown():
     pool = MCPClientPool()
@@ -89,3 +100,33 @@ async def test_connect_failure_maps_to_service_unavailable():
         )
 
     assert exc.value.server_type == MCPClientPool.GAME_TOOLS
+
+
+@pytest.mark.asyncio
+async def test_session_lifecycle_error_forces_reconnect(monkeypatch):
+    pool = MCPClientPool()
+    pool._tool_timeout_seconds = 1.0
+
+    session = _SessionLifecycleFailThenSuccess()
+    close_calls = {"count": 0}
+
+    async def _fake_get_session(server_type: str):
+        return session
+
+    async def _fake_close_session(server_type: str):
+        close_calls["count"] += 1
+
+    pool.get_session = _fake_get_session  # type: ignore[assignment]
+    monkeypatch.setattr(pool, "_close_session", _fake_close_session)
+
+    result = await pool.call_tool(
+        server_type=MCPClientPool.GAME_TOOLS,
+        tool_name="recoverable_tool",
+        arguments={},
+        max_retries=1,
+    )
+
+    assert result == {"ok": True}
+    assert close_calls["count"] == 1
+    assert pool._server_stats[MCPClientPool.GAME_TOOLS]["session_errors"] == 1
+    assert pool._server_stats[MCPClientPool.GAME_TOOLS]["forced_reconnects"] == 1

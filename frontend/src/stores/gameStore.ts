@@ -4,6 +4,10 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import type {
+  AgenticTracePayload,
+  CoordinatorImageData,
+  XPStateDelta,
+  PlayerHPStateDelta,
   GameState,
   GameTimeState,
   GameTimeResponse,
@@ -41,7 +45,16 @@ interface GameStoreState {
   availableActions: GameAction[];
   latestChapterInfo: CoordinatorChapterInfo | null;
   latestStoryEvents: string[];
+  latestStoryEventId: string | null;
   latestPacingAction: string | null;
+  latestImageData: CoordinatorImageData | null;
+  latestAgenticTrace: AgenticTracePayload | null;
+  latestPartyUpdate: Record<string, unknown> | null;
+  latestInventoryUpdate: Record<string, unknown> | null;
+  playerHp: PlayerHPStateDelta | null;
+  xpSnapshot: XPStateDelta | null;
+  inventoryItems: Record<string, unknown>[];
+  inventoryItemCount: number;
 
   // Actions
   setSession: (worldId: string, sessionId: string) => void;
@@ -64,6 +77,8 @@ interface GameStoreState {
     storyEvents?: string[],
     pacingAction?: string | null,
   ) => void;
+  setImageData: (imageData: CoordinatorImageData | null) => void;
+  setAgenticTrace: (trace: AgenticTracePayload | null) => void;
   updateFromStateDelta: (delta: StateDelta) => void;
   updateFromGameState: (state: GameState) => void;
 }
@@ -89,6 +104,34 @@ function isLocationResponse(value: unknown): value is LocationResponse {
 
 function isDangerLevel(value: unknown): value is 'low' | 'medium' | 'high' | 'extreme' {
   return value === 'low' || value === 'medium' || value === 'high' || value === 'extreme';
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+const teammateRoles = new Set([
+  'warrior',
+  'healer',
+  'mage',
+  'rogue',
+  'support',
+  'scout',
+  'scholar',
+]);
+
+function normalizeTeammateRole(value: unknown): 'warrior' | 'healer' | 'mage' | 'rogue' | 'support' | 'scout' | 'scholar' {
+  return typeof value === 'string' && teammateRoles.has(value)
+    ? (value as 'warrior' | 'healer' | 'mage' | 'rogue' | 'support' | 'scout' | 'scholar')
+    : 'support';
 }
 
 function resolveNodeUnlocked(
@@ -222,7 +265,16 @@ export const useGameStore = create<GameStoreState>()(
         availableActions: [],
         latestChapterInfo: null,
         latestStoryEvents: [],
+        latestStoryEventId: null,
         latestPacingAction: null,
+        latestImageData: null,
+        latestAgenticTrace: null,
+        latestPartyUpdate: null,
+        latestInventoryUpdate: null,
+        playerHp: null,
+        xpSnapshot: null,
+        inventoryItems: [],
+        inventoryItemCount: 0,
 
         // Actions
         setSession: (worldId: string, sessionId: string) => {
@@ -241,7 +293,16 @@ export const useGameStore = create<GameStoreState>()(
             availableActions: [],
             latestChapterInfo: null,
             latestStoryEvents: [],
+            latestStoryEventId: null,
             latestPacingAction: null,
+            latestImageData: null,
+            latestAgenticTrace: null,
+            latestPartyUpdate: null,
+            latestInventoryUpdate: null,
+            playerHp: null,
+            xpSnapshot: null,
+            inventoryItems: [],
+            inventoryItemCount: 0,
           });
         },
 
@@ -259,7 +320,16 @@ export const useGameStore = create<GameStoreState>()(
             availableActions: [],
             latestChapterInfo: null,
             latestStoryEvents: [],
+            latestStoryEventId: null,
             latestPacingAction: null,
+            latestImageData: null,
+            latestAgenticTrace: null,
+            latestPartyUpdate: null,
+            latestInventoryUpdate: null,
+            playerHp: null,
+            xpSnapshot: null,
+            inventoryItems: [],
+            inventoryItemCount: 0,
           });
         },
 
@@ -330,41 +400,175 @@ export const useGameStore = create<GameStoreState>()(
           set({
             latestChapterInfo: chapterInfo,
             latestStoryEvents: storyEvents,
+            latestStoryEventId: storyEvents.length > 0 ? storyEvents[storyEvents.length - 1] : null,
             latestPacingAction: pacingAction,
           });
+        },
+
+        setImageData: (imageData: CoordinatorImageData | null) => {
+          set({ latestImageData: imageData });
+        },
+
+        setAgenticTrace: (trace: AgenticTracePayload | null) => {
+          set({ latestAgenticTrace: trace });
         },
 
         updateFromStateDelta: (delta: StateDelta) => {
           const changes = delta.changes;
           const locationChange = changes.player_location;
           const locationFromDelta = isLocationResponse(locationChange) ? locationChange : null;
+          const hpRaw = asRecord(changes.player_hp);
+          const xpRaw = asRecord(changes.xp);
+          const partyUpdateRaw = asRecord(changes.party_update);
+          const storyEventUpdateRaw = asRecord(changes.story_event_update);
+          const eventTriggeredRaw = asRecord(changes.event_triggered);
+          const storyEventsRaw = changes.story_events;
+          const inventoryUpdateRaw = asRecord(changes.inventory_update);
+          const inventoryRaw = changes.inventory;
 
-          set((state) => ({
-            ...state,
-            ...(changes.player_location !== undefined && {
-              location:
-                locationChange === null
-                  ? null
-                  : locationFromDelta
-                  ? locationFromDelta
-                  : state.location,
-            }),
-            ...(locationFromDelta && {
-              mapGraph: mergeMapGraphFromLocation(state.mapGraph, locationFromDelta),
-            }),
-            ...(changes.sub_location !== undefined && {
-              subLocation: changes.sub_location as string | null,
-            }),
-            ...(changes.game_time !== undefined && {
-              gameTime: changes.game_time as GameTimeState,
-            }),
-            ...(changes.active_dialogue_npc !== undefined && {
-              activeDialogueNpc: changes.active_dialogue_npc as string | null,
-            }),
-            ...(changes.combat_id !== undefined && {
-              combatId: changes.combat_id as string | null,
-            }),
-          }));
+          set((state) => {
+            const next: Partial<GameStoreState> = {};
+
+            if (changes.player_location !== undefined) {
+              next.location = locationChange === null
+                ? null
+                : locationFromDelta
+                ? locationFromDelta
+                : state.location;
+            }
+            if (locationFromDelta) {
+              next.mapGraph = mergeMapGraphFromLocation(state.mapGraph, locationFromDelta);
+            }
+            if (changes.sub_location !== undefined) {
+              next.subLocation = (changes.sub_location as string | null);
+            }
+            if (changes.game_time !== undefined) {
+              next.gameTime = (changes.game_time as GameTimeState);
+            }
+            if (changes.active_dialogue_npc !== undefined) {
+              next.activeDialogueNpc = (changes.active_dialogue_npc as string | null);
+            }
+            if (changes.combat_id !== undefined) {
+              next.combatId = (changes.combat_id as string | null);
+            }
+
+            if (hpRaw) {
+              const current = asNumber(hpRaw.current);
+              const max = asNumber(hpRaw.max);
+              const deltaValue = asNumber(hpRaw.delta);
+              if (current !== null && max !== null) {
+                next.playerHp = {
+                  current,
+                  max,
+                  ...(deltaValue !== null ? { delta: deltaValue } : {}),
+                };
+              }
+            }
+
+            if (xpRaw) {
+              const gained = asNumber(xpRaw.gained);
+              const newXp = asNumber(xpRaw.new_xp);
+              const newLevel = asNumber(xpRaw.new_level);
+              const leveledUp = typeof xpRaw.leveled_up === 'boolean' ? xpRaw.leveled_up : undefined;
+              const snapshot: XPStateDelta = {
+                ...(gained !== null ? { gained } : {}),
+                ...(newXp !== null ? { new_xp: newXp } : {}),
+                ...(newLevel !== null ? { new_level: newLevel } : {}),
+                ...(leveledUp !== undefined ? { leveled_up: leveledUp } : {}),
+              };
+              if (Object.keys(snapshot).length > 0) {
+                next.xpSnapshot = snapshot;
+              }
+            }
+
+            const inventoryCount = asNumber(changes.inventory_item_count);
+            if (inventoryCount !== null) {
+              next.inventoryItemCount = inventoryCount;
+            }
+            if (Array.isArray(inventoryRaw)) {
+              next.inventoryItems = inventoryRaw
+                .map((item) => asRecord(item))
+                .filter((item): item is Record<string, unknown> => item !== null);
+            }
+            if (inventoryUpdateRaw) {
+              next.latestInventoryUpdate = inventoryUpdateRaw;
+            }
+
+            if (partyUpdateRaw) {
+              next.latestPartyUpdate = partyUpdateRaw;
+            }
+
+            const hasParty = typeof changes.has_party === 'boolean' ? changes.has_party : undefined;
+            const partyId = asString(changes.party_id);
+            const membersRaw = Array.isArray(changes.party_members) ? changes.party_members : null;
+            if (hasParty === false) {
+              next.party = null;
+            } else if (membersRaw) {
+              const previousMembers = state.party?.members || [];
+              const normalizedMembers = membersRaw
+                .map((member, index) => {
+                  const raw = asRecord(member);
+                  const fallback = previousMembers[index];
+                  const characterId = asString(raw?.character_id) || fallback?.character_id || '';
+                  if (!characterId) return null;
+                  const role = normalizeTeammateRole(raw?.role ?? fallback?.role);
+                  const responseTendencyRaw = asNumber(raw?.response_tendency);
+                  return {
+                    character_id: characterId,
+                    name: asString(raw?.name) || fallback?.name || characterId,
+                    role,
+                    personality: asString(raw?.personality) || fallback?.personality || '',
+                    response_tendency: responseTendencyRaw !== null
+                      ? responseTendencyRaw
+                      : (fallback?.response_tendency ?? 0.5),
+                    joined_at: asString(raw?.joined_at) || fallback?.joined_at || new Date().toISOString(),
+                    is_active: typeof raw?.is_active === 'boolean'
+                      ? raw.is_active
+                      : (fallback?.is_active ?? true),
+                    current_mood: asString(raw?.current_mood) || fallback?.current_mood || 'neutral',
+                    graph_ref: asString(raw?.graph_ref) || fallback?.graph_ref || '',
+                  };
+                })
+                .filter((member): member is Party['members'][number] => member !== null);
+
+              next.party = {
+                party_id: partyId || state.party?.party_id || 'party_live',
+                world_id: state.party?.world_id || state.worldId || '',
+                session_id: state.party?.session_id || state.sessionId || '',
+                leader_id: state.party?.leader_id || 'player',
+                members: normalizedMembers,
+                formed_at: state.party?.formed_at || new Date().toISOString(),
+                max_size: state.party?.max_size || 4,
+                auto_follow: state.party?.auto_follow ?? true,
+                share_events: state.party?.share_events ?? true,
+                current_location: state.party?.current_location || state.location?.location_id || null,
+                current_sub_location: state.party?.current_sub_location || state.subLocation || null,
+              };
+            }
+
+            if (Array.isArray(storyEventsRaw)) {
+              const storyEvents = storyEventsRaw
+                .filter((value): value is string => typeof value === 'string')
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0);
+              next.latestStoryEvents = storyEvents;
+              next.latestStoryEventId = storyEvents.length > 0 ? storyEvents[storyEvents.length - 1] : null;
+            }
+
+            const latestEventFromUpdate = asString(storyEventUpdateRaw?.event_id)
+              || asString(eventTriggeredRaw?.event_id);
+            if (latestEventFromUpdate) {
+              next.latestStoryEventId = latestEventFromUpdate;
+              if (!Array.isArray(storyEventsRaw)) {
+                const currentEvents = Array.isArray(state.latestStoryEvents) ? state.latestStoryEvents : [];
+                if (!currentEvents.includes(latestEventFromUpdate)) {
+                  next.latestStoryEvents = [...currentEvents, latestEventFromUpdate];
+                }
+              }
+            }
+
+            return { ...state, ...next };
+          });
         },
 
         updateFromGameState: (gameState: GameState) => {
@@ -375,6 +579,12 @@ export const useGameStore = create<GameStoreState>()(
             gameTime: gameState.game_time,
             activeDialogueNpc: gameState.active_dialogue_npc,
             combatId: gameState.combat_id,
+            playerHp: gameState.player_hp ?? null,
+            xpSnapshot: gameState.xp ?? null,
+            inventoryItems: Array.isArray(gameState.inventory) ? gameState.inventory : [],
+            inventoryItemCount: typeof gameState.inventory_item_count === 'number'
+              ? gameState.inventory_item_count
+              : (Array.isArray(gameState.inventory) ? gameState.inventory.length : 0),
           });
         },
       }),

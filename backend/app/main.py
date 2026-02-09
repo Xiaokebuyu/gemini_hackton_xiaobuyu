@@ -103,3 +103,22 @@ async def health_check():
                 "error": f"{type(exc).__name__}: {exc}",
             },
         )
+
+
+@app.get(f"{settings.api_prefix}/admin/mcp/diagnostics")
+async def mcp_diagnostics():
+    """MCP transport diagnostics for streamable-http/sse/stdio troubleshooting."""
+    try:
+        pool = await MCPClientPool.get_instance()
+        return await pool.get_diagnostics(
+            include_probe=True,
+            timeout_seconds=settings.mcp_probe_timeout_seconds,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )

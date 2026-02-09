@@ -58,6 +58,52 @@ export interface StateDelta {
   previous_values: Record<string, unknown>;
 }
 
+export interface PlayerHPStateDelta {
+  current: number;
+  max: number;
+  delta?: number;
+}
+
+export interface XPStateDelta {
+  gained?: number;
+  new_xp?: number;
+  leveled_up?: boolean;
+  new_level?: number;
+}
+
+export interface CoordinatorImageData {
+  base64: string;
+  mime_type: string;
+  style?: string;
+  prompt?: string;
+  model?: string;
+}
+
+export interface AgenticTracePayload {
+  thinking?: {
+    level?: string;
+    summary?: string;
+    thoughts_token_count?: number;
+    output_token_count?: number;
+    total_token_count?: number;
+    finish_reason?: string;
+  };
+  tool_calls?: Array<{
+    index?: number;
+    name?: string;
+    success?: boolean;
+    duration_ms?: number;
+    error?: string;
+    args?: Record<string, unknown>;
+    result?: Record<string, unknown>;
+  }>;
+  stats?: {
+    count?: number;
+    failed?: number;
+    success?: number;
+  };
+}
+
 export interface GameState {
   session_id: string;
   world_id: string;
@@ -66,6 +112,10 @@ export interface GameState {
   game_time: GameTimeState;
   active_dialogue_npc: string | null;
   combat_id: string | null;
+  player_hp?: PlayerHPStateDelta | null;
+  xp?: XPStateDelta | null;
+  inventory?: Record<string, unknown>[];
+  inventory_item_count?: number;
   narrative_progress: Record<string, unknown>;
   metadata: Record<string, unknown>;
   party_id: string | null;
@@ -209,6 +259,7 @@ export interface TeammateDebugMetadata {
 export interface CoordinatorMetadata extends Record<string, unknown> {
   story_director?: StoryDirectorMetadata;
   teammate_debug?: TeammateDebugMetadata;
+  agentic_trace?: AgenticTracePayload;
 }
 
 // =============================================================================
@@ -225,6 +276,7 @@ export interface CoordinatorResponse {
   story_events?: string[];
   pacing_action?: string | null;
   chapter_info?: CoordinatorChapterInfo | null;
+  image_data?: CoordinatorImageData | null;
 }
 
 // =============================================================================
@@ -329,6 +381,8 @@ export type SSEEventType =
   | 'gm_start'
   | 'gm_chunk'
   | 'gm_end'
+  | 'agentic_trace'
+  | 'teammate_response'
   | 'teammate_start'
   | 'teammate_chunk'
   | 'teammate_end'

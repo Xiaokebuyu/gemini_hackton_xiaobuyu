@@ -127,7 +127,7 @@ const TitleMenu: React.FC<{ onSelect: (mode: TitleMode) => void }> = ({ onSelect
           select-none
         "
       >
-        CHRONICLE
+        LOREWEAVER
       </motion.h1>
       <motion.p
         initial={{ opacity: 0 }}
