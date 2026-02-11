@@ -99,6 +99,7 @@ class V4AgenticToolRegistry:
             # Navigation
             self.navigate,
             self.enter_sublocation,
+            self.leave_sublocation,
             # NPC
             self.npc_dialogue,
             # Memory
@@ -126,6 +127,7 @@ class V4AgenticToolRegistry:
             self.activate_event,
             self.complete_event,
             self.advance_chapter,
+            self.complete_objective,
             # Disposition
             self.update_disposition,
             # Image
@@ -262,6 +264,14 @@ class V4AgenticToolRegistry:
         """
         args = {"sub_location": sub_location}
         return await self._timed("enter_sublocation", args, self.session.enter_sublocation(sub_location))
+
+    async def leave_sublocation(self) -> Dict[str, Any]:
+        """Leave the current sub-location, returning to area main map.
+
+        Usage:
+            - Use when player leaves a building/room/POI to return to the area.
+        """
+        return await self._timed("leave_sublocation", {}, self.session.leave_sublocation())
 
     # =========================================================================
     # NPC dialogue
@@ -1086,6 +1096,73 @@ class V4AgenticToolRegistry:
         await self._record("advance_chapter", args, started, payload, True, None)
         return payload
 
+    async def complete_objective(self, objective_id: str) -> Dict[str, Any]:
+        """Mark a chapter objective as completed.
+
+        Args:
+            objective_id: Objective id from `chapter_context.objectives`.
+
+        Usage:
+            - When the conditions described by a chapter objective are fulfilled.
+            - Only works on objectives not yet completed.
+        """
+        started = time.perf_counter()
+        args = {"objective_id": objective_id}
+
+        narrative = self.session.narrative
+        if not narrative:
+            payload = {"success": False, "error": "narrative not loaded"}
+            await self._record("complete_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        # Get chapter data for validation and description
+        chapter_id = getattr(narrative, "current_chapter", None)
+        world = self.session.world
+        chapter_data = None
+        if world and hasattr(world, "chapter_registry") and chapter_id:
+            chapter_data = world.chapter_registry.get(chapter_id)
+
+        # Find the objective in the chapter definition
+        obj_description = ""
+        if chapter_data:
+            objectives = chapter_data.get("objectives", []) if isinstance(chapter_data, dict) else getattr(chapter_data, "objectives", [])
+            for obj in objectives:
+                obj_id = obj.get("id", "") if isinstance(obj, dict) else getattr(obj, "id", "")
+                if obj_id == objective_id:
+                    obj_description = obj.get("description", "") if isinstance(obj, dict) else getattr(obj, "description", "")
+                    break
+            else:
+                payload = {
+                    "success": False,
+                    "error": f"objective not found: {objective_id}",
+                    "available_objectives": [
+                        (obj.get("id", "") if isinstance(obj, dict) else getattr(obj, "id", ""))
+                        for obj in objectives
+                    ],
+                }
+                await self._record("complete_objective", args, started, payload, False, payload["error"])
+                return payload
+
+        # Check if already completed
+        completed = getattr(narrative, "objectives_completed", []) or []
+        if objective_id in completed:
+            payload = {"success": False, "error": f"objective already completed: {objective_id}"}
+            await self._record("complete_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        # Mark completed
+        narrative.objectives_completed.append(objective_id)
+        self.session.mark_narrative_dirty()
+
+        payload = {
+            "success": True,
+            "objective_id": objective_id,
+            "description": obj_description,
+            "total_completed": len(narrative.objectives_completed),
+        }
+        await self._record("complete_objective", args, started, payload, True, None)
+        return payload
+
     # =========================================================================
     # Disposition tool (NEW in V4)
     # =========================================================================
@@ -1166,7 +1243,9 @@ class V4AgenticToolRegistry:
         """Generate a scene image.
 
         Args:
-            scene_description: Description of the scene to depict.
+            scene_description: Visual-only scene description (1-3 sentences).
+                Should include subject + environment + lighting/mood.
+                Avoid dialogue, game mechanics, options list, and meta instructions.
             style: dark_fantasy / anime / watercolor / realistic.
 
         Usage:
@@ -1180,6 +1259,10 @@ class V4AgenticToolRegistry:
             return payload
 
         style_value = style if style in {"dark_fantasy", "anime", "watercolor", "realistic"} else "dark_fantasy"
+        scene_preview = " ".join(str(scene_description or "").split())
+        if len(scene_preview) > 220:
+            scene_preview = f"{scene_preview[:220]}..."
+        logger.info("[generate_scene_image] style=%s scene=%.220s", style_value, scene_preview)
         try:
             image_data = await asyncio.wait_for(
                 self.image_service.generate(scene_description=scene_description, style=style_value),
@@ -1200,15 +1283,26 @@ class V4AgenticToolRegistry:
             await self._record("generate_scene_image", {"scene_description": scene_description, "style": style_value}, started, payload, False, payload["error"])
             return payload
 
-        payload = {"generated": True, **image_data}
+        full_payload = {"generated": True, **image_data}
+        # Keep large binary payload (base64) out of AFC loop context.
+        prompt_preview = str(image_data.get("prompt", scene_description) or "")
+        if len(prompt_preview) > 300:
+            prompt_preview = f"{prompt_preview[:300]}..."
+        payload = {
+            "generated": True,
+            "mime_type": image_data.get("mime_type", "image/png"),
+            "model": image_data.get("model"),
+            "style": image_data.get("style", style_value),
+            "prompt": prompt_preview,
+        }
         async with self._lock:
-            self.image_data = payload
+            self.image_data = full_payload
             self._image_generated_this_turn = True
         await self._record(
             "generate_scene_image",
             {"scene_description": scene_description, "style": style_value},
             started,
-            {"generated": True, "mime_type": image_data.get("mime_type", "image/png")},
+            payload,
             True, None,
         )
         return payload

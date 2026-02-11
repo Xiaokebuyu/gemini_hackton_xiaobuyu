@@ -272,6 +272,29 @@ class SessionRuntime:
                 exc,
             )
 
+        # 事件初始化：Firestore 无事件时从章节定义补充
+        if self.current_area and not self.current_area.events and self.narrative:
+            chapter = self.world.chapter_registry.get(
+                self.narrative.current_chapter
+            )
+            if chapter:
+                from app.models.narrative import Chapter as ChapterModel
+                if isinstance(chapter, dict):
+                    try:
+                        chapter = ChapterModel(**chapter)
+                    except Exception:
+                        chapter = None
+                if chapter:
+                    self.current_area.initialize_events_from_chapter(
+                        chapter, self.narrative.current_chapter
+                    )
+                    logger.info(
+                        "[SessionRuntime] 从章节定义初始化事件: area=%s chapter=%s events=%d",
+                        current_area_id,
+                        self.narrative.current_chapter,
+                        len(self.current_area.events),
+                    )
+
     # =========================================================================
     # enter_area — 完整区域切换生命周期
     # =========================================================================
@@ -317,6 +340,31 @@ class SessionRuntime:
                     exc,
                 )
             self.current_area = new_area
+
+            # 事件初始化：Firestore 无事件时从章节定义补充
+            if not new_area.events and self.narrative:
+                chapter = (
+                    self.world.chapter_registry.get(self.narrative.current_chapter)
+                    if self.world
+                    else None
+                )
+                if chapter:
+                    from app.models.narrative import Chapter as ChapterModel
+                    if isinstance(chapter, dict):
+                        try:
+                            chapter = ChapterModel(**chapter)
+                        except Exception:
+                            chapter = None
+                    if chapter:
+                        new_area.initialize_events_from_chapter(
+                            chapter, self.narrative.current_chapter
+                        )
+                        logger.info(
+                            "[SessionRuntime] 从章节定义初始化事件: area=%s chapter=%s events=%d",
+                            area_id,
+                            self.narrative.current_chapter,
+                            len(new_area.events),
+                        )
 
         # 3. 更新 GameState
         if self.game_state:

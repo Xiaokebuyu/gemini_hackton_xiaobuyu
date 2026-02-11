@@ -621,12 +621,31 @@ class FlashCPUService:
             image_service=self.image_service,
         )
 
+        context_json = json.dumps(context, ensure_ascii=False, default=str)
         user_prompt = (
             "以下是分层上下文(JSON)：\n"
-            f"{json.dumps(context, ensure_ascii=False, default=str)}\n\n"
+            f"{context_json}\n\n"
             f"玩家输入：{player_input}\n\n"
             "请先调用必要工具，再输出最终 GM 叙述。"
         )
+
+        # --- 诊断：各组件大小 (写入文件供排查) ---
+        _diag = {
+            "context_json_chars": len(context_json),
+            "system_prompt_chars": len(system_prompt),
+            "user_prompt_chars": len(user_prompt),
+            "conversation_history_chars": len(str(context.get("conversation_history", ""))),
+            "area_npcs_chars": len(json.dumps(context.get("area_context", {}).get("npcs", []), ensure_ascii=False, default=str)),
+            "area_context_chars": len(json.dumps(context.get("area_context", {}), ensure_ascii=False, default=str)),
+            "world_context_chars": len(json.dumps(context.get("world_context", {}), ensure_ascii=False, default=str)),
+            "chapter_context_chars": len(json.dumps(context.get("chapter_context", {}), ensure_ascii=False, default=str)),
+            "dynamic_state_chars": len(json.dumps(context.get("dynamic_state", {}), ensure_ascii=False, default=str)),
+        }
+        import pathlib as _pl
+        _pl.Path("/tmp/agentic_v4_diag.json").write_text(
+            json.dumps(_diag, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        logger.warning("[agentic_v4] CONTEXT SIZE DIAG written to /tmp/agentic_v4_diag.json: total_user_prompt=%d chars", len(user_prompt))
 
         tools = registry.get_tools()
         logger.info(

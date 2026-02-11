@@ -244,6 +244,12 @@ class LLMService:
         model = model_override or settings.admin_agentic_model or self.main_model
 
         try:
+            _logger.warning(
+                "[agentic_generate] DIAG: model=%s thinking_level=%s tools=%d user_prompt_len=%d",
+                model, thinking_config.thinking_level if thinking_config else "none",
+                len(tools), len(user_prompt),
+            )
+
             response = await self.client.aio.models.generate_content(
                 model=model,
                 contents=user_prompt,

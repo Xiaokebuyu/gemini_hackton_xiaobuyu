@@ -880,7 +880,14 @@ class AgenticToolRegistry:
         scene_description: str,
         style: str = "dark_fantasy",
     ) -> Dict[str, Any]:
-        """Generate a scene image and return base64."""
+        """Generate a scene image and return base64.
+
+        Args:
+            scene_description: Visual-only scene description (1-3 sentences).
+                Should include subject + environment + lighting/mood.
+                Avoid dialogue, game mechanics, options list, and meta instructions.
+            style: dark_fantasy / anime / watercolor / realistic.
+        """
         started = time.perf_counter()
         if self._image_generated_this_turn:
             payload = {
@@ -898,6 +905,14 @@ class AgenticToolRegistry:
             return payload
 
         style_value = style if style in {"dark_fantasy", "anime", "watercolor", "realistic"} else "dark_fantasy"
+        scene_preview = " ".join(str(scene_description or "").split())
+        if len(scene_preview) > 220:
+            scene_preview = f"{scene_preview[:220]}..."
+        logging.getLogger(__name__).info(
+            "[generate_scene_image] style=%s scene=%.220s",
+            style_value,
+            scene_preview,
+        )
         try:
             image_data = await asyncio.wait_for(
                 self.image_service.generate(
@@ -942,9 +957,20 @@ class AgenticToolRegistry:
             )
             return payload
 
-        payload = {"generated": True, **image_data}
+        full_payload = {"generated": True, **image_data}
+        # Keep large binary payload (base64) out of AFC loop context.
+        prompt_preview = str(image_data.get("prompt", scene_description) or "")
+        if len(prompt_preview) > 300:
+            prompt_preview = f"{prompt_preview[:300]}..."
+        payload = {
+            "generated": True,
+            "mime_type": image_data.get("mime_type", "image/png"),
+            "model": image_data.get("model"),
+            "style": image_data.get("style", style_value),
+            "prompt": prompt_preview,
+        }
         async with self._lock:
-            self.image_data = payload
+            self.image_data = full_payload
             self._image_generated_this_turn = True
         await self._record(
             "generate_scene_image",
