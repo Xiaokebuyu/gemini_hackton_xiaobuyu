@@ -41,7 +41,6 @@ from app.models.game import (
     TriggerCombatResponse,
 )
 from app.services.admin.admin_coordinator import AdminCoordinator
-from app.services.admin.agentic_enforcement import AgenticToolExecutionRequiredError
 from app.services.mcp_client_pool import MCPServiceUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -69,8 +68,6 @@ router.dependencies.append(Depends(_validate_fixed_world))
 def _map_exception_to_http(exc: Exception) -> HTTPException:
     if isinstance(exc, MCPServiceUnavailableError):
         return HTTPException(status_code=503, detail=str(exc))
-    if isinstance(exc, AgenticToolExecutionRequiredError):
-        return HTTPException(status_code=422, detail=exc.to_http_detail())
     return HTTPException(status_code=500, detail=str(exc))
 
 

@@ -82,8 +82,6 @@ class AgenticToolRegistry:
         """Return all tool callables exposed to model.
 
         IMPORTANT: Function names here become the tool names visible to the LLM.
-        They MUST match the names in agentic_enforcement.py (SIDE_EFFECT_TOOLS,
-        READ_ONLY_TOOLS, REPAIR_NAME_MAP) to avoid name mismatch bugs.
         """
         raw_tools = [
             self.recall_memory,

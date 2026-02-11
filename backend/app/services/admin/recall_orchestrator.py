@@ -204,6 +204,101 @@ class RecallOrchestrator:
             used_subgraph=True,
         )
 
+    async def recall_v4(
+        self,
+        *,
+        world_id: str,
+        character_id: str,
+        seed_nodes: List[str],
+        intent_type: Optional[str] = None,
+        chapter_id: Optional[str] = None,
+        area_id: Optional[str] = None,
+    ) -> RecallResponse:
+        """V4 简化记忆召回 — 仅 area + character 两个作用域。
+
+        相比 recall()（5+ 作用域: world + chapter + area + character + camp），
+        此方法仅加载 area + character，减少 Firestore 读取和合并开销。
+        """
+        recall_cfg = self.RECALL_CONFIGS.get(intent_type or "", {})
+        output_threshold = recall_cfg.get("output_threshold", 0.15)
+        config = SpreadingActivationConfig(
+            output_threshold=output_threshold,
+            current_chapter_id=chapter_id,
+        )
+
+        scopes: List[GraphScope] = []
+        calls: List[Any] = []
+
+        # 作用域 1: area（如果有 chapter_id 和 area_id）
+        if chapter_id and area_id:
+            area_scope = GraphScope(scope_type="area", chapter_id=chapter_id, area_id=area_id)
+            scopes.append(area_scope)
+            calls.append(self.graph_store.load_graph_v2(world_id, area_scope))
+
+        # 作用域 2: character
+        char_scope = GraphScope(scope_type="character", character_id=character_id)
+        scopes.append(char_scope)
+        calls.append(self.graph_store.load_graph_v2(world_id, char_scope))
+
+        results = await asyncio.gather(*calls, return_exceptions=True)
+        scoped_data: List[Tuple[GraphScope, Any]] = []
+        for scope, result in zip(scopes, results):
+            if isinstance(result, Exception):
+                logger.warning("[recall_v4] scope load failed scope=%s: %s", scope, result)
+                continue
+            scoped_data.append((scope, result))
+
+        merged = MemoryGraph.from_multi_scope(scoped_data)
+        await self._inject_disposition_edges(world_id, character_id, merged)
+
+        logger.info(
+            "[recall_v4] merged scopes=%d nodes=%d edges=%d",
+            len(scoped_data),
+            len(merged.graph.nodes),
+            len(merged.graph.edges),
+        )
+
+        # 扩展种子节点（复用 recall 逻辑）
+        expanded_seeds: List[str] = []
+        for seed in seed_nodes:
+            expanded_seeds.append(seed)
+            for prefix in ("person_", "character_", "location_", "area_"):
+                if seed.startswith(prefix):
+                    expanded_seeds.append(seed[len(prefix):])
+                else:
+                    expanded_seeds.append(f"{prefix}{seed}")
+        valid_seeds = [seed for seed in expanded_seeds if merged.has_node(seed)]
+        logger.info(
+            "[recall_v4] seeds original=%s valid=%s (expanded=%d matched=%d)",
+            seed_nodes,
+            valid_seeds,
+            len(expanded_seeds),
+            len(valid_seeds),
+        )
+        if not valid_seeds:
+            return RecallResponse(
+                seed_nodes=seed_nodes,
+                activated_nodes={},
+                subgraph=None,
+                used_subgraph=False,
+            )
+
+        activated = spread_activation(merged, valid_seeds, config)
+        subgraph_graph = extract_subgraph(merged, activated)
+        subgraph = subgraph_graph.to_graph_data()
+        subgraph.nodes = [
+            node
+            for node in subgraph.nodes
+            if not (node.properties or {}).get("placeholder", False)
+        ]
+
+        return RecallResponse(
+            seed_nodes=seed_nodes,
+            activated_nodes=activated,
+            subgraph=subgraph,
+            used_subgraph=True,
+        )
+
     async def _inject_disposition_edges(
         self,
         world_id: str,

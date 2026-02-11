@@ -590,6 +590,90 @@ class FlashCPUService:
             finish_reason=finish_reason,
         )
 
+    async def agentic_process_v4(
+        self,
+        *,
+        session: Any,
+        player_input: str,
+        context: Dict[str, Any],
+        graph_store: Any,
+        recall_orchestrator: Any = None,
+    ) -> AgenticResult:
+        """V4 agentic process — uses V4AgenticToolRegistry + layered context.
+
+        Args:
+            session: SessionRuntime instance (must be restored).
+            player_input: Player input text.
+            context: Flat dict from LayeredContext.to_flat_dict().
+            graph_store: GraphStore for memory/disposition tools.
+            recall_orchestrator: Optional RecallOrchestrator.
+        """
+        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
+
+        system_prompt = self._load_agentic_prompt()
+        model_name = settings.admin_agentic_model or settings.admin_flash_model
+
+        registry = V4AgenticToolRegistry(
+            session=session,
+            flash_cpu=self,
+            graph_store=graph_store,
+            recall_orchestrator=recall_orchestrator,
+            image_service=self.image_service,
+        )
+
+        user_prompt = (
+            "以下是分层上下文(JSON)：\n"
+            f"{json.dumps(context, ensure_ascii=False, default=str)}\n\n"
+            f"玩家输入：{player_input}\n\n"
+            "请先调用必要工具，再输出最终 GM 叙述。"
+        )
+
+        tools = registry.get_tools()
+        logger.info(
+            "[agentic_v4] starting: model=%s tools=%d input=%.60s...",
+            model_name, len(tools), player_input,
+        )
+        llm_resp = await self.llm_service.agentic_generate(
+            user_prompt=user_prompt,
+            system_instruction=system_prompt,
+            tools=tools,
+            model_override=model_name,
+            thinking_level=settings.admin_flash_thinking_level,
+            max_remote_calls=settings.admin_agentic_max_remote_calls,
+        )
+        narration = (llm_resp.text or "").strip()
+        logger.info(
+            "[agentic_v4] done: tool_calls=%d narration_len=%d",
+            len(registry.tool_calls), len(narration),
+        )
+        if not narration:
+            logger.warning("[agentic_v4] empty narration, tool_calls=%s", [c.name for c in registry.tool_calls])
+            narration = "（你短暂沉默，观察着周围的动静。）"
+
+        finish_reason: Optional[str] = None
+        usage = {
+            "tool_calls": len(registry.tool_calls),
+            "thoughts_token_count": llm_resp.thinking.thoughts_token_count,
+            "output_token_count": llm_resp.thinking.output_token_count,
+            "total_token_count": llm_resp.thinking.total_token_count,
+        }
+        raw = llm_resp.raw_response
+        try:
+            candidates = getattr(raw, "candidates", None) or []
+            if candidates:
+                finish_reason = str(getattr(candidates[0], "finish_reason", None) or "")
+        except Exception:
+            finish_reason = None
+
+        return AgenticResult(
+            narration=narration,
+            thinking_summary=(llm_resp.thinking.thoughts_summary or "").strip(),
+            tool_calls=registry.tool_calls,
+            image_data=registry.image_data,
+            usage=usage,
+            finish_reason=finish_reason,
+        )
+
     async def run_required_tool_repair(
         self,
         *,

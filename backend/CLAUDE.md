@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-AI 驱动的互动式 RPG 游戏后端，具备智能记忆管理和知识图谱能力。采用 Flash-Only v2 架构——单一 Flash 模型完成意图分析、操作执行和叙述生成。
+AI 驱动的互动式 RPG 游戏后端，具备智能记忆管理和知识图谱能力。采用 V4 Runtime Pipeline 架构——分层运行时 + Agentic 工具调用 + 结构化上下文组装。
 
 **技术栈**: FastAPI + Firestore + Google Gemini 3 + NetworkX
 
@@ -89,56 +89,56 @@ python -m app.tools.init_world_cli               # 世界初始化（查看所�
 
 > **注意**: 根目录下的 `README.md`、`ARCHITECTURE.md`、`MEMORY_GATEWAY_INTEGRATION.md` 内容已过时，不应作为架构参考。以本文件为准。
 
-### Flash-Only v2 数据流
+### V4 Runtime Pipeline 数据流
 
-这是核心请求处理流程，入口为 `AdminCoordinator.process_player_input_v2()`：
+核心请求处理流程，入口为 `AdminCoordinator.process_player_input_v3()` → `PipelineOrchestrator.process()`：
 
 ```
 玩家输入
     ↓
-1. 收集基础上下文（世界状态、会话状态、场景、队伍）
+A 阶段: 上下文组装
+  1. GameRuntime.get_world() → WorldInstance（静态数据注册表）
+  2. SessionRuntime.restore() → 加载状态/队伍/历史/角色
+  3. ContextAssembler.assemble() → 结构化上下文快照
+  4. AreaRuntime.check_events() → 机械条件驱动事件状态机
     ↓
-2. StoryDirector 预评估（机械条件 → auto_fired_events + 语义条件 → pending_flash）
+B 阶段: Agentic 会话
+  5. FlashCPUService.agentic_process_v4() → 模型自主工具调用 + 叙述生成
+     - 工具注册：V4AgenticToolRegistry（通过 SessionRuntime/AreaRuntime 操作）
     ↓
-3. Flash 一次性分析（intent + operations + memory seeds + Flash 条件评估）
-    ↓
-4. StoryDirector 后评估（合并结果 → fired_events + chapter_transition）
-    ↓
-5. 并行：记忆召回  |  顺序：执行 Flash 操作
-    ↓
-6. 组装完整上下文
-    ↓
-7. 导航后同步队友位置
-    ↓
-8. Flash GM 生成叙述
-    ↓
-9. 队友响应（显式交互用更高模型，被动用 Flash）
-    ↓
-10. 分发事件到队友图谱
+C 阶段: 后处理
+  6. AreaRuntime.check_events() → 后检查事件（agentic 操作可能改变状态）
+  7. CompanionInstance 事件分发 → 同伴接收已完成事件
+  8. TeammateResponseService.process_round() → 队友响应
+  9. SessionRuntime.persist() → 统一持久化
     ↓
 CoordinatorResponse → 前端
 ```
 
 ### 核心系统
 
-1. **游戏编排器** (`app/services/admin/`)
-   - `admin_coordinator.py`: 主编排器，协调所有子系统（单例，`AdminCoordinator.get_instance()`）
-   - `flash_cpu_service.py`: Flash 意图分析和操作执行
-   - `world_runtime.py`: 世界状态运行时
-   - `state_manager.py`: 会话状态管理，内存快照 + StateDelta 增量追踪（`app/models/state_delta.py`）
+1. **V4 Runtime 层** (`app/runtime/`)
+   - `game_runtime.py`: 全局运行时单例，管理 WorldInstance 缓存
+   - `world_instance.py`: 世界静态数据注册表（地图/角色/章节/知识图谱，启动时加载）
+   - `session_runtime.py`: 会话运行时，统一管理状态/队伍/历史/角色
+   - `area_runtime.py`: 区域生命周期管理，事件状态机 + 章节转换检查
+   - `context_assembler.py`: 结构化上下文组装（替代旧 `_build_context`）
+   - `companion_instance.py`: 同伴系统实例，轻量事件日志 + 记忆摘要
 
-2. **故事导演与事件系统** (`app/services/admin/`)
-   - `story_director.py`: 两阶段事件评估（pre_evaluate → Flash → post_evaluate）
-     - 返回 `PreDirective`（auto_fired_events + pending_flash_conditions + pacing_action）
-     - 返回 `StoryDirective`（fired_events + chapter_transition + side_effects）
-   - `condition_engine.py`: 纯机械条件引擎（8 种结构化条件 + FLASH_EVALUATE 语义条件）
-     - 条件类型：LOCATION / NPC_INTERACTED / TIME_PASSED / ROUNDS_ELAPSED / PARTY_CONTAINS / EVENT_TRIGGERED / OBJECTIVE_COMPLETED / GAME_STATE
-     - 支持 AND/OR/NOT 嵌套逻辑
+2. **管线编排** (`app/services/admin/`)
+   - `pipeline_orchestrator.py`: V4 薄编排层（A/B/C 三阶段）
+   - `v4_agentic_tools.py`: V4 工具注册表（通过 SessionRuntime/AreaRuntime 操作）
+   - `admin_coordinator.py`: 入口协调器（单例），委托核心逻辑到 PipelineOrchestrator
+   - `flash_cpu_service.py`: Flash 意图分析和 Agentic 工具执行
+   - `world_runtime.py`: 世界状态运行时（导航/时间/子地点等）
+   - `state_manager.py`: 会话状态管理，内存快照 + StateDelta 增量追踪
+
+3. **事件系统** (`app/services/admin/`)
    - `event_service.py`: 结构化事件入图 + EventBus 发布
    - `event_llm_service.py`: 自然语言事件 3 步管线（parse → encode → transform_perspective）
-   - 节奏控制（PacingConfig）：subtle_environmental → npc_reminder → direct_prompt → forced_event
+   - 事件状态机由 `AreaRuntime.check_events()` 驱动（替代旧 StoryDirector）
 
-3. **NPC AI 系统** — 三层模型 (`NPCTierConfig`) + 双层认知
+4. **NPC AI 系统** — 三层模型 (`NPCTierConfig`) + 双层认知
    - **Passerby**: 轻量路人交互（无 thinking，无上下文窗口）
    - **Secondary**: 次要角色（medium thinking，共享上下文窗口）
    - **Main**: 主要角色（low thinking，完整 200K 上下文窗口 + 扩散激活记忆召回）
@@ -149,11 +149,11 @@ CoordinatorResponse → 前端
      - 记忆注入：`build_context_with_injection()` 将召回的图谱节点作为"相关记忆"注入系统提示
    - 实例池化：`InstanceManager`，LRU 淘汰（默认 20 实例），淘汰前强制图谱化
 
-4. **队伍系统** (`app/services/party_service.py`, `teammate_response_service.py`)
+5. **队伍系统** (`app/services/party_service.py`, `teammate_response_service.py`)
    - 队友每回合自动决策是否响应
    - 队友位置随玩家导航自动同步
 
-5. **MCP 工具层** (`app/mcp/`, `app/services/mcp_client_pool.py`)
+6. **MCP 工具层** (`app/mcp/`, `app/services/mcp_client_pool.py`)
    - `game_tools_server.py`: 游戏 MCP 服务器
    - `app/combat/combat_mcp_server.py`: 战斗 MCP 服务器
    - 工具模块在 `app/mcp/tools/`：graph、narrative、navigation、npc、party、passerby、time
@@ -162,7 +162,7 @@ CoordinatorResponse → 前端
      - 健康检查 + 自动重连 + 30 秒冷却（超时错误豁免冷却）
      - 工具级超时：默认 20s，`npc_respond` 90s
 
-6. **知识图谱** (`app/services/memory_graph.py`, `spreading_activation.py`)
+7. **知识图谱** (`app/services/memory_graph.py`, `spreading_activation.py`)
    - 扩散激活算法查找相关概念
    - **GraphScope 统一寻址**（`app/models/graph_scope.py`）：6 种作用域
      - `world` → 世界级知识 | `chapter(cid)` → 章节 | `area(cid, aid)` → 区域
@@ -170,12 +170,12 @@ CoordinatorResponse → 前端
    - `GraphStore`（`app/services/graph_store.py`）通过 `_get_base_ref_v2()` 将 scope 映射到 Firestore 路径
    - `memory_graphizer.py`: 对话自动入图
 
-7. **战斗系统** (`app/combat/`)
+8. **战斗系统** (`app/combat/`)
    - D&D 风格 d20 判定
    - `combat_engine.py`: 核心战斗逻辑
    - `ai_opponent.py`: 基于性格的敌人 AI
 
-8. **世界数据处理** (`app/tools/worldbook_graphizer/`)
+9. **世界数据处理** (`app/tools/worldbook_graphizer/`)
    - `unified_pipeline.py`: 统一世界数据提取管线（支持 Batch API）
    - 从小说/Lorebook 提取地图、角色、知识图谱等结构化数据
 
@@ -208,9 +208,9 @@ CoordinatorResponse → 前端
 ### LLM 提示词
 
 所有系统提示存放在 `app/prompts/`，使用 `{variable}` 模板变量：
+- `flash_agentic_system.md`: V4 Agentic 系统提示（工具调用 + 叙述生成）
 - `flash_analysis.md`: Flash 意图分析（输出严格 JSON）
 - `flash_cpu_system.md`: Flash CPU 系统提示
-- `flash_context_curation.md`: 上下文选择策略
 - `flash_gm_narration.md`: GM 叙述生成
 - `teammate_decision.md` / `teammate_response.md`: 队友决策与响应
 - `travel_narration.md`: 旅行叙述
