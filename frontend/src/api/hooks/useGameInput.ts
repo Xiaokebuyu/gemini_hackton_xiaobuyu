@@ -10,6 +10,7 @@ import { sendGameInputV2 } from '../gameApi';
 import { streamGameInput } from '../sseClient';
 import { useGameStore } from '../../stores/gameStore';
 import { useChatStore } from '../../stores/chatStore';
+import { toast } from '../../stores/uiStore';
 import type {
   AgenticTracePayload,
   CoordinatorImageData,
@@ -161,6 +162,7 @@ export function useStreamGameInput() {
     updateFromStateDelta,
     setImageData,
     setAgenticTrace,
+    appendAgenticToolCall,
   } =
     useGameStore();
   const {
@@ -189,6 +191,7 @@ export function useStreamGameInput() {
       let currentGmId: string | null = null;
       const teammateIds: Record<string, string> = {};
       let receivedTeammateStreamingEvent = false;
+      let receivedNpcResponseEvent = false;
 
       try {
         await streamGameInput(
@@ -240,6 +243,22 @@ export function useStreamGameInput() {
                 break;
               }
 
+              case 'npc_response': {
+                receivedNpcResponseEvent = true;
+                const dialogue = typeof event.dialogue === 'string' ? event.dialogue : '';
+                if (dialogue) {
+                  addMessage({
+                    speaker: (event.name as string) || 'NPC',
+                    content: dialogue,
+                    type: 'npc',
+                    metadata: {
+                      character_id: typeof event.character_id === 'string' ? event.character_id : undefined,
+                    },
+                  });
+                }
+                break;
+              }
+
               case 'teammate_response': {
                 receivedTeammateStreamingEvent = true;
                 const responseText = typeof event.response === 'string' ? event.response : '';
@@ -253,6 +272,46 @@ export function useStreamGameInput() {
                       character_id: typeof event.character_id === 'string' ? event.character_id : undefined,
                     },
                   });
+                }
+                break;
+              }
+
+              case 'agentic_tool_call': {
+                appendAgenticToolCall({
+                  index: typeof event.tool_index === 'number' ? event.tool_index : undefined,
+                  name: typeof event.name === 'string' ? event.name : undefined,
+                  success: typeof event.success === 'boolean' ? event.success : true,
+                  duration_ms: typeof event.duration_ms === 'number' ? event.duration_ms : undefined,
+                  error: typeof event.error === 'string' ? event.error : undefined,
+                });
+                // 好感度变更实时 toast 通知
+                const dc = (event as Record<string, unknown>).disposition_change;
+                if (dc && typeof dc === 'object') {
+                  const change = dc as Record<string, unknown>;
+                  const npcId = change.npc_id as string;
+                  const deltas = change.deltas as Record<string, number> | undefined;
+                  if (npcId && deltas && typeof deltas === 'object') {
+                    // 从 party members 查找 NPC 显示名
+                    const party = useGameStore.getState().party;
+                    const member = party?.members?.find((m) => m.character_id === npcId);
+                    const displayName = member?.name || npcId;
+                    const parts: string[] = [];
+                    const dimLabels: Record<string, string> = {
+                      approval: '好感',
+                      trust: '信任',
+                      fear: '畏惧',
+                      romance: '浪漫',
+                    };
+                    for (const [dim, val] of Object.entries(deltas)) {
+                      if (typeof val === 'number' && val !== 0) {
+                        const label = dimLabels[dim] || dim;
+                        parts.push(`${label} ${val > 0 ? '+' : ''}${val}`);
+                      }
+                    }
+                    if (parts.length > 0) {
+                      toast.info(`${displayName}: ${parts.join(', ')}`);
+                    }
+                  }
                 }
                 break;
               }
@@ -293,6 +352,23 @@ export function useStreamGameInput() {
                       type: 'teammate',
                       metadata: {
                         reaction: typeof row.reaction === 'string' ? row.reaction : undefined,
+                        character_id: typeof row.character_id === 'string' ? row.character_id : undefined,
+                      },
+                    });
+                  }
+                }
+                // NPC 响应 fallback
+                if (!receivedNpcResponseEvent && Array.isArray(event.npc_responses)) {
+                  for (const item of event.npc_responses) {
+                    if (!item || typeof item !== 'object') continue;
+                    const row = item as Record<string, unknown>;
+                    const dialogue = typeof row.dialogue === 'string' ? row.dialogue : '';
+                    if (!dialogue) continue;
+                    addMessage({
+                      speaker: (typeof row.name === 'string' ? row.name : 'NPC'),
+                      content: dialogue,
+                      type: 'npc',
+                      metadata: {
                         character_id: typeof row.character_id === 'string' ? row.character_id : undefined,
                       },
                     });
@@ -348,6 +424,7 @@ export function useStreamGameInput() {
       setNarrativeSnapshot,
       setImageData,
       setAgenticTrace,
+      appendAgenticToolCall,
       queryClient,
     ],
   );

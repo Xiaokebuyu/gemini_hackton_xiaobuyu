@@ -15,8 +15,9 @@ import {
   Eye,
   BookOpen,
 } from 'lucide-react';
-import type { PartyMember, TeammateRole } from '../../types';
+import type { PartyMember, TeammateRole, DispositionSnapshot } from '../../types';
 import { useStreamGameInput } from '../../api';
+import { useGameStore } from '../../stores/gameStore';
 import { usePrivateChatStore } from '../../stores/privateChatStore';
 
 interface TeammateCardProps {
@@ -59,6 +60,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
   const { t } = useTranslation();
   const { sendInput, isLoading } = useStreamGameInput();
   const openChat = usePrivateChatStore((s) => s.openChat);
+  const disposition = useGameStore((s) => s.dispositions[member.character_id]) as DispositionSnapshot | undefined;
   const roleInfo = roleConfig[member.role];
   const mood = moodConfig[member.current_mood] || moodConfig.neutral;
 
@@ -108,6 +110,43 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
               <span className="text-g-red">({t('party.inactive')})</span>
             )}
           </div>
+          {/* Approval mini bar — 始终显示，无数据时默认 0 */}
+          {(() => {
+            const approval = disposition?.approval ?? 0;
+            const trust = disposition?.trust ?? 0;
+            const fear = disposition?.fear ?? 0;
+            const romance = disposition?.romance ?? 0;
+            return (
+              <div
+                className="flex items-center gap-1.5 mt-1"
+                title={`好感 ${approval} | 信任 ${trust} | 畏惧 ${fear} | 浪漫 ${romance}`}
+              >
+                <div className="flex-1 h-1.5 bg-[var(--g-bg-secondary)] rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full"
+                    initial={false}
+                    animate={{
+                      width: `${Math.max(2, (approval + 100) / 200 * 100)}%`,
+                    }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                    style={{
+                      backgroundColor:
+                        approval >= 50
+                          ? 'var(--g-green, #22c55e)'
+                          : approval >= 0
+                            ? 'var(--g-accent-gold, #d4a017)'
+                            : approval >= -50
+                              ? 'var(--g-danger-medium, #f59e0b)'
+                              : 'var(--g-red, #ef4444)',
+                    }}
+                  />
+                </div>
+                <span className="text-[10px] text-g-text-muted w-7 text-right tabular-nums">
+                  {approval > 0 ? '+' : ''}{approval}
+                </span>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Action buttons */}

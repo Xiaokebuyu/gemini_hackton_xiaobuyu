@@ -266,9 +266,17 @@ export interface CoordinatorMetadata extends Record<string, unknown> {
 // 协调器响应 (对应 app/models/admin_protocol.py)
 // =============================================================================
 
+export interface NpcResponseResult {
+  character_id: string;
+  name: string;
+  dialogue: string;
+  message: string;
+}
+
 export interface CoordinatorResponse {
   narration: string;
   speaker: string;
+  npc_responses: NpcResponseResult[];
   teammate_responses: TeammateResponseResult[];
   available_actions: GameAction[];
   state_delta: StateDelta | null;
@@ -382,6 +390,8 @@ export type SSEEventType =
   | 'gm_chunk'
   | 'gm_end'
   | 'agentic_trace'
+  | 'agentic_tool_call'
+  | 'npc_response'
   | 'teammate_response'
   | 'teammate_start'
   | 'teammate_chunk'
@@ -786,6 +796,30 @@ export interface PlayerCharacterData {
   class_features: string[];
   racial_traits: string[];
 }
+
+// =============================================================================
+// 好感度类型 (对应 disposition 系统)
+// =============================================================================
+
+export interface DispositionValues {
+  approval: number;   // -100 ~ +100
+  trust: number;      // -100 ~ +100
+  fear: number;       // 0 ~ 100
+  romance: number;    // 0 ~ 100
+}
+
+export interface DispositionSnapshot extends DispositionValues {
+  recent_changes?: Array<{
+    reason?: string;
+    day?: number;
+    delta_approval?: number;
+    delta_trust?: number;
+    delta_fear?: number;
+    delta_romance?: number;
+  }>;
+}
+
+export type DispositionsMap = Record<string, DispositionSnapshot>;
 
 // 保留旧的别名以兼容
 export type GameInputRequest = PlayerInputRequest;

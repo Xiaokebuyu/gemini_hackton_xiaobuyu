@@ -60,6 +60,8 @@ class StoryEvent(BaseModel):
     name: str
     description: str = ""
     trigger_conditions: ConditionGroup = Field(default_factory=ConditionGroup)
+    completion_conditions: Optional[ConditionGroup] = None
+    on_complete: Optional[Dict[str, Any]] = None
     is_required: bool = False
     is_repeatable: bool = False
     cooldown_rounds: int = 0

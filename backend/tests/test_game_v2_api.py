@@ -19,23 +19,6 @@ class FakeCoordinator:
         self.party_members = []
         self.v3_called = False
 
-    async def process_player_input_v2(
-        self,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        is_private: bool = False,
-        private_target: str | None = None,
-    ):
-        return CoordinatorResponse(
-            narration=f"ok:{player_input}",
-            speaker="GM",
-            teammate_responses=[],
-            available_actions=[],
-            state_delta=None,
-            metadata={"world_id": world_id, "session_id": session_id},
-        )
-
     async def process_player_input_v3(
         self,
         world_id: str,
@@ -93,25 +76,6 @@ class FakeCoordinator:
         return {"success": True, "character_id": character_id}
 
 
-class FakeCoordinatorV2Only:
-    async def process_player_input_v2(
-        self,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        is_private: bool = False,
-        private_target: str | None = None,
-    ):
-        return CoordinatorResponse(
-            narration=f"v2:{player_input}",
-            speaker="GM",
-            teammate_responses=[],
-            available_actions=[],
-            state_delta=None,
-            metadata={"world_id": world_id, "session_id": session_id},
-        )
-
-
 @pytest.mark.asyncio
 async def test_game_v2_input_route():
     fake = FakeCoordinator()
@@ -124,18 +88,6 @@ async def test_game_v2_input_route():
     assert response.narration == "v3:观察周围"
     assert response.speaker == "GM"
     assert fake.v3_called is True
-
-
-@pytest.mark.asyncio
-async def test_game_v2_input_route_fallback_v2():
-    fake = FakeCoordinatorV2Only()
-    response = await process_input_v2(
-        world_id="test_world",
-        session_id="test_session",
-        payload=PlayerInputRequest(input="观察周围"),
-        coordinator=fake,
-    )
-    assert response.narration == "v2:观察周围"
 
 
 @pytest.mark.asyncio

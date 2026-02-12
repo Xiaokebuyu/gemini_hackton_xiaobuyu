@@ -17,6 +17,7 @@ import type {
   StateDelta,
   CoordinatorChapterInfo,
   Party,
+  DispositionsMap,
 } from '../types';
 
 interface GameStoreState {
@@ -55,6 +56,7 @@ interface GameStoreState {
   xpSnapshot: XPStateDelta | null;
   inventoryItems: Record<string, unknown>[];
   inventoryItemCount: number;
+  dispositions: DispositionsMap;
 
   // Actions
   setSession: (worldId: string, sessionId: string) => void;
@@ -79,6 +81,8 @@ interface GameStoreState {
   ) => void;
   setImageData: (imageData: CoordinatorImageData | null) => void;
   setAgenticTrace: (trace: AgenticTracePayload | null) => void;
+  appendAgenticToolCall: (call: AgenticTracePayload['tool_calls'][0]) => void;
+  setDispositions: (d: DispositionsMap) => void;
   updateFromStateDelta: (delta: StateDelta) => void;
   updateFromGameState: (state: GameState) => void;
 }
@@ -275,6 +279,7 @@ export const useGameStore = create<GameStoreState>()(
         xpSnapshot: null,
         inventoryItems: [],
         inventoryItemCount: 0,
+        dispositions: {},
 
         // Actions
         setSession: (worldId: string, sessionId: string) => {
@@ -303,6 +308,7 @@ export const useGameStore = create<GameStoreState>()(
             xpSnapshot: null,
             inventoryItems: [],
             inventoryItemCount: 0,
+            dispositions: {},
           });
         },
 
@@ -330,6 +336,7 @@ export const useGameStore = create<GameStoreState>()(
             xpSnapshot: null,
             inventoryItems: [],
             inventoryItemCount: 0,
+            dispositions: {},
           });
         },
 
@@ -411,6 +418,28 @@ export const useGameStore = create<GameStoreState>()(
 
         setAgenticTrace: (trace: AgenticTracePayload | null) => {
           set({ latestAgenticTrace: trace });
+        },
+
+        setDispositions: (d: DispositionsMap) => {
+          set({ dispositions: d });
+        },
+
+        appendAgenticToolCall: (call) => {
+          set((state) => {
+            const prev = state.latestAgenticTrace ?? { tool_calls: [], stats: {} };
+            const newCalls = [...(prev.tool_calls ?? []), call];
+            return {
+              latestAgenticTrace: {
+                ...prev,
+                tool_calls: newCalls,
+                stats: {
+                  count: newCalls.length,
+                  success: newCalls.filter((c) => c?.success !== false).length,
+                  failed: newCalls.filter((c) => c?.success === false).length,
+                },
+              },
+            };
+          });
         },
 
         updateFromStateDelta: (delta: StateDelta) => {
@@ -553,6 +582,12 @@ export const useGameStore = create<GameStoreState>()(
                 .filter((value) => value.length > 0);
               next.latestStoryEvents = storyEvents;
               next.latestStoryEventId = storyEvents.length > 0 ? storyEvents[storyEvents.length - 1] : null;
+            }
+
+            // 好感度快照
+            const dispositionsRaw = changes.dispositions;
+            if (dispositionsRaw && typeof dispositionsRaw === 'object' && !Array.isArray(dispositionsRaw)) {
+              next.dispositions = dispositionsRaw as DispositionsMap;
             }
 
             const latestEventFromUpdate = asString(storyEventUpdateRaw?.event_id)

@@ -8,7 +8,7 @@ import { useGameStore } from '../../stores/gameStore';
 import type { LocationResponse, GameTimeResponse } from '../../types';
 
 export function useLocation() {
-  const { worldId, sessionId, mergeLocationIntoMapGraph } = useGameStore();
+  const { worldId, sessionId, mergeLocationIntoMapGraph, setSubLocation } = useGameStore();
 
   const locationQuery = useQuery<LocationResponse>({
     queryKey: ['location', worldId, sessionId],
@@ -44,8 +44,10 @@ export function useLocation() {
         availableMapsQuery.data?.available_maps,
         availableMapsQuery.data?.all_unlocked,
       );
+      // Sync sub_location to store
+      setSubLocation(locationQuery.data.sub_location_id ?? null);
     }
-  }, [locationQuery.data, availableMapsQuery.data, mergeLocationIntoMapGraph]);
+  }, [locationQuery.data, availableMapsQuery.data, mergeLocationIntoMapGraph, setSubLocation]);
 
   return {
     location: locationQuery.data,
@@ -57,7 +59,7 @@ export function useLocation() {
 }
 
 export function useGameTime() {
-  const { worldId, sessionId } = useGameStore();
+  const { worldId, sessionId, setGameTime } = useGameStore();
 
   const timeQuery = useQuery<GameTimeResponse>({
     queryKey: ['gameTime', worldId, sessionId],
@@ -71,6 +73,13 @@ export function useGameTime() {
     staleTime: 60000, // 1 minute
     refetchInterval: 60000, // Refetch every minute
   });
+
+  // Sync query result to gameStore so store-dependent components stay updated
+  useEffect(() => {
+    if (timeQuery.data) {
+      setGameTime(timeQuery.data);
+    }
+  }, [timeQuery.data, setGameTime]);
 
   return {
     gameTime: timeQuery.data,

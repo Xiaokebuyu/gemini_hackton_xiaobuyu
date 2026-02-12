@@ -26,6 +26,7 @@ import { useStreamGameInput } from '../../api';
 interface CurrentRound {
   playerMessage: NarrativeMessage | null;
   gmNarration: NarrativeMessage | null;
+  npcResponses: NarrativeMessage[];
   teammateResponses: NarrativeMessage[];
 }
 
@@ -42,13 +43,14 @@ function getCurrentRound(messages: NarrativeMessage[]): CurrentRound {
   if (lastPlayerIdx === -1) {
     // No player message yet (opening narration) — show last GM message
     const lastGM = [...messages].reverse().find((m) => m.type === 'gm') ?? null;
-    return { playerMessage: null, gmNarration: lastGM, teammateResponses: [] };
+    return { playerMessage: null, gmNarration: lastGM, npcResponses: [], teammateResponses: [] };
   }
 
   const roundMessages = messages.slice(lastPlayerIdx);
   return {
     playerMessage: roundMessages.find((m) => m.type === 'player') ?? null,
     gmNarration: roundMessages.find((m) => m.type === 'gm') ?? null,
+    npcResponses: roundMessages.filter((m) => m.type === 'npc'),
     teammateResponses: roundMessages.filter((m) => m.type === 'teammate'),
   };
 }
@@ -269,7 +271,13 @@ export const GalgameDisplay: React.FC<{ className?: string }> = ({
               </div>
             )}
 
-            {/* ---- Teammate response zone (after GM content, before input) ---- */}
+            {/* ---- NPC response zone (after GM, before teammates) ---- */}
+            <GalgameTeammateZone
+              messages={round.npcResponses}
+              visible={isTypingComplete}
+            />
+
+            {/* ---- Teammate response zone (after NPC, before input) ---- */}
             <GalgameTeammateZone
               messages={round.teammateResponses}
               visible={isTypingComplete}

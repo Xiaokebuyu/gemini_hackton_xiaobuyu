@@ -51,9 +51,15 @@ def _normalize_message_for_api(
     else:
         ts_str = str(timestamp) if timestamp else None
 
+    is_npc_dialogue = source == "npc_dialogue"
+
     if is_teammate:
         speaker = meta.get("name") or meta.get("character_id") or "队友"
         message_type = "teammate"
+        normalized_role = "assistant"
+    elif is_npc_dialogue:
+        speaker = meta.get("name") or meta.get("character_id") or "NPC"
+        message_type = "npc"
         normalized_role = "assistant"
     elif role == "user":
         speaker = "玩家"
@@ -165,6 +171,38 @@ class SessionHistory:
             "message_count": self._window.message_count,
         }
 
+    def record_npc_response(
+        self,
+        character_id: str,
+        name: str,
+        dialogue: str,
+    ) -> None:
+        """Record an NPC dialogue response as a system message."""
+        self._window.add_message(
+            role="system",
+            content=f"[NPC:{name}] {dialogue}",
+            metadata={"source": "npc_dialogue", "character_id": character_id, "name": name},
+        )
+
+        # Fire-and-forget Firestore persistence
+        if self._firestore_db:
+            try:
+                now = datetime.now(timezone.utc)
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    self._persist_messages_sync,
+                    [
+                        {
+                            "role": "system",
+                            "content": f"[NPC:{name}] {dialogue}",
+                            "timestamp": now,
+                            "metadata": {"source": "npc_dialogue", "character_id": character_id, "name": name},
+                        },
+                    ],
+                )
+            except Exception as exc:
+                logger.debug("[SessionHistory] Firestore persist failed: %s", exc)
+
     def record_teammate_response(
         self,
         character_id: str,
@@ -226,7 +264,7 @@ class SessionHistory:
                 lines.insert(0, f"玩家: {msg.content}")
             elif msg.role == "assistant":
                 lines.insert(0, f"GM: {msg.content}")
-            elif msg.role == "system" and msg.metadata.get("source") == "teammate":
+            elif msg.role == "system" and msg.metadata.get("source") in ("teammate", "npc_dialogue"):
                 lines.insert(0, msg.content)
 
             accumulated_tokens += msg.token_count

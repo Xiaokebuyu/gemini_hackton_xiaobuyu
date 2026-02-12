@@ -4,7 +4,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { User, Shield, Users, Info } from 'lucide-react';
+import { User, Shield, Users, MessageCircle, Info } from 'lucide-react';
 import { useChatStore, useGameStore } from '../../stores';
 import { getSessionHistory, type HistoryMessage } from '../../api/gameApi';
 
@@ -16,6 +16,8 @@ const speakerIcon = (type: string) => {
       return <Shield className="w-3 h-3 text-[var(--g-accent-gold)] flex-shrink-0" />;
     case 'teammate':
       return <Users className="w-3 h-3 text-g-green flex-shrink-0" />;
+    case 'npc':
+      return <MessageCircle className="w-3 h-3 text-[var(--g-cyan)] flex-shrink-0" />;
     default:
       return <Info className="w-3 h-3 text-g-text-muted/50 flex-shrink-0" />;
   }
@@ -54,6 +56,9 @@ function mapRemoteMessage(msg: HistoryMessage, index: number): DisplayMessage | 
   } else if (msg.role === 'system' && source === 'teammate') {
     type = 'teammate';
     speaker = name || 'Teammate';
+  } else if (msg.role === 'system' && source === 'npc_dialogue') {
+    type = 'npc';
+    speaker = name || 'NPC';
   }
 
   const ts = msg.timestamp ? new Date(msg.timestamp) : new Date();

@@ -267,7 +267,7 @@ class GameMasterCLI:
             print_error("请先开始游戏")
             return
 
-        result = await self.gm_service.process_player_input_v2(
+        result = await self.gm_service.process_player_input_v3(
             self.world_id, self.session_id, user_input
         )
 

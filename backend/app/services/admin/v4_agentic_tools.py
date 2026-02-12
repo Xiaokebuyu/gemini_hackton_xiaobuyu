@@ -37,12 +37,14 @@ class V4AgenticToolRegistry:
         graph_store: Any,       # GraphStore (for memory/disposition)
         recall_orchestrator: Optional[Any] = None,
         image_service: Optional[ImageGenerationService] = None,
+        event_queue: Optional[asyncio.Queue] = None,
     ) -> None:
         self.session = session
         self.flash_cpu = flash_cpu
         self.graph_store = graph_store
         self.recall_orchestrator = recall_orchestrator
         self.image_service = image_service or ImageGenerationService()
+        self._event_queue = event_queue
 
         self.tool_calls: List[AgenticToolCall] = []
         self.image_data: Optional[Dict[str, Any]] = None
@@ -73,6 +75,40 @@ class V4AgenticToolRegistry:
         allowed = [5, 10, 15, 30, 60, 120, 180, 240, 360, 480, 720]
         minutes = max(1, min(int(raw_minutes), 720))
         return min(allowed, key=lambda value: abs(value - minutes))
+
+    @staticmethod
+    def _parse_travel_time(travel_time: str) -> float:
+        """Parse travel time string to minutes."""
+        time_str = travel_time.lower()
+        if "分钟" in time_str or "minutes" in time_str:
+            try:
+                return float("".join(filter(str.isdigit, time_str))) or 30
+            except ValueError:
+                return 30
+        elif "小时" in time_str or "hour" in time_str:
+            try:
+                hours = float("".join(filter(str.isdigit, time_str))) or 1
+                return hours * 60
+            except ValueError:
+                return 60
+        elif "半天" in time_str or "half day" in time_str:
+            return 360
+        elif "一天" in time_str or "day" in time_str:
+            return 720
+        else:
+            return 30
+
+    @staticmethod
+    def _get_period(hour: int) -> str:
+        """Get time period from hour."""
+        if 5 <= hour < 8:
+            return "dawn"
+        elif 8 <= hour < 18:
+            return "day"
+        elif 18 <= hour < 20:
+            return "dusk"
+        else:
+            return "night"
 
     def _wrap_tool_for_afc(self, tool_fn):
         """Wrap tool for AFC error recording."""
@@ -192,6 +228,28 @@ class V4AgenticToolRegistry:
         )
         async with self._lock:
             self.tool_calls.append(call)
+            tool_index = len(self.tool_calls)
+        # Push real-time event to SSE queue
+        if self._event_queue is not None:
+            event = {
+                "type": "agentic_tool_call",
+                "name": name,
+                "success": success,
+                "duration_ms": duration_ms,
+                "error": error,
+                "tool_index": tool_index,
+            }
+            # 好感度变更明细 → 前端实时通知
+            if name == "update_disposition" and success and isinstance(result, dict):
+                event["disposition_change"] = {
+                    "npc_id": result.get("npc_id", args.get("npc_id", "")),
+                    "deltas": result.get("applied_deltas", {}),
+                    "current": {
+                        k: v for k, v in result.get("current", {}).items()
+                        if k in ("approval", "trust", "fear", "romance")
+                    },
+                }
+            await self._event_queue.put(event)
 
     async def _timed(self, name: str, args: Dict[str, Any], coro) -> Dict[str, Any]:
         """Execute coroutine with timing, recording, and error handling."""
@@ -231,25 +289,125 @@ class V4AgenticToolRegistry:
             - Use for map-level movement between areas.
             - Use `enter_sublocation` for in-area sub-locations.
         """
-        # Resolve name to area_id if needed
+        from app.models.state_delta import GameTimeState
+
+        started = time.perf_counter()
         area_id = self._resolve_area_id(destination)
         args = {"destination": destination, "resolved_area_id": area_id}
-        return await self._timed("navigate", args, self.session.enter_area(area_id))
+
+        # --- Validation 1: chapter gate (available_maps) ---
+        chapter_id = self.session.chapter_id
+        world = self.session.world
+        if chapter_id and world and hasattr(world, "chapter_registry"):
+            chapter_data = world.chapter_registry.get(chapter_id)
+            if chapter_data is not None:
+                if isinstance(chapter_data, dict):
+                    available_maps = chapter_data.get("available_maps", [])
+                else:
+                    available_maps = getattr(chapter_data, "available_maps", []) or []
+                if available_maps and area_id not in available_maps:
+                    payload = {
+                        "success": False,
+                        "error": f"area '{area_id}' not available in chapter '{chapter_id}'",
+                        "available_areas": list(available_maps),
+                    }
+                    await self._record("navigate", args, started, payload, False, payload["error"])
+                    return payload
+
+        # --- Validation 2: connection check ---
+        connection = None
+        if self.area and self.area.definition:
+            for conn in self.area.definition.connections:
+                if conn.target_area_id == area_id:
+                    connection = conn
+                    break
+            if connection is None:
+                available_conns = [
+                    {"area_id": c.target_area_id, "travel_time": c.travel_time}
+                    for c in self.area.definition.connections
+                ]
+                payload = {
+                    "success": False,
+                    "error": f"no connection from current area to '{area_id}'",
+                    "available_connections": available_conns,
+                }
+                await self._record("navigate", args, started, payload, False, payload["error"])
+                return payload
+
+        # --- Travel time advancement ---
+        travel_minutes = 30
+        if connection:
+            raw = self._parse_travel_time(connection.travel_time or "30 minutes")
+            travel_minutes = self._normalize_advance_minutes(int(raw))
+
+        # Advance game time
+        current_time = self.session.time
+        if current_time:
+            total = current_time.hour * 60 + current_time.minute + travel_minutes
+            new_day = current_time.day + total // (24 * 60)
+            remaining = total % (24 * 60)
+            new_hour = remaining // 60
+            new_minute = remaining % 60
+        else:
+            new_day, new_hour, new_minute = 1, 8, 0
+
+        period = self._get_period(new_hour)
+        formatted = f"第{new_day}天 {new_hour:02d}:{new_minute:02d}"
+        new_time = GameTimeState(
+            day=new_day, hour=new_hour, minute=new_minute,
+            period=period, formatted=formatted,
+        )
+        self.session.update_time(new_time)
+
+        # --- Execute area switch ---
+        try:
+            result = await asyncio.wait_for(
+                self.session.enter_area(area_id),
+                timeout=settings.admin_agentic_tool_timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            payload = {"success": False, "error": "tool timeout: navigate"}
+            await self._record("navigate", args, started, payload, False, payload["error"])
+            return payload
+        except Exception as exc:
+            logger.error("navigate raised: %s", exc, exc_info=True)
+            payload = {"success": False, "error": f"navigate error: {type(exc).__name__}: {str(exc)[:200]}"}
+            await self._record("navigate", args, started, payload, False, payload["error"])
+            return payload
+
+        if not isinstance(result, dict):
+            result = {"success": True, "result": result}
+        result.setdefault("success", True)
+        result["travel_time_minutes"] = travel_minutes
+        if connection:
+            result["connection_type"] = connection.connection_type
+        await self._record("navigate", args, started, result, result.get("success", True), result.get("error"))
+        return result
 
     def _resolve_area_id(self, destination: str) -> str:
         """Resolve area name to area_id. Returns destination as-is if no match."""
-        if not self.area or not self.area.definition:
-            return destination
-        # Check connections for name match
-        for conn in self.area.definition.connections:
-            if conn.target_area_id == destination:
-                return destination
-        # Try name-based match
         world = self.session.world
+
+        # Priority 1: exact match on connection target_area_id
+        if self.area and self.area.definition:
+            for conn in self.area.definition.connections:
+                if conn.target_area_id == destination:
+                    return destination
+
+        # Priority 2: match connection target by area name
+        if self.area and self.area.definition and world and hasattr(world, "area_registry"):
+            for conn in self.area.definition.connections:
+                area_def = world.area_registry.get(conn.target_area_id)
+                if area_def and getattr(area_def, "name", "") == destination:
+                    return conn.target_area_id
+
+        # Priority 3: global area_registry name/id match
         if world and hasattr(world, "area_registry"):
             for aid, area_def in world.area_registry.items():
+                if aid == destination:
+                    return aid
                 name = area_def.name if hasattr(area_def, "name") else ""
-                if name == destination or aid == destination:
+                if name == destination:
                     return aid
         return destination
 
@@ -315,6 +473,20 @@ class V4AgenticToolRegistry:
         payload["success"] = response.success
         if response.error:
             payload["error"] = response.error
+
+        # Resolve NPC display name from character registry
+        char_data = None
+        if self.session.world:
+            char_data = self.session.world.get_character(npc_id)
+        npc_name = (char_data or {}).get("name", npc_id) if isinstance(char_data, dict) else npc_id
+        payload["npc_name"] = npc_name
+
+        # Fix #22: increment npc_interactions count
+        if response.success and self.session.narrative:
+            count = self.session.narrative.npc_interactions.get(npc_id, 0)
+            self.session.narrative.npc_interactions[npc_id] = count + 1
+            self.session.mark_narrative_dirty()
+
         await self._record("npc_dialogue", {"npc_id": npc_id, "message": message}, started, payload, response.success, response.error)
         return payload
 
@@ -435,17 +607,17 @@ class V4AgenticToolRegistry:
             },
         )
 
-        # Determine graph scope
+        # Determine graph scope — only area + character are active scopes
         chapter_id = self.session.chapter_id
         area_id = self.session.area_id
         if scope == "character":
             graph_scope = GraphScope.character("player")
         elif chapter_id and area_id:
             graph_scope = GraphScope.area(chapter_id, area_id)
-        elif chapter_id:
-            graph_scope = GraphScope.chapter(chapter_id)
         else:
-            graph_scope = GraphScope.world()
+            # Missing area info → fall back to player personal memory
+            # rather than leaking to chapter/world shared scopes
+            graph_scope = GraphScope.character("player")
 
         try:
             await asyncio.wait_for(
@@ -1044,18 +1216,21 @@ class V4AgenticToolRegistry:
         await self._record("complete_event", args, started, payload, True, None)
         return payload
 
-    async def advance_chapter(self, target_chapter_id: str) -> Dict[str, Any]:
+    async def advance_chapter(
+        self, target_chapter_id: str, transition_type: str = "normal"
+    ) -> Dict[str, Any]:
         """Advance to a new chapter.
 
         Args:
             target_chapter_id: Target chapter id from `chapter_context.chapter_transition_available`.
+            transition_type: Transition type — normal / branch / failure / skip.
 
         Usage:
             - When chapter transition conditions are met and player is ready.
             - Present the choice to the player first before calling this.
         """
         started = time.perf_counter()
-        args = {"target_chapter_id": target_chapter_id}
+        args = {"target_chapter_id": target_chapter_id, "transition_type": transition_type}
 
         narrative = self.session.narrative
         if not narrative:
@@ -1077,21 +1252,56 @@ class V4AgenticToolRegistry:
                 await self._record("advance_chapter", args, started, payload, False, payload["error"])
                 return payload
 
-        # Update narrative
+        # Record old chapter completion
+        if old_chapter and old_chapter != target_chapter_id:
+            if old_chapter not in narrative.chapters_completed:
+                narrative.chapters_completed.append(old_chapter)
+
+        # Switch chapter + reset counters
         narrative.current_chapter = target_chapter_id
-        if hasattr(narrative, "rounds_in_chapter"):
-            narrative.rounds_in_chapter = 0
+        narrative.events_triggered = []
+        narrative.chapter_started_at = datetime.now()
+        narrative.rounds_in_chapter = 0
+        narrative.rounds_since_last_progress = 0
+
+        # Branch history tracking
+        if old_chapter and old_chapter != target_chapter_id:
+            narrative.branch_history.append({
+                "from": old_chapter,
+                "to": target_chapter_id,
+                "type": transition_type or "normal",
+                "at": datetime.now().isoformat(),
+            })
+
+        # Clean up active_chapters
+        if narrative.active_chapters:
+            narrative.active_chapters = [
+                cid for cid in narrative.active_chapters
+                if cid and cid != old_chapter
+            ]
+
         self.session.mark_narrative_dirty()
 
-        # Update game state
+        # Sync game_state
         if self.session.game_state:
             self.session.game_state.chapter_id = target_chapter_id
             self.session.mark_game_state_dirty()
+
+        # Collect new maps unlocked by this chapter
+        new_maps: list = []
+        if world and target_chapter_id in world.chapter_registry:
+            chapter_data = world.chapter_registry[target_chapter_id]
+            if isinstance(chapter_data, dict):
+                new_maps = chapter_data.get("available_maps", [])
+            elif hasattr(chapter_data, "available_maps"):
+                new_maps = chapter_data.available_maps or []
 
         payload = {
             "success": True,
             "previous_chapter": old_chapter,
             "new_chapter": target_chapter_id,
+            "transition_type": transition_type,
+            "new_maps_unlocked": new_maps,
         }
         await self._record("advance_chapter", args, started, payload, True, None)
         return payload

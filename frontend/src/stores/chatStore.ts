@@ -104,6 +104,24 @@ export const useChatStore = create<ChatStoreState>()(
           }
         }
 
+        // 3. NPC 对话响应
+        if (response.npc_responses && response.npc_responses.length > 0) {
+          for (const npc of response.npc_responses) {
+            if (npc.dialogue) {
+              newMessages.push({
+                id: uuidv4(),
+                speaker: npc.name || 'NPC',
+                content: npc.dialogue,
+                type: 'npc',
+                timestamp: new Date(),
+                metadata: {
+                  character_id: npc.character_id,
+                },
+              });
+            }
+          }
+        }
+
         set((state) => ({
           messages: [...state.messages, ...newMessages],
         }));
@@ -124,6 +142,9 @@ export const useChatStore = create<ChatStoreState>()(
           } else if (msg.role === 'system' && metadata.source === 'teammate') {
             type = 'teammate';
             speaker = metadata.name || 'Teammate';
+          } else if (msg.role === 'system' && metadata.source === 'npc_dialogue') {
+            type = 'npc';
+            speaker = metadata.name || 'NPC';
           }
 
           return {

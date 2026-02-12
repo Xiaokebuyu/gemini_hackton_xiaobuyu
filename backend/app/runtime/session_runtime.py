@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -47,6 +48,7 @@ class SessionRuntime:
         session_history_manager: Optional[Any] = None,
         character_store: Optional[Any] = None,
         world_runtime: Optional[Any] = None,
+        graph_store: Optional[Any] = None,
     ) -> None:
         from app.runtime.area_runtime import AreaRuntime
 
@@ -61,6 +63,7 @@ class SessionRuntime:
         self._session_history_manager = session_history_manager
         self._character_store = character_store
         self._world_runtime = world_runtime
+        self._graph_store = graph_store
 
         # -- 状态组件（restore() 填充） --
         self.game_state: Optional[GameState] = None
@@ -115,15 +118,11 @@ class SessionRuntime:
     # =========================================================================
 
     async def restore(self) -> None:
-        """从 Firestore 恢复完整会话状态。
+        """从 Firestore 恢复完整会话状态（分波并行）。
 
-        加载顺序：
-        1. GameState（通过 StateManager / WorldRuntime）
-        2. PlayerCharacter（通过 CharacterStore）
-        3. Party（通过 PartyService）
-        4. NarrativeProgress（通过 NarrativeService）
-        5. SessionHistory（通过 SessionHistoryManager）
-        6. AreaRuntime（如果有当前区域）
+        Wave 1（并行）：GameState + Player + Party + Narrative（主路径）
+        Wave 1（内联）：SessionHistory（同步）
+        Wave 2（串行）：时间提取 → Narrative fallback → AreaRuntime
         """
         logger.info(
             "[SessionRuntime] restore 开始: world=%s session=%s",
@@ -131,27 +130,39 @@ class SessionRuntime:
             self.session_id,
         )
 
-        # 1. GameState
-        await self._restore_game_state()
+        # ── Wave 1: 独立数据源并行加载 ──
+        wave1_tasks = [
+            self._restore_game_state(),
+            self._restore_player(),
+            self._restore_party(),
+        ]
+        # Narrative 主路径（有 _narrative_service 时）才加入并行
+        has_narrative_service = self._narrative_service is not None
+        if has_narrative_service:
+            wave1_tasks.append(self._restore_narrative())
 
-        # 2. PlayerCharacter
-        await self._restore_player()
+        results = await asyncio.gather(*wave1_tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error("[SessionRuntime] Wave 1 任务 %d 异常: %s", i, result)
 
-        # 3. Party
-        await self._restore_party()
-
-        # 4. NarrativeProgress
-        await self._restore_narrative()
-
-        # 5. SessionHistory
+        # SessionHistory（同步，无 I/O）
         self._restore_history()
 
-        # 6. 时间快照（从 GameState 提取）
+        # ── Wave 2: 依赖 game_state / narrative 的串行步骤 ──
+        # Narrative fallback（无 _narrative_service 时从 game_state 读取）
+        if not has_narrative_service:
+            await self._restore_narrative()
+
+        # 时间快照（依赖 game_state）
         if self.game_state:
             self.time = self.game_state.game_time
 
-        # 7. AreaRuntime（如果有当前区域且 WorldInstance 已就绪）
+        # AreaRuntime（依赖 game_state + narrative + world）
         await self._restore_area()
+
+        # 同伴实例（依赖 party）
+        await self._restore_companions()
 
         self._restored = True
         logger.info(
@@ -258,7 +269,11 @@ class SessionRuntime:
 
         try:
             area_rt = AreaRuntime(area_id=current_area_id, definition=area_def)
-            await area_rt.load(self.world_id, self.session_id)
+            await area_rt.load(
+                self.world_id, self.session_id,
+                chapter_id=self.chapter_id,
+                graph_store=self._graph_store,
+            )
             self.current_area = area_rt
         except NotImplementedError:
             # Phase 2B 尚未实现 load()
@@ -295,6 +310,30 @@ class SessionRuntime:
                         len(self.current_area.events),
                     )
 
+    async def _restore_companions(self) -> None:
+        """从 Party 成员创建并加载 CompanionInstance。"""
+        if not self.party:
+            return
+
+        from app.runtime.companion_instance import CompanionInstance
+
+        for member in self.party.get_active_members():
+            companion = CompanionInstance(
+                character_id=member.character_id,
+                name=member.name,
+                world_id=self.world_id,
+                session_id=self.session_id,
+            )
+            try:
+                await companion.load()
+            except Exception as exc:
+                logger.warning(
+                    "[SessionRuntime] 同伴 '%s' 加载失败: %s",
+                    member.character_id, exc,
+                )
+                continue
+            self.companions[member.character_id] = companion
+
     # =========================================================================
     # enter_area — 完整区域切换生命周期
     # =========================================================================
@@ -330,7 +369,11 @@ class SessionRuntime:
         if area_def:
             new_area = AreaRuntime(area_id=area_id, definition=area_def)
             try:
-                await new_area.load(self.world_id, self.session_id)
+                await new_area.load(
+                    self.world_id, self.session_id,
+                    chapter_id=self.chapter_id,
+                    graph_store=self._graph_store,
+                )
             except NotImplementedError:
                 pass  # Phase 2B
             except Exception as exc:
@@ -515,6 +558,23 @@ class SessionRuntime:
         if self._dirty_party:
             self._dirty_party = False
             persisted.append("party")
+
+        # 5. AreaRuntime — 每轮增量持久化 state + events
+        if self.current_area:
+            await self.current_area.persist_state()
+            persisted.append("area")
+
+        # 6. Companions — 保存同伴状态/事件/摘要
+        for companion in self.companions.values():
+            try:
+                await companion.save()
+            except Exception as exc:
+                logger.warning(
+                    "[SessionRuntime] 同伴 '%s' 持久化失败: %s",
+                    getattr(companion, "character_id", "?"), exc,
+                )
+        if self.companions:
+            persisted.append("companions")
 
         if persisted:
             logger.info(

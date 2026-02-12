@@ -410,17 +410,41 @@ class AdminCoordinator:
         is_private: bool = False,
         private_target: Optional[str] = None,
     ):
-        """V4 SSE 流：复用 V4 主流程并按事件输出。"""
+        """V4 SSE 流：实时推送工具调用事件 + 完整 trace。"""
         self._ensure_fixed_world(world_id)
         try:
-            yield {"type": "phase", "phase": "generating"}
-            response = await self.process_player_input_v3(
-                world_id=world_id,
-                session_id=session_id,
-                player_input=player_input,
-                is_private=is_private,
-                private_target=private_target,
+            yield {"type": "phase", "phase": "thinking"}
+
+            event_queue: asyncio.Queue = asyncio.Queue()
+
+            # Run pipeline in background task so we can stream tool-call events
+            pipeline_task = asyncio.create_task(
+                self._pipeline_orchestrator.process(
+                    world_id=world_id,
+                    session_id=session_id,
+                    player_input=player_input,
+                    is_private=is_private,
+                    private_target=private_target,
+                    event_queue=event_queue,
+                )
             )
+
+            # Stream real-time tool-call events while pipeline runs
+            while not pipeline_task.done():
+                try:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=0.3)
+                    yield event
+                except asyncio.TimeoutError:
+                    continue
+
+            # Drain any remaining events in the queue
+            while not event_queue.empty():
+                yield event_queue.get_nowait()
+
+            # Get the pipeline result (may raise)
+            response = pipeline_task.result()
+
+            # Extract agentic trace from metadata
             agentic_trace = {}
             if isinstance(response.metadata, dict):
                 raw_trace = response.metadata.get("agentic_trace")
@@ -428,12 +452,17 @@ class AdminCoordinator:
                     agentic_trace = raw_trace
             if agentic_trace:
                 yield {"type": "agentic_trace", "agentic_trace": agentic_trace}
+
             yield {"type": "gm_start"}
             full_text = response.narration or ""
             chunk_size = 120
             for idx in range(0, len(full_text), chunk_size):
                 yield {"type": "gm_chunk", "text": full_text[idx:idx + chunk_size], "chunk_type": "answer"}
             yield {"type": "gm_end", "full_text": full_text}
+
+            # NPC 对话气泡（GM 叙述之后，队友响应之前）
+            for npc_r in response.npc_responses:
+                yield {"type": "npc_response", **npc_r}
 
             for teammate in response.teammate_responses:
                 yield {"type": "teammate_response", **teammate}
@@ -444,6 +473,7 @@ class AdminCoordinator:
                 "metadata": response.metadata,
                 "available_actions": response.available_actions,
                 "story_events": response.story_events,
+                "npc_responses": response.npc_responses,
                 "teammate_responses": response.teammate_responses,
                 "pacing_action": response.pacing_action,
                 "chapter_info": response.chapter_info,
@@ -455,41 +485,6 @@ class AdminCoordinator:
         except Exception as exc:
             logger.exception("[v4-stream] 处理失败: %s", exc)
             yield {"type": "error", "error": str(exc)}
-
-    async def process_player_input_v2(
-        self,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        is_private: bool = False,
-        private_target: Optional[str] = None,
-    ) -> CoordinatorResponse:
-        """[DEPRECATED] V2 已废弃，委托到 V4 管线。"""
-        return await self.process_player_input_v3(
-            world_id=world_id,
-            session_id=session_id,
-            player_input=player_input,
-            is_private=is_private,
-            private_target=private_target,
-        )
-
-    async def process_player_input_v2_stream(
-        self,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        is_private: bool = False,
-        private_target: Optional[str] = None,
-    ):
-        """[DEPRECATED] V2 流已废弃，委托到 V4 流。"""
-        async for event in self.process_player_input_v3_stream(
-            world_id=world_id,
-            session_id=session_id,
-            player_input=player_input,
-            is_private=is_private,
-            private_target=private_target,
-        ):
-            yield event
 
     async def _run_graphization(
         self,
@@ -1268,119 +1263,6 @@ class AdminCoordinator:
             "day_advance": lambda d: f"新的一天（第{d.get('day', 1)}天）开始了",
         }
         return builders.get(change_type, lambda d: str(d))(details)
-
-    async def _get_available_actions(
-        self,
-        world_id: str,
-        session_id: str,
-        context: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """获取当前可用操作"""
-        actions = []
-        hotkey = 1
-
-        # 从位置信息获取可用操作
-        location = context.get("location") or {}
-
-        # 子地点选项（优先显示）
-        for sub in location.get("sub_locations", []):
-            if isinstance(sub, dict):
-                sub_id = sub.get("id", sub.get("name", "unknown"))
-                sub_name = sub.get("name", sub.get("id", "未知"))
-                actions.append({
-                    "action_id": f"enter_{sub_id}",
-                    "category": "movement",
-                    "display_name": f"进入 {sub_name}",
-                    "description": sub.get("description", "")[:50],
-                    "hotkey": str(hotkey) if hotkey <= 9 else None,
-                })
-                hotkey += 1
-
-        # 导航选项
-        for dest in location.get("available_destinations", []):
-            if isinstance(dest, dict):
-                dest_id = dest.get("id", dest.get("name", "unknown"))
-                dest_name = dest.get("name", dest.get("id", "未知"))
-                actions.append({
-                    "action_id": f"go_{dest_id}",
-                    "category": "movement",
-                    "display_name": f"前往 {dest_name}",
-                    "description": dest.get("description", ""),
-                    "hotkey": str(hotkey) if hotkey <= 9 else None,
-                })
-                hotkey += 1
-            else:
-                actions.append({
-                    "action_id": f"go_{dest}",
-                    "category": "movement",
-                    "display_name": f"前往 {dest}",
-                    "description": "",
-                    "hotkey": str(hotkey) if hotkey <= 9 else None,
-                })
-                hotkey += 1
-
-        # NPC 交互选项
-        for npc_id in location.get("npcs_present", []):
-            actions.append({
-                "action_id": f"talk_{npc_id}",
-                "category": "interaction",
-                "display_name": f"与 {npc_id} 交谈",
-                "description": "开始对话",
-                "hotkey": str(hotkey) if hotkey <= 9 else None,
-            })
-            hotkey += 1
-
-        # 观察选项
-        actions.append({
-            "action_id": "look_around",
-            "category": "observation",
-            "display_name": "观察周围",
-            "description": "仔细观察当前环境",
-            "hotkey": "0",
-        })
-
-        return actions
-
-    async def execute_action(
-        self,
-        world_id: str,
-        session_id: str,
-        action_id: str,
-    ) -> CoordinatorResponse:
-        """
-        直接执行操作（复用 v2 流程）。
-
-        将 action_id 转换为自然语言后调用 process_player_input_v2，
-        保证按钮操作与自然语言输入有一致的体验。
-
-        Args:
-            world_id: 世界ID
-            session_id: 会话ID
-            action_id: 操作ID (如 "enter_tavern", "go_forest", "talk_npc_id")
-
-        Returns:
-            CoordinatorResponse: 响应
-        """
-        player_input = self._action_id_to_input(action_id)
-        return await self.process_player_input_v2(world_id, session_id, player_input)
-
-    @staticmethod
-    def _action_id_to_input(action_id: str) -> str:
-        """将 action_id 转换为自然语言输入。"""
-        parts = action_id.split("_", 1)
-        action_type = parts[0] if parts else ""
-        target = parts[1] if len(parts) > 1 else ""
-
-        if action_type == "enter" and target:
-            return f"进入{target}"
-        if action_type == "go" and target:
-            return f"前往{target}"
-        if action_type == "talk" and target:
-            return f"与{target}交谈"
-        if action_id == "look_around":
-            return "观察周围"
-
-        return action_id.replace("_", " ")
 
     async def enter_scene(
         self,

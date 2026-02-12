@@ -35,6 +35,24 @@ def _get_chapter_context(session: Any) -> Dict[str, Any]:
     if world is None:
         return ctx
 
+    # 卷级叙事概述 — 从 mainline_registry 注入主线名称和描述
+    mainline_id = ctx.get("mainline_id", "")
+    mainline_registry = getattr(world, "mainline_registry", {})
+    mainline_data = mainline_registry.get(mainline_id)
+    if mainline_data:
+        if isinstance(mainline_data, dict):
+            ctx["current_mainline"] = {
+                "id": mainline_id,
+                "name": mainline_data.get("name", ""),
+                "description": mainline_data.get("description", ""),
+            }
+        else:
+            ctx["current_mainline"] = {
+                "id": mainline_id,
+                "name": getattr(mainline_data, "name", ""),
+                "description": getattr(mainline_data, "description", ""),
+            }
+
     chapter_registry = getattr(world, "chapter_registry", {})
     chapter_data = chapter_registry.get(current_chapter_id)
     if not chapter_data:
@@ -44,6 +62,14 @@ def _get_chapter_context(session: Any) -> Dict[str, Any]:
     if isinstance(chapter_data, dict):
         ctx["name"] = chapter_data.get("name", "")
         ctx["description"] = chapter_data.get("description", "")
+
+        # 注入 pacing 配置
+        pacing_raw = chapter_data.get("pacing", {})
+        if pacing_raw:
+            ctx["pacing"] = {
+                "stall_threshold": pacing_raw.get("stall_threshold", 5),
+                "hint_escalation": pacing_raw.get("hint_escalation", []),
+            }
 
         # 目标
         objectives = chapter_data.get("objectives", [])
@@ -90,6 +116,14 @@ def _get_chapter_context(session: Any) -> Dict[str, Any]:
         ctx["name"] = getattr(chapter_data, "name", "")
         ctx["description"] = getattr(chapter_data, "description", "")
 
+        # 注入 pacing 配置
+        pacing = getattr(chapter_data, "pacing", None)
+        if pacing:
+            ctx["pacing"] = {
+                "stall_threshold": getattr(pacing, "stall_threshold", 5),
+                "hint_escalation": getattr(pacing, "hint_escalation", []),
+            }
+
         completed_objectives = getattr(narrative, "objectives_completed", []) or []
         ctx["objectives"] = [
             {
@@ -119,6 +153,46 @@ def _get_chapter_context(session: Any) -> Dict[str, Any]:
                 }
                 for t in transitions
             ]
+
+    # 章节转换就绪评估（机械条件检查）
+    area = getattr(session, "current_area", None)
+    if area and hasattr(area, "check_chapter_transition"):
+        transition_ready = area.check_chapter_transition(session)
+        if transition_ready:
+            ctx["chapter_transition_available"] = transition_ready
+
+    # 下一章预览 — 从第一个有效转换的目标章节提取
+    _raw_transitions = (
+        chapter_data.get("transitions", [])
+        if isinstance(chapter_data, dict)
+        else getattr(chapter_data, "transitions", [])
+    )
+    for _t in _raw_transitions:
+        if isinstance(_t, dict):
+            _target_id = _t.get("target_chapter_id", "")
+            _hint = _t.get("narrative_hint", "")
+        else:
+            _target_id = getattr(_t, "target_chapter_id", "")
+            _hint = getattr(_t, "narrative_hint", "")
+        if not _target_id:
+            continue
+        _target_ch = chapter_registry.get(_target_id)
+        if _target_ch:
+            if isinstance(_target_ch, dict):
+                ctx["next_chapter_preview"] = {
+                    "id": _target_id,
+                    "name": _target_ch.get("name", ""),
+                    "narrative_hint": _hint,
+                    "available_areas": _target_ch.get("available_maps", []),
+                }
+            else:
+                ctx["next_chapter_preview"] = {
+                    "id": _target_id,
+                    "name": getattr(_target_ch, "name", ""),
+                    "narrative_hint": _hint,
+                    "available_areas": getattr(_target_ch, "available_maps", []),
+                }
+            break
 
     return ctx
 
@@ -150,12 +224,29 @@ class ContextAssembler:
         """
         area = getattr(session, "current_area", None)
 
+        # Layer 0: 世界常量 + 角色花名册
+        world_ctx: Dict[str, Any] = (
+            world.world_constants.to_context()
+            if world and getattr(world, "world_constants", None)
+            else {}
+        )
+        if world and getattr(world, "character_registry", None):
+            world_ctx["character_roster"] = [
+                {
+                    "id": cid,
+                    "name": cdata.get("name", cid),
+                    "description": cdata.get("description", ""),
+                    "location": (
+                        cdata.get("profile", {}).get("metadata", {}).get("default_map", "")
+                        if isinstance(cdata.get("profile"), dict)
+                        else ""
+                    ),
+                }
+                for cid, cdata in world.character_registry.items()
+            ]
+
         return LayeredContext(
-            world=(
-                world.world_constants.to_context()
-                if world and getattr(world, "world_constants", None)
-                else {}
-            ),
+            world=world_ctx,
             chapter=_get_chapter_context(session),
             area=(
                 area.get_area_context(world, session)
@@ -184,10 +275,12 @@ class ContextAssembler:
         """
         state: Dict[str, Any] = {}
 
-        # 玩家摘要
+        # 玩家角色全量结构
         player = getattr(session, "player", None)
-        if player and hasattr(player, "to_summary_text"):
-            state["player_summary"] = player.to_summary_text()
+        if player and hasattr(player, "model_dump"):
+            state["player_character"] = player.model_dump(
+                exclude={"created_at", "updated_at"}
+            )
 
         # 队伍成员
         party = getattr(session, "party", None)
@@ -198,6 +291,8 @@ class ContextAssembler:
                     "name": m.name,
                     "role": m.role.value if hasattr(m.role, "value") else str(m.role),
                     "is_active": m.is_active,
+                    "personality": m.personality,
+                    "current_mood": m.current_mood,
                 }
                 for m in party.get_active_members()
             ]
@@ -211,7 +306,7 @@ class ContextAssembler:
         elif time_state and isinstance(time_state, dict):
             state["game_time"] = time_state
 
-        # 好感度（Phase 5 预留）
+        # 好感度（由 PipelineOrchestrator._inject_dispositions 填充，此处提供空 fallback）
         state["affinity"] = {}
 
         # 对话历史（短摘要，完整历史在 PipelineOrchestrator 注入）

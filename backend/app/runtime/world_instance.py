@@ -202,11 +202,14 @@ class WorldInstance:
                 interaction_type=sl_data.get("interaction_type", "visit"),
                 resident_npcs=sl_data.get("resident_npcs", []),
                 requirements=sl_data.get("requirements", {}),
+                available_actions=sl_data.get("available_actions", []),
+                passerby_spawn_rate=sl_data.get("passerby_spawn_rate", 0.0),
                 metadata={
                     k: v for k, v in sl_data.items()
                     if k not in (
                         "id", "name", "description", "interaction_type",
                         "resident_npcs", "requirements",
+                        "available_actions", "passerby_spawn_rate",
                     )
                 },
             ))
@@ -242,6 +245,8 @@ class WorldInstance:
             danger_level=danger_level,
             area_type=info.get("area_type", "settlement"),
             tags=info.get("tags", []),
+            key_features=info.get("key_features", []),
+            available_actions=info.get("available_actions", []),
             sub_locations=sub_locations,
             connections=connections,
             resident_npcs=info.get("resident_npcs", []),
@@ -251,7 +256,7 @@ class WorldInstance:
                 if k not in (
                     "id", "name", "description", "danger_level", "area_type",
                     "tags", "sub_locations", "connections", "resident_npcs",
-                    "atmosphere", "key_features", "region",
+                    "atmosphere", "key_features", "available_actions", "region",
                 )
             },
         )

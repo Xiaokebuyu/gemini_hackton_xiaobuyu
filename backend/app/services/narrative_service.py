@@ -489,11 +489,36 @@ class NarrativeService:
             if not event_id:
                 continue
             trigger_cg = cls._parse_condition_group(raw.get("trigger_conditions"))
+            completion_cg = cls._parse_condition_group(raw.get("completion_conditions"))
+            on_complete_raw = raw.get("on_complete")
+            on_complete = on_complete_raw if isinstance(on_complete_raw, dict) else None
+
+            # on_complete fallback: 从 side_effects 映射
+            if on_complete is None and isinstance(raw.get("side_effects"), list) and raw["side_effects"]:
+                mapped: Dict[str, Any] = {}
+                for effect in raw["side_effects"]:
+                    if not isinstance(effect, dict):
+                        continue
+                    etype = effect.get("type", "")
+                    if etype == "unlock_event" and "event_id" in effect:
+                        mapped.setdefault("unlock_events", []).append(effect["event_id"])
+                    elif etype == "add_item":
+                        mapped.setdefault("add_items", []).append({
+                            "item_id": effect.get("item_id", ""),
+                            "quantity": effect.get("quantity", 1),
+                        })
+                    elif etype == "add_xp":
+                        mapped["add_xp"] = mapped.get("add_xp", 0) + int(effect.get("amount", 0))
+                if mapped:
+                    on_complete = mapped
+
             events.append(StoryEvent(
                 id=event_id,
                 name=str(raw.get("name", event_id)),
                 description=str(raw.get("description", "")),
                 trigger_conditions=trigger_cg or ConditionGroup(),
+                completion_conditions=completion_cg,
+                on_complete=on_complete,
                 is_required=bool(raw.get("is_required", False)),
                 is_repeatable=bool(raw.get("is_repeatable", False)),
                 cooldown_rounds=int(raw.get("cooldown_rounds", 0)),

@@ -31,7 +31,6 @@ from app.services.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
 from app.services.llm_service import LLMService
 from app.services.mcp_client_pool import MCPClientPool, MCPServiceUnavailableError
-from app.services.admin.agentic_tools import AgenticToolRegistry
 from app.services.image_generation_service import ImageGenerationService
 
 logger = logging.getLogger(__name__)
@@ -416,180 +415,6 @@ class FlashCPUService:
             "叙述必须基于工具真实返回结果，不要编造。"
         )
 
-    def _build_agentic_static_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Context block with relatively stable information suitable for caching."""
-        world_background = str(context.get("world_background", ""))[: settings.admin_agentic_background_max_chars]
-        return {
-            "player_character": context.get("player_character_summary", "无"),
-            "world_background": world_background,
-            "character_roster": context.get("character_roster", ""),
-            "available_destinations": context.get("available_destinations", []),
-            "sub_locations": context.get("sub_locations", []),
-        }
-
-    def _build_agentic_dynamic_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Context block with turn-variant information."""
-        location = context.get("location") or {}
-        time_info = context.get("time") or {}
-        chapter_info = context.get("chapter_info") or {}
-        history_text = str(context.get("conversation_history", ""))[-settings.admin_agentic_history_max_chars :]
-        memory_summary = str(context.get("memory_summary", ""))[: settings.admin_agentic_memory_max_chars]
-        current_event = chapter_info.get("current_event") if isinstance(chapter_info, dict) else None
-        if not isinstance(current_event, dict):
-            current_event = {}
-        pending_required_events = (
-            chapter_info.get("pending_required_events", [])
-            if isinstance(chapter_info, dict)
-            else []
-        )
-        if not isinstance(pending_required_events, list):
-            pending_required_events = []
-        return {
-            "state": context.get("state", "exploring"),
-            "active_npc": context.get("active_npc"),
-            "teammates": context.get("teammates", []),
-            "location": {
-                "location_id": location.get("location_id"),
-                "location_name": location.get("location_name"),
-                "atmosphere": location.get("atmosphere"),
-                "npcs_present": location.get("npcs_present", []),
-            },
-            "time": {
-                "day": time_info.get("day"),
-                "hour": time_info.get("hour"),
-                "minute": time_info.get("minute"),
-                "formatted": time_info.get("formatted") or time_info.get("formatted_time"),
-            },
-            "story_directives": context.get("story_directives", []),
-            "pending_flash_conditions": context.get("pending_flash_conditions", []),
-            "story_pacing": context.get("story_pacing", {}),
-            "chapter_progression": {
-                "chapter_info": chapter_info if isinstance(chapter_info, dict) else {},
-                "chapter_guidance": self._build_chapter_guidance(context),
-            },
-            "task_board": {
-                "current_event": {
-                    "id": current_event.get("id"),
-                    "name": current_event.get("name"),
-                    "description": current_event.get("description"),
-                },
-                "pending_required_events": pending_required_events[:8],
-                "event_completion_pct": (
-                    chapter_info.get("event_completion_pct")
-                    if isinstance(chapter_info, dict)
-                    else None
-                ),
-                "waiting_transition": (
-                    bool(chapter_info.get("waiting_transition"))
-                    if isinstance(chapter_info, dict)
-                    else False
-                ),
-            },
-            "memory_summary": memory_summary,
-            "teammate_memory_summaries": context.get("teammate_memory_summaries", {}),
-            "conversation_history": history_text,
-        }
-
-    def _build_agentic_user_prompt(
-        self,
-        *,
-        player_input: str,
-        static_context: Dict[str, Any],
-        dynamic_context: Dict[str, Any],
-        extra_instruction: str = "",
-    ) -> str:
-        extra_block = f"\n\n{extra_instruction.strip()}" if extra_instruction and extra_instruction.strip() else ""
-        return (
-            "以下是稳定上下文(JSON)：\n"
-            f"{json.dumps(static_context, ensure_ascii=False)}\n\n"
-            "以下是本回合动态上下文(JSON)：\n"
-            f"{json.dumps(dynamic_context, ensure_ascii=False)}\n\n"
-            f"玩家输入：{player_input}\n\n"
-            "请先调用必要工具，再输出最终 GM 叙述。"
-            f"{extra_block}"
-        )
-
-    async def agentic_process(
-        self,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        context: Dict[str, Any],
-    ) -> AgenticResult:
-        """Agentic runtime entrypoint (single LLM session + automatic tool loop)."""
-        system_prompt = self._load_agentic_prompt()
-        model_name = settings.admin_agentic_model or settings.admin_flash_model
-        static_context = self._build_agentic_static_context(context)
-        dynamic_context = self._build_agentic_dynamic_context(context)
-        cached_content_name = None
-        user_prompt = self._build_agentic_user_prompt(
-            player_input=player_input,
-            static_context=static_context,
-            dynamic_context=dynamic_context,
-        )
-        pending_condition_ids = [
-            str(c.get("id")).strip()
-            for c in (context.get("pending_flash_conditions") or [])
-            if isinstance(c, dict) and str(c.get("id", "")).strip()
-        ]
-        registry = AgenticToolRegistry(
-            flash_cpu=self,
-            world_id=world_id,
-            session_id=session_id,
-            pending_condition_ids=pending_condition_ids,
-            image_service=self.image_service,
-        )
-
-        tools = registry.get_tools()
-        logger.info(
-            "[agentic] starting: model=%s tools=%d input=%.60s...",
-            model_name, len(tools), player_input,
-        )
-        llm_resp = await self.llm_service.agentic_generate(
-            user_prompt=user_prompt,
-            system_instruction=system_prompt,
-            tools=tools,
-            model_override=model_name,
-            thinking_level=settings.admin_flash_thinking_level,
-            max_remote_calls=settings.admin_agentic_max_remote_calls,
-            cached_content=cached_content_name,
-        )
-        narration = (llm_resp.text or "").strip()
-        logger.info(
-            "[agentic] done: tool_calls=%d narration_len=%d",
-            len(registry.tool_calls), len(narration),
-        )
-        if not narration:
-            logger.warning("[agentic] empty narration, tool_calls=%s", [c.name for c in registry.tool_calls])
-            narration = "（你短暂沉默，观察着周围的动静。）"
-
-        finish_reason: Optional[str] = None
-        usage = {
-            "tool_calls": len(registry.tool_calls),
-            "thoughts_token_count": llm_resp.thinking.thoughts_token_count,
-            "output_token_count": llm_resp.thinking.output_token_count,
-            "total_token_count": llm_resp.thinking.total_token_count,
-            "cache_mode": "disabled",
-        }
-        raw = llm_resp.raw_response
-        try:
-            candidates = getattr(raw, "candidates", None) or []
-            if candidates:
-                finish_reason = str(getattr(candidates[0], "finish_reason", None) or "")
-        except Exception:
-            finish_reason = None
-
-        return AgenticResult(
-            narration=narration,
-            thinking_summary=(llm_resp.thinking.thoughts_summary or "").strip(),
-            tool_calls=registry.tool_calls,
-            flash_results=registry.flash_results,
-            story_condition_results=registry.story_condition_results,
-            image_data=registry.image_data,
-            usage=usage,
-            finish_reason=finish_reason,
-        )
-
     async def agentic_process_v4(
         self,
         *,
@@ -598,6 +423,7 @@ class FlashCPUService:
         context: Dict[str, Any],
         graph_store: Any,
         recall_orchestrator: Any = None,
+        event_queue: Optional[asyncio.Queue] = None,
     ) -> AgenticResult:
         """V4 agentic process — uses V4AgenticToolRegistry + layered context.
 
@@ -619,6 +445,7 @@ class FlashCPUService:
             graph_store=graph_store,
             recall_orchestrator=recall_orchestrator,
             image_service=self.image_service,
+            event_queue=event_queue,
         )
 
         context_json = json.dumps(context, ensure_ascii=False, default=str)
@@ -691,185 +518,6 @@ class FlashCPUService:
             image_data=registry.image_data,
             usage=usage,
             finish_reason=finish_reason,
-        )
-
-    async def run_required_tool_repair(
-        self,
-        *,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        context: Dict[str, Any],
-        missing_requirements: List[str],
-        repair_tool_names: List[str],
-        enforcement_reason: str,
-    ) -> AgenticResult:
-        """Run one strict repair turn forcing tool calls for missing requirements."""
-        system_prompt = self._load_agentic_prompt()
-        model_name = settings.admin_agentic_model or settings.admin_flash_model
-        static_context = self._build_agentic_static_context(context)
-        dynamic_context = self._build_agentic_dynamic_context(context)
-        pending_condition_ids = [
-            str(c.get("id")).strip()
-            for c in (context.get("pending_flash_conditions") or [])
-            if isinstance(c, dict) and str(c.get("id", "")).strip()
-        ]
-        registry = AgenticToolRegistry(
-            flash_cpu=self,
-            world_id=world_id,
-            session_id=session_id,
-            pending_condition_ids=pending_condition_ids,
-            image_service=self.image_service,
-        )
-        tool_map = registry.get_tool_name_map()
-        allowed_tools = [
-            name
-            for name in dict.fromkeys(str(item).strip() for item in (repair_tool_names or []) if str(item).strip())
-            if name in tool_map
-        ]
-
-        if not allowed_tools:
-            logger.warning(
-                "[agentic] repair skipped: no valid tools from required=%s",
-                repair_tool_names,
-            )
-            return AgenticResult(
-                narration="",
-                tool_calls=[],
-                flash_results=[],
-                story_condition_results={},
-                usage={
-                    "repair_attempted": False,
-                    "repair_reason": "no_valid_repair_tools",
-                    "requested_tools": list(repair_tool_names or []),
-                },
-            )
-
-        extra_instruction = (
-            "严格修复模式：本轮必须调用工具，禁止输出普通叙述文本。\n"
-            f"- 缺失要求: {json.dumps(missing_requirements, ensure_ascii=False)}\n"
-            f"- 修复原因: {enforcement_reason}\n"
-            f"- 仅可使用工具: {json.dumps(allowed_tools, ensure_ascii=False)}\n"
-            "如果需要多个工具，请在同一响应中返回多个 function call。"
-        )
-        user_prompt = self._build_agentic_user_prompt(
-            player_input=player_input,
-            static_context=static_context,
-            dynamic_context=dynamic_context,
-            extra_instruction=extra_instruction,
-        )
-
-        forced_calls: List[Dict[str, Any]] = []
-        forced_response_content: Any = None
-        force_round_fn = getattr(self.llm_service, "agentic_force_tool_calls_round", None)
-        if callable(force_round_fn):
-            round_payload = await force_round_fn(
-                user_prompt=user_prompt,
-                system_instruction=system_prompt,
-                tools=registry.get_tools(),
-                allowed_function_names=allowed_tools,
-                model_override=model_name,
-                thinking_level=settings.admin_flash_thinking_level,
-            )
-            forced_calls = list(getattr(round_payload, "function_calls", None) or [])
-            forced_response_content = getattr(round_payload, "response_content", None)
-        else:
-            forced_calls = await self.llm_service.agentic_force_tool_calls(
-                user_prompt=user_prompt,
-                system_instruction=system_prompt,
-                tools=registry.get_tools(),
-                allowed_function_names=allowed_tools,
-                model_override=model_name,
-                thinking_level=settings.admin_flash_thinking_level,
-            )
-
-        function_responses: List[Dict[str, Any]] = []
-        for call in forced_calls:
-            tool_name = str(call.get("name", "")).strip()
-            tool_args = call.get("args", {}) if isinstance(call.get("args"), dict) else {}
-            result_payload = await registry.execute_tool_call(tool_name, tool_args)
-            if not tool_name:
-                continue
-            function_responses.append(
-                {
-                    "name": tool_name,
-                    "response": {"result": result_payload},
-                }
-            )
-
-        finalize_user_prompt = self._build_agentic_user_prompt(
-            player_input=player_input,
-            static_context=static_context,
-            dynamic_context=dynamic_context,
-            extra_instruction=(
-                "以上是工具的执行结果。请基于工具返回的实际数据，输出 2-4 段沉浸式中文 GM 叙述。"
-                "不要调用任何工具，直接输出叙述文本。"
-            ),
-        )
-
-        finalize_status = "skipped"
-        finalize_error = ""
-        finalize_finish_reason: Optional[str] = None
-        finalize_usage: Dict[str, Any] = {}
-        finalized_narration = ""
-        finalize_fn = getattr(self.llm_service, "agentic_finalize_with_function_responses", None)
-        if callable(finalize_fn) and forced_response_content is not None and function_responses:
-            try:
-                finalized = await finalize_fn(
-                    user_prompt=finalize_user_prompt,
-                    system_instruction=system_prompt,
-                    forced_response_content=forced_response_content,
-                    function_responses=function_responses,
-                    model_override=model_name,
-                    thinking_level=settings.admin_flash_thinking_level,
-                )
-                finalized_narration = (finalized.text or "").strip()
-                finalize_status = "ok" if finalized_narration else "empty"
-                finalize_usage = {
-                    "thoughts_token_count": finalized.thinking.thoughts_token_count,
-                    "output_token_count": finalized.thinking.output_token_count,
-                    "total_token_count": finalized.thinking.total_token_count,
-                }
-                raw = finalized.raw_response
-                try:
-                    candidates = getattr(raw, "candidates", None) or []
-                    if candidates:
-                        finalize_finish_reason = str(
-                            getattr(candidates[0], "finish_reason", None) or ""
-                        )
-                except Exception:
-                    finalize_finish_reason = None
-            except Exception as exc:
-                finalize_status = "failed"
-                finalize_error = f"{type(exc).__name__}: {str(exc)[:240]}"
-                logger.error(
-                    "[agentic] repair finalize failed: %s",
-                    finalize_error,
-                    exc_info=True,
-                )
-        elif callable(finalize_fn):
-            finalize_status = "skipped_no_calls_or_content"
-        else:
-            finalize_status = "finalize_unavailable"
-
-        return AgenticResult(
-            narration=finalized_narration,
-            tool_calls=registry.tool_calls,
-            flash_results=registry.flash_results,
-            story_condition_results=registry.story_condition_results,
-            image_data=registry.image_data,
-            usage={
-                "repair_attempted": True,
-                "repair_reason": enforcement_reason,
-                "requested_tools": allowed_tools,
-                "model_calls": forced_calls,
-                "executed_calls": len(registry.tool_calls),
-                "function_responses": len(function_responses),
-                "finalize_status": finalize_status,
-                "finalize_error": finalize_error,
-                "finalize_usage": finalize_usage,
-            },
-            finish_reason=finalize_finish_reason,
         )
 
     def _format_subgraph_for_prompt(self, memory_result) -> tuple:
@@ -1196,7 +844,6 @@ class FlashCPUService:
         request: FlashRequest,
         generate_narration: bool = True,
     ) -> FlashResponse:
-        # [LEGACY] v2 编排器驱动执行器；v3 中由 AgenticToolRegistry 包装复用。
         """Execute a Flash operation."""
         op = request.operation
         params = request.parameters or {}

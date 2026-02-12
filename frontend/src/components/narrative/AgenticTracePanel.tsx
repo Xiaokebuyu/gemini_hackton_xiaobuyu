@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Brain, CheckCircle2, ChevronDown, ChevronUp, Wrench, XCircle } from 'lucide-react';
 import { useGameStore } from '../../stores';
+import { useChatStore } from '../../stores/chatStore';
 
 function compactJson(value: unknown, maxChars = 220): string {
   try {
@@ -15,6 +16,7 @@ function compactJson(value: unknown, maxChars = 220): string {
 
 const AgenticTracePanel: React.FC = () => {
   const { latestAgenticTrace } = useGameStore();
+  const { isLoading } = useChatStore();
   const [expanded, setExpanded] = useState(false);
 
   const normalized = useMemo(() => {
@@ -27,9 +29,18 @@ const AgenticTracePanel: React.FC = () => {
     return { thinking, toolCalls, stats };
   }, [latestAgenticTrace]);
 
+  // Auto-expand when loading and trace data arrives
+  useEffect(() => {
+    if (isLoading && normalized) {
+      setExpanded(true);
+    }
+  }, [isLoading, !!normalized]);
+
   if (!normalized) return null;
 
   const { thinking, toolCalls, stats } = normalized;
+  const successCount = typeof stats.success === 'number' ? stats.success : toolCalls.filter(c => c?.success !== false).length;
+  const failedCount = typeof stats.failed === 'number' ? stats.failed : toolCalls.filter(c => c?.success === false).length;
 
   return (
     <section className="mt-3 rounded-xl border border-g-border bg-g-bg-surface-alt/80">
@@ -43,7 +54,12 @@ const AgenticTracePanel: React.FC = () => {
           <span className="font-semibold">GM Agentic Trace</span>
           <span className="text-xs text-g-text-muted">
             tools={typeof stats.count === 'number' ? stats.count : toolCalls.length}
+            {successCount > 0 && <span className="text-emerald-500 ml-1">✓{successCount}</span>}
+            {failedCount > 0 && <span className="text-rose-500 ml-1">✗{failedCount}</span>}
           </span>
+          {isLoading && toolCalls.length > 0 && (
+            <span className="inline-block w-2 h-2 rounded-full bg-g-gold animate-pulse" />
+          )}
         </div>
         {expanded ? <ChevronUp className="w-4 h-4 text-g-text-muted" /> : <ChevronDown className="w-4 h-4 text-g-text-muted" />}
       </button>
@@ -75,14 +91,16 @@ const AgenticTracePanel: React.FC = () => {
 
           <div className="space-y-2">
             {toolCalls.length === 0 ? (
-              <div className="text-xs text-g-text-muted">本轮无工具调用。</div>
+              <div className="text-xs text-g-text-muted">
+                {isLoading ? '等待工具调用...' : '本轮无工具调用。'}
+              </div>
             ) : (
               toolCalls.map((call, index) => {
                 const ok = call?.success !== false;
                 return (
                   <div
                     key={`${call?.index ?? index}-${call?.name ?? 'tool'}`}
-                    className="rounded-lg border border-g-border px-2 py-1.5 bg-g-bg-surface"
+                    className="rounded-lg border border-g-border px-2 py-1.5 bg-g-bg-surface animate-[fadeIn_0.3s_ease-in]"
                   >
                     <div className="flex items-center gap-2 text-xs">
                       <Wrench className="w-3.5 h-3.5 text-g-gold" />
@@ -101,9 +119,11 @@ const AgenticTracePanel: React.FC = () => {
                         <XCircle className="w-3.5 h-3.5 text-rose-500" />
                       )}
                     </div>
-                    <div className="mt-1 text-[11px] text-g-text-muted break-all">
-                      args: <code>{compactJson(call?.args)}</code>
-                    </div>
+                    {call?.args && (
+                      <div className="mt-1 text-[11px] text-g-text-muted break-all">
+                        args: <code>{compactJson(call?.args)}</code>
+                      </div>
+                    )}
                     {!ok && typeof call?.error === 'string' && call.error ? (
                       <div className="mt-0.5 text-[11px] text-rose-400 break-all">
                         error: {call.error}

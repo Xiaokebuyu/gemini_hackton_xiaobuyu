@@ -427,13 +427,10 @@ async def process_input_v2(
     payload: PlayerInputRequest,
     coordinator: AdminCoordinator = Depends(get_coordinator),
 ) -> CoordinatorResponse:
-    """处理玩家输入（默认 Agentic v3，兼容回退 v2）"""
+    """处理玩家输入（V4 Agentic 管线）"""
     try:
-        process_fn = getattr(coordinator, "process_player_input_v3", None)
-        if process_fn is None:
-            process_fn = coordinator.process_player_input_v2
         return await asyncio.wait_for(
-            process_fn(
+            coordinator.process_player_input_v3(
                 world_id=world_id,
                 session_id=session_id,
                 player_input=payload.input,
@@ -459,14 +456,11 @@ async def process_input_v2_stream(
     payload: PlayerInputRequest,
     coordinator: AdminCoordinator = Depends(get_coordinator),
 ):
-    """流式处理玩家输入（默认 Agentic v3，兼容回退 v2）"""
+    """流式处理玩家输入（V4 Agentic 管线）"""
 
     async def event_generator():
         try:
-            process_stream_fn = getattr(coordinator, "process_player_input_v3_stream", None)
-            if process_stream_fn is None:
-                process_stream_fn = coordinator.process_player_input_v2_stream
-            async for event in process_stream_fn(
+            async for event in coordinator.process_player_input_v3_stream(
                 world_id=world_id,
                 session_id=session_id,
                 player_input=payload.input,

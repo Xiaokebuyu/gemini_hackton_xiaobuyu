@@ -21,6 +21,8 @@ class SubLocationDef(BaseModel):
     interaction_type: str = "visit"
     resident_npcs: List[str] = Field(default_factory=list)
     requirements: Dict[str, Any] = Field(default_factory=dict)
+    available_actions: List[str] = Field(default_factory=list)
+    passerby_spawn_rate: float = 0.0
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("requirements", "metadata", mode="before")
@@ -54,6 +56,8 @@ class AreaDefinition(BaseModel):
     danger_level: int = 1
     area_type: str = "settlement"
     tags: List[str] = Field(default_factory=list)
+    key_features: List[str] = Field(default_factory=list)
+    available_actions: List[str] = Field(default_factory=list)
     sub_locations: List[SubLocationDef] = Field(default_factory=list)
     connections: List[AreaConnection] = Field(default_factory=list)
     resident_npcs: List[str] = Field(default_factory=list)

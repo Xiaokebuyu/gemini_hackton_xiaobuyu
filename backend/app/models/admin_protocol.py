@@ -209,6 +209,9 @@ class CoordinatorResponse(BaseModel):
     narration: str
     speaker: str = "GM"
 
+    # NPC 对话响应（独立于 GM 叙述）
+    npc_responses: List[Dict[str, Any]] = Field(default_factory=list)
+
     # 队友响应（可选）
     teammate_responses: List[Dict[str, Any]] = Field(default_factory=list)
 
