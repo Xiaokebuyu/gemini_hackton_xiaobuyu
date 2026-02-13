@@ -18,6 +18,7 @@ import type {
   CoordinatorChapterInfo,
   Party,
   DispositionsMap,
+  DiceRoll,
 } from '../types';
 
 interface GameStoreState {
@@ -58,6 +59,9 @@ interface GameStoreState {
   inventoryItemCount: number;
   dispositions: DispositionsMap;
 
+  // Dice
+  pendingDiceRoll: DiceRoll | null;
+
   // Actions
   setSession: (worldId: string, sessionId: string) => void;
   clearSession: () => void;
@@ -83,6 +87,7 @@ interface GameStoreState {
   setAgenticTrace: (trace: AgenticTracePayload | null) => void;
   appendAgenticToolCall: (call: AgenticTracePayload['tool_calls'][0]) => void;
   setDispositions: (d: DispositionsMap) => void;
+  setDiceRoll: (roll: DiceRoll | null) => void;
   updateFromStateDelta: (delta: StateDelta) => void;
   updateFromGameState: (state: GameState) => void;
 }
@@ -280,6 +285,7 @@ export const useGameStore = create<GameStoreState>()(
         inventoryItems: [],
         inventoryItemCount: 0,
         dispositions: {},
+        pendingDiceRoll: null,
 
         // Actions
         setSession: (worldId: string, sessionId: string) => {
@@ -309,6 +315,7 @@ export const useGameStore = create<GameStoreState>()(
             inventoryItems: [],
             inventoryItemCount: 0,
             dispositions: {},
+            pendingDiceRoll: null,
           });
         },
 
@@ -337,6 +344,7 @@ export const useGameStore = create<GameStoreState>()(
             inventoryItems: [],
             inventoryItemCount: 0,
             dispositions: {},
+            pendingDiceRoll: null,
           });
         },
 
@@ -422,6 +430,10 @@ export const useGameStore = create<GameStoreState>()(
 
         setDispositions: (d: DispositionsMap) => {
           set({ dispositions: d });
+        },
+
+        setDiceRoll: (roll: DiceRoll | null) => {
+          set({ pendingDiceRoll: roll });
         },
 
         appendAgenticToolCall: (call) => {

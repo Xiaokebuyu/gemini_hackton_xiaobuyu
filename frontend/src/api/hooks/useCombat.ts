@@ -13,15 +13,38 @@ import type {
   CombatActionRequest,
   CombatActionResponse,
   CombatState,
+  DiceRoll,
   TriggerCombatRequest,
   TriggerCombatResponse,
   CombatResolveRequest,
   CombatResolveResponse,
 } from '../../types';
 
+/** Try to extract a DiceRoll from combat action_result */
+function extractCombatDice(response: CombatActionResponse): DiceRoll | null {
+  const ar = response.action_result;
+  if (!ar || typeof ar !== 'object') return null;
+  const roll = (ar as Record<string, unknown>).roll;
+  const diceRoll = (ar as Record<string, unknown>).dice_roll;
+  const source = diceRoll ?? roll;
+  if (!source || typeof source !== 'object') return null;
+  const dr = source as Record<string, unknown>;
+  // Support both { roll: number } and { result: number } shapes
+  const rawResult = typeof dr.roll === 'number' ? dr.roll : (typeof dr.result === 'number' ? dr.result : null);
+  if (rawResult === null) return null;
+  return {
+    roll_type: typeof dr.roll_type === 'string' ? dr.roll_type as DiceRoll['roll_type'] : 'd20',
+    result: rawResult,
+    modifier: typeof dr.modifier === 'number' ? dr.modifier : 0,
+    total: typeof dr.total === 'number' ? dr.total : rawResult,
+    is_critical: typeof dr.is_critical === 'boolean' ? dr.is_critical : false,
+    is_fumble: typeof dr.is_fumble === 'boolean' ? dr.is_fumble : false,
+  };
+}
+
 export function useCombatAction() {
   const queryClient = useQueryClient();
-  const { worldId, sessionId } = useGameStore();
+  const { worldId, sessionId, setDiceRoll } = useGameStore();
 
   const mutation = useMutation<CombatActionResponse, Error, CombatActionRequest>({
     mutationFn: async (action: CombatActionRequest) => {
@@ -31,7 +54,13 @@ export function useCombatAction() {
       return executeCombatAction(worldId, sessionId, action);
     },
 
-    onSuccess: () => {
+    onSuccess: (response) => {
+      // Extract and display dice roll if present
+      const dice = extractCombatDice(response);
+      if (dice) {
+        setDiceRoll(dice);
+      }
+
       queryClient.invalidateQueries({
         queryKey: ['combat', worldId, sessionId],
       });

@@ -460,12 +460,9 @@ class AdminCoordinator:
                 yield {"type": "gm_chunk", "text": full_text[idx:idx + chunk_size], "chunk_type": "answer"}
             yield {"type": "gm_end", "full_text": full_text}
 
-            # NPC 对话气泡（GM 叙述之后，队友响应之前）
-            for npc_r in response.npc_responses:
-                yield {"type": "npc_response", **npc_r}
-
-            for teammate in response.teammate_responses:
-                yield {"type": "teammate_response", **teammate}
+            # NPC 对话 + 队友响应已在管线内通过 event_queue 即时推送，
+            # 不再重复推送。complete 事件中的 npc_responses / teammate_responses
+            # 字段作为 fallback 保证前端数据完整性。
 
             yield {
                 "type": "complete",

@@ -287,8 +287,8 @@ class SessionRuntime:
                 exc,
             )
 
-        # 事件初始化：Firestore 无事件时从章节定义补充
-        if self.current_area and not self.current_area.events and self.narrative:
+        # 事件初始化：始终合并章节事件（initialize_events_from_chapter 内部去重）
+        if self.current_area and self.narrative:
             chapter = self.world.chapter_registry.get(
                 self.narrative.current_chapter
             )
@@ -384,8 +384,8 @@ class SessionRuntime:
                 )
             self.current_area = new_area
 
-            # 事件初始化：Firestore 无事件时从章节定义补充
-            if not new_area.events and self.narrative:
+            # 事件初始化：始终合并章节事件（initialize_events_from_chapter 内部去重）
+            if self.narrative:
                 chapter = (
                     self.world.chapter_registry.get(self.narrative.current_chapter)
                     if self.world

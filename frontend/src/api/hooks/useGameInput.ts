@@ -19,6 +19,7 @@ import type {
   GameAction,
   StateDelta,
   CoordinatorChapterInfo,
+  DiceRoll,
 } from '../../types';
 
 function normalizeImageData(value: unknown): CoordinatorImageData | null {
@@ -36,6 +37,26 @@ function normalizeImageData(value: unknown): CoordinatorImageData | null {
 
 function normalizeAgenticTrace(value: unknown): AgenticTracePayload | null {
   return value && typeof value === 'object' ? (value as AgenticTracePayload) : null;
+}
+
+function parseDiceResult(raw: unknown): DiceRoll | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const dr = raw as Record<string, unknown>;
+  if (typeof dr.roll !== 'number') return null;
+  return {
+    roll_type: 'd20',
+    result: dr.roll,
+    modifier: typeof dr.modifier === 'number' ? dr.modifier : 0,
+    total: typeof dr.total === 'number' ? dr.total : 0,
+    is_critical: typeof dr.is_critical === 'boolean' ? dr.is_critical : false,
+    is_fumble: typeof dr.is_fumble === 'boolean' ? dr.is_fumble : false,
+    ability: typeof dr.ability === 'string' ? dr.ability : undefined,
+    skill: typeof dr.skill === 'string' ? dr.skill : undefined,
+    proficiency: typeof dr.proficiency === 'number' ? dr.proficiency : undefined,
+    dc: typeof dr.dc === 'number' ? dr.dc : undefined,
+    success: typeof dr.success === 'boolean' ? dr.success : undefined,
+    description: typeof dr.description === 'string' ? dr.description : undefined,
+  };
 }
 
 // =============================================================================
@@ -163,6 +184,7 @@ export function useStreamGameInput() {
     setImageData,
     setAgenticTrace,
     appendAgenticToolCall,
+    setDiceRoll,
   } =
     useGameStore();
   const {
@@ -313,12 +335,26 @@ export function useStreamGameInput() {
                     }
                   }
                 }
+                // 骰子结果 → 全局骰子动画
+                const diceResult = (event as Record<string, unknown>).dice_result;
+                const parsedDice = parseDiceResult(diceResult);
+                if (parsedDice) {
+                  setDiceRoll(parsedDice);
+                }
                 break;
               }
 
               case 'agentic_trace':
                 setAgenticTrace(normalizeAgenticTrace(event.agentic_trace) ?? null);
                 break;
+
+              case 'dice_roll': {
+                const parsed = parseDiceResult((event as Record<string, unknown>).result);
+                if (parsed) {
+                  setDiceRoll(parsed);
+                }
+                break;
+              }
 
               case 'complete': {
                 if (event.state_delta) {
@@ -425,6 +461,7 @@ export function useStreamGameInput() {
       setImageData,
       setAgenticTrace,
       appendAgenticToolCall,
+      setDiceRoll,
       queryClient,
     ],
   );

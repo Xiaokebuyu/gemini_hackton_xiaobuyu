@@ -1,7 +1,7 @@
 /**
  * Full-screen combat overlay
  */
-import React, { useState } from 'react';
+import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Swords, Trophy, Skull } from 'lucide-react';
 import { useCombatStore, useGameStore } from '../../stores';
@@ -10,7 +10,6 @@ import CombatArena from './CombatArena';
 import ActionOptionList from './ActionOptionList';
 import CombatLog from './CombatLog';
 import TurnOrder from './TurnOrder';
-import DiceRollDisplay from './DiceRollDisplay';
 import { PanelFrame } from '../layout';
 
 interface CombatOverlayProps {
@@ -27,15 +26,11 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
     selectAction,
     selectTarget,
     clearSelection,
-    lastRoll,
-    setLastRoll,
     canAct,
   } = useCombatStore();
   const { setCombatId } = useGameStore();
   const { executeAction, isLoading } = useCombatAction();
   const { endCombat } = useEndCombat();
-
-  const [showDiceRoll, setShowDiceRoll] = useState(false);
 
   // Get real actions from combat state
   const actions = combatState?.player_actions || [];
@@ -189,17 +184,6 @@ export const CombatOverlay: React.FC<CombatOverlayProps> = ({
             </PanelFrame>
           </div>
         </div>
-
-        {/* Dice roll overlay */}
-        {showDiceRoll && lastRoll && (
-          <DiceRollDisplay
-            roll={lastRoll}
-            onComplete={() => {
-              setShowDiceRoll(false);
-              setLastRoll(null);
-            }}
-          />
-        )}
 
         {/* Victory/defeat overlay */}
         {combatState.is_victory !== null && (

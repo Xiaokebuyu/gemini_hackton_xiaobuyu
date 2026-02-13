@@ -7,7 +7,6 @@ export { default as CombatArena } from './CombatArena';
 export { default as CombatantCard } from './CombatantCard';
 export { default as ActionOptionList } from './ActionOptionList';
 export { default as DistanceBand } from './DistanceBand';
-export { default as DiceRollDisplay } from './DiceRollDisplay';
 export { default as CombatLog } from './CombatLog';
 export { default as TurnOrder } from './TurnOrder';
 export { default as CombatTriggerCard } from './CombatTriggerCard';

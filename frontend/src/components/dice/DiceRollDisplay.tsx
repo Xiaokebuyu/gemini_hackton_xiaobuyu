@@ -1,10 +1,25 @@
 /**
  * Dice roll animation display
+ * Global component — serves both combat rolls and ability checks.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Dices } from 'lucide-react';
 import type { DiceRoll } from '../../types';
+
+const SKILL_LABELS: Record<string, string> = {
+  stealth: '潜行', persuasion: '说服', athletics: '运动',
+  perception: '感知', investigation: '调查', sleight_of_hand: '巧手',
+  arcana: '奥术', intimidation: '威吓', deception: '欺骗',
+  survival: '生存', medicine: '医疗', nature: '自然',
+  acrobatics: '特技', insight: '洞察', animal_handling: '驯兽',
+  history: '历史', religion: '宗教', performance: '表演',
+};
+
+const ABILITY_LABELS: Record<string, string> = {
+  str: '力量', dex: '敏捷', con: '体质',
+  int: '智力', wis: '感知', cha: '魅力',
+};
 
 interface DiceRollDisplayProps {
   roll: DiceRoll | null;
@@ -19,6 +34,9 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
 }) => {
   const [isAnimating, setIsAnimating] = useState(false);
   const [displayValue, setDisplayValue] = useState<number | null>(null);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (roll) {
@@ -37,20 +55,29 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
           setDisplayValue(roll.result);
           setIsAnimating(false);
 
-          setTimeout(() => {
-            onComplete?.();
-          }, 1500);
+          // Ability checks need more reading time
+          const delay = roll.dc != null ? 2500 : 1500;
+          dismissTimerRef.current = setTimeout(() => {
+            onCompleteRef.current?.();
+          }, delay);
         }
       }, 50);
 
-      return () => clearInterval(interval);
+      return () => {
+        clearInterval(interval);
+        if (dismissTimerRef.current) {
+          clearTimeout(dismissTimerRef.current);
+          dismissTimerRef.current = null;
+        }
+      };
     }
-  }, [roll, onComplete]);
+  }, [roll]);
 
   if (!roll) return null;
 
   const isCrit = roll.is_critical;
   const isFumble = roll.is_fumble;
+  const isCheck = roll.dc != null;
 
   return (
     <AnimatePresence>
@@ -106,8 +133,8 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
           </div>
         </motion.div>
 
-        {/* Critical/Fumble label */}
-        {!isAnimating && (isCrit || isFumble) && (
+        {/* Critical/Fumble label (non-check mode) */}
+        {!isAnimating && !isCheck && (isCrit || isFumble) && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -123,14 +150,50 @@ export const DiceRollDisplay: React.FC<DiceRollDisplayProps> = ({
           </motion.div>
         )}
 
-        {/* Total with modifier */}
-        {!isAnimating && roll.modifier !== 0 && (
+        {/* Total with modifier (non-check mode) */}
+        {!isAnimating && !isCheck && roll.modifier !== 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             className="absolute bottom-1/4 text-[var(--g-text-secondary)]"
           >
             {roll.result} {roll.modifier >= 0 ? '+' : ''}{roll.modifier} = {roll.total}
+          </motion.div>
+        )}
+
+        {/* Ability check details */}
+        {!isAnimating && isCheck && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="absolute bottom-1/3 text-center"
+          >
+            {/* Skill / ability label */}
+            <div className="text-sm text-[var(--g-text-muted)] mb-1">
+              {roll.skill
+                ? `【${SKILL_LABELS[roll.skill] || roll.skill}检定】`
+                : roll.ability
+                ? `【${ABILITY_LABELS[roll.ability] || roll.ability}检定】`
+                : '【检定】'}
+            </div>
+            {/* Calculation breakdown */}
+            <div className="text-sm text-[var(--g-text-secondary)]">
+              d20={roll.result}
+              {roll.modifier !== 0 && (
+                <> + {roll.ability ? `${ABILITY_LABELS[roll.ability] || roll.ability}` : ''}{roll.modifier >= 0 ? '+' : ''}{roll.modifier}</>
+              )}
+              {roll.proficiency != null && roll.proficiency !== 0 && (
+                <> + 熟练+{roll.proficiency}</>
+              )}
+            </div>
+            {/* DC comparison */}
+            <div className="text-lg font-bold mt-1">
+              总计 {roll.total} vs DC {roll.dc}
+            </div>
+            {/* Pass / fail */}
+            <div className={`text-xl font-heading mt-2 ${roll.success ? 'text-g-green' : 'text-g-red'}`}>
+              {isCrit ? '大成功！' : isFumble ? '大失败！' : roll.success ? '成功！' : '失败。'}
+            </div>
           </motion.div>
         )}
       </motion.div>

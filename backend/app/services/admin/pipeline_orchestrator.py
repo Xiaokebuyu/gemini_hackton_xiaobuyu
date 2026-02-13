@@ -93,12 +93,31 @@ class PipelineOrchestrator:
         if not session.player:
             raise ValueError("请先创建角色后再开始冒险。")
 
+        # A4: 事件状态机 pre-check（locked → available）
+        if session.current_area:
+            session.current_area.check_events(session)
+
         context = ContextAssembler.assemble(world, session)
 
         # =====================================================================
         # B 阶段: Agentic 会话
         # =====================================================================
         context_dict = context.to_flat_dict()
+
+        # --- 玩家主动掷骰预处理 ---
+        player_roll_result = None
+        if player_input.strip().lower().startswith("/roll"):
+            player_roll_result = await self._handle_player_roll(
+                world_id, session_id, player_input,
+            )
+            if player_roll_result and "error" not in player_roll_result:
+                context_dict["player_roll_result"] = player_roll_result
+                if event_queue:
+                    await event_queue.put({
+                        "type": "dice_roll",
+                        "source": "player",
+                        "result": player_roll_result,
+                    })
 
         # 注入对话历史
         if session.history:
@@ -182,23 +201,26 @@ class PipelineOrchestrator:
         if session.current_area:
             session.current_area.record_action(player_input)
 
-        # 队友响应
+        # 队友响应（流式推送到 event_queue）
         party = session.party
         teammate_responses: List[Dict[str, Any]] = []
         if party and party.get_active_members():
-            teammate_result = await self.teammate_response_service.process_round(
+            async for tm_event in self.teammate_response_service.process_round_stream(
                 party=party,
                 player_input=player_input,
                 gm_response=gm_narration,
                 context=context_dict,
-            )
-            for r in teammate_result.responses:
-                if r.response:
+            ):
+                # 实时推送到前端
+                if event_queue:
+                    await event_queue.put(tm_event)
+                # 从 teammate_end 事件收集结果（用于历史记录 + CoordinatorResponse）
+                if tm_event.get("type") == "teammate_end" and tm_event.get("response"):
                     teammate_responses.append({
-                        "character_id": r.character_id,
-                        "name": r.name,
-                        "response": r.response,
-                        "reaction": r.reaction,
+                        "character_id": tm_event["character_id"],
+                        "name": tm_event["name"],
+                        "response": tm_event["response"],
+                        "reaction": tm_event.get("reaction", ""),
                     })
 
         # 历史记录
@@ -356,7 +378,16 @@ class PipelineOrchestrator:
                         "total_token_count": agentic_result.usage.get("total_token_count", 0),
                         "finish_reason": agentic_result.finish_reason,
                     },
-                    "tool_calls": [tc.model_dump(exclude={"result"}) for tc in agentic_result.tool_calls],
+                    "tool_calls": [
+                        tc.model_dump(
+                            exclude={"result"} if tc.name in {
+                                "recall_memory", "npc_dialogue",
+                                "get_combat_options", "choose_combat_action",
+                                "generate_scene_image",
+                            } else set()
+                        )
+                        for tc in agentic_result.tool_calls
+                    ],
                     "stats": {
                         "count": len(agentic_result.tool_calls),
                         "success": sum(1 for tc in agentic_result.tool_calls if tc.success),
@@ -427,3 +458,45 @@ class PipelineOrchestrator:
         if affinity:
             context_dict.setdefault("dynamic_state", {})["affinity"] = affinity
             logger.info("[v4] injected dispositions for %d NPCs", len(affinity))
+
+    async def _handle_player_roll(
+        self,
+        world_id: str,
+        session_id: str,
+        raw_input: str,
+    ) -> Optional[Dict[str, Any]]:
+        """解析 /roll 命令并执行检定。
+
+        Format: /roll <skill_or_ability> [DC]
+        Examples: /roll stealth 15, /roll dex, /roll perception
+        """
+        from app.services.ability_check_service import (
+            AbilityCheckService,
+            SKILL_ABILITY_MAP,
+            VALID_ABILITIES,
+        )
+
+        parts = raw_input.strip().split()
+        if len(parts) < 2:
+            return {"error": "用法: /roll <技能或属性> [DC]", "success": False}
+
+        target = parts[1].lower().replace(" ", "_")
+        dc = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 10
+
+        skill = target if target in SKILL_ABILITY_MAP else ""
+        ability = target if target in VALID_ABILITIES else ""
+        if not skill and not ability:
+            skill = target  # Let AbilityCheckService validate
+
+        turn_key = f"{session_id}:{id(self)}"
+
+        svc = AbilityCheckService(store=self.character_store)
+        return await svc.perform_check(
+            world_id=world_id,
+            session_id=session_id,
+            skill=skill or None,
+            ability=ability or None,
+            dc=dc,
+            source="player",
+            turn_key=turn_key,
+        )

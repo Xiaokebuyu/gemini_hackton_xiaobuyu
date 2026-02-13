@@ -193,6 +193,14 @@ class CombatActionResponse(BaseModel):
     available_actions: List[Dict] = Field(default_factory=list)
 
 
+class DiceRollAPIRequest(BaseModel):
+    """玩家主动掷骰请求"""
+    skill: str = ""
+    ability: str = ""
+    dc: Optional[int] = None
+    context: str = ""
+
+
 class GameContextResponse(BaseModel):
     """游戏上下文响应"""
     world_id: str

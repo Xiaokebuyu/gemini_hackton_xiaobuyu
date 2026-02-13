@@ -249,7 +249,33 @@ class V4AgenticToolRegistry:
                         if k in ("approval", "trust", "fear", "romance")
                     },
                 }
+            # 掷骰结果明细 → 前端实时骰子动画
+            if name == "ability_check" and isinstance(result, dict) and "roll" in result:
+                event["dice_result"] = {
+                    "roll": result.get("roll"),
+                    "ability": result.get("ability"),
+                    "skill": result.get("skill"),
+                    "modifier": result.get("modifier"),
+                    "proficiency": result.get("proficiency"),
+                    "total": result.get("total"),
+                    "dc": result.get("dc"),
+                    "success": result.get("success"),
+                    "is_critical": result.get("is_critical"),
+                    "is_fumble": result.get("is_fumble"),
+                    "description": result.get("description"),
+                }
             await self._event_queue.put(event)
+            # NPC 对话结果 → 前端即时推送对话气泡
+            if name == "npc_dialogue" and success and isinstance(result, dict) and result.get("response"):
+                char_data = self.session.world.get_character(args.get("npc_id", "")) if self.session.world else None
+                npc_name = (char_data or {}).get("name", result.get("npc_name", args.get("npc_id", "")))
+                await self._event_queue.put({
+                    "type": "npc_response",
+                    "character_id": args.get("npc_id", ""),
+                    "name": npc_name,
+                    "dialogue": result["response"],
+                    "message": args.get("message", ""),
+                })
 
     async def _timed(self, name: str, args: Dict[str, Any], coro) -> Dict[str, Any]:
         """Execute coroutine with timing, recording, and error handling."""
@@ -1124,20 +1150,51 @@ class V4AgenticToolRegistry:
                 break
 
         if not target_event:
+            logger.warning(
+                "activate_event: '%s' not found in area '%s' (events: %s)",
+                event_id, area_rt.area_id, [e.id for e in area_rt.events],
+            )
             payload = {
                 "success": False,
                 "error": f"event not found: {event_id}",
                 "available_events": [e.id for e in area_rt.events if e.status == "available"],
+                "all_event_ids": [e.id for e in area_rt.events],
             }
             await self._record("activate_event", args, started, payload, False, payload["error"])
+            return payload
+
+        # 如果事件仍是 locked，补偿同轮时序：同一 agentic turn 内
+        # 前置工具调用（如 complete_event）可能已满足 trigger_conditions，
+        # 但 check_events 要到 C1 阶段才运行。这里就地刷新一次。
+        if target_event.status == "locked":
+            area_rt.check_events(self.session)
+
+        if target_event.status == "locked":
+            # 条件仍不满足 → 返回可操作信息而非硬错误
+            hint = area_rt._summarize_completion_conditions(
+                target_event.trigger_conditions,
+            )
+            payload = {
+                "success": False,
+                "event_id": event_id,
+                "current_status": "locked",
+                "message": f"事件 '{target_event.name}' 尚未解锁",
+                "unmet_conditions": hint or "未知条件",
+                "available_events": [
+                    e.id for e in area_rt.events if e.status == "available"
+                ],
+            }
+            await self._record("activate_event", args, started, payload, False, payload["message"])
             return payload
 
         if target_event.status != "available":
             payload = {
                 "success": False,
-                "error": f"event '{event_id}' status is '{target_event.status}', expected 'available'",
+                "event_id": event_id,
+                "current_status": target_event.status,
+                "message": f"事件 '{target_event.name}' 当前状态为 '{target_event.status}'，需要 'available'",
             }
-            await self._record("activate_event", args, started, payload, False, payload["error"])
+            await self._record("activate_event", args, started, payload, False, payload["message"])
             return payload
 
         target_event.status = "active"
@@ -1206,12 +1263,21 @@ class V4AgenticToolRegistry:
                 triggered.append(event_id)
                 self.session.mark_narrative_dirty()
 
+        # 级联解锁：完成事件后立即刷新状态机，
+        # 让依赖本事件的下游事件在同轮内即可从 locked→available
+        cascade_updates = area_rt.check_events(self.session)
+        newly_available = [
+            u.event.id for u in cascade_updates
+            if u.transition == "locked→available"
+        ]
+
         payload = {
             "success": True,
             "event_id": event_id,
             "event_name": target_event.name,
             "new_status": "completed",
             "on_complete_applied": bool(target_event.on_complete),
+            "newly_available_events": newly_available,
         }
         await self._record("complete_event", args, started, payload, True, None)
         return payload

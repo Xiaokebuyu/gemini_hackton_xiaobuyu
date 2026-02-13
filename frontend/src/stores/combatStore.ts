@@ -9,7 +9,6 @@ import type {
   Combatant,
   CombatActionType,
   CombatLogEntry,
-  DiceRoll,
 } from '../types';
 
 interface CombatStoreState {
@@ -21,7 +20,6 @@ interface CombatStoreState {
   selectedAction: CombatActionType | null;
   selectedTarget: string | null;
   isAnimating: boolean;
-  lastRoll: DiceRoll | null;
 
   // Actions
   setActive: (active: boolean) => void;
@@ -36,7 +34,6 @@ interface CombatStoreState {
 
   // Animation
   setAnimating: (animating: boolean) => void;
-  setLastRoll: (roll: DiceRoll | null) => void;
 
   // Log
   addLogEntry: (entry: Omit<CombatLogEntry, 'id' | 'timestamp'>) => void;
@@ -58,7 +55,6 @@ export const useCombatStore = create<CombatStoreState>()(
       selectedAction: null,
       selectedTarget: null,
       isAnimating: false,
-      lastRoll: null,
 
       // Actions
       setActive: (isActive: boolean) => {
@@ -89,7 +85,6 @@ export const useCombatStore = create<CombatStoreState>()(
           selectedAction: null,
           selectedTarget: null,
           isAnimating: false,
-          lastRoll: null,
         });
       },
 
@@ -112,10 +107,6 @@ export const useCombatStore = create<CombatStoreState>()(
       // Animation
       setAnimating: (isAnimating: boolean) => {
         set({ isAnimating });
-      },
-
-      setLastRoll: (lastRoll: DiceRoll | null) => {
-        set({ lastRoll });
       },
 
       // Log

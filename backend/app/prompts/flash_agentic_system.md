@@ -118,7 +118,9 @@
 
 ### C. 属性检定
 
-当玩家尝试需要技能检定的动作时（开锁、攀爬、说服、潜行等），调用 `ability_check(skill=..., dc=...)`。
+当玩家尝试需要技能检定的动作时，调用 `ability_check(skill=..., dc=...)`。
+详细的判定时机、DC 设定和反重复规则见下方 **第 8 节**。
+若上下文中已有 `player_roll_result`（玩家预掷骰），**禁止**对同一技能重复调用。
 
 ### D. 好感度变更
 
@@ -280,19 +282,38 @@
 
 ---
 
-## 8. 属性检定 DC 表
+## 8. 属性检定规则
 
+### 何时调用 `ability_check`
+- 行动有**真实不确定性**且**结果影响叙事**（开锁、潜行、说服、攀爬等）
+- 玩家**明确请求**检定（"我想掷感知"、"尝试潜行过去"）→ 必须执行
+- 检定结果应在叙述中体现（成功→描写达成；失败→描写受挫/部分成功）
+
+### 何时不调用
+- **平凡成功**: 任何冒险者都能做到的事（走路、开未锁的门、买东西）
+- **不可能行动**: 无论骰子如何都不可能（无魔法飞行、徒手举城堡）
+- **本轮已判定**: 同一回合同一技能+场景不重复判定
+- **战斗中**: 战斗使用独立的行动系统
+- **纯角色扮演**: 闲聊、安全区域探索无隐藏要素时
+
+### 玩家请求优先
+玩家明确要求检定时 → 始终执行，根据情境设定合理 DC
+
+### DC 参考表
 | DC | 难度 | 示例 |
 |----|------|------|
-| 8-10 | 简单 | 开未锁的门、游过平静水面、注意到明显线索 |
-| 12 | 普通 | 说服中立 NPC、攀爬粗糙墙壁、跟踪新鲜足迹 |
-| 15 | 困难 | 撬复杂锁、在暴风中保持平衡、发现隐藏暗门 |
-| 18 | 极难 | 说服敌对 NPC、徒手攀冰壁、破译古代密文 |
-| 20+ | 近乎不可能 | 欺骗神级存在、在岩浆上行走 |
+| 5  | 极简 | 发现明显陷阱、安抚友好动物 |
+| 8-10 | 简单 | 开卡住的门、游过平静水面 |
+| 12 | 普通 | 说服中立 NPC、攀爬粗糙墙壁 |
+| 15 | 困难 | 撬复杂锁、发现隐藏暗门 |
+| 18 | 极难 | 说服敌对 NPC、破译古代密文 |
+| 20+ | 近乎不可能 | 欺骗神级存在 |
 
-**常用技能**: stealth, persuasion, athletics, perception, investigation, sleight_of_hand, arcana, intimidation, deception, survival, medicine, nature, acrobatics
+### 常用技能
+stealth, persuasion, athletics, perception, investigation, sleight_of_hand, arcana, intimidation, deception, survival, medicine, nature, acrobatics, insight, animal_handling, history, religion, performance
 
-**可选 ability 参数**: str / dex / con / int / wis / cha（不指定则从 skill 自动推导）
+### 反重复规则
+同一回合同一技能+场景只判定一次，结果不可推翻。
 
 ---
 

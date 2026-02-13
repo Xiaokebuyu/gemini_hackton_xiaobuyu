@@ -394,11 +394,27 @@ class AreaRuntime:
 
             if event.status == "locked":
                 if not event.trigger_conditions:
+                    # 无触发条件 → 直接变为 available
+                    event.status = "available"
+                    updates.append(EventUpdate(
+                        event=event,
+                        transition="locked→available",
+                        details={"reason": "no_trigger_conditions"},
+                    ))
+                    logger.info("事件 '%s' 状态: locked → available (无触发条件)", event.id)
                     continue
                 cond_group = self._parse_condition_group(
                     event.trigger_conditions
                 )
                 if cond_group is None or not cond_group.conditions:
+                    # 条件组为空 → 直接变为 available
+                    event.status = "available"
+                    updates.append(EventUpdate(
+                        event=event,
+                        transition="locked→available",
+                        details={"reason": "empty_condition_group"},
+                    ))
+                    logger.info("事件 '%s' 状态: locked → available (空条件组)", event.id)
                     continue
                 result = self._evaluate_conditions(cond_group, session)
                 if result["satisfied"] and not result["pending_flash"]:

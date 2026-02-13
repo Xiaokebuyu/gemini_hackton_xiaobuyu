@@ -27,6 +27,7 @@ from app.models.game import (
     CombatResolveResponse,
     CombatStartRequest,
     CombatStartResponse,
+    DiceRollAPIRequest,
     EnterSceneRequest,
     EnterSceneResponse,
     GameContextResponse,
@@ -819,6 +820,36 @@ async def resolve_combat(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise _map_exception_to_http(exc) from exc
+
+
+@router.post("/{world_id}/sessions/{session_id}/dice-roll")
+async def player_dice_roll(
+    world_id: str,
+    session_id: str,
+    payload: DiceRollAPIRequest,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """玩家通过 UI 按钮发起掷骰（不触发 LLM 叙述）。"""
+    try:
+        from app.services.ability_check_service import AbilityCheckService
+
+        svc = AbilityCheckService(store=coordinator.character_store)
+        result = await svc.perform_check(
+            world_id=world_id,
+            session_id=session_id,
+            skill=payload.skill or None,
+            ability=payload.ability or None,
+            dc=payload.dc if payload.dc is not None else 10,
+            source="player",
+            turn_key=f"{session_id}:api",
+        )
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return {"type": "dice_roll", "result": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/advance-day")

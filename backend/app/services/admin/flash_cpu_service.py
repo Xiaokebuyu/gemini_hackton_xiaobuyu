@@ -1451,9 +1451,9 @@ class FlashCPUService:
                     skill=params.get("skill"),
                     dc=int(params.get("dc", 10)),
                 )
-                success = result.get("success", False) and "error" not in result
+                op_success = "error" not in result
                 return FlashResponse(
-                    success=True, operation=op,
+                    success=op_success, operation=op,
                     result=result,
                     error=result.get("error"),
                 )

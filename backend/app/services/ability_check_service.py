@@ -27,6 +27,42 @@ SKILL_ABILITY_MAP = {
     "persuasion": "cha",
 }
 
+VALID_ABILITIES = {"str", "dex", "con", "int", "wis", "cha"}
+
+
+class RollTracker:
+    """Per-turn anti-abuse tracker for player-initiated rolls (in-memory)."""
+
+    MAX_ROLLS_PER_TURN = 3
+
+    def __init__(self) -> None:
+        self._turn_key: str = ""
+        self._skills_used: set = set()
+        self._roll_count: int = 0
+
+    def reset(self, turn_key: str) -> None:
+        if turn_key != self._turn_key:
+            self._turn_key = turn_key
+            self._skills_used = set()
+            self._roll_count = 0
+
+    def check(self, skill_or_ability: str, turn_key: str) -> Optional[str]:
+        """Return error message if roll should be blocked, else None."""
+        self.reset(turn_key)
+        if self._roll_count >= self.MAX_ROLLS_PER_TURN:
+            return f"本回合已达到掷骰上限 ({self.MAX_ROLLS_PER_TURN} 次)，请继续冒险。"
+        if skill_or_ability in self._skills_used:
+            return f"本回合已对 {skill_or_ability} 进行过检定，结果不可推翻。"
+        return None
+
+    def record(self, skill_or_ability: str) -> None:
+        self._skills_used.add(skill_or_ability)
+        self._roll_count += 1
+
+
+# Module-level singleton tracker
+_roll_tracker = RollTracker()
+
 
 class AbilityCheckService:
     """Performs D&D-style ability checks."""
@@ -41,6 +77,8 @@ class AbilityCheckService:
         ability: Optional[str] = None,
         skill: Optional[str] = None,
         dc: int = 10,
+        source: str = "ai",
+        turn_key: str = "",
     ) -> Dict[str, Any]:
         """
         Roll d20 + ability modifier + proficiency (if proficient) vs DC.
@@ -51,17 +89,51 @@ class AbilityCheckService:
             ability: Ability name (str/dex/con/int/wis/cha). Auto-derived from skill if omitted.
             skill: Skill name (e.g. "stealth", "persuasion"). Optional.
             dc: Difficulty Class (default 10)
+            source: "ai" or "player" — only player rolls are rate-limited.
+            turn_key: Unique turn identifier for anti-abuse tracking.
 
         Returns:
             Dict with roll, modifier, total, dc, success, description
         """
+        # Normalize inputs
+        if skill:
+            skill = skill.lower().replace(" ", "_")
+        if ability:
+            ability = ability.lower()
+
+        # Validate skill
+        if skill and skill not in SKILL_ABILITY_MAP:
+            return {
+                "error": f"未知技能: {skill}",
+                "valid_skills": sorted(SKILL_ABILITY_MAP.keys()),
+                "success": False,
+            }
+
+        # Validate ability
+        if ability and ability not in VALID_ABILITIES:
+            return {
+                "error": f"未知属性: {ability}",
+                "valid_abilities": sorted(VALID_ABILITIES),
+                "success": False,
+            }
+
+        # Clamp DC to [1, 30]
+        dc = max(1, min(dc, 30))
+
+        # Anti-abuse for player-initiated rolls
+        if source == "player" and turn_key:
+            check_key = skill or ability or "raw"
+            block_msg = _roll_tracker.check(check_key, turn_key)
+            if block_msg:
+                return {"error": block_msg, "success": False}
+
         character = await self.store.get_character(world_id, session_id)
         if not character:
             return {"error": "no player character", "success": False}
 
         # Determine ability from skill if not provided
         if skill and not ability:
-            ability = SKILL_ABILITY_MAP.get(skill.lower(), "str")
+            ability = SKILL_ABILITY_MAP.get(skill, "str")
         if not ability:
             ability = "str"
 
@@ -70,7 +142,7 @@ class AbilityCheckService:
 
         # Add proficiency if character is proficient in the skill
         proficiency = 0
-        if skill and skill.lower() in [s.lower() for s in character.skill_proficiencies]:
+        if skill and skill in [s.lower() for s in character.skill_proficiencies]:
             proficiency = character.proficiency_bonus
 
         # Roll
@@ -113,5 +185,9 @@ class AbilityCheckService:
             result["description"] = f"成功！{roll_desc} = {total} vs DC{dc}"
         else:
             result["description"] = f"失败。{roll_desc} = {total} vs DC{dc}"
+
+        # Record for anti-abuse tracking
+        if source == "player" and turn_key:
+            _roll_tracker.record(skill or ability or "raw")
 
         return result

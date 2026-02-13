@@ -398,6 +398,7 @@ export type SSEEventType =
   | 'teammate_end'
   | 'teammate_skip'
   | 'time_event'
+  | 'dice_roll'
   | 'complete'
   | 'error';
 

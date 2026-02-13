@@ -154,6 +154,13 @@ export interface DiceRoll {
   total: number;
   is_critical: boolean;
   is_fumble: boolean;
+  // 检定扩展（仅 ability_check 时有值）
+  ability?: string;
+  skill?: string;
+  proficiency?: number;
+  dc?: number;
+  success?: boolean;
+  description?: string;
 }
 
 // =============================================================================

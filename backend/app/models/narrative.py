@@ -10,7 +10,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # =============================================================================
@@ -109,10 +109,12 @@ class ChapterObjective(BaseModel):
 
 class Chapter(BaseModel):
     """剧情章节"""
+    model_config = {"extra": "ignore"}
+
     id: str
-    mainline_id: str
+    mainline_id: str = ""
     name: str
-    description: str
+    description: str = ""
     type: str = "story"  # "story" | "metadata" | "volume_index"
     objectives: List[ChapterObjective] = Field(default_factory=list)
     available_maps: List[str] = Field(default_factory=list)  # 解锁的地图ID
@@ -124,6 +126,23 @@ class Chapter(BaseModel):
     pacing: PacingConfig = Field(default_factory=PacingConfig)
     entry_conditions: Optional[ConditionGroup] = None
     tags: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _compat(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        # available_areas → available_maps
+        if "available_areas" in data and "available_maps" not in data:
+            data["available_maps"] = data.pop("available_areas")
+        # objectives: 纯字符串 → ChapterObjective
+        raw_obj = data.get("objectives")
+        if isinstance(raw_obj, list) and raw_obj and isinstance(raw_obj[0], str):
+            data["objectives"] = [
+                {"id": f"obj_{i}", "description": s}
+                for i, s in enumerate(raw_obj)
+            ]
+        return data
 
 
 class Mainline(BaseModel):

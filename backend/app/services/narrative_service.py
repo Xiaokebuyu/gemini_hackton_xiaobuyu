@@ -203,7 +203,7 @@ class NarrativeService:
                 f"世界 '{world_id}' 没有可用主线数据（Firestore: worlds/{world_id}/mainlines）"
             )
 
-        self._mainlines_by_world[world_id] = mainlines
+        self._mainlines_by_world[world_id] = dict(sorted(mainlines.items()))
         self._chapters_by_world[world_id] = chapters
         self._loaded_worlds.add(world_id)
 
@@ -581,7 +581,7 @@ class NarrativeService:
         if not mainlines or not chapters:
             raise ValueError(f"世界 '{world_id}' 未加载可用叙事数据")
 
-        first_mainline = next(iter(mainlines.keys()))
+        first_mainline = sorted(mainlines.keys())[0]
         first_chapter = ""
 
         chapter_list = mainlines[first_mainline].chapters
@@ -590,6 +590,11 @@ class NarrativeService:
 
         if first_chapter not in chapters:
             first_chapter = next(iter(chapters.keys()))
+
+        logger.info(
+            "[NarrativeService] 默认进度: mainline=%s, chapter=%s",
+            first_mainline, first_chapter,
+        )
 
         return NarrativeProgress(
             current_mainline=first_mainline,

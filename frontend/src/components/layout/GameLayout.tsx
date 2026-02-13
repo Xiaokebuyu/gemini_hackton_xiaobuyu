@@ -2,7 +2,7 @@
  * Main Game Layout - Left panel + Center + Right overlay panel
  * Uses golden theme
  */
-import React from 'react';
+import React, { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RotateCcw, Backpack } from 'lucide-react';
 import { useGameStore, useCombatStore, useChatStore, useUIStore, toast } from '../../stores';
@@ -10,6 +10,7 @@ import LeftPanel from './LeftPanel';
 import CenterPanel from './CenterPanel';
 import RightPanel from './RightPanel';
 import CombatOverlay from '../combat/CombatOverlay';
+import { DiceRollDisplay } from '../dice';
 import PrivateChatPanel from '../party/PrivateChatPanel';
 import { LanguageSwitch } from '../shared';
 
@@ -19,10 +20,12 @@ interface GameLayoutProps {
 
 export const GameLayout: React.FC<GameLayoutProps> = () => {
   const { t } = useTranslation();
-  const { combatId, clearSession } = useGameStore();
+  const { combatId, clearSession, pendingDiceRoll, setDiceRoll } = useGameStore();
   const { isActive: isCombatActive, clearCombat } = useCombatStore();
   const { clearMessages } = useChatStore();
   const { rightPanelCollapsed, toggleRightPanel } = useUIStore();
+
+  const handleDiceComplete = useCallback(() => setDiceRoll(null), [setDiceRoll]);
 
   const handleReselectSession = () => {
     clearCombat();
@@ -92,6 +95,14 @@ export const GameLayout: React.FC<GameLayoutProps> = () => {
 
       {/* Combat Overlay */}
       {combatId && isCombatActive && <CombatOverlay />}
+
+      {/* Global dice animation (combat + ability checks) */}
+      {pendingDiceRoll && (
+        <DiceRollDisplay
+          roll={pendingDiceRoll}
+          onComplete={handleDiceComplete}
+        />
+      )}
 
       {/* Private Chat Overlay */}
       <PrivateChatPanel />
