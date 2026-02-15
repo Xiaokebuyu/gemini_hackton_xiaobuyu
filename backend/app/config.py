@@ -122,6 +122,10 @@ class Settings(BaseModel):
     narrative_v2_strict_mode: bool = os.getenv("NARRATIVE_V2_STRICT_MODE", "true").lower() in ("1", "true", "yes")
     story_event_graph_sync: bool = os.getenv("STORY_EVENT_GRAPH_SYNC", "true").lower() in ("1", "true", "yes")
 
+    # WorldGraph (C7)
+    world_graph_enabled: bool = os.getenv("WORLD_GRAPH_ENABLED", "true").lower() in ("1", "true", "yes")
+    world_graph_dual_write: bool = os.getenv("WORLD_GRAPH_DUAL_WRITE", "true").lower() in ("1", "true", "yes")
+
     # Module 3: 上下文缓存配置
     context_cache_ttl_seconds: int = int(os.getenv("CONTEXT_CACHE_TTL_SECONDS", "300"))
 

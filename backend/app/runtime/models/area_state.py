@@ -62,6 +62,7 @@ class AreaDefinition(BaseModel):
     connections: List[AreaConnection] = Field(default_factory=list)
     resident_npcs: List[str] = Field(default_factory=list)
     ambient_description: str = ""
+    region: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     def get_sub_location(self, sub_id: str) -> Optional[SubLocationDef]:

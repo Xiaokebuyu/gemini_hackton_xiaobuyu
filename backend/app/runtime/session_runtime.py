@@ -74,6 +74,11 @@ class SessionRuntime:
         self.history: Optional[Any] = None  # SessionHistory
         self.companions: Dict[str, Any] = {}  # Phase 5
         self.current_area: Optional[AreaRuntime] = None
+
+        # -- WorldGraph (C7) --
+        self.world_graph: Optional[Any] = None       # WorldGraph
+        self._behavior_engine: Optional[Any] = None  # BehaviorEngine
+        self._world_graph_failed: bool = False       # 降级标记
         self.delta_log: List[StateDelta] = []
 
         # -- 脏标记（persist 时只保存有变更的部分） --
@@ -163,6 +168,10 @@ class SessionRuntime:
 
         # 同伴实例（依赖 party）
         await self._restore_companions()
+
+        # WorldGraph (C7a): 构建 + 恢复快照
+        self._build_world_graph()
+        await self._restore_world_graph_snapshot()
 
         self._restored = True
         logger.info(
@@ -333,6 +342,98 @@ class SessionRuntime:
                 )
                 continue
             self.companions[member.character_id] = companion
+
+    # =========================================================================
+    # WorldGraph (C7) — 构建 + 快照 I/O
+    # =========================================================================
+
+    def _build_world_graph(self) -> None:
+        """从 WorldInstance + 当前会话状态构建 WorldGraph（同步）。"""
+        from app.config import settings
+        if not settings.world_graph_enabled or not self.world:
+            return
+        try:
+            from app.world.graph_builder import GraphBuilder
+            from app.world.behavior_engine import BehaviorEngine
+            wg = GraphBuilder.build(self.world, self)
+            self.world_graph = wg
+            self._behavior_engine = BehaviorEngine(wg)
+            stats = wg.stats()
+            logger.info("[SessionRuntime] WorldGraph built: %s", stats)
+        except Exception as exc:
+            logger.error("[SessionRuntime] WorldGraph build failed: %s", exc, exc_info=True)
+            self._world_graph_failed = True
+
+    async def _restore_world_graph_snapshot(self) -> None:
+        """从 Firestore 加载快照并恢复到 world_graph。
+        路径: worlds/{wid}/sessions/{sid}/world_snapshot/current
+        """
+        if not self.world_graph:
+            return
+        try:
+            from google.cloud import firestore as fs
+            from app.config import settings
+            from app.world.snapshot import dict_to_snapshot, restore_snapshot
+            db = fs.Client(database=settings.firestore_database)
+            doc = (db.collection("worlds").document(self.world_id)
+                   .collection("sessions").document(self.session_id)
+                   .collection("world_snapshot").document("current").get())
+            if not doc.exists:
+                logger.info("[SessionRuntime] 无 WorldGraph 快照，使用干净构建")
+                return
+            snapshot = dict_to_snapshot(doc.to_dict())
+            if snapshot:
+                restore_snapshot(self.world_graph, snapshot)
+                logger.info("[SessionRuntime] WorldGraph 快照恢复: %d states, %d spawned",
+                            len(snapshot.node_states), len(snapshot.spawned_nodes))
+        except Exception as exc:
+            logger.warning("[SessionRuntime] WorldGraph 快照恢复失败: %s", exc)
+
+    async def _persist_world_graph_snapshot(self) -> None:
+        """保存 WorldGraph 快照到 Firestore。"""
+        if not self.world_graph or self._world_graph_failed:
+            return
+        try:
+            from google.cloud import firestore as fs
+            from app.config import settings
+            from app.world.snapshot import capture_snapshot, snapshot_to_dict
+            game_day = self.time.day if self.time else 1
+            game_hour = self.time.hour if self.time else 8
+            snapshot = capture_snapshot(
+                self.world_graph, self.world_id, self.session_id,
+                game_day=game_day, game_hour=game_hour,
+            )
+            data = snapshot_to_dict(snapshot)
+            db = fs.Client(database=settings.firestore_database)
+            (db.collection("worlds").document(self.world_id)
+             .collection("sessions").document(self.session_id)
+             .collection("world_snapshot").document("current").set(data))
+            self.world_graph.clear_dirty()
+            logger.info("[SessionRuntime] WorldGraph 快照保存: %d states, %d spawned, %d edges",
+                        len(snapshot.node_states), len(snapshot.spawned_nodes),
+                        len(snapshot.modified_edges))
+        except Exception as exc:
+            logger.warning("[SessionRuntime] WorldGraph 快照保存失败: %s", exc)
+
+    def build_tick_context(self, phase: str = "pre") -> Optional[Any]:
+        """从当前会话状态构建 TickContext。无 WorldGraph 时返回 None。"""
+        if not self.world_graph or self._world_graph_failed:
+            return None
+        from app.world.models import TickContext
+        return TickContext(
+            phase=phase,
+            player_location=self.player_location or "",
+            player_sub_location=self.sub_location or "",
+            game_day=self.time.day if self.time else 1,
+            game_hour=self.time.hour if self.time else 8,
+            active_chapter=self.chapter_id or "",
+            party_members=[m.character_id for m in self.party.get_active_members()] if self.party else [],
+            events_triggered=list(self.narrative.events_triggered) if self.narrative else [],
+            objectives_completed=list(getattr(self.narrative, "objectives_completed", []) or []) if self.narrative else [],
+            round_count=getattr(self.narrative, "rounds_in_chapter", 0) if self.narrative else 0,
+            npc_interactions=dict(getattr(self.narrative, "npc_interactions", {}) or {}) if self.narrative else {},
+            game_state="",
+        )
 
     # =========================================================================
     # enter_area — 完整区域切换生命周期
@@ -575,6 +676,11 @@ class SessionRuntime:
                 )
         if self.companions:
             persisted.append("companions")
+
+        # 7. WorldGraph 快照 (C7a)
+        if self.world_graph and not self._world_graph_failed:
+            await self._persist_world_graph_snapshot()
+            persisted.append("world_graph")
 
         if persisted:
             logger.info(

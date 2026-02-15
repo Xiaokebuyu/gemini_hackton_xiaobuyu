@@ -52,6 +52,45 @@ class V4AgenticToolRegistry:
         self._lock = asyncio.Lock()
         self._image_generated_this_turn = False
 
+    # =========================================================================
+    # WorldGraph dual-write helpers (C7c)
+    # =========================================================================
+
+    def _wg_sync_event_status(self, event_id: str, new_status: str) -> None:
+        """双写事件状态到 WorldGraph（C7c）。"""
+        wg = getattr(self.session, "world_graph", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            return
+        try:
+            if wg.has_node(event_id):
+                wg.merge_state(event_id, {"status": new_status})
+        except Exception as exc:
+            logger.warning("[v4_tool] WorldGraph 双写失败 event=%s: %s", event_id, exc)
+
+    def _wg_emit_event(self, event_id: str, event_type: str) -> None:
+        """向 WorldGraph 发射事件并触发传播（C7c）。"""
+        engine = getattr(self.session, "_behavior_engine", None)
+        if not engine or getattr(self.session, "_world_graph_failed", False):
+            return
+        try:
+            from app.world.models import WorldEvent
+            ctx = self.session.build_tick_context("post")
+            if not ctx:
+                return
+            event = WorldEvent(
+                event_type=event_type,
+                origin_node=event_id,
+                game_day=ctx.game_day,
+                game_hour=ctx.game_hour,
+                data={"event_id": event_id},
+                visibility="scope",
+            )
+            result = engine.handle_event(event, ctx)
+            if result.narrative_hints:
+                logger.info("[v4_tool] WorldGraph 事件传播 '%s': %d hints", event_id, len(result.narrative_hints))
+        except Exception as exc:
+            logger.warning("[v4_tool] WorldGraph 事件传播失败 '%s': %s", event_id, exc)
+
     # Convenience accessors
     @property
     def world_id(self) -> str:
@@ -407,6 +446,18 @@ class V4AgenticToolRegistry:
         result["travel_time_minutes"] = travel_minutes
         if connection:
             result["connection_type"] = connection.connection_type
+
+        # C7c: 更新 WorldGraph 区域状态
+        if result.get("success"):
+            wg = getattr(self.session, "world_graph", None)
+            if wg and not getattr(self.session, "_world_graph_failed", False) and wg.has_node(area_id):
+                try:
+                    wg.merge_state(area_id, {"visited": True})
+                    old_count = wg.get_node(area_id).state.get("visit_count", 0)
+                    wg.set_state(area_id, "visit_count", old_count + 1)
+                except Exception:
+                    pass  # 不阻塞导航
+
         await self._record("navigate", args, started, result, result.get("success", True), result.get("error"))
         return result
 
@@ -1200,6 +1251,10 @@ class V4AgenticToolRegistry:
         target_event.status = "active"
         area_rt.record_action(f"activated_event:{event_id}")
 
+        # C7c: 双写到 WorldGraph
+        self._wg_sync_event_status(event_id, "active")
+        self._wg_emit_event(event_id, "event_activated")
+
         payload = {
             "success": True,
             "event_id": event_id,
@@ -1255,6 +1310,10 @@ class V4AgenticToolRegistry:
         target_event.status = "completed"
         area_rt._apply_on_complete(target_event.on_complete, self.session)
         area_rt.record_action(f"completed_event:{event_id}")
+
+        # C7c: 双写到 WorldGraph
+        self._wg_sync_event_status(event_id, "completed")
+        self._wg_emit_event(event_id, "event_completed")
 
         # Track in narrative progress
         if self.session.narrative:

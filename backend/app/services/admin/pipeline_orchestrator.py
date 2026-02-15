@@ -93,9 +93,11 @@ class PipelineOrchestrator:
         if not session.player:
             raise ValueError("请先创建角色后再开始冒险。")
 
-        # A4: 事件状态机 pre-check（locked → available）
-        if session.current_area:
-            session.current_area.check_events(session)
+        # A4: 事件 pre-check（AreaRuntime 主，BehaviorEngine 双写）
+        pre_area_updates = session.current_area.check_events(session) if session.current_area else []
+
+        # A4b: BehaviorEngine pre-tick (C7b)
+        pre_tick_result = self._run_behavior_tick(session, "pre", pre_area_updates)
 
         context = ContextAssembler.assemble(world, session)
 
@@ -103,6 +105,10 @@ class PipelineOrchestrator:
         # B 阶段: Agentic 会话
         # =====================================================================
         context_dict = context.to_flat_dict()
+
+        # C7b: 注入 BehaviorEngine 叙事指令
+        if pre_tick_result and pre_tick_result.narrative_hints:
+            context_dict["world_graph_hints"] = pre_tick_result.narrative_hints
 
         # --- 玩家主动掷骰预处理 ---
         player_roll_result = None
@@ -172,12 +178,12 @@ class PipelineOrchestrator:
                 session.narrative.rounds_since_last_progress += 1
             session.mark_narrative_dirty()
 
-        # C1: 后检查事件（agentic 操作可能改变了状态）
+        # C1: 事件 post-check（AreaRuntime 主，BehaviorEngine 双写）
         post_updates = (
-            session.current_area.check_events(session)
-            if session.current_area
-            else []
+            session.current_area.check_events(session) if session.current_area else []
         )
+        # C1-wg: BehaviorEngine post-tick (C7b)
+        post_tick_result = self._run_behavior_tick(session, "post", post_updates)
 
         # C1b: 后置章节转换重评估
         chapter_transition = (
@@ -399,6 +405,67 @@ class PipelineOrchestrator:
             chapter_info=chapter_info_payload,
             image_data=agentic_result.image_data,
         )
+
+    # =========================================================================
+    # WorldGraph dual-write (C7b)
+    # =========================================================================
+
+    def _run_behavior_tick(self, session: Any, phase: str, area_updates: list) -> Optional[Any]:
+        """运行 BehaviorEngine.tick() 并与 AreaRuntime 比较（C7b 双写）。"""
+        if not session._behavior_engine or session._world_graph_failed:
+            return None
+        ctx = session.build_tick_context(phase)
+        if ctx is None:
+            return None
+        try:
+            tick_result = session._behavior_engine.tick(ctx)
+            logger.info("[v4] BehaviorEngine.tick(%s): %d fired, %d hints, %d events",
+                        phase, len(tick_result.results), len(tick_result.narrative_hints),
+                        len(tick_result.all_events))
+            # 双写比较日志
+            if settings.world_graph_dual_write:
+                self._log_dual_write_comparison(phase, area_updates, tick_result, session)
+            # 同步事件完成到 narrative.events_triggered
+            self._sync_event_completions(tick_result, session)
+            return tick_result
+        except Exception as exc:
+            logger.error("[v4] BehaviorEngine.tick(%s) failed: %s", phase, exc, exc_info=True)
+            return None
+
+    def _log_dual_write_comparison(self, phase: str, area_updates: list,
+                                    tick_result: Any, session: Any) -> None:
+        """记录 AreaRuntime 与 BehaviorEngine 的事件状态比较。"""
+        area_changes = set()
+        for u in area_updates:
+            area_changes.add(f"{u.event.id}:{u.transition}")
+
+        be_changes = set()
+        for nid, changes in tick_result.state_changes.items():
+            if "status" in changes:
+                node = session.world_graph.get_node(nid) if session.world_graph else None
+                if node and node.type == "event_def":
+                    be_changes.add(f"{nid}:{changes['status']}")
+
+        if area_changes != be_changes:
+            logger.warning("[v4] 双写差异 (%s): AreaRuntime=%s, BehaviorEngine=%s",
+                           phase, area_changes, be_changes)
+        elif area_changes:
+            logger.info("[v4] 双写一致 (%s): %d 事件变更", phase, len(area_changes))
+
+    def _sync_event_completions(self, tick_result: Any, session: Any) -> None:
+        """将 BehaviorEngine 检测到的事件完成同步到 narrative.events_triggered。"""
+        if not session.narrative:
+            return
+        for nid, changes in tick_result.state_changes.items():
+            if changes.get("status") != "completed":
+                continue
+            node = session.world_graph.get_node(nid) if session.world_graph else None
+            if not node or node.type != "event_def":
+                continue
+            if nid not in session.narrative.events_triggered:
+                session.narrative.events_triggered.append(nid)
+                session.mark_narrative_dirty()
+                logger.info("[v4] BehaviorEngine 同步事件完成: %s", nid)
 
     async def _inject_dispositions(
         self,

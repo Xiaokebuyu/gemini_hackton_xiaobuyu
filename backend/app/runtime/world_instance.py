@@ -251,6 +251,7 @@ class WorldInstance:
             connections=connections,
             resident_npcs=info.get("resident_npcs", []),
             ambient_description=info.get("atmosphere", ""),
+            region=info.get("region", ""),
             metadata={
                 k: v for k, v in info.items()
                 if k not in (
