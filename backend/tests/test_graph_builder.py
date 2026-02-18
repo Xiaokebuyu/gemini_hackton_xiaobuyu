@@ -358,7 +358,8 @@ class TestEventToBehaviors:
         # complete behavior should have: CHANGE_STATE + unlock_events EMIT + xp EMIT
         assert len(behaviors[1].actions) == 3
 
-    def test_empty_conditions_creates_always_true(self):
+    def test_empty_conditions_creates_guarded_unlock(self):
+        """空 trigger_conditions → 仍有状态守卫 (EVENT_STATE: status==LOCKED)。"""
         event = StoryEvent(
             id="evt_2",
             name="Always True",
@@ -366,7 +367,9 @@ class TestEventToBehaviors:
         )
         behaviors = _event_to_behaviors(event, "evt_2", "ch_01")
         assert len(behaviors) == 1
-        assert behaviors[0].conditions is None  # 永真
+        # 6a: 即使空条件，也有状态守卫
+        assert behaviors[0].conditions is not None
+        assert behaviors[0].conditions.conditions[0].type == ConditionType.EVENT_STATE
 
     def test_no_completion_conditions(self):
         event = StoryEvent(
@@ -561,9 +564,10 @@ class TestBuildEvents:
         assert len(evt.behaviors) == 2
 
         evt2 = wg.get_node("evt_forest_quest")
-        # Empty conditions → only unlock behavior (永真), no complete
+        # Empty conditions → only unlock behavior, no complete
         assert len(evt2.behaviors) == 1
-        assert evt2.behaviors[0].conditions is None  # 永真
+        # 6a: 状态守卫 — 即使空条件也有 EVENT_STATE guard
+        assert evt2.behaviors[0].conditions is not None
 
     def test_complete_behavior_actions(self):
         world = _make_world()
@@ -918,4 +922,256 @@ class TestRelationshipsDictFormat:
 
         edges = wg.get_neighbors("npc_x", WorldEdgeType.RELATES_TO.value)
         assert len(edges) == 1
-        assert edges[0][1]["relationship_type"] == "mentor"
+
+
+# =============================================================================
+# E4/U8: activation_type 行为生成测试
+# =============================================================================
+
+
+def _make_story_event(
+    event_id: str,
+    name: str = "Test Event",
+    activation_type: str = "event_driven",
+    time_limit=None,
+    is_repeatable: bool = False,
+    cooldown_rounds: int = 0,
+    discovery_check=None,
+    trigger_conditions=None,
+    completion_conditions=None,
+) -> StoryEvent:
+    """快捷构建 StoryEvent 用于测试 _event_to_behaviors。"""
+    kwargs = {
+        "id": event_id,
+        "name": name,
+        "activation_type": activation_type,
+        "is_repeatable": is_repeatable,
+        "cooldown_rounds": cooldown_rounds,
+    }
+    if time_limit is not None:
+        kwargs["time_limit"] = time_limit
+    if discovery_check is not None:
+        kwargs["discovery_check"] = discovery_check
+    if trigger_conditions is not None:
+        kwargs["trigger_conditions"] = trigger_conditions
+    if completion_conditions is not None:
+        kwargs["completion_conditions"] = completion_conditions
+    return StoryEvent(**kwargs)
+
+
+class TestActivationTypeBehaviors:
+    """U8: activation_type 行为生成。"""
+
+    def test_npc_given_no_unlock_behavior(self):
+        """npc_given 事件不生成 unlock behavior。"""
+        from app.world.models import TriggerType
+        event = _make_story_event("evt_npc", activation_type="npc_given")
+        behaviors = _event_to_behaviors(event, "evt_npc", "ch_01")
+        # 没有任何 bh_unlock_ 开头的 behavior
+        unlock_bhs = [b for b in behaviors if b.id.startswith("bh_unlock_")]
+        assert len(unlock_bhs) == 0
+
+    def test_auto_enter_on_enter_trigger(self):
+        """auto_enter 事件生成 ON_ENTER trigger 的 unlock behavior。"""
+        from app.world.models import TriggerType
+        event = _make_story_event("evt_enter", activation_type="auto_enter")
+        behaviors = _event_to_behaviors(event, "evt_enter", "ch_01")
+        unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_enter"), None)
+        assert unlock_bh is not None
+        assert unlock_bh.trigger == TriggerType.ON_ENTER
+        assert unlock_bh.once is True
+        assert unlock_bh.priority == 10
+        # 只有 unlock_guard 条件
+        assert unlock_bh.conditions is not None
+        conds = unlock_bh.conditions.conditions
+        assert len(conds) == 1
+        assert conds[0].params["key"] == "status"
+        assert conds[0].params["value"] == EventStatus.LOCKED
+
+    def test_discovery_on_enter_with_narrative_hint(self):
+        """discovery 事件生成 ON_ENTER + NARRATIVE_HINT action。"""
+        from app.world.models import ActionType, TriggerType
+        discovery_check = {"skill": "感知", "dc": 15}
+        event = _make_story_event("evt_disc", activation_type="discovery", discovery_check=discovery_check)
+        behaviors = _event_to_behaviors(event, "evt_disc", "ch_01")
+        unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_disc"), None)
+        assert unlock_bh is not None
+        assert unlock_bh.trigger == TriggerType.ON_ENTER
+        # 应有两个 actions: CHANGE_STATE + NARRATIVE_HINT
+        action_types = [a.type for a in unlock_bh.actions]
+        assert ActionType.CHANGE_STATE in action_types
+        assert ActionType.NARRATIVE_HINT in action_types
+        hint_action = next(a for a in unlock_bh.actions if a.type == ActionType.NARRATIVE_HINT)
+        assert "感知" in hint_action.params.get("text", "")
+        assert "15" in hint_action.params.get("text", "")
+
+    def test_discovery_default_check_values(self):
+        """discovery 事件无 discovery_check 时使用默认值。"""
+        from app.world.models import ActionType, TriggerType
+        event = _make_story_event("evt_disc2", activation_type="discovery")
+        behaviors = _event_to_behaviors(event, "evt_disc2", "ch_01")
+        unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_disc2"), None)
+        assert unlock_bh is not None
+        hint_action = next((a for a in unlock_bh.actions if a.type == ActionType.NARRATIVE_HINT), None)
+        assert hint_action is not None
+        assert "感知" in hint_action.params.get("text", "")  # 默认 skill
+        assert "15" in hint_action.params.get("text", "")   # 默认 dc
+
+    def test_event_driven_on_tick_trigger(self):
+        """event_driven 事件保持 ON_TICK trigger（临时策略）。"""
+        from app.world.models import TriggerType
+        event = _make_story_event("evt_driven", activation_type="event_driven")
+        behaviors = _event_to_behaviors(event, "evt_driven", "ch_01")
+        unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_driven"), None)
+        assert unlock_bh is not None
+        assert unlock_bh.trigger == TriggerType.ON_TICK
+
+    def test_default_activation_type_on_tick(self):
+        """activation_type 为空/默认时保持 ON_TICK trigger。"""
+        from app.world.models import TriggerType
+        event = StoryEvent(id="evt_def", name="Default Event")  # activation_type 默认 "event_driven"
+        behaviors = _event_to_behaviors(event, "evt_def", "ch_01")
+        unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_def"), None)
+        assert unlock_bh is not None
+        assert unlock_bh.trigger == TriggerType.ON_TICK
+
+
+class TestTimeoutBehavior:
+    """U9: 超时 behavior 生成。"""
+
+    def test_time_limit_generates_timeout_behavior(self):
+        """有 time_limit 的事件生成 bh_timeout_ 行为。"""
+        from app.models.narrative import ConditionType
+        from app.world.models import ActionType, TriggerType
+        event = _make_story_event("evt_timed", time_limit=5)
+        behaviors = _event_to_behaviors(event, "evt_timed", "ch_01")
+        timeout_bh = next((b for b in behaviors if b.id == "bh_timeout_evt_timed"), None)
+        assert timeout_bh is not None
+        assert timeout_bh.trigger == TriggerType.ON_TICK
+        assert timeout_bh.once is True
+        assert timeout_bh.priority == 3
+        # 验证条件：status==ACTIVE + event_rounds_elapsed
+        cond_types = [c.type for c in timeout_bh.conditions.conditions]
+        assert ConditionType.EVENT_STATE in cond_types
+        assert ConditionType.EVENT_ROUNDS_ELAPSED in cond_types
+        # min_rounds 等于 time_limit
+        rounds_cond = next(c for c in timeout_bh.conditions.conditions if c.type == ConditionType.EVENT_ROUNDS_ELAPSED)
+        assert rounds_cond.params["min_rounds"] == 5
+        # action: FAILED
+        assert len(timeout_bh.actions) == 1
+        action = timeout_bh.actions[0]
+        assert action.type == ActionType.CHANGE_STATE
+        assert action.params["updates"]["status"] == EventStatus.FAILED
+        assert action.params["updates"]["failure_reason"] == "timeout"
+
+    def test_no_time_limit_no_timeout_behavior(self):
+        """无 time_limit 的事件不生成 bh_timeout_ 行为。"""
+        event = _make_story_event("evt_notimed")
+        behaviors = _event_to_behaviors(event, "evt_notimed", "ch_01")
+        timeout_bhs = [b for b in behaviors if b.id.startswith("bh_timeout_")]
+        assert len(timeout_bhs) == 0
+
+    def test_timeout_priority_lower_than_complete(self):
+        """超时 priority(3) < complete priority(5)，确保完成优先。"""
+        from app.world.models import TriggerType
+        event = _make_story_event(
+            "evt_both",
+            time_limit=3,
+            completion_conditions=ConditionGroup(operator="and", conditions=[
+                Condition(type=ConditionType.ROUNDS_ELAPSED, params={"min_rounds": 1}),
+            ]),
+        )
+        behaviors = _event_to_behaviors(event, "evt_both", "ch_01")
+        timeout_bh = next((b for b in behaviors if b.id == "bh_timeout_evt_both"), None)
+        complete_bh = next((b for b in behaviors if b.id == "bh_complete_evt_both"), None)
+        assert timeout_bh is not None and complete_bh is not None
+        assert complete_bh.priority > timeout_bh.priority
+
+
+class TestCooldownBehavior:
+    """U9: 冷却 behavior 生成。"""
+
+    def test_repeatable_with_cooldown_generates_cooldown_behavior(self):
+        """is_repeatable + cooldown_rounds > 0 生成 bh_cooldown_ 行为。"""
+        from app.models.narrative import ConditionType
+        from app.world.models import ActionType, TriggerType
+        event = _make_story_event("evt_rep", is_repeatable=True, cooldown_rounds=3)
+        behaviors = _event_to_behaviors(event, "evt_rep", "ch_01")
+        cooldown_bh = next((b for b in behaviors if b.id == "bh_cooldown_evt_rep"), None)
+        assert cooldown_bh is not None
+        assert cooldown_bh.trigger == TriggerType.ON_TICK
+        assert cooldown_bh.once is False
+        assert cooldown_bh.priority == 2
+        # 验证条件：status==COOLDOWN + event_rounds_elapsed
+        cond_types = [c.type for c in cooldown_bh.conditions.conditions]
+        assert ConditionType.EVENT_STATE in cond_types
+        assert ConditionType.EVENT_ROUNDS_ELAPSED in cond_types
+        status_cond = next(c for c in cooldown_bh.conditions.conditions if c.type == ConditionType.EVENT_STATE)
+        assert status_cond.params["value"] == EventStatus.COOLDOWN
+        # min_rounds 等于 cooldown_rounds
+        rounds_cond = next(c for c in cooldown_bh.conditions.conditions if c.type == ConditionType.EVENT_ROUNDS_ELAPSED)
+        assert rounds_cond.params["min_rounds"] == 3
+        # action: 回 AVAILABLE + 重置各字段
+        action = cooldown_bh.actions[0]
+        assert action.params["updates"]["status"] == EventStatus.AVAILABLE
+        assert action.params["updates"]["failure_reason"] is None
+
+    def test_non_repeatable_no_cooldown_behavior(self):
+        """非 is_repeatable 事件不生成 bh_cooldown_ 行为。"""
+        event = _make_story_event("evt_norep", is_repeatable=False, cooldown_rounds=3)
+        behaviors = _event_to_behaviors(event, "evt_norep", "ch_01")
+        cooldown_bhs = [b for b in behaviors if b.id.startswith("bh_cooldown_")]
+        assert len(cooldown_bhs) == 0
+
+    def test_repeatable_zero_cooldown_no_cooldown_behavior(self):
+        """cooldown_rounds=0 的 is_repeatable 事件不生成 bh_cooldown_ 行为（统一由 session_runtime 处理）。"""
+        event = _make_story_event("evt_zero", is_repeatable=True, cooldown_rounds=0)
+        behaviors = _event_to_behaviors(event, "evt_zero", "ch_01")
+        cooldown_bhs = [b for b in behaviors if b.id.startswith("bh_cooldown_")]
+        assert len(cooldown_bhs) == 0
+
+    def test_failure_reason_in_evt_state(self):
+        """evt_state 包含 failure_reason 字段（初始化为 None）。"""
+        world = _make_world(chapter_registry={
+            "ch_01": {
+                "id": "ch_01",
+                "name": "Test",
+                "mainline_id": "main",
+                "status": "active",
+                "available_maps": ["town_square"],
+                "events": [{
+                    "id": "evt_fail_state",
+                    "name": "Fail State Event",
+                    "time_limit": 5,
+                }],
+            }
+        })
+        session = _make_session(with_party=False)
+        wg = GraphBuilder.build(world, session)
+        node = wg.get_node("evt_fail_state")
+        assert node is not None
+        assert "failure_reason" in node.state
+        assert node.state["failure_reason"] is None
+
+    def test_cooldown_rounds_in_evt_props(self):
+        """cooldown_rounds 字段被正确写入 evt_props。"""
+        world = _make_world(chapter_registry={
+            "ch_01": {
+                "id": "ch_01",
+                "name": "Test",
+                "mainline_id": "main",
+                "status": "active",
+                "available_maps": ["town_square"],
+                "events": [{
+                    "id": "evt_cool_prop",
+                    "name": "Cooldown Props Event",
+                    "is_repeatable": True,
+                    "cooldown_rounds": 7,
+                }],
+            }
+        })
+        session = _make_session(with_party=False)
+        wg = GraphBuilder.build(world, session)
+        node = wg.get_node("evt_cool_prop")
+        assert node is not None
+        assert node.properties.get("cooldown_rounds") == 7

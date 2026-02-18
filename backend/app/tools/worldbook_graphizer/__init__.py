@@ -1,17 +1,20 @@
 """
 世界书图谱化工具
 
-将 worldbook.md 转换为结构化的箱庭数据：
-- maps.json: 地图/箱庭定义
-- characters.json: 角色分类和资料
-- world_graph.json: 世界知识图谱
-- world_map.json: 世界地图描述
+推荐入口：`python -m app.tools.init_world_cli extract`（UnifiedWorldExtractor）
 
-酒馆卡片图谱化：
+模块职责：
 - tavern_card_parser: 解析 SillyTavern JSON 格式
-- graph_extractor: LLM 提取实体和关系
+- map_extractor:      地图提取
+- npc_classifier:     NPC 分类与角色档案
+- graph_extractor:    LLM 知识图谱提取（Batch API / Direct）
+- graph_prefill:      JSON → MemoryNode/Edge（Firestore 写前转换）
+- unified_pipeline:   统一编排器（主推荐）
+- narrative_orchestrator: 章节/主线编排（从 unified_pipeline 提取）
+- models:             数据模型（MapsData、CharactersData 等）
+
+[DEPRECATED] graphizer.py — 旧编排器，仅被旧 CLI 命令调用，勿在新代码中引用
 """
-from .graphizer import WorldbookGraphizer
 from .map_extractor import MapExtractor
 from .npc_classifier import NPCClassifier
 from .tavern_card_parser import TavernCardParser
@@ -19,7 +22,6 @@ from .graph_extractor import GraphExtractor
 from .unified_pipeline import UnifiedWorldExtractor
 
 __all__ = [
-    "WorldbookGraphizer",
     "MapExtractor",
     "NPCClassifier",
     "TavernCardParser",

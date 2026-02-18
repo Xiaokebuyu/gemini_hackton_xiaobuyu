@@ -876,6 +876,8 @@ class UnifiedWorldExtractor:
                 "name": ch_name,
                 "type": ch_type,
                 "description": content_preview,
+                "_full_content": entry.content or "",   # 原始 lorebook 全文（不截断），供 Phase 2+3 使用
+                "_source_entry_uid": entry.uid,          # 溯源 uid
                 "available_maps": [],
                 "objectives": objectives,
                 "trigger_conditions": {},
@@ -887,39 +889,18 @@ class UnifiedWorldExtractor:
         self._log(f"  Classification: metadata={classify_stats['metadata']}, "
                   f"volume_index={classify_stats['volume_index']}, story={classify_stats['story']}")
 
-        # Phase 2: 增量 LLM 填充 available_maps 和 objectives
-        if chapters and maps_data and maps_data.maps:
-            try:
-                chapters = await self._enrich_mainlines_incremental(
-                    chapters, volumes, maps_data,
-                    output_dir=output_dir, use_direct=use_direct,
-                )
-            except Exception as e:
-                import traceback
-                self._log(f"  Warning: Incremental LLM enrichment failed, trying batch fallback: {e}")
-                self._log(f"  Traceback: {traceback.format_exc()}")
-                if settings.narrative_v2_strict_mode:
-                    raise
-                try:
-                    chapters = await self._enrich_mainlines_with_llm(
-                        chapters, volumes, maps_data
-                    )
-                except Exception as e2:
-                    self._log(f"  Warning: Batch LLM enrichment also failed: {e2}")
-
-        # Phase 3: 章节编排提取（events, transitions, pacing）
+        # Phase 2+3（v2 合并版）：一次 Batch API 完成 available_maps + objectives + events + transitions + pacing
         if chapters and maps_data:
+            import traceback as _tb
             try:
-                chapters = await self._extract_chapter_orchestration(
-                    chapters, volumes, maps_data, chars_data=chars_data,
+                chapters = await self._enrich_chapters_v2(
+                    chapters, maps_data, chars_data=chars_data,
                     output_dir=output_dir, use_direct=use_direct,
                 )
             except Exception as e:
-                import traceback
-                self._log(f"  ERROR: Chapter orchestration extraction failed: {e}")
-                self._log(f"  Traceback: {traceback.format_exc()}")
-                if settings.narrative_v2_strict_mode:
-                    raise
+                self._log(f"  ERROR: Chapter v2 enrichment failed: {e}")
+                self._log(f"  Traceback: {_tb.format_exc()}")
+                raise  # 不降级，让调用方知道失败
 
         mainlines_list = list(volumes.values())
         return {
@@ -927,321 +908,99 @@ class UnifiedWorldExtractor:
             "chapters": chapters,
         }
 
-    async def _enrich_mainlines_with_llm(
+    async def _enrich_chapters_v2(
         self,
         chapters: List[Dict[str, Any]],
-        volumes: Dict[str, Dict[str, Any]],
-        maps_data: MapsData,
-    ) -> List[Dict[str, Any]]:
-        """用 LLM 为每个章节填充 available_maps 和 objectives"""
-        prompt_path = Path(__file__).parent / "prompts" / "mainline_extraction.md"
-        prompt_template = prompt_path.read_text(encoding="utf-8")
-
-        known_maps = "\n".join(f"- {m.id}: {m.name}" for m in maps_data.maps)
-
-        # 构建章节输入摘要
-        chapters_input_parts = []
-        for ch in chapters:
-            chapters_input_parts.append(
-                f"### {ch['id']} ({ch['mainline_id']}): {ch['name']}\n"
-                f"{ch['description'][:300]}"
-            )
-        chapters_input = "\n\n".join(chapters_input_parts)
-
-        prompt = prompt_template.replace(
-            "{known_maps}", known_maps
-        ).replace(
-            "{chapters_input}", chapters_input
-        )
-
-        client = genai.Client(api_key=self.api_key or settings.gemini_api_key)
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.2,
-            max_output_tokens=65536,
-        )
-
-        response = client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=config,
-        )
-
-        # 提取 JSON
-        text = ""
-        if hasattr(response, 'candidates') and response.candidates:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, 'text') and part.text:
-                    if not (hasattr(part, 'thought') and part.thought):
-                        text += part.text
-
-        if not text:
-            return chapters
-
-        try:
-            enriched = json.loads(text)
-        except json.JSONDecodeError:
-            # 尝试提取 JSON 块
-            match = re.search(r'\{[\s\S]*\}', text)
-            if match:
-                enriched = json.loads(match.group(0))
-            else:
-                return chapters
-
-        # 合并 LLM 结果到章节
-        llm_chapters = {ch["id"]: ch for ch in enriched.get("chapters", [])}
-        valid_map_ids = {m.id for m in maps_data.maps}
-
-        for ch in chapters:
-            if ch["id"] in llm_chapters:
-                llm_ch = llm_chapters[ch["id"]]
-                # 只保留有效地图 ID
-                ch["available_maps"] = [
-                    m for m in llm_ch.get("available_maps", [])
-                    if m in valid_map_ids
-                ]
-                ch["objectives"] = llm_ch.get("objectives", [])
-                ch["trigger_conditions"] = llm_ch.get("trigger_conditions", {})
-                ch["completion_conditions"] = llm_ch.get("completion_conditions", {})
-
-        # 合并卷级信息
-        llm_mainlines = {ml["id"]: ml for ml in enriched.get("mainlines", [])}
-        for vol_id, vol in volumes.items():
-            if vol_id in llm_mainlines:
-                vol["description"] = llm_mainlines[vol_id].get("description", vol["description"])
-
-        return chapters
-
-    async def _enrich_mainlines_incremental(
-        self,
-        chapters: List[Dict[str, Any]],
-        volumes: Dict[str, Dict[str, Any]],
-        maps_data: MapsData,
-        output_dir: Optional[Path] = None,
-        use_direct: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """增量 LLM 增强：只处理 type==story 且缺失字段的章节
-
-        Args:
-            output_dir: 输出目录（batch 模式用于存放临时文件）
-            use_direct: True 走逐章 LLM 直接调用，False 走 Batch API
-        """
-        prompt_path = Path(__file__).parent / "prompts" / "mainline_enrichment.md"
-        if not prompt_path.exists():
-            self._log(f"  Warning: Prompt template not found: {prompt_path}")
-            return chapters
-
-        prompt_template = prompt_path.read_text(encoding="utf-8")
-        known_maps = "\n".join(f"- {m.id}: {m.name}" for m in maps_data.maps)
-        valid_map_ids = {m.id for m in maps_data.maps}
-
-        # 筛选需要 LLM 增强的章节
-        need_enrich = [
-            ch for ch in chapters
-            if ch.get("type") == "story"
-            and (not ch.get("available_maps") or not ch.get("objectives"))
-        ]
-
-        if not need_enrich:
-            self._log("  All story chapters already have maps and objectives, skipping LLM")
-            return chapters
-
-        self._log(f"  Chapters needing LLM enrichment: {len(need_enrich)}/{len(chapters)}")
-
-        # 构建所有章节的 prompt
-        chapter_prompts: List[tuple] = []  # (key, prompt)
-        for ch in need_enrich:
-            ch_id = ch.get("id", "unknown")
-
-            existing_objectives = ch.get("objectives", [])
-            if isinstance(existing_objectives, list) and existing_objectives:
-                obj_text = "\n".join(
-                    f"- {o}" if isinstance(o, str) else f"- {o.get('description', '')}"
-                    for o in existing_objectives
-                )
-            else:
-                obj_text = "无"
-
-            prompt = prompt_template.format(
-                chapter_id=ch_id,
-                chapter_name=ch.get("name", ""),
-                chapter_description=ch.get("description", "")[:2000],
-                known_maps=known_maps,
-                existing_objectives=obj_text,
-            )
-            chapter_prompts.append((f"ch_{ch_id}", prompt))
-
-        def _apply_enrichment(ch: Dict[str, Any], parsed: Dict[str, Any]) -> bool:
-            """将 LLM 结果合并到章节，返回是否成功"""
-            if not parsed:
-                return False
-            if parsed.get("available_maps") and not ch.get("available_maps"):
-                ch["available_maps"] = [
-                    m for m in parsed["available_maps"]
-                    if m in valid_map_ids
-                ]
-            if parsed.get("objectives") and not ch.get("objectives"):
-                ch["objectives"] = parsed["objectives"]
-            if parsed.get("completion_conditions"):
-                if "completion_conditions" not in ch:
-                    ch["completion_conditions"] = {}
-                cc = parsed["completion_conditions"]
-                if cc.get("events_required") and not ch["completion_conditions"].get("events_required"):
-                    ch["completion_conditions"]["events_required"] = cc["events_required"]
-            return True
-
-        enriched_count = 0
-
-        if use_direct:
-            # ── 直接调用模式 ──
-            from app.services.llm_service import LLMService
-            llm = LLMService()
-
-            for i, (ch, (key, prompt)) in enumerate(zip(need_enrich, chapter_prompts)):
-                ch_id = ch.get("id", "unknown")
-                self._log(f"    [{i+1}/{len(need_enrich)}] Enriching {ch_id}...")
-                try:
-                    result = await llm.generate_simple(prompt, model_override=self.model)
-                    parsed = llm.parse_json(result)
-                    if _apply_enrichment(ch, parsed):
-                        enriched_count += 1
-                    else:
-                        self._log(f"      Parse failed for {ch_id}")
-                except Exception as exc:
-                    self._log(f"      Error enriching {ch_id}: {exc}")
-        else:
-            # ── Batch API 模式 ──
-            self._log(f"  Submitting {len(chapter_prompts)} chapters to Batch API...")
-            temp_dir = (output_dir or Path(".")) / "batch_temp"
-            raw_results = self.batch_runner.run_batch(
-                requests=chapter_prompts,
-                temp_dir=temp_dir,
-                display_name="mainline-enrichment",
-            )
-
-            # 按 key 匹配回章节（防御性去重）
-            key_to_ch: Dict[str, Dict] = {}
-            for ch in need_enrich:
-                key = f"ch_{ch.get('id', 'unknown')}"
-                if key in key_to_ch:
-                    self._log(f"    WARNING: Duplicate enrichment key {key}, skipping")
-                    continue
-                key_to_ch[key] = ch
-            for key, text in raw_results.items():
-                ch = key_to_ch.get(key)
-                if not ch:
-                    continue
-                try:
-                    parsed = json.loads(text)
-                except json.JSONDecodeError:
-                    match = re.search(r'\{[\s\S]*\}', text)
-                    if match:
-                        try:
-                            parsed = json.loads(match.group(0))
-                        except json.JSONDecodeError:
-                            continue
-                    else:
-                        continue
-
-                if _apply_enrichment(ch, parsed):
-                    enriched_count += 1
-
-        self._log(f"  LLM enriched: {enriched_count}/{len(need_enrich)}")
-        return chapters
-
-    async def _extract_chapter_orchestration(
-        self,
-        chapters: List[Dict[str, Any]],
-        volumes: Dict[str, Dict[str, Any]],
         maps_data: MapsData,
         chars_data: Any = None,
+        items_data: Any = None,
         output_dir: Optional[Path] = None,
         use_direct: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Phase 3: 从章节描述提取剧情编排数据（events, transitions, pacing）
+        """Phase 2+3 合并：一次 Batch API 提取完整章节数据。
 
-        Args:
-            chapters: 章节列表
-            volumes: 卷字典
-            maps_data: 地图数据
-            chars_data: 角色数据（可选）
-            output_dir: 输出目录（batch 模式临时文件）
-            use_direct: True 走直接调用，False 走 Batch API
+        使用 chapter_orchestration_v2.md prompt，每章一个请求，
+        同时输出 available_maps + objectives + 完整 StoryEvent[] + transitions + pacing。
+
+        输入使用 _full_content（原始 lorebook 全文），不截断。
         """
-        prompt_path = Path(__file__).parent / "prompts" / "chapter_orchestration.md"
+        prompt_path = Path(__file__).parent / "prompts" / "chapter_orchestration_v2.md"
         if not prompt_path.exists():
-            self._log(f"  Warning: Prompt template not found: {prompt_path}")
+            self._log("  Warning: chapter_orchestration_v2.md not found, falling back to v1")
             return chapters
 
         prompt_template = prompt_path.read_text(encoding="utf-8")
 
-        # 筛选 story 类型的章节
         story_chapters = [ch for ch in chapters if ch.get("type") == "story"]
         if not story_chapters:
-            self._log("  No story chapters for orchestration extraction")
+            self._log("  No story chapters for v2 enrichment")
             return chapters
 
-        self._log(f"\n  [Phase 3] Extracting chapter orchestration for {len(story_chapters)} chapters...")
+        self._log(f"\n  [Phase 2+3 v2] Enriching {len(story_chapters)} chapters (one Batch job)...")
 
-        # 构建已知地图和 NPC 列表
-        known_maps = "\n".join(f"- {m.id}: {m.name}" for m in maps_data.maps) if maps_data and maps_data.maps else "无"
-        known_npcs = "无"
+        # ── 构建上下文字符串 ──
+        known_maps = "\n".join(
+            f"- {m.id}: {m.name}" for m in maps_data.maps
+        ) if maps_data and maps_data.maps else "（无已知地图）"
+
+        known_npcs = "（无已知 NPC）"
         if chars_data and hasattr(chars_data, "characters"):
             known_npcs = "\n".join(
-                f"- {c.id}: {c.name}" for c in chars_data.characters[:50]
-            ) or "无"
+                f"- {c.id}: {c.name}" for c in chars_data.characters[:60]
+            ) or "（无已知 NPC）"
 
-        # 按章节顺序构建 prompt，跟踪前序事件
+        known_items = "（无已知物品）"
+        if items_data:
+            try:
+                if isinstance(items_data, list):
+                    known_items = "\n".join(
+                        f"- {it.get('id', '')}: {it.get('name', '')}"
+                        for it in items_data[:30]
+                    ) or "（无已知物品）"
+            except Exception:
+                pass
+
+        # ── 按章节顺序构建 prompt，跟踪前序事件 ──
         chapter_prompts: List[tuple] = []  # (key, prompt)
         previous_events_by_chapter: Dict[str, str] = {}
 
-        # 预计算每个章节的前序章节 ID
-        chapter_order = {ch["id"]: i for i, ch in enumerate(story_chapters)}
         prev_chapter_ids: Dict[str, Optional[str]] = {}
         for i, ch in enumerate(story_chapters):
-            if i > 0:
-                prev_chapter_ids[ch["id"]] = story_chapters[i - 1]["id"]
-            else:
-                prev_chapter_ids[ch["id"]] = None
+            prev_chapter_ids[ch["id"]] = story_chapters[i - 1]["id"] if i > 0 else None
 
         for ch in story_chapters:
             ch_id = ch.get("id", "unknown")
             prev_id = prev_chapter_ids.get(ch_id)
 
-            # 构建前序事件信息
+            # 前序事件引用
             if prev_id and prev_id in previous_events_by_chapter:
                 previous_events = previous_events_by_chapter[prev_id]
             elif prev_id:
-                # 用前序章节的事件作为参考
-                prev_ch = next((c for c in chapters if c.get("id") == prev_id), None)
-                if prev_ch and prev_ch.get("completion_conditions", {}).get("events_required"):
-                    events_list = prev_ch["completion_conditions"]["events_required"]
-                    previous_events = "\n".join(f"- {eid}" for eid in events_list)
-                else:
-                    previous_events = f"- {prev_id}_event_final（前一章最终事件）"
+                previous_events = f"- {prev_id}_event_final（前一章最终事件，格式参考）"
             else:
                 previous_events = "无（这是第一章）"
 
-            prompt = prompt_template.format(
-                chapter_id=ch_id,
-                chapter_name=ch.get("name", ""),
-                chapter_description=ch.get("description", "")[:3000],
-                known_maps=known_maps,
-                known_npcs=known_npcs,
-                previous_events=previous_events,
-            )
-            orch_key = f"orch_{ch_id}"
-            existing_keys = {k for k, _ in chapter_prompts}
-            if orch_key in existing_keys:
-                self._log(f"    WARNING: Duplicate orchestration key {orch_key}, appending suffix")
-                orch_key = f"{orch_key}__dup"
-            chapter_prompts.append((orch_key, prompt))
+            # 使用完整 lorebook 内容（_full_content），无截断
+            full_content = ch.get("_full_content") or ch.get("description", "")
 
-            # 为后续章节预填前序事件占位
+            # 用 replace 替换变量，避免 .format() 把 JSON 示例中的花括号误识别为占位符
+            prompt = (
+                prompt_template
+                .replace("{chapter_id}", ch_id)
+                .replace("{chapter_name}", ch.get("name", ""))
+                .replace("{chapter_full_content}", full_content)
+                .replace("{known_maps}", known_maps)
+                .replace("{known_npcs}", known_npcs)
+                .replace("{known_items}", known_items)
+                .replace("{previous_events}", previous_events)
+            )
+
+            enrich_key = f"enrich_v2_{ch_id}"
+            chapter_prompts.append((enrich_key, prompt))
             previous_events_by_chapter[ch_id] = f"- {ch_id}_event_1（将由 LLM 生成）"
 
-        def _parse_orchestration(text: str) -> Optional[Dict[str, Any]]:
-            """解析编排 JSON 结果"""
+        # ── 解析结果 ──
+        def _parse_result(text: str) -> Optional[Dict[str, Any]]:
             try:
                 return json.loads(text)
             except json.JSONDecodeError:
@@ -1253,80 +1012,152 @@ class UnifiedWorldExtractor:
                         return None
                 return None
 
-        def _apply_orchestration(ch: Dict[str, Any], parsed: Dict[str, Any]) -> bool:
-            """将编排结果合并到章节"""
+        # ── 应用结果到章节 ──
+        valid_map_ids = {m.id for m in maps_data.maps} if maps_data else set()
+
+        def _apply_v2(ch: Dict[str, Any], parsed: Dict[str, Any]) -> bool:
             if not parsed:
                 return False
-            events_raw = parsed.get("events", [])
-            transitions_raw = parsed.get("transitions", [])
-            pacing_raw = parsed.get("pacing", {})
 
+            # available_maps（校验合法性）
+            raw_maps = parsed.get("available_maps", [])
+            if isinstance(raw_maps, list):
+                ch["available_maps"] = [m for m in raw_maps if m in valid_map_ids]
+
+            # objectives
+            raw_obj = parsed.get("objectives", [])
+            if isinstance(raw_obj, list) and raw_obj:
+                ch["objectives"] = raw_obj
+
+            # events（完整 StoryEvent 列表，含所有新字段）
+            events_raw = parsed.get("events", [])
             ch["events"] = events_raw if isinstance(events_raw, list) else []
-            ch["transitions"] = transitions_raw if isinstance(transitions_raw, list) else []
-            ch["pacing"] = pacing_raw if isinstance(pacing_raw, dict) else {}
+
+            # transitions / pacing / entry_conditions / tags
+            ch["transitions"] = parsed.get("transitions", []) if isinstance(parsed.get("transitions"), list) else []
+            ch["pacing"] = parsed.get("pacing", {}) if isinstance(parsed.get("pacing"), dict) else {}
             ch["entry_conditions"] = parsed.get("entry_conditions")
             tags_raw = parsed.get("tags", [])
             ch["tags"] = tags_raw if isinstance(tags_raw, list) else []
             return True
 
-        orchestrated_count = 0
-        ch_id_to_chapter: Dict[str, Dict] = {}
-        for ch in chapters:
-            cid = ch["id"]
-            if cid in ch_id_to_chapter:
-                self._log(f"    WARNING: Duplicate chapter ID {cid} in orchestration mapping")
-                continue
-            ch_id_to_chapter[cid] = ch
+        ch_id_to_chapter = {ch["id"]: ch for ch in story_chapters}
+        enriched_count = 0
 
         if use_direct:
-            # ── 直接调用模式 ──
+            # ── 直接调用模式（开发/调试用） ──
             from app.services.llm_service import LLMService
             llm = LLMService()
-
             for i, (key, prompt) in enumerate(chapter_prompts):
-                ch_id = key.removeprefix("orch_")
+                ch_id = key.removeprefix("enrich_v2_")
                 ch = ch_id_to_chapter.get(ch_id)
                 if not ch:
                     continue
-                self._log(f"    [{i+1}/{len(chapter_prompts)}] Orchestrating {ch_id}...")
+                self._log(f"    [{i+1}/{len(chapter_prompts)}] Enriching {ch_id}...")
                 try:
-                    result = await llm.generate_simple(prompt, model_override=self.model)
-                    parsed = _parse_orchestration(result)
-                    if _apply_orchestration(ch, parsed):
-                        orchestrated_count += 1
+                    result = await llm.generate_simple(prompt, model_override=self.model, timeout=120.0)
+                    parsed = _parse_result(result)
+                    if _apply_v2(ch, parsed):
+                        enriched_count += 1
                     else:
                         self._log(f"      Parse failed for {ch_id}")
                 except Exception as exc:
-                    self._log(f"      Error: {exc}")
+                    self._log(f"      Error for {ch_id}: {exc}")
         else:
-            # ── Batch API 模式 ──
-            self._log(f"  Submitting {len(chapter_prompts)} chapters to Batch API for orchestration...")
-            temp_dir = (output_dir or Path(".")) / "batch_temp"
+            # ── Batch API 模式（生产推荐） ──
+            self._log(f"  Submitting {len(chapter_prompts)} chapters to Batch API (v2 enrichment)...")
+            temp_dir = (output_dir or Path(".")) / "batch_temp_v2"
             raw_results = self.batch_runner.run_batch(
                 requests=chapter_prompts,
                 temp_dir=temp_dir,
-                display_name="chapter-orchestration",
+                display_name="chapter-enrichment-v2",
             )
-
             for key, text in raw_results.items():
-                ch_id = key.removeprefix("orch_")
+                ch_id = key.removeprefix("enrich_v2_")
                 ch = ch_id_to_chapter.get(ch_id)
                 if not ch:
                     continue
-                parsed = _parse_orchestration(text)
-                if _apply_orchestration(ch, parsed):
-                    orchestrated_count += 1
+                parsed = _parse_result(text)
+                if _apply_v2(ch, parsed):
+                    enriched_count += 1
 
-        # strict-v2: 即使解析失败也写入空键，避免下游字段缺失
+        # ── 确保字段存在（防下游字段缺失） ──
         for ch in story_chapters:
+            ch.setdefault("available_maps", [])
+            ch.setdefault("objectives", [])
             ch.setdefault("events", [])
             ch.setdefault("transitions", [])
             ch.setdefault("pacing", {})
             ch.setdefault("entry_conditions", None)
             ch.setdefault("tags", [])
 
-        self._log(f"  Chapter orchestration extracted: {orchestrated_count}/{len(story_chapters)}")
+        # ── 后处理：从依赖关系自动推导 unlock_events ──
+        self._derive_unlock_events(chapters)
+
+        self._log(f"  v2 enrichment completed: {enriched_count}/{len(story_chapters)}")
         return chapters
+
+    def _derive_unlock_events(self, chapters: List[Dict[str, Any]]) -> None:
+        """从事件的 trigger_conditions 反向推导 on_complete.unlock_events。
+
+        原理：如果事件 B 的 trigger_conditions 包含 event_triggered(event_A)，
+        则 A 完成后应该解锁 B。这个关系可以机械推导，无需 LLM。
+        """
+        # 建立事件 ID → 章节 ID 映射
+        event_to_chapter: Dict[str, str] = {}
+        for ch in chapters:
+            for evt in ch.get("events", []):
+                if isinstance(evt, dict) and evt.get("id"):
+                    event_to_chapter[evt["id"]] = ch["id"]
+
+        def _extract_event_triggered_ids(conditions: Any) -> List[str]:
+            """递归提取所有 event_triggered 条件中的 event_id。"""
+            if not conditions or not isinstance(conditions, dict):
+                return []
+            result = []
+            for cond in conditions.get("conditions", []):
+                if isinstance(cond, dict):
+                    if cond.get("type") == "event_triggered":
+                        eid = cond.get("params", {}).get("event_id", "")
+                        if eid:
+                            result.append(eid)
+                    elif "conditions" in cond:
+                        result.extend(_extract_event_triggered_ids(cond))
+            return result
+
+        # 建立依赖关系：dep_event_id → [事件 ID 列表（依赖它的）]
+        dependencies: Dict[str, List[str]] = {}
+        for ch in chapters:
+            for evt in ch.get("events", []):
+                if not isinstance(evt, dict):
+                    continue
+                evt_id = evt.get("id", "")
+                trigger = evt.get("trigger_conditions", {})
+                dep_ids = _extract_event_triggered_ids(trigger)
+                for dep_id in dep_ids:
+                    dependencies.setdefault(dep_id, []).append(evt_id)
+
+        # 写入 on_complete.unlock_events
+        added_count = 0
+        for ch in chapters:
+            for evt in ch.get("events", []):
+                if not isinstance(evt, dict):
+                    continue
+                evt_id = evt.get("id", "")
+                unlocks = dependencies.get(evt_id, [])
+                if unlocks:
+                    on_complete = evt.setdefault("on_complete", {})
+                    if not isinstance(on_complete, dict):
+                        evt["on_complete"] = {}
+                        on_complete = evt["on_complete"]
+                    existing = set(on_complete.get("unlock_events", []))
+                    new_unlocks = [u for u in unlocks if u not in existing]
+                    if new_unlocks:
+                        on_complete["unlock_events"] = list(existing) + new_unlocks
+                        added_count += len(new_unlocks)
+
+        if added_count:
+            self._log(f"  _derive_unlock_events: added {added_count} unlock_events entries")
 
     @staticmethod
     def _build_linear_chapter_graph(chapter_ids: List[str]) -> Dict[str, List[str]]:

@@ -154,10 +154,9 @@ def _get_chapter_context(session: Any) -> Dict[str, Any]:
                 for t in transitions
             ]
 
-    # 章节转换就绪评估（机械条件检查）
-    area = getattr(session, "current_area", None)
-    if area and hasattr(area, "check_chapter_transition"):
-        transition_ready = area.check_chapter_transition(session)
+    # 章节转换就绪评估（从 WorldGraph GATE 边）
+    if hasattr(session, "check_chapter_transitions"):
+        transition_ready = session.check_chapter_transitions()
         if transition_ready:
             ctx["chapter_transition_available"] = transition_ready
 
@@ -322,5 +321,16 @@ class ContextAssembler:
             state["chat_mode"] = getattr(game_state, "chat_mode", None)
             state["active_dialogue_npc"] = getattr(game_state, "active_dialogue_npc", None)
             state["combat_id"] = getattr(game_state, "combat_id", None)
+
+        # U20/U18: 世界状态注入（从 WorldGraph world_root 读取）
+        # 始终注入两个键（即使空 dict），保持 dynamic_state schema 稳定
+        state["world_flags"] = {}
+        state["faction_reputations"] = {}
+        wg = getattr(session, "world_graph", None)
+        if wg and not getattr(session, "_world_graph_failed", False):
+            world_root_node = wg.get_node("world_root")
+            if world_root_node:
+                state["world_flags"] = dict(world_root_node.state.get("world_flags", {}))
+                state["faction_reputations"] = dict(world_root_node.state.get("faction_reputations", {}))
 
         return state

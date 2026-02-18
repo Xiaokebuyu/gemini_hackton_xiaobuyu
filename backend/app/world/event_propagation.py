@@ -37,8 +37,9 @@ DEFAULT_DECAY: Dict[str, float] = {
     "horizontal": 0.5,  # CONNECTS: 相邻区域弱传播
 }
 
-# 单个事件的最大传播深度
-MAX_DEPTH = 3
+# 传播深度
+MAX_DEPTH_SCOPE = 3     # scope: 沿 CONTAINS 垂直传播（不水平扩散）
+MAX_DEPTH_GLOBAL = 8    # global: 覆盖完整路径 location→area→region→world→region2→area2→location2 (6跳+余量)
 
 
 class EventPropagator:
@@ -99,7 +100,8 @@ class EventPropagator:
             node_id, strength, depth = queue.popleft()
             if node_id in visited:
                 continue
-            if depth > MAX_DEPTH:
+            max_depth = MAX_DEPTH_GLOBAL if event.visibility == "global" else MAX_DEPTH_SCOPE
+            if depth > max_depth:
                 continue
             visited.add(node_id)
 
@@ -149,8 +151,8 @@ class EventPropagator:
         for entity_id in self.wg.get_entities_at(node_id):
             targets.append((entity_id, "down"))
 
-        # 水平: CONNECTS 邻居（scope 和 global 都传播）
-        if visibility in ("global", "scope"):
+        # 水平: CONNECTS 邻居（仅 global 传播，scope 只走垂直 CONTAINS）
+        if visibility == "global":
             for neighbor_id, _ in self.wg.get_neighbors(
                 node_id, WorldEdgeType.CONNECTS.value
             ):

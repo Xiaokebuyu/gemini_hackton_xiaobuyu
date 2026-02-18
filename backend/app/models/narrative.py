@@ -29,6 +29,10 @@ class ConditionType(str, Enum):
     EVENT_TRIGGERED = "event_triggered"
     OBJECTIVE_COMPLETED = "objective_completed"
     GAME_STATE = "game_state"
+    EVENT_STATE = "event_state"         # 检查事件节点运行时 state (U4)
+    EVENT_ROUNDS_ELAPSED = "event_rounds_elapsed"  # 事件自激活后经过的回合数 (E4/U9)
+    WORLD_FLAG = "world_flag"           # 检查 world_root.state.world_flags 中的标记值
+    FACTION_REPUTATION = "faction_reputation"  # 检查 world_root.state.faction_reputations 中的声望阈值
     # 语义化（由 FlashCPU 评估）
     FLASH_EVALUATE = "flash_evaluate"
 
@@ -50,12 +54,60 @@ ConditionGroup.model_rebuild()
 
 
 # =============================================================================
+# 事件子模型 (U21: 从 world/models.py 统一归属)
+# =============================================================================
+
+
+class EventObjective(BaseModel):
+    """可追踪的事件目标"""
+    id: str                         # "obj_ask_guild"
+    text: str                       # "询问公会情报"
+    required: bool = True           # true=必须完成, false=可选
+    completion_hint: str = ""       # 给 LLM: "当玩家与公会柜台交谈后标记完成"
+
+
+class EventStage(BaseModel):
+    """事件阶段（多阶段任务）"""
+    id: str                                             # "stage_1"
+    name: str                                           # "找到哥布林巢穴入口"
+    description: str = ""
+    narrative_directive: str = ""                        # 给 LLM 的指令
+    objectives: List[EventObjective] = Field(default_factory=list)
+    completion_conditions: Optional[ConditionGroup] = None
+
+
+class EventOutcome(BaseModel):
+    """事件分支结局
+
+    每个 outcome 带 conditions（Option B: LLM 调用时必须满足，否则拒绝）。
+    """
+    description: str                                    # "成功清除了哥布林巢穴"
+    conditions: Optional[ConditionGroup] = None         # 验证条件
+    rewards: Dict[str, Any] = Field(default_factory=dict)
+    """奖励: {xp: int, gold: int, items: list[str]}"""
+
+    reputation_changes: Dict[str, int] = Field(default_factory=dict)
+    """阵营声望变化: {"adventurer_guild": +10}"""
+
+    unlock_events: List[str] = Field(default_factory=list)
+    """解锁的 event_def ID"""
+
+    world_flags: Dict[str, Any] = Field(default_factory=dict)
+    """设置世界标记: {"goblin_nest_cleared": true}"""
+
+    narrative_hint: str = ""
+    """结局叙事指令"""
+
+
+# =============================================================================
 # 事件与章节编排
 # =============================================================================
 
 
 class StoryEvent(BaseModel):
     """章节事件（替代纯 event_id 字符串）"""
+    model_config = {"extra": "ignore"}
+
     id: str
     name: str
     description: str = ""
@@ -67,6 +119,17 @@ class StoryEvent(BaseModel):
     cooldown_rounds: int = 0
     narrative_directive: str = ""
     side_effects: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # --- U21: 新增字段 ---
+    stages: List[EventStage] = Field(default_factory=list)
+    outcomes: Dict[str, EventOutcome] = Field(default_factory=dict)   # key → EventOutcome
+    activation_type: str = "event_driven"   # npc_given / auto_enter / event_driven / discovery
+    importance: str = "side"                # main / side / personal / flavor
+    quest_giver: Optional[str] = None       # NPC ID
+    time_limit: Optional[int] = None        # 回合限制
+    visibility: str = "visible"             # visible / hidden / discovered
+    discovery_check: Optional[Dict[str, Any]] = None  # {"skill": "perception", "dc": 15}
+    recommended_level: Optional[int] = None
 
 
 class ChapterTransition(BaseModel):

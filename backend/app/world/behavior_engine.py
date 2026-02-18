@@ -241,14 +241,129 @@ def _eval_game_state(cond: Condition, ctx: TickContext) -> EvalResult:
 
 
 def _eval_flash_evaluate(cond: Condition, ctx: TickContext) -> EvalResult:
-    """语义条件 — 标记 pending，由 LLM 稍后评估。
+    """语义条件 — 查缓存或标记 pending（E3 pending_flash 闭环）。
 
-    返回 satisfied=True 以不阻塞机械条件推进。
+    pre-tick: 无缓存 → satisfied=False + pending_flash，行为暂不触发，等待 LLM 评估。
+    post-tick: LLM 已调用 report_flash_evaluation 写入缓存 → 用真实结果判定。
     """
+    prompt = cond.params.get("prompt", "")
+
+    # 有 LLM 回报结果时直接使用（post-tick 路径）
+    if prompt and prompt in ctx.flash_results:
+        result = ctx.flash_results[prompt]
+        return EvalResult(
+            satisfied=result,
+            details={"flash_evaluate": True, "from_cache": True, "result": result},
+        )
+
+    # 无缓存：标记 pending，行为不触发（pre-tick 路径）
     return EvalResult(
-        satisfied=True,
+        satisfied=False,
         pending_flash=[cond],
-        details={"flash_evaluate": True},
+        details={"flash_evaluate": True, "pending": True},
+    )
+
+
+def _eval_world_flag(cond: Condition, ctx: TickContext) -> EvalResult:
+    """检查 world_root.state.world_flags 中的标记值。
+
+    params:
+        key:   标记名（如 "goblin_nest_cleared"）
+        value: 期望值（任意类型，使用 == 比较）
+
+    若 key 不存在，视为 None（与 value=None 的条件匹配）。
+    """
+    key = cond.params.get("key", "")
+    expected = cond.params.get("value")
+    actual = ctx.world_flags.get(key)
+    satisfied = actual == expected
+    return EvalResult(
+        satisfied=satisfied,
+        details={f"world_flag:{key}": satisfied, "actual": actual, "expected": expected},
+    )
+
+
+def _eval_faction_reputation(cond: Condition, ctx: TickContext) -> EvalResult:
+    """检查阵营声望阈值，从 TickContext.faction_reputations 读取。
+
+    params:
+        faction: 阵营 ID（如 "adventurer_guild"）
+        gte:     声望 >= 该值（inclusive），可选
+        lte:     声望 <= 该值（inclusive），可选
+        gt:      声望 > 该值，可选
+        lt:      声望 < 该值，可选
+
+    支持多个阈值组合（如 gte=10 且 lte=80 表示声望在 10-80 区间内）。
+    faction 不存在时视为 0。
+    """
+    faction = cond.params.get("faction", "")
+    value = ctx.faction_reputations.get(faction, 0)
+
+    satisfied = True
+    if "gte" in cond.params and value < cond.params["gte"]:
+        satisfied = False
+    if "lte" in cond.params and value > cond.params["lte"]:
+        satisfied = False
+    if "gt" in cond.params and value <= cond.params["gt"]:
+        satisfied = False
+    if "lt" in cond.params and value >= cond.params["lt"]:
+        satisfied = False
+
+    return EvalResult(
+        satisfied=satisfied,
+        details={f"faction_reputation:{faction}": satisfied, "value": value},
+    )
+
+
+def _eval_event_rounds_elapsed(cond: Condition, ctx: TickContext) -> EvalResult:
+    """检查事件自激活（或进入 COOLDOWN）后经过的回合数 (E4/U9)。
+
+    params:
+        event_id:   事件节点 ID
+        min_rounds: 最少经过回合数（inclusive）
+
+    计算：ctx.round_count - event_node.state.get("activated_at_round", 0)
+    若 activated_at_round 为 None，视为 0（防御性处理）。
+    """
+    event_id = cond.params.get("event_id", "")
+    min_rounds = cond.params.get("min_rounds", 0)
+    wg = getattr(ctx.session, "world_graph", None) if ctx.session else None
+    if not wg:
+        return EvalResult(satisfied=False, details={"error": "no_wg"})
+    node = wg.get_node(event_id)
+    if not node:
+        return EvalResult(satisfied=False, details={"error": "node_not_found"})
+    activated_at = node.state.get("activated_at_round") or 0
+    elapsed = ctx.round_count - activated_at
+    satisfied = elapsed >= min_rounds
+    return EvalResult(satisfied=satisfied, details={"elapsed": elapsed, "min": min_rounds})
+
+
+def _eval_event_state(cond: Condition, ctx: TickContext) -> EvalResult:
+    """检查事件节点的运行时 state 字段 (U4)。
+
+    params:
+        event_id: 事件节点 ID
+        key: state 中的字段名 (如 "status", "current_stage")
+        value: 期望值
+    """
+    event_id = cond.params.get("event_id", "")
+    key = cond.params.get("key", "")
+    expected = cond.params.get("value")
+
+    wg = getattr(ctx.session, "world_graph", None) if ctx.session else None
+    if not wg:
+        return EvalResult(satisfied=False, details={"event_state": "no_wg"})
+
+    node = wg.get_node(event_id)
+    if not node:
+        return EvalResult(satisfied=False, details={"event_state": "not_found"})
+
+    actual = node.state.get(key)
+    satisfied = actual == expected
+    return EvalResult(
+        satisfied=satisfied,
+        details={f"event_state:{event_id}.{key}": satisfied},
     )
 
 
@@ -262,6 +377,10 @@ _CONDITION_HANDLERS = {
     ConditionType.EVENT_TRIGGERED: _eval_event_triggered,
     ConditionType.OBJECTIVE_COMPLETED: _eval_objective_completed,
     ConditionType.GAME_STATE: _eval_game_state,
+    ConditionType.EVENT_STATE: _eval_event_state,
+    ConditionType.EVENT_ROUNDS_ELAPSED: _eval_event_rounds_elapsed,
+    ConditionType.WORLD_FLAG: _eval_world_flag,
+    ConditionType.FACTION_REPUTATION: _eval_faction_reputation,
     ConditionType.FLASH_EVALUATE: _eval_flash_evaluate,
 }
 
@@ -623,7 +742,27 @@ class BehaviorEngine:
                 for nid, changes in r.state_changes.items():
                     all_state_changes.setdefault(nid, {}).update(changes)
 
-        # 6. 记录事件日志
+        # 6. ON_STATE_CHANGE: 处理本 tick 内（含 B 阶段工具调用）积累的 state 变更
+        state_changes_map = self.wg.get_and_clear_state_changes()
+        for nid, changed_keys in state_changes_map.items():
+            node = self.wg.get_node(nid)
+            if not node:
+                continue
+            for bh in node.get_active_behaviors(TriggerType.ON_STATE_CHANGE):
+                if not bh.watch_key or bh.watch_key not in changed_keys:
+                    continue
+                result = self._evaluate_and_execute(node, bh, ctx)
+                if result is None:
+                    continue
+                all_results.append(result)
+                all_hints.extend(result.narrative_hints)
+                all_pending.extend(result.pending_flash)
+                for nid2, changes in result.state_changes.items():
+                    all_state_changes.setdefault(nid2, {}).update(changes)
+                if result.events_emitted:
+                    all_events.extend(result.events_emitted)
+
+        # 7. 记录事件日志
         for event in all_events:
             self.wg.log_event(event)
 
@@ -768,6 +907,19 @@ class BehaviorEngine:
         # 评估条件
         eval_result = self._evaluator.evaluate(behavior.conditions, ctx)
         if not eval_result.satisfied:
+            # E3: 即使条件不满足，若有 pending_flash（FLASH_EVALUATE 等待 LLM 评估），
+            # 也需要向上传播，让 pipeline 注入 context_dict。行为本身不触发。
+            if eval_result.pending_flash:
+                return BehaviorResult(
+                    behavior_id=behavior.id,
+                    node_id=node.id,
+                    trigger=behavior.trigger,
+                    actions_executed=[],
+                    events_emitted=[],
+                    state_changes={},
+                    narrative_hints=[],
+                    pending_flash=eval_result.pending_flash,
+                )
             return None
 
         # 执行 actions

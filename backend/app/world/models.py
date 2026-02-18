@@ -48,7 +48,12 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.graph import MemoryNode
-from app.models.narrative import ConditionGroup
+from app.models.narrative import (
+    ConditionGroup,
+    EventObjective,
+    EventOutcome,
+    EventStage,
+)
 
 
 # =============================================================================
@@ -197,49 +202,11 @@ class Behavior(BaseModel):
 
 
 # =============================================================================
-# Event System Sub-models
+# Event System Sub-models (定义在 app.models.narrative，此处 re-export)
 # =============================================================================
 
-
-class EventObjective(BaseModel):
-    """可追踪的事件目标"""
-    id: str                         # "obj_ask_guild"
-    text: str                       # "询问公会情报"
-    required: bool = True           # true=必须完成, false=可选
-    completion_hint: str = ""       # 给 LLM: "当玩家与公会柜台交谈后标记完成"
-
-
-class EventStage(BaseModel):
-    """事件阶段（多阶段任务）"""
-    id: str                                             # "stage_1"
-    name: str                                           # "找到哥布林巢穴入口"
-    description: str = ""
-    narrative_directive: str = ""                        # 给 LLM 的指令
-    objectives: List[EventObjective] = Field(default_factory=list)
-    completion_conditions: Optional[ConditionGroup] = None
-
-
-class EventOutcome(BaseModel):
-    """事件分支结局
-
-    每个 outcome 带 conditions（Option B: LLM 调用时必须满足，否则拒绝）。
-    """
-    description: str                                    # "成功清除了哥布林巢穴"
-    conditions: Optional[ConditionGroup] = None         # 验证条件
-    rewards: Dict[str, Any] = Field(default_factory=dict)
-    """奖励: {xp: int, gold: int, items: list[str]}"""
-
-    reputation_changes: Dict[str, int] = Field(default_factory=dict)
-    """阵营声望变化: {"adventurer_guild": +10}"""
-
-    unlock_events: List[str] = Field(default_factory=list)
-    """解锁的 event_def ID"""
-
-    world_flags: Dict[str, Any] = Field(default_factory=dict)
-    """设置世界标记: {"goblin_nest_cleared": true}"""
-
-    narrative_hint: str = ""
-    """结局叙事指令"""
+# EventObjective, EventStage, EventOutcome — imported from app.models.narrative
+__all_event_models__ = [EventObjective, EventStage, EventOutcome]  # re-export 确认
 
 
 # =============================================================================
@@ -382,7 +349,14 @@ class TickContext(BaseModel):
     """当前游戏状态字符串 (GAME_STATE condition)"""
 
     world_flags: Dict[str, Any] = Field(default_factory=dict)
-    """世界标记 (备用扩展)"""
+    """世界标记: {key: value}，从 world_root.state.world_flags 读入 (WORLD_FLAG condition)"""
+
+    faction_reputations: Dict[str, int] = Field(default_factory=dict)
+    """阵营声望: {faction_id: value}，从 world_root.state.faction_reputations 读入 (FACTION_REPUTATION condition)"""
+
+    flash_results: Dict[str, bool] = Field(default_factory=dict)
+    """LLM 回报的语义条件评估结果: {prompt -> bool}。
+    post-tick 时由 _eval_flash_evaluate 消费，有缓存则返回确定性结果。"""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

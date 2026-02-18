@@ -307,6 +307,15 @@ def default_player_state() -> dict[str, Any]:
     base = default_character_state()
     base.update({
         "inspiration": False,
+        # --- 经济 ---
+        "gold": 0,
+        "xp_to_next_level": 300,
+        # --- 额外熟练 ---
+        "weapon_proficiencies": [],
+        "armor_proficiencies": [],
+        # --- 特性 ---
+        "feats": [],
+        "racial_traits": [],
         # --- 任务追踪 ---
         "active_quests": [],
         "completed_quests": [],

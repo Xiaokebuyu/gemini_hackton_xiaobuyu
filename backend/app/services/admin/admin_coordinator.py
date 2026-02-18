@@ -1370,6 +1370,7 @@ class AdminCoordinator:
                 CombatResolveRequest(combat_id=combat_id, use_engine=True, dispatch=True),
             )
             # Sync combat results (HP/XP/gold) to player character
+            # Note: V3 legacy path — no session available, uses character_store fallback
             final_result = payload.get("final_result") or {}
             await self.flash_cpu.sync_combat_result_to_character(
                 world_id, session_id, {"final_result": final_result},

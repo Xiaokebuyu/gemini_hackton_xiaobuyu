@@ -6,6 +6,8 @@ Tests for BehaviorEngine (C4).
   - ActionExecutor: 6 种 ActionType
   - BehaviorEngine: tick / handle_event / handle_enter / handle_exit / 级联限制
 """
+from typing import Optional
+
 import pytest
 
 from app.models.narrative import Condition, ConditionGroup, ConditionType
@@ -239,13 +241,14 @@ class TestEvalGameState:
 
 class TestEvalFlashEvaluate:
     def test_returns_pending(self):
+        """E3: 无缓存时 FLASH_EVALUATE 返回 satisfied=False + pending_flash（行为暂不触发）。"""
         ev = ConditionEvaluator()
         cond = ConditionGroup(conditions=[
             Condition(type=ConditionType.FLASH_EVALUATE,
-                      params={"description": "test"})
+                      params={"prompt": "test", "description": "test"})
         ])
         result = ev.evaluate(cond, _ctx())
-        assert result.satisfied is True
+        assert result.satisfied is False
         assert len(result.pending_flash) == 1
 
 
@@ -781,7 +784,7 @@ class TestFullTickCycle:
 
 class TestPendingFlashPropagation:
     def test_tick_collects_pending_flash(self):
-        """含 FLASH_EVALUATE 条件的 behavior 触发后，pending_flash 应出现在 TickResult 中。"""
+        """E3: 含 FLASH_EVALUATE 条件的 behavior 暂不触发，但 pending_flash 上传到 TickResult。"""
         wg = _make_simple_graph()
         area_node = wg.get_node("area_1")
         area_node.behaviors.append(Behavior(
@@ -789,7 +792,7 @@ class TestPendingFlashPropagation:
             trigger=TriggerType.ON_TICK,
             conditions=ConditionGroup(operator="and", conditions=[
                 Condition(type=ConditionType.FLASH_EVALUATE,
-                          params={"description": "Is the tavern crowded?"}),
+                          params={"prompt": "Is the tavern crowded?"}),
             ]),
             actions=[Action(
                 type=ActionType.NARRATIVE_HINT,
@@ -801,12 +804,66 @@ class TestPendingFlashPropagation:
         engine = BehaviorEngine(wg)
         result = engine.tick(_ctx(player_location="loc_1"))
 
-        # FLASH_EVALUATE → satisfied=True + pending_flash
+        # E3: FLASH_EVALUATE → satisfied=False，行为不触发，但 pending_flash 向上传播
         assert len(result.pending_flash) >= 1
-        assert "flash behavior fired" in result.narrative_hints
+        # 行为未触发，narrative_hints 中不应有该条目
+        assert "flash behavior fired" not in result.narrative_hints
+
+    def test_tick_flash_fires_with_cached_result(self):
+        """E3: TickContext.flash_results 有缓存时，FLASH_EVALUATE 返回真实结果，行为正常触发。"""
+        wg = _make_simple_graph()
+        area_node = wg.get_node("area_1")
+        area_node.behaviors.append(Behavior(
+            id="bh_flash_cached",
+            trigger=TriggerType.ON_TICK,
+            conditions=ConditionGroup(operator="and", conditions=[
+                Condition(type=ConditionType.FLASH_EVALUATE,
+                          params={"prompt": "Is the tavern crowded?"}),
+            ]),
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "flash behavior fired after evaluation"},
+            )],
+            once=True,
+        ))
+
+        engine = BehaviorEngine(wg)
+        # post-tick 路径：LLM 已回报 result=True
+        ctx = _ctx(player_location="loc_1")
+        ctx.flash_results["Is the tavern crowded?"] = True
+        result = engine.tick(ctx)
+
+        assert len(result.pending_flash) == 0
+        assert "flash behavior fired after evaluation" in result.narrative_hints
+
+    def test_tick_flash_not_fires_with_false_cached_result(self):
+        """E3: flash_results 缓存为 False 时，FLASH_EVALUATE 返回 False，行为不触发。"""
+        wg = _make_simple_graph()
+        area_node = wg.get_node("area_1")
+        area_node.behaviors.append(Behavior(
+            id="bh_flash_false",
+            trigger=TriggerType.ON_TICK,
+            conditions=ConditionGroup(operator="and", conditions=[
+                Condition(type=ConditionType.FLASH_EVALUATE,
+                          params={"prompt": "Is the gate locked?"}),
+            ]),
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "should not fire"},
+            )],
+            once=True,
+        ))
+
+        engine = BehaviorEngine(wg)
+        ctx = _ctx(player_location="loc_1")
+        ctx.flash_results["Is the gate locked?"] = False
+        result = engine.tick(ctx)
+
+        assert "should not fire" not in result.narrative_hints
+        assert len(result.pending_flash) == 0
 
     def test_handle_event_collects_pending_flash(self):
-        """handle_event() 中含 FLASH_EVALUATE 的 ON_EVENT behavior 也应收集 pending_flash。"""
+        """E3: handle_event() 中含 FLASH_EVALUATE 的 ON_EVENT behavior，pending_flash 上传。"""
         wg = _make_simple_graph()
         area_node = wg.get_node("area_1")
         area_node.behaviors.append(Behavior(
@@ -815,7 +872,7 @@ class TestPendingFlashPropagation:
             event_filter="test_event",
             conditions=ConditionGroup(conditions=[
                 Condition(type=ConditionType.FLASH_EVALUATE,
-                          params={"description": "NPC reacts?"}),
+                          params={"prompt": "Does the NPC react?"}),
             ]),
             actions=[Action(
                 type=ActionType.NARRATIVE_HINT,
@@ -832,6 +889,8 @@ class TestPendingFlashPropagation:
         result = engine.handle_event(event, _ctx(player_location="loc_1"))
 
         assert len(result.pending_flash) >= 1
+        # 行为未触发（无缓存），narrative_hints 为空
+        assert "flash on event" not in result.narrative_hints
 
 
 class TestHandleExit:
@@ -980,3 +1039,293 @@ class TestChangeEdgeAddRemove:
 
         # 边应已删除
         assert wg.get_edge("area_1", "loc_1", WorldEdgeType.CONTAINS.value) is None
+
+
+# =============================================================================
+# E5.2 / U1: ON_STATE_CHANGE 触发器
+# =============================================================================
+
+
+class TestOnStateChange:
+    """E5.2: ON_STATE_CHANGE — 节点 state 变化时触发 behavior。"""
+
+    def test_state_change_tracked_by_set_state(self):
+        """set_state 只在值真正变化时记录。"""
+        wg = _make_simple_graph()
+        area = wg.get_node("area_1")
+        area.state["alert"] = "normal"  # 初始值
+
+        wg.set_state("area_1", "alert", "high")  # 变化 → 记录
+        changes = wg.get_and_clear_state_changes()
+        assert "area_1" in changes
+        assert "alert" in changes["area_1"]
+
+    def test_state_change_not_tracked_when_same_value(self):
+        """值未变化时不记录，避免无效触发。"""
+        wg = _make_simple_graph()
+        area = wg.get_node("area_1")
+        area.state["alert"] = "normal"
+
+        wg.set_state("area_1", "alert", "normal")  # 相同值 → 不记录
+        changes = wg.get_and_clear_state_changes()
+        assert "area_1" not in changes
+
+    def test_merge_state_tracked_only_changed_keys(self):
+        """merge_state 只记录值真正变化的 key。"""
+        wg = _make_simple_graph()
+        area = wg.get_node("area_1")
+        area.state["mood"] = "calm"
+        area.state["hp"] = 20
+
+        wg.merge_state("area_1", {"mood": "panic", "hp": 20})  # mood 变，hp 不变
+        changes = wg.get_and_clear_state_changes()
+        assert "area_1" in changes
+        assert "mood" in changes["area_1"]
+        assert "hp" not in changes["area_1"]
+
+    def test_get_and_clear_returns_and_empties(self):
+        """get_and_clear_state_changes 取出后清空。"""
+        wg = _make_simple_graph()
+        wg.set_state("area_1", "x", "new")
+        changes1 = wg.get_and_clear_state_changes()
+        changes2 = wg.get_and_clear_state_changes()
+        assert "area_1" in changes1
+        assert changes2 == {}
+
+    def test_on_state_change_behavior_fires(self):
+        """ON_STATE_CHANGE behavior 在 watch_key 变化后 tick 触发。"""
+        wg = _make_simple_graph()
+        area = wg.get_node("area_1")
+        area.state["alert"] = "normal"
+        area.behaviors.append(Behavior(
+            id="bh_alert",
+            trigger=TriggerType.ON_STATE_CHANGE,
+            watch_key="alert",
+            conditions=None,
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "区域进入警戒状态！"},
+            )],
+        ))
+
+        engine = BehaviorEngine(wg)
+        # 模拟 B 阶段工具调用修改 state
+        wg.set_state("area_1", "alert", "high")
+
+        # C1 post-tick：ON_STATE_CHANGE 应触发
+        result = engine.tick(_ctx(player_location="loc_1"))
+        assert "区域进入警戒状态！" in result.narrative_hints
+
+    def test_on_state_change_not_fire_on_unrelated_key(self):
+        """watch_key 不匹配时 behavior 不触发。"""
+        wg = _make_simple_graph()
+        area = wg.get_node("area_1")
+        area.state["hp"] = 20
+        area.behaviors.append(Behavior(
+            id="bh_watch_mood",
+            trigger=TriggerType.ON_STATE_CHANGE,
+            watch_key="mood",  # 监听 mood
+            conditions=None,
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "心情变了"},
+            )],
+        ))
+
+        engine = BehaviorEngine(wg)
+        wg.set_state("area_1", "hp", 15)  # 改的是 hp，不是 mood
+
+        result = engine.tick(_ctx(player_location="loc_1"))
+        assert "心情变了" not in result.narrative_hints
+
+    def test_on_state_change_once_flag(self):
+        """once=True 的 ON_STATE_CHANGE behavior 只触发一次。"""
+        wg = _make_simple_graph()
+        area = wg.get_node("area_1")
+        area.state["counter"] = 0
+        area.behaviors.append(Behavior(
+            id="bh_once",
+            trigger=TriggerType.ON_STATE_CHANGE,
+            watch_key="counter",
+            conditions=None,
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "首次变化！"},
+            )],
+            once=True,
+        ))
+
+        engine = BehaviorEngine(wg)
+
+        wg.set_state("area_1", "counter", 1)
+        result1 = engine.tick(_ctx(player_location="loc_1"))
+        assert "首次变化！" in result1.narrative_hints
+
+        wg.set_state("area_1", "counter", 2)
+        result2 = engine.tick(_ctx(player_location="loc_1"))
+        assert "首次变化！" not in result2.narrative_hints
+
+    def test_state_change_cleared_after_tick(self):
+        """tick() 执行后 _state_changes_this_tick 被清空。"""
+        wg = _make_simple_graph()
+        engine = BehaviorEngine(wg)
+
+        wg.set_state("area_1", "x", "y")
+        engine.tick(_ctx(player_location="loc_1"))
+
+        # tick 后再查：应已清空
+        assert wg._state_changes_this_tick == {}
+
+
+# =============================================================================
+# E4/U9: event_rounds_elapsed 条件测试
+# =============================================================================
+
+
+def _make_event_node_with_state(
+    node_id: str,
+    activated_at_round: Optional[int],
+) -> WorldNode:
+    """构建带 activated_at_round 状态的 event_def 节点。"""
+    node = WorldNode(
+        id=node_id,
+        type=WorldNodeType.EVENT_DEF,
+        name=f"Event {node_id}",
+        state={"activated_at_round": activated_at_round, "status": "active"},
+    )
+    return node
+
+
+class TestEvalEventRoundsElapsed:
+    """_eval_event_rounds_elapsed 条件处理器测试 (E4/U9)。"""
+
+    def _ctx_with_wg(self, round_count: int, node_id: str, activated_at: Optional[int]) -> TickContext:
+        """构建带 WorldGraph 的 TickContext。"""
+        wg = WorldGraph()
+        wg.add_node(WorldNode(id="world_root", type="world", name="Root"))
+        wg.add_node(_make_event_node_with_state(node_id, activated_at))
+        # 用 mock session 持有 world_graph
+        from unittest.mock import MagicMock
+        session = MagicMock()
+        session.world_graph = wg
+        ctx = _ctx(round_count=round_count)
+        ctx = TickContext(
+            session=session,
+            player_location=ctx.player_location,
+            player_sub_location=ctx.player_sub_location,
+            game_day=ctx.game_day,
+            game_hour=ctx.game_hour,
+            active_chapter=ctx.active_chapter,
+            party_members=ctx.party_members,
+            events_triggered=ctx.events_triggered,
+            objectives_completed=ctx.objectives_completed,
+            round_count=round_count,
+            npc_interactions=ctx.npc_interactions,
+            game_state=ctx.game_state,
+            flash_results={},
+        )
+        ctx.session = session
+        return ctx
+
+    def test_elapsed_meets_min(self):
+        """经过回合数 >= min_rounds 时满足条件。"""
+        cond = Condition(
+            type=ConditionType.EVENT_ROUNDS_ELAPSED,
+            params={"event_id": "evt_x", "min_rounds": 3},
+        )
+        ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=7)
+        result = ConditionEvaluator().evaluate(None, ctx)  # 仅测基础满足
+        # 直接测 handler
+        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        result = _eval_event_rounds_elapsed(cond, ctx)
+        assert result.satisfied is True
+        assert result.details["elapsed"] == 3
+        assert result.details["min"] == 3
+
+    def test_elapsed_below_min(self):
+        """经过回合数 < min_rounds 时不满足条件。"""
+        cond = Condition(
+            type=ConditionType.EVENT_ROUNDS_ELAPSED,
+            params={"event_id": "evt_x", "min_rounds": 5},
+        )
+        ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=7)
+        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        result = _eval_event_rounds_elapsed(cond, ctx)
+        assert result.satisfied is False
+        assert result.details["elapsed"] == 3
+
+    def test_activated_at_round_none_treated_as_zero(self):
+        """activated_at_round=None 视为 0，不崩溃。"""
+        cond = Condition(
+            type=ConditionType.EVENT_ROUNDS_ELAPSED,
+            params={"event_id": "evt_x", "min_rounds": 5},
+        )
+        ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=None)
+        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        result = _eval_event_rounds_elapsed(cond, ctx)
+        # None → 0，elapsed = 10 - 0 = 10 >= 5
+        assert result.satisfied is True
+        assert result.details["elapsed"] == 10
+
+    def test_no_wg_returns_false(self):
+        """无 WorldGraph 时返回 satisfied=False。"""
+        cond = Condition(
+            type=ConditionType.EVENT_ROUNDS_ELAPSED,
+            params={"event_id": "evt_x", "min_rounds": 1},
+        )
+        from unittest.mock import MagicMock
+        session = MagicMock()
+        session.world_graph = None
+        ctx = _ctx(round_count=5)
+        ctx.session = session
+        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        result = _eval_event_rounds_elapsed(cond, ctx)
+        assert result.satisfied is False
+        assert "error" in result.details
+
+    def test_node_not_found_returns_false(self):
+        """节点不存在时返回 satisfied=False。"""
+        cond = Condition(
+            type=ConditionType.EVENT_ROUNDS_ELAPSED,
+            params={"event_id": "nonexistent_node", "min_rounds": 1},
+        )
+        ctx = self._ctx_with_wg(round_count=5, node_id="evt_x", activated_at=0)
+        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        result = _eval_event_rounds_elapsed(cond, ctx)
+        assert result.satisfied is False
+        assert "error" in result.details
+
+    def test_condition_registered_in_evaluator(self):
+        """EVENT_ROUNDS_ELAPSED 已注册到 ConditionEvaluator。"""
+        cond = Condition(
+            type=ConditionType.EVENT_ROUNDS_ELAPSED,
+            params={"event_id": "evt_x", "min_rounds": 3},
+        )
+        ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=5)
+        # 通过 evaluator 的 _eval_single 路径
+        evaluator = ConditionEvaluator()
+        result = evaluator._eval_single(cond, ctx)
+        assert result.satisfied is True
+
+
+class TestResetBehaviors:
+    """E4: WorldGraph.reset_behaviors() 测试。"""
+
+    def test_reset_clears_fired_and_cooldowns(self):
+        """reset_behaviors 清除 behavior_fired 和 behavior_cooldowns。"""
+        wg = _make_simple_graph()
+        node = wg.get_node("area_1")
+        node.state["behavior_fired"] = ["bh_1", "bh_2"]
+        node.state["behavior_cooldowns"] = {"bh_1": 3}
+        wg._dirty_nodes.discard("area_1")
+
+        wg.reset_behaviors("area_1")
+
+        assert "behavior_fired" not in node.state
+        assert "behavior_cooldowns" not in node.state
+        assert "area_1" in wg._dirty_nodes
+
+    def test_reset_nonexistent_node_noop(self):
+        """reset_behaviors 对不存在的节点静默跳过。"""
+        wg = _make_simple_graph()
+        wg.reset_behaviors("nonexistent")  # 不应 raise

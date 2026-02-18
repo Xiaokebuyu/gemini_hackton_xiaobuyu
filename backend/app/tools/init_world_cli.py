@@ -55,48 +55,6 @@ import sys
 from pathlib import Path
 
 
-async def cmd_graphize(args: argparse.Namespace) -> int:
-    """执行世界书图谱化"""
-    from app.tools.worldbook_graphizer import WorldbookGraphizer
-
-    worldbook_path = Path(args.worldbook)
-    output_dir = Path(args.output)
-
-    if not worldbook_path.exists():
-        print(f"Error: Worldbook file not found: {worldbook_path}")
-        return 1
-
-    print(f"Graphizing worldbook: {worldbook_path}")
-    print(f"Output directory: {output_dir}")
-    print(f"Model: {args.model}")
-    print()
-
-    try:
-        graphizer = WorldbookGraphizer(model=args.model)
-        result = await graphizer.graphize(
-            worldbook_path=worldbook_path,
-            output_dir=output_dir,
-            validate=not args.no_validate,
-            verbose=not args.quiet,
-        )
-
-        print(f"\nOutput files:")
-        print(f"  - {output_dir / 'maps.json'}")
-        print(f"  - {output_dir / 'characters.json'}")
-        print(f"  - {output_dir / 'world_map.json'}")
-        print(f"  - {output_dir / 'character_profiles.json'}")
-        print(f"  - {output_dir / 'metadata.json'}")
-
-        return 0
-
-    except Exception as e:
-        print(f"\nError during graphization: {str(e)}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-
 async def cmd_load(args: argparse.Namespace) -> int:
     """加载世界数据到 Firestore"""
     from app.tools.world_initializer import WorldInitializer
@@ -194,86 +152,6 @@ async def cmd_verify(args: argparse.Namespace) -> int:
 
     except Exception as e:
         print(f"\nError during verification: {str(e)}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-
-async def cmd_graphize_maps(args: argparse.Namespace) -> int:
-    """仅提取地图数据"""
-    from app.tools.worldbook_graphizer import WorldbookGraphizer
-
-    worldbook_path = Path(args.worldbook)
-    output_path = Path(args.output)
-
-    if not worldbook_path.exists():
-        print(f"Error: Worldbook file not found: {worldbook_path}")
-        return 1
-
-    print(f"Extracting maps from: {worldbook_path}")
-    print(f"Output: {output_path}")
-    print()
-
-    try:
-        graphizer = WorldbookGraphizer(model=args.model)
-        maps_data = await graphizer.graphize_maps_only(
-            worldbook_path=worldbook_path,
-            output_path=output_path,
-        )
-
-        print(f"\nExtracted {len(maps_data.maps)} maps")
-        for m in maps_data.maps[:10]:
-            print(f"  - {m.id}: {m.name}")
-        if len(maps_data.maps) > 10:
-            print(f"  ... and {len(maps_data.maps) - 10} more")
-
-        return 0
-
-    except Exception as e:
-        print(f"\nError: {str(e)}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-        return 1
-
-
-async def cmd_graphize_characters(args: argparse.Namespace) -> int:
-    """仅提取角色数据"""
-    from app.tools.worldbook_graphizer import WorldbookGraphizer
-
-    worldbook_path = Path(args.worldbook)
-    output_path = Path(args.output)
-    maps_path = Path(args.maps) if args.maps else None
-
-    if not worldbook_path.exists():
-        print(f"Error: Worldbook file not found: {worldbook_path}")
-        return 1
-
-    print(f"Extracting characters from: {worldbook_path}")
-    if maps_path:
-        print(f"Using maps from: {maps_path}")
-    print(f"Output: {output_path}")
-    print()
-
-    try:
-        graphizer = WorldbookGraphizer(model=args.model)
-        chars_data = await graphizer.graphize_characters_only(
-            worldbook_path=worldbook_path,
-            maps_path=maps_path,
-            output_path=output_path,
-        )
-
-        print(f"\nExtracted {len(chars_data.characters)} characters")
-        for c in chars_data.characters[:10]:
-            print(f"  - {c.id}: {c.name} ({c.tier.value})")
-        if len(chars_data.characters) > 10:
-            print(f"  ... and {len(chars_data.characters) - 10} more")
-
-        return 0
-
-    except Exception as e:
-        print(f"\nError: {str(e)}")
         if args.debug:
             import traceback
             traceback.print_exc()
@@ -850,9 +728,9 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 完整图谱化
-  python -m app.tools.init_world_cli graphize \\
-      --worldbook data/goblin_slayer/worldbook_full.md \\
+  # 从酒馆卡片 JSON 提取结构化数据（推荐）
+  python -m app.tools.init_world_cli extract \\
+      --input data/goblin_slayer/worldbook.json \\
       --output data/goblin_slayer/structured/
 
   # 加载到 Firestore
@@ -877,79 +755,7 @@ def main() -> int:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # ============ graphize 命令 [DEPRECATED] ============
-    graphize_parser = subparsers.add_parser(
-        "graphize",
-        help="[已弃用] 请使用 extract 命令。从世界书提取结构化数据"
-    )
-    graphize_parser.add_argument(
-        "--worldbook", "-w",
-        required=True,
-        help="世界书文件路径 (markdown)"
-    )
-    graphize_parser.add_argument(
-        "--output", "-o",
-        required=True,
-        help="输出目录"
-    )
-    graphize_parser.add_argument(
-        "--model", "-m",
-        default="gemini-2.0-flash",
-        help="Gemini 模型 (默认: gemini-2.0-flash)"
-    )
-    graphize_parser.add_argument(
-        "--no-validate",
-        action="store_true",
-        help="跳过验证"
-    )
-
-    # ============ graphize-maps 命令 [DEPRECATED] ============
-    graphize_maps_parser = subparsers.add_parser(
-        "graphize-maps",
-        help="[已弃用] 请使用 extract 命令。仅提取地图数据"
-    )
-    graphize_maps_parser.add_argument(
-        "--worldbook", "-w",
-        required=True,
-        help="世界书文件路径"
-    )
-    graphize_maps_parser.add_argument(
-        "--output", "-o",
-        required=True,
-        help="输出文件路径 (maps.json)"
-    )
-    graphize_maps_parser.add_argument(
-        "--model", "-m",
-        default="gemini-2.0-flash",
-        help="Gemini 模型"
-    )
-
-    # ============ graphize-characters 命令 [DEPRECATED] ============
-    graphize_chars_parser = subparsers.add_parser(
-        "graphize-characters",
-        help="[已弃用] 请使用 extract 命令。仅提取角色数据"
-    )
-    graphize_chars_parser.add_argument(
-        "--worldbook", "-w",
-        required=True,
-        help="世界书文件路径"
-    )
-    graphize_chars_parser.add_argument(
-        "--output", "-o",
-        required=True,
-        help="输出文件路径 (characters.json)"
-    )
-    graphize_chars_parser.add_argument(
-        "--maps",
-        help="已提取的地图文件路径（可选，用于关联 NPC 到地图）"
-    )
-    graphize_chars_parser.add_argument(
-        "--model", "-m",
-        default="gemini-2.0-flash",
-        help="Gemini 模型"
-    )
-
-    # ============ graphize-tavern 命令 [DEPRECATED] ============
+    # ============ graphize-tavern 命令 ============
     graphize_tavern_parser = subparsers.add_parser(
         "graphize-tavern",
         help="[已弃用] 请使用 extract 命令。从酒馆卡片 JSON 提取知识图谱 (使用 Batch API)"
@@ -1124,13 +930,7 @@ def main() -> int:
     args = parser.parse_args()
 
     # 路由到对应命令
-    if args.command == "graphize":
-        return asyncio.run(cmd_graphize(args))
-    elif args.command == "graphize-maps":
-        return asyncio.run(cmd_graphize_maps(args))
-    elif args.command == "graphize-characters":
-        return asyncio.run(cmd_graphize_characters(args))
-    elif args.command == "graphize-tavern":
+    if args.command == "graphize-tavern":
         return asyncio.run(cmd_graphize_tavern(args))
     elif args.command == "extract":
         return asyncio.run(cmd_extract(args))

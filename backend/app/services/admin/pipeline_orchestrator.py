@@ -4,9 +4,9 @@
 通过 ContextAssembler + SessionRuntime + FlashCPUService.agentic_process_v4 实现。
 
 V4 关键变化:
-- 使用 V4AgenticToolRegistry（通过 SessionRuntime/AreaRuntime 操作）
+- 使用 V4AgenticToolRegistry（通过 SessionRuntime 操作）
 - 不使用 StoryDirector / ConditionEngine / AgenticEnforcement
-- 事件状态机由 AreaRuntime.check_events() 驱动
+- 事件状态机由 BehaviorEngine.tick() 驱动（C8: 唯一事件系统）
 """
 
 from __future__ import annotations
@@ -93,11 +93,8 @@ class PipelineOrchestrator:
         if not session.player:
             raise ValueError("请先创建角色后再开始冒险。")
 
-        # A4: 事件 pre-check（AreaRuntime 主，BehaviorEngine 双写）
-        pre_area_updates = session.current_area.check_events(session) if session.current_area else []
-
-        # A4b: BehaviorEngine pre-tick (C7b)
-        pre_tick_result = self._run_behavior_tick(session, "pre", pre_area_updates)
+        # A4: BehaviorEngine pre-tick (C8: 唯一事件系统)
+        pre_tick_result = session.run_behavior_tick("pre")
 
         context = ContextAssembler.assemble(world, session)
 
@@ -106,9 +103,42 @@ class PipelineOrchestrator:
         # =====================================================================
         context_dict = context.to_flat_dict()
 
-        # C7b: 注入 BehaviorEngine 叙事指令
-        if pre_tick_result and pre_tick_result.narrative_hints:
-            context_dict["world_graph_hints"] = pre_tick_result.narrative_hints
+        # C7b + 世界状态回注：构建 world_state_update 注入 LLM 上下文
+        # 1. 读取上一轮 post-tick 存在 GameState.metadata 里的遗留变更（跨回合持久化）
+        prev_summary: Dict[str, Any] = {}
+        if session.game_state and isinstance(getattr(session.game_state, "metadata", None), dict):
+            prev_summary = session.game_state.metadata.pop("_world_state_summary", {}) or {}
+            if prev_summary:
+                session.mark_game_state_dirty()  # metadata 被修改，persist 时写入 Firestore
+
+        # 2. 本轮 pre-tick 新变更
+        pre_update: Dict[str, Any] = {}
+        if pre_tick_result:
+            pre_update = PipelineOrchestrator._build_world_state_update(session, pre_tick_result)
+
+        # 3. 合并（去重），注入 context_dict
+        world_state_update = PipelineOrchestrator._merge_world_state_updates(prev_summary, pre_update)
+        if world_state_update:
+            context_dict["world_state_update"] = world_state_update
+            logger.info(
+                "[v4] world_state_update: available=%d completed=%d hints=%d",
+                len(world_state_update.get("events_newly_available", [])),
+                len(world_state_update.get("events_auto_completed", [])),
+                len(world_state_update.get("narrative_hints", [])),
+            )
+
+        # E3: 注入 pending_flash 语义条件，LLM 应调用 report_flash_evaluation 回报结果
+        if pre_tick_result and pre_tick_result.pending_flash:
+            pending = [
+                {
+                    "prompt": cond.params.get("prompt", ""),
+                    "context": cond.params.get("context", ""),
+                }
+                for cond in pre_tick_result.pending_flash
+                if cond.params.get("prompt")
+            ]
+            if pending:
+                context_dict["pending_flash_evaluations"] = pending
 
         # --- 玩家主动掷骰预处理 ---
         player_roll_result = None
@@ -138,8 +168,8 @@ class PipelineOrchestrator:
             context_dict["is_private"] = True
             context_dict["private_target"] = private_target
 
-        # 注入好感度数据（数据包⑥）
-        await self._inject_dispositions(world_id, context_dict)
+        # 注入好感度数据（P2: 从 WorldGraph 图节点读取，不再走 Firestore）
+        self._inject_dispositions_from_graph(session, context_dict)
 
         agentic_result: AgenticResult = await self.flash_cpu.agentic_process_v4(
             session=session,
@@ -167,6 +197,7 @@ class PipelineOrchestrator:
             progress_tools = {
                 "complete_event", "complete_objective",
                 "activate_event", "advance_chapter",
+                "advance_stage", "complete_event_objective",
             }
             made_progress = any(
                 tc.success and tc.name in progress_tools
@@ -178,19 +209,28 @@ class PipelineOrchestrator:
                 session.narrative.rounds_since_last_progress += 1
             session.mark_narrative_dirty()
 
-        # C1: 事件 post-check（AreaRuntime 主，BehaviorEngine 双写）
-        post_updates = (
-            session.current_area.check_events(session) if session.current_area else []
-        )
-        # C1-wg: BehaviorEngine post-tick (C7b)
-        post_tick_result = self._run_behavior_tick(session, "post", post_updates)
+        # C1: BehaviorEngine post-tick (C8: 唯一事件系统)
+        # E3: post-tick 时 flash_results 已由 LLM 写入，TickContext 会携带它们
+        post_tick_result = session.run_behavior_tick("post")
+        # E3: post-tick 完成后清空缓存，避免跨回合污染
+        session.flash_results.clear()
 
-        # C1b: 后置章节转换重评估
-        chapter_transition = (
-            session.current_area.check_chapter_transition(session)
-            if session.current_area
-            else None
-        )
+        # 世界状态回注：将 post-tick 产生的状态变更存入 GameState.metadata，供下一回合注入 LLM
+        if post_tick_result and session.game_state:
+            post_summary = PipelineOrchestrator._build_world_state_update(session, post_tick_result)
+            if post_summary:
+                if session.game_state.metadata is None:
+                    session.game_state.metadata = {}
+                session.game_state.metadata["_world_state_summary"] = post_summary
+                session.mark_game_state_dirty()
+                logger.info(
+                    "[v4] post-tick summary stored: available=%d completed=%d",
+                    len(post_summary.get("events_newly_available", [])),
+                    len(post_summary.get("events_auto_completed", [])),
+                )
+
+        # C1b: 章节转换（从 WorldGraph GATE 边）
+        chapter_transition = session.check_chapter_transitions()
 
         # 提取 NPC 对话响应
         npc_responses: List[Dict[str, Any]] = []
@@ -321,13 +361,16 @@ class PipelineOrchestrator:
             previous_values={},
         )
 
-        # ── 收集所有已触发事件（不仅是 post-check 变更） ──
+        # ── 收集所有已触发事件 ──
         all_event_ids: List[str] = list(
             session.narrative.events_triggered
         ) if session.narrative else []
-        for u in post_updates:
-            if u.event.id not in all_event_ids:
-                all_event_ids.append(u.event.id)
+        if post_tick_result:
+            for nid, changes in post_tick_result.state_changes.items():
+                if changes.get("status") == "completed" and nid not in all_event_ids:
+                    node = session.world_graph.get_node(nid) if session.world_graph else None
+                    if node and node.type == "event_def":
+                        all_event_ids.append(nid)
 
         # ── 构建完整 chapter_info ──
         chapter_info_payload: Optional[Dict[str, Any]] = None
@@ -406,74 +449,122 @@ class PipelineOrchestrator:
             image_data=agentic_result.image_data,
         )
 
-    # =========================================================================
-    # WorldGraph dual-write (C7b)
-    # =========================================================================
+    @staticmethod
+    def _build_world_state_update(session: Any, tick_result: Any) -> Dict[str, Any]:
+        """从 TickResult 构建结构化世界状态公报，注入 LLM 上下文。
 
-    def _run_behavior_tick(self, session: Any, phase: str, area_updates: list) -> Optional[Any]:
-        """运行 BehaviorEngine.tick() 并与 AreaRuntime 比较（C7b 双写）。"""
-        if not session._behavior_engine or session._world_graph_failed:
-            return None
-        ctx = session.build_tick_context(phase)
-        if ctx is None:
-            return None
-        try:
-            tick_result = session._behavior_engine.tick(ctx)
-            logger.info("[v4] BehaviorEngine.tick(%s): %d fired, %d hints, %d events",
-                        phase, len(tick_result.results), len(tick_result.narrative_hints),
-                        len(tick_result.all_events))
-            # 双写比较日志
-            if settings.world_graph_dual_write:
-                self._log_dual_write_comparison(phase, area_updates, tick_result, session)
-            # 同步事件完成到 narrative.events_triggered
-            self._sync_event_completions(tick_result, session)
-            return tick_result
-        except Exception as exc:
-            logger.error("[v4] BehaviorEngine.tick(%s) failed: %s", phase, exc, exc_info=True)
-            return None
+        来源：
+          - state_changes: 节点状态变更（事件解锁/完成、世界标记、声望）
+          - all_events: WorldEvent 列表（XP/物品/声望/世界标记等副作用）
+          - narrative_hints: 引擎行为产生的叙事文本
+        """
+        from app.world.models import WorldNodeType
+        update: Dict[str, Any] = {}
+        newly_available: List[Dict] = []
+        auto_completed: List[Dict] = []
+        failed: List[Dict] = []
+        world_flags_changed: Dict[str, Any] = {}
+        faction_rep_changed: Dict[str, int] = {}
+        npc_state_changes: List[Dict] = []
 
-    def _log_dual_write_comparison(self, phase: str, area_updates: list,
-                                    tick_result: Any, session: Any) -> None:
-        """记录 AreaRuntime 与 BehaviorEngine 的事件状态比较。"""
-        area_changes = set()
-        for u in area_updates:
-            area_changes.add(f"{u.event.id}:{u.transition}")
+        wg = getattr(session, "world_graph", None)
 
-        be_changes = set()
+        # ── 1. 节点状态变更（state_changes） ──
         for nid, changes in tick_result.state_changes.items():
-            if "status" in changes:
-                node = session.world_graph.get_node(nid) if session.world_graph else None
-                if node and node.type == "event_def":
-                    be_changes.add(f"{nid}:{changes['status']}")
+            node = wg.get_node(nid) if wg else None
 
-        if area_changes != be_changes:
-            logger.warning("[v4] 双写差异 (%s): AreaRuntime=%s, BehaviorEngine=%s",
-                           phase, area_changes, be_changes)
-        elif area_changes:
-            logger.info("[v4] 双写一致 (%s): %d 事件变更", phase, len(area_changes))
+            if node and node.type == WorldNodeType.EVENT_DEF:
+                # 事件状态变更
+                status = changes.get("status")
+                entry = {"id": nid, "name": node.name}
+                if status == "available":
+                    newly_available.append(entry)
+                elif status == "completed":
+                    auto_completed.append(entry)
+                elif status == "failed":
+                    entry["reason"] = node.state.get("failure_reason", "")
+                    failed.append(entry)
 
-    def _sync_event_completions(self, tick_result: Any, session: Any) -> None:
-        """将 BehaviorEngine 检测到的事件完成同步到 narrative.events_triggered。"""
-        if not session.narrative:
-            return
-        for nid, changes in tick_result.state_changes.items():
-            if changes.get("status") != "completed":
+            elif nid == "world_root" and node:
+                # 世界标记变更
+                if "world_flags" in changes:
+                    world_flags_changed.update(changes["world_flags"])
+                if "faction_reputations" in changes:
+                    faction_rep_changed.update(changes["faction_reputations"])
+
+            elif node and node.type == WorldNodeType.NPC:
+                # NPC 关键状态变更（存活/位置）
+                significant = {}
+                if "is_alive" in changes:
+                    significant["is_alive"] = changes["is_alive"]
+                if "current_location" in changes:
+                    significant["moved_to"] = changes["current_location"]
+                if significant:
+                    npc_state_changes.append({"id": nid, "name": node.name, **significant})
+
+        # ── 2. WorldEvent 副作用摘要（all_events） ──
+        # 按事件类型分类，过滤内部机制事件
+        _MEANINGFUL_EVENT_TYPES = {
+            "xp_awarded", "item_granted", "gold_awarded",
+            "reputation_changed", "world_flag_set",
+            "event_completed", "event_activated", "event_unlocked",
+            "event_failed", "combat_ended", "npc_killed",
+        }
+        world_events_summary: List[Dict] = []
+        for evt in tick_result.all_events:
+            if evt.event_type not in _MEANINGFUL_EVENT_TYPES:
                 continue
-            node = session.world_graph.get_node(nid) if session.world_graph else None
-            if not node or node.type != "event_def":
-                continue
-            if nid not in session.narrative.events_triggered:
-                session.narrative.events_triggered.append(nid)
-                session.mark_narrative_dirty()
-                logger.info("[v4] BehaviorEngine 同步事件完成: %s", nid)
+            entry = {"type": evt.event_type, "origin": evt.origin_node}
+            # 提取关键数据字段
+            if evt.data:
+                for key in ("amount", "event_id", "item_id", "faction", "delta", "key", "value", "result"):
+                    if key in evt.data:
+                        entry[key] = evt.data[key]
+            world_events_summary.append(entry)
 
-    async def _inject_dispositions(
+        # ── 组装输出 ──
+        if newly_available:
+            update["events_newly_available"] = newly_available
+        if auto_completed:
+            update["events_auto_completed"] = auto_completed
+        if failed:
+            update["events_failed"] = failed
+        if world_flags_changed:
+            update["world_flags_changed"] = world_flags_changed
+        if faction_rep_changed:
+            update["faction_reputations_changed"] = faction_rep_changed
+        if npc_state_changes:
+            update["npc_state_changes"] = npc_state_changes
+        if world_events_summary:
+            update["world_events"] = world_events_summary
+        if tick_result.narrative_hints:
+            update["narrative_hints"] = tick_result.narrative_hints
+
+        return update
+
+    @staticmethod
+    def _merge_world_state_updates(*updates: Dict[str, Any]) -> Dict[str, Any]:
+        """合并多个 world_state_update，按 event_id 去重。"""
+        merged: Dict[str, Any] = {}
+        for upd in updates:
+            for key in ("events_newly_available", "events_auto_completed", "events_failed"):
+                existing_ids = {e["id"] for e in merged.get(key, [])}
+                for entry in upd.get(key, []):
+                    if entry["id"] not in existing_ids:
+                        merged.setdefault(key, []).append(entry)
+                        existing_ids.add(entry["id"])
+            for hint in upd.get("narrative_hints", []):
+                merged.setdefault("narrative_hints", []).append(hint)
+        return merged
+
+    def _inject_dispositions_from_graph(
         self,
-        world_id: str,
+        session: SessionRuntime,
         context_dict: Dict[str, Any],
     ) -> None:
-        """注入在场 NPC + 队友对玩家的好感度到 context_dict。"""
-        if not self.graph_store:
+        """P2: 从 WorldGraph NPC 节点读取好感度注入 context_dict。"""
+        wg = getattr(session, "world_graph", None)
+        if not wg or getattr(session, "_world_graph_failed", False):
             return
 
         # 收集在场 NPC ID
@@ -490,20 +581,13 @@ class PipelineOrchestrator:
         if not npc_ids:
             return
 
-        # 并行获取（单个失败不影响其他）
-        async def _fetch_one(cid: str):
-            try:
-                return cid, await self.graph_store.get_disposition(world_id, cid, "player")
-            except Exception as exc:
-                logger.warning("disposition fetch failed for %s: %s", cid, exc)
-                return cid, None
-
-        results = await asyncio.gather(*[_fetch_one(cid) for cid in npc_ids])
-
-        # 过滤 + 格式化
         affinity: Dict[str, Any] = {}
-        for cid, disp in results:
-            if disp is None:
+        for cid in npc_ids:
+            node = wg.get_node(cid)
+            if not node:
+                continue
+            disp = node.state.get("dispositions", {}).get("player", {})
+            if not disp:
                 continue
             approval = disp.get("approval", 0)
             trust = disp.get("trust", 0)
@@ -524,7 +608,7 @@ class PipelineOrchestrator:
 
         if affinity:
             context_dict.setdefault("dynamic_state", {})["affinity"] = affinity
-            logger.info("[v4] injected dispositions for %d NPCs", len(affinity))
+            logger.info("[v4] injected dispositions for %d NPCs (from graph)", len(affinity))
 
     async def _handle_player_roll(
         self,

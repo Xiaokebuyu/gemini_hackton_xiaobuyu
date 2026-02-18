@@ -107,6 +107,11 @@ class WorldGraph:
         self._removed_node_ids: Set[str] = set()
         self._edge_changes: List[EdgeChange] = []        # 有序变更日志
 
+        # ===== E5.2: ON_STATE_CHANGE 触发器追踪 =====
+        self._state_changes_this_tick: Dict[str, Set[str]] = {}
+        """记录本 tick 内真正改变了值的 state key：{node_id: {key, ...}}。
+        tick() 末尾消费后清空，B 阶段（工具调用）产生的变更在 C1 post-tick 消费。"""
+
     # =========================================================================
     # Seal — 构建期 → 运行期切换
     # =========================================================================
@@ -220,6 +225,9 @@ class WorldGraph:
         node = self.get_node(node_id)
         if node is None:
             raise KeyError(f"Node not found: {node_id}")
+        # E5.2: 值真正变化时才记录（避免无效触发 ON_STATE_CHANGE）
+        if node.state.get(key) != value:
+            self._state_changes_this_tick.setdefault(node_id, set()).add(key)
         node.set_state(key, value)
         self._dirty_nodes.add(node_id)
 
@@ -234,7 +242,29 @@ class WorldGraph:
         node = self.get_node(node_id)
         if node is None:
             raise KeyError(f"Node not found: {node_id}")
+        # E5.2: 只记录值真正变化的 key（避免无效触发 ON_STATE_CHANGE）
+        changed = {k for k, v in updates.items() if node.state.get(k) != v}
+        if changed:
+            self._state_changes_this_tick.setdefault(node_id, set()).update(changed)
         node.merge_state(updates)
+        self._dirty_nodes.add(node_id)
+
+    def get_and_clear_state_changes(self) -> Dict[str, Set[str]]:
+        """取出并清空本 tick 积累的 state 变更记录。由 BehaviorEngine.tick() 调用。"""
+        changes = dict(self._state_changes_this_tick)
+        self._state_changes_this_tick.clear()
+        return changes
+
+    def reset_behaviors(self, node_id: str) -> None:
+        """清除节点 once 行为触发标记和冷却状态，供 is_repeatable 事件重置使用 (E4/U9)。
+
+        同时标记节点为 dirty，确保快照系统捕获行为状态变更。
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return
+        node.state.pop("behavior_fired", None)
+        node.state.pop("behavior_cooldowns", None)
         self._dirty_nodes.add(node_id)
 
     # =========================================================================
@@ -533,17 +563,17 @@ class WorldGraph:
     def get_entities_at(self, location_id: str) -> List[str]:
         """获取某地点/区域的所有实体 ID（NPC、物品、事件）。
 
-        使用 _entities_at 索引，O(1)。
+        使用 _entities_at 索引，O(1)。结果已排序保证稳定性。
         """
-        return list(self._entities_at.get(location_id, set()))
+        return sorted(self._entities_at.get(location_id, set()))
 
     # =========================================================================
     # 查询 — 按类型
     # =========================================================================
 
     def get_by_type(self, node_type: str) -> List[str]:
-        """按类型获取所有节点 ID。使用 _type_index 索引。"""
-        return list(self._type_index.get(node_type, set()))
+        """按类型获取所有节点 ID。使用 _type_index 索引。结果已排序保证稳定性。"""
+        return sorted(self._type_index.get(node_type, set()))
 
     def find_events_in_scope(self, scope_node_id: str) -> List[str]:
         """获取指定节点及其后代中的所有 event_def 节点。
@@ -571,7 +601,7 @@ class WorldGraph:
                 if entity and entity.type == WorldNodeType.EVENT_DEF:
                     result_set.add(entity_id)
 
-        return list(result_set)
+        return sorted(result_set)  # 排序保证每轮顺序稳定，避免 LLM 上下文漂移
 
     # =========================================================================
     # 查询 — 原生逃生通道

@@ -22,6 +22,7 @@ from app.models.admin_protocol import AgenticToolCall
 from app.models.graph import MemoryNode
 from app.models.graph_scope import GraphScope
 from app.services.image_generation_service import ImageGenerationService
+from app.world.models import EventStatus
 
 logger = logging.getLogger(__name__)
 
@@ -51,45 +52,6 @@ class V4AgenticToolRegistry:
 
         self._lock = asyncio.Lock()
         self._image_generated_this_turn = False
-
-    # =========================================================================
-    # WorldGraph dual-write helpers (C7c)
-    # =========================================================================
-
-    def _wg_sync_event_status(self, event_id: str, new_status: str) -> None:
-        """双写事件状态到 WorldGraph（C7c）。"""
-        wg = getattr(self.session, "world_graph", None)
-        if not wg or getattr(self.session, "_world_graph_failed", False):
-            return
-        try:
-            if wg.has_node(event_id):
-                wg.merge_state(event_id, {"status": new_status})
-        except Exception as exc:
-            logger.warning("[v4_tool] WorldGraph 双写失败 event=%s: %s", event_id, exc)
-
-    def _wg_emit_event(self, event_id: str, event_type: str) -> None:
-        """向 WorldGraph 发射事件并触发传播（C7c）。"""
-        engine = getattr(self.session, "_behavior_engine", None)
-        if not engine or getattr(self.session, "_world_graph_failed", False):
-            return
-        try:
-            from app.world.models import WorldEvent
-            ctx = self.session.build_tick_context("post")
-            if not ctx:
-                return
-            event = WorldEvent(
-                event_type=event_type,
-                origin_node=event_id,
-                game_day=ctx.game_day,
-                game_hour=ctx.game_hour,
-                data={"event_id": event_id},
-                visibility="scope",
-            )
-            result = engine.handle_event(event, ctx)
-            if result.narrative_hints:
-                logger.info("[v4_tool] WorldGraph 事件传播 '%s': %d hints", event_id, len(result.narrative_hints))
-        except Exception as exc:
-            logger.warning("[v4_tool] WorldGraph 事件传播失败 '%s': %s", event_id, exc)
 
     # Convenience accessors
     @property
@@ -156,13 +118,16 @@ class V4AgenticToolRegistry:
         @functools.wraps(tool_fn)
         async def wrapper(**kwargs):
             started = time.perf_counter()
+            # Gemini 有时把参数名中的单下划线序列化为双下划线（如 event_id → event__id），
+            # 在这里规范化，确保参数名与函数签名一致。
+            normalized = {k.replace("__", "_"): v for k, v in kwargs.items()}
             try:
-                return await tool_fn(**kwargs)
+                return await tool_fn(**normalized)
             except TypeError as exc:
                 error_msg = f"argument error: {tool_fn.__name__}: {exc}"
                 logger.warning("[agentic] AFC %s", error_msg)
                 payload = {"success": False, "error": error_msg}
-                await registry._record(tool_fn.__name__, kwargs, started, payload, False, error_msg)
+                await registry._record(tool_fn.__name__, normalized, started, payload, False, error_msg)
                 raise
 
         wrapper.__annotations__ = tool_fn.__annotations__
@@ -201,8 +166,12 @@ class V4AgenticToolRegistry:
             # Events & chapters
             self.activate_event,
             self.complete_event,
+            self.fail_event,
             self.advance_chapter,
             self.complete_objective,
+            self.advance_stage,
+            self.complete_event_objective,
+            self.report_flash_evaluation,
             # Disposition
             self.update_disposition,
             # Image
@@ -379,14 +348,49 @@ class V4AgenticToolRegistry:
                     await self._record("navigate", args, started, payload, False, payload["error"])
                     return payload
 
-        # --- Validation 2: connection check ---
-        connection = None
-        if self.area and self.area.definition:
+        # --- Validation 2: connection check (P8: 从 WorldGraph CONNECTS 边读) ---
+        from app.world.models import WorldEdgeType
+        edge_props: Optional[Dict[str, Any]] = None
+        current_area_id = self.session.player_location
+        old_sub_location = self.session.sub_location  # P1: 保存旧子地点供 exit ctx 使用
+
+        wg = getattr(self.session, "world_graph", None)
+        if wg and not getattr(self.session, "_world_graph_failed", False) and current_area_id:
+            for neighbor_id, edata in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
+                if neighbor_id == area_id:
+                    edge_props = edata
+                    break
+            if edge_props is None:
+                available_conns = [
+                    {"area_id": nid, "travel_time": ed.get("travel_time", "30 minutes")}
+                    for nid, ed in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value)
+                ]
+                payload = {
+                    "success": False,
+                    "error": f"no connection from current area to '{area_id}'",
+                    "available_connections": available_conns,
+                }
+                await self._record("navigate", args, started, payload, False, payload["error"])
+                return payload
+
+            # P8: blocked 检查骨架（等管线数据填充）
+            if edge_props.get("blocked"):
+                payload = {
+                    "success": False,
+                    "error": f"道路被封锁: {edge_props.get('blocked_reason', '前方不可通行')}",
+                }
+                await self._record("navigate", args, started, payload, False, payload["error"])
+                return payload
+        elif self.area and self.area.definition:
+            # 降级：WorldGraph 不可用时回退旧路径
             for conn in self.area.definition.connections:
                 if conn.target_area_id == area_id:
-                    connection = conn
+                    edge_props = {
+                        "travel_time": conn.travel_time,
+                        "connection_type": conn.connection_type,
+                    }
                     break
-            if connection is None:
+            if edge_props is None:
                 available_conns = [
                     {"area_id": c.target_area_id, "travel_time": c.travel_time}
                     for c in self.area.definition.connections
@@ -401,8 +405,8 @@ class V4AgenticToolRegistry:
 
         # --- Travel time advancement ---
         travel_minutes = 30
-        if connection:
-            raw = self._parse_travel_time(connection.travel_time or "30 minutes")
+        if edge_props:
+            raw = self._parse_travel_time(edge_props.get("travel_time") or "30 minutes")
             travel_minutes = self._normalize_advance_minutes(int(raw))
 
         # Advance game time
@@ -444,8 +448,10 @@ class V4AgenticToolRegistry:
             result = {"success": True, "result": result}
         result.setdefault("success", True)
         result["travel_time_minutes"] = travel_minutes
-        if connection:
-            result["connection_type"] = connection.connection_type
+        if edge_props:
+            conn_type = edge_props.get("connection_type")
+            if conn_type:
+                result["connection_type"] = conn_type
 
         # C7c: 更新 WorldGraph 区域状态
         if result.get("success"):
@@ -458,27 +464,92 @@ class V4AgenticToolRegistry:
                 except Exception:
                     pass  # 不阻塞导航
 
+            # --- P1: ON_EXIT / ON_ENTER + HOSTS 边管理 ---
+            engine = getattr(self.session, "_behavior_engine", None)
+            is_area_change = current_area_id and current_area_id != area_id
+            if engine and wg and not getattr(self.session, "_world_graph_failed", False) and is_area_change:
+                try:
+                    # 1. handle_exit（旧区域）— 覆写 ctx 为旧位置+旧子地点
+                    exit_result = None
+                    if wg.has_node(current_area_id):
+                        ctx_exit = self.session.build_tick_context("post")
+                        if ctx_exit:
+                            ctx_exit.player_location = current_area_id
+                            ctx_exit.player_sub_location = old_sub_location or ""
+                            exit_result = engine.handle_exit("player", current_area_id, ctx_exit)
+
+                    # 2. 更新 HOSTS 边（player + 队友）
+                    self._update_hosts_edges(wg, current_area_id, area_id)
+                    self._update_party_hosts_edges(wg, area_id)
+
+                    # 3. handle_enter（新区域）
+                    enter_result = None
+                    if wg.has_node(area_id):
+                        ctx_enter = self.session.build_tick_context("post")
+                        if ctx_enter:
+                            enter_result = engine.handle_enter("player", area_id, ctx_enter)
+
+                    # 4. 处理 TickResult
+                    hints = []
+                    for tr in (exit_result, enter_result):
+                        if tr:
+                            hints.extend(tr.narrative_hints)
+                            self.session._sync_tick_to_narrative(tr)
+                            self.session._apply_tick_side_effects(tr)
+                    if hints:
+                        result["narrative_hints"] = hints
+                except Exception as exc:
+                    logger.warning("[navigate] P1 enter/exit handling failed: %s", exc)
+
         await self._record("navigate", args, started, result, result.get("success", True), result.get("error"))
         return result
 
     def _resolve_area_id(self, destination: str) -> str:
-        """Resolve area name to area_id. Returns destination as-is if no match."""
-        world = self.session.world
+        """Resolve area name to area_id. Returns destination as-is if no match.
 
-        # Priority 1: exact match on connection target_area_id
+        P8: 优先从 WorldGraph CONNECTS 边查询，降级到旧注册表。
+        """
+        from app.world.models import WorldEdgeType
+
+        current_area_id = self.session.player_location
+        wg = getattr(self.session, "world_graph", None)
+
+        # Priority 1: WorldGraph CONNECTS 边精确 ID 匹配
+        if wg and not getattr(self.session, "_world_graph_failed", False) and current_area_id:
+            for neighbor_id, _ in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
+                if neighbor_id == destination:
+                    return destination
+
+            # Priority 2: WorldGraph CONNECTS 边按节点 name 匹配
+            for neighbor_id, _ in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
+                node = wg.get_node(neighbor_id)
+                if node and node.name == destination:
+                    return neighbor_id
+
+            # Priority 3: WorldGraph 全局 area 节点按 ID/name 匹配
+            from app.world.models import WorldNodeType
+            for nid in wg.get_by_type(WorldNodeType.AREA.value):
+                if nid == destination:
+                    return nid
+                node = wg.get_node(nid)
+                if node and node.name == destination:
+                    return nid
+
+            return destination
+
+        # 降级：WorldGraph 不可用时使用旧注册表
+        world = self.session.world
         if self.area and self.area.definition:
             for conn in self.area.definition.connections:
                 if conn.target_area_id == destination:
                     return destination
 
-        # Priority 2: match connection target by area name
         if self.area and self.area.definition and world and hasattr(world, "area_registry"):
             for conn in self.area.definition.connections:
                 area_def = world.area_registry.get(conn.target_area_id)
                 if area_def and getattr(area_def, "name", "") == destination:
                     return conn.target_area_id
 
-        # Priority 3: global area_registry name/id match
         if world and hasattr(world, "area_registry"):
             for aid, area_def in world.area_registry.items():
                 if aid == destination:
@@ -956,7 +1027,14 @@ class V4AgenticToolRegistry:
                     "overrides": dict(enemy.get("overrides", {}) or {}),
                 })
 
-        args = {"enemies": enemy_payload}
+        # U2: 从图节点适配器获取 player_state，不再依赖 FlashCPU 从 character_store 读
+        player_state = {}
+        if self.session.player:
+            try:
+                player_state = self.session.player.to_combat_player_state()
+            except Exception as exc:
+                logger.warning("[start_combat] 从图节点获取 player_state 失败: %s", exc)
+        args = {"enemies": enemy_payload, "player_state": player_state}
         request = FlashRequest(operation=FlashOperation.START_COMBAT, parameters=args)
         return await self._execute_flash_request("start_combat", args, request)
 
@@ -1072,9 +1150,8 @@ class V4AgenticToolRegistry:
                 )
                 sync_data = dict(resolve_payload) if isinstance(resolve_payload, dict) else {}
                 sync_data["final_result"] = payload.get("final_result")
-                await self.flash_cpu.sync_combat_result_to_character(
-                    self.world_id, self.session_id, sync_data,
-                )
+                # U2: 通过图节点适配器同步战斗结果
+                self._sync_combat_to_graph(sync_data)
                 # Clear combat_id in session state
                 if self.session.game_state:
                     self.session.game_state.combat_id = None
@@ -1083,9 +1160,120 @@ class V4AgenticToolRegistry:
             except Exception as exc:
                 payload["resolve_error"] = str(exc)
 
+            # --- P6-层2: 战斗结束发射 WorldEvent ---
+            try:
+                wg = getattr(self.session, "world_graph", None)
+                engine = getattr(self.session, "_behavior_engine", None)
+                if wg and engine and not getattr(self.session, "_world_graph_failed", False):
+                    from app.world.models import WorldEvent as WE
+                    player_location = self.session.player_location or ""
+                    ctx = self.session.build_tick_context("post")
+                    if ctx and player_location:
+                        final = payload.get("final_result") or {}
+                        combat_event = WE(
+                            event_type="combat_ended",
+                            origin_node=player_location,
+                            actor="player",
+                            data={
+                                "result": final.get("result", "unknown"),
+                                "enemies": final.get("enemies_defeated", []),
+                                "rewards": final.get("rewards", {}),
+                                "combat_id": combat_id,
+                            },
+                            visibility="scope",
+                            game_day=ctx.game_day,
+                            game_hour=ctx.game_hour,
+                        )
+                        tick_result = engine.handle_event(combat_event, ctx)
+                        if tick_result.narrative_hints:
+                            payload["combat_event_hints"] = tick_result.narrative_hints
+                        self.session._sync_tick_to_narrative(tick_result)
+                        self.session._apply_tick_side_effects(tick_result)
+            except Exception as exc:
+                logger.warning("[combat] P6 combat_ended event failed: %s", exc)
+
         payload["success"] = not bool(payload.get("error"))
         await self._record("choose_combat_action", {"action_id": action_id, "actor_id": actor_id}, started, payload, payload["success"], payload.get("error"))
         return payload
+
+    def _sync_combat_to_graph(self, combat_payload: Dict[str, Any]) -> None:
+        """U2: 通过图节点适配器同步战斗结果到 player 图节点。
+
+        从 combat_payload 提取 HP/XP/gold/items，写入 session.player（PlayerNodeView）。
+        """
+        player = self.session.player
+        if not player:
+            return
+
+        try:
+            # Sync HP
+            player_state = combat_payload.get("player_state") or {}
+            hp_remaining = player_state.get("hp_remaining")
+            if hp_remaining is not None:
+                player.current_hp = max(0, min(int(hp_remaining), player.max_hp))
+                self.session.mark_player_dirty()
+
+            # Extract rewards from final_result
+            final_result = combat_payload.get("final_result") or combat_payload.get("result") or {}
+            if isinstance(final_result, dict):
+                result_type = final_result.get("result", "")
+                rewards = final_result.get("rewards") or {}
+
+                if result_type == "victory" and rewards:
+                    xp = int(rewards.get("xp", 0))
+                    if xp > 0:
+                        player.xp = (player.xp or 0) + xp
+                        self.session.mark_player_dirty()
+
+                    gold = int(rewards.get("gold", 0))
+                    if gold > 0:
+                        player.gold = (player.gold or 0) + gold
+                        self.session.mark_player_dirty()
+
+                    for item_id in rewards.get("items", []):
+                        player.add_item(item_id, item_id, 1)
+                        self.session.mark_player_dirty()
+
+            logger.info("[combat_sync] Synced combat results to player graph node")
+        except Exception as exc:
+            logger.error("[combat_sync] Failed to sync to graph: %s", exc, exc_info=True)
+
+    # =========================================================================
+    # P1: HOSTS edge management helpers
+    # =========================================================================
+
+    def _update_hosts_edges(self, wg, old_area_id: Optional[str], new_area_id: str) -> None:
+        """更新 player HOSTS 边：旧位置移除 → 新位置添加。"""
+        from app.world.models import WorldEdgeType
+        if not wg.has_node("player"):
+            return
+        # 移除旧 HOSTS
+        if old_area_id and wg.has_node(old_area_id):
+            wg.remove_edge(old_area_id, "player", key="hosts_player")
+        # 添加新 HOSTS + 同步 state（仅当目标区域存在于图中）
+        if wg.has_node(new_area_id):
+            wg.add_edge(new_area_id, "player", WorldEdgeType.HOSTS.value, key="hosts_player")
+            wg.merge_state("player", {"current_location": new_area_id})
+
+    def _update_party_hosts_edges(self, wg, new_area_id: str) -> None:
+        """队友 NPC HOSTS 边跟随 player 同步。"""
+        from app.world.models import WorldEdgeType
+        if not self.session.party or not wg.has_node(new_area_id):
+            return
+        for member in self.session.party.get_active_members():
+            char_id = member.character_id
+            if not wg.has_node(char_id):
+                continue
+            edge_key = f"hosts_{char_id}"
+            # 从 NPC state 读旧位置（比用 old_area_id 更准确，NPC 可能在 default_map）
+            npc_node = wg.get_node(char_id)
+            if npc_node:
+                old_host = npc_node.state.get("current_location", "")
+                if old_host and old_host != new_area_id and wg.has_node(old_host):
+                    wg.remove_edge(old_host, char_id, key=edge_key)
+            # 添加新 HOSTS + 同步 state
+            wg.add_edge(new_area_id, char_id, WorldEdgeType.HOSTS.value, key=edge_key)
+            wg.merge_state(char_id, {"current_location": new_area_id})
 
     # =========================================================================
     # Party tools (delegate to FlashCPU)
@@ -1188,158 +1376,434 @@ class V4AgenticToolRegistry:
         started = time.perf_counter()
         args = {"event_id": event_id}
 
-        area_rt = self.area
-        if not area_rt:
-            payload = {"success": False, "error": "no current area"}
+        wg = getattr(self.session, "world_graph", None)
+        engine = getattr(self.session, "_behavior_engine", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            payload = {"success": False, "error": "WorldGraph not available"}
             await self._record("activate_event", args, started, payload, False, payload["error"])
             return payload
 
-        target_event = None
-        for event in area_rt.events:
-            if event.id == event_id:
-                target_event = event
-                break
-
-        if not target_event:
-            logger.warning(
-                "activate_event: '%s' not found in area '%s' (events: %s)",
-                event_id, area_rt.area_id, [e.id for e in area_rt.events],
-            )
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            # 收集可用事件供 LLM 参考
+            available = [
+                eid for eid in wg.find_events_in_scope(self.session.player_location or "")
+                if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.AVAILABLE
+            ]
             payload = {
                 "success": False,
                 "error": f"event not found: {event_id}",
-                "available_events": [e.id for e in area_rt.events if e.status == "available"],
-                "all_event_ids": [e.id for e in area_rt.events],
+                "available_events": available,
             }
             await self._record("activate_event", args, started, payload, False, payload["error"])
             return payload
 
-        # 如果事件仍是 locked，补偿同轮时序：同一 agentic turn 内
-        # 前置工具调用（如 complete_event）可能已满足 trigger_conditions，
-        # 但 check_events 要到 C1 阶段才运行。这里就地刷新一次。
-        if target_event.status == "locked":
-            area_rt.check_events(self.session)
+        current_status = node.state.get("status", EventStatus.LOCKED)
 
-        if target_event.status == "locked":
-            # 条件仍不满足 → 返回可操作信息而非硬错误
-            hint = area_rt._summarize_completion_conditions(
-                target_event.trigger_conditions,
+        # 如果事件仍是 locked，补偿同轮时序：同一 agentic turn 内
+        # 前置工具调用可能已满足 trigger_conditions，就地刷新一次。
+        if current_status == EventStatus.LOCKED and engine:
+            ctx = self.session.build_tick_context("post")
+            if ctx:
+                try:
+                    engine.tick(ctx)
+                except Exception:
+                    pass
+            # 重新读取状态
+            node = wg.get_node(event_id)
+            current_status = node.state.get("status", EventStatus.LOCKED) if node else EventStatus.LOCKED
+
+        if current_status == EventStatus.LOCKED:
+            from app.runtime.area_runtime import AreaRuntime
+            hint = AreaRuntime._summarize_completion_conditions(
+                node.properties.get("trigger_conditions") or node.properties.get("completion_conditions"),
             )
             payload = {
                 "success": False,
                 "event_id": event_id,
-                "current_status": "locked",
-                "message": f"事件 '{target_event.name}' 尚未解锁",
+                "current_status": EventStatus.LOCKED,
+                "message": f"事件 '{node.name}' 尚未解锁",
                 "unmet_conditions": hint or "未知条件",
                 "available_events": [
-                    e.id for e in area_rt.events if e.status == "available"
+                    eid for eid in wg.find_events_in_scope(self.session.player_location or "")
+                    if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.AVAILABLE
                 ],
             }
             await self._record("activate_event", args, started, payload, False, payload["message"])
             return payload
 
-        if target_event.status != "available":
+        if current_status != EventStatus.AVAILABLE:
             payload = {
                 "success": False,
                 "event_id": event_id,
-                "current_status": target_event.status,
-                "message": f"事件 '{target_event.name}' 当前状态为 '{target_event.status}'，需要 'available'",
+                "current_status": current_status,
+                "message": f"事件 '{node.name}' 当前状态为 '{current_status}'，需要 'available'",
             }
             await self._record("activate_event", args, started, payload, False, payload["message"])
             return payload
 
-        target_event.status = "active"
-        area_rt.record_action(f"activated_event:{event_id}")
+        # 激活事件（E4 P0: 始终写入 activated_at_round，供超时/冷却计算使用）
+        current_round = getattr(self.session.narrative, "rounds_in_chapter", 0) if self.session.narrative else 0
+        wg.merge_state(event_id, {"status": EventStatus.ACTIVE, "activated_at_round": current_round})
 
-        # C7c: 双写到 WorldGraph
-        self._wg_sync_event_status(event_id, "active")
-        self._wg_emit_event(event_id, "event_activated")
+        # U4: 如果事件有 stages，初始化 current_stage
+        stages = node.properties.get("stages", [])
+        if stages:
+            first_stage_id = stages[0]["id"] if isinstance(stages[0], dict) else stages[0].id
+            wg.merge_state(event_id, {
+                "current_stage": first_stage_id,
+            })
+
+        # 传播事件
+        if engine:
+            try:
+                from app.world.models import WorldEvent
+                ctx = self.session.build_tick_context("post")
+                if ctx:
+                    evt = WorldEvent(
+                        event_type="event_activated",
+                        origin_node=event_id,
+                        actor="player",   # U23: 玩家手动激活
+                        game_day=ctx.game_day,
+                        game_hour=ctx.game_hour,
+                        data={"event_id": event_id},
+                        visibility="scope",
+                    )
+                    engine.handle_event(evt, ctx)
+            except Exception as exc:
+                logger.warning("[v4_tool] 事件传播失败 '%s': %s", event_id, exc)
+
+        if self.area:
+            self.area.record_action(f"activated_event:{event_id}")
 
         payload = {
             "success": True,
             "event_id": event_id,
-            "event_name": target_event.name,
-            "new_status": "active",
-            "narrative_directive": target_event.narrative_directive,
+            "event_name": node.name,
+            "new_status": EventStatus.ACTIVE,
+            "narrative_directive": node.properties.get("narrative_directive", ""),
         }
         await self._record("activate_event", args, started, payload, True, None)
         return payload
 
-    async def complete_event(self, event_id: str) -> Dict[str, Any]:
+    async def complete_event(self, event_id: str, outcome_key: str = "") -> Dict[str, Any]:
         """Complete an active event, triggering on_complete side effects.
 
         Args:
             event_id: Event id from `area_context.events` with status "active".
+            outcome_key: Optional outcome key (e.g. "victory", "mercy"). If the event
+                has defined outcomes in `available_outcomes`, pass the desired key.
+                Leave empty for events without outcomes.
 
         Usage:
             - When the event's objective is fulfilled, call this to complete it.
             - Side effects (unlock_events, add_items, add_xp) are applied automatically.
+            - For events with outcomes, pass outcome_key to select a specific ending.
         """
         started = time.perf_counter()
         args = {"event_id": event_id}
+        if outcome_key:
+            args["outcome_key"] = outcome_key
 
-        area_rt = self.area
-        if not area_rt:
-            payload = {"success": False, "error": "no current area"}
+        wg = getattr(self.session, "world_graph", None)
+        engine = getattr(self.session, "_behavior_engine", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            payload = {"success": False, "error": "WorldGraph not available"}
             await self._record("complete_event", args, started, payload, False, payload["error"])
             return payload
 
-        target_event = None
-        for event in area_rt.events:
-            if event.id == event_id:
-                target_event = event
-                break
-
-        if not target_event:
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            active_events = [
+                eid for eid in wg.find_events_in_scope(self.session.player_location or "")
+                if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.ACTIVE
+            ]
             payload = {
                 "success": False,
                 "error": f"event not found: {event_id}",
-                "active_events": [e.id for e in area_rt.events if e.status == "active"],
+                "active_events": active_events,
             }
             await self._record("complete_event", args, started, payload, False, payload["error"])
             return payload
 
-        if target_event.status != "active":
+        current_status = node.state.get("status", EventStatus.LOCKED)
+        if current_status != EventStatus.ACTIVE:
             payload = {
                 "success": False,
-                "error": f"event '{event_id}' status is '{target_event.status}', expected 'active'",
+                "error": f"event '{event_id}' status is '{current_status}', expected 'active'",
             }
             await self._record("complete_event", args, started, payload, False, payload["error"])
             return payload
 
-        target_event.status = "completed"
-        area_rt._apply_on_complete(target_event.on_complete, self.session)
-        area_rt.record_action(f"completed_event:{event_id}")
+        # 标记完成
+        wg.merge_state(event_id, {"status": EventStatus.COMPLETED})
 
-        # C7c: 双写到 WorldGraph
-        self._wg_sync_event_status(event_id, "completed")
-        self._wg_emit_event(event_id, "event_completed")
+        # U5: outcome 处理
+        outcome_applied = False
+        if outcome_key:
+            outcomes = node.properties.get("outcomes", {})
+            outcome = outcomes.get(outcome_key)
+            if not outcome:
+                # 回滚
+                wg.merge_state(event_id, {"status": EventStatus.ACTIVE})
+                payload = {
+                    "success": False,
+                    "error": f"Unknown outcome: {outcome_key}",
+                    "available_outcomes": list(outcomes.keys()),
+                }
+                await self._record("complete_event", args, started, payload, False, payload["error"])
+                return payload
+
+            # 验证 outcome 条件
+            outcome_conditions = outcome.get("conditions") if isinstance(outcome, dict) else getattr(outcome, "conditions", None)
+            if outcome_conditions:
+                from app.models.narrative import ConditionGroup as CG
+                ctx = self.session.build_tick_context("post")
+                if ctx:
+                    from app.world.behavior_engine import ConditionEvaluator
+                    eval_result = ConditionEvaluator().evaluate(
+                        CG(**outcome_conditions) if isinstance(outcome_conditions, dict) else outcome_conditions,
+                        ctx,
+                    )
+                    if not eval_result.satisfied:
+                        wg.merge_state(event_id, {"status": EventStatus.ACTIVE})
+                        payload = {
+                            "success": False,
+                            "error": f"Outcome conditions not met: {outcome_key}",
+                        }
+                        await self._record("complete_event", args, started, payload, False, payload["error"])
+                        return payload
+
+            # 设置 outcome
+            wg.merge_state(event_id, {"outcome": outcome_key})
+            # 应用 outcome 特定奖励
+            outcome_dict = outcome if isinstance(outcome, dict) else outcome.model_dump()
+            self._apply_outcome_rewards(outcome_dict, event_id, node)
+            outcome_applied = True
+        else:
+            # 现有逻辑: 应用 on_complete 通用奖励
+            on_complete = node.properties.get("on_complete")
+            self._apply_on_complete_from_graph(on_complete, event_id, node)
 
         # Track in narrative progress
         if self.session.narrative:
-            triggered = getattr(self.session.narrative, "events_triggered", None)
-            if triggered is not None and event_id not in triggered:
+            triggered = self.session.narrative.events_triggered
+            if event_id not in triggered:
                 triggered.append(event_id)
                 self.session.mark_narrative_dirty()
 
-        # 级联解锁：完成事件后立即刷新状态机，
-        # 让依赖本事件的下游事件在同轮内即可从 locked→available
-        cascade_updates = area_rt.check_events(self.session)
-        newly_available = [
-            u.event.id for u in cascade_updates
-            if u.transition == "locked→available"
-        ]
+        # 级联解锁：先 handle_event 传播，再 tick 刷新 ON_TICK 解锁
+        newly_available: List[str] = []
+        if engine:
+            try:
+                from app.world.models import WorldEvent
+                ctx = self.session.build_tick_context("post")
+                if ctx:
+                    # handle_event 传播 ON_EVENT behaviors
+                    evt = WorldEvent(
+                        event_type="event_completed",
+                        origin_node=event_id,
+                        actor="player",   # U23: 工具调用均为玩家触发
+                        game_day=ctx.game_day,
+                        game_hour=ctx.game_hour,
+                        data={
+                            "event_id": event_id,
+                            "outcome": outcome_key or None,
+                            "source": "manual" if outcome_key else "tool",  # 区分手动选择结局 vs 工具直接完成
+                        },
+                        visibility="scope",
+                    )
+                    cascade_result = engine.handle_event(evt, ctx)
+                    # 只同步 narrative（不 apply 副作用，工具已手动处理）
+                    self.session._sync_tick_to_narrative(cascade_result)
 
-        payload = {
+                    # tick 刷新 ON_TICK 条件 → 解锁依赖事件
+                    tick_result = engine.tick(ctx)
+                    self.session._sync_tick_to_narrative(tick_result)
+                    # 收集新解锁事件
+                    for nid, changes in tick_result.state_changes.items():
+                        if changes.get("status") in ("available", "active"):
+                            newly_available.append(nid)
+                    for nid, changes in cascade_result.state_changes.items():
+                        if changes.get("status") in ("available", "active") and nid not in newly_available:
+                            newly_available.append(nid)
+            except Exception as exc:
+                logger.warning("[v4_tool] 级联解锁失败 '%s': %s", event_id, exc)
+
+        # 分发到同伴（工具直接处理，不依赖 tick 副作用路径）
+        self._dispatch_event_to_companions_from_graph(event_id, node)
+
+        if self.area:
+            self.area.record_action(f"completed_event:{event_id}")
+
+        payload: Dict[str, Any] = {
             "success": True,
             "event_id": event_id,
-            "event_name": target_event.name,
+            "event_name": node.name,
             "new_status": "completed",
-            "on_complete_applied": bool(target_event.on_complete),
             "newly_available_events": newly_available,
         }
+        if outcome_key:
+            payload["outcome"] = outcome_key
+            payload["outcome_applied"] = outcome_applied
+        else:
+            payload["on_complete_applied"] = bool(node.properties.get("on_complete"))
         await self._record("complete_event", args, started, payload, True, None)
         return payload
+
+    def _apply_on_complete_from_graph(
+        self, on_complete: Optional[Dict[str, Any]], event_id: str, node: Any,
+    ) -> None:
+        """从 WorldGraph 节点的 on_complete 属性应用副作用。
+
+        同时在 session._applied_side_effect_events 中标记，防止后续 tick 重复发放。
+        """
+        if not on_complete:
+            return
+
+        # add_xp
+        add_xp = on_complete.get("add_xp", 0)
+        if add_xp and self.session.player and hasattr(self.session.player, "xp"):
+            self.session.player.xp = (self.session.player.xp or 0) + add_xp
+            self.session.mark_player_dirty()
+            self.session._applied_side_effect_events.add(f"xp_awarded:{event_id}")
+            logger.info("[v4_tool] 副作用: +%d XP (event=%s)", add_xp, event_id)
+
+        # add_items
+        add_items = on_complete.get("add_items", [])
+        if add_items and self.session.player:
+            inventory = getattr(self.session.player, "inventory", None)
+            if inventory is not None and hasattr(inventory, "append"):
+                for item in add_items:
+                    inventory.append(item)
+                    logger.info("[v4_tool] 副作用: +物品 %s (event=%s)", item, event_id)
+                self.session.mark_player_dirty()
+                self.session._applied_side_effect_events.add(f"item_granted:{event_id}")
+
+        # add_gold
+        add_gold = on_complete.get("add_gold", 0)
+        if add_gold and self.session.player and hasattr(self.session.player, "gold"):
+            self.session.player.gold = (self.session.player.gold or 0) + add_gold
+            self.session.mark_player_dirty()
+            self.session._applied_side_effect_events.add(f"gold_awarded:{event_id}")
+            logger.info("[v4_tool] 副作用: +%d 金币 (event=%s)", add_gold, event_id)
+
+        # reputation_changes
+        rep_changes = on_complete.get("reputation_changes") or {}
+        if rep_changes:
+            wg = getattr(self.session, "world_graph", None)
+            if wg and wg.has_node("world_root"):
+                root = wg.get_node("world_root")
+                reps = dict(root.state.get("faction_reputations", {})) if root else {}
+                for faction, delta in rep_changes.items():
+                    reps[faction] = reps.get(faction, 0) + delta
+                    logger.info("[v4_tool] 副作用: 声望 %s %+d (event=%s)", faction, delta, event_id)
+                wg.merge_state("world_root", {"faction_reputations": reps})
+                self.session._applied_side_effect_events.add(f"reputation_changed:{event_id}")
+
+        # world_flags
+        wf_changes = on_complete.get("world_flags") or {}
+        if wf_changes:
+            wg = getattr(self.session, "world_graph", None)
+            if wg and wg.has_node("world_root"):
+                root = wg.get_node("world_root")
+                flags = dict(root.state.get("world_flags", {})) if root else {}
+                for key, value in wf_changes.items():
+                    flags[key] = value
+                    logger.info("[v4_tool] 副作用: 世界标记 %s = %s (event=%s)", key, value, event_id)
+                wg.merge_state("world_root", {"world_flags": flags})
+                self.session._applied_side_effect_events.add(f"world_flag_set:{event_id}")
+
+        # unlock_events — 由 BehaviorEngine cascade 自动处理，无需手动
+
+    def _apply_outcome_rewards(
+        self, outcome: Dict[str, Any], event_id: str, node: Any,
+    ) -> None:
+        """应用 EventOutcome 的特定奖励，与 _apply_on_complete_from_graph 类似。"""
+        rewards = outcome.get("rewards", {})
+        if not rewards and not outcome.get("reputation_changes") and not outcome.get("world_flags"):
+            return
+
+        add_xp = rewards.get("xp", 0)
+        if add_xp and self.session.player and hasattr(self.session.player, "xp"):
+            self.session.player.xp = (self.session.player.xp or 0) + add_xp
+            self.session.mark_player_dirty()
+            self.session._applied_side_effect_events.add(f"xp_awarded:{event_id}")
+            logger.info("[v4_tool] outcome 奖励: +%d XP (event=%s)", add_xp, event_id)
+
+        add_gold = rewards.get("gold", 0)
+        if add_gold and self.session.player and hasattr(self.session.player, "gold"):
+            self.session.player.gold = (self.session.player.gold or 0) + add_gold
+            self.session.mark_player_dirty()
+            self.session._applied_side_effect_events.add(f"gold_awarded:{event_id}")
+            logger.info("[v4_tool] outcome 奖励: +%d 金币 (event=%s)", add_gold, event_id)
+
+        for item in (rewards.get("items") or []):
+            if self.session.player:
+                inventory = getattr(self.session.player, "inventory", None)
+                if inventory is not None and hasattr(inventory, "append"):
+                    inventory.append({"item_id": item} if isinstance(item, str) else item)
+                    self.session.mark_player_dirty()
+                    self.session._applied_side_effect_events.add(f"item_granted:{event_id}")
+
+        rep_changes = outcome.get("reputation_changes") or {}
+        if rep_changes:
+            wg = getattr(self.session, "world_graph", None)
+            if wg and wg.has_node("world_root"):
+                root = wg.get_node("world_root")
+                reps = dict(root.state.get("faction_reputations", {})) if root else {}
+                for faction, delta in rep_changes.items():
+                    reps[faction] = reps.get(faction, 0) + delta
+                wg.merge_state("world_root", {"faction_reputations": reps})
+                self.session._applied_side_effect_events.add(f"reputation_changed:{event_id}")
+
+        wf_changes = outcome.get("world_flags") or {}
+        if wf_changes:
+            wg = getattr(self.session, "world_graph", None)
+            if wg and wg.has_node("world_root"):
+                root = wg.get_node("world_root")
+                flags = dict(root.state.get("world_flags", {})) if root else {}
+                for key, value in wf_changes.items():
+                    flags[key] = value
+                wg.merge_state("world_root", {"world_flags": flags})
+                self.session._applied_side_effect_events.add(f"world_flag_set:{event_id}")
+
+        # unlock_events — 显式处理（outcome 已设置，自动行为不会再补发）
+        unlock_events = outcome.get("unlock_events") or []
+        if unlock_events:
+            wg = getattr(self.session, "world_graph", None)
+            if wg:
+                for unlock_eid in unlock_events:
+                    unlock_node = wg.get_node(unlock_eid)
+                    if unlock_node and unlock_node.state.get("status") == EventStatus.LOCKED:
+                        wg.merge_state(unlock_eid, {"status": EventStatus.AVAILABLE})
+                        self.session._applied_side_effect_events.add(f"event_unlocked:{unlock_eid}")
+
+    def _dispatch_event_to_companions_from_graph(
+        self, event_id: str, node: Any,
+    ) -> None:
+        """将完成的事件分发到同伴（从 WorldGraph 节点）。
+
+        同时在 session._applied_side_effect_events 中标记，防止后续 tick 重复分发。
+        """
+        companions = getattr(self.session, "companions", None)
+        if not companions:
+            return
+        from app.runtime.models.companion_state import CompactEvent
+        game_day = self.session.time.day if self.session.time else 1
+        area_id = self.session.player_location or ""
+        compact = CompactEvent(
+            event_id=event_id,
+            event_name=node.name,
+            summary=node.properties.get("description", node.name),
+            area_id=area_id,
+            game_day=game_day,
+            importance=node.properties.get("importance", "side"),
+        )
+        for companion in companions.values():
+            if hasattr(companion, "add_event"):
+                companion.add_event(compact)
+        self.session._applied_side_effect_events.add(f"companion_dispatch:{event_id}")
 
     async def advance_chapter(
         self, target_chapter_id: str, transition_type: str = "normal"
@@ -1499,6 +1963,362 @@ class V4AgenticToolRegistry:
         return payload
 
     # =========================================================================
+    # Event stage & objective tools (U6 + U11)
+    # =========================================================================
+
+    async def advance_stage(self, event_id: str, stage_id: str = "") -> Dict[str, Any]:
+        """Manually advance an event to the next stage or a specific stage.
+
+        Args:
+            event_id: Active event id.
+            stage_id: Target stage id. Empty string = advance to next sequential stage.
+
+        Usage:
+            - For stages without completion_conditions (narrative-driven progression).
+            - Validates required objectives are completed before advancing.
+        """
+        started = time.perf_counter()
+        args = {"event_id": event_id, "stage_id": stage_id}
+
+        wg = getattr(self.session, "world_graph", None)
+        engine = getattr(self.session, "_behavior_engine", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            payload = {"success": False, "error": "WorldGraph not available"}
+            await self._record("advance_stage", args, started, payload, False, payload["error"])
+            return payload
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            payload = {"success": False, "error": f"event not found: {event_id}"}
+            await self._record("advance_stage", args, started, payload, False, payload["error"])
+            return payload
+
+        if node.state.get("status") != EventStatus.ACTIVE:
+            payload = {"success": False, "error": f"event '{event_id}' is not active"}
+            await self._record("advance_stage", args, started, payload, False, payload["error"])
+            return payload
+
+        stages_raw = node.properties.get("stages", [])
+        if not stages_raw:
+            payload = {"success": False, "error": f"event '{event_id}' has no stages"}
+            await self._record("advance_stage", args, started, payload, False, payload["error"])
+            return payload
+
+        current_stage_id = node.state.get("current_stage")
+
+        # 找当前 stage 索引
+        current_idx = -1
+        for i, s in enumerate(stages_raw):
+            sid = s["id"] if isinstance(s, dict) else s.id
+            if sid == current_stage_id:
+                current_idx = i
+                break
+
+        if current_idx < 0:
+            payload = {"success": False, "error": f"current_stage '{current_stage_id}' not found in stages"}
+            await self._record("advance_stage", args, started, payload, False, payload["error"])
+            return payload
+
+        # 校验当前 stage 的 required objectives 全部完成
+        current_stage = stages_raw[current_idx]
+        cs = current_stage if isinstance(current_stage, dict) else current_stage.model_dump()
+        obj_progress = node.state.get("objective_progress", {})
+        for obj in cs.get("objectives", []):
+            if obj.get("required", True) and not obj_progress.get(obj["id"], False):
+                payload = {
+                    "success": False,
+                    "error": f"Required objective '{obj['id']}' not completed",
+                    "incomplete_objectives": [
+                        o["id"] for o in cs.get("objectives", [])
+                        if o.get("required", True) and not obj_progress.get(o["id"], False)
+                    ],
+                }
+                await self._record("advance_stage", args, started, payload, False, payload["error"])
+                return payload
+
+        # 确定目标 stage
+        if stage_id:
+            target_idx = -1
+            for i, s in enumerate(stages_raw):
+                sid = s["id"] if isinstance(s, dict) else s.id
+                if sid == stage_id:
+                    target_idx = i
+                    break
+            if target_idx < 0:
+                payload = {"success": False, "error": f"target stage '{stage_id}' not found"}
+                await self._record("advance_stage", args, started, payload, False, payload["error"])
+                return payload
+        else:
+            # 下一个 stage
+            target_idx = current_idx + 1
+
+        is_last = target_idx >= len(stages_raw)
+
+        if is_last:
+            # 最后一个 stage → 自动调 complete_event
+            result = await self.complete_event(event_id)
+            result["advanced_from_stage"] = current_stage_id
+            result["auto_completed"] = True
+            return result
+
+        target_stage = stages_raw[target_idx]
+        target_stage_id = target_stage["id"] if isinstance(target_stage, dict) else target_stage.id
+        target_stage_name = target_stage.get("name", "") if isinstance(target_stage, dict) else getattr(target_stage, "name", "")
+
+        # 更新 current_stage + stage_progress
+        progress = dict(node.state.get("stage_progress", {}))
+        progress[current_stage_id] = True
+        wg.merge_state(event_id, {
+            "current_stage": target_stage_id,
+            "stage_progress": progress,
+        })
+
+        # 补偿 tick: 推进后可能满足新阶段的自动条件
+        if engine:
+            try:
+                ctx = self.session.build_tick_context("post")
+                if ctx:
+                    tick_result = engine.tick(ctx)
+                    self.session._sync_tick_to_narrative(tick_result)
+            except Exception as exc:
+                logger.warning("[v4_tool] advance_stage 补偿 tick 失败: %s", exc)
+
+        ts = target_stage if isinstance(target_stage, dict) else target_stage.model_dump()
+        payload = {
+            "success": True,
+            "event_id": event_id,
+            "previous_stage": current_stage_id,
+            "new_stage": target_stage_id,
+            "stage_name": target_stage_name,
+            "narrative_directive": ts.get("narrative_directive", ""),
+        }
+        await self._record("advance_stage", args, started, payload, True, None)
+        return payload
+
+    async def complete_event_objective(self, event_id: str, objective_id: str) -> Dict[str, Any]:
+        """Mark an event objective as completed.
+
+        Args:
+            event_id: The active event containing this objective.
+            objective_id: The objective id within the event's current stage.
+
+        Usage:
+            - When a player fulfills a specific objective within an event stage.
+            - Different from complete_objective which is for chapter-level objectives.
+        """
+        started = time.perf_counter()
+        args = {"event_id": event_id, "objective_id": objective_id}
+
+        wg = getattr(self.session, "world_graph", None)
+        engine = getattr(self.session, "_behavior_engine", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            payload = {"success": False, "error": "WorldGraph not available"}
+            await self._record("complete_event_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            payload = {"success": False, "error": f"event not found: {event_id}"}
+            await self._record("complete_event_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        if node.state.get("status") != EventStatus.ACTIVE:
+            payload = {"success": False, "error": f"event '{event_id}' is not active"}
+            await self._record("complete_event_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        # 验证 objective 存在于当前 stage
+        stages_raw = node.properties.get("stages", [])
+        current_stage_id = node.state.get("current_stage")
+        objective_found = False
+
+        if stages_raw and current_stage_id:
+            for s in stages_raw:
+                sid = s["id"] if isinstance(s, dict) else s.id
+                if sid == current_stage_id:
+                    objectives = s.get("objectives", []) if isinstance(s, dict) else getattr(s, "objectives", [])
+                    for obj in objectives:
+                        oid = obj["id"] if isinstance(obj, dict) else obj.id
+                        if oid == objective_id:
+                            objective_found = True
+                            break
+                    break
+
+        if not objective_found:
+            payload = {
+                "success": False,
+                "error": f"objective '{objective_id}' not found in current stage '{current_stage_id}'",
+            }
+            await self._record("complete_event_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        # 检查是否已完成
+        obj_progress = dict(node.state.get("objective_progress", {}))
+        if obj_progress.get(objective_id, False):
+            payload = {"success": False, "error": f"objective '{objective_id}' already completed"}
+            await self._record("complete_event_objective", args, started, payload, False, payload["error"])
+            return payload
+
+        # 写入 objective_progress
+        obj_progress[objective_id] = True
+        wg.merge_state(event_id, {"objective_progress": obj_progress})
+
+        # 计算剩余 objectives
+        remaining = []
+        if stages_raw and current_stage_id:
+            for s in stages_raw:
+                sid = s["id"] if isinstance(s, dict) else s.id
+                if sid == current_stage_id:
+                    objectives = s.get("objectives", []) if isinstance(s, dict) else getattr(s, "objectives", [])
+                    for obj in objectives:
+                        oid = obj["id"] if isinstance(obj, dict) else obj.id
+                        if not obj_progress.get(oid, False):
+                            remaining.append(oid)
+                    break
+
+        # 补偿 tick: objective 完成可能满足 stage.completion_conditions
+        # 注: stage 条件通常用标准条件类型 (LOCATION, NPC_INTERACTED 等)，
+        #     不直接检查 objective_progress。但补偿 tick 仍然有用——
+        #     objective 完成后其他条件可能恰好满足。
+        if engine:
+            try:
+                ctx = self.session.build_tick_context("post")
+                if ctx:
+                    tick_result = engine.tick(ctx)
+                    self.session._sync_tick_to_narrative(tick_result)
+            except Exception as exc:
+                logger.warning("[v4_tool] complete_event_objective 补偿 tick 失败: %s", exc)
+
+        payload = {
+            "success": True,
+            "event_id": event_id,
+            "objective_id": objective_id,
+            "remaining_objectives": remaining,
+        }
+        await self._record("complete_event_objective", args, started, payload, True, None)
+        return payload
+
+    # =========================================================================
+    # E4: fail_event 工具 (U10)
+    # =========================================================================
+
+    async def fail_event(self, event_id: str, reason: str = "") -> Dict[str, Any]:
+        """标记事件失败（ACTIVE → FAILED）。
+
+        主路径靠 timeout behavior 自动触发；本工具供 LLM 手动覆盖。
+        对 is_repeatable 事件，失败后会通过 _sync_tick_to_narrative 进入 COOLDOWN 路径。
+
+        Args:
+            event_id: 要标记失败的事件 ID（必须处于 active 状态）。
+            reason: 失败原因描述（可选，便于调试/叙事追踪）。
+        """
+        started = time.perf_counter()
+        args = {"event_id": event_id, "reason": reason}
+
+        wg = getattr(self.session, "world_graph", None)
+        engine = getattr(self.session, "_behavior_engine", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            payload = {"success": False, "error": "WorldGraph 不可用"}
+            await self._record("fail_event", args, started, payload, False, payload["error"])
+            return payload
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            payload = {"success": False, "error": f"事件节点不存在: {event_id}"}
+            await self._record("fail_event", args, started, payload, False, payload["error"])
+            return payload
+
+        current_status = node.state.get("status")
+        if current_status != EventStatus.ACTIVE:
+            payload = {
+                "success": False,
+                "error": f"事件 {event_id} 不处于 ACTIVE 状态（当前: {current_status}）",
+            }
+            await self._record("fail_event", args, started, payload, False, payload["error"])
+            return payload
+
+        # 设置 FAILED
+        wg.merge_state(event_id, {
+            "status": EventStatus.FAILED,
+            "failure_reason": reason or "manual_fail",
+        })
+
+        # 发射 WorldEvent + cascade（与 complete_event 对称）
+        if engine:
+            try:
+                from app.world.models import WorldEvent
+                ctx = self.session.build_tick_context("post")
+                if ctx:
+                    evt = WorldEvent(
+                        event_type="event_failed",
+                        origin_node=event_id,
+                        actor="player",
+                        game_day=ctx.game_day,
+                        game_hour=ctx.game_hour,
+                        data={"event_id": event_id, "reason": reason},
+                        visibility="scope",
+                    )
+                    fail_result = engine.handle_event(evt, ctx)
+                    # 触发 COOLDOWN 转换（is_repeatable 事件）
+                    self.session._sync_tick_to_narrative(fail_result)
+                    self.session._apply_tick_side_effects(fail_result)
+            except Exception as exc:
+                logger.warning("[v4_tool] fail_event 事件传播失败 '%s': %s", event_id, exc)
+
+        if self.area:
+            self.area.record_action(f"failed_event:{event_id}")
+
+        payload = {
+            "success": True,
+            "event_id": event_id,
+            "status": "failed",
+            "reason": reason or "manual_fail",
+        }
+        await self._record("fail_event", args, started, payload, True, None)
+        return payload
+
+    # =========================================================================
+    # E3: pending_flash 回报工具 (U12)
+    # =========================================================================
+
+    async def report_flash_evaluation(
+        self,
+        prompt: str,
+        result: bool,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """回报语义条件（FLASH_EVALUATE）的 LLM 评估结果。
+
+        当上下文中出现 pending_flash_evaluations 时，对每个条件判断后调用本工具。
+        结果在本回合 post-tick 中被 BehaviorEngine 消费，用于触发条件满足的行为。
+
+        Args:
+            prompt: 条件提示文本（与 pending_flash_evaluations[].prompt 对应）
+            result: 评估结果（True=条件满足, False=条件不满足）
+            reason: 评估依据（可选，便于调试追踪）
+        """
+        started = time.perf_counter()
+        args = {"prompt": prompt, "result": result, "reason": reason}
+
+        if not prompt:
+            payload = {"success": False, "error": "prompt 不能为空"}
+            await self._record("report_flash_evaluation", args, started, payload, False, payload["error"])
+            return payload
+
+        if not hasattr(self.session, "flash_results"):
+            payload = {"success": False, "error": "session 不支持 flash_results"}
+            await self._record("report_flash_evaluation", args, started, payload, False, payload["error"])
+            return payload
+
+        self.session.flash_results[prompt] = bool(result)
+        logger.info("[V4Tools] flash_evaluation 回报: prompt=%r result=%s reason=%s",
+                    prompt[:80], result, reason)
+
+        payload = {"success": True, "prompt": prompt, "result": result, "stored": True}
+        await self._record("report_flash_evaluation", args, started, payload, True, None)
+        return payload
+
+    # =========================================================================
     # Disposition tool (NEW in V4)
     # =========================================================================
 
@@ -1540,33 +2360,55 @@ class V4AgenticToolRegistry:
             await self._record("update_disposition", args, started, payload, False, payload["error"])
             return payload
 
-        game_day = None
-        if self.session.time:
-            game_day = getattr(self.session.time, "day", None)
-
-        try:
-            result = await asyncio.wait_for(
-                self.graph_store.update_disposition(
-                    world_id=self.world_id,
-                    character_id=npc_id,
-                    target_id="player",
-                    deltas=cleaned,
-                    reason=reason,
-                    game_day=game_day,
-                ),
-                timeout=settings.admin_agentic_tool_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            payload = {"success": False, "error": "tool timeout: update_disposition"}
-            await self._record("update_disposition", args, started, payload, False, payload["error"])
-            return payload
-        except Exception as exc:
-            logger.error("update_disposition raised: %s", exc, exc_info=True)
-            payload = {"success": False, "error": f"update_disposition error: {type(exc).__name__}: {str(exc)[:200]}"}
+        # P2: 直接写 WorldGraph NPC 节点 state，替代旧 graph_store Firestore 路径
+        wg = getattr(self.session, "world_graph", None)
+        if not wg or getattr(self.session, "_world_graph_failed", False):
+            payload = {"success": False, "error": "WorldGraph not available"}
             await self._record("update_disposition", args, started, payload, False, payload["error"])
             return payload
 
-        payload = {"success": True, "npc_id": npc_id, "applied_deltas": cleaned, "current": result}
+        node = wg.get_node(npc_id)
+        if not node:
+            payload = {"success": False, "error": f"NPC node not found: {npc_id}"}
+            await self._record("update_disposition", args, started, payload, False, payload["error"])
+            return payload
+
+        # 读取当前好感度
+        dispositions = node.state.get("dispositions", {})
+        current = dispositions.get("player", {
+            "approval": 0, "trust": 0, "fear": 0, "romance": 0, "history": [],
+        })
+
+        # 应用 deltas + clamp
+        clamp_ranges = {
+            "approval": (-100, 100),
+            "trust": (-100, 100),
+            "fear": (0, 100),
+            "romance": (0, 100),
+        }
+        game_day = getattr(self.session.time, "day", None) if self.session.time else None
+        history_entry = {"reason": reason, "day": game_day}
+        for dim, delta in cleaned.items():
+            lo, hi = clamp_ranges.get(dim, (-100, 100))
+            old_val = current.get(dim, 0)
+            current[dim] = max(lo, min(hi, old_val + delta))
+            history_entry[f"delta_{dim}"] = delta
+
+        # 追加历史（保留最近 50 条）
+        history = current.get("history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append(history_entry)
+        if len(history) > 50:
+            history = history[-50:]
+        current["history"] = history
+
+        # 写回图节点（快照系统自动持久化）
+        wg.merge_state(npc_id, {"dispositions": {"player": current}})
+
+        # 返回不含 history 的精简视图
+        result_view = {dim: current.get(dim, 0) for dim in ("approval", "trust", "fear", "romance")}
+        payload = {"success": True, "npc_id": npc_id, "applied_deltas": cleaned, "current": result_view}
         await self._record("update_disposition", args, started, payload, True, None)
         return payload
 

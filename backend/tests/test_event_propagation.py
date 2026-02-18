@@ -10,7 +10,7 @@ Tests for EventPropagator (C5).
 """
 import pytest
 
-from app.world.event_propagation import EventPropagator, DEFAULT_DECAY, MAX_DEPTH
+from app.world.event_propagation import EventPropagator, DEFAULT_DECAY, MAX_DEPTH_SCOPE, MAX_DEPTH_GLOBAL
 from app.world.models import (
     WorldEdgeType,
     WorldEvent,
@@ -109,15 +109,40 @@ class TestPropagateScope:
         reached_ids = [nid for nid, _ in reached]
         assert "loc_1" in reached_ids
 
-    def test_scope_includes_horizontal(self):
-        """scope 也走 CONNECTS 边。"""
+    def test_scope_no_connects_edge(self):
+        """P4: scope 不走 CONNECTS 水平边，但可通过 CONTAINS 垂直路径到达同级节点。"""
+        # 创建两个区域，仅通过 CONNECTS 连接（不共享父节点）
+        wg = WorldGraph()
+        wg.add_node(WorldNode(id="root", type=WorldNodeType.WORLD, name="Root"))
+        wg.add_node(WorldNode(id="r1", type=WorldNodeType.REGION, name="R1"))
+        wg.add_node(WorldNode(id="r2", type=WorldNodeType.REGION, name="R2"))
+        wg.add_node(WorldNode(id="a1", type=WorldNodeType.AREA, name="A1"))
+        wg.add_node(WorldNode(id="a2", type=WorldNodeType.AREA, name="A2"))
+        wg.add_edge("root", "r1", WorldEdgeType.CONTAINS.value)
+        wg.add_edge("root", "r2", WorldEdgeType.CONTAINS.value)
+        wg.add_edge("r1", "a1", WorldEdgeType.CONTAINS.value)
+        wg.add_edge("r2", "a2", WorldEdgeType.CONTAINS.value)
+        wg.add_edge("a1", "a2", WorldEdgeType.CONNECTS.value, key="conn")
+
+        prop = EventPropagator(wg)
+        # scope 从 a1: 垂直上到 r1 → root（但 MAX_DEPTH_SCOPE=3，不够到 r2 → a2）
+        event = _make_event(origin_node="a1", visibility="scope", strength=1.0, min_strength=0.001)
+        reached = prop.propagate(event)
+        reached_ids = [nid for nid, _ in reached]
+        # scope 不走 CONNECTS → a2 不可达（垂直路径太深也到不了）
+        assert "a2" not in reached_ids
+        assert "r1" in reached_ids  # 垂直父节点可达
+
+    def test_scope_reaches_sibling_via_parent(self):
+        """scope 通过共同父节点可达同级节点（垂直路径）。"""
         wg = _make_branching_graph()
         prop = EventPropagator(wg)
         event = _make_event(origin_node="area_1", visibility="scope")
         reached = prop.propagate(event)
-
         reached_ids = [nid for nid, _ in reached]
+        # area_2 通过 area_1→region_a→area_2 垂直路径可达
         assert "area_2" in reached_ids
+        assert "region_a" in reached_ids
 
 
 class TestPropagateGlobal:
@@ -168,14 +193,19 @@ class TestDecay:
                 assert abs(weakened.strength - 0.64) < 0.01
 
     def test_horizontal_decay(self):
-        """水平传播衰减 0.5。"""
+        """P4: 水平传播衰减 0.5（仅 global 走 CONNECTS）。"""
         wg = _make_branching_graph()
         prop = EventPropagator(wg)
-        event = _make_event(origin_node="area_1", visibility="scope", strength=1.0)
+        # 使用 global 才走 CONNECTS 水平边
+        event = _make_event(origin_node="area_1", visibility="global", strength=1.0)
         reached = prop.propagate(event)
 
         for nid, weakened in reached:
             if nid == "area_2":
+                # area_2 可能通过两条路径到达:
+                # 1. CONNECTS 水平: 0.5 (depth 1)
+                # 2. CONTAINS 垂直: up(0.8) * down(0.6) = 0.48 (depth 2)
+                # BFS 先到的路径生效（depth 1 先入队）
                 assert abs(weakened.strength - 0.5) < 0.01
 
 
@@ -214,7 +244,7 @@ class TestDepthLimit:
         reached = prop.propagate(event)
         reached_ids = [nid for nid, _ in reached]
 
-        # MAX_DEPTH=3，从 n0 开始: n1(depth=1), n2(2), n3(3)
+        # MAX_DEPTH_SCOPE=3，从 n0 开始: n1(depth=1), n2(2), n3(3)
         assert "n1" in reached_ids
         assert "n2" in reached_ids
         assert "n3" in reached_ids

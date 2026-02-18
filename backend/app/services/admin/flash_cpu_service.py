@@ -1279,6 +1279,7 @@ class FlashCPUService:
                     error=None if success else "解散队伍失败",
                 )
 
+            # [LEGACY] V3 player state ops — V4 pipeline uses V4AgenticToolRegistry direct graph writes
             if op == FlashOperation.HEAL_PLAYER:
                 if not self.character_service or not self.character_store:
                     return FlashResponse(success=False, operation=op, error="character_service not initialized")
@@ -1633,8 +1634,47 @@ class FlashCPUService:
         world_id: str,
         session_id: str,
         combat_payload: Dict[str, Any],
+        *,
+        session: Optional[Any] = None,
     ) -> None:
-        """Sync combat results (HP/XP/gold) back to player character."""
+        """Sync combat results (HP/XP/gold) back to player character.
+
+        U2: 有 session 时走图节点适配器（V4 pipeline 主路径）；
+        无 session 时降级旧 character_store 路径（V3 遗留）。
+        """
+        # U2: 图节点路径 — V4 pipeline 通过 v4_agentic_tools._sync_combat_to_graph() 处理
+        if session is not None:
+            player = session.player
+            if player:
+                try:
+                    player_state = combat_payload.get("player_state") or {}
+                    hp_remaining = player_state.get("hp_remaining")
+                    if hp_remaining is not None:
+                        player.current_hp = max(0, min(int(hp_remaining), player.max_hp))
+                        session.mark_player_dirty()
+
+                    final_result = combat_payload.get("final_result") or combat_payload.get("result") or {}
+                    if isinstance(final_result, dict):
+                        result_type = final_result.get("result", "")
+                        rewards = final_result.get("rewards") or {}
+                        if result_type == "victory" and rewards:
+                            xp = int(rewards.get("xp", 0))
+                            if xp > 0:
+                                player.xp = (player.xp or 0) + xp
+                                session.mark_player_dirty()
+                            gold = int(rewards.get("gold", 0))
+                            if gold > 0:
+                                player.gold = (player.gold or 0) + gold
+                                session.mark_player_dirty()
+                            for item_id in rewards.get("items", []):
+                                player.add_item(item_id, item_id, 1)
+                                session.mark_player_dirty()
+                    logger.info("[combat_sync] Synced combat results via graph node")
+                except Exception as exc:
+                    logger.error("[combat_sync] Graph sync failed: %s", exc, exc_info=True)
+            return
+
+        # [LEGACY] V3 character_store 路径 — V4 pipeline 不再触发
         if not self.character_store or not self.character_service:
             return
         character = await self.character_store.get_character(world_id, session_id)
@@ -1642,34 +1682,28 @@ class FlashCPUService:
             return
 
         try:
-            # Sync HP from combat result
             player_state = combat_payload.get("player_state") or {}
             hp_remaining = player_state.get("hp_remaining")
             if hp_remaining is not None:
                 character.current_hp = max(0, min(int(hp_remaining), character.max_hp))
 
-            # Extract final_result for rewards
             final_result = combat_payload.get("final_result") or combat_payload.get("result") or {}
             if isinstance(final_result, dict):
                 result_type = final_result.get("result", "")
                 rewards = final_result.get("rewards") or {}
 
                 if result_type == "victory" and rewards:
-                    # XP reward (use add_xp for level-up logic)
                     xp = int(rewards.get("xp", 0))
                     if xp > 0:
                         await self.character_service.add_xp(world_id, session_id, xp)
-                        # Re-fetch after add_xp (it saves internally)
                         character = await self.character_store.get_character(world_id, session_id)
                         if not character:
                             return
 
-                    # Gold reward
                     gold = int(rewards.get("gold", 0))
                     if gold > 0:
                         character.gold += gold
 
-                    # Item rewards
                     for item_id in rewards.get("items", []):
                         character.add_item(item_id, item_id, 1)
 
