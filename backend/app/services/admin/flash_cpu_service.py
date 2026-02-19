@@ -49,7 +49,6 @@ class FlashCPUService:
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
         llm_service: Optional[LLMService] = None,
-        analysis_prompt_path: Optional[Path] = None,
         agentic_prompt_path: Optional[Path] = None,
         instance_manager: Optional[Any] = None,
         party_service: Optional[Any] = None,
@@ -65,7 +64,6 @@ class FlashCPUService:
         self.narrative_service = narrative_service
         self.passerby_service = passerby_service or PasserbyService()
         self.llm_service = llm_service or LLMService()
-        self.analysis_prompt_path = analysis_prompt_path or Path("app/prompts/flash_analysis.md")
         self.agentic_prompt_path = agentic_prompt_path or Path("app/prompts/flash_agentic_system.md")
         self.instance_manager = instance_manager
         self.party_service = party_service
@@ -73,13 +71,6 @@ class FlashCPUService:
         self.character_store = character_store
         self.image_service = image_service or ImageGenerationService()
         self.recall_orchestrator: Optional[Any] = None
-
-    def _load_analysis_prompt(self) -> str:
-        if self.analysis_prompt_path.exists():
-            return self.analysis_prompt_path.read_text(encoding="utf-8")
-        return (
-            "你是游戏系统的分析引擎。一次性完成意图解析、操作规划与记忆召回建议，并返回严格 JSON。"
-        )
 
     def _default_plan(self, player_input: str) -> AnalysisPlan:
         intent = ParsedIntent(
@@ -171,227 +162,6 @@ class FlashCPUService:
         )
         return AnalysisPlan(intent=intent, reasoning="system_command")
 
-    def _parse_analysis_result(
-        self,
-        parsed: Dict[str, Any],
-        player_input: str,
-        context: Dict[str, Any],
-    ) -> AnalysisPlan:
-        intent_type_str = str(parsed.get("intent_type", "roleplay")).lower()
-        intent_aliases = {
-            "enter_sublocation": "enter_sub_location",
-            "leave_sublocation": "leave_sub_location",
-            "npc_interaction": "npc_interaction",
-            "team_interaction": "team_interaction",
-            "start_combat": "start_combat",
-        }
-        intent_type_str = intent_aliases.get(intent_type_str, intent_type_str)
-        try:
-            intent_type = IntentType(intent_type_str)
-        except ValueError:
-            intent_type = IntentType.ROLEPLAY
-
-        intent = ParsedIntent(
-            intent_type=intent_type,
-            confidence=float(parsed.get("confidence", 0.8)),
-            target=parsed.get("target"),
-            action=parsed.get("action"),
-            parameters=parsed.get("parameters", {}),
-            raw_input=player_input,
-            interpretation=parsed.get("interpretation"),
-            player_emotion=parsed.get("player_emotion"),
-        )
-
-        operations: List[FlashRequest] = []
-        for req_data in parsed.get("operations", []):
-            if not isinstance(req_data, dict):
-                continue
-            op_raw = str(req_data.get("operation", "")).strip()
-            if not op_raw:
-                continue
-            op_key = op_raw.lower()
-            op_aliases = {
-                "enter_sub_location": "enter_sublocation",
-                "leave_sub_location": "leave_sublocation",
-                "enter_sublocation": "enter_sublocation",
-                "start_combat": "start_combat",
-                "npc_dialogue": "npc_dialogue",
-                "spawn_passerby": "spawn_passerby",
-                "trigger_narrative_event": "trigger_narrative_event",
-                "update_time": "update_time",
-                "navigate": "navigate",
-                "get_progress": "get_progress",
-                "get_status": "get_status",
-                "add_teammate": "add_teammate",
-                "remove_teammate": "remove_teammate",
-                "disband_party": "disband_party",
-                "heal_player": "heal_player",
-                "damage_player": "damage_player",
-                "add_xp": "add_xp",
-                "add_item": "add_item",
-                "remove_item": "remove_item",
-                "ability_check": "ability_check",
-            }
-            op_key = op_aliases.get(op_key, op_key)
-            operation = None
-            try:
-                operation = FlashOperation(op_key)
-            except ValueError:
-                operation = None
-            if not operation:
-                continue
-            operations.append(
-                FlashRequest(
-                    operation=operation,
-                    parameters=req_data.get("parameters", {}),
-                    priority=req_data.get("priority", "normal"),
-                )
-            )
-
-        memory_seeds = [str(s) for s in parsed.get("memory_seeds", []) if s]
-        reasoning = parsed.get("reasoning") or ""
-        context_package = parsed.get("context_package")
-        if context_package and not isinstance(context_package, dict):
-            context_package = None
-
-        story_progression = parsed.get("story_progression")
-        if not isinstance(story_progression, dict) and isinstance(context_package, dict):
-            nested_story_progression = context_package.get("story_progression")
-            if isinstance(nested_story_progression, dict):
-                story_progression = nested_story_progression
-
-        if isinstance(story_progression, dict):
-            story_events_raw = story_progression.get("story_events", [])
-            story_events: List[str] = []
-            if isinstance(story_events_raw, list):
-                for event_id in story_events_raw:
-                    event_text = ""
-                    if isinstance(event_id, str):
-                        event_text = event_id.strip()
-                    elif isinstance(event_id, (int, float)) and not isinstance(event_id, bool):
-                        event_text = str(event_id).strip()
-                    if event_text:
-                        story_events.append(event_text)
-            elif isinstance(story_events_raw, str):
-                story_events = [
-                    token.strip()
-                    for token in story_events_raw.replace("，", ",").replace("、", ",").split(",")
-                    if token.strip()
-                ]
-
-            normalized_story_progression: Dict[str, Any] = {"story_events": story_events}
-            progress_note = story_progression.get("progress_note")
-            if isinstance(progress_note, str) and progress_note.strip():
-                normalized_story_progression["progress_note"] = progress_note.strip()
-
-            # v2: 提取 condition_evaluations（缺失降级为 []）
-            raw_evals = story_progression.get("condition_evaluations", [])
-            condition_evaluations: List[Dict[str, Any]] = []
-            if isinstance(raw_evals, list):
-                for eval_item in raw_evals:
-                    if isinstance(eval_item, dict) and "id" in eval_item:
-                        condition_evaluations.append({
-                            "id": str(eval_item["id"]),
-                            "result": bool(eval_item.get("result", False)),
-                            "reasoning": str(eval_item.get("reasoning", "")),
-                        })
-            if condition_evaluations:
-                normalized_story_progression["condition_evaluations"] = condition_evaluations
-
-            story_progression = normalized_story_progression
-        else:
-            story_progression = None
-
-        return AnalysisPlan(
-            intent=intent,
-            operations=operations,
-            memory_seeds=memory_seeds,
-            reasoning=reasoning,
-            context_package=context_package,
-            story_progression=story_progression,
-        )
-
-    async def analyze_and_plan(
-        self,
-        player_input: str,
-        context: Dict[str, Any],
-    ) -> AnalysisPlan:
-        # [LEGACY] Flash-Only v2 分析方法。agentic 模式下不再作为主路径。
-        if player_input.strip().startswith("/"):
-            return self._handle_system_command(player_input)
-
-        prompt = self._load_analysis_prompt()
-        location = context.get("location") or {}
-        time_info = context.get("time") or {}
-        teammates = context.get("teammates") or []
-        available_destinations = context.get("available_destinations") or []
-        sub_locations = context.get("sub_locations") or location.get("sub_locations") or []
-
-        chapter_info = context.get("chapter_info") or {}
-        chapter_obj = chapter_info.get("chapter") or {}
-        chapter_goals = chapter_info.get("goals", [])
-        chapter_events = chapter_info.get("required_events", [])
-
-        # v2 StoryDirector 注入
-        story_directives_list = context.get("story_directives") or []
-        story_directives_text = "\n".join(story_directives_list) if story_directives_list else "无"
-
-        pending_conditions = context.get("pending_flash_conditions") or []
-        if pending_conditions:
-            pending_lines = []
-            for pc in pending_conditions:
-                if isinstance(pc, dict):
-                    pending_lines.append(f"- [{pc.get('id', '?')}] {pc.get('prompt', '?')}")
-            pending_flash_text = "\n".join(pending_lines) if pending_lines else "无"
-        else:
-            pending_flash_text = "无"
-
-        filled_prompt = prompt.format(
-            player_character=context.get("player_character_summary", "无玩家角色"),
-            location_name=location.get("location_name", "未知地点"),
-            available_destinations=", ".join(
-                d.get("name", d.get("id", str(d)))
-                if isinstance(d, dict) else str(d)
-                for d in available_destinations
-            ) or "无",
-            sub_locations=", ".join(
-                f"{s.get('name', s.get('id', str(s)))}"
-                if isinstance(s, dict) else str(s)
-                for s in sub_locations
-            ) or "无",
-            npcs_present=", ".join(location.get("npcs_present", [])) or "无",
-            teammates=", ".join(
-                t.get("name", t) if isinstance(t, dict) else str(t)
-                for t in teammates
-            ) or "无",
-            time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
-            current_state=context.get("state", "exploring"),
-            active_npc=context.get("active_npc") or "无",
-            player_input=player_input,
-            conversation_history=context.get("conversation_history", "无"),
-            character_roster=context.get("character_roster", "无"),
-            chapter_name=self._sanitize_tavern_text(chapter_obj.get("name", "未知")),
-            chapter_goals="、".join(self._sanitize_tavern_text(g) for g in chapter_goals) if chapter_goals else "无",
-            chapter_description=self._build_enriched_chapter_description(chapter_obj, chapter_info),
-            chapter_events="、".join(chapter_events) if chapter_events else "无",
-            story_directives=story_directives_text,
-            pending_flash_conditions=pending_flash_text,
-        )
-
-        try:
-            result = await self.llm_service.generate_simple(
-                filled_prompt,
-                model_override=settings.admin_flash_model,
-                thinking_level=settings.admin_flash_thinking_level,
-            )
-            parsed = self.llm_service.parse_json(result)
-            if parsed:
-                return self._parse_analysis_result(parsed, player_input, context)
-        except Exception as exc:
-            logger.error("analyze_and_plan 失败: %s", exc, exc_info=True)
-
-        return self._default_plan(player_input)
-
     def _load_curation_prompt(self) -> str:
         curation_path = Path("app/prompts/flash_context_curation.md")
         if curation_path.exists():
@@ -446,6 +216,7 @@ class FlashCPUService:
             recall_orchestrator=recall_orchestrator,
             image_service=self.image_service,
             event_queue=event_queue,
+            engine_executed=context.get("engine_executed"),
         )
 
         context_json = json.dumps(context, ensure_ascii=False, default=str)

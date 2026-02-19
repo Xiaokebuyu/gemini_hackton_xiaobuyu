@@ -47,6 +47,7 @@ class PipelineOrchestrator:
         state_manager: Any,
         world_runtime: Any,
         recall_orchestrator: Any = None,
+        memory_graphizer: Any = None,
     ) -> None:
         self.flash_cpu = flash_cpu
         self.party_service = party_service
@@ -58,6 +59,7 @@ class PipelineOrchestrator:
         self.state_manager = state_manager
         self.world_runtime = world_runtime
         self.recall_orchestrator = recall_orchestrator
+        self.memory_graphizer = memory_graphizer
 
     async def process(
         self,
@@ -171,6 +173,103 @@ class PipelineOrchestrator:
         # 注入好感度数据（P2: 从 WorldGraph 图节点读取，不再走 Firestore）
         self._inject_dispositions_from_graph(session, context_dict)
 
+        # ===== SceneBus: 写入玩家输入 + pre-tick hints =====
+        # 对齐 Direction A 手册顺序：玩家输入先写总线，再做引擎前置执行。
+        if session.scene_bus:
+            from app.world.scene_bus import BusEntry, BusEntryType
+            _vis = f"private:{private_target}" if is_private and private_target else "public"
+            session.scene_bus.publish(BusEntry(
+                actor="player",
+                actor_name="player",
+                type=BusEntryType.ACTION if not is_private else BusEntryType.SPEECH,
+                content=player_input,
+                visibility=_vis,
+            ), event_queue)
+            if pre_tick_result and pre_tick_result.narrative_hints:
+                for hint in pre_tick_result.narrative_hints:
+                    session.scene_bus.publish(BusEntry(
+                        actor="engine",
+                        type=BusEntryType.SYSTEM,
+                        content=hint,
+                    ), event_queue)
+
+        # ===== A.2: 引擎前置执行（高置信度机械意图）=====
+        if session.world_graph:
+            from app.world.intent_resolver import IntentResolver
+            from app.world.intent_executor import IntentExecutor
+            resolver = IntentResolver(session.world_graph, session)
+            intent = resolver.resolve(player_input)
+            if intent is not None:
+                executor = IntentExecutor(
+                    session,
+                    session.scene_bus,
+                    recall_orchestrator=self.recall_orchestrator,
+                    flash_cpu=self.flash_cpu,
+                )
+                engine_result = await executor.dispatch(intent)
+                if engine_result.success:
+                    if session.scene_bus:
+                        for entry in engine_result.bus_entries:
+                            session.scene_bus.publish(entry, event_queue)
+                    context_dict["engine_executed"] = {
+                        "type": engine_result.intent_type,
+                        "target": engine_result.target,
+                        "hints": engine_result.narrative_hints,
+                    }
+                    logger.info(
+                        "[v4] engine pre-executed: %s → %s",
+                        engine_result.intent_type, engine_result.target,
+                    )
+                else:
+                    # 引擎执行失败 — 记录原因，GM 走完整旧路径
+                    logger.warning(
+                        "[v4] engine pre-exec FAILED: type=%s target=%s error=%s",
+                        intent.type.value, intent.target, engine_result.error,
+                    )
+                    context_dict["engine_attempted"] = {
+                        "type": intent.type.value,
+                        "target": intent.target,
+                        "error": engine_result.error,
+                    }
+
+        # 注入总线摘要到 context_dict（B 阶段前）
+        if session.scene_bus:
+            bus_summary = session.scene_bus.get_round_summary()
+            if bus_summary:
+                context_dict["scene_bus_summary"] = bus_summary
+
+        # ===== A.3: NPC autonomous reactions (before GM, so GM can consume them) =====
+        npc_autonomous_responses: List[Dict[str, Any]] = []
+        if session.scene_bus:
+            try:
+                from app.world.npc_reactor import NPCReactor
+                wg = getattr(session, "world_graph", None)
+                reactor = NPCReactor(
+                    instance_manager=None,
+                    world_graph=wg,
+                    use_llm=True,
+                    llm_service=self.flash_cpu.llm_service,
+                )
+                npc_reactions = await reactor.collect_reactions(
+                    session.scene_bus, session, context_dict,
+                )
+                from app.world.scene_bus import BusEntry as _BE
+                for r in npc_reactions:
+                    session.scene_bus.publish(r, event_queue)
+                    npc_autonomous_responses.append({
+                        "character_id": r.actor,
+                        "name": r.actor_name,
+                        "dialogue": r.content,
+                    })
+                # Refresh bus_summary so GM sees NPC reactions
+                if npc_reactions:
+                    bus_summary = session.scene_bus.get_round_summary()
+                    if bus_summary:
+                        context_dict["scene_bus_summary"] = bus_summary
+            except Exception as exc:
+                logger.warning("[v4] NPC reactor failed: %s", exc)
+
+        # ===== B 阶段: Agentic 会话 =====
         agentic_result: AgenticResult = await self.flash_cpu.agentic_process_v4(
             session=session,
             player_input=player_input,
@@ -186,6 +285,32 @@ class PipelineOrchestrator:
             len(agentic_result.tool_calls),
             len(gm_narration),
         )
+
+        # ===== SceneBus: B 阶段后写入工具结果 + NPC 响应 + GM 叙述 =====
+        if session.scene_bus:
+            from app.world.scene_bus import BusEntry, BusEntryType
+            for tc in agentic_result.tool_calls:
+                if tc.success:
+                    session.scene_bus.publish(BusEntry(
+                        actor="engine",
+                        type=BusEntryType.ENGINE_RESULT,
+                        content=f"[{tc.name}] completed",
+                        data={"tool": tc.name, "args": tc.args},
+                    ))
+            for tc in agentic_result.tool_calls:
+                if tc.name == "npc_dialogue" and tc.success and tc.result.get("response"):
+                    session.scene_bus.publish(BusEntry(
+                        actor=tc.args.get("npc_id", "npc"),
+                        actor_name=tc.result.get("npc_name", ""),
+                        type=BusEntryType.SPEECH,
+                        content=tc.result["response"],
+                    ))
+            if gm_narration:
+                session.scene_bus.publish(BusEntry(
+                    actor="gm",
+                    type=BusEntryType.NARRATIVE,
+                    content=gm_narration[:500],
+                ))
 
         # =====================================================================
         # C 阶段: 后处理
@@ -248,6 +373,21 @@ class PipelineOrchestrator:
             session.current_area.record_action(player_input)
 
         # 队友响应（流式推送到 event_queue）
+        # A.3: 注入总线摘要到队友上下文（排除 player/gm 条目，避免与模板变量重复）
+        teammate_context = self._build_teammate_context(
+            session=session,
+            base_context=context_dict,
+            player_input=player_input,
+            gm_narration=gm_narration,
+            world_state_update=world_state_update,
+            agentic_result=agentic_result,
+        )
+        if session.scene_bus:
+            bus_summary_for_teammates = session.scene_bus.get_round_summary(
+                exclude_actors={"player", "gm"}
+            )
+            if bus_summary_for_teammates:
+                teammate_context["scene_bus_summary"] = bus_summary_for_teammates
         party = session.party
         teammate_responses: List[Dict[str, Any]] = []
         if party and party.get_active_members():
@@ -255,7 +395,7 @@ class PipelineOrchestrator:
                 party=party,
                 player_input=player_input,
                 gm_response=gm_narration,
-                context=context_dict,
+                context=teammate_context,
             ):
                 # 实时推送到前端
                 if event_queue:
@@ -268,6 +408,17 @@ class PipelineOrchestrator:
                         "response": tm_event["response"],
                         "reaction": tm_event.get("reaction", ""),
                     })
+
+        # ===== SceneBus: C 阶段写入队友响应 + clear =====
+        if session.scene_bus:
+            from app.world.scene_bus import BusEntry, BusEntryType as _BET
+            for t in teammate_responses:
+                session.scene_bus.publish(BusEntry(
+                    actor=t["character_id"],
+                    actor_name=t.get("name", ""),
+                    type=_BET.REACTION,
+                    content=t["response"],
+                ))
 
         # 历史记录
         if session.history:
@@ -292,6 +443,35 @@ class PipelineOrchestrator:
                     name=t["name"],
                     response=t["response"],
                 )
+            # A.3: NPC 自主反应也写入历史
+            for r in npc_autonomous_responses:
+                session.history.record_npc_response(
+                    character_id=r["character_id"],
+                    name=r["name"],
+                    dialogue=r["dialogue"],
+                )
+
+        # SceneBus: 回合末图谱化（F18）
+        if session.scene_bus and self.memory_graphizer:
+            try:
+                from app.services.scene_bus_graphizer import graphize_scene_bus_round
+
+                graphize_result = await graphize_scene_bus_round(
+                    scene_bus=session.scene_bus,
+                    session=session,
+                    memory_graphizer=self.memory_graphizer,
+                )
+                if not graphize_result.success:
+                    logger.warning(
+                        "[v4] scene bus graphize skipped/failed: %s",
+                        graphize_result.error,
+                    )
+            except Exception as exc:
+                logger.warning("[v4] scene bus graphize raised: %s", exc)
+
+        # SceneBus: persist 前 clear
+        if session.scene_bus:
+            session.scene_bus.clear()
 
         # 统一持久化
         await session.persist()
@@ -556,6 +736,56 @@ class PipelineOrchestrator:
             for hint in upd.get("narrative_hints", []):
                 merged.setdefault("narrative_hints", []).append(hint)
         return merged
+
+    def _build_teammate_context(
+        self,
+        *,
+        session: SessionRuntime,
+        base_context: Dict[str, Any],
+        player_input: str,
+        gm_narration: str,
+        world_state_update: Optional[Dict[str, Any]],
+        agentic_result: AgenticResult,
+    ) -> Dict[str, Any]:
+        """构建队友阶段专用上下文，避免直接复用 GM 阶段原始字典。"""
+        teammate_context = dict(base_context)
+        teammate_context["world_id"] = session.world_id
+        teammate_context["chapter_id"] = session.chapter_id
+        teammate_context["area_id"] = session.area_id
+        teammate_context["location"] = (
+            base_context.get("location")
+            or base_context.get("location_context")
+            or {}
+        )
+        teammate_context["player_input"] = player_input
+        teammate_context["gm_narration_full"] = gm_narration
+        teammate_context["world_state_update"] = world_state_update or base_context.get("world_state_update", {})
+        teammate_context["combat_active"] = bool(
+            session.game_state and session.game_state.combat_id
+        )
+        teammate_context["_runtime_session"] = session
+
+        if session.history and hasattr(session.history, "get_last_teammate_responses"):
+            teammate_context["last_teammate_responses"] = (
+                session.history.get_last_teammate_responses()
+            )
+
+        tool_summaries: List[Dict[str, Any]] = []
+        for call in getattr(agentic_result, "tool_calls", []) or []:
+            name = getattr(call, "name", "")
+            if name in {"recall_memory", "generate_scene_image"}:
+                continue
+            tool_summaries.append(
+                {
+                    "name": name,
+                    "success": bool(getattr(call, "success", False)),
+                    "args": getattr(call, "args", {}) or {},
+                }
+            )
+        if tool_summaries:
+            teammate_context["this_round_tools"] = tool_summaries
+
+        return teammate_context
 
     def _inject_dispositions_from_graph(
         self,

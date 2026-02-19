@@ -128,6 +128,8 @@ class AdminCoordinator:
         self.flash_cpu.character_store = None
         self.teammate_response_service = teammate_response_service or TeammateResponseService(
             instance_manager=self.instance_manager,
+            flash_cpu=self.flash_cpu,
+            graph_store=self.graph_store,
         )
 
         # 角色系统
@@ -158,6 +160,7 @@ class AdminCoordinator:
             get_area_chapter_map=self._get_area_chapter_map,
         )
         self.flash_cpu.recall_orchestrator = self.recall_orchestrator
+        self.teammate_response_service.recall_orchestrator = self.recall_orchestrator
 
         # V4 Pipeline Orchestrator（唯一处理管线）
         from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
@@ -172,6 +175,7 @@ class AdminCoordinator:
             state_manager=self._state_manager,
             world_runtime=self._world_runtime,
             recall_orchestrator=self.recall_orchestrator,
+            memory_graphizer=self.memory_graphizer,
         )
         logger.info("[AdminCoordinator] V4 PipelineOrchestrator 已初始化")
 

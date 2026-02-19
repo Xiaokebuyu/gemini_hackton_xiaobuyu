@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
 
 from app.config import settings
 from app.models.party import (
@@ -40,14 +40,21 @@ class TeammateResponseService:
         self,
         llm_service: Optional[LLMService] = None,
         instance_manager: Optional["InstanceManager"] = None,
+        flash_cpu: Optional[Any] = None,
+        graph_store: Optional[Any] = None,
+        recall_orchestrator: Optional[Any] = None,
     ) -> None:
         self.llm_service = llm_service or LLMService()
         self.visibility_manager = TeammateVisibilityManager()
         self.instance_manager = instance_manager
+        self.flash_cpu = flash_cpu
+        self.graph_store = graph_store
+        self.recall_orchestrator = recall_orchestrator
 
         # 加载提示词模板
         self.decision_prompt_path = Path("app/prompts/teammate_decision.md")
         self.response_prompt_path = Path("app/prompts/teammate_response.md")
+        self.agentic_system_prompt_path = Path("app/prompts/teammate_agentic_system.md")
 
         # 默认模型配置
         self.default_model_config = TeammateModelConfig()
@@ -57,6 +64,193 @@ class TeammateResponseService:
         if path.exists():
             return path.read_text(encoding="utf-8")
         return ""
+
+    def _resolve_round_basics(
+        self,
+        party: Party,
+        gm_response: str,
+        context: Dict[str, Any],
+    ) -> Tuple[List[PartyMember], str, str, bool, Optional[str]]:
+        """统一提取回合公共参数。"""
+        active_members = party.get_active_members()
+        world_id = context.get("world_id") or party.world_id
+        gm_narration_full = str(context.get("gm_narration_full") or gm_response or "")
+        is_private = bool(context.get("is_private", False))
+        private_target = context.get("private_target")
+        return active_members, world_id, gm_narration_full, is_private, private_target
+
+    def _get_location_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """兼容 location/location_context 两种键。"""
+        location = context.get("location")
+        if not location:
+            location = context.get("location_context")
+        return location or {}
+
+    def _build_filtered_context(
+        self,
+        member: PartyMember,
+        player_input: str,
+        gm_response: str,
+        context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return self.visibility_manager.filter_context_for_teammate(
+            teammate=member,
+            full_context={
+                "player_input": player_input,
+                "gm_response": gm_response,
+                **context,
+            },
+        )
+
+    @staticmethod
+    def _get_effective_player_input(
+        filtered_context: Dict[str, Any],
+        player_input: str,
+    ) -> str:
+        if filtered_context.get("player_said_privately"):
+            return str(filtered_context["player_said_privately"])
+        if filtered_context.get("player_said"):
+            return str(filtered_context["player_said"])
+        return player_input
+
+    @staticmethod
+    def _format_previous_responses(previous_responses: List[Dict[str, Any]]) -> str:
+        if previous_responses:
+            return "\n".join(
+                f"- {r['name']}: {r['response']} ({r['reaction']})"
+                for r in previous_responses
+            )
+        return "（还没有其他队友发言）"
+
+    @staticmethod
+    def _format_location_values(location: Dict[str, Any]) -> Tuple[str, str, str]:
+        location_desc = location.get("atmosphere") or location.get("description") or ""
+        available_dests = location.get("available_destinations", [])
+        if isinstance(available_dests, list):
+            available_dests_text = ", ".join(
+                d.get("name", d) if isinstance(d, dict) else str(d)
+                for d in available_dests
+            ) or "未知"
+        else:
+            available_dests_text = str(available_dests) or "未知"
+        sub_locs = location.get("available_sub_locations", location.get("sub_locations", []))
+        if isinstance(sub_locs, list):
+            sub_locs_text = ", ".join(
+                s.get("name", s) if isinstance(s, dict) else str(s)
+                for s in sub_locs
+            ) or "无"
+        else:
+            sub_locs_text = str(sub_locs) or "无"
+        return location_desc, available_dests_text, sub_locs_text
+
+    @staticmethod
+    def _chunk_text(text: str, chunk_size: int = 72) -> List[str]:
+        payload = str(text or "")
+        if not payload:
+            return []
+        return [payload[i:i + chunk_size] for i in range(0, len(payload), chunk_size)]
+
+    async def _inject_last_teammate_responses(
+        self,
+        *,
+        active_members: List[PartyMember],
+        world_id: str,
+        context: Dict[str, Any],
+    ) -> None:
+        if self.instance_manager is None or not world_id:
+            return
+        last_responses = context.get("last_teammate_responses", [])
+        if not last_responses:
+            return
+        for member in active_members:
+            try:
+                instance = await self.instance_manager.get_or_create(
+                    member.character_id, world_id
+                )
+                for resp in last_responses:
+                    if resp.get("character_id") != member.character_id and resp.get("response"):
+                        resp_name = resp.get("name", resp.get("character_id", "队友"))
+                        instance.context_window.add_message(
+                            "system",
+                            f"[队友 {resp_name}] {resp['response']}",
+                        )
+            except Exception as exc:
+                logger.debug(
+                    "[TeammateResponse] 跨轮队友发言注入失败 (%s): %s",
+                    member.name,
+                    exc,
+                )
+
+    async def _inject_round_histories(
+        self,
+        *,
+        active_members: List[PartyMember],
+        world_id: str,
+        player_input: str,
+        gm_narration_full: str,
+        is_private: bool,
+        private_target: Optional[str],
+        parallel: bool,
+        skip_non_target_in_private: bool,
+    ) -> Dict[str, Optional[str]]:
+        preloaded_histories: Dict[str, Optional[str]] = {}
+        if self.instance_manager is None or not world_id:
+            return preloaded_histories
+
+        async def _inject_single(member: PartyMember):
+            inject_player = player_input
+            if is_private and private_target and member.character_id != private_target:
+                if skip_non_target_in_private:
+                    return member.character_id, None
+                inject_player = ""
+            history_text = await self._inject_round_to_instance(
+                member=member,
+                world_id=world_id,
+                player_input=inject_player,
+                gm_response=gm_narration_full,
+            )
+            return member.character_id, history_text
+
+        if parallel:
+            inject_results = await asyncio.gather(
+                *(_inject_single(member) for member in active_members),
+                return_exceptions=True,
+            )
+            for member, item in zip(active_members, inject_results):
+                if isinstance(item, Exception):
+                    logger.error(
+                        "[TeammateResponse] 轮次注入失败 (%s): %s",
+                        member.name,
+                        item,
+                        exc_info=True,
+                    )
+                    continue
+                char_id, history_text = item
+                preloaded_histories[char_id] = history_text
+            return preloaded_histories
+
+        for member in active_members:
+            try:
+                char_id, history_text = await _inject_single(member)
+                preloaded_histories[char_id] = history_text
+            except Exception as exc:
+                logger.error(
+                    "[TeammateResponse] 轮次注入失败 (%s): %s",
+                    member.name,
+                    exc,
+                )
+        return preloaded_histories
+
+    @staticmethod
+    def _members_for_decision(
+        active_members: List[PartyMember],
+        is_private: bool,
+        private_target: Optional[str],
+        private_only: bool,
+    ) -> List[PartyMember]:
+        if private_only and is_private and private_target:
+            return [m for m in active_members if m.character_id == private_target]
+        return active_members
 
     # =========================================================================
     # 主流程
@@ -85,8 +279,13 @@ class TeammateResponseService:
         responses: List[TeammateResponseResult] = []
         responding_count = 0
 
-        # 1. 获取活跃队友
-        active_members = party.get_active_members()
+        active_members, world_id, gm_narration_full, is_private, private_target = (
+            self._resolve_round_basics(
+                party=party,
+                gm_response=gm_response,
+                context=context,
+            )
+        )
         if not active_members:
             return TeammateRoundResult(
                 responses=[],
@@ -94,72 +293,36 @@ class TeammateResponseService:
                 responding_count=0,
             )
 
-        world_id = context.get("world_id") or party.world_id
-        gm_narration_full = str(context.get("gm_narration_full") or gm_response or "")
-
-        # 2. 所有队友先接收本轮消息（即使后续不发言，也会更新独立上下文）
-        preloaded_histories: Dict[str, Optional[str]] = {}
-        if self.instance_manager is not None and world_id:
-            # 2a. 注入上轮队友发言到各自 ContextWindow（排除自己）
-            last_responses = context.get("last_teammate_responses", [])
-            if last_responses:
-                for member in active_members:
-                    try:
-                        instance = await self.instance_manager.get_or_create(
-                            member.character_id, world_id
-                        )
-                        for resp in last_responses:
-                            if resp.get("character_id") != member.character_id and resp.get("response"):
-                                resp_name = resp.get("name", resp.get("character_id", "队友"))
-                                instance.context_window.add_message(
-                                    "system",
-                                    f"[队友 {resp_name}] {resp['response']}"
-                                )
-                    except Exception as e:
-                        logger.debug(
-                            "[TeammateResponse] 跨轮队友发言注入失败 (%s): %s",
-                            member.name, e,
-                        )
-
-            # 2b. 注入本轮公共信息（玩家输入 + GM 叙述）
-            # 私密模式下跳过非目标队友的玩家输入注入
-            is_private = context.get("is_private", False)
-            private_target = context.get("private_target")
-
-            async def _inject(member: PartyMember):
-                inject_player = player_input
-                if is_private and private_target and member.character_id != private_target:
-                    inject_player = ""  # 非目标队友不注入玩家输入
-                history_text = await self._inject_round_to_instance(
-                    member=member,
-                    world_id=world_id,
-                    player_input=inject_player,
-                    gm_response=gm_narration_full,
-                )
-                return member.character_id, history_text
-
-            inject_results = await asyncio.gather(
-                *(_inject(member) for member in active_members),
-                return_exceptions=True,
-            )
-            for member, item in zip(active_members, inject_results):
-                if isinstance(item, Exception):
-                    logger.error(
-                        "[TeammateResponse] 轮次注入失败 (%s): %s",
-                        member.name,
-                        item,
-                        exc_info=True,
-                    )
-                    continue
-                char_id, history_text = item
-                preloaded_histories[char_id] = history_text
+        # 所有队友先接收本轮消息（即使后续不发言，也会更新独立上下文）
+        await self._inject_last_teammate_responses(
+            active_members=active_members,
+            world_id=world_id,
+            context=context,
+        )
+        preloaded_histories = await self._inject_round_histories(
+            active_members=active_members,
+            world_id=world_id,
+            player_input=player_input,
+            gm_narration_full=gm_narration_full,
+            is_private=is_private,
+            private_target=private_target,
+            parallel=True,
+            skip_non_target_in_private=False,
+        )
 
         # 3. 每个队友独立决策是否回复
+        members_for_decision = self._members_for_decision(
+            active_members=active_members,
+            is_private=is_private,
+            private_target=private_target,
+            private_only=False,
+        )
         decisions = await self.decide_responses(
             party=party,
             player_input=player_input,
             gm_response=gm_response,
             context=context,
+            members_override=members_for_decision,
         )
         decision_by_char = {d.character_id: d for d in decisions}
 
@@ -283,17 +446,18 @@ class TeammateResponseService:
     ) -> TeammateResponseDecision:
         """决定单个队友是否回复"""
         # 准备上下文
-        filtered_context = self.visibility_manager.filter_context_for_teammate(
-            teammate=member,
-            full_context={
-                "player_input": player_input,
-                "gm_response": gm_response,
-                **context,
-            },
+        filtered_context = self._build_filtered_context(
+            member=member,
+            player_input=player_input,
+            gm_response=gm_response,
+            context=context,
         )
 
         # 使用 filtered context 中的 player_said（支持私密模式）
-        effective_player_input = filtered_context.get("player_said", player_input)
+        effective_player_input = self._get_effective_player_input(
+            filtered_context=filtered_context,
+            player_input=player_input,
+        )
         # 私密模式下非目标队友没有 player_said，不应触发响应
         if context.get("is_private") and not filtered_context.get("player_said"):
             return TeammateResponseDecision(
@@ -309,7 +473,7 @@ class TeammateResponseService:
             # 无提示词，使用简单规则
             return self._simple_decision(member, effective_player_input, gm_response, context)
 
-        location = context.get("location") or {}
+        location = self._get_location_context(context)
         present_characters = ", ".join(
             location.get("npcs_present", [])
         )
@@ -325,6 +489,10 @@ class TeammateResponseService:
             location_name=location.get("location_name", "未知"),
             present_characters=present_characters or "无",
         )
+
+        bus_summary = context.get("scene_bus_summary")
+        if bus_summary:
+            prompt += f"\n\n## 本轮场景事件\n{bus_summary}\n"
 
         # 调用 LLM 决策
         try:
@@ -509,152 +677,17 @@ class TeammateResponseService:
         preloaded_history: Optional[str] = None,
         inject_round: bool = True,
     ) -> TeammateResponseResult:
-        """生成单个队友的回复"""
-        # 准备提示词
-        prompt_template = self._load_prompt(self.response_prompt_path)
-        if not prompt_template:
-            logger.error("[TeammateResponse] 缺少提示词模板: %s", self.response_prompt_path)
-            return TeammateResponseResult(
-                character_id=member.character_id,
-                name=member.name,
-                response=None,
-                reaction="",
-                model_used="error",
-            )
-
-        location = context.get("location") or {}
-        world_id = context.get("world_id") or ""
-
-        # 注入当前轮到队友实例（如果有 InstanceManager）
-        instance_history = preloaded_history
-        if inject_round:
-            instance_history = await self._inject_round_to_instance(
-                member, world_id, player_input, gm_response,
-            )
-
-        # 格式化之前的回复
-        prev_responses_text = ""
-        if previous_responses:
-            prev_responses_text = "\n".join(
-                f"- {r['name']}: {r['response']} ({r['reaction']})"
-                for r in previous_responses
-            )
-        else:
-            prev_responses_text = "（还没有其他队友发言）"
-
-        # 构建世界知识变量
-        location_desc = location.get("atmosphere") or location.get("description") or ""
-        available_dests = location.get("available_destinations", [])
-        if isinstance(available_dests, list):
-            available_dests_text = ", ".join(
-                d.get("name", d) if isinstance(d, dict) else str(d)
-                for d in available_dests
-            ) or "未知"
-        else:
-            available_dests_text = str(available_dests) or "未知"
-        sub_locs = location.get("available_sub_locations", location.get("sub_locations", []))
-        if isinstance(sub_locs, list):
-            sub_locs_text = ", ".join(
-                s.get("name", s) if isinstance(s, dict) else str(s)
-                for s in sub_locs
-            ) or "无"
-        else:
-            sub_locs_text = str(sub_locs) or "无"
-
-        # 使用 filtered context 的 player_said（支持私密模式）
-        filtered_context = self.visibility_manager.filter_context_for_teammate(
-            teammate=member,
-            full_context={
-                "player_input": player_input,
-                "gm_response": gm_response,
-                **context,
-            },
+        result, _ = await self._generate_single_response_core(
+            member=member,
+            player_input=player_input,
+            gm_response=gm_response,
+            context=context,
+            decision=decision,
+            previous_responses=previous_responses,
+            preloaded_history=preloaded_history,
+            inject_round=inject_round,
         )
-        effective_player_input = filtered_context.get("player_said", player_input)
-
-        prompt = prompt_template.format(
-            name=member.name,
-            role=member.role.value,
-            personality=member.personality,
-            current_mood=member.current_mood,
-            player_said=effective_player_input,
-            gm_narration=gm_response[:300],
-            location_name=location.get("location_name", "未知"),
-            location_description=location_desc,
-            available_destinations=available_dests_text,
-            sub_locations=sub_locs_text,
-            suggested_tone=decision.suggested_tone or "自然",
-            previous_responses=prev_responses_text,
-        )
-
-        # 如果有实例历史，追加到 prompt 以提供上下文连续性
-        if instance_history:
-            prompt += f"\n\n## 你的近期记忆\n{instance_history}\n"
-
-        # Admin Flash 为该队友编排的图谱上下文
-        teammate_packages = context.get("teammate_context_packages") or {}
-        teammate_package = teammate_packages.get(member.character_id)
-        if isinstance(teammate_package, dict) and teammate_package:
-            pkg_text = self._format_context_package(teammate_package)
-            prompt += f"\n\n## 你的图谱上下文（Flash编排）\n{pkg_text}\n"
-
-        teammate_memory_summaries = context.get("teammate_memory_summaries") or {}
-        memory_summary = teammate_memory_summaries.get(member.character_id)
-        if memory_summary:
-            prompt += f"\n\n## 你的记忆摘要\n{memory_summary}\n"
-
-        # 统一使用 Flash 模型，"low" thinking 足以保证队友回复质量
-        model = settings.admin_flash_model
-        thinking_level = "low"
-
-        # 生成回复
-        try:
-            result = await self.llm_service.generate_simple(
-                prompt,
-                model_override=model,
-                thinking_level=thinking_level,
-            )
-            parsed = self.llm_service.parse_json(result)
-            if not parsed:
-                logger.error("[TeammateResponse] JSON 解析失败 (%s): %s", member.name, result[:200])
-                return TeammateResponseResult(
-                    character_id=member.character_id,
-                    name=member.name,
-                    response=None,
-                    reaction="",
-                    model_used="error",
-                    thinking_level=thinking_level,
-                )
-
-            # 更新队友情绪
-            if parsed.get("updated_mood"):
-                member.current_mood = parsed["updated_mood"]
-
-            response_text = parsed.get("response")
-            # 写回实例
-            if response_text:
-                await self._write_response_to_instance(
-                    member, world_id, response_text
-                )
-
-            return TeammateResponseResult(
-                character_id=member.character_id,
-                name=member.name,
-                response=response_text,
-                reaction=parsed.get("reaction", ""),
-                model_used=model,
-                thinking_level=thinking_level,
-            )
-        except Exception as e:
-            logger.warning("[TeammateResponse] 生成失败 (%s): %s", member.name, e)
-            return TeammateResponseResult(
-                character_id=member.character_id,
-                name=member.name,
-                response=None,
-                reaction="",
-                model_used="error",
-                thinking_level=thinking_level,
-            )
+        return result
 
     # =========================================================================
     # 流式生成
@@ -673,55 +706,40 @@ class TeammateResponseService:
         Yields:
             dict: teammate_start / teammate_chunk / teammate_end / teammate_skip
         """
-        active_members = party.get_active_members()
+        active_members, world_id, gm_narration_full, is_private, private_target = (
+            self._resolve_round_basics(
+                party=party,
+                gm_response=gm_response,
+                context=context,
+            )
+        )
         if not active_members:
             return
 
-        world_id = context.get("world_id") or party.world_id
-        is_private = context.get("is_private", False)
-        private_target = context.get("private_target")
-        gm_narration_full = str(context.get("gm_narration_full") or gm_response or "")
-
         # 消息注入（复用同步逻辑）
-        preloaded_histories: Dict[str, Optional[str]] = {}
-        if self.instance_manager is not None and world_id:
-            last_responses = context.get("last_teammate_responses", [])
-            if last_responses:
-                for member in active_members:
-                    try:
-                        instance = await self.instance_manager.get_or_create(
-                            member.character_id, world_id
-                        )
-                        for resp in last_responses:
-                            if resp.get("character_id") != member.character_id and resp.get("response"):
-                                resp_name = resp.get("name", resp.get("character_id", "队友"))
-                                instance.context_window.add_message(
-                                    "system",
-                                    f"[队友 {resp_name}] {resp['response']}"
-                                )
-                    except Exception as e:
-                        logger.debug("[TeammateResponse] 跨轮注入失败 (%s): %s", member.name, e)
-
-            # 注入本轮信息（私密模式下跳过非目标队友）
-            for member in active_members:
-                if is_private and private_target and member.character_id != private_target:
-                    continue
-                try:
-                    history_text = await self._inject_round_to_instance(
-                        member=member,
-                        world_id=world_id,
-                        player_input=player_input,
-                        gm_response=gm_narration_full,
-                    )
-                    preloaded_histories[member.character_id] = history_text
-                except Exception as e:
-                    logger.error("[TeammateResponse] 轮次注入失败 (%s): %s", member.name, e)
+        await self._inject_last_teammate_responses(
+            active_members=active_members,
+            world_id=world_id,
+            context=context,
+        )
+        preloaded_histories = await self._inject_round_histories(
+            active_members=active_members,
+            world_id=world_id,
+            player_input=player_input,
+            gm_narration_full=gm_narration_full,
+            is_private=is_private,
+            private_target=private_target,
+            parallel=False,
+            skip_non_target_in_private=True,
+        )
 
         # 决策（私密模式仅目标参与决策）
-        if is_private and private_target:
-            members_for_decision = [m for m in active_members if m.character_id == private_target]
-        else:
-            members_for_decision = active_members
+        members_for_decision = self._members_for_decision(
+            active_members=active_members,
+            is_private=is_private,
+            private_target=private_target,
+            private_only=True,
+        )
 
         decisions = await self.decide_responses(
             party=party,
@@ -767,12 +785,9 @@ class TeammateResponseService:
                 "name": member.name,
             }
 
-            # 流式生成单个队友响应
-            full_text = ""
-            reaction = ""
             try:
                 preloaded_history = preloaded_histories.get(member.character_id)
-                async for chunk in self._generate_single_response_stream(
+                result, tool_events = await self._generate_single_response_core(
                     member=member,
                     player_input=player_input,
                     gm_response=gm_narration_full,
@@ -781,42 +796,37 @@ class TeammateResponseService:
                     previous_responses=collected_responses,
                     preloaded_history=preloaded_history,
                     inject_round=(self.instance_manager is not None and preloaded_history is None),
-                ):
-                    if chunk["type"] == "answer":
-                        full_text += chunk["text"]
+                )
+                for tool_event in tool_events:
+                    yield tool_event
+
+                if result.response:
+                    for piece in self._chunk_text(result.response):
                         yield {
                             "type": "teammate_chunk",
                             "character_id": member.character_id,
-                            "text": chunk["text"],
+                            "text": piece,
                         }
-
-                # 流式完成后，解析结构化数据（从完整文本提取 reaction/mood）
-                parsed = self.llm_service.parse_json(full_text)
-                if parsed:
-                    response_text = parsed.get("response", full_text)
-                    reaction = parsed.get("reaction", "")
-                    if parsed.get("updated_mood"):
-                        member.current_mood = parsed["updated_mood"]
-                else:
-                    response_text = full_text
-
-                if response_text:
                     collected_responses.append({
-                        "name": member.name,
-                        "response": response_text,
-                        "reaction": reaction,
+                        "name": result.name,
+                        "response": result.response,
+                        "reaction": result.reaction,
                     })
-                    await self._write_response_to_instance(member, world_id, response_text)
 
                 yield {
                     "type": "teammate_end",
                     "character_id": member.character_id,
                     "name": member.name,
-                    "response": response_text,
-                    "reaction": reaction,
+                    "response": result.response,
+                    "reaction": result.reaction,
                 }
-            except Exception as e:
-                logger.error("[TeammateResponse] 流式生成失败 (%s): %s", member.name, e, exc_info=True)
+            except Exception as exc:
+                logger.error(
+                    "[TeammateResponse] 流式生成失败 (%s): %s",
+                    member.name,
+                    exc,
+                    exc_info=True,
+                )
                 yield {
                     "type": "teammate_end",
                     "character_id": member.character_id,
@@ -836,54 +846,61 @@ class TeammateResponseService:
         preloaded_history: Optional[str] = None,
         inject_round: bool = True,
     ):
-        """流式生成单个队友回复，yield {"type": "thought"/"answer", "text": str}。"""
+        """兼容旧接口：内部复用核心生成后再分块输出。"""
+        result, _ = await self._generate_single_response_core(
+            member=member,
+            player_input=player_input,
+            gm_response=gm_response,
+            context=context,
+            decision=decision,
+            previous_responses=previous_responses,
+            preloaded_history=preloaded_history,
+            inject_round=inject_round,
+        )
+        for piece in self._chunk_text(result.response or ""):
+            yield {"type": "answer", "text": piece}
+
+    def _get_agentic_system_prompt(self) -> str:
+        prompt = self._load_prompt(self.agentic_system_prompt_path)
+        if prompt:
+            return prompt
+        return (
+            "你是RPG队友Agent。\n"
+            "你可以调用工具来表达自主决策（例如回忆、战斗行动、好感度变化），"
+            "但你不能操控世界主流程。\n"
+            "最终必须输出严格JSON：\n"
+            "{\"response\": string|null, \"reaction\": string, \"updated_mood\": string}\n"
+            "不要输出JSON之外的文本。"
+        )
+
+    def _build_response_prompt(
+        self,
+        *,
+        member: PartyMember,
+        player_input: str,
+        gm_response: str,
+        context: Dict[str, Any],
+        decision: TeammateResponseDecision,
+        previous_responses: List[Dict[str, Any]],
+        instance_history: Optional[str],
+    ) -> str:
         prompt_template = self._load_prompt(self.response_prompt_path)
         if not prompt_template:
-            return
+            return ""
 
-        location = context.get("location") or {}
-        world_id = context.get("world_id") or ""
-
-        instance_history = preloaded_history
-        if inject_round:
-            instance_history = await self._inject_round_to_instance(
-                member, world_id, player_input, gm_response,
-            )
-
-        prev_responses_text = ""
-        if previous_responses:
-            prev_responses_text = "\n".join(
-                f"- {r['name']}: {r['response']} ({r['reaction']})"
-                for r in previous_responses
-            )
-        else:
-            prev_responses_text = "（还没有其他队友发言）"
-
-        location_desc = location.get("atmosphere") or location.get("description") or ""
-        available_dests = location.get("available_destinations", [])
-        if isinstance(available_dests, list):
-            available_dests_text = ", ".join(
-                d.get("name", d) if isinstance(d, dict) else str(d)
-                for d in available_dests
-            ) or "未知"
-        else:
-            available_dests_text = str(available_dests) or "未知"
-        sub_locs = location.get("available_sub_locations", location.get("sub_locations", []))
-        if isinstance(sub_locs, list):
-            sub_locs_text = ", ".join(
-                s.get("name", s) if isinstance(s, dict) else str(s)
-                for s in sub_locs
-            ) or "无"
-        else:
-            sub_locs_text = str(sub_locs) or "无"
-
-        # 使用 filtered context 中的 player_said（支持私密模式）
-        effective_player_input = player_input
-        filtered_context = context.get("_filtered_context", {})
-        if filtered_context.get("player_said_privately"):
-            effective_player_input = filtered_context["player_said_privately"]
-        elif filtered_context.get("player_said"):
-            effective_player_input = filtered_context["player_said"]
+        location = self._get_location_context(context)
+        location_desc, available_dests_text, sub_locs_text = self._format_location_values(location)
+        prev_responses_text = self._format_previous_responses(previous_responses)
+        filtered_context = self._build_filtered_context(
+            member=member,
+            player_input=player_input,
+            gm_response=gm_response,
+            context=context,
+        )
+        effective_player_input = self._get_effective_player_input(
+            filtered_context=filtered_context,
+            player_input=player_input,
+        )
 
         prompt = prompt_template.format(
             name=member.name,
@@ -900,6 +917,9 @@ class TeammateResponseService:
             previous_responses=prev_responses_text,
         )
 
+        bus_summary = context.get("scene_bus_summary")
+        if bus_summary:
+            prompt += f"\n\n## 本轮场景事件\n{bus_summary}\n"
         if instance_history:
             prompt += f"\n\n## 你的近期记忆\n{instance_history}\n"
 
@@ -913,16 +933,193 @@ class TeammateResponseService:
         memory_summary = teammate_memory_summaries.get(member.character_id)
         if memory_summary:
             prompt += f"\n\n## 你的记忆摘要\n{memory_summary}\n"
+        return prompt
 
-        model = settings.admin_flash_model
-        thinking_level = "low"
-
-        async for chunk in self.llm_service.generate_simple_stream(
+    async def _run_simple_generation_payload(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        thinking_level: str,
+    ) -> Optional[Dict[str, Any]]:
+        result = await self.llm_service.generate_simple(
             prompt,
             model_override=model,
             thinking_level=thinking_level,
-        ):
-            yield chunk
+        )
+        return self.llm_service.parse_json(result)
+
+    async def _run_agentic_generation_payload(
+        self,
+        *,
+        member: PartyMember,
+        context: Dict[str, Any],
+        prompt: str,
+        model: str,
+        thinking_level: str,
+    ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+        session = context.get("_runtime_session")
+        if session is None or self.flash_cpu is None:
+            return None, []
+
+        from app.services.admin.teammate_agentic_tools import TeammateAgenticToolRegistry
+
+        tool_events: List[Dict[str, Any]] = []
+
+        async def _on_tool_event(event: Dict[str, Any]) -> None:
+            tool_events.append(event)
+
+        registry = TeammateAgenticToolRegistry(
+            member=member,
+            session=session,
+            flash_cpu=self.flash_cpu,
+            graph_store=self.graph_store,
+            recall_orchestrator=self.recall_orchestrator,
+            event_callback=_on_tool_event,
+        )
+        tools = registry.get_tools()
+        if not tools:
+            return None, tool_events
+
+        llm_resp = await self.llm_service.agentic_generate(
+            user_prompt=prompt,
+            system_instruction=self._get_agentic_system_prompt(),
+            tools=tools,
+            model_override=model,
+            thinking_level=thinking_level,
+            max_remote_calls=settings.admin_agentic_max_remote_calls,
+        )
+        return self.llm_service.parse_json(llm_resp.text or ""), tool_events
+
+    async def _generate_response_payload(
+        self,
+        *,
+        member: PartyMember,
+        context: Dict[str, Any],
+        prompt: str,
+        model: str,
+        thinking_level: str,
+    ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+        tool_events: List[Dict[str, Any]] = []
+        parsed: Optional[Dict[str, Any]] = None
+
+        try:
+            parsed, tool_events = await self._run_agentic_generation_payload(
+                member=member,
+                context=context,
+                prompt=prompt,
+                model=model,
+                thinking_level=thinking_level,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[TeammateResponse] agentic生成失败 (%s), fallback到simple: %s",
+                member.name,
+                exc,
+            )
+
+        if parsed:
+            return parsed, tool_events
+
+        try:
+            parsed = await self._run_simple_generation_payload(
+                prompt=prompt,
+                model=model,
+                thinking_level=thinking_level,
+            )
+            return parsed, tool_events
+        except Exception as exc:
+            logger.warning(
+                "[TeammateResponse] simple生成失败 (%s): %s",
+                member.name,
+                exc,
+            )
+            return None, tool_events
+
+    async def _generate_single_response_core(
+        self,
+        *,
+        member: PartyMember,
+        player_input: str,
+        gm_response: str,
+        context: Dict[str, Any],
+        decision: TeammateResponseDecision,
+        previous_responses: List[Dict[str, Any]],
+        preloaded_history: Optional[str] = None,
+        inject_round: bool = True,
+    ) -> Tuple[TeammateResponseResult, List[Dict[str, Any]]]:
+        world_id = context.get("world_id") or ""
+        instance_history = preloaded_history
+        if inject_round:
+            instance_history = await self._inject_round_to_instance(
+                member,
+                world_id,
+                player_input,
+                gm_response,
+            )
+
+        prompt = self._build_response_prompt(
+            member=member,
+            player_input=player_input,
+            gm_response=gm_response,
+            context=context,
+            decision=decision,
+            previous_responses=previous_responses,
+            instance_history=instance_history,
+        )
+        if not prompt:
+            logger.error("[TeammateResponse] 缺少提示词模板: %s", self.response_prompt_path)
+            return (
+                TeammateResponseResult(
+                    character_id=member.character_id,
+                    name=member.name,
+                    response=None,
+                    reaction="",
+                    model_used="error",
+                ),
+                [],
+            )
+
+        model = settings.admin_flash_model
+        thinking_level = "low"
+        parsed, tool_events = await self._generate_response_payload(
+            member=member,
+            context=context,
+            prompt=prompt,
+            model=model,
+            thinking_level=thinking_level,
+        )
+        if not parsed:
+            return (
+                TeammateResponseResult(
+                    character_id=member.character_id,
+                    name=member.name,
+                    response=None,
+                    reaction="",
+                    model_used="error",
+                    thinking_level=thinking_level,
+                ),
+                tool_events,
+            )
+
+        if parsed.get("updated_mood"):
+            member.current_mood = parsed["updated_mood"]
+
+        response_text = parsed.get("response")
+        if response_text:
+            await self._write_response_to_instance(member, world_id, response_text)
+
+        return (
+            TeammateResponseResult(
+                character_id=member.character_id,
+                name=member.name,
+                response=response_text,
+                reaction=parsed.get("reaction", ""),
+                model_used=model,
+                thinking_level=thinking_level,
+            ),
+            tool_events,
+        )
 
     def _format_context_package(self, package: Dict[str, Any]) -> str:
         """将 Flash context_package 转成紧凑文本，避免提示词膨胀。"""

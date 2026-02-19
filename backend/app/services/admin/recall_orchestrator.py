@@ -55,6 +55,7 @@ class RecallOrchestrator:
         intent_type: Optional[str] = None,
         chapter_id: Optional[str] = None,
         area_id: Optional[str] = None,
+        location_id: Optional[str] = None,
     ) -> RecallResponse:
         """Recall memory by merging multi-scope graphs and running activation."""
         recall_cfg = self.RECALL_CONFIGS.get(intent_type or "", {})
@@ -74,6 +75,16 @@ class RecallOrchestrator:
 
         area_scope: Optional[GraphScope] = None
         area_data: Optional[Any] = None
+        if chapter_id and area_id and location_id:
+            location_scope = GraphScope(
+                scope_type="location",
+                chapter_id=chapter_id,
+                area_id=area_id,
+                location_id=location_id,
+            )
+            mandatory_scopes.append(location_scope)
+            mandatory_calls.append(self.graph_store.load_graph_v2(world_id, location_scope))
+
         if chapter_id and area_id:
             area_scope = GraphScope(scope_type="area", chapter_id=chapter_id, area_id=area_id)
             mandatory_scopes.append(area_scope)
@@ -213,11 +224,12 @@ class RecallOrchestrator:
         intent_type: Optional[str] = None,
         chapter_id: Optional[str] = None,
         area_id: Optional[str] = None,
+        location_id: Optional[str] = None,
     ) -> RecallResponse:
-        """V4 简化记忆召回 — 仅 area + character 两个作用域。
+        """V4 简化记忆召回 — location + area + character 三个作用域。
 
         相比 recall()（5+ 作用域: world + chapter + area + character + camp），
-        此方法仅加载 area + character，减少 Firestore 读取和合并开销。
+        此方法仅加载 location + area + character，减少 Firestore 读取和合并开销。
         """
         recall_cfg = self.RECALL_CONFIGS.get(intent_type or "", {})
         output_threshold = recall_cfg.get("output_threshold", 0.15)
@@ -229,13 +241,24 @@ class RecallOrchestrator:
         scopes: List[GraphScope] = []
         calls: List[Any] = []
 
-        # 作用域 1: area（如果有 chapter_id 和 area_id）
+        # 作用域 1: location（如果有 chapter_id + area_id + location_id）
+        if chapter_id and area_id and location_id:
+            location_scope = GraphScope(
+                scope_type="location",
+                chapter_id=chapter_id,
+                area_id=area_id,
+                location_id=location_id,
+            )
+            scopes.append(location_scope)
+            calls.append(self.graph_store.load_graph_v2(world_id, location_scope))
+
+        # 作用域 2: area（如果有 chapter_id 和 area_id）
         if chapter_id and area_id:
             area_scope = GraphScope(scope_type="area", chapter_id=chapter_id, area_id=area_id)
             scopes.append(area_scope)
             calls.append(self.graph_store.load_graph_v2(world_id, area_scope))
 
-        # 作用域 2: character
+        # 作用域 3: character
         char_scope = GraphScope(scope_type="character", character_id=character_id)
         scopes.append(char_scope)
         calls.append(self.graph_store.load_graph_v2(world_id, char_scope))

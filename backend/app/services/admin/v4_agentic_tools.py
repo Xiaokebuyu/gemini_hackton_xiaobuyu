@@ -26,6 +26,15 @@ from app.world.models import EventStatus
 
 logger = logging.getLogger(__name__)
 
+# 意图 → 排除工具映射（引擎已执行的操作对应的工具不暴露给 LLM）
+_ENGINE_TOOL_EXCLUSIONS: Dict[str, set] = {
+    "move_area": {"navigate", "enter_sublocation", "leave_sublocation"},
+    "move_sublocation": {"enter_sublocation"},
+    "leave": {"leave_sublocation"},
+    "rest": {"update_time"},
+    "talk": {"npc_dialogue"},
+}
+
 
 class V4AgenticToolRegistry:
     """V4 agentic tool registry — tools backed by SessionRuntime/AreaRuntime."""
@@ -39,6 +48,7 @@ class V4AgenticToolRegistry:
         recall_orchestrator: Optional[Any] = None,
         image_service: Optional[ImageGenerationService] = None,
         event_queue: Optional[asyncio.Queue] = None,
+        engine_executed: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.session = session
         self.flash_cpu = flash_cpu
@@ -46,6 +56,7 @@ class V4AgenticToolRegistry:
         self.recall_orchestrator = recall_orchestrator
         self.image_service = image_service or ImageGenerationService()
         self._event_queue = event_queue
+        self._engine_executed = engine_executed
 
         self.tool_calls: List[AgenticToolCall] = []
         self.image_data: Optional[Dict[str, Any]] = None
@@ -112,11 +123,25 @@ class V4AgenticToolRegistry:
             return "night"
 
     def _wrap_tool_for_afc(self, tool_fn):
-        """Wrap tool for AFC error recording."""
+        """Wrap tool for AFC error recording + engine-executed safety net."""
         registry = self
 
         @functools.wraps(tool_fn)
         async def wrapper(**kwargs):
+            # 安全网：如果工具已被引擎执行但 LLM 仍然调用，短路返回
+            if registry._engine_executed:
+                excluded = _ENGINE_TOOL_EXCLUSIONS.get(
+                    registry._engine_executed.get("type", ""), set()
+                )
+                if tool_fn.__name__ in excluded:
+                    started = time.perf_counter()
+                    payload = {"success": True, "already_executed_by_engine": True}
+                    await registry._record(
+                        tool_fn.__name__, kwargs, started, payload,
+                        success=True, error="blocked_by_engine_filter",
+                    )
+                    return payload
+
             started = time.perf_counter()
             # Gemini 有时把参数名中的单下划线序列化为双下划线（如 event_id → event__id），
             # 在这里规范化，确保参数名与函数签名一致。
@@ -177,6 +202,14 @@ class V4AgenticToolRegistry:
             # Image
             self.generate_scene_image,
         ]
+
+        # 过滤引擎已执行的对应工具
+        if self._engine_executed:
+            exec_type = self._engine_executed.get("type", "")
+            excluded = _ENGINE_TOOL_EXCLUSIONS.get(exec_type, set())
+            if excluded:
+                raw_tools = [t for t in raw_tools if t.__name__ not in excluded]
+
         return [self._wrap_tool_for_afc(t) for t in raw_tools]
 
     def get_tool_name_map(self) -> Dict[str, Any]:
@@ -1242,38 +1275,13 @@ class V4AgenticToolRegistry:
     # P1: HOSTS edge management helpers
     # =========================================================================
 
-    def _update_hosts_edges(self, wg, old_area_id: Optional[str], new_area_id: str) -> None:
-        """更新 player HOSTS 边：旧位置移除 → 新位置添加。"""
-        from app.world.models import WorldEdgeType
-        if not wg.has_node("player"):
-            return
-        # 移除旧 HOSTS
-        if old_area_id and wg.has_node(old_area_id):
-            wg.remove_edge(old_area_id, "player", key="hosts_player")
-        # 添加新 HOSTS + 同步 state（仅当目标区域存在于图中）
-        if wg.has_node(new_area_id):
-            wg.add_edge(new_area_id, "player", WorldEdgeType.HOSTS.value, key="hosts_player")
-            wg.merge_state("player", {"current_location": new_area_id})
+    def _update_hosts_edges(self, wg, old_area_id, new_area_id):
+        from app.world.intent_executor import update_hosts_edges
+        update_hosts_edges(wg, old_area_id, new_area_id)
 
-    def _update_party_hosts_edges(self, wg, new_area_id: str) -> None:
-        """队友 NPC HOSTS 边跟随 player 同步。"""
-        from app.world.models import WorldEdgeType
-        if not self.session.party or not wg.has_node(new_area_id):
-            return
-        for member in self.session.party.get_active_members():
-            char_id = member.character_id
-            if not wg.has_node(char_id):
-                continue
-            edge_key = f"hosts_{char_id}"
-            # 从 NPC state 读旧位置（比用 old_area_id 更准确，NPC 可能在 default_map）
-            npc_node = wg.get_node(char_id)
-            if npc_node:
-                old_host = npc_node.state.get("current_location", "")
-                if old_host and old_host != new_area_id and wg.has_node(old_host):
-                    wg.remove_edge(old_host, char_id, key=edge_key)
-            # 添加新 HOSTS + 同步 state
-            wg.add_edge(new_area_id, char_id, WorldEdgeType.HOSTS.value, key=edge_key)
-            wg.merge_state(char_id, {"current_location": new_area_id})
+    def _update_party_hosts_edges(self, wg, new_area_id):
+        from app.world.intent_executor import update_party_hosts_edges
+        update_party_hosts_edges(wg, new_area_id, self.session.party)
 
     # =========================================================================
     # Party tools (delegate to FlashCPU)

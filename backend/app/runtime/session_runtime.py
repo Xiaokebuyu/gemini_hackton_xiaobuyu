@@ -86,6 +86,9 @@ class SessionRuntime:
         self.flash_results: Dict[str, bool] = {}
         """LLM 通过 report_flash_evaluation 写入，post-tick 后清空。"""
 
+        # -- SceneBus (Direction A) --
+        self.scene_bus: Optional[Any] = None
+
         # -- 脏标记（persist 时只保存有变更的部分） --
         self._dirty_game_state: bool = False
         self._dirty_party: bool = False
@@ -319,6 +322,20 @@ class SessionRuntime:
                 current_area_id,
                 exc,
             )
+
+        # SceneBus 挂载
+        self._init_scene_bus()
+
+    def _init_scene_bus(self) -> None:
+        """创建 SceneBus。"""
+        area_id = self.player_location
+        if not area_id:
+            return
+        from app.world.scene_bus import SceneBus
+        self.scene_bus = SceneBus(
+            area_id=area_id,
+            sub_location=self.sub_location,
+        )
 
     async def _restore_companions(self) -> None:
         """从 Party 成员创建并加载 CompanionInstance。"""
@@ -784,6 +801,12 @@ class SessionRuntime:
                 self.world_id, self.session_id, self.game_state
             )
 
+        # 6. SceneBus 切换
+        if self.scene_bus:
+            self.scene_bus.clear()
+        from app.world.scene_bus import SceneBus
+        self.scene_bus = SceneBus(area_id=area_id)
+
         logger.info(
             "[SessionRuntime] enter_area: %s → %s", old_area_id, area_id
         )
@@ -818,11 +841,16 @@ class SessionRuntime:
             if result.get("success"):
                 self.game_state.sub_location = sub_id
                 self._dirty_game_state = True
+                # SceneBus: 更新 sub_location（不换实例）
+                if self.scene_bus:
+                    self.scene_bus.sub_location = sub_id
             return result
 
         # 最小化实现：直接更新状态
         self.game_state.sub_location = sub_id
         self._dirty_game_state = True
+        if self.scene_bus:
+            self.scene_bus.sub_location = sub_id
 
         if self._state_manager:
             await self._state_manager.set_state(
@@ -850,11 +878,15 @@ class SessionRuntime:
             if result.get("success"):
                 self.game_state.sub_location = None
                 self._dirty_game_state = True
+                if self.scene_bus:
+                    self.scene_bus.sub_location = None
             return result
 
         old_sub = self.game_state.sub_location
         self.game_state.sub_location = None
         self._dirty_game_state = True
+        if self.scene_bus:
+            self.scene_bus.sub_location = None
 
         if self._state_manager:
             await self._state_manager.set_state(

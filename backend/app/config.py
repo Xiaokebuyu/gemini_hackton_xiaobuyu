@@ -125,6 +125,9 @@ class Settings(BaseModel):
     # WorldGraph (C7/C8)
     world_graph_enabled: bool = os.getenv("WORLD_GRAPH_ENABLED", "true").lower() in ("1", "true", "yes")
 
+    # SceneBus (Direction A: 总线驱动架构)
+    scene_bus_enabled: bool = os.getenv("SCENE_BUS_ENABLED", "true").lower() in ("1", "true", "yes")
+
     # Module 3: 上下文缓存配置
     context_cache_ttl_seconds: int = int(os.getenv("CONTEXT_CACHE_TTL_SECONDS", "300"))
 
