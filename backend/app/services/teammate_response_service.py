@@ -835,30 +835,6 @@ class TeammateResponseService:
                     "reaction": "",
                 }
 
-    async def _generate_single_response_stream(
-        self,
-        member: PartyMember,
-        player_input: str,
-        gm_response: str,
-        context: Dict[str, Any],
-        decision: TeammateResponseDecision,
-        previous_responses: List[Dict[str, Any]],
-        preloaded_history: Optional[str] = None,
-        inject_round: bool = True,
-    ):
-        """兼容旧接口：内部复用核心生成后再分块输出。"""
-        result, _ = await self._generate_single_response_core(
-            member=member,
-            player_input=player_input,
-            gm_response=gm_response,
-            context=context,
-            decision=decision,
-            previous_responses=previous_responses,
-            preloaded_history=preloaded_history,
-            inject_round=inject_round,
-        )
-        for piece in self._chunk_text(result.response or ""):
-            yield {"type": "answer", "text": piece}
 
     def _get_agentic_system_prompt(self) -> str:
         prompt = self._load_prompt(self.agentic_system_prompt_path)
@@ -1139,7 +1115,3 @@ class TeammateResponseService:
             compact = package
         return json.dumps(compact, ensure_ascii=False)
 
-    def _get_member_name(self, party: Party, character_id: str) -> str:
-        """获取队友名字"""
-        member = party.get_member(character_id)
-        return member.name if member else character_id

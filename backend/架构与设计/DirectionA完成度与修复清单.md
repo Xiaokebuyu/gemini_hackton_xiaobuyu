@@ -427,6 +427,44 @@ S7.  scene_bus.clear()                             ← L478   ✅ 步骤 7
 
 ---
 
+## 架构债务记录
+
+> 以下为已识别但暂不修复的结构性技术债务。属于"需要架构决策"范畴，非 bug。
+
+### R1: v4_agentic_tools.py 与 intent_executor.py 逻辑重复（~300 行）
+
+**文件**: `app/services/admin/v4_agentic_tools.py` vs `app/world/intent_executor.py`
+
+**问题**: navigate() 工具（190 行）与 execute_move()（164 行）包含几乎相同的逻辑：章节门限检查、CONNECTS 边验证、旅行时间解析+归一化、区域切换+HOSTS 边同步。三个静态工具方法 `_parse_travel_time`/`_normalize_advance_minutes`/`_get_period` 在两个文件中完全相同。
+
+**为什么没有删除**: 工具层仍需为 GM 兜底场景独立工作（引擎低置信度时 GM 通过工具手动导航）。改为薄委托需要统一返回值适配（EngineResult vs dict），属架构重构。
+
+**影响**: 维护成本翻倍（两处修改），逻辑分歧风险。
+
+**建议**: 未来提取共享的 `_navigate_core()` 函数，两端都调用它。HOSTS 边同步已做薄委托（F05），可作为参考模式。
+
+### R2: flash_cpu_service.py 仍保留非 V4 路径方法
+
+**文件**: `app/services/admin/flash_cpu_service.py`
+
+**问题**: `generate_gm_narration()` + `_build_chapter_guidance()` + `_sanitize_tavern_text()` + `_load_gm_narration_prompt()`（~90 行）仍保留，因为 `admin_coordinator.py` 的 `narrate_state_change()` / `enter_scene()` 路由还在调用。这些是 V3 遗留的 REST 端点（navigate/time/dialogue 独立 API），不走 V4 pipeline。
+
+**影响**: 低 — 这些路由可能仍有前端使用。
+
+**建议**: 前端完全迁移到 V4 pipeline（`/input` 端点）后，删除这些旧路由及其依赖方法。
+
+### R3: admin_coordinator.py 遗留旧路由
+
+**文件**: `app/services/admin/admin_coordinator.py`
+
+**问题**: `narrate_state_change()`、`enter_scene()`、`start_dialogue()` 等方法是 V3 时代按操作分拆的 REST 端点。V4 pipeline 统一走 `process_player_input_v3()` → `PipelineOrchestrator.process()`。旧路由仍挂在 `game_v2.py` 的 `/navigate`、`/time/advance`、`/dialogue/start` 等端点。
+
+**影响**: 中 — 增加维护面，但功能正常。
+
+**建议**: 标记为 deprecated，前端切换后移除。
+
+---
+
 ## 变更日志
 
 | 日期 | 操作 | 涉及 |
@@ -443,3 +481,5 @@ S7.  scene_bus.clear()                             ← L478   ✅ 步骤 7
 | 2026-02-19 | 设计手册对照分析，识别 6 项结构性偏差（D1-D6），新增 F22/F23/F24 | P7 新增 |
 | 2026-02-19 | 第七批修复完成：F25 清除旧管线 fallback + F22 删 post-tick hints（138/138 测试通过） | F22/F25 ✅ |
 | 2026-02-19 | 第八批完成：F21 确认 + F23 NPC 对话自产 + F24 GM TALK 收窄（147/147 测试通过） | F21/F23/F24 ✅ |
+| 2026-02-19 | 死代码清理：flash_cpu_service(-682行) + admin_coordinator(-68行) + teammate_response_service(-28行) = **778 行删除**，147/147 测试通过 | 清理 |
+| 2026-02-19 | 新增架构债务记录（R1/R2/R3）：工具层重复、非 V4 路径残留、旧路由 | 文档 |
