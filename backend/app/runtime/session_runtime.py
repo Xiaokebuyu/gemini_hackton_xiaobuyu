@@ -145,6 +145,18 @@ class SessionRuntime:
         """是否已完成 restore()。"""
         return self._restored
 
+    @property
+    def degradation_info(self) -> Dict[str, Any]:
+        """降级状态摘要，供下游诊断和前端展示。"""
+        return {
+            "has_player": self._player_character is not None,
+            "has_party": self.party is not None,
+            "has_narrative": self.narrative is not None,
+            "has_area": self.current_area is not None,
+            "world_graph_failed": self._world_graph_failed,
+            "companion_count": len(self.companions),
+        }
+
     # =========================================================================
     # restore — 从 Firestore 恢复会话状态
     # =========================================================================
@@ -174,9 +186,13 @@ class SessionRuntime:
             wave1_tasks.append(self._restore_narrative())
 
         results = await asyncio.gather(*wave1_tasks, return_exceptions=True)
+        wave1_names = ["game_state", "player", "party"]
+        if has_narrative_service:
+            wave1_names.append("narrative")
         for i, result in enumerate(results):
+            name = wave1_names[i] if i < len(wave1_names) else f"task_{i}"
             if isinstance(result, Exception):
-                logger.error("[SessionRuntime] Wave 1 任务 %d 异常: %s", i, result)
+                logger.error("[SessionRuntime] Wave 1 '%s' 失败: %s", name, result)
 
         # SessionHistory（同步，无 I/O）
         self._restore_history()
@@ -201,12 +217,40 @@ class SessionRuntime:
         await self._restore_world_graph_snapshot()
 
         self._restored = True
-        logger.info(
-            "[SessionRuntime] restore 完成: location=%s chapter=%s party_size=%d",
-            self.player_location,
-            self.chapter_id,
-            len(self.party.members) if self.party else 0,
-        )
+
+        # ── restore 摘要日志 ──
+        failed = []
+        if not self._player_character:
+            failed.append("player")
+        if not self.party:
+            failed.append("party")
+        if not self.narrative:
+            failed.append("narrative")
+        if self._world_graph_failed:
+            failed.append("world_graph")
+        if not self.current_area:
+            failed.append("area")
+
+        if failed:
+            logger.warning(
+                "[SessionRuntime] restore 完成(降级): location=%s chapter=%s "
+                "failed_components=%s party_size=%d companions=%d",
+                self.player_location,
+                self.chapter_id,
+                failed,
+                len(self.party.members) if self.party else 0,
+                len(self.companions),
+            )
+        else:
+            logger.info(
+                "[SessionRuntime] restore 完成: location=%s chapter=%s "
+                "party_size=%d companions=%d graph=%s",
+                self.player_location,
+                self.chapter_id,
+                len(self.party.members) if self.party else 0,
+                len(self.companions),
+                "ok" if self.world_graph else "disabled",
+            )
 
     async def _restore_game_state(self) -> None:
         """加载 GameState。"""
@@ -1002,6 +1046,33 @@ class SessionRuntime:
         if self.game_state:
             self.game_state.game_time = game_time
             self._dirty_game_state = True
+
+    def advance_time(self, minutes: int) -> Dict[str, Any]:
+        """推进游戏时间（TimeManager 版本）。
+
+        使用 TimeManager.tick() 计算新时间 + 触发事件（时段/日期变化），
+        同步到 GameState.game_time 并标记脏。
+        Firestore 持久化由 persist() 统一处理。
+        """
+        if not self.time:
+            return {"success": False, "error": "time not initialized"}
+
+        from app.services.time_manager import TimeManager
+        from app.models.state_delta import GameTimeState
+
+        tm = TimeManager.from_dict(self.time.model_dump())
+        events = tm.tick(minutes)
+        new_time = GameTimeState(**tm.to_dict())
+        self.update_time(new_time)  # 内部已标记 _dirty_game_state
+
+        return {
+            "success": True,
+            "time": tm.to_dict(),
+            "events": [
+                {"event_type": e.event_type, "description": e.description, "data": e.data}
+                for e in events
+            ],
+        }
 
     def update_narrative(self, progress: NarrativeProgress) -> None:
         """更新叙事进度并同步到 GameState。"""

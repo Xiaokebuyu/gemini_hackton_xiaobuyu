@@ -6,14 +6,9 @@
  */
 import apiClient from './client';
 import type {
-  PlayerInputRequest,
-  PlayerInputResponse,
-  CoordinatorResponse,
   LocationResponse,
   Destination,
   SubLocation,
-  NavigateRequest,
-  NavigateResponse,
   GameTimeResponse,
   Party,
   GameSessionState,
@@ -21,13 +16,7 @@ import type {
   CreateGameSessionResponse,
   RecoverableSessionsResponse,
   GameContextResponse,
-  EnterSceneRequest,
-  EnterSceneResponse,
-  StartDialogueRequest,
-  StartDialogueResponse,
-  EnterSubLocationRequest,
   SubLocationsResponse,
-  AdvanceTimeRequest,
   PasserbyDialogueRequest,
   TriggerEventRequest,
   CreatePartyRequest,
@@ -284,48 +273,6 @@ export async function createCharacter(
 }
 
 // =============================================================================
-// Core Game Loop
-// =============================================================================
-
-/**
- * 发送玩家输入 (Pro-First v2)
- *
- * POST /api/game/{world_id}/sessions/{session_id}/input
- */
-export async function sendGameInputV2(
-  worldId: string,
-  sessionId: string,
-  input: PlayerInputRequest
-): Promise<CoordinatorResponse> {
-  const response = await apiClient.post<CoordinatorResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/input`,
-    input
-  );
-  return response.data;
-}
-
-// =============================================================================
-// Scene
-// =============================================================================
-
-/**
- * 进入场景
- *
- * POST /api/game/{world_id}/sessions/{session_id}/scene
- */
-export async function enterScene(
-  worldId: string,
-  sessionId: string,
-  request: EnterSceneRequest
-): Promise<EnterSceneResponse> {
-  const response = await apiClient.post<EnterSceneResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/scene`,
-    request
-  );
-  return response.data;
-}
-
-// =============================================================================
 // Location & Navigation
 // =============================================================================
 
@@ -342,28 +289,6 @@ export async function getLocation(
     `/api/game/${worldId}/sessions/${sessionId}/location`
   );
   return normalizeLocationResponse(response.data);
-}
-
-/**
- * 导航到新位置
- *
- * POST /api/game/{world_id}/sessions/{session_id}/navigate
- */
-export async function navigate(
-  worldId: string,
-  sessionId: string,
-  request: NavigateRequest
-): Promise<NavigateResponse> {
-  const response = await apiClient.post<NavigateResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/navigate`,
-    request
-  );
-  return {
-    ...response.data,
-    new_location: response.data.new_location
-      ? normalizeLocationResponse(response.data.new_location)
-      : response.data.new_location,
-  };
 }
 
 // =============================================================================
@@ -385,38 +310,6 @@ export async function getSubLocations(
   return normalizeSubLocationsResponse(response.data);
 }
 
-/**
- * 进入子地点
- *
- * POST /api/game/{world_id}/sessions/{session_id}/sub-location/enter
- */
-export async function enterSubLocation(
-  worldId: string,
-  sessionId: string,
-  request: EnterSubLocationRequest
-): Promise<{ success: boolean; sub_location: string; narration: string }> {
-  const response = await apiClient.post(
-    `/api/game/${worldId}/sessions/${sessionId}/sub-location/enter`,
-    request
-  );
-  return response.data;
-}
-
-/**
- * 离开子地点
- *
- * POST /api/game/{world_id}/sessions/{session_id}/sub-location/leave
- */
-export async function leaveSubLocation(
-  worldId: string,
-  sessionId: string
-): Promise<{ success: boolean; error?: string }> {
-  const response = await apiClient.post(
-    `/api/game/${worldId}/sessions/${sessionId}/sub-location/leave`
-  );
-  return response.data;
-}
-
 // =============================================================================
 // Time
 // =============================================================================
@@ -436,73 +329,7 @@ export async function getGameTime(
   return response.data;
 }
 
-/**
- * 推进时间
- *
- * POST /api/game/{world_id}/sessions/{session_id}/time/advance
- */
-export async function advanceTime(
-  worldId: string,
-  sessionId: string,
-  request?: AdvanceTimeRequest
-): Promise<Record<string, unknown>> {
-  const response = await apiClient.post(
-    `/api/game/${worldId}/sessions/${sessionId}/time/advance`,
-    request || {}
-  );
-  return response.data;
-}
-
-/**
- * 推进到下一天
- *
- * POST /api/game/{world_id}/sessions/{session_id}/advance-day
- */
-export async function advanceDay(
-  worldId: string,
-  sessionId: string
-): Promise<PlayerInputResponse> {
-  const response = await apiClient.post<PlayerInputResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/advance-day`
-  );
-  return response.data;
-}
-
-// =============================================================================
-// Dialogue
-// =============================================================================
-
-/**
- * 开始对话
- *
- * POST /api/game/{world_id}/sessions/{session_id}/dialogue/start
- */
-export async function startDialogue(
-  worldId: string,
-  sessionId: string,
-  request: StartDialogueRequest
-): Promise<StartDialogueResponse> {
-  const response = await apiClient.post<StartDialogueResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/dialogue/start`,
-    request
-  );
-  return response.data;
-}
-
-/**
- * 结束对话
- *
- * POST /api/game/{world_id}/sessions/{session_id}/dialogue/end
- */
-export async function endDialogue(
-  worldId: string,
-  sessionId: string
-): Promise<PlayerInputResponse> {
-  const response = await apiClient.post<PlayerInputResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/dialogue/end`
-  );
-  return response.data;
-}
+// (All write operations are routed through `/input/stream` in the new runtime.)
 
 // =============================================================================
 // Party Management

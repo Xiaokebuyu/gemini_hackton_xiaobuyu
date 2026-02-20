@@ -120,14 +120,14 @@ CoordinatorResponse → 前端
 1. **V4 Runtime 层** (`app/runtime/`)
    - `game_runtime.py`: 全局运行时单例，管理 WorldInstance 缓存
    - `world_instance.py`: 世界静态数据注册表（地图/角色/章节/知识图谱，启动时加载）
-   - `session_runtime.py`: 会话运行时，统一管理状态/队伍/历史/角色
+   - `session_runtime.py`: 会话运行时，统一管理状态/队伍/历史/角色；`advance_time(minutes)` 通过 TimeManager 推进时间并触发时段/日期事件
    - `area_runtime.py`: 区域生命周期管理，事件状态机 + 章节转换检查
    - `context_assembler.py`: 结构化上下文组装（替代旧 `_build_context`）
    - `companion_instance.py`: 同伴系统实例，轻量事件日志 + 记忆摘要
 
 2. **管线编排** (`app/services/admin/`)
    - `pipeline_orchestrator.py`: V4 薄编排层（A/B/C 三阶段）
-   - `v4_agentic_tools.py`: V4 工具注册表（通过 SessionRuntime/AreaRuntime 操作）
+   - `v4_agentic_tools.py`: V4 工具注册表（通过 SessionRuntime/AreaRuntime 操作）；导航工具（navigate/enter_sublocation/leave_sublocation）已移除，由 IntentExecutor 引擎处理；`update_time` 直接调用 `SessionRuntime.advance_time()`（不经 FlashCPU）
    - `admin_coordinator.py`: 入口协调器（单例），委托核心逻辑到 PipelineOrchestrator
    - `flash_cpu_service.py`: Flash 意图分析和 Agentic 工具执行
    - `world_runtime.py`: 世界状态运行时（导航/时间/子地点等）
@@ -211,7 +211,6 @@ CoordinatorResponse → 前端
 - `flash_agentic_system.md`: V4 Agentic 系统提示（工具调用 + 叙述生成）
 - `flash_analysis.md`: Flash 意图分析（输出严格 JSON）
 - `flash_cpu_system.md`: Flash CPU 系统提示
-- `flash_gm_narration.md`: GM 叙述生成
 - `teammate_decision.md` / `teammate_response.md`: 队友决策与响应
 - `travel_narration.md`: 旅行叙述
 

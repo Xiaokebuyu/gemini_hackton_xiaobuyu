@@ -102,10 +102,8 @@ class FlashOperation(str, Enum):
     # 实例管理
     SPAWN_PASSERBY = "spawn_passerby"
     NPC_DIALOGUE = "npc_dialogue"
-    # 导航/时间
-    NAVIGATE = "navigate"
+    # 时间
     UPDATE_TIME = "update_time"
-    ENTER_SUBLOCATION = "enter_sublocation"
     # 战斗
     START_COMBAT = "start_combat"
     # 章节

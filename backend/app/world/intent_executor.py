@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -258,19 +258,57 @@ class IntentExecutor:
             narrative_hints=hints,
         )
 
+    def _resolve_sublocation_ids(self, sub_id: str) -> Tuple[str, str]:
+        """Normalize sub-location IDs across graph and runtime layers.
+
+        WorldGraph location nodes use `loc_{area_id}_{sub_id}` while runtime APIs
+        expect raw `sub_id`.
+        """
+        area_id: str = ""
+        area_candidate = getattr(self.session, "area_id", None)
+        if isinstance(area_candidate, str) and area_candidate.strip():
+            area_id = area_candidate.strip()
+        else:
+            player_location = getattr(self.session, "player_location", None)
+            if isinstance(player_location, str) and player_location.strip():
+                area_id = player_location.strip()
+
+        runtime_sub_id = sub_id
+        graph_location_id = sub_id
+
+        if area_id:
+            prefix = f"loc_{area_id}_"
+            if sub_id.startswith(prefix) and len(sub_id) > len(prefix):
+                runtime_sub_id = sub_id[len(prefix):]
+                graph_location_id = sub_id
+            elif not sub_id.startswith("loc_"):
+                graph_location_id = f"loc_{area_id}_{sub_id}"
+
+        if not runtime_sub_id:
+            runtime_sub_id = sub_id
+
+        return runtime_sub_id, graph_location_id
+
     async def execute_sublocation_enter(self, sub_id: str, sub_name: str = "") -> EngineResult:
         """执行子地点进入的机械部分。"""
+        runtime_sub_id, graph_location_id = self._resolve_sublocation_ids(sub_id)
+
         # area_lock 检查（通过 WorldGraph）
         wg = getattr(self.session, "world_graph", None)
         if wg and not getattr(self.session, "_world_graph_failed", False):
-            node = wg.get_node(sub_id)
+            node = wg.get_node(graph_location_id)
+            if node is None and graph_location_id != sub_id:
+                node = wg.get_node(sub_id)
             if node and node.state.get("locked"):
                 return EngineResult(
-                    error=f"sub-location '{sub_id}' is locked: {node.state.get('lock_reason', 'inaccessible')}"
+                    error=(
+                        f"sub-location '{runtime_sub_id}' is locked: "
+                        f"{node.state.get('lock_reason', 'inaccessible')}"
+                    )
                 )
 
         try:
-            result = await self.session.enter_sublocation(sub_id)
+            result = await self.session.enter_sublocation(runtime_sub_id)
         except Exception as exc:
             logger.error("[IntentExecutor] enter_sublocation failed: %s", exc, exc_info=True)
             return EngineResult(error=f"enter_sublocation error: {exc}")
@@ -278,13 +316,13 @@ class IntentExecutor:
         if not isinstance(result, dict) or not result.get("success"):
             return EngineResult(error=result.get("error", "enter_sublocation failed") if isinstance(result, dict) else "enter_sublocation failed")
 
-        recall_entry = await self._build_enter_sublocation_recall_entry(sub_id, sub_name)
+        recall_entry = await self._build_enter_sublocation_recall_entry(runtime_sub_id, sub_name)
         bus_entries = [
             BusEntry(
                 actor="engine",
                 type=BusEntryType.ENGINE_RESULT,
                 content=f"entered sub-location {sub_name or sub_id}",
-                data={"tool": "enter_sublocation", "sub_location": sub_id},
+                data={"tool": "enter_sublocation", "sub_location": runtime_sub_id},
             )
         ]
         if recall_entry is not None:
@@ -293,7 +331,7 @@ class IntentExecutor:
         return EngineResult(
             success=True,
             intent_type="move_sublocation",
-            target=sub_id,
+            target=runtime_sub_id,
             bus_entries=bus_entries,
         )
 
@@ -455,7 +493,7 @@ class IntentExecutor:
 
         return EngineResult(
             success=True,
-            intent_type="talk",
+            intent_type="talk" if npc_responded else "talk_pending",
             target=npc_id,
             bus_entries=bus_entries,
             narrative_hints=hints,
@@ -512,27 +550,9 @@ class IntentExecutor:
         if game_state and getattr(game_state, "combat_id", None):
             return EngineResult(error="cannot rest during combat")
 
-        from app.models.state_delta import GameTimeState
-
         # 推进时间 60 分钟
         rest_minutes = 60
-        current_time = self.session.time
-        if current_time:
-            total = current_time.hour * 60 + current_time.minute + rest_minutes
-            new_day = current_time.day + total // (24 * 60)
-            remaining = total % (24 * 60)
-            new_hour = remaining // 60
-            new_minute = remaining % 60
-        else:
-            new_day, new_hour, new_minute = 1, 9, 0
-
-        period = self._get_period(new_hour)
-        formatted = f"第{new_day}天 {new_hour:02d}:{new_minute:02d}"
-        new_time = GameTimeState(
-            day=new_day, hour=new_hour, minute=new_minute,
-            period=period, formatted=formatted,
-        )
-        self.session.update_time(new_time)
+        self.session.advance_time(rest_minutes)
 
         # 恢复 HP 25%
         healed = 0

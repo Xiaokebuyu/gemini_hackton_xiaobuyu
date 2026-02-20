@@ -31,28 +31,6 @@ class TestFlashMCPIntegration:
         await MCPClientPool.shutdown()
 
     @pytest.mark.asyncio
-    async def test_navigate_operation(self, flash_cpu):
-        """测试导航操作（需要 world_runtime）"""
-        # 注意：这个测试可能因为没有真实会话而失败
-        request = FlashRequest(
-            operation=FlashOperation.NAVIGATE,
-            parameters={"destination": "town_square"}
-        )
-        result = await flash_cpu.execute_request(
-            world_id="test_world",
-            session_id="test_session",
-            request=request
-        )
-        print(f"Navigate result: {result}")
-        # 因为没有 world_runtime，应该返回错误
-        assert result is not None
-        # 预期会失败，因为 world_runtime 未初始化
-        if not result.success:
-            print(f"✓ 符合预期 - 错误: {result.error}")
-        else:
-            print(f"✓ 导航成功: {result.result}")
-
-    @pytest.mark.asyncio
     async def test_combat_tool_call(self, flash_cpu):
         """测试战斗工具调用"""
         try:

@@ -95,6 +95,12 @@ class PipelineOrchestrator:
         if not session.player:
             raise ValueError("请先创建角色后再开始冒险。")
 
+        # 降级状态诊断
+        if session._world_graph_failed:
+            logger.warning("[v4] WorldGraph 构建失败，降级运行（事件引擎不可用）")
+        if not session.party:
+            logger.info("[v4] party=None，队友阶段将跳过")
+
         # A4: BehaviorEngine pre-tick (C8: 唯一事件系统)
         pre_tick_result = session.run_behavior_tick("pre")
 
@@ -390,6 +396,9 @@ class PipelineOrchestrator:
                 teammate_context["scene_bus_summary"] = bus_summary_for_teammates
         party = session.party
         teammate_responses: List[Dict[str, Any]] = []
+        if not party or not party.get_active_members():
+            logger.info("[v4] 队友阶段跳过: party=%s members=%d",
+                        bool(party), len(party.get_active_members()) if party else 0)
         if party and party.get_active_members():
             async for tm_event in self.teammate_response_service.process_round_stream(
                 party=party,

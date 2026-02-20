@@ -69,15 +69,6 @@ class FlashCPUService:
         self.image_service = image_service or ImageGenerationService()
         self.recall_orchestrator: Optional[Any] = None
 
-    def _load_gm_narration_prompt(self) -> str:
-        prompt_path = Path("app/prompts/flash_gm_narration.md")
-        if prompt_path.exists():
-            return prompt_path.read_text(encoding="utf-8")
-        return (
-            "你是GM。基于场景、近期对话、记忆和本轮执行结果生成2-4句沉浸式中文叙述。"
-            "避免复读，不要输出JSON。"
-        )
-
     def _load_agentic_prompt(self) -> str:
         if self.agentic_prompt_path.exists():
             return self.agentic_prompt_path.read_text(encoding="utf-8")
@@ -174,107 +165,6 @@ class FlashCPUService:
             finish_reason=finish_reason,
         )
 
-    async def generate_gm_narration(
-        self,
-        player_input: str,
-        execution_summary: str,
-        context: Dict[str, Any],
-    ) -> str:
-        # [LEGACY] Flash-Only v2 独立叙述生成。v3 使用 agentic_process 一次会话生成。
-        """使用 Flash 模型直接生成 GM 叙述。"""
-        location = context.get("location") or {}
-        time_info = context.get("time") or {}
-        teammates = context.get("teammates") or []
-        conversation_history = context.get("conversation_history") or "无"
-        world_background = context.get("world_background") or "无"
-        memory_summary = context.get("memory_summary") or "无"
-        context_package = context.get("context_package") or {}
-
-        teammate_lines = []
-        for teammate in teammates:
-            if not isinstance(teammate, dict):
-                continue
-            teammate_lines.append(
-                f"- {teammate.get('name', '?')}({teammate.get('role', '?')}, 情绪:{teammate.get('current_mood', '未知')})"
-            )
-        teammates_text = "\n".join(teammate_lines) if teammate_lines else "无"
-
-        # v2 StoryDirector 叙述指令
-        story_directives_list = context.get("story_narrative_directives") or context.get("story_directives") or []
-        story_directives_text = "\n".join(story_directives_list) if story_directives_list else "无"
-
-        prompt_template = self._load_gm_narration_prompt()
-        prompt = prompt_template.format(
-            player_character=context.get("player_character_summary", "无玩家角色"),
-            location_name=location.get("location_name", "未知地点"),
-            location_atmosphere=location.get("atmosphere", ""),
-            time=time_info.get("formatted") or time_info.get("formatted_time") or "未知",
-            current_state=context.get("state", "exploring"),
-            active_npc=context.get("active_npc") or "无",
-            world_background=world_background,
-            chapter_guidance=self._build_chapter_guidance(context),
-            story_directives=story_directives_text,
-            teammates=teammates_text,
-            conversation_history=conversation_history,
-            memory_summary=memory_summary,
-            context_package=json.dumps(context_package, ensure_ascii=False) if context_package else "无",
-            execution_summary=execution_summary or "无",
-            player_input=player_input,
-        )
-
-        result = await self.llm_service.generate_simple(
-            prompt,
-            model_override=settings.admin_flash_model,
-            thinking_level=settings.admin_flash_thinking_level,
-        )
-        narration = (result or "").strip()
-        if not narration:
-            logger.warning("Flash GM narration returned empty, using fallback")
-            return "……"
-        return narration
-
-    @staticmethod
-    def _sanitize_tavern_text(text: str) -> str:
-        """替换 SillyTavern 占位符为通用称谓。"""
-        if not text:
-            return text
-        return text.replace("{{user}}", "冒险者").replace("{{char}}", "")
-
-    def _build_chapter_guidance(self, context: Dict[str, Any]) -> str:
-        """构建章节引导文本"""
-        chapter_info = context.get("chapter_info") or {}
-        chapter_obj = chapter_info.get("chapter") or {}
-        chapter_name = chapter_obj.get("name")
-        if not chapter_name:
-            return "无"
-        goals = chapter_info.get("goals", [])
-        event_dirs = chapter_info.get("event_directives", [])
-        current_event = chapter_info.get("current_event") or {}
-        pending_required_events = chapter_info.get("pending_required_events") or []
-        required_events = chapter_info.get("required_events") or []
-
-        parts = [f"当前章节：{self._sanitize_tavern_text(chapter_name)}"]
-        if isinstance(current_event, dict) and (current_event.get("name") or current_event.get("id")):
-            event_name = current_event.get("name") or current_event.get("id")
-            parts.append(f"当前事件焦点：{self._sanitize_tavern_text(str(event_name))}")
-            event_desc = current_event.get("description")
-            if isinstance(event_desc, str) and event_desc.strip():
-                parts.append(f"当前事件描述：{self._sanitize_tavern_text(event_desc.strip())[:120]}")
-        if goals:
-            sanitized_goals = [self._sanitize_tavern_text(g) for g in goals[:3]]
-            parts.append(f"推进目标：{'、'.join(sanitized_goals)}")
-        if pending_required_events:
-            pending_text = "、".join(str(e) for e in pending_required_events[:4])
-            parts.append(f"待触发关键事件：{pending_text}")
-        elif required_events:
-            parts.append("章节关键事件已全部触发，可准备章节收束或过渡。")
-        if event_dirs:
-            parts.append("即将到来的事件：")
-            for d in event_dirs[:2]:
-                parts.append(f"  {self._sanitize_tavern_text(d)}")
-        parts.append("本回合叙述要求：至少给出一个可执行的推进线索，并与当前事件保持一致。")
-        return "\n".join(parts)
-
     async def execute_request(
         self,
         world_id: str,
@@ -286,12 +176,7 @@ class FlashCPUService:
         op = request.operation
         params = request.parameters or {}
 
-        runtime_required_ops = {
-            FlashOperation.NAVIGATE,
-            FlashOperation.UPDATE_TIME,
-            FlashOperation.ENTER_SUBLOCATION,
-        }
-        if op in runtime_required_ops and self.world_runtime is None:
+        if op == FlashOperation.UPDATE_TIME and self.world_runtime is None:
             return FlashResponse(
                 success=False,
                 operation=op,
@@ -299,45 +184,6 @@ class FlashCPUService:
             )
 
         try:
-            if op == FlashOperation.NAVIGATE:
-                result = await self.world_runtime.navigate(
-                    world_id=world_id,
-                    session_id=session_id,
-                    destination=params.get("destination"),
-                    direction=params.get("direction"),
-                    generate_narration=generate_narration,
-                )
-                await self.world_runtime.refresh_state(world_id, session_id)
-                payload = result if isinstance(result, dict) else {"raw": result}
-                success = bool(payload.get("success"))
-                delta = None
-                if success:
-                    new_location = payload.get("new_location") if isinstance(payload, dict) else {}
-                    changes: Dict[str, Any] = {
-                        "player_location": (
-                            new_location.get("location_id")
-                            if isinstance(new_location, dict)
-                            else None
-                        ),
-                        "sub_location": None,
-                    }
-                    if isinstance(payload, dict) and isinstance(payload.get("time"), dict):
-                        changes["game_time"] = payload.get("time")
-                    if isinstance(new_location, dict):
-                        changes["location"] = {
-                            "location_id": new_location.get("location_id"),
-                            "location_name": new_location.get("location_name"),
-                        }
-                    delta = self._build_state_delta("navigate", changes)
-                error_message = payload.get("error") if not success else None
-                return FlashResponse(
-                    success=success,
-                    operation=op,
-                    result=payload,
-                    state_delta=delta,
-                    error=error_message,
-                )
-
             if op == FlashOperation.UPDATE_TIME:
                 minutes = int(params.get("minutes", 0))
                 result = await self.world_runtime.advance_time(world_id, session_id, minutes)
@@ -345,52 +191,6 @@ class FlashCPUService:
                 payload = result if isinstance(result, dict) else {"raw": result}
                 success = isinstance(payload, dict) and not payload.get("error") and payload.get("success") is not False
                 delta = self._build_state_delta("update_time", {"game_time": payload.get("time")})
-                error_message = payload.get("error") if not success else None
-                return FlashResponse(
-                    success=success,
-                    operation=op,
-                    result=payload,
-                    state_delta=delta,
-                    error=error_message,
-                )
-
-            if op == FlashOperation.ENTER_SUBLOCATION:
-                sub_location_id = await self._resolve_enter_sub_location_id(
-                    world_id=world_id,
-                    session_id=session_id,
-                    params=params,
-                )
-                if not sub_location_id:
-                    return FlashResponse(
-                        success=False,
-                        operation=op,
-                        error="missing sub_location_id",
-                    )
-
-                result = await self.world_runtime.enter_sub_location(
-                    world_id=world_id,
-                    session_id=session_id,
-                    sub_location_id=sub_location_id,
-                )
-                await self.world_runtime.refresh_state(world_id, session_id)
-                payload = result if isinstance(result, dict) else {"raw": result}
-                success = bool(payload.get("success"))
-                delta = None
-                if success:
-                    sub_location = payload.get("sub_location") if isinstance(payload, dict) else {}
-                    changes: Dict[str, Any] = {
-                        "sub_location": (
-                            sub_location.get("id")
-                            if isinstance(sub_location, dict)
-                            else sub_location_id
-                        ),
-                        "sub_location_name": (
-                            sub_location.get("name")
-                            if isinstance(sub_location, dict)
-                            else None
-                        ),
-                    }
-                    delta = self._build_state_delta("enter_sub_location", changes)
                 error_message = payload.get("error") if not success else None
                 return FlashResponse(
                     success=success,
@@ -670,122 +470,6 @@ class FlashCPUService:
             raise
         except Exception as exc:
             return FlashResponse(success=False, operation=op, error=str(exc))
-
-    @staticmethod
-    def _matches_location_candidate(candidate: str, value: Optional[str]) -> bool:
-        if not candidate or not value:
-            return False
-        lhs = candidate.strip().lower()
-        rhs = str(value).strip().lower()
-        if not lhs or not rhs:
-            return False
-        if lhs == rhs or lhs in rhs or rhs in lhs:
-            return True
-        # 处理下划线/连字符分隔的英文名: "guild_hall" → "guild hall"
-        lhs_normalized = lhs.replace("_", " ").replace("-", " ")
-        rhs_normalized = rhs.replace("_", " ").replace("-", " ")
-        return (lhs_normalized == rhs_normalized
-                or lhs_normalized in rhs_normalized
-                or rhs_normalized in lhs_normalized)
-
-    def _match_sub_location_from_context(
-        self,
-        candidate: str,
-        sub_locations: List[Dict[str, Any]],
-    ) -> Optional[str]:
-        for item in sub_locations:
-            if not isinstance(item, dict):
-                continue
-            sub_id = item.get("id")
-            sub_name = item.get("name")
-            if self._matches_location_candidate(candidate, sub_id) or self._matches_location_candidate(candidate, sub_name):
-                return str(sub_id) if sub_id else None
-        return None
-
-    async def _resolve_enter_sub_location_id(
-        self,
-        world_id: str,
-        session_id: str,
-        params: Dict[str, Any],
-    ) -> Optional[str]:
-        """
-        兼容两种参数：
-        - sub_location_id: 规范 ID
-        - sub_location: 名称或ID（LLM 常返回中文名称）
-        """
-        raw_id = params.get("sub_location_id")
-        if raw_id is not None and str(raw_id).strip():
-            return str(raw_id).strip()
-
-        raw_name = params.get("sub_location")
-        if raw_name is None and params.get("target") is not None:
-            raw_name = params.get("target")
-        if raw_name is None and params.get("destination") is not None:
-            raw_name = params.get("destination")
-        if raw_name is None and params.get("location") is not None:
-            raw_name = params.get("location")
-        if raw_name is None:
-            return None
-
-        candidate = str(raw_name).strip()
-        if not candidate:
-            return None
-
-        if not self.world_runtime:
-            return candidate
-
-        current_map_id: Optional[str] = None
-        try:
-            state = await self.world_runtime.get_state(world_id, session_id)
-            current_map_id = getattr(state, "player_location", None)
-        except Exception:
-            current_map_id = None
-
-        try:
-            location = await self.world_runtime.get_current_location(world_id, session_id)
-            if isinstance(location, dict):
-                current_map_id = current_map_id or location.get("location_id")
-                sub_locations = (
-                    location.get("available_sub_locations")
-                    or location.get("sub_locations")
-                    or []
-                )
-                resolved = self._match_sub_location_from_context(candidate, sub_locations)
-                logger.debug(
-                    "[resolve_sub_location] candidate=%s, context_subs=%s, resolved=%s",
-                    candidate, [s.get("id") for s in sub_locations if isinstance(s, dict)], resolved,
-                )
-                if resolved:
-                    return resolved
-        except Exception:
-            pass
-
-        # 再用导航器做兜底匹配（支持名称/ID模糊匹配）
-        try:
-            navigator = self.world_runtime._get_navigator(world_id)
-
-            if current_map_id:
-                if navigator.get_sub_location(current_map_id, candidate):
-                    return candidate
-                for sub_loc in navigator.get_sub_locations(current_map_id):
-                    if (
-                        self._matches_location_candidate(candidate, sub_loc.id)
-                        or self._matches_location_candidate(candidate, sub_loc.name)
-                    ):
-                        return sub_loc.id
-
-            map_id, sub_location_id = navigator.resolve_location(candidate)
-            if sub_location_id and (not current_map_id or map_id == current_map_id):
-                return sub_location_id
-        except Exception:
-            pass
-
-        # 最终兜底：按 ID 原样传递给 runtime，让 runtime 给出明确报错
-        logger.debug(
-            "[resolve_sub_location] candidate=%s, resolved=None (fallback to raw)",
-            candidate,
-        )
-        return candidate
 
     def _build_state_delta(self, operation: str, changes: Dict[str, Any]) -> StateDelta:
         return StateDelta(

@@ -1,12 +1,10 @@
 /**
- * Core game input mutation hooks
+ * Core game input streaming hook
  *
- * useGameInput      — legacy non-streaming (POST /input)
- * useStreamGameInput — SSE streaming   (POST /input/stream)
+ * useStreamGameInput — SSE streaming (POST /input/stream)
  */
 import { useCallback, useRef } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { sendGameInputV2 } from '../gameApi';
+import { useQueryClient } from '@tanstack/react-query';
 import { streamGameInput } from '../sseClient';
 import { useGameStore } from '../../stores/gameStore';
 import { useChatStore } from '../../stores/chatStore';
@@ -14,8 +12,6 @@ import { toast } from '../../stores/uiStore';
 import type {
   AgenticTracePayload,
   CoordinatorImageData,
-  PlayerInputRequest,
-  CoordinatorResponse,
   GameAction,
   StateDelta,
   CoordinatorChapterInfo,
@@ -58,119 +54,8 @@ function parseDiceResult(raw: unknown): DiceRoll | null {
     description: typeof dr.description === 'string' ? dr.description : undefined,
   };
 }
-
 // =============================================================================
-// Legacy non-streaming hook (kept for backward-compat)
-// =============================================================================
-
-interface UseGameInputOptions {
-  onSuccess?: (response: CoordinatorResponse) => void;
-  onError?: (error: Error) => void;
-}
-
-export function useGameInput(options?: UseGameInputOptions) {
-  const queryClient = useQueryClient();
-  const {
-    worldId,
-    sessionId,
-    setAvailableActions,
-    setNarrativeSnapshot,
-    updateFromStateDelta,
-    setImageData,
-    setAgenticTrace,
-  } =
-    useGameStore();
-  const { addPlayerMessage, addGMResponseV2, setLoading, addSystemMessage } = useChatStore();
-
-  const mutation = useMutation({
-    mutationFn: async (content: string): Promise<CoordinatorResponse> => {
-      if (!worldId || !sessionId) {
-        throw new Error('No active session');
-      }
-
-      const request: PlayerInputRequest = {
-        input: content,
-      };
-
-      return sendGameInputV2(worldId, sessionId, request);
-    },
-
-    onMutate: (content: string) => {
-      // Optimistic update - add player message immediately
-      addPlayerMessage(content);
-      setLoading(true);
-    },
-
-    onSuccess: (response: CoordinatorResponse) => {
-      // Add GM response and teammate responses to chat
-      addGMResponseV2(response);
-
-      // Update game state from state_delta
-      if (response.state_delta) {
-        updateFromStateDelta(response.state_delta);
-      }
-      setNarrativeSnapshot(
-        response.chapter_info ?? null,
-        response.story_events ?? [],
-        response.pacing_action ?? null,
-      );
-      setImageData(normalizeImageData(response.image_data) ?? null);
-      setAgenticTrace(normalizeAgenticTrace(response.metadata?.agentic_trace) ?? null);
-
-      // Invalidate location, time, and party queries to refresh sidebar
-      queryClient.invalidateQueries({ queryKey: ['location'] });
-      queryClient.invalidateQueries({ queryKey: ['availableMaps', worldId, sessionId] });
-      queryClient.invalidateQueries({ queryKey: ['gameTime'] });
-      queryClient.invalidateQueries({ queryKey: ['party'] });
-      queryClient.invalidateQueries({ queryKey: ['narrativeProgress', worldId, sessionId] });
-      queryClient.invalidateQueries({ queryKey: ['flowBoard', worldId, sessionId] });
-      queryClient.invalidateQueries({ queryKey: ['currentPlan', worldId, sessionId] });
-      queryClient.invalidateQueries({ queryKey: ['sessionHistory', worldId, sessionId] });
-
-      // Update available actions
-      if (response.available_actions && response.available_actions.length > 0) {
-        setAvailableActions(response.available_actions as GameAction[]);
-      }
-
-      setLoading(false);
-      options?.onSuccess?.(response);
-    },
-
-    onError: (error: Error) => {
-      setLoading(false);
-      console.error('Game input error:', error);
-
-      // 向聊天显示错误消息（区分超时/网络/HTTP三类错误）
-      let errorMessage = '发生了一些问题，请重新尝试。';
-      const axiosErr = error as { code?: string; response?: { data?: { detail?: string | unknown } }; message?: string };
-
-      if (axiosErr.code === 'ECONNABORTED' || axiosErr.message?.includes('timeout')) {
-        errorMessage = '请求超时了，服务器可能正在忙碌，请稍后再试。';
-      } else if (axiosErr.code === 'ERR_NETWORK') {
-        errorMessage = '无法连接到服务器，请检查后端是否正在运行。';
-      } else if (axiosErr.response?.data?.detail) {
-        const detail = axiosErr.response.data.detail;
-        errorMessage = typeof detail === 'string'
-          ? `系统出了点小问题：${detail}`
-          : `系统出了点小问题：${JSON.stringify(detail)}`;
-      }
-      addSystemMessage(errorMessage);
-
-      options?.onError?.(error);
-    },
-  });
-
-  return {
-    sendInput: mutation.mutate,
-    sendInputAsync: mutation.mutateAsync,
-    isLoading: mutation.isPending,
-    error: mutation.error,
-    reset: mutation.reset,
-  };
-}
-
-// =============================================================================
-// SSE streaming hook (preferred)
+// SSE streaming hook
 // =============================================================================
 
 export function useStreamGameInput() {

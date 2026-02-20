@@ -10,8 +10,6 @@ import type {
   CombatActionResponse,
   TriggerCombatRequest,
   TriggerCombatResponse,
-  CombatStartRequest,
-  CombatStartResponse,
   CombatResolveRequest,
   CombatResolveResponse,
 } from '../types';
@@ -50,23 +48,6 @@ export async function executeCombatAction(
   const response = await apiClient.post<CombatActionResponse>(
     `/api/game/${worldId}/sessions/${sessionId}/combat/action`,
     action
-  );
-  return response.data;
-}
-
-/**
- * 开始战斗 (Legacy)
- *
- * POST /api/game/{world_id}/sessions/{session_id}/combat/start
- */
-export async function startCombat(
-  worldId: string,
-  sessionId: string,
-  request: CombatStartRequest
-): Promise<CombatStartResponse> {
-  const response = await apiClient.post<CombatStartResponse>(
-    `/api/game/${worldId}/sessions/${sessionId}/combat/start`,
-    request
   );
   return response.data;
 }

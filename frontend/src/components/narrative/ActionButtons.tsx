@@ -63,6 +63,20 @@ const categoryConfig: Record<
   },
 };
 
+function buildActionInput(action: GameAction): string {
+  const rawText = action.display_name.trim();
+  if (!rawText) return '';
+
+  // Keep frontend clicks aligned with natural-language intents consumed by V4.
+  const text = rawText.replace(/^\[(.*)\]$/, '$1').trim();
+  if (action.category === 'movement') {
+    const hasMoveVerb = /(前往|进入|离开|返回|去|走|travel|move|go|enter|leave)/i.test(text);
+    if (!hasMoveVerb) return `前往${text}`;
+  }
+
+  return text;
+}
+
 export const ActionButtons: React.FC<ActionButtonsProps> = ({
   actions,
   className = '',
@@ -89,8 +103,10 @@ export const ActionButtons: React.FC<ActionButtonsProps> = ({
 
   const handleActionClick = (action: GameAction) => {
     if (action.enabled && !isLoading) {
-      // Send the action as a command
-      sendInput(`[${action.display_name}]`);
+      const input = buildActionInput(action);
+      if (input) {
+        sendInput(input);
+      }
     }
   };
 

@@ -7,7 +7,7 @@ export * from './gameApi';
 export * from './combatApi';
 
 // Hooks
-export { useGameInput, useStreamGameInput } from './hooks/useGameInput';
+export { useStreamGameInput } from './hooks/useGameInput';
 export { streamGameInput, streamPrivateChat } from './sseClient';
 export { usePrivateChat } from './hooks/usePrivateChat';
 export { useLocation, useGameTime } from './hooks/useLocation';

@@ -28,16 +28,10 @@ from app.models.game import (
     CombatStartRequest,
     CombatStartResponse,
     DiceRollAPIRequest,
-    EnterSceneRequest,
-    EnterSceneResponse,
     GameContextResponse,
     GamePhase,
     GameSessionState,
-    NavigateRequest,
     PlayerInputRequest,
-    PlayerInputResponse,
-    StartDialogueRequest,
-    StartDialogueResponse,
     TriggerCombatRequest,
     TriggerCombatResponse,
 )
@@ -100,11 +94,6 @@ class CreateGameSessionRequest(BaseModel):
     known_characters: List[str] = Field(default_factory=list)
     character_locations: Dict[str, str] = Field(default_factory=dict)
 
-
-class EnterSubLocationRequest(BaseModel):
-    """进入子地点请求"""
-
-    sub_location_id: str
 
 
 class CreatePartyRequest(BaseModel):
@@ -395,31 +384,6 @@ async def get_context(
     )
 
 
-@router.post("/{world_id}/sessions/{session_id}/scene")
-async def enter_scene(
-    world_id: str,
-    session_id: str,
-    payload: EnterSceneRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-) -> EnterSceneResponse:
-    """进入场景（统一入口）"""
-    try:
-        result = await coordinator.enter_scene(
-            world_id=world_id,
-            session_id=session_id,
-            scene=payload.scene,
-            generate_description=payload.generate_description,
-        )
-        return EnterSceneResponse(
-            scene=result["scene"],
-            description=result.get("description", ""),
-            npc_memories=result.get("npc_memories", {}),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
 
 @router.post("/{world_id}/sessions/{session_id}/input")
 async def process_input_v2(
@@ -512,39 +476,6 @@ async def get_location(
         raise _map_exception_to_http(exc) from exc
 
 
-@router.post("/{world_id}/sessions/{session_id}/navigate")
-async def navigate(
-    world_id: str,
-    session_id: str,
-    payload: NavigateRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-):
-    """导航到目标位置"""
-    try:
-        result = await coordinator.navigate(
-            world_id=world_id,
-            session_id=session_id,
-            destination=payload.destination,
-            direction=payload.direction,
-        )
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "导航失败"))
-        narration = await coordinator.narrate_state_change(
-            world_id,
-            session_id,
-            change_type="navigation",
-            change_details={
-                "to": (result.get("new_location") or {}).get("location_name"),
-                "segments": result.get("segments", []),
-            },
-        )
-        result["narration"] = narration
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise _map_exception_to_http(exc) from exc
-
 
 @router.get("/{world_id}/sessions/{session_id}/time")
 async def get_time(
@@ -564,89 +495,6 @@ async def get_time(
         raise _map_exception_to_http(exc) from exc
 
 
-class AdvanceTimeRequest(BaseModel):
-    """推进时间请求"""
-
-    minutes: int = 30
-
-
-@router.post("/{world_id}/sessions/{session_id}/time/advance")
-async def advance_time(
-    world_id: str,
-    session_id: str,
-    payload: AdvanceTimeRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-):
-    """手动推进游戏时间"""
-    try:
-        result = await coordinator.advance_time(world_id, session_id, payload.minutes)
-        if "error" in result:
-            raise HTTPException(status_code=400, detail=result["error"])
-        narration = await coordinator.narrate_state_change(
-            world_id,
-            session_id,
-            change_type="time_advance",
-            change_details={"minutes": payload.minutes, "events": result.get("events", [])},
-        )
-        result["narration"] = narration
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post("/{world_id}/sessions/{session_id}/sub-location/enter")
-async def enter_sub_location(
-    world_id: str,
-    session_id: str,
-    payload: EnterSubLocationRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-):
-    """进入子地点"""
-    try:
-        result = await coordinator.enter_sub_location(
-            world_id=world_id,
-            session_id=session_id,
-            sub_location_id=payload.sub_location_id,
-        )
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "进入子地点失败"))
-        narration = await coordinator.narrate_state_change(
-            world_id,
-            session_id,
-            change_type="sub_location_enter",
-            change_details={
-                "name": (result.get("sub_location") or {}).get("name", payload.sub_location_id),
-            },
-        )
-        result["narration"] = narration
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post("/{world_id}/sessions/{session_id}/sub-location/leave")
-async def leave_sub_location(
-    world_id: str,
-    session_id: str,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-):
-    """离开子地点"""
-    try:
-        result = await coordinator.leave_sub_location(
-            world_id=world_id,
-            session_id=session_id,
-        )
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "离开子地点失败"))
-        return result
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.get("/{world_id}/sessions/{session_id}/sub-locations")
@@ -671,57 +519,6 @@ async def get_sub_locations(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-
-@router.post("/{world_id}/sessions/{session_id}/dialogue/start")
-async def start_dialogue(
-    world_id: str,
-    session_id: str,
-    payload: StartDialogueRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-) -> StartDialogueResponse:
-    """开始与NPC对话"""
-    try:
-        result = await coordinator.start_dialogue(
-            world_id=world_id,
-            session_id=session_id,
-            npc_id=payload.npc_id,
-        )
-        if result.get("type") == "error":
-            raise HTTPException(status_code=400, detail=result.get("response"))
-        narration = await coordinator.narrate_state_change(
-            world_id,
-            session_id,
-            change_type="dialogue_start",
-            change_details={"npc_name": result.get("speaker", payload.npc_id)},
-        )
-        return StartDialogueResponse(
-            npc_id=payload.npc_id,
-            npc_name=result.get("speaker", payload.npc_id),
-            greeting=result.get("response", ""),
-            narration=narration,
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post("/{world_id}/sessions/{session_id}/dialogue/end")
-async def end_dialogue(
-    world_id: str,
-    session_id: str,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-) -> PlayerInputResponse:
-    """结束当前对话"""
-    try:
-        result = await coordinator.end_dialogue(world_id, session_id)
-        return PlayerInputResponse(
-            type=result.get("type", "system"),
-            response=result.get("response", ""),
-            speaker=result.get("speaker", "系统"),
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/combat/trigger")
@@ -851,31 +648,6 @@ async def player_dice_roll(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-
-@router.post("/{world_id}/sessions/{session_id}/advance-day")
-async def advance_day(
-    world_id: str,
-    session_id: str,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-) -> PlayerInputResponse:
-    """推进游戏日"""
-    try:
-        result = await coordinator.advance_day(world_id, session_id)
-        narration = await coordinator.narrate_state_change(
-            world_id,
-            session_id,
-            change_type="day_advance",
-            change_details={"day": result.get("game_day")},
-        )
-        return PlayerInputResponse(
-            type=result.get("type", "system"),
-            response=result.get("response", ""),
-            speaker="系统",
-            state_changes={"game_day": result.get("game_day")},
-            narration=narration,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{world_id}/sessions/{session_id}/party")

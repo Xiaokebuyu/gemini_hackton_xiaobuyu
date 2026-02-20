@@ -1,8 +1,6 @@
 """Navigation tools for MCP server."""
 import json
-from typing import Optional
 
-# 懒加载 AdminCoordinator，避免循环依赖
 _admin = None
 
 
@@ -18,21 +16,6 @@ def register(game_mcp) -> None:
     @game_mcp.tool()
     async def get_location(world_id: str, session_id: str) -> str:
         result = await _get_admin().get_current_location(world_id, session_id)
-        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
-
-    @game_mcp.tool()
-    async def navigate(
-        world_id: str,
-        session_id: str,
-        destination: Optional[str] = None,
-        direction: Optional[str] = None,
-    ) -> str:
-        result = await _get_admin().navigate(
-            world_id=world_id,
-            session_id=session_id,
-            destination=destination,
-            direction=direction,
-        )
         return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
     @game_mcp.tool()

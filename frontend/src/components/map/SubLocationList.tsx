@@ -25,7 +25,7 @@ export const SubLocationList: React.FC<SubLocationListProps> = ({
 
   const handleEnter = (subLoc: SubLocation) => {
     if (isSubLocationAccessible(subLoc) && !isLoading) {
-      sendInput(`[进入${subLoc.name}]`);
+      sendInput(`进入${subLoc.name}`);
     }
   };
 

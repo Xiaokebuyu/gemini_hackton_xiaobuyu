@@ -563,6 +563,7 @@ class GraphBuilder:
         _build_geography(wg, world)
         _build_events(wg, world)
         _build_characters(wg, world, use_canonical_relationships)
+        _enrich_hosts_from_area_registry(wg, world)
         _build_party(wg, session)
 
         wg.seal()
@@ -1033,6 +1034,71 @@ def _build_characters(
     #       后期需在源数据中区分。use_canonical_relationships 参数控制是否构建。
     if use_canonical_relationships:
         _build_npc_relationships(wg, world.character_registry)
+
+
+def _enrich_hosts_from_area_registry(
+    wg: WorldGraph,
+    world: WorldInstance,
+) -> None:
+    """从 area_registry.sub_locations.resident_npcs 补充/升级 HOSTS 边。
+
+    _build_characters() 仅依据 NPC 自身的 default_map/default_sub_location
+    创建 HOSTS 边，但大量 NPC 的 default_sub_location 为空。
+    area_registry 的 sub_locations[].resident_npcs 才是权威数据源。
+
+    本函数将 area 级 HOSTS 边升级为子地点级，或为无 HOSTS 边的 NPC 补建。
+    """
+    upgraded = 0
+    created = 0
+
+    for area_id, area_def in world.area_registry.items():
+        for sub_loc in area_def.sub_locations:
+            if not sub_loc.resident_npcs:
+                continue
+            loc_node_id = f"loc_{area_id}_{sub_loc.id}"
+            if not wg.has_node(loc_node_id):
+                continue
+
+            for char_id in sub_loc.resident_npcs:
+                if not wg.has_node(char_id):
+                    continue
+
+                npc_node = wg.get_node(char_id)
+                if not npc_node:
+                    continue
+
+                current_loc = npc_node.state.get("current_location", "")
+                edge_key = f"hosts_{char_id}"
+
+                # 已在正确子地点 → 跳过
+                if current_loc == loc_node_id:
+                    continue
+
+                # 移除旧 HOSTS 边（如果存在）
+                if current_loc and wg.has_node(current_loc):
+                    old_edge = wg.get_edge(current_loc, char_id, edge_key)
+                    if old_edge is not None:
+                        wg.remove_edge(current_loc, char_id, edge_key)
+                        upgraded += 1
+                    else:
+                        created += 1
+                else:
+                    created += 1
+
+                # 创建子地点级 HOSTS 边
+                wg.add_edge(
+                    loc_node_id,
+                    char_id,
+                    WorldEdgeType.HOSTS.value,
+                    key=edge_key,
+                )
+                npc_node.state["current_location"] = loc_node_id
+
+    if upgraded or created:
+        logger.info(
+            "[GraphBuilder] HOSTS 边补充完成: 升级 %d 条, 新建 %d 条",
+            upgraded, created,
+        )
 
 
 def _build_npc_relationships(

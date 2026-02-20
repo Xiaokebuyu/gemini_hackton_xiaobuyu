@@ -1,9 +1,9 @@
 """
 FastAPI 端到端测试（含 MCP）
 
-按阶段覆盖所有 36 个 API 端点：
-- 阶段 1：基础连通性 (7 端点)
-- 阶段 2：Game Tools MCP (10 端点)
+按阶段覆盖所有 API 端点：
+- 阶段 1：基础连通性 (8 端点)
+- 阶段 2：Game Tools MCP (4 端点: input, narrative, maps, trigger-event)
 - 阶段 3：Combat MCP (4 端点)
 - 阶段 4：队伍系统 (5 端点)
 - 阶段 5：路人与事件 (5 端点)
@@ -47,14 +47,6 @@ CREATE_SESSION_PAYLOAD = {
     "starting_location": "village",
     "starting_time": {"day": 1, "hour": 8, "minute": 0},
 }
-
-NAVIGATE_REQUEST = {"destination": "tavern"}
-
-ADVANCE_TIME_REQUEST = {"minutes": 30}
-
-ENTER_SUB_LOCATION = {"sub_location_id": "counter"}
-
-START_DIALOGUE = {"npc_id": "guild_girl"}
 
 PLAYER_INPUT = {"input": "我环顾四周"}
 
@@ -254,99 +246,6 @@ class TestPhase2GameToolsMCP:
             data = response.json()
             assert "narration" in data or "response" in data
             print(f"✓ 玩家输入处理成功")
-
-    @pytest.mark.asyncio
-    async def test_02_navigate(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/navigate - 导航（触发 MCP navigate）"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/navigate",
-            json=NAVIGATE_REQUEST,
-        )
-        print(f"导航响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 400, 500]
-        if response.status_code == 200:
-            data = response.json()
-            assert data.get("success") is True or "new_location" in data
-            print(f"✓ 导航成功")
-
-    @pytest.mark.asyncio
-    async def test_03_enter_sub_location(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/sub-location/enter - 进入子地点"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/sub-location/enter",
-            json=ENTER_SUB_LOCATION,
-        )
-        print(f"进入子地点响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 400, 500]
-        if response.status_code == 200:
-            data = response.json()
-            assert data.get("success") is True
-            print(f"✓ 进入子地点成功")
-
-    @pytest.mark.asyncio
-    async def test_04_leave_sub_location(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/sub-location/leave - 离开子地点"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/sub-location/leave"
-        )
-        print(f"离开子地点响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 400, 500]
-        if response.status_code == 200:
-            data = response.json()
-            assert data.get("success") is True
-            print(f"✓ 离开子地点成功")
-
-    @pytest.mark.asyncio
-    async def test_05_advance_time(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/time/advance - 推进时间"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/time/advance",
-            json=ADVANCE_TIME_REQUEST,
-        )
-        print(f"推进时间响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 400, 500]
-        if response.status_code == 200:
-            data = response.json()
-            print(f"✓ 时间推进成功")
-
-    @pytest.mark.asyncio
-    async def test_06_start_dialogue(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/dialogue/start - 开始对话"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/dialogue/start",
-            json=START_DIALOGUE,
-        )
-        print(f"开始对话响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 400, 500]
-        if response.status_code == 200:
-            data = response.json()
-            assert "npc_id" in data or "greeting" in data
-            print(f"✓ 对话开始成功")
-
-    @pytest.mark.asyncio
-    async def test_07_end_dialogue(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/dialogue/end - 结束对话"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/dialogue/end"
-        )
-        print(f"结束对话响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 500]
-        if response.status_code == 200:
-            data = response.json()
-            assert "type" in data
-            print(f"✓ 对话结束成功")
 
     @pytest.mark.asyncio
     async def test_08_narrative_progress(self, client: AsyncClient, session_id: str):
@@ -718,44 +617,6 @@ class TestPhase5PasserbyAndEvents:
             print(f"✓ 自然语言事件摄入成功")
 
 
-# ==================== Additional Tests ====================
-
-
-class TestAdditionalEndpoints:
-    """其他端点测试"""
-
-    @pytest.mark.asyncio
-    async def test_enter_scene(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/scene - 进入场景"""
-        payload = {
-            "scene": {
-                "scene_id": "tavern_main",
-                "description": "酒馆大厅，熙熙攘攘",
-                "location": "tavern",
-            },
-            "generate_description": True,
-        }
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/scene",
-            json=payload,
-        )
-        print(f"进入场景响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 404, 500]
-
-    @pytest.mark.asyncio
-    async def test_advance_day(self, client: AsyncClient, session_id: str):
-        """POST /{world}/sessions/{id}/advance-day - 推进游戏日"""
-        response = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/advance-day"
-        )
-        print(f"推进游戏日响应: {response.status_code}")
-        print(f"响应内容: {response.json()}")
-
-        assert response.status_code in [200, 500]
-
-
 # ==================== Integration Scenarios ====================
 
 
@@ -806,20 +667,6 @@ class TestIntegrationScenarios:
             json={"input": "我们出发去冒险吧"},
         )
         print(f"6. 玩家输入: {resp.status_code}")
-
-        # 7. 导航
-        resp = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/navigate",
-            json={"destination": "forest"},
-        )
-        print(f"7. 导航: {resp.status_code}")
-
-        # 8. 推进时间
-        resp = await client.post(
-            f"/api/game/{WORLD_ID}/sessions/{session_id}/time/advance",
-            json={"minutes": 60},
-        )
-        print(f"8. 推进时间: {resp.status_code}")
 
         print("=" * 60)
         print("完整游戏流程测试完成")

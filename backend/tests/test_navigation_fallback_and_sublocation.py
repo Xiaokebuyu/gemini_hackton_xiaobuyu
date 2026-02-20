@@ -234,99 +234,6 @@ class _DummyRuntime:
 
 
 @pytest.mark.asyncio
-async def test_enter_sublocation_accepts_sub_location_name():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ENTER_SUBLOCATION,
-            parameters={"sub_location": "酒馆"},
-        ),
-    )
-
-    assert result.success is True
-    assert runtime.entered_sub_location_id == "frontier_tavern"
-
-
-@pytest.mark.asyncio
-async def test_enter_sublocation_keeps_sub_location_id_priority():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ENTER_SUBLOCATION,
-            parameters={"sub_location_id": "blacksmith_shop", "sub_location": "酒馆"},
-        ),
-    )
-
-    assert result.success is True
-    assert runtime.entered_sub_location_id == "blacksmith_shop"
-
-
-@pytest.mark.asyncio
-async def test_enter_sublocation_accepts_destination_alias():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ENTER_SUBLOCATION,
-            parameters={"destination": "酒馆"},
-        ),
-    )
-
-    assert result.success is True
-    assert runtime.entered_sub_location_id == "frontier_tavern"
-
-
-@pytest.mark.asyncio
-async def test_enter_sublocation_accepts_location_alias():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ENTER_SUBLOCATION,
-            parameters={"location": "酒馆"},
-        ),
-    )
-
-    assert result.success is True
-    assert runtime.entered_sub_location_id == "frontier_tavern"
-
-
-@pytest.mark.asyncio
-async def test_navigate_calls_runtime_directly():
-    """导航操作应直接调用 world_runtime.navigate。"""
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.NAVIGATE,
-            parameters={"destination": "frontier_town"},
-        ),
-    )
-
-    assert result.success is True
-    assert result.state_delta is not None
-    assert result.state_delta.changes.get("player_location") == "frontier_town"
-    assert result.state_delta.changes.get("sub_location") is None
-
-
-@pytest.mark.asyncio
 async def test_update_time_calls_runtime_directly():
     """时间更新操作应直接调用 world_runtime.advance_time。"""
     runtime = _DummyRuntime()
@@ -343,25 +250,6 @@ async def test_update_time_calls_runtime_directly():
 
     assert result.success is True
     assert "time" in result.result
-
-
-@pytest.mark.asyncio
-async def test_enter_sublocation_returns_state_delta():
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ENTER_SUBLOCATION,
-            parameters={"sub_location": "酒馆"},
-        ),
-    )
-
-    assert result.success is True
-    assert result.state_delta is not None
-    assert result.state_delta.changes.get("sub_location") == "frontier_tavern"
 
 
 class _DummyCharacter:

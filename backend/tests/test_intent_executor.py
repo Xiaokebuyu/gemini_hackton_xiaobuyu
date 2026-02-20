@@ -57,6 +57,7 @@ def _make_session(
     session.enter_area = AsyncMock(return_value={"success": True, "new_area": "tavern_area"})
     session.enter_sublocation = AsyncMock(return_value={"success": True, "sub_location": "smithy"})
     session.update_time = MagicMock()
+    session.advance_time = MagicMock(return_value={"success": True, "time": {"day": 1, "hour": 11, "minute": 0}, "events": []})
     session.build_tick_context = MagicMock(return_value=None)
 
     return session
@@ -159,6 +160,23 @@ class TestExecuteSublocation:
         assert result.target == "smithy"
         session.enter_sublocation.assert_called_once_with("smithy")
 
+    def test_sublocation_graph_id_is_normalized_before_enter(self):
+        """Graph node id `loc_<area>_<sub>` should be converted to runtime sub_id."""
+        session = _make_session(player_location="frontier_town")
+        bus = SceneBus(area_id="frontier_town")
+        executor = IntentExecutor(session, bus)
+        intent = ResolvedIntent(
+            type=IntentType.MOVE,
+            target="loc_frontier_town_tavern_guild",
+            target_name="公会大厅",
+            params={"is_sublocation": True},
+        )
+        result = _run(executor.dispatch(intent))
+        assert result.success
+        assert result.intent_type == "move_sublocation"
+        assert result.target == "tavern_guild"
+        session.enter_sublocation.assert_called_once_with("tavern_guild")
+
     def test_locked_sublocation(self):
         session = _make_session()
         node = MagicMock()
@@ -237,7 +255,7 @@ class TestExecuteTalkSetup:
         )
         result = _run(executor.dispatch(intent))
         assert result.success
-        assert result.intent_type == "talk"
+        assert result.intent_type == "talk_pending"  # no flash_cpu → NPC didn't respond
         assert result.target == "priestess"
         assert len(result.bus_entries) == 1
         assert session.narrative.npc_interactions["priestess"] == 1
@@ -407,7 +425,7 @@ class TestExecuteRest:
         assert result.success
         assert result.intent_type == "rest"
         assert len(result.bus_entries) == 1
-        session.update_time.assert_called_once()
+        session.advance_time.assert_called_once_with(60)
         assert player.current_hp == 75  # 50 + 25% of 100
         session.mark_player_dirty.assert_called_once()
 
@@ -440,10 +458,8 @@ class TestExecuteRest:
         )
         result = _run(executor.dispatch(intent))
         assert result.success
-        # Time should have been updated (10:30 + 60min = 11:30)
-        call_args = session.update_time.call_args[0][0]
-        assert call_args.hour == 11
-        assert call_args.minute == 30
+        # advance_time should be called with 60 minutes
+        session.advance_time.assert_called_once_with(60)
 
     def test_rest_blocked_during_combat(self):
         session = _make_session()

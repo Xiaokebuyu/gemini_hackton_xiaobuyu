@@ -25,7 +25,7 @@ export const LocationCard: React.FC<LocationCardProps> = ({
 
   const handleLeaveSubLocation = () => {
     if (subLocation && !isLoading) {
-      sendInput('[离开]');
+      sendInput('离开这里');
     }
   };
 

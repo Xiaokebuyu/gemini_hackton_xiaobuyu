@@ -85,7 +85,7 @@ interface GameStoreState {
   ) => void;
   setImageData: (imageData: CoordinatorImageData | null) => void;
   setAgenticTrace: (trace: AgenticTracePayload | null) => void;
-  appendAgenticToolCall: (call: AgenticTracePayload['tool_calls'][0]) => void;
+  appendAgenticToolCall: (call: NonNullable<AgenticTracePayload['tool_calls']>[number]) => void;
   setDispositions: (d: DispositionsMap) => void;
   setDiceRoll: (roll: DiceRoll | null) => void;
   updateFromStateDelta: (delta: StateDelta) => void;

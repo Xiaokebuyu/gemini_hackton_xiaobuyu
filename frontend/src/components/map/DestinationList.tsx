@@ -37,7 +37,7 @@ export const DestinationList: React.FC<DestinationListProps> = ({
 
   const handleTravel = (dest: Destination) => {
     if (isDestinationAccessible(dest) && !isLoading) {
-      sendInput(`[前往${dest.name}]`);
+      sendInput(`前往${dest.name}`);
     }
   };
 

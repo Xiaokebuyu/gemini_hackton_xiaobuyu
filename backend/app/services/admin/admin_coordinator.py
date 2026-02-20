@@ -31,13 +31,10 @@ from app.models.game import (
     CreateSessionResponse,
     GameSessionState,
     GamePhase,
-    SceneState,
     UpdateSceneRequest,
 )
 from app.models.admin_protocol import (
     CoordinatorResponse,
-    FlashOperation,
-    FlashRequest,
 )
 from app.services.game_session_store import GameSessionStore
 from app.services.flash_service import FlashService
@@ -948,186 +945,6 @@ class AdminCoordinator:
         self._area_chapter_cache[world_id] = mapping
         return mapping
 
-    async def _build_context(
-        self,
-        world_id: str,
-        session_id: str,
-        player_character: Any = None,
-    ) -> Dict[str, Any]:
-        """构建当前上下文（并行读取只读依赖）。"""
-        context = {"world_id": world_id}
-
-        task_map: Dict[str, Any] = {
-            "location": self._world_runtime.get_current_location(world_id, session_id),
-            "time": self._world_runtime.get_game_time(world_id, session_id),
-            "state": self._state_manager.get_state(world_id, session_id),
-            "party": self.party_service.get_party(world_id, session_id),
-            "world_background": self._get_world_background(world_id, session_id),
-            "character_roster": self._get_character_roster(world_id),
-        }
-        if player_character is None:
-            task_map["player_character"] = self.character_store.get_character(world_id, session_id)
-
-        task_keys = list(task_map.keys())
-        task_results = await asyncio.gather(
-            *(task_map[key] for key in task_keys),
-            return_exceptions=True,
-        )
-        result_map = dict(zip(task_keys, task_results))
-
-        location = result_map.get("location")
-        if isinstance(location, Exception):
-            logger.debug("[_build_context] 位置信息加载失败: %s", location)
-            location = {}
-        if not isinstance(location, dict):
-            location = {}
-        context["location"] = location
-        context["available_destinations"] = location.get("available_destinations", [])
-        context["sub_locations"] = location.get("available_sub_locations", [])
-
-        time_info = result_map.get("time")
-        if isinstance(time_info, Exception):
-            logger.debug("[_build_context] 时间信息加载失败: %s", time_info)
-            time_info = {}
-        context["time"] = time_info if isinstance(time_info, dict) else {}
-
-        state = result_map.get("state")
-        if isinstance(state, Exception):
-            logger.debug("[_build_context] 状态加载失败: %s", state)
-            state = None
-        if state:
-            context["state"] = "in_dialogue" if state.active_dialogue_npc else (
-                "combat" if state.combat_id else "exploring"
-            )
-            context["active_npc"] = state.active_dialogue_npc
-        else:
-            context["state"] = "exploring"
-            context["active_npc"] = None
-
-        party = result_map.get("party")
-        if isinstance(party, Exception):
-            logger.debug("[_build_context] 队伍信息加载失败: %s", party)
-            party = None
-        if party:
-            context["party"] = party
-            context["teammates"] = [
-                {
-                    "character_id": m.character_id,
-                    "name": m.name,
-                    "role": m.role.value,
-                    "personality": m.personality,
-                    "current_mood": m.current_mood,
-                }
-                for m in party.get_active_members()
-            ]
-        else:
-            context["teammates"] = []
-
-        try:
-            player_char = player_character
-            if player_char is None:
-                player_char = result_map.get("player_character")
-                if isinstance(player_char, Exception):
-                    raise player_char
-            if player_char:
-                context["player_character"] = player_char
-                context["player_character_summary"] = player_char.to_summary_text()
-            else:
-                context["player_character_summary"] = "无玩家角色"
-        except Exception as exc:
-            logger.debug("[_build_context] 玩家角色加载失败: %s", exc)
-            context["player_character_summary"] = "无玩家角色"
-
-        world_background = result_map.get("world_background")
-        if isinstance(world_background, Exception):
-            logger.debug("[_build_context] 世界背景加载失败: %s", world_background)
-            world_background = "无"
-        context["world_background"] = world_background
-
-        character_roster = result_map.get("character_roster")
-        if isinstance(character_roster, Exception):
-            logger.debug("[_build_context] 角色花名册加载失败: %s", character_roster)
-            character_roster = "无"
-        context["character_roster"] = character_roster
-
-        await self._refresh_chapter_context(world_id, session_id, context)
-        return context
-
-    async def _refresh_chapter_context(
-        self,
-        world_id: str,
-        session_id: str,
-        context: Dict[str, Any],
-    ) -> None:
-        """刷新上下文中的章节编排信息。"""
-        try:
-            chapter_plan = await self.narrative_service.get_current_chapter_plan(
-                world_id, session_id
-            )
-            if not isinstance(chapter_plan, dict):
-                context["chapter_info"] = {}
-                return
-
-            chapter_info = dict(chapter_plan)
-            progress = await self.narrative_service.get_progress(world_id, session_id)
-
-            triggered_events = [
-                event_id
-                for event_id in (getattr(progress, "events_triggered", []) or [])
-                if isinstance(event_id, str) and event_id.strip()
-            ]
-            triggered_set = set(triggered_events)
-            required_event_summaries_raw = chapter_info.get("required_event_summaries", [])
-            required_event_summaries: List[Dict[str, Any]] = []
-            if isinstance(required_event_summaries_raw, list):
-                for item in required_event_summaries_raw:
-                    if not isinstance(item, dict):
-                        continue
-                    event_id = item.get("id")
-                    if not isinstance(event_id, str) or not event_id.strip():
-                        continue
-                    normalized = dict(item)
-                    normalized["id"] = event_id.strip()
-                    normalized["completed"] = normalized["id"] in triggered_set
-                    required_event_summaries.append(normalized)
-
-            required_events_raw = chapter_info.get("required_events", [])
-            required_events_from_ids = [
-                event_id
-                for event_id in required_events_raw
-                if isinstance(event_id, str) and event_id.strip()
-            ]
-            required_events_from_summaries = [
-                item["id"] for item in required_event_summaries
-                if isinstance(item.get("id"), str) and item["id"].strip()
-            ]
-            required_events = required_events_from_ids or required_events_from_summaries
-            pending_required_events = [
-                event_id for event_id in required_events if event_id not in triggered_set
-            ]
-            event_total = len(required_events)
-            event_completed = event_total - len(pending_required_events)
-            event_completion_pct = (
-                round((event_completed / event_total) * 100, 2) if event_total > 0 else 0.0
-            )
-            all_required_events_completed = event_total > 0 and event_completed >= event_total
-            waiting_transition = bool(
-                all_required_events_completed and not chapter_info.get("current_event")
-            )
-
-            chapter_info["events_triggered"] = triggered_events
-            chapter_info["required_event_summaries"] = required_event_summaries
-            chapter_info["pending_required_events"] = pending_required_events
-            chapter_info["event_total"] = event_total
-            chapter_info["event_completed"] = event_completed
-            chapter_info["event_completion_pct"] = event_completion_pct
-            chapter_info["all_required_events_completed"] = all_required_events_completed
-            chapter_info["waiting_transition"] = waiting_transition
-            context["chapter_info"] = chapter_info
-        except Exception as exc:
-            logger.debug("[_refresh_chapter_context] 章节信息获取失败: %s", exc)
-            context["chapter_info"] = {}
-
     @staticmethod
     def _detect_output_anomalies(narration: str) -> Dict[str, Any]:
         """检测疑似 thought/草稿泄露，仅用于可观测性记录，不改写正文。"""
@@ -1165,85 +982,6 @@ class AdminCoordinator:
             "output_anomaly_excerpt": compact[:240],
         }
 
-
-    async def narrate_state_change(
-        self,
-        world_id: str,
-        session_id: str,
-        change_type: str,
-        change_details: Dict[str, Any],
-    ) -> str:
-        """状态变更后的统一叙述（供 navigate/time/dialogue 等端点使用）"""
-        context = await self._build_context(world_id, session_id)
-        history = self.session_history_manager.get_or_create(world_id, session_id)
-        conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
-        if conversation_history:
-            context["conversation_history"] = conversation_history
-        summary = self._build_change_summary(change_type, change_details)
-        return await self.flash_cpu.generate_gm_narration(
-            player_input=summary,
-            execution_summary=summary,
-            context=context,
-        )
-
-    def _build_change_summary(self, change_type: str, details: Dict[str, Any]) -> str:
-        """构建状态变更摘要"""
-        builders = {
-            "navigation": lambda d: f"玩家到达了{d.get('to', '新地点')}",
-            "time_advance": lambda d: f"时间过去了{d.get('minutes', 0)}分钟",
-            "dialogue_start": lambda d: f"玩家开始与{d.get('npc_name', 'NPC')}对话",
-            "sub_location_enter": lambda d: f"玩家进入了{d.get('name', '某处')}",
-            "day_advance": lambda d: f"新的一天（第{d.get('day', 1)}天）开始了",
-        }
-        return builders.get(change_type, lambda d: str(d))(details)
-
-    async def enter_scene(
-        self,
-        world_id: str,
-        session_id: str,
-        scene: SceneState,
-        generate_description: bool = True,
-    ) -> Dict[str, Any]:
-        await self._session_store.set_scene(world_id, session_id, scene)
-        description = scene.description or ""
-        if generate_description and not description:
-            context = await self._build_context(world_id, session_id)
-            history = self.session_history_manager.get_or_create(world_id, session_id)
-            conversation_history = history.get_recent_history(max_tokens=settings.session_history_max_tokens)
-            if conversation_history:
-                context["conversation_history"] = conversation_history
-            summary = f"进入场景：{scene.location or scene.scene_id}"
-            description = await self.flash_cpu.generate_gm_narration(
-                player_input=summary,
-                execution_summary=summary,
-                context=context,
-            )
-        return {
-            "scene": scene,
-            "description": description,
-            "npc_memories": {},
-        }
-
-    async def start_dialogue(self, world_id: str, session_id: str, npc_id: str) -> Dict[str, Any]:
-        delta = self.flash_cpu._build_state_delta("dialogue_start", {"active_dialogue_npc": npc_id})
-        await self.flash_cpu._apply_delta(world_id, session_id, delta)
-        request = FlashRequest(
-            operation=FlashOperation.NPC_DIALOGUE,
-            parameters={"npc_id": npc_id, "message": "你好"},
-        )
-        result = await self.flash_cpu.execute_request(world_id, session_id, request)
-        response_text = result.result.get("response") if isinstance(result.result, dict) else ""
-        return {
-            "type": "dialogue",
-            "response": response_text or "……",
-            "speaker": npc_id,
-            "npc_id": npc_id,
-        }
-
-    async def end_dialogue(self, world_id: str, session_id: str) -> Dict[str, Any]:
-        delta = self.flash_cpu._build_state_delta("dialogue_end", {"active_dialogue_npc": None})
-        await self.flash_cpu._apply_delta(world_id, session_id, delta)
-        return {"type": "system", "response": "结束对话。", "speaker": "系统"}
 
     async def trigger_combat(
         self,
@@ -1331,9 +1069,6 @@ class AdminCoordinator:
             "available_actions": actions_payload.get("actions", []),
         }
 
-    async def advance_day(self, world_id: str, session_id: str) -> Dict[str, Any]:
-        return await self._world_runtime.advance_day(world_id, session_id)
-
     async def start_session(
         self,
         world_id: str,
@@ -1345,7 +1080,7 @@ class AdminCoordinator:
         starting_time: Optional[dict] = None,
     ):
         self._ensure_fixed_world(world_id)
-        return await self._world_runtime.start_session(
+        admin_state = await self._world_runtime.start_session(
             world_id=world_id,
             session_id=session_id,
             participants=participants,
@@ -1354,6 +1089,16 @@ class AdminCoordinator:
             starting_location=starting_location,
             starting_time=starting_time,
         )
+
+        # A3: 自动创建空队伍（队友通过游戏内邀请加入）
+        try:
+            await self.party_service.get_or_create_party(
+                world_id, admin_state.session_id, leader_id="player"
+            )
+        except Exception as exc:
+            logger.warning("[start_session] 队伍自动创建失败: %s", exc)
+
+        return admin_state
 
     def get_context(self, world_id: str, session_id: str):
         # Prefer in-memory admin state
@@ -1398,22 +1143,6 @@ class AdminCoordinator:
 
     async def get_current_location(self, world_id: str, session_id: str):
         return await self._world_runtime.get_current_location(world_id, session_id)
-
-    async def navigate(
-        self,
-        world_id: str,
-        session_id: str,
-        destination: Optional[str] = None,
-        direction: Optional[str] = None,
-        generate_narration: bool = False,
-    ):
-        return await self._world_runtime.navigate(
-            world_id,
-            session_id,
-            destination=destination,
-            direction=direction,
-            generate_narration=generate_narration,
-        )
 
     async def get_game_time(self, world_id: str, session_id: str):
         return await self._world_runtime.get_game_time(world_id, session_id)

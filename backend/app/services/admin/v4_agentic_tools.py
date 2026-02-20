@@ -1,13 +1,8 @@
 """
 V4 Agentic tool registry — tools operate via SessionRuntime/AreaRuntime API.
 
-Changes from V3 (agentic_tools.py):
-- navigate/enter_sublocation → SessionRuntime.enter_area/enter_sublocation
-- player state tools → SessionRuntime.player direct modification
-- update_time → SessionRuntime.update_time
-- recall_memory → simplified to area + character scopes only
-- New: activate_event, complete_event, advance_chapter, update_disposition, create_memory
-- Removed: evaluate_story_conditions, get_progress, get_status (data in layered context)
+Navigation (navigate/enter_sublocation/leave_sublocation) removed — handled by IntentExecutor engine.
+update_time uses SessionRuntime.advance_time() directly (no FlashCPU relay).
 """
 import asyncio
 import functools
@@ -28,11 +23,10 @@ logger = logging.getLogger(__name__)
 
 # 意图 → 排除工具映射（引擎已执行的操作对应的工具不暴露给 LLM）
 _ENGINE_TOOL_EXCLUSIONS: Dict[str, set] = {
-    "move_area": {"navigate", "enter_sublocation", "leave_sublocation"},
-    "move_sublocation": {"enter_sublocation"},
-    "leave": {"leave_sublocation"},
+    "move_area": {"update_time"},  # 引擎 navigate 已推进旅行时间
     "rest": {"update_time"},
     "talk": {"npc_dialogue"},
+    "use_item": {"add_item", "remove_item", "heal_player"},
 }
 
 
@@ -88,40 +82,6 @@ class V4AgenticToolRegistry:
         minutes = max(1, min(int(raw_minutes), 720))
         return min(allowed, key=lambda value: abs(value - minutes))
 
-    @staticmethod
-    def _parse_travel_time(travel_time: str) -> float:
-        """Parse travel time string to minutes."""
-        time_str = travel_time.lower()
-        if "分钟" in time_str or "minutes" in time_str:
-            try:
-                return float("".join(filter(str.isdigit, time_str))) or 30
-            except ValueError:
-                return 30
-        elif "小时" in time_str or "hour" in time_str:
-            try:
-                hours = float("".join(filter(str.isdigit, time_str))) or 1
-                return hours * 60
-            except ValueError:
-                return 60
-        elif "半天" in time_str or "half day" in time_str:
-            return 360
-        elif "一天" in time_str or "day" in time_str:
-            return 720
-        else:
-            return 30
-
-    @staticmethod
-    def _get_period(hour: int) -> str:
-        """Get time period from hour."""
-        if 5 <= hour < 8:
-            return "dawn"
-        elif 8 <= hour < 18:
-            return "day"
-        elif 18 <= hour < 20:
-            return "dusk"
-        else:
-            return "night"
-
     def _wrap_tool_for_afc(self, tool_fn):
         """Wrap tool for AFC error recording + engine-executed safety net."""
         registry = self
@@ -161,10 +121,6 @@ class V4AgenticToolRegistry:
     def get_tools(self) -> List[Any]:
         """Return all tool callables exposed to the LLM."""
         raw_tools = [
-            # Navigation
-            self.navigate,
-            self.enter_sublocation,
-            self.leave_sublocation,
             # NPC
             self.npc_dialogue,
             # Memory
@@ -343,274 +299,8 @@ class V4AgenticToolRegistry:
         return payload
 
     # =========================================================================
-    # Navigation tools
+    # (Navigation tools removed — handled by IntentExecutor engine)
     # =========================================================================
-
-    async def navigate(self, destination: str) -> Dict[str, Any]:
-        """Navigate to a destination area.
-
-        Args:
-            destination: Area id or name from context `area_context.connections`.
-
-        Usage:
-            - Use for map-level movement between areas.
-            - Use `enter_sublocation` for in-area sub-locations.
-        """
-        from app.models.state_delta import GameTimeState
-
-        started = time.perf_counter()
-        area_id = self._resolve_area_id(destination)
-        args = {"destination": destination, "resolved_area_id": area_id}
-
-        # --- Validation 1: chapter gate (available_maps) ---
-        chapter_id = self.session.chapter_id
-        world = self.session.world
-        if chapter_id and world and hasattr(world, "chapter_registry"):
-            chapter_data = world.chapter_registry.get(chapter_id)
-            if chapter_data is not None:
-                if isinstance(chapter_data, dict):
-                    available_maps = chapter_data.get("available_maps", [])
-                else:
-                    available_maps = getattr(chapter_data, "available_maps", []) or []
-                if available_maps and area_id not in available_maps:
-                    payload = {
-                        "success": False,
-                        "error": f"area '{area_id}' not available in chapter '{chapter_id}'",
-                        "available_areas": list(available_maps),
-                    }
-                    await self._record("navigate", args, started, payload, False, payload["error"])
-                    return payload
-
-        # --- Validation 2: connection check (P8: 从 WorldGraph CONNECTS 边读) ---
-        from app.world.models import WorldEdgeType
-        edge_props: Optional[Dict[str, Any]] = None
-        current_area_id = self.session.player_location
-        old_sub_location = self.session.sub_location  # P1: 保存旧子地点供 exit ctx 使用
-
-        wg = getattr(self.session, "world_graph", None)
-        if wg and not getattr(self.session, "_world_graph_failed", False) and current_area_id:
-            for neighbor_id, edata in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
-                if neighbor_id == area_id:
-                    edge_props = edata
-                    break
-            if edge_props is None:
-                available_conns = [
-                    {"area_id": nid, "travel_time": ed.get("travel_time", "30 minutes")}
-                    for nid, ed in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value)
-                ]
-                payload = {
-                    "success": False,
-                    "error": f"no connection from current area to '{area_id}'",
-                    "available_connections": available_conns,
-                }
-                await self._record("navigate", args, started, payload, False, payload["error"])
-                return payload
-
-            # P8: blocked 检查骨架（等管线数据填充）
-            if edge_props.get("blocked"):
-                payload = {
-                    "success": False,
-                    "error": f"道路被封锁: {edge_props.get('blocked_reason', '前方不可通行')}",
-                }
-                await self._record("navigate", args, started, payload, False, payload["error"])
-                return payload
-        elif self.area and self.area.definition:
-            # 降级：WorldGraph 不可用时回退旧路径
-            for conn in self.area.definition.connections:
-                if conn.target_area_id == area_id:
-                    edge_props = {
-                        "travel_time": conn.travel_time,
-                        "connection_type": conn.connection_type,
-                    }
-                    break
-            if edge_props is None:
-                available_conns = [
-                    {"area_id": c.target_area_id, "travel_time": c.travel_time}
-                    for c in self.area.definition.connections
-                ]
-                payload = {
-                    "success": False,
-                    "error": f"no connection from current area to '{area_id}'",
-                    "available_connections": available_conns,
-                }
-                await self._record("navigate", args, started, payload, False, payload["error"])
-                return payload
-
-        # --- Travel time advancement ---
-        travel_minutes = 30
-        if edge_props:
-            raw = self._parse_travel_time(edge_props.get("travel_time") or "30 minutes")
-            travel_minutes = self._normalize_advance_minutes(int(raw))
-
-        # Advance game time
-        current_time = self.session.time
-        if current_time:
-            total = current_time.hour * 60 + current_time.minute + travel_minutes
-            new_day = current_time.day + total // (24 * 60)
-            remaining = total % (24 * 60)
-            new_hour = remaining // 60
-            new_minute = remaining % 60
-        else:
-            new_day, new_hour, new_minute = 1, 8, 0
-
-        period = self._get_period(new_hour)
-        formatted = f"第{new_day}天 {new_hour:02d}:{new_minute:02d}"
-        new_time = GameTimeState(
-            day=new_day, hour=new_hour, minute=new_minute,
-            period=period, formatted=formatted,
-        )
-        self.session.update_time(new_time)
-
-        # --- Execute area switch ---
-        try:
-            result = await asyncio.wait_for(
-                self.session.enter_area(area_id),
-                timeout=settings.admin_agentic_tool_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            payload = {"success": False, "error": "tool timeout: navigate"}
-            await self._record("navigate", args, started, payload, False, payload["error"])
-            return payload
-        except Exception as exc:
-            logger.error("navigate raised: %s", exc, exc_info=True)
-            payload = {"success": False, "error": f"navigate error: {type(exc).__name__}: {str(exc)[:200]}"}
-            await self._record("navigate", args, started, payload, False, payload["error"])
-            return payload
-
-        if not isinstance(result, dict):
-            result = {"success": True, "result": result}
-        result.setdefault("success", True)
-        result["travel_time_minutes"] = travel_minutes
-        if edge_props:
-            conn_type = edge_props.get("connection_type")
-            if conn_type:
-                result["connection_type"] = conn_type
-
-        # C7c: 更新 WorldGraph 区域状态
-        if result.get("success"):
-            wg = getattr(self.session, "world_graph", None)
-            if wg and not getattr(self.session, "_world_graph_failed", False) and wg.has_node(area_id):
-                try:
-                    wg.merge_state(area_id, {"visited": True})
-                    old_count = wg.get_node(area_id).state.get("visit_count", 0)
-                    wg.set_state(area_id, "visit_count", old_count + 1)
-                except Exception:
-                    pass  # 不阻塞导航
-
-            # --- P1: ON_EXIT / ON_ENTER + HOSTS 边管理 ---
-            engine = getattr(self.session, "_behavior_engine", None)
-            is_area_change = current_area_id and current_area_id != area_id
-            if engine and wg and not getattr(self.session, "_world_graph_failed", False) and is_area_change:
-                try:
-                    # 1. handle_exit（旧区域）— 覆写 ctx 为旧位置+旧子地点
-                    exit_result = None
-                    if wg.has_node(current_area_id):
-                        ctx_exit = self.session.build_tick_context("post")
-                        if ctx_exit:
-                            ctx_exit.player_location = current_area_id
-                            ctx_exit.player_sub_location = old_sub_location or ""
-                            exit_result = engine.handle_exit("player", current_area_id, ctx_exit)
-
-                    # 2. 更新 HOSTS 边（player + 队友）
-                    self._update_hosts_edges(wg, current_area_id, area_id)
-                    self._update_party_hosts_edges(wg, area_id)
-
-                    # 3. handle_enter（新区域）
-                    enter_result = None
-                    if wg.has_node(area_id):
-                        ctx_enter = self.session.build_tick_context("post")
-                        if ctx_enter:
-                            enter_result = engine.handle_enter("player", area_id, ctx_enter)
-
-                    # 4. 处理 TickResult
-                    hints = []
-                    for tr in (exit_result, enter_result):
-                        if tr:
-                            hints.extend(tr.narrative_hints)
-                            self.session._sync_tick_to_narrative(tr)
-                            self.session._apply_tick_side_effects(tr)
-                    if hints:
-                        result["narrative_hints"] = hints
-                except Exception as exc:
-                    logger.warning("[navigate] P1 enter/exit handling failed: %s", exc)
-
-        await self._record("navigate", args, started, result, result.get("success", True), result.get("error"))
-        return result
-
-    def _resolve_area_id(self, destination: str) -> str:
-        """Resolve area name to area_id. Returns destination as-is if no match.
-
-        P8: 优先从 WorldGraph CONNECTS 边查询，降级到旧注册表。
-        """
-        from app.world.models import WorldEdgeType
-
-        current_area_id = self.session.player_location
-        wg = getattr(self.session, "world_graph", None)
-
-        # Priority 1: WorldGraph CONNECTS 边精确 ID 匹配
-        if wg and not getattr(self.session, "_world_graph_failed", False) and current_area_id:
-            for neighbor_id, _ in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
-                if neighbor_id == destination:
-                    return destination
-
-            # Priority 2: WorldGraph CONNECTS 边按节点 name 匹配
-            for neighbor_id, _ in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
-                node = wg.get_node(neighbor_id)
-                if node and node.name == destination:
-                    return neighbor_id
-
-            # Priority 3: WorldGraph 全局 area 节点按 ID/name 匹配
-            from app.world.models import WorldNodeType
-            for nid in wg.get_by_type(WorldNodeType.AREA.value):
-                if nid == destination:
-                    return nid
-                node = wg.get_node(nid)
-                if node and node.name == destination:
-                    return nid
-
-            return destination
-
-        # 降级：WorldGraph 不可用时使用旧注册表
-        world = self.session.world
-        if self.area and self.area.definition:
-            for conn in self.area.definition.connections:
-                if conn.target_area_id == destination:
-                    return destination
-
-        if self.area and self.area.definition and world and hasattr(world, "area_registry"):
-            for conn in self.area.definition.connections:
-                area_def = world.area_registry.get(conn.target_area_id)
-                if area_def and getattr(area_def, "name", "") == destination:
-                    return conn.target_area_id
-
-        if world and hasattr(world, "area_registry"):
-            for aid, area_def in world.area_registry.items():
-                if aid == destination:
-                    return aid
-                name = area_def.name if hasattr(area_def, "name") else ""
-                if name == destination:
-                    return aid
-        return destination
-
-    async def enter_sublocation(self, sub_location: str) -> Dict[str, Any]:
-        """Enter a sub-location within the current area.
-
-        Args:
-            sub_location: Sub-location id or name from context `area_context.sub_locations`.
-
-        Usage:
-            - Use when player enters a building/room/POI inside current area.
-        """
-        args = {"sub_location": sub_location}
-        return await self._timed("enter_sublocation", args, self.session.enter_sublocation(sub_location))
-
-    async def leave_sublocation(self) -> Dict[str, Any]:
-        """Leave the current sub-location, returning to area main map.
-
-        Usage:
-            - Use when player leaves a building/room/POI to return to the area.
-        """
-        return await self._timed("leave_sublocation", {}, self.session.leave_sublocation())
 
     # =========================================================================
     # NPC dialogue
@@ -847,42 +537,18 @@ class V4AgenticToolRegistry:
 
         normalized = self._normalize_advance_minutes(int(minutes))
 
-        # Use FlashCPU for time update (it handles Firestore persistence)
-        from app.models.admin_protocol import FlashOperation, FlashRequest
-        request = FlashRequest(operation=FlashOperation.UPDATE_TIME, parameters={"minutes": normalized})
         try:
-            response = await asyncio.wait_for(
-                self.flash_cpu.execute_request(
-                    world_id=self.world_id,
-                    session_id=self.session_id,
-                    request=request,
-                    generate_narration=False,
-                ),
-                timeout=settings.admin_agentic_tool_timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            payload = {"success": False, "error": "tool timeout: update_time"}
-            await self._record("update_time", args, started, payload, False, payload["error"])
-            return payload
+            payload = self.session.advance_time(normalized)
         except Exception as exc:
             logger.error("update_time raised: %s", exc, exc_info=True)
             payload = {"success": False, "error": f"update_time error: {type(exc).__name__}: {str(exc)[:200]}"}
             await self._record("update_time", args, started, payload, False, payload["error"])
             return payload
 
-        payload = response.result if isinstance(response.result, dict) else {"raw": response.result}
-        payload["success"] = response.success
         payload["requested_minutes"] = int(minutes)
         payload["applied_minutes"] = normalized
-        if response.error:
-            payload["error"] = response.error
 
-        # Sync time to SessionRuntime
-        if response.success and self.session.game_state:
-            self.session.time = self.session.game_state.game_time
-            self.session.mark_game_state_dirty()
-
-        await self._record("update_time", args, started, payload, response.success, response.error)
+        await self._record("update_time", args, started, payload, payload.get("success", True), payload.get("error"))
         return payload
 
     # =========================================================================
@@ -1270,18 +936,6 @@ class V4AgenticToolRegistry:
             logger.info("[combat_sync] Synced combat results to player graph node")
         except Exception as exc:
             logger.error("[combat_sync] Failed to sync to graph: %s", exc, exc_info=True)
-
-    # =========================================================================
-    # P1: HOSTS edge management helpers
-    # =========================================================================
-
-    def _update_hosts_edges(self, wg, old_area_id, new_area_id):
-        from app.world.intent_executor import update_hosts_edges
-        update_hosts_edges(wg, old_area_id, new_area_id)
-
-    def _update_party_hosts_edges(self, wg, new_area_id):
-        from app.world.intent_executor import update_party_hosts_edges
-        update_party_hosts_edges(wg, new_area_id, self.session.party)
 
     # =========================================================================
     # Party tools (delegate to FlashCPU)

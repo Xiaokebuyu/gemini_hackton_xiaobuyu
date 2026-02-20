@@ -122,7 +122,7 @@ export const MiniMap: React.FC<MiniMapProps> = ({ className = '' }) => {
     if (!currentNodeId) return;
     if (node.id === currentNodeId) return;
     if (!node.is_unlocked || isLoading) return;
-    sendInput(`[前往${node.name}]`);
+    sendInput(`前往${node.name}`);
   };
 
   return (

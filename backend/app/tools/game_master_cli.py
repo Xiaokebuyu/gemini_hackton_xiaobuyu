@@ -238,28 +238,9 @@ class GameMasterCLI:
         print(colorize("\n✓ 游戏会话已创建！", Colors.GREEN))
 
     async def enter_scene(self, scene_id: str) -> None:
-        """进入场景"""
-        if not self.session_id:
-            print_error("请先开始游戏")
-            return
-
-        scene = self.demo_scenes.get(scene_id)
-        if not scene:
-            print_error(f"未知场景: {scene_id}")
-            print(f"可用场景: {', '.join(self.demo_scenes.keys())}")
-            return
-
-        result = await self.gm_service.enter_scene(
-            self.world_id, self.session_id, scene
-        )
-
-        print_gm(result["description"])
-
-        if result.get("npc_memories"):
-            print_subheader("NPC状态")
-            for npc_id, memory in result["npc_memories"].items():
-                if memory:
-                    print(f"  {npc_id}: {memory[:100]}...")
+        """进入场景（已废弃，改用 V4 /input 管线）"""
+        print_error("该命令已废弃。请直接输入文字描述你想去的地方，例如：'去冒险者公会'")
+        return
 
     async def process_input(self, user_input: str) -> None:
         """处理用户输入"""
@@ -282,30 +263,13 @@ class GameMasterCLI:
                 print_npc(name, response_text)
 
     async def talk_to(self, npc_id: str) -> None:
-        """开始与NPC对话"""
-        if not self.session_id:
-            print_error("请先开始游戏")
-            return
-
-        result = await self.gm_service.start_dialogue(
-            self.world_id, self.session_id, npc_id
-        )
-
-        if result.get("type") == "error":
-            print_error(result.get("response"))
-        else:
-            print_npc(result.get("speaker", npc_id), result.get("response", ""))
-            print_system(f"(你现在正在与 {npc_id} 对话。输入 /leave 结束对话)")
+        """开始与NPC对话（已废弃，改用 V4 /input 管线）"""
+        print_system(f"提示：直接输入 '和{npc_id}说话' 即可通过 V4 管线对话")
+        await self.process_input(f"和{npc_id}说话")
 
     async def leave_dialogue(self) -> None:
-        """离开对话"""
-        if not self.session_id:
-            return
-
-        result = await self.gm_service.end_dialogue(
-            self.world_id, self.session_id
-        )
-        print_system(result.get("response", ""))
+        """离开对话（已废弃，改用 V4 /input 管线）"""
+        await self.process_input("结束对话")
 
     async def trigger_combat(self) -> None:
         """触发演示战斗"""
@@ -521,8 +485,7 @@ class GameMasterCLI:
 
         elif cmd == "/day":
             if self.session_id:
-                result = await self.gm_service.advance_day(self.world_id, self.session_id)
-                print_system(result.get("response", ""))
+                await self.process_input("休息到明天")
 
         else:
             # 尝试作为系统命令处理

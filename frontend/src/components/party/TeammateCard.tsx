@@ -66,7 +66,7 @@ export const TeammateCard: React.FC<TeammateCardProps> = ({
 
   const handleTalk = () => {
     if (!isLoading) {
-      sendInput(`[和${member.name}交谈]`);
+      sendInput(`和${member.name}说话`);
     }
   };
 

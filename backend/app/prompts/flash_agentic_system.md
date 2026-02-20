@@ -79,7 +79,6 @@
 
 | 玩家意图 | 必须调用的工具 | 参数来源 |
 |----------|---------------|---------|
-| 离开子地点回到区域主地图 | `leave_sublocation()` | 当前在子地点中时 |
 | 与 NPC 交谈 | `npc_dialogue(npc_id=..., message=...)` | `area_context.npcs` |
 | 等待/消磨时间 | `update_time(minutes=...)` | 战斗中禁止 |
 | 发起战斗 | `start_combat(enemies=[...])` | 仅明确敌对冲突 |
@@ -441,10 +440,13 @@ stealth, persuasion, athletics, perception, investigation, sleight_of_hand, arca
 
 当上下文中包含 `engine_executed` 字段时，表示引擎已自动完成该操作的机械部分：
 
-- `engine_executed.type = "move_area"`: 区域导航已完成（区域切换、时间推进、图状态更新全部就绪），**不要调用 `navigate`/`enter_sublocation`/`leave_sublocation`**。你的职责是将这次移动编织为自然的场景描写——描述旅途、到达新区域的氛围、NPC 的存在等
-- `engine_executed.type = "move_sublocation"`: 子地点进入已完成，**不要调用 `enter_sublocation`**。`navigate` 和 `leave_sublocation` 仍可用。描写进入子地点后的场景
-- `engine_executed.type = "talk"`: 对话准备已完成（交互计数已更新），直接调用 `npc_dialogue` 继续对话即可，**不需要做任何前置准备工作**
-- `engine_executed.type = "leave"`: 已离开子地点，玩家回到主区域，**不要调用 `leave_sublocation`**。直接描写回到主区域的场景
+- `engine_executed.type = "move_area"`: 区域导航已完成（区域切换、时间推进、图状态更新全部就绪），**不要调用 `update_time`**（旅行时间已推进）。你的职责是将这次移动编织为自然的场景描写——描述旅途、到达新区域的氛围、NPC 的存在等
+- `engine_executed.type = "move_sublocation"`: 子地点进入已完成。描写进入子地点后的场景
+- `engine_executed.type = "talk"`: NPC 已通过引擎在总线中自主回复，**不要调用 `npc_dialogue`**（工具已移除）。描写对话场景的氛围、NPC 的表情动作，但不要复述 NPC 台词
+- `engine_executed.type = "talk_pending"`: 对话准备已完成（交互计数已更新），但 NPC 尚未回复。直接调用 `npc_dialogue(npc_id=..., message=...)` 让 NPC 自主发言
+- `engine_executed.type = "examine"`: 引擎已聚合目标的结构化详情（类型/描述/驻留NPC等），查看 `hints` 获取可叙述细节。你的职责是将这些数据编织为沉浸式的观察描写，补充感官细节
+- `engine_executed.type = "use_item"`: 引擎已完成物品消耗 + HP恢复（具体数值见 `hints`），**不要调用 `remove_item`/`heal_player`**（工具已移除）。`add_item` 也已移除以防误操作。将物品使用效果编织为叙述
+- `engine_executed.type = "leave"`: 已离开子地点，玩家回到主区域。直接描写回到主区域的场景
 - `engine_executed.type = "rest"`: 时间已推进60分钟 + HP 已恢复25%，**不要调用 `update_time`**（时间已推进）。`heal_player` 仍可用于额外治疗（如使用药水、治疗术等）。描写休息的过渡场景，可以融入环境变化、时间流逝的细节
 - `engine_executed.hints`: 引擎产出的叙事提示，请融入你的叙述
 
