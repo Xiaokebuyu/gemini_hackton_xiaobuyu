@@ -14,7 +14,6 @@ from app.models.narrative import NarrativeProgress
 from app.models.party import Party
 from app.models.player_character import PlayerCharacter
 from app.models.state_delta import GameState, GameTimeState, StateDelta
-
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +46,7 @@ class SessionRuntime:
         narrative_service: Optional[Any] = None,
         session_history_manager: Optional[Any] = None,
         character_store: Optional[Any] = None,
-        world_runtime: Optional[Any] = None,
+        session_store: Optional[Any] = None,
         graph_store: Optional[Any] = None,
     ) -> None:
         from app.runtime.area_runtime import AreaRuntime
@@ -62,7 +61,7 @@ class SessionRuntime:
         self._narrative_service = narrative_service
         self._session_history_manager = session_history_manager
         self._character_store = character_store
-        self._world_runtime = world_runtime
+        self._session_store = session_store
         self._graph_store = graph_store
 
         # -- 状态组件（restore() 填充） --
@@ -206,6 +205,11 @@ class SessionRuntime:
         if self.game_state:
             self.time = self.game_state.game_time
 
+            # 2.3: 恢复副作用去重集合（crash recovery 安全）
+            saved_dedup = self.game_state.metadata.get("_applied_side_effects")
+            if isinstance(saved_dedup, list):
+                self._applied_side_effect_events = set(saved_dedup[-200:])
+
         # AreaRuntime（依赖 game_state + narrative + world）
         await self._restore_area()
 
@@ -253,25 +257,37 @@ class SessionRuntime:
             )
 
     async def _restore_game_state(self) -> None:
-        """加载 GameState。"""
-        if self._world_runtime:
-            self.game_state = await self._world_runtime.get_state(
+        """加载 GameState（StateManager 缓存 → Firestore 回退 → 空兜底）。"""
+        # 1. StateManager 缓存
+        if self._state_manager:
+            cached = await self._state_manager.get_state(
                 self.world_id, self.session_id
             )
-        elif self._state_manager:
-            self.game_state = await self._state_manager.get_state(
-                self.world_id, self.session_id
-            )
-            if self.game_state is None:
-                self.game_state = GameState(
-                    world_id=self.world_id, session_id=self.session_id
+            if cached:
+                self.game_state = cached
+                return
+        # 2. Firestore 回退
+        if self._session_store:
+            try:
+                session_data = await self._session_store.get_session(
+                    self.world_id, self.session_id
                 )
-                await self._state_manager.set_state(
-                    self.world_id, self.session_id, self.game_state
-                )
-        else:
-            self.game_state = GameState(
-                world_id=self.world_id, session_id=self.session_id
+                if session_data and session_data.metadata.get("admin_state"):
+                    self.game_state = GameState(**session_data.metadata["admin_state"])
+                    if self._state_manager:
+                        await self._state_manager.set_state(
+                            self.world_id, self.session_id, self.game_state
+                        )
+                    return
+            except Exception as exc:
+                logger.warning("[SessionRuntime] Firestore GameState 回退失败: %s", exc)
+        # 3. 空兜底
+        self.game_state = GameState(
+            world_id=self.world_id, session_id=self.session_id
+        )
+        if self._state_manager:
+            await self._state_manager.set_state(
+                self.world_id, self.session_id, self.game_state
             )
 
     async def _restore_player(self) -> None:
@@ -371,14 +387,19 @@ class SessionRuntime:
         self._init_scene_bus()
 
     def _init_scene_bus(self) -> None:
-        """创建 SceneBus。"""
+        """创建 SceneBus（含常驻成员）。"""
         area_id = self.player_location
         if not area_id:
             return
         from app.world.scene_bus import SceneBus
+        permanent = {"player"}
+        if self.party:
+            for m in self.party.get_active_members():
+                permanent.add(m.character_id)
         self.scene_bus = SceneBus(
             area_id=area_id,
             sub_location=self.sub_location,
+            permanent_members=permanent,
         )
 
     async def _restore_companions(self) -> None:
@@ -451,10 +472,10 @@ class SessionRuntime:
         except Exception as exc:
             logger.warning("[SessionRuntime] WorldGraph 快照恢复失败: %s", exc)
 
-    async def _persist_world_graph_snapshot(self) -> None:
-        """保存 WorldGraph 快照到 Firestore。"""
+    async def _persist_world_graph_snapshot(self) -> bool:
+        """保存 WorldGraph 快照到 Firestore。返回 True 表示成功。"""
         if not self.world_graph or self._world_graph_failed:
-            return
+            return False
         try:
             from google.cloud import firestore as fs
             from app.config import settings
@@ -474,8 +495,35 @@ class SessionRuntime:
             logger.info("[SessionRuntime] WorldGraph 快照保存: %d states, %d spawned, %d edges",
                         len(snapshot.node_states), len(snapshot.spawned_nodes),
                         len(snapshot.modified_edges))
+            return True
         except Exception as exc:
-            logger.warning("[SessionRuntime] WorldGraph 快照保存失败: %s", exc)
+            logger.error("[SessionRuntime] WorldGraph 快照保存失败: %s", exc)
+            return False
+
+    async def _fallback_persist_player(self) -> bool:
+        """将当前 player 状态写入 CharacterStore 作为快照失败兜底。
+
+        PlayerNodeView.model_dump() 返回 PlayerCharacter 兼容 dict，
+        经 PlayerCharacter(**data) 重建后写入 Firestore session 文档。
+        """
+        if not self._character_store:
+            return False
+        player = self.player
+        if not player:
+            return False
+        try:
+            if isinstance(player, PlayerCharacter):
+                pc = player
+            else:
+                pc = PlayerCharacter(**player.model_dump())
+            await self._character_store.save_character(
+                self.world_id, self.session_id, pc,
+            )
+            logger.info("[SessionRuntime] Player 兜底写入 CharacterStore 成功")
+            return True
+        except Exception as exc:
+            logger.warning("[SessionRuntime] CharacterStore 兜底写入失败: %s", exc)
+            return False
 
     def build_tick_context(self, phase: str = "pre") -> Optional[Any]:
         """从当前会话状态构建 TickContext。无 WorldGraph 时返回 None。"""
@@ -586,7 +634,8 @@ class SessionRuntime:
             if event.event_type == "xp_awarded":
                 amount = event.data.get("amount", 0)
                 if amount and self.player and hasattr(self.player, "xp"):
-                    self.player.xp = (self.player.xp or 0) + amount
+                    from app.world import stats_manager as _sm
+                    _sm.add_xp(self.player, amount)
                     self.mark_player_dirty()
                     self._applied_side_effect_events.add(dedup_key)
                     logger.info("[SessionRuntime] 副作用: +%d XP", amount)
@@ -601,7 +650,8 @@ class SessionRuntime:
             elif event.event_type == "gold_awarded":
                 amount = event.data.get("amount", 0)
                 if amount and self.player and hasattr(self.player, "gold"):
-                    self.player.gold = (self.player.gold or 0) + amount
+                    from app.world import stats_manager as _sm2
+                    _sm2.add_gold(self.player, amount)
                     self.mark_player_dirty()
                     self._applied_side_effect_events.add(dedup_key)
                     logger.info("[SessionRuntime] 副作用: +%d 金币", amount)
@@ -849,7 +899,11 @@ class SessionRuntime:
         if self.scene_bus:
             self.scene_bus.clear()
         from app.world.scene_bus import SceneBus
-        self.scene_bus = SceneBus(area_id=area_id)
+        permanent = {"player"}
+        if self.party:
+            for m in self.party.get_active_members():
+                permanent.add(m.character_id)
+        self.scene_bus = SceneBus(area_id=area_id, permanent_members=permanent)
 
         logger.info(
             "[SessionRuntime] enter_area: %s → %s", old_area_id, area_id
@@ -870,36 +924,15 @@ class SessionRuntime:
     # =========================================================================
 
     async def enter_sublocation(self, sub_id: str) -> Dict[str, Any]:
-        """进入子地点。
-
-        委托 WorldRuntime 做子地点校验（营业时间等），然后更新状态。
-        """
+        """进入子地点（直接更新状态，persist() 统一持久化）。"""
         if not self.game_state or not self.game_state.player_location:
             return {"success": False, "error": "当前位置未知"}
 
-        # 如果有 WorldRuntime，委托完整逻辑
-        if self._world_runtime:
-            result = await self._world_runtime.enter_sub_location(
-                self.world_id, self.session_id, sub_id
-            )
-            if result.get("success"):
-                self.game_state.sub_location = sub_id
-                self._dirty_game_state = True
-                # SceneBus: 更新 sub_location（不换实例）
-                if self.scene_bus:
-                    self.scene_bus.sub_location = sub_id
-            return result
-
-        # 最小化实现：直接更新状态
         self.game_state.sub_location = sub_id
         self._dirty_game_state = True
         if self.scene_bus:
             self.scene_bus.sub_location = sub_id
-
-        if self._state_manager:
-            await self._state_manager.set_state(
-                self.world_id, self.session_id, self.game_state
-            )
+            self.scene_bus.active_members.clear()  # P3-B: 子地点切换清空对话
 
         return {
             "success": True,
@@ -907,35 +940,19 @@ class SessionRuntime:
         }
 
     async def leave_sublocation(self) -> Dict[str, Any]:
-        """离开子地点。"""
+        """离开子地点（直接更新状态，persist() 统一持久化）。"""
         if not self.game_state:
             return {"success": False, "error": "游戏状态未初始化"}
 
         if not self.game_state.sub_location:
             return {"success": False, "error": "当前不在子地点"}
 
-        # 如果有 WorldRuntime，委托完整逻辑
-        if self._world_runtime:
-            result = await self._world_runtime.leave_sub_location(
-                self.world_id, self.session_id
-            )
-            if result.get("success"):
-                self.game_state.sub_location = None
-                self._dirty_game_state = True
-                if self.scene_bus:
-                    self.scene_bus.sub_location = None
-            return result
-
         old_sub = self.game_state.sub_location
         self.game_state.sub_location = None
         self._dirty_game_state = True
         if self.scene_bus:
             self.scene_bus.sub_location = None
-
-        if self._state_manager:
-            await self._state_manager.set_state(
-                self.world_id, self.session_id, self.game_state
-            )
+            self.scene_bus.active_members.clear()  # P3-B: 子地点切换清空对话
 
         return {
             "success": True,
@@ -953,13 +970,26 @@ class SessionRuntime:
         """
         persisted: List[str] = []
 
-        # 1. GameState
+        # 2.3: 副作用去重持久化（crash recovery 安全）
+        if self._applied_side_effect_events and self.game_state:
+            if self.game_state.metadata is None:
+                self.game_state.metadata = {}
+            dedup_list = sorted(self._applied_side_effect_events)
+            if len(dedup_list) > 200:
+                dedup_list = dedup_list[:200]
+            self.game_state.metadata["_applied_side_effects"] = dedup_list
+            self._dirty_game_state = True
+
+        # 1. GameState — 内联持久化（StateManager 缓存 + Firestore）
         if self._dirty_game_state and self.game_state:
-            if self._world_runtime:
-                await self._world_runtime.persist_state(self.game_state)
-            elif self._state_manager:
+            if self._state_manager:
                 await self._state_manager.set_state(
                     self.world_id, self.session_id, self.game_state
+                )
+            if self._session_store:
+                await self._session_store.update_session(
+                    self.world_id, self.session_id,
+                    {"metadata.admin_state": self.game_state.model_dump()},
                 )
             self._dirty_game_state = False
             persisted.append("game_state")
@@ -972,11 +1002,8 @@ class SessionRuntime:
             self._dirty_narrative = False
             persisted.append("narrative")
 
-        # 3. PlayerCharacter — U2: 运行时不再写 character_store，仅走 snapshot
-        #    player 脏节点已包含在 WorldGraph 快照中（步骤 7）
-        if self._dirty_player:
-            self._dirty_player = False
-            persisted.append("player")
+        # 3. PlayerCharacter — 延迟清除脏标记（步骤 7 后处理）
+        player_was_dirty = self._dirty_player
 
         # 4. Party — PartyService 内部已实时写入 Firestore，
         #    这里标记重置即可
@@ -1001,10 +1028,28 @@ class SessionRuntime:
         if self.companions:
             persisted.append("companions")
 
-        # 7. WorldGraph 快照 (C7a)
+        # 7a. Player 兜底写入 CharacterStore（快照前，确保有备份）
+        fallback_ok = False
+        if player_was_dirty:
+            fallback_ok = await self._fallback_persist_player()
+
+        # 7b. WorldGraph 快照 (C7a)
+        snapshot_ok = False
         if self.world_graph and not self._world_graph_failed:
-            await self._persist_world_graph_snapshot()
-            persisted.append("world_graph")
+            snapshot_ok = await self._persist_world_graph_snapshot()
+            if snapshot_ok:
+                persisted.append("world_graph")
+
+        # 7c. Player 脏标记清除（仅在至少一条路径成功后）
+        if player_was_dirty:
+            if snapshot_ok:
+                self._dirty_player = False
+                persisted.append("player")
+            elif fallback_ok:
+                self._dirty_player = False
+                persisted.append("player(fallback)")
+            else:
+                logger.error("[SessionRuntime] Player 数据未持久化（快照+兜底均失败），保留脏标记")
 
         if persisted:
             logger.info(
@@ -1031,10 +1076,6 @@ class SessionRuntime:
         self._dirty_player = True
         if self.world_graph and not self._world_graph_failed:
             self.world_graph._dirty_nodes.add("player")
-
-    def mark_party_dirty(self) -> None:
-        """外部修改 party 后调用此方法标记脏。"""
-        self._dirty_party = True
 
     def apply_delta(self, delta: StateDelta) -> None:
         """记录状态变更到 delta_log。"""
@@ -1074,59 +1115,810 @@ class SessionRuntime:
             ],
         }
 
-    def update_narrative(self, progress: NarrativeProgress) -> None:
-        """更新叙事进度并同步到 GameState。"""
-        self.narrative = progress
+    # =========================================================================
+    # 机械操作 — Player Stats（阶段 3 从 V4AgenticTools 下沉）
+    # =========================================================================
+
+    def heal(self, amount: int) -> Dict[str, Any]:
+        """回复玩家 HP（纯内存操作，persist() 统一持久化）。"""
+        player = self.player
+        if not player:
+            return {"success": False, "error": "player not loaded"}
+        from app.world import stats_manager
+        result = stats_manager.add_hp(player, int(amount))
+        self.mark_player_dirty()
+        return {"success": True, **result}
+
+    def damage(self, amount: int) -> Dict[str, Any]:
+        """扣除玩家 HP（纯内存操作，persist() 统一持久化）。"""
+        player = self.player
+        if not player:
+            return {"success": False, "error": "player not loaded"}
+        from app.world import stats_manager
+        result = stats_manager.remove_hp(player, int(amount))
+        self.mark_player_dirty()
+        return {"success": True, **result}
+
+    def add_xp(self, amount: int) -> Dict[str, Any]:
+        """增加玩家经验值（纯内存操作，自动处理升级）。"""
+        player = self.player
+        if not player:
+            return {"success": False, "error": "player not loaded"}
+        from app.world import stats_manager
+        result = stats_manager.add_xp(player, int(amount))
+        self.mark_player_dirty()
+        return {"success": True, **result}
+
+    def add_gold(self, amount: int) -> Dict[str, Any]:
+        """增加玩家金币（纯内存操作）。"""
+        player = self.player
+        if not player:
+            return {"success": False, "error": "player not loaded"}
+        from app.world import stats_manager
+        result = stats_manager.add_gold(player, int(amount))
+        self.mark_player_dirty()
+        return {"success": True, **result}
+
+    def add_item(self, item_id: str, item_name: str, quantity: int = 1) -> Dict[str, Any]:
+        """添加物品到玩家背包（纯内存操作）。"""
+        player = self.player
+        if not player:
+            return {"success": False, "error": "player not loaded"}
+        item = player.add_item(item_id, item_name, int(quantity))
+        self.mark_player_dirty()
+        return {"success": True, "item": item}
+
+    def remove_item(self, item_id: str, quantity: int = 1) -> Dict[str, Any]:
+        """从玩家背包移除物品（纯内存操作）。"""
+        player = self.player
+        if not player:
+            return {"success": False, "error": "player not loaded"}
+        removed = player.remove_item(item_id, int(quantity))
+        if not removed:
+            return {"success": False, "error": f"item not found: {item_id}"}
+        self.mark_player_dirty()
+        return {"success": True, "removed": item_id, "quantity": int(quantity)}
+
+    # =========================================================================
+    # 机械操作 — Narrative / Social（阶段 3 从 V4AgenticTools 下沉）
+    # =========================================================================
+
+    def advance_chapter(
+        self, target_chapter_id: str, transition_type: str = "normal"
+    ) -> Dict[str, Any]:
+        """切换章节（纯内存操作，persist() 统一持久化）。"""
+        from datetime import datetime
+
+        narrative = self.narrative
+        if not narrative:
+            return {"success": False, "error": "narrative not loaded"}
+
+        old_chapter = getattr(narrative, "current_chapter", None)
+
+        # 验证目标章节存在
+        world = self.world
+        if world and hasattr(world, "chapter_registry"):
+            if target_chapter_id not in world.chapter_registry:
+                return {
+                    "success": False,
+                    "error": f"unknown chapter: {target_chapter_id}",
+                    "available_chapters": list(world.chapter_registry.keys()),
+                }
+
+        # 记录旧章节完成
+        if old_chapter and old_chapter != target_chapter_id:
+            if old_chapter not in narrative.chapters_completed:
+                narrative.chapters_completed.append(old_chapter)
+
+        # 切换章节 + 重置计数器
+        narrative.current_chapter = target_chapter_id
+        narrative.events_triggered = []
+        narrative.chapter_started_at = datetime.now()
+        narrative.rounds_in_chapter = 0
+        narrative.rounds_since_last_progress = 0
+
+        # 分支历史
+        if old_chapter and old_chapter != target_chapter_id:
+            narrative.branch_history.append({
+                "from": old_chapter,
+                "to": target_chapter_id,
+                "type": transition_type or "normal",
+                "at": datetime.now().isoformat(),
+            })
+
+        # 清理 active_chapters
+        if narrative.active_chapters:
+            narrative.active_chapters = [
+                cid for cid in narrative.active_chapters
+                if cid and cid != old_chapter
+            ]
+
+        self.mark_narrative_dirty()
+
+        # 同步 game_state
         if self.game_state:
-            self.game_state.narrative_progress = progress.to_dict()
-            self.game_state.chapter_id = progress.current_chapter
-            self._dirty_game_state = True
-        self._dirty_narrative = True
+            self.game_state.chapter_id = target_chapter_id
+            self.mark_game_state_dirty()
+
+        # 收集新章节解锁的地图
+        new_maps: list = []
+        if world and target_chapter_id in world.chapter_registry:
+            chapter_data = world.chapter_registry[target_chapter_id]
+            if isinstance(chapter_data, dict):
+                new_maps = chapter_data.get("available_maps", [])
+            elif hasattr(chapter_data, "available_maps"):
+                new_maps = chapter_data.available_maps or []
+
+        return {
+            "success": True,
+            "previous_chapter": old_chapter,
+            "new_chapter": target_chapter_id,
+            "transition_type": transition_type,
+            "new_maps_unlocked": new_maps,
+        }
+
+    def complete_objective(self, objective_id: str) -> Dict[str, Any]:
+        """标记章节目标完成（纯内存操作）。"""
+        narrative = self.narrative
+        if not narrative:
+            return {"success": False, "error": "narrative not loaded"}
+
+        # 获取章节数据用于验证
+        chapter_id = getattr(narrative, "current_chapter", None)
+        world = self.world
+        chapter_data = None
+        if world and hasattr(world, "chapter_registry") and chapter_id:
+            chapter_data = world.chapter_registry.get(chapter_id)
+
+        # 查找目标
+        obj_description = ""
+        if chapter_data:
+            objectives = chapter_data.get("objectives", []) if isinstance(chapter_data, dict) else getattr(chapter_data, "objectives", [])
+            for obj in objectives:
+                obj_id = obj.get("id", "") if isinstance(obj, dict) else getattr(obj, "id", "")
+                if obj_id == objective_id:
+                    obj_description = obj.get("description", "") if isinstance(obj, dict) else getattr(obj, "description", "")
+                    break
+            else:
+                return {
+                    "success": False,
+                    "error": f"objective not found: {objective_id}",
+                    "available_objectives": [
+                        (obj.get("id", "") if isinstance(obj, dict) else getattr(obj, "id", ""))
+                        for obj in objectives
+                    ],
+                }
+
+        # 检查是否已完成
+        completed = getattr(narrative, "objectives_completed", []) or []
+        if objective_id in completed:
+            return {"success": False, "error": f"objective already completed: {objective_id}"}
+
+        # 标记完成
+        narrative.objectives_completed.append(objective_id)
+        self.mark_narrative_dirty()
+
+        return {
+            "success": True,
+            "objective_id": objective_id,
+            "description": obj_description,
+            "total_completed": len(narrative.objectives_completed),
+        }
+
+    def update_disposition(
+        self,
+        npc_id: str,
+        deltas: Dict[str, int],
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """更新 NPC 好感度（纯内存操作，通过 WorldGraph 存储）。"""
+        valid_dims = {"approval", "trust", "fear", "romance"}
+        cleaned: Dict[str, int] = {}
+        for dim, val in (deltas or {}).items():
+            if dim not in valid_dims:
+                continue
+            clamped = max(-20, min(20, int(val)))
+            if clamped != 0:
+                cleaned[dim] = clamped
+
+        if not cleaned:
+            return {"success": False, "error": "no valid disposition deltas"}
+
+        wg = self.world_graph
+        if not wg or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph not available"}
+
+        node = wg.get_node(npc_id)
+        if not node:
+            return {"success": False, "error": f"NPC node not found: {npc_id}"}
+
+        # 读取当前好感度
+        dispositions = node.state.get("dispositions", {})
+        current = dispositions.get("player", {
+            "approval": 0, "trust": 0, "fear": 0, "romance": 0, "history": [],
+        })
+
+        # 应用 deltas + clamp
+        clamp_ranges = {
+            "approval": (-100, 100),
+            "trust": (-100, 100),
+            "fear": (0, 100),
+            "romance": (0, 100),
+        }
+        game_day = getattr(self.time, "day", None) if self.time else None
+        history_entry: Dict[str, Any] = {"reason": reason, "day": game_day}
+        for dim, delta in cleaned.items():
+            lo, hi = clamp_ranges.get(dim, (-100, 100))
+            old_val = current.get(dim, 0)
+            current[dim] = max(lo, min(hi, old_val + delta))
+            history_entry[f"delta_{dim}"] = delta
+
+        # 追加历史（保留最近 50 条）
+        history = current.get("history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append(history_entry)
+        if len(history) > 50:
+            history = history[-50:]
+        current["history"] = history
+
+        # 写回图节点
+        wg.merge_state(npc_id, {"dispositions": {"player": current}})
+
+        # 返回不含 history 的精简视图
+        result_view = {dim: current.get(dim, 0) for dim in ("approval", "trust", "fear", "romance")}
+        return {"success": True, "npc_id": npc_id, "applied_deltas": cleaned, "current": result_view}
+
+    # =========================================================================
+    # 机械操作 — Event（阶段 3 从 V4AgenticTools 下沉）
+    # =========================================================================
+
+    def activate_event(self, event_id: str) -> Dict[str, Any]:
+        """激活可用事件 (available → active)（纯内存操作）。"""
+        from app.world.models import EventStatus
+
+        wg = self.world_graph
+        engine = self._behavior_engine
+        if not wg or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph not available"}
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            available = [
+                eid for eid in wg.find_events_in_scope(self.player_location or "")
+                if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.AVAILABLE
+            ]
+            return {"success": False, "error": f"event not found: {event_id}", "available_events": available}
+
+        current_status = node.state.get("status", EventStatus.LOCKED)
+
+        # 补偿同轮时序：如果事件仍 locked，先 tick 刷新条件
+        if current_status == EventStatus.LOCKED and engine:
+            ctx = self.build_tick_context("post")
+            if ctx:
+                try:
+                    engine.tick(ctx)
+                except Exception as exc:
+                    logger.warning("[session] pre-activate tick failed: %s", exc)
+            node = wg.get_node(event_id)
+            current_status = node.state.get("status", EventStatus.LOCKED) if node else EventStatus.LOCKED
+
+        if current_status == EventStatus.LOCKED:
+            from app.runtime.area_runtime import AreaRuntime
+            hint = AreaRuntime._summarize_completion_conditions(
+                node.properties.get("trigger_conditions") or node.properties.get("completion_conditions"),
+            )
+            return {
+                "success": False,
+                "event_id": event_id,
+                "current_status": EventStatus.LOCKED,
+                "error": f"事件 '{node.name}' 尚未解锁",
+                "unmet_conditions": hint or "未知条件",
+                "available_events": [
+                    eid for eid in wg.find_events_in_scope(self.player_location or "")
+                    if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.AVAILABLE
+                ],
+            }
+
+        if current_status != EventStatus.AVAILABLE:
+            return {
+                "success": False,
+                "event_id": event_id,
+                "current_status": current_status,
+                "error": f"事件 '{node.name}' 当前状态为 '{current_status}'，需要 'available'",
+            }
+
+        # 激活事件
+        current_round = getattr(self.narrative, "rounds_in_chapter", 0) if self.narrative else 0
+        wg.merge_state(event_id, {"status": EventStatus.ACTIVE, "activated_at_round": current_round})
+
+        # 初始化 stages
+        stages = node.properties.get("stages", [])
+        if stages:
+            first_stage_id = stages[0]["id"] if isinstance(stages[0], dict) else stages[0].id
+            wg.merge_state(event_id, {"current_stage": first_stage_id})
+
+        # 传播事件
+        if engine:
+            try:
+                from app.world.models import WorldEvent
+                ctx = self.build_tick_context("post")
+                if ctx:
+                    evt = WorldEvent(
+                        event_type="event_activated",
+                        origin_node=event_id,
+                        actor="player",
+                        game_day=ctx.game_day,
+                        game_hour=ctx.game_hour,
+                        data={"event_id": event_id},
+                        visibility="scope",
+                    )
+                    engine.handle_event(evt, ctx)
+            except Exception as exc:
+                logger.warning("[session] 事件传播失败 '%s': %s", event_id, exc)
+
+        if self.current_area:
+            self.current_area.record_action(f"activated_event:{event_id}")
+
+        return {
+            "success": True,
+            "event_id": event_id,
+            "event_name": node.name,
+            "new_status": EventStatus.ACTIVE,
+            "narrative_directive": node.properties.get("narrative_directive", ""),
+        }
+
+    def complete_event(self, event_id: str, outcome_key: str = "") -> Dict[str, Any]:
+        """完成活跃事件 (active → completed)，应用奖励和级联解锁。"""
+        from app.world.models import EventStatus
+
+        wg = self.world_graph
+        engine = self._behavior_engine
+        if not wg or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph not available"}
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            active_events = [
+                eid for eid in wg.find_events_in_scope(self.player_location or "")
+                if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.ACTIVE
+            ]
+            return {"success": False, "error": f"event not found: {event_id}", "active_events": active_events}
+
+        current_status = node.state.get("status", EventStatus.LOCKED)
+        if current_status != EventStatus.ACTIVE:
+            return {"success": False, "error": f"event '{event_id}' status is '{current_status}', expected 'active'"}
+
+        # 标记完成
+        wg.merge_state(event_id, {"status": EventStatus.COMPLETED})
+
+        # outcome 处理
+        outcome_applied = False
+        if outcome_key:
+            outcomes = node.properties.get("outcomes", {})
+            outcome = outcomes.get(outcome_key)
+            if not outcome:
+                wg.merge_state(event_id, {"status": EventStatus.ACTIVE})  # 回滚
+                return {"success": False, "error": f"Unknown outcome: {outcome_key}", "available_outcomes": list(outcomes.keys())}
+
+            # 验证 outcome 条件
+            outcome_conditions = outcome.get("conditions") if isinstance(outcome, dict) else getattr(outcome, "conditions", None)
+            if outcome_conditions:
+                from app.models.narrative import ConditionGroup as CG
+                ctx = self.build_tick_context("post")
+                if ctx:
+                    from app.world.behavior_engine import ConditionEvaluator
+                    eval_result = ConditionEvaluator().evaluate(
+                        CG(**outcome_conditions) if isinstance(outcome_conditions, dict) else outcome_conditions,
+                        ctx,
+                    )
+                    if not eval_result.satisfied:
+                        wg.merge_state(event_id, {"status": EventStatus.ACTIVE})
+                        return {"success": False, "error": f"Outcome conditions not met: {outcome_key}"}
+
+            wg.merge_state(event_id, {"outcome": outcome_key})
+            outcome_dict = outcome if isinstance(outcome, dict) else outcome.model_dump()
+            self._apply_outcome_rewards(outcome_dict, event_id, node)
+            outcome_applied = True
+        else:
+            on_complete = node.properties.get("on_complete")
+            self._apply_on_complete_from_graph(on_complete, event_id, node)
+
+        # 同步到 narrative
+        if self.narrative:
+            triggered = self.narrative.events_triggered
+            if event_id not in triggered:
+                triggered.append(event_id)
+                self.mark_narrative_dirty()
+
+        # 级联解锁
+        newly_available: List[str] = []
+        if engine:
+            try:
+                from app.world.models import WorldEvent
+                ctx = self.build_tick_context("post")
+                if ctx:
+                    evt = WorldEvent(
+                        event_type="event_completed",
+                        origin_node=event_id,
+                        actor="player",
+                        game_day=ctx.game_day,
+                        game_hour=ctx.game_hour,
+                        data={"event_id": event_id, "outcome": outcome_key or None,
+                              "source": "manual" if outcome_key else "tool"},
+                        visibility="scope",
+                    )
+                    cascade_result = engine.handle_event(evt, ctx)
+                    self._sync_tick_to_narrative(cascade_result)
+
+                    tick_result = engine.tick(ctx)
+                    self._sync_tick_to_narrative(tick_result)
+
+                    for nid, changes in tick_result.state_changes.items():
+                        if changes.get("status") in ("available", "active"):
+                            newly_available.append(nid)
+                    for nid, changes in cascade_result.state_changes.items():
+                        if changes.get("status") in ("available", "active") and nid not in newly_available:
+                            newly_available.append(nid)
+            except Exception as exc:
+                logger.warning("[session] 级联解锁失败 '%s': %s", event_id, exc)
+
+        # 分发到同伴
+        self._dispatch_event_to_companions_from_graph(event_id, node)
+
+        if self.current_area:
+            self.current_area.record_action(f"completed_event:{event_id}")
+
+        payload: Dict[str, Any] = {
+            "success": True,
+            "event_id": event_id,
+            "event_name": node.name,
+            "new_status": "completed",
+            "newly_available_events": newly_available,
+        }
+        if outcome_key:
+            payload["outcome"] = outcome_key
+            payload["outcome_applied"] = outcome_applied
+        else:
+            payload["on_complete_applied"] = bool(node.properties.get("on_complete"))
+        return payload
+
+    def fail_event(self, event_id: str, reason: str = "") -> Dict[str, Any]:
+        """标记事件失败 (active → failed)。"""
+        from app.world.models import EventStatus
+
+        wg = self.world_graph
+        engine = self._behavior_engine
+        if not wg or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph 不可用"}
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            return {"success": False, "error": f"事件节点不存在: {event_id}"}
+
+        current_status = node.state.get("status")
+        if current_status != EventStatus.ACTIVE:
+            return {"success": False, "error": f"事件 {event_id} 不处于 ACTIVE 状态（当前: {current_status}）"}
+
+        wg.merge_state(event_id, {"status": EventStatus.FAILED, "failure_reason": reason or "manual_fail"})
+
+        if engine:
+            try:
+                from app.world.models import WorldEvent
+                ctx = self.build_tick_context("post")
+                if ctx:
+                    evt = WorldEvent(
+                        event_type="event_failed",
+                        origin_node=event_id,
+                        actor="player",
+                        game_day=ctx.game_day,
+                        game_hour=ctx.game_hour,
+                        data={"event_id": event_id, "reason": reason},
+                        visibility="scope",
+                    )
+                    fail_result = engine.handle_event(evt, ctx)
+                    self._sync_tick_to_narrative(fail_result)
+                    self._apply_tick_side_effects(fail_result)
+            except Exception as exc:
+                logger.warning("[session] fail_event 事件传播失败 '%s': %s", event_id, exc)
+
+        if self.current_area:
+            self.current_area.record_action(f"failed_event:{event_id}")
+
+        return {"success": True, "event_id": event_id, "status": "failed", "reason": reason or "manual_fail"}
+
+    def advance_stage(self, event_id: str, stage_id: str = "") -> Dict[str, Any]:
+        """推进事件到下一阶段（纯内存操作）。"""
+        from app.world.models import EventStatus
+
+        wg = self.world_graph
+        engine = self._behavior_engine
+        if not wg or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph not available"}
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            return {"success": False, "error": f"event not found: {event_id}"}
+
+        if node.state.get("status") != EventStatus.ACTIVE:
+            return {"success": False, "error": f"event '{event_id}' is not active"}
+
+        stages_raw = node.properties.get("stages", [])
+        if not stages_raw:
+            return {"success": False, "error": f"event '{event_id}' has no stages"}
+
+        current_stage_id = node.state.get("current_stage")
+
+        # 找当前 stage 索引
+        current_idx = -1
+        for i, s in enumerate(stages_raw):
+            sid = s["id"] if isinstance(s, dict) else s.id
+            if sid == current_stage_id:
+                current_idx = i
+                break
+
+        if current_idx < 0:
+            return {"success": False, "error": f"current_stage '{current_stage_id}' not found in stages"}
+
+        # 校验 required objectives 完成
+        current_stage = stages_raw[current_idx]
+        cs = current_stage if isinstance(current_stage, dict) else current_stage.model_dump()
+        obj_progress = node.state.get("objective_progress", {})
+        for obj in cs.get("objectives", []):
+            if obj.get("required", True) and not obj_progress.get(obj["id"], False):
+                return {
+                    "success": False,
+                    "error": f"Required objective '{obj['id']}' not completed",
+                    "incomplete_objectives": [
+                        o["id"] for o in cs.get("objectives", [])
+                        if o.get("required", True) and not obj_progress.get(o["id"], False)
+                    ],
+                }
+
+        # 确定目标 stage
+        if stage_id:
+            target_idx = -1
+            for i, s in enumerate(stages_raw):
+                sid = s["id"] if isinstance(s, dict) else s.id
+                if sid == stage_id:
+                    target_idx = i
+                    break
+            if target_idx < 0:
+                return {"success": False, "error": f"target stage '{stage_id}' not found"}
+        else:
+            target_idx = current_idx + 1
+
+        is_last = target_idx >= len(stages_raw)
+
+        if is_last:
+            result = self.complete_event(event_id)
+            result["advanced_from_stage"] = current_stage_id
+            result["auto_completed"] = True
+            return result
+
+        target_stage = stages_raw[target_idx]
+        target_stage_id = target_stage["id"] if isinstance(target_stage, dict) else target_stage.id
+        target_stage_name = target_stage.get("name", "") if isinstance(target_stage, dict) else getattr(target_stage, "name", "")
+
+        # 更新 current_stage + stage_progress
+        progress = dict(node.state.get("stage_progress", {}))
+        progress[current_stage_id] = True
+        wg.merge_state(event_id, {"current_stage": target_stage_id, "stage_progress": progress})
+
+        # 补偿 tick
+        if engine:
+            try:
+                ctx = self.build_tick_context("post")
+                if ctx:
+                    tick_result = engine.tick(ctx)
+                    self._sync_tick_to_narrative(tick_result)
+            except Exception as exc:
+                logger.warning("[session] advance_stage 补偿 tick 失败: %s", exc)
+
+        ts = target_stage if isinstance(target_stage, dict) else target_stage.model_dump()
+        return {
+            "success": True,
+            "event_id": event_id,
+            "previous_stage": current_stage_id,
+            "new_stage": target_stage_id,
+            "stage_name": target_stage_name,
+            "narrative_directive": ts.get("narrative_directive", ""),
+        }
+
+    def complete_event_objective(self, event_id: str, objective_id: str) -> Dict[str, Any]:
+        """标记事件目标完成（纯内存操作）。"""
+        from app.world.models import EventStatus
+
+        wg = self.world_graph
+        engine = self._behavior_engine
+        if not wg or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph not available"}
+
+        node = wg.get_node(event_id)
+        if not node or node.type != "event_def":
+            return {"success": False, "error": f"event not found: {event_id}"}
+
+        if node.state.get("status") != EventStatus.ACTIVE:
+            return {"success": False, "error": f"event '{event_id}' is not active"}
+
+        # 验证 objective 在当前 stage 中
+        stages_raw = node.properties.get("stages", [])
+        current_stage_id = node.state.get("current_stage")
+        objective_found = False
+
+        if stages_raw and current_stage_id:
+            for s in stages_raw:
+                sid = s["id"] if isinstance(s, dict) else s.id
+                if sid == current_stage_id:
+                    objectives = s.get("objectives", []) if isinstance(s, dict) else getattr(s, "objectives", [])
+                    for obj in objectives:
+                        oid = obj["id"] if isinstance(obj, dict) else obj.id
+                        if oid == objective_id:
+                            objective_found = True
+                            break
+                    break
+
+        if not objective_found:
+            return {"success": False, "error": f"objective '{objective_id}' not found in current stage '{current_stage_id}'"}
+
+        obj_progress = dict(node.state.get("objective_progress", {}))
+        if obj_progress.get(objective_id, False):
+            return {"success": False, "error": f"objective '{objective_id}' already completed"}
+
+        obj_progress[objective_id] = True
+        wg.merge_state(event_id, {"objective_progress": obj_progress})
+
+        # 计算剩余
+        remaining = []
+        if stages_raw and current_stage_id:
+            for s in stages_raw:
+                sid = s["id"] if isinstance(s, dict) else s.id
+                if sid == current_stage_id:
+                    objectives = s.get("objectives", []) if isinstance(s, dict) else getattr(s, "objectives", [])
+                    for obj in objectives:
+                        oid = obj["id"] if isinstance(obj, dict) else obj.id
+                        if not obj_progress.get(oid, False):
+                            remaining.append(oid)
+                    break
+
+        # 补偿 tick
+        if engine:
+            try:
+                ctx = self.build_tick_context("post")
+                if ctx:
+                    tick_result = engine.tick(ctx)
+                    self._sync_tick_to_narrative(tick_result)
+            except Exception as exc:
+                logger.warning("[session] complete_event_objective 补偿 tick 失败: %s", exc)
+
+        return {"success": True, "event_id": event_id, "objective_id": objective_id, "remaining_objectives": remaining}
+
+    # ---- Event helpers (从 V4AgenticTools 搬迁) ----
+
+    def _apply_rewards(
+        self,
+        *,
+        xp: int = 0,
+        gold: int = 0,
+        items: Optional[list] = None,
+        reputation_changes: Optional[Dict[str, Any]] = None,
+        world_flags: Optional[Dict[str, Any]] = None,
+        event_id: str,
+        label: str = "副作用",
+    ) -> None:
+        """通用奖励应用：XP/Gold/Items/Reputation/WorldFlags。"""
+        from app.world import stats_manager
+
+        player = self.player
+
+        if xp and player and hasattr(player, "xp"):
+            stats_manager.add_xp(player, xp)
+            self.mark_player_dirty()
+            self._applied_side_effect_events.add(f"xp_awarded:{event_id}")
+            logger.info("[session] %s: +%d XP (event=%s)", label, xp, event_id)
+
+        if gold and player and hasattr(player, "gold"):
+            stats_manager.add_gold(player, gold)
+            self.mark_player_dirty()
+            self._applied_side_effect_events.add(f"gold_awarded:{event_id}")
+            logger.info("[session] %s: +%d 金币 (event=%s)", label, gold, event_id)
+
+        if items and player:
+            inventory = getattr(player, "inventory", None)
+            if inventory is not None and hasattr(inventory, "append"):
+                for item in items:
+                    inventory.append(item if isinstance(item, dict) else {"item_id": item})
+                self.mark_player_dirty()
+                self._applied_side_effect_events.add(f"item_granted:{event_id}")
+
+        wg = self.world_graph
+
+        if reputation_changes and wg and wg.has_node("world_root"):
+            root = wg.get_node("world_root")
+            reps = dict(root.state.get("faction_reputations", {})) if root else {}
+            for faction, delta in reputation_changes.items():
+                reps[faction] = reps.get(faction, 0) + delta
+                logger.info("[session] %s: 声望 %s %+d (event=%s)", label, faction, delta, event_id)
+            wg.merge_state("world_root", {"faction_reputations": reps})
+            self._applied_side_effect_events.add(f"reputation_changed:{event_id}")
+
+        if world_flags and wg and wg.has_node("world_root"):
+            root = wg.get_node("world_root")
+            flags = dict(root.state.get("world_flags", {})) if root else {}
+            for key, value in world_flags.items():
+                flags[key] = value
+                logger.info("[session] %s: 世界标记 %s = %s (event=%s)", label, key, value, event_id)
+            wg.merge_state("world_root", {"world_flags": flags})
+            self._applied_side_effect_events.add(f"world_flag_set:{event_id}")
+
+    def _apply_on_complete_from_graph(
+        self, on_complete: Optional[Dict[str, Any]], event_id: str, node: Any,
+    ) -> None:
+        """从 WorldGraph 节点的 on_complete 属性应用副作用。"""
+        if not on_complete:
+            return
+        self._apply_rewards(
+            xp=on_complete.get("add_xp", 0),
+            gold=on_complete.get("add_gold", 0),
+            items=on_complete.get("add_items"),
+            reputation_changes=on_complete.get("reputation_changes"),
+            world_flags=on_complete.get("world_flags"),
+            event_id=event_id,
+            label="副作用",
+        )
+
+    def _apply_outcome_rewards(
+        self, outcome: Dict[str, Any], event_id: str, node: Any,
+    ) -> None:
+        """应用 EventOutcome 的特定奖励。"""
+        from app.world.models import EventStatus
+
+        rewards = outcome.get("rewards", {})
+        if not rewards and not outcome.get("reputation_changes") and not outcome.get("world_flags"):
+            return
+        self._apply_rewards(
+            xp=rewards.get("xp", 0),
+            gold=rewards.get("gold", 0),
+            items=rewards.get("items"),
+            reputation_changes=outcome.get("reputation_changes"),
+            world_flags=outcome.get("world_flags"),
+            event_id=event_id,
+            label="outcome 奖励",
+        )
+        # unlock_events
+        unlock_events = outcome.get("unlock_events") or []
+        if unlock_events:
+            wg = self.world_graph
+            if wg:
+                for unlock_eid in unlock_events:
+                    unlock_node = wg.get_node(unlock_eid)
+                    if unlock_node and unlock_node.state.get("status") == EventStatus.LOCKED:
+                        wg.merge_state(unlock_eid, {"status": EventStatus.AVAILABLE})
+                        self._applied_side_effect_events.add(f"event_unlocked:{unlock_eid}")
+
+    def _dispatch_event_to_companions_from_graph(
+        self, event_id: str, node: Any,
+    ) -> None:
+        """将完成的事件分发到同伴。"""
+        companions = self.companions
+        if not companions:
+            return
+        from app.runtime.models.companion_state import CompactEvent
+        game_day = self.time.day if self.time else 1
+        area_id = self.player_location or ""
+        compact = CompactEvent(
+            event_id=event_id,
+            event_name=node.name,
+            summary=node.properties.get("description", node.name),
+            area_id=area_id,
+            game_day=game_day,
+            importance=node.properties.get("importance", "side"),
+        )
+        for companion in companions.values():
+            if hasattr(companion, "add_event"):
+                companion.add_event(compact)
+        self._applied_side_effect_events.add(f"companion_dispatch:{event_id}")
 
     # =========================================================================
     # 上下文导出（供 ContextAssembler 消费）
     # =========================================================================
-
-    def to_context_dict(self) -> Dict[str, Any]:
-        """导出完整上下文字典，供 ContextAssembler / Flash 分析消费。"""
-        ctx: Dict[str, Any] = {
-            "world_id": self.world_id,
-            "session_id": self.session_id,
-            "player_location": self.player_location,
-            "sub_location": self.sub_location,
-            "chapter_id": self.chapter_id,
-            "area_id": self.area_id,
-        }
-
-        if self.game_state:
-            ctx["game_time"] = self.game_state.game_time.model_dump()
-            ctx["chat_mode"] = self.game_state.chat_mode
-            ctx["active_dialogue_npc"] = self.game_state.active_dialogue_npc
-            ctx["combat_id"] = self.game_state.combat_id
-            ctx["metadata"] = self.game_state.metadata
-
-        if self.player:
-            ctx["player_summary"] = self.player.to_summary_text()
-
-        if self.party:
-            ctx["party_members"] = [
-                {
-                    "character_id": m.character_id,
-                    "name": m.name,
-                    "role": m.role.value,
-                    "is_active": m.is_active,
-                }
-                for m in self.party.get_active_members()
-            ]
-        else:
-            ctx["party_members"] = []
-
-        if self.narrative:
-            ctx["narrative_progress"] = self.narrative.to_dict()
-
-        if self.history:
-            ctx["recent_history"] = self.history.get_recent_history(
-                max_tokens=4000
-            )
-
-        return ctx

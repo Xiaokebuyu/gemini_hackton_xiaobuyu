@@ -43,7 +43,6 @@ from app.models.state_delta import GameState, GameTimeState
 from app.runtime.models.area_state import AreaConnection, AreaDefinition, SubLocationDef
 from app.runtime.models.world_constants import WorldConstants
 from app.runtime.session_runtime import SessionRuntime
-from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
 from app.world.behavior_engine import BehaviorEngine
 from app.world.graph_builder import GraphBuilder, _event_to_behaviors
 from app.world.models import (
@@ -237,14 +236,6 @@ def _build_graph_and_engine(session: SessionRuntime):
     engine = BehaviorEngine(wg)
     session._behavior_engine = engine
     return wg, engine
-
-
-def _make_registry(session: SessionRuntime) -> V4AgenticToolRegistry:
-    return V4AgenticToolRegistry(
-        session=session,
-        flash_cpu=MagicMock(),
-        graph_store=MagicMock(),
-    )
 
 
 def _force_complete_event(wg: WorldGraph, engine: BehaviorEngine, session: SessionRuntime) -> TickResult:
@@ -479,13 +470,12 @@ class TestPathBManualComplete:
         """_apply_on_complete_from_graph 处理 add_gold。"""
         session = _make_session_runtime()
         wg, engine = _build_graph_and_engine(session)
-        registry = _make_registry(session)
 
         initial_gold = session.player.gold
         on_complete = {"add_gold": 300}
         node = wg.get_node("evt_test")
 
-        registry._apply_on_complete_from_graph(on_complete, "evt_test", node)
+        session._apply_on_complete_from_graph(on_complete, "evt_test", node)
 
         assert session.player.gold == initial_gold + 300
         assert "gold_awarded:evt_test" in session._applied_side_effect_events
@@ -494,12 +484,11 @@ class TestPathBManualComplete:
         """_apply_on_complete_from_graph 处理 reputation_changes。"""
         session = _make_session_runtime()
         wg, engine = _build_graph_and_engine(session)
-        registry = _make_registry(session)
 
         on_complete = {"reputation_changes": {"thieves_guild": -10, "merchants": 5}}
         node = wg.get_node("evt_test")
 
-        registry._apply_on_complete_from_graph(on_complete, "evt_test", node)
+        session._apply_on_complete_from_graph(on_complete, "evt_test", node)
 
         root = wg.get_node("world_root")
         reps = root.state.get("faction_reputations", {})
@@ -511,12 +500,11 @@ class TestPathBManualComplete:
         """_apply_on_complete_from_graph 处理 world_flags。"""
         session = _make_session_runtime()
         wg, engine = _build_graph_and_engine(session)
-        registry = _make_registry(session)
 
         on_complete = {"world_flags": {"bridge_repaired": True, "tax_rate": 0.15}}
         node = wg.get_node("evt_test")
 
-        registry._apply_on_complete_from_graph(on_complete, "evt_test", node)
+        session._apply_on_complete_from_graph(on_complete, "evt_test", node)
 
         root = wg.get_node("world_root")
         flags = root.state.get("world_flags", {})

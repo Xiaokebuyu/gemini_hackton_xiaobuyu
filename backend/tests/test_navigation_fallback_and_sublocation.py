@@ -233,190 +233,6 @@ class _DummyRuntime:
         )
 
 
-@pytest.mark.asyncio
-async def test_update_time_calls_runtime_directly():
-    """时间更新操作应直接调用 world_runtime.advance_time。"""
-    runtime = _DummyRuntime()
-    service = FlashCPUService(world_runtime=runtime)
-
-    result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.UPDATE_TIME,
-            parameters={"minutes": 15},
-        ),
-    )
-
-    assert result.success is True
-    assert "time" in result.result
-
-
-class _DummyCharacter:
-    def __init__(self):
-        self.character_id = "player"
-        self.name = "玩家"
-        self.level = 1
-        self.xp = 100
-        self.gold = 12
-        self.current_hp = 20
-        self.max_hp = 30
-        self.inventory = []
-        self.updated_at = None
-
-    def add_item(self, item_id, item_name, quantity=1, properties=None):
-        for item in self.inventory:
-            if item.get("item_id") == item_id:
-                item["quantity"] = item.get("quantity", 1) + quantity
-                return item
-        item = {"item_id": item_id, "name": item_name, "quantity": quantity}
-        if properties:
-            item["properties"] = properties
-        self.inventory.append(item)
-        return item
-
-    def remove_item(self, item_id, quantity=1):
-        for idx, item in enumerate(self.inventory):
-            if item.get("item_id") == item_id:
-                current = int(item.get("quantity", 1))
-                if current <= quantity:
-                    self.inventory.pop(idx)
-                else:
-                    item["quantity"] = current - quantity
-                return True
-        return False
-
-
-class _DummyCharacterStore:
-    def __init__(self, character: _DummyCharacter):
-        self.character = character
-
-    async def get_character(self, world_id: str, session_id: str):
-        return self.character
-
-    async def save_character(self, world_id: str, session_id: str, character):
-        self.character = character
-
-
-class _DummyCharacterService:
-    def __init__(self, store: _DummyCharacterStore):
-        self.store = store
-
-    async def add_xp(self, world_id: str, session_id: str, amount: int):
-        character = await self.store.get_character(world_id, session_id)
-        character.xp += amount
-        leveled = False
-        if character.xp >= 300:
-            character.level = 2
-            leveled = True
-        return {
-            "xp_gained": amount,
-            "new_xp": character.xp,
-            "leveled_up": leveled,
-            "new_level": character.level,
-        }
-
-
-class _DummyParty:
-    party_id = "party_test"
-    share_events = True
-
-    def get_active_members(self):
-        return [
-            types.SimpleNamespace(
-                character_id="ally_1",
-                name="队友一",
-                role=types.SimpleNamespace(value="support"),
-                current_mood="focused",
-            )
-        ]
-
-
-class _DummyPartyService:
-    async def get_party(self, world_id: str, session_id: str):
-        return _DummyParty()
-
-
-@pytest.mark.asyncio
-async def test_character_and_inventory_ops_return_state_delta():
-    runtime = _DummyRuntime()
-    character = _DummyCharacter()
-    store = _DummyCharacterStore(character)
-    service = FlashCPUService(
-        world_runtime=runtime,
-        character_store=store,
-        character_service=_DummyCharacterService(store),
-    )
-
-    add_item_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ADD_ITEM,
-            parameters={"item_id": "potion", "item_name": "治疗药水", "quantity": 2},
-        ),
-    )
-    assert add_item_result.success is True
-    assert add_item_result.state_delta is not None
-    assert add_item_result.state_delta.changes.get("inventory_item_count") == 1
-
-    heal_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.HEAL_PLAYER,
-            parameters={"amount": 5},
-        ),
-    )
-    assert heal_result.success is True
-    assert heal_result.state_delta is not None
-    hp_change = heal_result.state_delta.changes.get("player_hp") or {}
-    assert hp_change.get("current") == 25
-
-    xp_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ADD_XP,
-            parameters={"amount": 210},
-        ),
-    )
-    assert xp_result.success is True
-    assert xp_result.state_delta is not None
-    xp_change = xp_result.state_delta.changes.get("xp") or {}
-    assert xp_change.get("new_xp") == 310
-    assert xp_change.get("leveled_up") is True
-
-
-@pytest.mark.asyncio
-async def test_get_status_includes_party_and_player_snapshot():
-    runtime = _DummyRuntime()
-    character = _DummyCharacter()
-    character.inventory = [{"item_id": "coin", "name": "金币", "quantity": 1}]
-    store = _DummyCharacterStore(character)
-    service = FlashCPUService(
-        world_runtime=runtime,
-        character_store=store,
-        party_service=_DummyPartyService(),
-    )
-
-    status_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.GET_STATUS,
-            parameters={},
-        ),
-    )
-
-    assert status_result.success is True
-    party = status_result.result.get("party") or {}
-    player = status_result.result.get("player") or {}
-    assert party.get("has_party") is True
-    assert len(party.get("members", [])) == 1
-    assert player.get("inventory_item_count") == 1
-
-
 class _DummyPartyOps:
     def __init__(self) -> None:
         self.party_id = "party_ops"
@@ -483,19 +299,11 @@ class _DummyPartyOpsService:
         return existed
 
 
-class _DummyNarrativeEventService:
-    async def trigger_event(self, world_id: str, session_id: str, event_id: str, skip_advance: bool = True):
-        return {"success": True, "event_id": event_id}
-
-
 @pytest.mark.asyncio
 async def test_party_and_story_event_ops_return_state_delta():
-    runtime = _DummyRuntime()
     party_service = _DummyPartyOpsService()
     service = FlashCPUService(
-        world_runtime=runtime,
         party_service=party_service,
-        narrative_service=_DummyNarrativeEventService(),
     )
 
     add_result = await service.execute_request(
@@ -547,17 +355,3 @@ async def test_party_and_story_event_ops_return_state_delta():
     assert disband_result.state_delta.changes.get("has_party") is False
     assert disband_result.state_delta.changes.get("party_member_count") == 0
     assert disband_result.state_delta.changes.get("party_update", {}).get("action") == "disband"
-
-    trigger_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.TRIGGER_NARRATIVE_EVENT,
-            parameters={"event_id": "ev_test"},
-        ),
-    )
-    assert trigger_result.success is True
-    assert trigger_result.state_delta is not None
-    assert trigger_result.state_delta.changes.get("story_events") == ["ev_test"]
-    story_update = trigger_result.state_delta.changes.get("story_event_update", {})
-    assert story_update.get("event_id") == "ev_test"

@@ -171,38 +171,6 @@ def register(game_mcp) -> None:
         result = await _graph_store.get_disposition(world_id, character_id, target_id)
         return json.dumps(result, ensure_ascii=False, indent=2, default=str)
 
-    @game_mcp.tool()
-    async def update_disposition(
-        world_id: str,
-        character_id: str,
-        target_id: str,
-        deltas: Dict[str, int],
-        reason: str = "",
-        game_day: Optional[int] = None,
-    ) -> str:
-        """Update a character's disposition toward a target.
-
-        Applies delta changes to disposition values with automatic clamping:
-        - approval: -100 to 100
-        - trust: -100 to 100
-        - fear: 0 to 100
-        - romance: 0 to 100
-
-        Args:
-            world_id: World identifier.
-            character_id: The character whose disposition changes.
-            target_id: The target of the disposition.
-            deltas: Dict of field deltas, e.g. {"approval": 5, "trust": -10}.
-            reason: Human-readable reason for the change.
-            game_day: In-game day number.
-
-        Returns: JSON with updated disposition values.
-        """
-        result = await _graph_store.update_disposition(
-            world_id, character_id, target_id, deltas, reason, game_day
-        )
-        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
-
     # ==================== Choice Tools ====================
 
     @game_mcp.tool()

@@ -14,10 +14,9 @@ P10: 上下文输出增强
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from types import ModuleType
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -286,6 +285,19 @@ class _MockSession:
                 continue
             if nid not in self.narrative.events_triggered:
                 self.narrative.events_triggered.append(nid)
+
+    # 绑定 SessionRuntime 事件方法（Session 3 下沉后，V4AgenticTools 薄壳委托到此）
+    from app.runtime.session_runtime import SessionRuntime as _SR
+    activate_event = _SR.activate_event
+    complete_event = _SR.complete_event
+    fail_event = _SR.fail_event
+    advance_stage = _SR.advance_stage
+    complete_event_objective = _SR.complete_event_objective
+    _apply_rewards = _SR._apply_rewards
+    _apply_on_complete_from_graph = _SR._apply_on_complete_from_graph
+    _apply_outcome_rewards = _SR._apply_outcome_rewards
+    _dispatch_event_to_companions_from_graph = _SR._dispatch_event_to_companions_from_graph
+    del _SR
 
 
 # =============================================================================
@@ -767,17 +779,7 @@ class TestCompleteEventObjectiveTool:
         """事件目标完成写入 event_def.state。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.complete_event_objective("evt_goblin_quest", "obj_talk_scout")
-
-        result = asyncio.run(_run())
+        result = session.complete_event_objective("evt_goblin_quest", "obj_talk_scout")
         assert result["success"] is True
         assert result["objective_id"] == "obj_talk_scout"
 
@@ -788,17 +790,7 @@ class TestCompleteEventObjectiveTool:
         """目标不在当前 stage 中时返回错误。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.complete_event_objective("evt_goblin_quest", "nonexistent_obj")
-
-        result = asyncio.run(_run())
+        result = session.complete_event_objective("evt_goblin_quest", "nonexistent_obj")
         assert result["success"] is False
 
     def test_complete_event_objective_already_done(self):
@@ -809,17 +801,7 @@ class TestCompleteEventObjectiveTool:
             "objective_progress": {"obj_talk_scout": True},
         })
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.complete_event_objective("evt_goblin_quest", "obj_talk_scout")
-
-        result = asyncio.run(_run())
+        result = session.complete_event_objective("evt_goblin_quest", "obj_talk_scout")
         assert result["success"] is False
 
 
@@ -840,17 +822,7 @@ class TestAdvanceStageTool:
         """advance_stage 手动推进到下一阶段。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.advance_stage("evt_goblin_quest")
-
-        result = asyncio.run(_run())
+        result = session.advance_stage("evt_goblin_quest")
         assert result["success"] is True
         assert result["new_stage"] == "stage_loot"
 
@@ -865,17 +837,7 @@ class TestAdvanceStageTool:
         # 设为 stage_find (有 required objectives)
         wg.merge_state("evt_goblin_quest", {"current_stage": "stage_find"})
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.advance_stage("evt_goblin_quest")
-
-        result = asyncio.run(_run())
+        result = session.advance_stage("evt_goblin_quest")
         assert result["success"] is False
         assert "obj_talk_scout" in str(result)
 
@@ -888,17 +850,7 @@ class TestAdvanceStageTool:
             "objective_progress": {"obj_open_chest": True},
         })
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.advance_stage("evt_goblin_quest")
-
-        result = asyncio.run(_run())
+        result = session.advance_stage("evt_goblin_quest")
         assert result["success"] is True
         assert result.get("auto_completed") is True
 
@@ -909,17 +861,7 @@ class TestAdvanceStageTool:
         """advance_stage 可以指定目标 stage_id。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.advance_stage("evt_goblin_quest", stage_id="stage_loot")
-
-        result = asyncio.run(_run())
+        result = session.advance_stage("evt_goblin_quest", stage_id="stage_loot")
         assert result["success"] is True
         assert result["new_stage"] == "stage_loot"
 
@@ -945,18 +887,8 @@ class TestCompleteEventOutcome:
         """complete_event(outcome_key=...) 手动选择 + 无条件 outcome。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.complete_event("evt_goblin_quest", outcome_key="mercy")
-
         # mercy 没有 conditions → 直接成功
-        result = asyncio.run(_run())
+        result = session.complete_event("evt_goblin_quest", outcome_key="mercy")
         assert result["success"] is True
         assert result["outcome"] == "mercy"
 
@@ -968,20 +900,10 @@ class TestCompleteEventOutcome:
         """outcome 条件不满足时拒绝 + 状态回滚。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
         # victory 需要 EVENT_TRIGGERED(evt_goblin_quest)，但 events_triggered 为空
         session.narrative.events_triggered = []
 
-        async def _run():
-            return await registry.complete_event("evt_goblin_quest", outcome_key="victory")
-
-        result = asyncio.run(_run())
+        result = session.complete_event("evt_goblin_quest", outcome_key="victory")
         assert result["success"] is False
         assert "conditions not met" in result["error"].lower() or "not met" in result["error"]
 
@@ -993,17 +915,7 @@ class TestCompleteEventOutcome:
         """outcome 条件不满足时状态回滚，副作用不落地。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.complete_event("evt_goblin_quest", outcome_key="victory")
-
-        result = asyncio.run(_run())
+        result = session.complete_event("evt_goblin_quest", outcome_key="victory")
         assert result["success"] is False
 
         node = wg.get_node("evt_goblin_quest")
@@ -1014,16 +926,6 @@ class TestCompleteEventOutcome:
         """未知 outcome_key 返回错误。"""
         wg, session = self._setup()
 
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-        )
-
-        async def _run():
-            return await registry.complete_event("evt_goblin_quest", outcome_key="nonexistent")
-
-        result = asyncio.run(_run())
+        result = session.complete_event("evt_goblin_quest", outcome_key="nonexistent")
         assert result["success"] is False
         assert "available_outcomes" in result

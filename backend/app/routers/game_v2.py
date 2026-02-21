@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_coordinator
-from app.models.admin_protocol import CoordinatorResponse
+from app.models.admin_protocol import CoordinatorResponse, InteractRequest
 from app.models.event import (
     GMEventIngestRequest,
     GMEventIngestResponse,
@@ -458,6 +458,43 @@ async def process_input_v2_stream(
     )
 
 
+@router.post("/{world_id}/sessions/{session_id}/interact/stream")
+async def interact_stream(
+    world_id: str,
+    session_id: str,
+    payload: InteractRequest,
+    coordinator: AdminCoordinator = Depends(get_coordinator),
+):
+    """NPC 直接交互流式端点（SSE）"""
+
+    async def event_generator():
+        try:
+            async for event in coordinator.process_interact_stream(
+                world_id=world_id,
+                session_id=session_id,
+                npc_id=payload.npc_id,
+                player_input=payload.input,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        except asyncio.CancelledError:
+            logger.debug("[interact/stream] 客户端断开 world=%s session=%s", world_id, session_id)
+            raise
+        except Exception as exc:
+            logger.exception("[interact/stream] 流式处理失败: %s", exc)
+            error_event = {"type": "error", "error": str(exc)}
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/{world_id}/sessions/{session_id}/location")
 async def get_location(
     world_id: str,
@@ -735,11 +772,6 @@ async def load_predefined_teammates(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-class TriggerEventRequest(BaseModel):
-    """触发叙事事件请求"""
-
-    event_id: str
-
 
 @router.get("/{world_id}/sessions/{session_id}/narrative/progress")
 async def get_narrative_progress(
@@ -821,22 +853,6 @@ async def get_available_maps(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-
-@router.post("/{world_id}/sessions/{session_id}/narrative/trigger-event")
-async def trigger_narrative_event(
-    world_id: str,
-    session_id: str,
-    payload: TriggerEventRequest,
-    coordinator: AdminCoordinator = Depends(get_coordinator),
-):
-    """触发叙事事件"""
-    try:
-        await coordinator.narrative_service.load_narrative_data(world_id, force_reload=True)
-        return await coordinator.narrative_service.trigger_event(
-            world_id, session_id, payload.event_id
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 class PrivateChatRequest(BaseModel):

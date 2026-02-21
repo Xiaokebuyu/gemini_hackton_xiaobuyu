@@ -532,8 +532,8 @@ class AreaRuntime:
                     text = AreaRuntime._summarize_single_condition(c)
                     if text:
                         parts.append(text)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("[area_runtime] 条件解析跳过: %s", exc)
         if not parts:
             return ""
         joiner = "且" if group.operator == "and" else "或"

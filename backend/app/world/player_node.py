@@ -97,7 +97,7 @@ class PlayerNodeView:
 
     @current_hp.setter
     def current_hp(self, value: int) -> None:
-        self._state["hp"] = int(value)
+        self._state["hp"] = max(0, int(value))
         self._mark_dirty()
 
     @property
@@ -124,7 +124,7 @@ class PlayerNodeView:
 
     @xp.setter
     def xp(self, value: int) -> None:
-        self._state["xp"] = int(value)
+        self._state["xp"] = max(0, int(value))
         self._mark_dirty()
 
     @property
@@ -153,6 +153,11 @@ class PlayerNodeView:
     def proficiency_bonus(self) -> int:
         return int(self._state.get("proficiency_bonus", 2))
 
+    @proficiency_bonus.setter
+    def proficiency_bonus(self, value: int) -> None:
+        self._state["proficiency_bonus"] = int(value)
+        self._mark_dirty()
+
     @property
     def speed(self) -> int:
         return int(self._state.get("speed", 30))
@@ -167,7 +172,7 @@ class PlayerNodeView:
 
     @gold.setter
     def gold(self, value: int) -> None:
-        self._state["gold"] = int(value)
+        self._state["gold"] = max(0, int(value))
         self._mark_dirty()
 
     # --- spell_slots ↔ state["spell_slots_max"] (str 键 → int 键) ---

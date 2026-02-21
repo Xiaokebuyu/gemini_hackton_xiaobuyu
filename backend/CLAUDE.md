@@ -103,42 +103,70 @@ A 阶段: 上下文组装
   4. AreaRuntime.check_events() → 机械条件驱动事件状态机
     ↓
 B 阶段: Agentic 会话
-  5. FlashCPUService.agentic_process_v4() → 模型自主工具调用 + 叙述生成
-     - 工具注册：V4AgenticToolRegistry（通过 SessionRuntime/AreaRuntime 操作）
+  5. AgenticExecutor.run() → 模型自主工具调用 + 叙述生成
+     - 工具来源：RoleRegistry 沉浸式工具(role="gm") + GM extra_tools（MCP 依赖）
+     - 引擎排除：ENGINE_TOOL_EXCLUSIONS 过滤已执行操作对应的工具
     ↓
 C 阶段: 后处理
   6. AreaRuntime.check_events() → 后检查事件（agentic 操作可能改变状态）
+  6b. 自动时间推进 → session.advance_time(10)（引擎已推进时间时跳过：move_area/rest）
   7. CompanionInstance 事件分发 → 同伴接收已完成事件
-  8. TeammateResponseService.process_round() → 队友响应
+  8. TeammateResponseService.process_round() → 队友响应（使用 AgenticExecutor + RoleRegistry 沉浸式工具）
   9. SessionRuntime.persist() → 统一持久化
     ↓
 CoordinatorResponse → 前端
 ```
+
+**NPC 直接交互管线** (`POST .../interact/stream`)：
+```
+Setup → NPC Agentic Response → GM Observer(可[PASS]) → Teammate Observer → Dialogue Options → Persist
+```
+- NPC 通过 AgenticExecutor 使用 role="npc" 沉浸式工具响应
+- GM 默认 [PASS]（空 narration），仅在需要环境渲染时介入
+- 对话选项由 LLM 生成 4 个结构化选项（失败时回退通用选项）
+
+**私聊管线** (`POST .../private-chat/stream`)：
+```
+Setup → InstanceManager 双层认知 → NPC Agentic Response → Dialogue Options → Persist
+```
+- 走 PipelineOrchestrator，完整 SessionRuntime + AgenticExecutor + SceneBus + SessionHistory
+- 系统提示来自 InstanceManager（保留双层认知：上下文窗口 + 记忆图谱化）
+- GM/队友观察在私密模式下跳过
+- SSE 事件格式与 /interact/stream 统一（interact_start/npc_response/dialogue_options/complete）
 
 ### 核心系统
 
 1. **V4 Runtime 层** (`app/runtime/`)
    - `game_runtime.py`: 全局运行时单例，管理 WorldInstance 缓存
    - `world_instance.py`: 世界静态数据注册表（地图/角色/章节/知识图谱，启动时加载）
-   - `session_runtime.py`: 会话运行时，统一管理状态/队伍/历史/角色；`advance_time(minutes)` 通过 TimeManager 推进时间并触发时段/日期事件
+   - `session_runtime.py`: 会话运行时，统一管理状态/队伍/历史/角色；`advance_time(minutes)` 通过 TimeManager 推进时间并触发时段/日期事件；Player 持久化双路径：主路径 WorldGraph 快照 + 兜底路径 CharacterStore，脏标记仅在至少一条路径成功后清除
    - `area_runtime.py`: 区域生命周期管理，事件状态机 + 章节转换检查
    - `context_assembler.py`: 结构化上下文组装（替代旧 `_build_context`）
    - `companion_instance.py`: 同伴系统实例，轻量事件日志 + 记忆摘要
 
 2. **管线编排** (`app/services/admin/`)
-   - `pipeline_orchestrator.py`: V4 薄编排层（A/B/C 三阶段）
-   - `v4_agentic_tools.py`: V4 工具注册表（通过 SessionRuntime/AreaRuntime 操作）；导航工具（navigate/enter_sublocation/leave_sublocation）已移除，由 IntentExecutor 引擎处理；`update_time` 直接调用 `SessionRuntime.advance_time()`（不经 FlashCPU）
+   - `pipeline_orchestrator.py`: V4 薄编排层（A/B/C 三阶段 + NPC /interact 交互流 + /private-chat 私聊流）
    - `admin_coordinator.py`: 入口协调器（单例），委托核心逻辑到 PipelineOrchestrator
-   - `flash_cpu_service.py`: Flash 意图分析和 Agentic 工具执行
-   - `world_runtime.py`: 世界状态运行时（导航/时间/子地点等）
+   - `flash_cpu_service.py`: Flash MCP 工具调用（`execute_request`：SPAWN_PASSERBY/NPC_DIALOGUE/START_COMBAT/ADD_TEAMMATE/REMOVE_TEAMMATE/DISBAND_PARTY/ABILITY_CHECK + `call_combat_tool`）+ agentic 系统提示加载
+   - `world_runtime.py`: 世界状态运行时（薄壳：仅 `start_session` + `get_current_location`；SessionRuntime/FlashCPU 已解耦，不再依赖）
    - `state_manager.py`: 会话状态管理，内存快照 + StateDelta 增量追踪
+
+   **Agentic 基础设施**（Phase 4b+4c 完成）：
+   - `app/world/agentic_executor.py`: 统一 Agent 执行器（GM/NPC/队友共用），封装 LLM agentic 循环 + 工具录制/SSE 推送 + `exclude_tools` 引擎排除
+   - `app/world/immersive_tools.py`: 30 个沉浸式工具 + AgenticContext + FEELING_MAP 情感翻译层 + bind 机制；GM 工具含 `heal_player`/`damage_player`/`add_xp`/`update_disposition`/`create_memory` 等 16 个（时间由 Pipeline 自动推进，不再有 `update_time` 工具）
+   - `app/world/gm_extra_tools.py`: 8 个 GM MCP 依赖工具工厂（`npc_dialogue`/`start_combat`/`ability_check`/`add_teammate` 等）+ `ENGINE_TOOL_EXCLUSIONS` 引擎排除映射
+   - `app/world/role_registry.py`: 按 (role, traits) 映射工具集 — gm={base,gm}, npc={base}, teammate={base,teammate}
+   - GM/NPC/队友三条路径均使用 AgenticExecutor：
+     - GM: `PipelineOrchestrator.process()` B-stage → AgenticExecutor + RoleRegistry(gm) + GM extra_tools
+     - NPC: `/interact/stream` → AgenticExecutor + RoleRegistry(npc)
+     - 队友: `TeammateResponseService` → AgenticExecutor + RoleRegistry(teammate)
 
 3. **事件系统** (`app/services/admin/`)
    - `event_service.py`: 结构化事件入图 + EventBus 发布
    - `event_llm_service.py`: 自然语言事件 3 步管线（parse → encode → transform_perspective）
    - 事件状态机由 `AreaRuntime.check_events()` 驱动（替代旧 StoryDirector）
 
-4. **NPC AI 系统** — 三层模型 (`NPCTierConfig`) + 双层认知
+4. **NPC AI 系统** — 三层模型 (`NPCTierConfig`) + 双交互路径
    - **Passerby**: 轻量路人交互（无 thinking，无上下文窗口）
    - **Secondary**: 次要角色（medium thinking，共享上下文窗口）
    - **Main**: 主要角色（low thinking，完整 200K 上下文窗口 + 扩散激活记忆召回）
@@ -148,10 +176,13 @@ CoordinatorResponse → 前端
      - 当工作记忆达 90% 阈值 → `MemoryGraphizer.graphize()` 将旧消息转为图谱节点 → 释放 token
      - 记忆注入：`build_context_with_injection()` 将召回的图谱节点作为"相关记忆"注入系统提示
    - 实例池化：`InstanceManager`，LRU 淘汰（默认 20 实例），淘汰前强制图谱化
+   - **直接交互路径**：`POST .../interact/stream`（SSE），NPC 通过 AgenticExecutor 使用沉浸式工具响应，支持 GM 观察、队友旁观、对话选项生成
+   - **NPCReactor**（`app/services/npc_reactor.py`）：NPC 相关度推荐器，模板反应，不再使用 LLM
 
 5. **队伍系统** (`app/services/party_service.py`, `teammate_response_service.py`)
    - 队友每回合自动决策是否响应
    - 队友位置随玩家导航自动同步
+   - 队友使用 `AgenticExecutor` + RoleRegistry 沉浸式工具（4b 迁移完成）
 
 6. **MCP 工具层** (`app/mcp/`, `app/services/mcp_client_pool.py`)
    - `game_tools_server.py`: 游戏 MCP 服务器
@@ -189,10 +220,11 @@ CoordinatorResponse → 前端
 - 导航: `GET .../location`, `POST .../navigate`, `GET .../sub-locations`, `POST .../sub-location/enter`, `POST .../sub-location/leave`
 - 时间: `GET .../time`, `POST .../time/advance`, `POST .../advance-day`
 - 游戏: `POST .../input`（主入口）, `POST .../input/stream`（SSE）, `POST .../scene`, `GET .../context`
-- 对话: `POST .../dialogue/start`, `POST .../dialogue/end`, `POST .../private-chat/stream`（SSE）
+- NPC 交互: `POST .../interact/stream`（SSE，NPC 直接交互：NPC回复→GM观察→队友旁观→对话选项）
+- 对话: `POST .../dialogue/start`, `POST .../dialogue/end`, `POST .../private-chat/stream`（SSE，私聊走 Pipeline：NPC Agentic 回复→对话选项→持久化，GM/队友跳过）
 - 战斗: `POST .../combat/trigger`, `POST .../combat/start`, `POST .../combat/action`, `POST .../combat/resolve`
 - 队伍: `POST .../party`, `GET .../party`, `POST .../party/add`, `DELETE .../party/{character_id}`, `POST .../party/load`
-- 叙事: `GET .../narrative/progress`, `GET .../narrative/flow-board`, `GET .../narrative/current-plan`, `GET .../narrative/available-maps`, `POST .../narrative/trigger-event`
+- 叙事: `GET .../narrative/progress`, `GET .../narrative/flow-board`, `GET .../narrative/current-plan`, `GET .../narrative/available-maps`
 - 事件: `POST /{world_id}/events/ingest`, `POST /{world_id}/events/ingest-natural`
 - 路人: `GET .../passersby`, `POST .../passersby/spawn`, `POST .../passersby/dialogue`
 - 历史: `GET .../history`

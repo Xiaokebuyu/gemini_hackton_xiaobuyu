@@ -17,7 +17,3 @@ def register(game_mcp) -> None:
         maps = await _narrative_service.get_available_maps(world_id, session_id)
         return json.dumps({"available_maps": maps, "all_unlocked": "*" in maps}, ensure_ascii=False)
 
-    @game_mcp.tool()
-    async def trigger_event(world_id: str, session_id: str, event_id: str) -> str:
-        result = await _narrative_service.trigger_event(world_id, session_id, event_id)
-        return json.dumps(result, ensure_ascii=False, indent=2, default=str)

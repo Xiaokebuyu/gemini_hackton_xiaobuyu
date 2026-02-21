@@ -200,64 +200,9 @@ class TestRelevanceCalculation:
         assert score == 0.0
 
 
-class TestLLMReaction:
-    def test_llm_path_when_use_llm_true(self):
-        """use_llm=True 时应使用 LLM 生成反应。"""
-        priestess = _make_npc_node("priestess", "女祭司")
-        wg = _make_wg(
-            area_npcs={"town_square": ["priestess"]},
-            all_nodes={"priestess": priestess},
-        )
-        bus = SceneBus(area_id="town_square")
-        bus.publish(BusEntry(
-            actor="player", type=BusEntryType.SPEECH,
-            content="女祭司，你好吗？",
-        ))
-        session = _make_session()
-
-        reactor = NPCReactor(world_graph=wg, use_llm=True)
-
-        with patch("app.services.llm_service.LLMService") as MockLLM:
-            mock_instance = MockLLM.return_value
-            mock_instance.generate_simple = AsyncMock(return_value="女祭司微笑着回应。")
-
-            results = _run(reactor.collect_reactions(bus, session, {}))
-
-        assert len(results) >= 1
-        assert results[0].actor == "priestess"
-        assert "微笑" in results[0].content
-
-    def test_llm_failure_falls_back_to_template(self):
-        """LLM 失败时应回退到模板反应。"""
-        priestess = _make_npc_node("priestess", "女祭司")
-        wg = _make_wg(
-            area_npcs={"town_square": ["priestess"]},
-            all_nodes={"priestess": priestess},
-        )
-        bus = SceneBus(area_id="town_square")
-        bus.publish(BusEntry(
-            actor="player", type=BusEntryType.SPEECH,
-            content="女祭司，你好吗？",
-        ))
-        session = _make_session()
-
-        reactor = NPCReactor(world_graph=wg, use_llm=True)
-
-        with patch("app.services.llm_service.LLMService") as MockLLM:
-            mock_instance = MockLLM.return_value
-            mock_instance.generate_simple = AsyncMock(side_effect=Exception("LLM error"))
-
-            results = _run(reactor.collect_reactions(bus, session, {}))
-
-        assert len(results) >= 1
-        assert results[0].actor == "priestess"
-        # 应回退到模板
-        assert "注意到" in results[0].content
-
-
-class TestLLMServiceReuse:
-    def test_llm_service_reused(self):
-        """两次调用共享同一个 LLMService 实例（通过构造器注入）。"""
+class TestGetRelevantNpcs:
+    def test_returns_sorted_by_relevance(self):
+        """get_relevant_npcs 返回按关联度排序的列表。"""
         priestess = _make_npc_node("priestess", "女祭司")
         warrior = _make_npc_node("warrior", "战士")
         wg = _make_wg(
@@ -267,23 +212,22 @@ class TestLLMServiceReuse:
         bus = SceneBus(area_id="town_square")
         bus.publish(BusEntry(
             actor="player", type=BusEntryType.SPEECH,
-            content="女祭司和战士你们好",
+            content="女祭司，你好吗？",  # 点名女祭司
         ))
         session = _make_session()
+        reactor = NPCReactor(world_graph=wg)
+        result = reactor.get_relevant_npcs(bus, session)
+        assert len(result) >= 1
+        assert result[0]["npc_id"] == "priestess"
+        assert result[0]["relevance"] >= 10
 
-        mock_llm = MagicMock()
-        mock_llm.generate_simple = AsyncMock(return_value="反应文本。")
-        reactor = NPCReactor(world_graph=wg, use_llm=True, llm_service=mock_llm)
+    def test_simple_constructor(self):
+        """简化后构造函数只需 world_graph。"""
+        reactor = NPCReactor(world_graph=None)
+        assert reactor.wg is None
 
-        _run(reactor.collect_reactions(bus, session, {}))
-
-        # Same instance should be reused across calls
-        assert reactor._llm_service is mock_llm
-        # generate_simple should be called at least once (up to 2 for 2 NPCs)
-        assert mock_llm.generate_simple.call_count >= 1
-
-    def test_injected_llm_service_used(self):
-        """传入 llm_service 时直接使用，不创建新实例。"""
+    def test_template_reactions_content(self):
+        """collect_reactions 返回模板文本。"""
         priestess = _make_npc_node("priestess", "女祭司")
         wg = _make_wg(
             area_npcs={"town_square": ["priestess"]},
@@ -295,76 +239,8 @@ class TestLLMServiceReuse:
             content="女祭司你好",
         ))
         session = _make_session()
-
-        mock_llm = MagicMock()
-        mock_llm.generate_simple = AsyncMock(return_value="注入的反应。")
-        reactor = NPCReactor(world_graph=wg, use_llm=True, llm_service=mock_llm)
-
+        reactor = NPCReactor(world_graph=wg)
         results = _run(reactor.collect_reactions(bus, session, {}))
-
-        # Should use injected service
-        assert reactor._llm_service is mock_llm
-        mock_llm.generate_simple.assert_called()
-        assert len(results) >= 1
-        assert "注入的反应" in results[0].content
-
-    def test_lazy_init_sets_llm_service(self):
-        """未注入时，首次调用后 _llm_service 不再为 None。"""
-        reactor = NPCReactor(world_graph=MagicMock(), use_llm=True)
-        assert reactor._llm_service is None
-        # After injection, it should be set
-        mock_llm = MagicMock()
-        reactor._llm_service = mock_llm
-        assert reactor._llm_service is mock_llm
-
-
-class TestConsecutiveFailures:
-    def test_consecutive_failures_tracked(self):
-        """3 次失败后计数为 3。"""
-        priestess = _make_npc_node("priestess", "女祭司")
-        candidate = {
-            "npc_id": "priestess",
-            "npc_name": "女祭司",
-            "relevance": 10.0,
-            "node": priestess,
-        }
-        bus = SceneBus(area_id="town_square")
-        bus.publish(BusEntry(
-            actor="player", type=BusEntryType.SPEECH, content="女祭司",
-        ))
-        session = _make_session()
-
-        mock_llm = MagicMock()
-        mock_llm.generate_simple = AsyncMock(side_effect=Exception("fail"))
-        reactor = NPCReactor(world_graph=MagicMock(), use_llm=True, llm_service=mock_llm)
-
-        assert reactor._llm_consecutive_failures == 0
-        for _ in range(3):
-            _run(reactor._generate_reaction(candidate, bus, session, {}))
-
-        assert reactor._llm_consecutive_failures == 3
-
-    def test_consecutive_failures_reset_on_success(self):
-        """成功后计数归零。"""
-        priestess = _make_npc_node("priestess", "女祭司")
-        candidate = {
-            "npc_id": "priestess",
-            "npc_name": "女祭司",
-            "relevance": 10.0,
-            "node": priestess,
-        }
-        bus = SceneBus(area_id="town_square")
-        bus.publish(BusEntry(
-            actor="player", type=BusEntryType.SPEECH, content="女祭司",
-        ))
-        session = _make_session()
-
-        mock_llm = MagicMock()
-        mock_llm.generate_simple = AsyncMock(return_value="成功的反应。")
-        reactor = NPCReactor(world_graph=MagicMock(), use_llm=True, llm_service=mock_llm)
-        reactor._llm_consecutive_failures = 5
-
-        result = _run(reactor._generate_reaction(candidate, bus, session, {}))
-
-        assert result is not None
-        assert reactor._llm_consecutive_failures == 0
+        assert len(results) == 1
+        assert results[0].actor == "priestess"
+        assert "注意到" in results[0].content

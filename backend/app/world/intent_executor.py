@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.world.intent_resolver import IntentType, ResolvedIntent
+from app.world import stats_manager
 from app.world.scene_bus import BusEntry, BusEntryType
 
 logger = logging.getLogger(__name__)
@@ -68,12 +69,10 @@ class IntentExecutor:
         session: Any,
         scene_bus: Any,
         recall_orchestrator: Optional[Any] = None,
-        flash_cpu: Optional[Any] = None,
     ) -> None:
         self.session = session
         self.scene_bus = scene_bus
         self.recall_orchestrator = recall_orchestrator
-        self.flash_cpu = flash_cpu
 
     async def dispatch(self, intent: ResolvedIntent) -> EngineResult:
         """分派意图到对应执行器。"""
@@ -307,6 +306,27 @@ class IntentExecutor:
                     )
                 )
 
+        # 子地点存在性 + 营业时间校验（通过 WorldInstance.area_registry）
+        world = getattr(self.session, "world", None)
+        player_location = getattr(self.session, "player_location", None)
+        if world and player_location:
+            area_registry = getattr(world, "area_registry", {})
+            area_def = area_registry.get(player_location)
+            if area_def:
+                sub_loc_def = area_def.get_sub_location(runtime_sub_id)
+                if not sub_loc_def:
+                    available = [{"id": sl.id, "name": sl.name} for sl in area_def.sub_locations]
+                    return EngineResult(
+                        error=f"子地点不存在: {runtime_sub_id}，可用: {', '.join(sl.name + '(' + sl.id + ')' for sl in area_def.sub_locations) or '无'}"
+                    )
+                if sub_loc_def.interaction_type == "shop":
+                    game_time = getattr(self.session, "time", None)
+                    if game_time and hasattr(game_time, "hour"):
+                        if not (8 <= game_time.hour < 20):
+                            return EngineResult(
+                                error=f"{sub_loc_def.name}已打烊，营业时间: 08:00-20:00（当前: {game_time.hour:02d}:00）"
+                            )
+
         try:
             result = await self.session.enter_sublocation(runtime_sub_id)
         except Exception as exc:
@@ -424,11 +444,7 @@ class IntentExecutor:
         )
 
     async def execute_talk(self, npc_id: str, npc_name: str = "", player_message: str = "") -> EngineResult:
-        """TALK — 验证 + 计数 + 调用 NPC AI 生成对话。
-
-        NPC 回复直接写入总线，GM 不再代理。
-        flash_cpu 不可用或调用失败时降级：只写 ACTION 条目，GM 仍可调 npc_dialogue。
-        """
+        """TALK — 验证 + 计数，返回 talk_pending 让 Pipeline 层处理 NPC 对话。"""
         wg = getattr(self.session, "world_graph", None)
 
         # NPC 存在性验证
@@ -450,53 +466,16 @@ class IntentExecutor:
                 actor="player",
                 type=BusEntryType.ACTION,
                 content=f"wants to talk to {npc_name or npc_id}",
-                data={"npc_id": npc_id, "npc_name": npc_name},
+                data={"npc_id": npc_id, "npc_name": npc_name, "message": player_message},
             )
         ]
 
-        # ---- NPC 自产对话 ----
-        npc_responded = False
-        if self.flash_cpu:
-            try:
-                from app.models.admin_protocol import FlashOperation, FlashRequest as _FR
-                req = _FR(
-                    operation=FlashOperation.NPC_DIALOGUE,
-                    parameters={"npc_id": npc_id, "message": player_message or "你好"},
-                )
-                resp = await self.flash_cpu.execute_request(
-                    world_id=self.session.world_id,
-                    session_id=self.session.session_id,
-                    request=req,
-                    generate_narration=False,
-                )
-                if resp.success and isinstance(resp.result, dict):
-                    response_text = resp.result.get("response", "")
-                    if response_text:
-                        char_data = None
-                        if self.session.world:
-                            char_data = self.session.world.get_character(npc_id)
-                        display_name = (char_data or {}).get("name", npc_name or npc_id) if isinstance(char_data, dict) else (npc_name or npc_id)
-
-                        bus_entries.append(BusEntry(
-                            actor=npc_id,
-                            actor_name=display_name,
-                            type=BusEntryType.SPEECH,
-                            content=response_text,
-                        ))
-                        npc_responded = True
-            except Exception as exc:
-                logger.warning("[IntentExecutor] NPC dialogue failed for %s, GM will handle: %s", npc_id, exc)
-
-        hints = [f"玩家想要与{npc_name or npc_id}交谈"]
-        if npc_responded:
-            hints.append(f"{npc_name or npc_id}已在总线中回复，请勿再调用 npc_dialogue 重复对话")
-
         return EngineResult(
             success=True,
-            intent_type="talk" if npc_responded else "talk_pending",
+            intent_type="talk_pending",
             target=npc_id,
             bus_entries=bus_entries,
-            narrative_hints=hints,
+            narrative_hints=[f"玩家想要与{npc_name or npc_id}交谈"],
         )
 
     async def execute_leave(self) -> EngineResult:
@@ -558,11 +537,9 @@ class IntentExecutor:
         healed = 0
         player = getattr(self.session, "player", None)
         if player and hasattr(player, "current_hp"):
-            max_hp = player.max_hp
-            heal_amount = max(1, int(max_hp * 0.25))
-            old_hp = player.current_hp
-            player.current_hp = min(max_hp, old_hp + heal_amount)
-            healed = player.current_hp - old_hp
+            heal_amount = max(1, int(player.max_hp * 0.25))
+            result = stats_manager.add_hp(player, heal_amount)
+            healed = result["new_hp"] - result["old_hp"]
             self.session.mark_player_dirty()
 
         bus_entries = [
@@ -776,9 +753,8 @@ class IntentExecutor:
             # 兜底：不因骰子解析失败中断主链路
             heal_amount = 8
 
-        new_hp = min(max_hp, old_hp + heal_amount)
-        actual_healed = max(0, new_hp - old_hp)
-        player.current_hp = new_hp
+        hp_result = stats_manager.add_hp(player, heal_amount)
+        actual_healed = hp_result["new_hp"] - old_hp
 
         # 3) 消耗物品
         consumed = False
@@ -810,8 +786,8 @@ class IntentExecutor:
                     "rolled_heal": heal_amount,
                     "actual_healed": actual_healed,
                     "old_hp": old_hp,
-                    "new_hp": new_hp,
-                    "max_hp": max_hp,
+                    "new_hp": hp_result["new_hp"],
+                    "max_hp": hp_result["max_hp"],
                 },
             )
         ]
@@ -821,6 +797,6 @@ class IntentExecutor:
             target=resolved_item_id,
             bus_entries=bus_entries,
             narrative_hints=[
-                f"玩家使用了「{display}」，恢复 {actual_healed} 点HP（{new_hp}/{max_hp}），并已从背包消耗 1 个。"
+                f"玩家使用了「{display}」，恢复 {actual_healed} 点HP（{hp_result['new_hp']}/{hp_result['max_hp']}），并已从背包消耗 1 个。"
             ],
         )

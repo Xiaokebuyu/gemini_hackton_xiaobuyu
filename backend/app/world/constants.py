@@ -179,6 +179,19 @@ FULL_CASTER_SPELL_SLOTS: dict[int, dict[int, int]] = {
 }
 
 # Half Caster (Paladin / Ranger): 2 级开始获得法术位
+HIT_DIE_BY_CLASS: dict[str, int] = {
+    "barbarian": 12, "fighter": 10, "paladin": 10, "ranger": 10,
+    "bard": 8, "cleric": 8, "druid": 8, "monk": 8, "rogue": 8, "warlock": 8,
+    "sorcerer": 6, "wizard": 6,
+}
+
+CASTER_TYPE_BY_CLASS: dict[str, str] = {
+    "bard": "full", "cleric": "full", "druid": "full",
+    "sorcerer": "full", "wizard": "full", "warlock": "full",
+    "paladin": "half", "ranger": "half",
+}
+
+# Half Caster (Paladin / Ranger): 2 级开始获得法术位
 HALF_CASTER_SPELL_SLOTS: dict[int, dict[int, int]] = {
     1:  {},
     2:  {1: 2},

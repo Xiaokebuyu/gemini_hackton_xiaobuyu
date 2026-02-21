@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import uuid
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
 
@@ -51,15 +51,46 @@ class SceneBus:
         area_id: str,
         sub_location: Optional[str] = None,
         round_number: int = 0,
+        permanent_members: Optional[Set[str]] = None,
     ) -> None:
         self.area_id = area_id
         self.sub_location = sub_location
         self.round_number = round_number
         self._entries: List[BusEntry] = []
+        # Phase 4a: 成员追踪
+        self.permanent_members: Set[str] = set(permanent_members or [])
+        self.active_members: Set[str] = set()
 
     @property
     def entries(self) -> List[BusEntry]:
         return list(self._entries)
+
+    # ── 成员管理 (Phase 4a) ──
+
+    def contact(self, npc_id: str) -> None:
+        """玩家开始与 NPC 交互 → NPC 加入总线。"""
+        self.active_members.add(npc_id)
+
+    def end_contact(self, npc_id: str) -> None:
+        """玩家结束与 NPC 交互 → NPC 离开总线。"""
+        self.active_members.discard(npc_id)
+
+    def is_member(self, entity_id: str) -> bool:
+        """检查实体是否为总线成员（常驻或临时）。"""
+        return entity_id in self.permanent_members or entity_id in self.active_members
+
+    def get_members(self) -> Set[str]:
+        """返回所有成员（常驻 + 临时）。"""
+        return self.permanent_members | self.active_members
+
+    def reset_scene(self, new_area_id: str) -> None:
+        """区域切换 → 清临时成员 + 条目，保留常驻成员。"""
+        self.area_id = new_area_id
+        self.sub_location = None
+        self.active_members.clear()
+        self._entries.clear()
+
+    # ── 消息发布 ──
 
     def publish(
         self,
@@ -96,12 +127,18 @@ class SceneBus:
             result = [e for e in result if e.visibility == visibility]
         return result
 
+    _SYSTEM_ACTORS = frozenset({"player", "gm", "engine"})
+
     def get_visible_entries(self, viewer_id: Optional[str] = None) -> List[BusEntry]:
         """按 visibility 过滤，返回 viewer 有权看到的条目。
 
         public 条目对所有人可见。
         private:{target_id} 条目仅对 actor 和 target_id 可见。
+        非成员（且非系统 actor）返回空列表。
         """
+        has_members = bool(self.permanent_members or self.active_members)
+        if has_members and viewer_id and viewer_id not in self._SYSTEM_ACTORS and not self.is_member(viewer_id):
+            return []
         result: List[BusEntry] = []
         for entry in self._entries:
             if entry.visibility == "public":
@@ -148,6 +185,8 @@ class SceneBus:
             "sub_location": self.sub_location,
             "round_number": self.round_number,
             "entries": [e.model_dump(mode="json") for e in self._entries],
+            "permanent_members": sorted(self.permanent_members),
+            "active_members": sorted(self.active_members),
         }
 
     @classmethod
@@ -157,7 +196,9 @@ class SceneBus:
             area_id=data.get("area_id", ""),
             sub_location=data.get("sub_location"),
             round_number=data.get("round_number", 0),
+            permanent_members=set(data.get("permanent_members", [])),
         )
+        bus.active_members = set(data.get("active_members", []))
         for entry_data in data.get("entries", []):
             bus._entries.append(BusEntry(**entry_data))
         return bus

@@ -656,6 +656,7 @@ class BehaviorEngine:
         self._evaluator = ConditionEvaluator()
         self._executor = ActionExecutor(wg)
         self._propagator = EventPropagator(wg)
+        self._fired_behaviors: Set[Tuple[str, str]] = set()  # 2.4: 回合内去重
 
     # -----------------------------------------------------------------
     # 公开方法
@@ -904,6 +905,11 @@ class BehaviorEngine:
         Returns:
             BehaviorResult 如果触发，None 如果条件不满足。
         """
+        # 2.4: 回合内去重 — 同一 (node_id, behavior_id) 在同一轮只执行一次
+        dedup_key = (node.id, behavior.id)
+        if dedup_key in self._fired_behaviors:
+            return None
+
         # 评估条件
         eval_result = self._evaluator.evaluate(behavior.conditions, ctx)
         if not eval_result.satisfied:
@@ -947,6 +953,9 @@ class BehaviorEngine:
             # +1 补偿: 下次 tick 开始时 tick_cooldowns() 会立即减 1，
             # 所以设置 N+1 确保实际阻塞 N 个 tick
             node.set_behavior_cooldown(behavior.id, behavior.cooldown_ticks + 1)
+
+        # 2.4: 记录已执行（回合内去重）
+        self._fired_behaviors.add((node.id, behavior.id))
 
         return BehaviorResult(
             behavior_id=behavior.id,

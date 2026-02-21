@@ -13,22 +13,21 @@ from typing import Any, Dict, List, Optional
 
 from app.config import settings
 from app.models.admin_protocol import (
-    AgenticResult,
     FlashOperation,
     FlashRequest,
     FlashResponse,
 )
-from app.models.state_delta import StateDelta
+from app.models.state_delta import GameTimeState, StateDelta
 from app.services.admin.state_manager import StateManager
 from app.services.flash_service import FlashService
 from app.services.admin.event_service import AdminEventService
-from app.services.admin.world_runtime import AdminWorldRuntime
 from app.services.game_session_store import GameSessionStore
 from app.services.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
 from app.services.llm_service import LLMService
 from app.services.mcp_client_pool import MCPClientPool, MCPServiceUnavailableError
 from app.services.image_generation_service import ImageGenerationService
+from app.world import stats_manager
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,6 @@ class FlashCPUService:
         state_manager: Optional[StateManager] = None,
         event_service: Optional[AdminEventService] = None,
         flash_service: Optional[FlashService] = None,
-        world_runtime: Optional[AdminWorldRuntime] = None,
         session_store: Optional[GameSessionStore] = None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
@@ -52,11 +50,13 @@ class FlashCPUService:
         character_service: Optional[Any] = None,
         character_store: Optional[Any] = None,
         image_service: Optional[ImageGenerationService] = None,
+        recall_orchestrator: Optional[Any] = None,
     ) -> None:
+        if state_manager is None:
+            logger.warning("[FlashCPU] 使用独立 StateManager 实例（仅限测试）")
         self.state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
         self.flash_service = flash_service or FlashService()
-        self.world_runtime = world_runtime
         self.session_store = session_store or GameSessionStore()
         self.narrative_service = narrative_service
         self.passerby_service = passerby_service or PasserbyService()
@@ -67,7 +67,7 @@ class FlashCPUService:
         self.character_service = character_service
         self.character_store = character_store
         self.image_service = image_service or ImageGenerationService()
-        self.recall_orchestrator: Optional[Any] = None
+        self.recall_orchestrator = recall_orchestrator
 
     def _load_agentic_prompt(self) -> str:
         if self.agentic_prompt_path.exists():
@@ -75,94 +75,6 @@ class FlashCPUService:
         return (
             "你是一个 RPG GM。先使用工具执行必要操作，再输出2-4段中文叙述。"
             "叙述必须基于工具真实返回结果，不要编造。"
-        )
-
-    async def agentic_process_v4(
-        self,
-        *,
-        session: Any,
-        player_input: str,
-        context: Dict[str, Any],
-        graph_store: Any,
-        recall_orchestrator: Any = None,
-        event_queue: Optional[asyncio.Queue] = None,
-    ) -> AgenticResult:
-        """V4 agentic process — uses V4AgenticToolRegistry + layered context.
-
-        Args:
-            session: SessionRuntime instance (must be restored).
-            player_input: Player input text.
-            context: Flat dict from LayeredContext.to_flat_dict().
-            graph_store: GraphStore for memory/disposition tools.
-            recall_orchestrator: Optional RecallOrchestrator.
-        """
-        from app.services.admin.v4_agentic_tools import V4AgenticToolRegistry
-
-        system_prompt = self._load_agentic_prompt()
-        model_name = settings.admin_agentic_model or settings.admin_flash_model
-
-        registry = V4AgenticToolRegistry(
-            session=session,
-            flash_cpu=self,
-            graph_store=graph_store,
-            recall_orchestrator=recall_orchestrator,
-            image_service=self.image_service,
-            event_queue=event_queue,
-            engine_executed=context.get("engine_executed"),
-        )
-
-        context_json = json.dumps(context, ensure_ascii=False, default=str)
-        user_prompt = (
-            "以下是分层上下文(JSON)：\n"
-            f"{context_json}\n\n"
-            f"玩家输入：{player_input}\n\n"
-            "请先调用必要工具，再输出最终 GM 叙述。"
-        )
-
-        tools = registry.get_tools()
-        logger.info(
-            "[agentic_v4] starting: model=%s tools=%d input=%.60s...",
-            model_name, len(tools), player_input,
-        )
-        llm_resp = await self.llm_service.agentic_generate(
-            user_prompt=user_prompt,
-            system_instruction=system_prompt,
-            tools=tools,
-            model_override=model_name,
-            thinking_level=settings.admin_flash_thinking_level,
-            max_remote_calls=settings.admin_agentic_max_remote_calls,
-        )
-        narration = (llm_resp.text or "").strip()
-        logger.info(
-            "[agentic_v4] done: tool_calls=%d narration_len=%d",
-            len(registry.tool_calls), len(narration),
-        )
-        if not narration:
-            logger.warning("[agentic_v4] empty narration, tool_calls=%s", [c.name for c in registry.tool_calls])
-            narration = "（你短暂沉默，观察着周围的动静。）"
-
-        finish_reason: Optional[str] = None
-        usage = {
-            "tool_calls": len(registry.tool_calls),
-            "thoughts_token_count": llm_resp.thinking.thoughts_token_count,
-            "output_token_count": llm_resp.thinking.output_token_count,
-            "total_token_count": llm_resp.thinking.total_token_count,
-        }
-        raw = llm_resp.raw_response
-        try:
-            candidates = getattr(raw, "candidates", None) or []
-            if candidates:
-                finish_reason = str(getattr(candidates[0], "finish_reason", None) or "")
-        except Exception:
-            finish_reason = None
-
-        return AgenticResult(
-            narration=narration,
-            thinking_summary=(llm_resp.thinking.thoughts_summary or "").strip(),
-            tool_calls=registry.tool_calls,
-            image_data=registry.image_data,
-            usage=usage,
-            finish_reason=finish_reason,
         )
 
     async def execute_request(
@@ -176,30 +88,7 @@ class FlashCPUService:
         op = request.operation
         params = request.parameters or {}
 
-        if op == FlashOperation.UPDATE_TIME and self.world_runtime is None:
-            return FlashResponse(
-                success=False,
-                operation=op,
-                error="world_runtime not initialized",
-            )
-
         try:
-            if op == FlashOperation.UPDATE_TIME:
-                minutes = int(params.get("minutes", 0))
-                result = await self.world_runtime.advance_time(world_id, session_id, minutes)
-                await self.world_runtime.refresh_state(world_id, session_id)
-                payload = result if isinstance(result, dict) else {"raw": result}
-                success = isinstance(payload, dict) and not payload.get("error") and payload.get("success") is not False
-                delta = self._build_state_delta("update_time", {"game_time": payload.get("time")})
-                error_message = payload.get("error") if not success else None
-                return FlashResponse(
-                    success=success,
-                    operation=op,
-                    result=payload,
-                    state_delta=delta,
-                    error=error_message,
-                )
-
             if op == FlashOperation.START_COMBAT:
                 # Auto-fill player_state from character data if not provided
                 player_state = params.get("player_state") or {}
@@ -209,7 +98,7 @@ class FlashCPUService:
                         if character:
                             player_state = character.to_combat_player_state()
                     except Exception as exc:
-                        logger.warning("[start_combat] Failed to auto-fill player_state: %s", exc)
+                        logger.error("[start_combat] Failed to auto-fill player_state: %s", exc)
                 result = await self._call_combat_tool(
                     "start_combat_v3",
                     {
@@ -235,43 +124,6 @@ class FlashCPUService:
                     success=success,
                     operation=op,
                     result=result,
-                    state_delta=delta,
-                    error=error_message,
-                )
-
-            if op == FlashOperation.TRIGGER_NARRATIVE_EVENT:
-                if not self.narrative_service:
-                    return FlashResponse(success=False, operation=op, error="叙事系统未初始化")
-                event_id = params.get("event_id")
-                if not event_id:
-                    return FlashResponse(success=False, operation=op, error="missing event_id")
-                result = await self.narrative_service.trigger_event(
-                    world_id,
-                    session_id,
-                    event_id,
-                    skip_advance=True,
-                )
-                payload = result if isinstance(result, dict) else {"raw": result}
-                success = isinstance(payload, dict) and not payload.get("error")
-                error_message = payload.get("error") if not success else None
-                delta = None
-                if success:
-                    delta = self._build_state_delta(
-                        "trigger_narrative_event",
-                        {
-                            "story_event_update": {
-                                "action": "trigger",
-                                "event_id": str(event_id),
-                                "success": True,
-                            },
-                            "story_events": [str(event_id)],
-                            "last_story_event": str(event_id),
-                        },
-                    )
-                return FlashResponse(
-                    success=success,
-                    operation=op,
-                    result=payload,
                     state_delta=delta,
                     error=error_message,
                 )
@@ -372,7 +224,7 @@ class FlashCPUService:
                         if instance and hasattr(instance, "persist") and self.instance_manager.graph_store:
                             await instance.persist(self.instance_manager.graph_store)
                     except Exception as exc:
-                        logger.warning("[remove_teammate] 实例图谱化/持久化失败 (%s): %s", character_id, exc)
+                        logger.error("[remove_teammate] 实例图谱化/持久化失败 (%s): %s", character_id, exc, exc_info=True)
                 success = await self.party_service.remove_member(world_id, session_id, character_id)
                 party_after_remove = await self.party_service.get_party(world_id, session_id)
                 name = params.get("name", character_id)
@@ -418,7 +270,7 @@ class FlashCPUService:
                                 await inst.persist(self.instance_manager.graph_store)
                             saved_members.append(member.name)
                         except Exception as exc:
-                            logger.warning("[disband_party] 实例图谱化失败 (%s): %s", member.character_id, exc)
+                            logger.error("[disband_party] 实例图谱化失败 (%s): %s", member.character_id, exc, exc_info=True)
                 success = await self.party_service.disband_party(world_id, session_id)
                 summary = "队伍已解散"
                 if reason:
@@ -514,8 +366,11 @@ class FlashCPUService:
 
     async def _apply_delta(self, world_id: str, session_id: str, delta: StateDelta) -> None:
         state = await self.state_manager.apply_delta(world_id, session_id, delta)
-        if self.world_runtime:
-            await self.world_runtime.persist_state(state)
+        if state:
+            await self.session_store.update_session(
+                world_id, session_id,
+                {"metadata.admin_state": state.model_dump()},
+            )
 
     async def sync_combat_result_to_character(
         self,
@@ -535,29 +390,10 @@ class FlashCPUService:
             player = session.player
             if player:
                 try:
-                    player_state = combat_payload.get("player_state") or {}
-                    hp_remaining = player_state.get("hp_remaining")
-                    if hp_remaining is not None:
-                        player.current_hp = max(0, min(int(hp_remaining), player.max_hp))
+                    result = stats_manager.sync_combat_rewards(player, combat_payload)
+                    if any(v for v in result.values()):
                         session.mark_player_dirty()
-
-                    final_result = combat_payload.get("final_result") or combat_payload.get("result") or {}
-                    if isinstance(final_result, dict):
-                        result_type = final_result.get("result", "")
-                        rewards = final_result.get("rewards") or {}
-                        if result_type == "victory" and rewards:
-                            xp = int(rewards.get("xp", 0))
-                            if xp > 0:
-                                player.xp = (player.xp or 0) + xp
-                                session.mark_player_dirty()
-                            gold = int(rewards.get("gold", 0))
-                            if gold > 0:
-                                player.gold = (player.gold or 0) + gold
-                                session.mark_player_dirty()
-                            for item_id in rewards.get("items", []):
-                                player.add_item(item_id, item_id, 1)
-                                session.mark_player_dirty()
-                    logger.info("[combat_sync] Synced combat results via graph node")
+                    logger.info("[combat_sync] Synced via graph node: %s", result)
                 except Exception as exc:
                     logger.error("[combat_sync] Graph sync failed: %s", exc, exc_info=True)
             return

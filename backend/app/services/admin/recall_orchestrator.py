@@ -35,6 +35,13 @@ class RecallOrchestrator:
         "wait": {"depth": 1, "output_threshold": 0.3},
     }
 
+    ROLE_SCOPES: Dict[str, Optional[List[str]]] = {
+        "npc": ["character", "location"],
+        "teammate": ["character", "camp", "location"],
+        "gm": ["character", "area", "chapter"],
+        "player": None,
+    }
+
     def __init__(
         self,
         *,
@@ -357,3 +364,126 @@ class RecallOrchestrator:
                         },
                     )
                 )
+
+    async def recall_for_role(
+        self,
+        *,
+        role: str,
+        world_id: str,
+        character_id: str,
+        seed_nodes: List[str],
+        intent_type: Optional[str] = None,
+        chapter_id: Optional[str] = None,
+        area_id: Optional[str] = None,
+        location_id: Optional[str] = None,
+    ) -> RecallResponse:
+        """Role-scoped recall — 按角色加载不同 scope。"""
+        scope_types = self.ROLE_SCOPES.get(role)
+        if scope_types is None:
+            return await self.recall(
+                world_id=world_id,
+                character_id=character_id,
+                seed_nodes=seed_nodes,
+                intent_type=intent_type,
+                chapter_id=chapter_id,
+                area_id=area_id,
+                location_id=location_id,
+            )
+
+        recall_cfg = self.RECALL_CONFIGS.get(intent_type or "", {})
+        output_threshold = recall_cfg.get("output_threshold", 0.15)
+        config = SpreadingActivationConfig(
+            output_threshold=output_threshold,
+            current_chapter_id=chapter_id,
+        )
+
+        scopes: List[GraphScope] = []
+        calls: List[Any] = []
+
+        for scope_type in scope_types:
+            if scope_type == "character":
+                s = GraphScope(scope_type="character", character_id=character_id)
+                scopes.append(s)
+                calls.append(self.graph_store.load_graph_v2(world_id, s))
+            elif scope_type == "location" and chapter_id and area_id and location_id:
+                s = GraphScope(
+                    scope_type="location",
+                    chapter_id=chapter_id,
+                    area_id=area_id,
+                    location_id=location_id,
+                )
+                scopes.append(s)
+                calls.append(self.graph_store.load_graph_v2(world_id, s))
+            elif scope_type == "area" and chapter_id and area_id:
+                s = GraphScope(scope_type="area", chapter_id=chapter_id, area_id=area_id)
+                scopes.append(s)
+                calls.append(self.graph_store.load_graph_v2(world_id, s))
+            elif scope_type == "chapter" and chapter_id:
+                s = GraphScope(scope_type="chapter", chapter_id=chapter_id)
+                scopes.append(s)
+                calls.append(self.graph_store.load_graph_v2(world_id, s))
+            elif scope_type == "camp":
+                s = GraphScope(scope_type="camp")
+                scopes.append(s)
+                calls.append(self.graph_store.load_graph_v2(world_id, s))
+
+        results = await asyncio.gather(*calls, return_exceptions=True)
+        scoped_data: List[Tuple[GraphScope, Any]] = []
+        for scope, result in zip(scopes, results):
+            if isinstance(result, Exception):
+                logger.warning("[recall_for_role] scope load failed scope=%s: %s", scope, result)
+                continue
+            scoped_data.append((scope, result))
+
+        merged = MemoryGraph.from_multi_scope(scoped_data)
+        await self._inject_disposition_edges(world_id, character_id, merged)
+
+        logger.info(
+            "[recall_for_role] role=%s merged scopes=%d nodes=%d edges=%d",
+            role,
+            len(scoped_data),
+            len(merged.graph.nodes),
+            len(merged.graph.edges),
+        )
+
+        expanded_seeds: List[str] = []
+        for seed in seed_nodes:
+            expanded_seeds.append(seed)
+            for prefix in ("person_", "character_", "location_", "area_"):
+                if seed.startswith(prefix):
+                    expanded_seeds.append(seed[len(prefix):])
+                else:
+                    expanded_seeds.append(f"{prefix}{seed}")
+        valid_seeds = [seed for seed in expanded_seeds if merged.has_node(seed)]
+
+        logger.info(
+            "[recall_for_role] seeds original=%s valid=%s (expanded=%d matched=%d)",
+            seed_nodes,
+            valid_seeds,
+            len(expanded_seeds),
+            len(valid_seeds),
+        )
+
+        if not valid_seeds:
+            return RecallResponse(
+                seed_nodes=seed_nodes,
+                activated_nodes={},
+                subgraph=None,
+                used_subgraph=False,
+            )
+
+        activated = spread_activation(merged, valid_seeds, config)
+        subgraph_graph = extract_subgraph(merged, activated)
+        subgraph = subgraph_graph.to_graph_data()
+        subgraph.nodes = [
+            node
+            for node in subgraph.nodes
+            if not (node.properties or {}).get("placeholder", False)
+        ]
+
+        return RecallResponse(
+            seed_nodes=seed_nodes,
+            activated_nodes=activated,
+            subgraph=subgraph,
+            used_subgraph=True,
+        )

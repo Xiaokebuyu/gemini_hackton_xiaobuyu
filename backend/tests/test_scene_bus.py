@@ -201,3 +201,48 @@ class TestRoundSummaryExcludeActors:
         summary = bus.get_round_summary()
         assert "hi" in summary
         assert "ok" in summary
+
+
+class TestMemberVisibility:
+    """get_visible_entries 成员校验测试。"""
+
+    def _make_bus(self):
+        bus = SceneBus(area_id="tavern", permanent_members={"priestess"})
+        bus.publish(BusEntry(actor="player", type=BusEntryType.ACTION, content="hello"))
+        return bus
+
+    def test_non_member_gets_empty(self):
+        bus = self._make_bus()
+        assert bus.get_visible_entries("outsider") == []
+
+    def test_permanent_member_gets_entries(self):
+        bus = self._make_bus()
+        entries = bus.get_visible_entries("priestess")
+        assert len(entries) == 1
+        assert entries[0].content == "hello"
+
+    def test_active_member_gets_entries(self):
+        bus = self._make_bus()
+        bus.contact("merchant")
+        entries = bus.get_visible_entries("merchant")
+        assert len(entries) == 1
+
+    def test_system_actor_player_always_sees(self):
+        bus = self._make_bus()
+        entries = bus.get_visible_entries("player")
+        assert len(entries) == 1
+
+    def test_system_actor_gm_always_sees(self):
+        bus = self._make_bus()
+        entries = bus.get_visible_entries("gm")
+        assert len(entries) == 1
+
+    def test_system_actor_engine_always_sees(self):
+        bus = self._make_bus()
+        entries = bus.get_visible_entries("engine")
+        assert len(entries) == 1
+
+    def test_no_viewer_id_returns_all_public(self):
+        bus = self._make_bus()
+        entries = bus.get_visible_entries()
+        assert len(entries) == 1

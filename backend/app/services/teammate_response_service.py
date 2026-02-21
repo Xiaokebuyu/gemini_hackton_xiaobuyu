@@ -33,6 +33,49 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ── B1: 辅助函数（AgenticExecutor 迁移） ──
+
+
+def _is_combat_active(session: Any) -> bool:
+    """检查当前是否在战斗中。"""
+    gs = getattr(session, "game_state", None)
+    return bool(gs and getattr(gs, "combat_id", None))
+
+
+def _make_combat_action_tool(
+    flash_cpu: Any, session: Any, character_id: str,
+) -> Any:
+    """创建队友专属的战斗行动工具（从 TeammateAgenticToolRegistry 提取）。"""
+    from typing import Callable
+
+    async def choose_battle_action(action_id: str) -> Dict[str, Any]:
+        """Select your combat action. action_id: the action to perform."""
+        if not action_id:
+            return {"success": False, "error": "missing action_id"}
+        gs = getattr(session, "game_state", None)
+        combat_id = getattr(gs, "combat_id", None) if gs else None
+        if not combat_id:
+            return {"success": False, "error": "no active combat"}
+        payload = await flash_cpu.call_combat_tool(
+            "execute_action_for_actor",
+            {"combat_id": combat_id, "actor_id": character_id, "action_id": action_id},
+        )
+        if isinstance(payload, dict) and payload.get("error"):
+            payload = await flash_cpu.call_combat_tool(
+                "execute_action",
+                {"combat_id": combat_id, "action_id": action_id},
+            )
+        if not isinstance(payload, dict):
+            payload = {"success": False, "error": "invalid combat response"}
+        payload["actor_id"] = character_id
+        payload["combat_id"] = combat_id
+        payload["success"] = not bool(payload.get("error"))
+        return payload
+
+    choose_battle_action.__annotations__ = {"action_id": str, "return": Dict[str, Any]}
+    return choose_battle_action
+
+
 class TeammateResponseService:
     """队友响应服务"""
 
@@ -935,37 +978,55 @@ class TeammateResponseService:
         thinking_level: str,
     ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
         session = context.get("_runtime_session")
-        if session is None or self.flash_cpu is None:
+        if session is None:
             return None, []
 
-        from app.services.admin.teammate_agentic_tools import TeammateAgenticToolRegistry
+        from app.world.agentic_executor import AgenticExecutor
+        from app.world.immersive_tools import AgenticContext
 
-        tool_events: List[Dict[str, Any]] = []
+        event_queue: asyncio.Queue = asyncio.Queue()
 
-        async def _on_tool_event(event: Dict[str, Any]) -> None:
-            tool_events.append(event)
-
-        registry = TeammateAgenticToolRegistry(
-            member=member,
+        ctx = AgenticContext(
             session=session,
-            flash_cpu=self.flash_cpu,
-            graph_store=self.graph_store,
+            agent_id=member.character_id,
+            role="teammate",
+            scene_bus=getattr(session, "scene_bus", None),
+            world_id=getattr(session, "world_id", ""),
+            chapter_id=getattr(session, "chapter_id", ""),
+            area_id=getattr(session, "area_id", ""),
+            location_id=getattr(session, "sub_location", ""),
             recall_orchestrator=self.recall_orchestrator,
-            event_callback=_on_tool_event,
+            graph_store=self.graph_store,
         )
-        tools = registry.get_tools()
-        if not tools:
-            return None, tool_events
 
-        llm_resp = await self.llm_service.agentic_generate(
+        # 战斗时注入 extra_tool
+        extra_tools: List[Any] = []
+        if self.flash_cpu and _is_combat_active(session):
+            extra_tools.append(
+                _make_combat_action_tool(self.flash_cpu, session, member.character_id)
+            )
+
+        executor = AgenticExecutor(self.llm_service)
+        result = await executor.run(
+            ctx=ctx,
+            system_prompt=self._get_agentic_system_prompt(),
             user_prompt=prompt,
-            system_instruction=self._get_agentic_system_prompt(),
-            tools=tools,
+            extra_tools=extra_tools or None,
+            event_queue=event_queue,
             model_override=model,
             thinking_level=thinking_level,
-            max_remote_calls=settings.admin_agentic_max_remote_calls,
         )
-        return self.llm_service.parse_json(llm_resp.text or ""), tool_events
+
+        # 收集工具事件
+        tool_events: List[Dict[str, Any]] = []
+        while not event_queue.empty():
+            evt = event_queue.get_nowait()
+            evt["character_id"] = member.character_id
+            evt["type"] = "teammate_tool_call"
+            tool_events.append(evt)
+
+        parsed = self.llm_service.parse_json(result.narration)
+        return parsed, tool_events
 
     async def _generate_response_payload(
         self,

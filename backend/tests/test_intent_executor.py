@@ -288,39 +288,25 @@ class TestExecuteTalkSetup:
 
 
 class TestExecuteTalk:
-    """F23: execute_talk with flash_cpu NPC dialogue."""
+    """execute_talk returns talk_pending (NPC dialogue handled by Pipeline layer)."""
 
-    def _make_flash_cpu(self, response_text="你好，冒险者。"):
-        flash_cpu = AsyncMock()
-        resp = MagicMock()
-        resp.success = True
-        resp.result = {"response": response_text}
-        flash_cpu.execute_request = AsyncMock(return_value=resp)
-        return flash_cpu
-
-    def test_talk_with_flash_cpu_produces_speech_entry(self):
-        """flash_cpu available -> bus_entries has ACTION + SPEECH."""
+    def test_talk_always_returns_talk_pending(self):
+        """execute_talk always returns talk_pending with ACTION entry only."""
         session = _make_session()
-        session.world_id = "test_world"
-        session.session_id = "test_session"
         npc_node = MagicMock()
         npc_node.state = {"is_alive": True}
         session.world_graph.get_node.return_value = npc_node
-        session.world.get_character.return_value = {"name": "女祭司"}
-        flash_cpu = self._make_flash_cpu()
         bus = SceneBus(area_id="town_square")
-        executor = IntentExecutor(session, bus, flash_cpu=flash_cpu)
+        executor = IntentExecutor(session, bus)
         result = _run(executor.execute_talk("priestess", "女祭司", "你好啊"))
         assert result.success
-        assert len(result.bus_entries) == 2
+        assert result.intent_type == "talk_pending"
+        assert len(result.bus_entries) == 1
         assert result.bus_entries[0].type == BusEntryType.ACTION
-        assert result.bus_entries[1].type == BusEntryType.SPEECH
-        assert result.bus_entries[1].actor == "priestess"
-        assert result.bus_entries[1].actor_name == "女祭司"
-        assert "请勿再调用 npc_dialogue" in result.narrative_hints[1]
+        assert result.bus_entries[0].actor == "player"
 
     def test_talk_without_flash_cpu_only_action_entry(self):
-        """flash_cpu=None -> only ACTION entry (degraded)."""
+        """No flash_cpu in constructor -> still returns talk_pending."""
         session = _make_session()
         npc_node = MagicMock()
         npc_node.state = {"is_alive": True}
@@ -332,39 +318,18 @@ class TestExecuteTalk:
         assert len(result.bus_entries) == 1
         assert result.bus_entries[0].type == BusEntryType.ACTION
 
-    def test_talk_flash_cpu_failure_degrades_gracefully(self):
-        """flash_cpu raises -> degrade to ACTION only, no exception."""
+    def test_talk_stores_player_message_in_bus_data(self):
+        """player_message is stored in bus entry data for Pipeline layer."""
         session = _make_session()
-        session.world_id = "test_world"
-        session.session_id = "test_session"
         npc_node = MagicMock()
         npc_node.state = {"is_alive": True}
         session.world_graph.get_node.return_value = npc_node
-        flash_cpu = AsyncMock()
-        flash_cpu.execute_request = AsyncMock(side_effect=RuntimeError("LLM timeout"))
         bus = SceneBus(area_id="town_square")
-        executor = IntentExecutor(session, bus, flash_cpu=flash_cpu)
-        result = _run(executor.execute_talk("priestess", "女祭司", "你好"))
+        executor = IntentExecutor(session, bus)
+        result = _run(executor.execute_talk("priestess", "女祭司", "我需要治疗"))
         assert result.success
-        assert len(result.bus_entries) == 1
-        assert result.bus_entries[0].type == BusEntryType.ACTION
-
-    def test_talk_passes_player_message(self):
-        """player_message is forwarded to flash_cpu request parameters."""
-        session = _make_session()
-        session.world_id = "test_world"
-        session.session_id = "test_session"
-        npc_node = MagicMock()
-        npc_node.state = {"is_alive": True}
-        session.world_graph.get_node.return_value = npc_node
-        session.world.get_character.return_value = {"name": "女祭司"}
-        flash_cpu = self._make_flash_cpu()
-        bus = SceneBus(area_id="town_square")
-        executor = IntentExecutor(session, bus, flash_cpu=flash_cpu)
-        _run(executor.execute_talk("priestess", "女祭司", "我需要治疗"))
-        call_args = flash_cpu.execute_request.call_args
-        req = call_args.kwargs.get("request") or call_args[0][2]
-        assert req.parameters["message"] == "我需要治疗"
+        assert result.bus_entries[0].data["message"] == "我需要治疗"
+        assert result.bus_entries[0].data["npc_id"] == "priestess"
 
 
 class TestExecuteLeave:

@@ -50,6 +50,7 @@ from app.models.graph_scope import GraphScope
 from app.services.character_store import CharacterStore
 from app.services.character_service import CharacterService
 from app.services.admin.recall_orchestrator import RecallOrchestrator
+from app.models.state_delta import GameState
 
 
 class AdminCoordinator:
@@ -81,6 +82,7 @@ class AdminCoordinator:
         party_service: Optional[PartyService] = None,
         teammate_response_service: Optional[TeammateResponseService] = None,
     ) -> None:
+        # ── 基础服务（无相互依赖） ──
         self._session_store = session_store or GameSessionStore()
         self._state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
@@ -88,6 +90,8 @@ class AdminCoordinator:
         self.flash_service = flash_service or FlashService(self.graph_store)
         self.narrative_service = narrative_service or NarrativeService(self._session_store)
         self.passerby_service = passerby_service or PasserbyService()
+
+        # ── 世界运行时 ──
         self._world_runtime = world_runtime or AdminWorldRuntime(
             state_manager=self._state_manager,
             session_store=self._session_store,
@@ -95,7 +99,7 @@ class AdminCoordinator:
             event_service=self.event_service,
         )
 
-        # 共享 InstanceManager（队友 + NPC 实例化）
+        # ── 共享 InstanceManager（队友 + NPC 实例化） ──
         from app.services.instance_manager import InstanceManager
         self.instance_manager = InstanceManager(
             max_instances=settings.instance_pool_max_instances,
@@ -105,38 +109,48 @@ class AdminCoordinator:
             graph_store=self.graph_store,
         )
 
+        # ── 队伍 / 角色 / 记忆召回（flash_cpu 的前置依赖，全部上移） ──
+        self.party_store = PartyStore()
+        self.party_service = party_service or PartyService(self.graph_store, self.party_store)
+        self.character_store = CharacterStore()
+        self.character_service = CharacterService(store=self.character_store)
+        self._world_background_cache: Dict[str, str] = {}
+        self._character_roster_cache: Dict[str, str] = {}
+        self._character_ids_cache: Dict[str, set] = {}
+        self._area_chapter_cache: Dict[str, Dict[str, str]] = {}
+        self.recall_orchestrator = RecallOrchestrator(
+            graph_store=self.graph_store,
+            get_character_id_set=self._get_character_id_set,
+            get_area_chapter_map=self._get_area_chapter_map,
+        )
+
+        # ── FlashCPU（所有依赖已就绪，无需后期注入） ──
         self.flash_cpu = flash_cpu or FlashCPUService(
             state_manager=self._state_manager,
-            world_runtime=self._world_runtime,
             session_store=self._session_store,
             event_service=self.event_service,
             narrative_service=self.narrative_service,
             passerby_service=self.passerby_service,
             instance_manager=self.instance_manager,
+            party_service=self.party_service,
+            character_service=self.character_service,
+            character_store=self.character_store,
+            recall_orchestrator=self.recall_orchestrator,
         )
 
-        # 队友系统
-        self.party_store = PartyStore()
-        self.party_service = party_service or PartyService(self.graph_store, self.party_store)
-        # 补充注入 party_service 到 flash_cpu（flash_cpu 创建早于 party_service）
-        self.flash_cpu.party_service = self.party_service
-        # 补充注入 character_service / character_store 到 flash_cpu
-        self.flash_cpu.character_service = None  # placeholder, set after character_service created
-        self.flash_cpu.character_store = None
+        # ── StateManager 一致性断言 ──
+        assert self._state_manager is self.flash_cpu.state_manager, \
+            "FlashCPU 持有不同的 StateManager 实例"
+
+        # ── 队友响应（依赖 flash_cpu + recall_orchestrator） ──
         self.teammate_response_service = teammate_response_service or TeammateResponseService(
             instance_manager=self.instance_manager,
             flash_cpu=self.flash_cpu,
             graph_store=self.graph_store,
+            recall_orchestrator=self.recall_orchestrator,
         )
 
-        # 角色系统
-        self.character_store = CharacterStore()
-        self.character_service = CharacterService(store=self.character_store)
-        # 补充注入到 flash_cpu
-        self.flash_cpu.character_service = self.character_service
-        self.flash_cpu.character_store = self.character_store
-
-        # 会话历史 + 图谱化
+        # ── 会话历史 + 图谱化 ──
         self.session_history_manager = SessionHistoryManager(
             firestore_db=self.graph_store.db,
             max_tokens=settings.session_history_max_tokens,
@@ -145,21 +159,7 @@ class AdminCoordinator:
         )
         self.memory_graphizer = MemoryGraphizer(graph_store=self.graph_store)
 
-        # 世界背景 / 角色花名册缓存
-        self._world_background_cache: Dict[str, str] = {}
-        self._character_roster_cache: Dict[str, str] = {}
-        self._character_ids_cache: Dict[str, set] = {}
-        self._area_chapter_cache: Dict[str, Dict[str, str]] = {}
-
-        self.recall_orchestrator = RecallOrchestrator(
-            graph_store=self.graph_store,
-            get_character_id_set=self._get_character_id_set,
-            get_area_chapter_map=self._get_area_chapter_map,
-        )
-        self.flash_cpu.recall_orchestrator = self.recall_orchestrator
-        self.teammate_response_service.recall_orchestrator = self.recall_orchestrator
-
-        # V4 Pipeline Orchestrator（唯一处理管线）
+        # ── V4 Pipeline Orchestrator（唯一处理管线） ──
         from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
         self._pipeline_orchestrator = PipelineOrchestrator(
             flash_cpu=self.flash_cpu,
@@ -170,9 +170,10 @@ class AdminCoordinator:
             session_history_manager=self.session_history_manager,
             character_store=self.character_store,
             state_manager=self._state_manager,
-            world_runtime=self._world_runtime,
+            session_store=self._session_store,
             recall_orchestrator=self.recall_orchestrator,
             memory_graphizer=self.memory_graphizer,
+            instance_manager=self.instance_manager,
         )
         logger.info("[AdminCoordinator] V4 PipelineOrchestrator 已初始化")
 
@@ -276,8 +277,8 @@ class AdminCoordinator:
                     for m in party_obj.get_active_members():
                         party_member_count += 1
                         party_members_names.append(m.name)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[list_recoverable] 队伍信息加载失败: %s", exc)
 
             # 角色创建状态：以 character_store 为准（player_character 存在于 session 顶层字段）
             has_character = False
@@ -285,8 +286,9 @@ class AdminCoordinator:
                 has_character = bool(
                     await self.character_store.get_character(world_id, session.session_id)
                 )
-            except Exception:
+            except Exception as exc:
                 # 回退兼容：历史数据可能写在 metadata 中
+                logger.debug("[list_recoverable] 角色存储查询失败，回退到 metadata: %s", exc)
                 has_character = bool(metadata.get("player_character"))
 
             recoverable.append(
@@ -402,6 +404,23 @@ class AdminCoordinator:
             is_private=is_private,
             private_target=private_target,
         )
+
+    async def process_interact_stream(
+        self,
+        world_id: str,
+        session_id: str,
+        npc_id: str,
+        player_input: str,
+    ):
+        """NPC 直接交互 SSE 流。"""
+        self._ensure_fixed_world(world_id)
+        async for event in self._pipeline_orchestrator.process_interact_stream(
+            world_id=world_id,
+            session_id=session_id,
+            npc_id=npc_id,
+            player_input=player_input,
+        ):
+            yield event
 
     async def process_player_input_v3_stream(
         self,
@@ -524,8 +543,13 @@ class AdminCoordinator:
         加载 admin_state、队伍、对话历史，预热队友实例，
         并可选生成恢复叙述帮助玩家回忆进度。
         """
-        # 1. 加载 admin_state（从 Firestore 恢复到 StateManager）
-        state = await self._world_runtime.get_state(world_id, session_id)
+        # 1. 加载 admin_state（StateManager 缓存 → Firestore 回退）
+        state = await self._state_manager.get_state(world_id, session_id)
+        if not state:
+            session_data = await self._session_store.get_session(world_id, session_id)
+            if session_data and session_data.metadata.get("admin_state"):
+                state = GameState(**session_data.metadata["admin_state"])
+                await self._state_manager.set_state(world_id, session_id, state)
         if not state:
             raise ValueError(f"session {session_id} not found or has no admin_state")
 
@@ -689,7 +713,8 @@ class AdminCoordinator:
             location_atmosphere = location.get("atmosphere") or ""
             npcs_present = ", ".join(location.get("npcs_present", [])) or "无"
 
-            time_info = await self._world_runtime.get_game_time(world_id, session_id)
+            _time_state = await self._state_manager.get_state(world_id, session_id)
+            time_info = _time_state.game_time.model_dump() if _time_state and _time_state.game_time else {}
             time_text = time_info.get("formatted") or time_info.get("formatted_time") or "未知"
 
             world_background = await self._get_world_background(world_id, session_id)
@@ -1096,13 +1121,13 @@ class AdminCoordinator:
                 world_id, admin_state.session_id, leader_id="player"
             )
         except Exception as exc:
-            logger.warning("[start_session] 队伍自动创建失败: %s", exc)
+            logger.error("[start_session] 队伍自动创建失败: %s", exc)
 
         return admin_state
 
     def get_context(self, world_id: str, session_id: str):
         # Prefer in-memory admin state
-        state = self._state_manager._states.get(f"{world_id}:{session_id}")
+        state = self._state_manager.get_state_sync(world_id, session_id)
         if state:
             known_chars = state.metadata.get("known_characters", []) if state.metadata else []
             return self.AdminContextView(
@@ -1117,7 +1142,7 @@ class AdminCoordinator:
         return None
 
     async def get_context_async(self, world_id: str, session_id: str):
-        state = await self._world_runtime.get_state(world_id, session_id)
+        state = await self._state_manager.get_state(world_id, session_id)
         if state:
             known_chars = state.metadata.get("known_characters", []) if state.metadata else []
             # Derive phase from state
@@ -1145,16 +1170,10 @@ class AdminCoordinator:
         return await self._world_runtime.get_current_location(world_id, session_id)
 
     async def get_game_time(self, world_id: str, session_id: str):
-        return await self._world_runtime.get_game_time(world_id, session_id)
-
-    async def advance_time(self, world_id: str, session_id: str, minutes: int):
-        return await self._world_runtime.advance_time(world_id, session_id, minutes)
-
-    async def enter_sub_location(self, world_id: str, session_id: str, sub_location_id: str):
-        return await self._world_runtime.enter_sub_location(world_id, session_id, sub_location_id)
-
-    async def leave_sub_location(self, world_id: str, session_id: str):
-        return await self._world_runtime.leave_sub_location(world_id, session_id)
+        state = await self._state_manager.get_state(world_id, session_id)
+        if state and state.game_time:
+            return state.game_time.model_dump()
+        return {}
 
     async def ingest_event(self, world_id: str, request):
         return await self.event_service.ingest_event(world_id, request)
@@ -1331,74 +1350,6 @@ class AdminCoordinator:
 
         return result
 
-    async def update_disposition_after_combat(
-        self,
-        world_id: str,
-        session_id: str,
-        combat_result: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """战斗结束后根据结果更新队友好感度。
-
-        规则：
-        - 玩家保护了队友 → approval +5, trust +3
-        - 玩家治疗了队友 → approval +3, trust +2
-        - 队友被击败（玩家未保护）→ approval -3
-        - 战斗胜利 → 所有参与队友 approval +2
-        - 战斗失败 → 所有参与队友 approval -1
-        """
-        party = await self.party_service.get_party(world_id, session_id)
-        if not party:
-            return []
-
-        state = await self._state_manager.get_state(world_id, session_id)
-        game_day = state.game_time.day if state else 1
-
-        updates = []
-        is_victory = combat_result.get("result") == "victory"
-
-        for member in party.get_active_members():
-            char_id = member.character_id
-            deltas: Dict[str, int] = {}
-            reasons: List[str] = []
-
-            # 战斗结果基础好感度
-            if is_victory:
-                deltas["approval"] = deltas.get("approval", 0) + 2
-                reasons.append("combat_victory")
-            else:
-                deltas["approval"] = deltas.get("approval", 0) - 1
-                reasons.append("combat_defeat")
-
-            # 保护/治疗行为
-            protected = combat_result.get("protected_allies", [])
-            healed = combat_result.get("healed_allies", [])
-            if char_id in protected:
-                deltas["approval"] = deltas.get("approval", 0) + 5
-                deltas["trust"] = deltas.get("trust", 0) + 3
-                reasons.append("protected")
-            if char_id in healed:
-                deltas["approval"] = deltas.get("approval", 0) + 3
-                deltas["trust"] = deltas.get("trust", 0) + 2
-                reasons.append("healed")
-
-            if deltas:
-                result = await self.update_disposition(
-                    world_id=world_id,
-                    character_id=char_id,
-                    target_id="player",
-                    deltas=deltas,
-                    reason=", ".join(reasons),
-                    game_day=game_day,
-                )
-                updates.append({
-                    "character_id": char_id,
-                    "deltas": deltas,
-                    "reason": ", ".join(reasons),
-                    "new_approval": result.get("approval"),
-                })
-
-        return updates
-
     # ==================== Private Chat ====================
 
     async def process_private_chat_stream(
@@ -1408,86 +1359,15 @@ class AdminCoordinator:
         target_character_id: str,
         player_input: str,
     ):
-        """
-        私聊流式处理 -- 直接与角色对话，跳过 Flash 分析和 GM 叙述。
+        """私聊流式处理 — 委托到 PipelineOrchestrator。
 
         Yields:
-            dict: SSE 事件 (chat_start/chat_chunk/chat_end/error)
+            dict: SSE 事件 (interact_start/npc_response/dialogue_options/complete/error)
         """
-        try:
-            # Phase 守卫：角色必须存在
-            pc = await self.character_store.get_character(world_id, session_id)
-            if not pc:
-                yield {"type": "error", "error": "请先创建角色后再开始冒险。"}
-                return
-
-            # 1. 获取或创建 NPC 实例
-            instance = await self.instance_manager.get_or_create(
-                target_character_id, world_id
-            )
-            character_name = (
-                instance.config.name if instance.config else target_character_id
-            )
-
-            yield {
-                "type": "chat_start",
-                "character_id": target_character_id,
-                "name": character_name,
-            }
-
-            # 2. 将玩家消息注入实例上下文
-            instance.context_window.add_message("user", player_input)
-
-            # 3. 构建 prompt：系统提示 + 对话历史
-            system_prompt = instance.context_window.get_system_prompt()
-            recent_messages = instance.context_window.get_all_messages()
-            conversation_lines = []
-            for msg in recent_messages[-20:]:
-                role_label = "玩家" if msg.role == "user" else character_name
-                conversation_lines.append(f"{role_label}: {msg.content}")
-            conversation_text = "\n".join(conversation_lines)
-
-            prompt = f"""{system_prompt}
-
----
-以下是最近的对话：
-{conversation_text}
-
----
-请以 {character_name} 的身份，直接回复玩家。保持角色性格和说话风格。只输出对话内容，不要加任何前缀或标记。"""
-
-            # 4. 流式生成
-            from app.services.llm_service import LLMService
-            llm = LLMService()
-            full_text = ""
-
-            async for chunk in llm.generate_simple_stream(prompt):
-                if chunk["type"] == "answer":
-                    full_text += chunk["text"]
-                    yield {
-                        "type": "chat_chunk",
-                        "text": chunk["text"],
-                    }
-                elif chunk["type"] == "error":
-                    yield {"type": "error", "error": chunk["text"]}
-                    return
-
-            # 5. 将角色回复写回上下文
-            instance.context_window.add_message("assistant", full_text)
-
-            yield {
-                "type": "chat_end",
-                "full_text": full_text,
-            }
-
-            # 6. 检查是否需要图谱化
-            try:
-                await self.instance_manager.maybe_graphize_instance(
-                    world_id, target_character_id
-                )
-            except Exception as e:
-                logger.debug("[私聊] 图谱化检查失败: %s", e)
-
-        except Exception as exc:
-            logger.exception("[私聊] 处理失败: %s", exc)
-            yield {"type": "error", "error": str(exc)}
+        async for event in self._pipeline_orchestrator.process_private_chat_stream(
+            world_id=world_id,
+            session_id=session_id,
+            npc_id=target_character_id,
+            player_input=player_input,
+        ):
+            yield event

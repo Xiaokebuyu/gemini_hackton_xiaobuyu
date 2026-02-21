@@ -66,16 +66,8 @@ class AdminWorldRuntime:
         await self.state_manager.set_state(world_id, session_id, state)
         return state
 
-    async def refresh_state(self, world_id: str, session_id: str) -> GameState:
-        session = await self.session_store.get_session(world_id, session_id)
-        if session and session.metadata.get("admin_state"):
-            state = GameState(**session.metadata.get("admin_state"))
-        else:
-            state = GameState(world_id=world_id, session_id=session_id)
-        await self.state_manager.set_state(world_id, session_id, state)
-        return state
-
-    async def persist_state(self, state: GameState) -> None:
+    async def _persist_state(self, state: GameState) -> None:
+        """内部持久化辅助（写 Firestore）。"""
         await self.session_store.update_session(
             state.world_id,
             state.session_id,
@@ -135,8 +127,8 @@ class AdminWorldRuntime:
                             if area in navigator.maps:
                                 current_location = area
                                 break
-            except Exception:
-                pass  # 回退到原有逻辑
+            except Exception as exc:
+                logger.warning("[start_session] 章节进度加载失败，使用 fallback: %s", exc)
 
         if not current_location:
             for area_id, area in navigator.maps.items():
@@ -173,7 +165,7 @@ class AdminWorldRuntime:
         )
 
         await self.state_manager.set_state(world_id, state.session_id, admin_state)
-        await self.persist_state(admin_state)
+        await self._persist_state(admin_state)
         await self.narrative_service.save_progress(world_id, state.session_id, progress)
         logger.info("会话启动完成: session=%s, location=%s", admin_state.session_id, current_location)
         return admin_state
@@ -195,7 +187,7 @@ class AdminWorldRuntime:
             location_id = list(navigator.maps.keys())[0]
             state.player_location = location_id
             state.area_id = location_id
-            await self.persist_state(state)
+            await self._persist_state(state)
 
         if not location_id:
             return {"error": "当前位置未知"}
@@ -210,7 +202,7 @@ class AdminWorldRuntime:
             state.player_location = fallback_id
             state.area_id = fallback_id
             state.sub_location = None
-            await self.persist_state(state)
+            await self._persist_state(state)
 
         destinations = navigator.get_available_destinations(location_id)
         time_info = state.game_time.model_dump()
@@ -242,78 +234,3 @@ class AdminWorldRuntime:
             "available_sub_locations": available_sub_locations,
         }
 
-    async def get_game_time(self, world_id: str, session_id: str) -> Dict[str, Any]:
-        state = await self.get_state(world_id, session_id)
-        return state.game_time.model_dump()
-
-    async def advance_time(self, world_id: str, session_id: str, minutes: int) -> Dict[str, Any]:
-        state = await self.get_state(world_id, session_id)
-        time_manager = self._time_manager_from_state(state)
-        events = time_manager.tick(minutes)
-        self._update_time_state(state, time_manager)
-
-        await self.state_manager.set_state(world_id, session_id, state)
-        await self.persist_state(state)
-
-        return {
-            "time": time_manager.to_dict(),
-            "events": [
-                {"event_type": e.event_type, "description": e.description, "data": e.data}
-                for e in events
-            ],
-        }
-
-    async def enter_sub_location(self, world_id: str, session_id: str, sub_location_id: str) -> Dict[str, Any]:
-        state = await self.get_state(world_id, session_id)
-        if not state.player_location:
-            return {"success": False, "error": "当前位置未知"}
-
-        navigator = self._get_navigator_ready(world_id)
-        sub_loc = navigator.get_sub_location(state.player_location, sub_location_id)
-        if not sub_loc:
-            # 列出可用子地点帮助 LLM 自我纠正
-            available = navigator.get_sub_locations(state.player_location)
-            available_text = ", ".join(
-                f"{s.name}({s.id})" for s in available
-            ) if available else "无"
-            return {
-                "success": False,
-                "error": f"子地点不存在: {sub_location_id}",
-                "available_sub_locations": [
-                    {"id": s.id, "name": s.name} for s in available
-                ],
-                "hint": f"可用子地点: {available_text}",
-            }
-
-        # 营业时间检查：商店类子地点在非营业时间不可进入
-        from app.services.area_navigator import InteractionType
-        if hasattr(sub_loc, "interaction_type") and sub_loc.interaction_type == InteractionType.SHOP:
-            time_manager = self._time_manager_from_state(state)
-            if not time_manager.is_shop_open():
-                hour = state.game_time.hour if state.game_time else 0
-                return {
-                    "success": False,
-                    "error": f"{sub_loc.name}已打烊，营业时间: 08:00-20:00（当前: {hour:02d}:00）",
-                    "time_blocked": True,
-                }
-
-        state.sub_location = sub_location_id
-        await self.state_manager.set_state(world_id, session_id, state)
-        await self.persist_state(state)
-
-        return {
-            "success": True,
-            "sub_location": sub_loc.to_dict(),
-            "description": sub_loc.description or f"你进入了{sub_loc.name}",
-        }
-
-    async def leave_sub_location(self, world_id: str, session_id: str) -> Dict[str, Any]:
-        state = await self.get_state(world_id, session_id)
-        if not state.sub_location:
-            return {"success": False, "error": "当前不在子地点"}
-
-        state.sub_location = None
-        await self.state_manager.set_state(world_id, session_id, state)
-        await self.persist_state(state)
-
-        return {"success": True}

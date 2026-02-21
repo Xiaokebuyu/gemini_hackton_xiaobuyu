@@ -99,29 +99,12 @@ class IntentParseResult(BaseModel):
 class FlashOperation(str, Enum):
     """Supported Flash operations."""
 
-    # 实例管理
     SPAWN_PASSERBY = "spawn_passerby"
     NPC_DIALOGUE = "npc_dialogue"
-    # 时间
-    UPDATE_TIME = "update_time"
-    # 战斗
     START_COMBAT = "start_combat"
-    # 章节
-    TRIGGER_NARRATIVE_EVENT = "trigger_narrative_event"
-    # 队伍管理
     ADD_TEAMMATE = "add_teammate"
     REMOVE_TEAMMATE = "remove_teammate"
     DISBAND_PARTY = "disband_party"
-    # 查询类
-    GET_PROGRESS = "get_progress"
-    GET_STATUS = "get_status"
-    # 角色状态
-    HEAL_PLAYER = "heal_player"
-    DAMAGE_PLAYER = "damage_player"
-    ADD_XP = "add_xp"
-    ADD_ITEM = "add_item"
-    REMOVE_ITEM = "remove_item"
-    # 属性检定
     ABILITY_CHECK = "ability_check"
 
 
@@ -227,6 +210,27 @@ class CoordinatorResponse(BaseModel):
     pacing_action: Optional[str] = None
     chapter_info: Optional[Dict[str, Any]] = None
     image_data: Optional[Dict[str, Any]] = None
+
+
+# =============================================================================
+# NPC 交互模型
+# =============================================================================
+
+
+class InteractRequest(BaseModel):
+    """NPC 直接交互请求。"""
+
+    npc_id: str
+    input: str
+    context_hint: str = ""
+
+
+class DialogueOption(BaseModel):
+    """对话选项。"""
+
+    text: str
+    intent: str = ""
+    tone: str = "neutral"  # neutral/friendly/threatening/curious/formal
 
 
 # 解决前向引用

@@ -52,7 +52,6 @@ def _orchestrator() -> PipelineOrchestrator:
         session_history_manager=object(),
         character_store=object(),
         state_manager=object(),
-        world_runtime=object(),
     )
 
 

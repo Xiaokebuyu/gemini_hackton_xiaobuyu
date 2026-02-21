@@ -530,23 +530,23 @@ class TestTickCooldown:
             cooldown_ticks=2,
         ))
 
-        engine = BehaviorEngine(wg)
         ctx = _ctx(player_location="loc_1")
 
+        # 每次 tick 新建 engine（符合生产实际：每轮 new SessionRuntime → new BehaviorEngine）
         # Tick 1: fires
-        r1 = engine.tick(ctx)
+        r1 = BehaviorEngine(wg).tick(ctx)
         assert any(r.behavior_id == "bh_cd" for r in r1.results)
 
         # Tick 2: cooldown=2 → 跳过
-        r2 = engine.tick(ctx)
+        r2 = BehaviorEngine(wg).tick(ctx)
         assert not any(r.behavior_id == "bh_cd" for r in r2.results)
 
         # Tick 3: cooldown=1 → 跳过
-        r3 = engine.tick(ctx)
+        r3 = BehaviorEngine(wg).tick(ctx)
         assert not any(r.behavior_id == "bh_cd" for r in r3.results)
 
         # Tick 4: cooldown expired → fires again
-        r4 = engine.tick(ctx)
+        r4 = BehaviorEngine(wg).tick(ctx)
         assert any(r.behavior_id == "bh_cd" for r in r4.results)
 
 
@@ -1329,3 +1329,105 @@ class TestResetBehaviors:
         """reset_behaviors 对不存在的节点静默跳过。"""
         wg = _make_simple_graph()
         wg.reset_behaviors("nonexistent")  # 不应 raise
+
+
+# =============================================================================
+# 2.4: 回合内行为去重 (TestRoundDedup)
+# =============================================================================
+
+
+class TestRoundDedup:
+    """2.4: 同一 (node_id, behavior_id) 在同一 BehaviorEngine 实例内只执行一次。"""
+
+    def test_repeatable_fires_once_in_double_tick(self):
+        """非 once、非 cooldown 行为在 pre+post tick 只执行一次。"""
+        wg = _make_simple_graph()
+        area_node = wg.get_node("area_1")
+        area_node.behaviors.append(Behavior(
+            id="bh_patrol",
+            trigger=TriggerType.ON_TICK,
+            conditions=None,
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "Guard patrols."},
+            )],
+        ))
+
+        engine = BehaviorEngine(wg)
+        ctx = _ctx(player_location="loc_1")
+
+        # Pre-tick
+        r1 = engine.tick(ctx)
+        fired_1 = [r for r in r1.results if r.behavior_id == "bh_patrol"]
+        assert len(fired_1) == 1
+        assert "Guard patrols." in r1.narrative_hints
+
+        # Post-tick（同一 engine 实例 = 同一回合）
+        r2 = engine.tick(ctx)
+        fired_2 = [r for r in r2.results if r.behavior_id == "bh_patrol"]
+        assert len(fired_2) == 0  # 去重！
+
+    def test_flash_evaluate_fires_in_post_tick(self):
+        """FLASH_EVALUATE 行为 pre-tick 挂起，post-tick 缓存就绪后正常执行。"""
+        wg = _make_simple_graph()
+        area_node = wg.get_node("area_1")
+        area_node.behaviors.append(Behavior(
+            id="bh_flash",
+            trigger=TriggerType.ON_TICK,
+            conditions=ConditionGroup(conditions=[
+                Condition(type=ConditionType.FLASH_EVALUATE,
+                          params={"prompt": "Is it raining?"}),
+            ]),
+            actions=[Action(
+                type=ActionType.NARRATIVE_HINT,
+                params={"text": "Rain starts."},
+            )],
+        ))
+
+        engine = BehaviorEngine(wg)
+
+        # Pre-tick: 无缓存 → 条件不满足 → 行为不执行 → 不在 _fired_behaviors 中
+        ctx_pre = _ctx(player_location="loc_1")
+        r1 = engine.tick(ctx_pre)
+        assert len(r1.pending_flash) >= 1
+        assert "Rain starts." not in r1.narrative_hints
+
+        # Post-tick: LLM 通过 flash_results 报告 True → 条件满足 → 行为首次执行
+        ctx_post = _ctx(player_location="loc_1")
+        ctx_post.flash_results["Is it raining?"] = True
+        r2 = engine.tick(ctx_post)
+        assert "Rain starts." in r2.narrative_hints
+
+    def test_different_behaviors_on_same_node_both_fire(self):
+        """同节点不同行为都应执行（dedup key 包含 behavior_id）。"""
+        wg = _make_simple_graph()
+        area_node = wg.get_node("area_1")
+        area_node.behaviors.append(Behavior(
+            id="bh_a", trigger=TriggerType.ON_TICK, conditions=None,
+            actions=[Action(type=ActionType.NARRATIVE_HINT, params={"text": "A fires"})],
+        ))
+        area_node.behaviors.append(Behavior(
+            id="bh_b", trigger=TriggerType.ON_TICK, conditions=None,
+            actions=[Action(type=ActionType.NARRATIVE_HINT, params={"text": "B fires"})],
+        ))
+
+        result = BehaviorEngine(wg).tick(_ctx(player_location="loc_1"))
+        assert "A fires" in result.narrative_hints
+        assert "B fires" in result.narrative_hints
+
+    def test_new_engine_clears_dedup(self):
+        """新 BehaviorEngine 实例 = 新回合 = 去重集清空。"""
+        wg = _make_simple_graph()
+        area_node = wg.get_node("area_1")
+        area_node.behaviors.append(Behavior(
+            id="bh_rep", trigger=TriggerType.ON_TICK, conditions=None,
+            actions=[Action(type=ActionType.NARRATIVE_HINT, params={"text": "fires"})],
+        ))
+
+        # 回合 1
+        r1 = BehaviorEngine(wg).tick(_ctx(player_location="loc_1"))
+        assert any(r.behavior_id == "bh_rep" for r in r1.results)
+
+        # 回合 2（新 engine = 新回合）
+        r2 = BehaviorEngine(wg).tick(_ctx(player_location="loc_1"))
+        assert any(r.behavior_id == "bh_rep" for r in r2.results)

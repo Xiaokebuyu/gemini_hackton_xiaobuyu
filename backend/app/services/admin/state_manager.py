@@ -32,25 +32,9 @@ class StateManager:
     async def get_state(self, world_id: str, session_id: str) -> Optional[GameState]:
         return self._states.get(self._key(world_id, session_id))
 
-    async def init_state(
-        self,
-        world_id: str,
-        session_id: str,
-        initial_state: Optional[GameState] = None,
-    ) -> GameState:
-        key = self._key(world_id, session_id)
-        async with self._lock:
-            if key in self._states:
-                logger.debug("状态已存在，跳过初始化: %s", key)
-                return self._states[key]
-            if initial_state is None:
-                initial_state = self._new_default_state(world_id, session_id)
-            else:
-                initial_state.world_id = world_id
-                initial_state.session_id = session_id
-            self._states[key] = initial_state
-            logger.info("状态初始化完成: %s", key)
-            return initial_state
+    def get_state_sync(self, world_id: str, session_id: str) -> Optional[GameState]:
+        """Synchronous state lookup (no lock, read-only snapshot)."""
+        return self._states.get(self._key(world_id, session_id))
 
     async def set_state(self, world_id: str, session_id: str, state: GameState) -> GameState:
         """Replace current state snapshot."""
@@ -70,7 +54,7 @@ class StateManager:
         async with self._lock:
             state = self._states.get(state_key)
             if state is None:
-                # Avoid re-entering the same lock via init_state() and deadlocking.
+                # State not found; create a default one inline (under the same lock).
                 state = self._new_default_state(world_id, session_id)
                 self._states[state_key] = state
                 logger.info("状态初始化完成: %s", state_key)
@@ -88,5 +72,3 @@ class StateManager:
             self._deltas[state_key].append(delta)
             return new_state
 
-    async def list_deltas(self, world_id: str, session_id: str) -> List[StateDelta]:
-        return list(self._deltas.get(self._key(world_id, session_id), []))
