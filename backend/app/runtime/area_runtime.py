@@ -1,7 +1,7 @@
 """AreaRuntime — 区域生命周期管理。
 
 C8: 事件逻辑已迁移到 BehaviorEngine/WorldGraph。
-保留：区域上下文、子地点、访问记录、记忆图谱、NPC上下文。
+保留：区域上下文、子地点、访问记录、NPC上下文。
 """
 
 from __future__ import annotations
@@ -89,15 +89,12 @@ class AreaRuntime:
         self.definition = definition
         self.state: AreaState = AreaState(area_id=area_id)
         self.events: List[AreaEvent] = []
-        self.area_graph: Optional[Any] = None        # 区域级动态记忆图谱 (MemoryGraph)
         self.npc_contexts: Dict[str, Any] = {}       # NPC 上下文窗口快照
         self.visit_summaries: List[VisitSummary] = []
         self.current_visit_log: List[str] = []
         self._world_id: Optional[str] = None
         self._session_id: Optional[str] = None
         self._db: Optional[firestore.Client] = None
-        self._graph_store: Optional[Any] = None      # GraphStore 引用
-        self._chapter_id: Optional[str] = None        # 章节 ID（GraphScope 需要）
 
     def _get_db(self) -> firestore.Client:
         """获取或创建 Firestore 客户端。"""
@@ -123,26 +120,19 @@ class AreaRuntime:
         self,
         world_id: str,
         session_id: str,
-        *,
-        chapter_id: Optional[str] = None,
-        graph_store: Optional[Any] = None,
     ) -> None:
-        """从 Firestore 加载区域状态（5 路并行）。
+        """从 Firestore 加载区域状态（3 路并行）。
 
-        并行加载：state + events + visits + area_graph + npc_contexts，
-        完成后更新访问计数。
+        并行加载：state + visits + npc_contexts，完成后更新访问计数。
         """
         self._world_id = world_id
         self._session_id = session_id
-        self._chapter_id = chapter_id
-        self._graph_store = graph_store
         area_ref = self._area_ref(world_id)
 
-        # 并行加载 4 个数据源（C8: 事件由 WorldGraph 管理，不再从 Firestore 加载）
+        # 并行加载 3 个数据源（C8: 事件由 WorldGraph 管理，不再从 Firestore 加载）
         results = await asyncio.gather(
             self._load_state(area_ref),
             self._load_visits(area_ref, session_id),
-            self._load_area_graph(world_id, chapter_id, graph_store),
             self._load_npc_contexts(area_ref),
             return_exceptions=True,
         )
@@ -158,9 +148,8 @@ class AreaRuntime:
         self.current_visit_log = []
 
         logger.info(
-            "AreaRuntime '%s' 已加载: %d 历史访问, graph=%s, npc_ctx=%d",
-            self.area_id, len(self.visit_summaries),
-            self.area_graph is not None, len(self.npc_contexts),
+            "AreaRuntime '%s' 已加载: %d 历史访问, npc_ctx=%d",
+            self.area_id, len(self.visit_summaries), len(self.npc_contexts),
         )
 
     async def _load_state(self, area_ref: firestore.DocumentReference) -> None:
@@ -193,25 +182,6 @@ class AreaRuntime:
             except Exception as e:
                 logger.warning("跳过无效访问摘要 %s: %s", doc.id, e)
 
-    async def _load_area_graph(
-        self, world_id: str, chapter_id: Optional[str], graph_store: Optional[Any],
-    ) -> None:
-        """加载区域级动态记忆图谱。"""
-        if not chapter_id or not graph_store:
-            return
-        from app.models.graph_scope import GraphScope
-        scope = GraphScope.area(chapter_id, self.area_id)
-        graph_data = await graph_store.load_graph_v2(world_id, scope)
-        if graph_data and (graph_data.nodes or graph_data.edges):
-            from app.services.memory_graph import MemoryGraph
-            self.area_graph = MemoryGraph.from_graph_data(graph_data)
-            logger.debug(
-                "AreaRuntime '%s' 加载 area_graph: %d nodes, %d edges",
-                self.area_id,
-                len(graph_data.nodes),
-                len(graph_data.edges),
-            )
-
     async def _load_npc_contexts(
         self, area_ref: firestore.DocumentReference,
     ) -> None:
@@ -229,7 +199,7 @@ class AreaRuntime:
             )
 
     async def persist_state(self) -> None:
-        """每轮增量持久化：保存 state + events + area_graph + npc_contexts。"""
+        """每轮增量持久化：保存 state + npc_contexts。"""
         world_id = self._world_id
         if not world_id:
             return
@@ -241,15 +211,7 @@ class AreaRuntime:
             self.state.model_dump(), merge=True
         )
 
-        # 2. 持久化区域级记忆图谱（merge=True 保证不覆盖 B 阶段写入的节点）
-        if self.area_graph and self._graph_store and self._chapter_id:
-            from app.models.graph_scope import GraphScope
-            scope = GraphScope.area(self._chapter_id, self.area_id)
-            await self._graph_store.save_graph_v2(
-                world_id, scope, self.area_graph, merge=True
-            )
-
-        # 3. 持久化 NPC 上下文快照
+        # 2. 持久化 NPC 上下文快照
         if self.npc_contexts:
             for npc_id, snapshot in self.npc_contexts.items():
                 area_ref.collection("npc_contexts").document(npc_id).set(
@@ -314,7 +276,6 @@ class AreaRuntime:
         # 4. 清理临时数据
         self.current_visit_log = []
         self.npc_contexts = {}
-        self.area_graph = None
 
         logger.info("AreaRuntime '%s' 已卸载并持久化", self.area_id)
         return visit_summary

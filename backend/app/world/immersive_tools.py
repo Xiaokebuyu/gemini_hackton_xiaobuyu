@@ -9,7 +9,6 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -37,8 +36,7 @@ class AgenticContext:
     area_id: str = ""
     location_id: str = ""
     # 按需注入的服务
-    recall_orchestrator: Any = None
-    graph_store: Any = None
+    world_graph: Any = None       # 只读辅助（写入统一走 SessionRuntime 门面）
     image_service: Any = None
     flash_cpu: Any = None         # GM extra_tools 需要（MCP 调用）
 
@@ -203,24 +201,24 @@ async def recall_experience(
     seeds: List[str],
 ) -> Dict[str, Any]:
     """Recall memories related to the given concept seeds (2-6 keywords)."""
-    if not ctx.recall_orchestrator:
+    if not ctx.session:
         return {"success": True, "stub": True, "agent_id": ctx.agent_id, "seeds": seeds}
-
-    result = await ctx.recall_orchestrator.recall_for_role(
+    records = await ctx.session.recall(
         role=ctx.role,
-        world_id=ctx.world_id,
-        character_id=ctx.agent_id,
-        seed_nodes=seeds,
-        chapter_id=ctx.chapter_id or None,
-        area_id=ctx.area_id or None,
-        location_id=ctx.location_id or None,
+        actor_id=ctx.agent_id,
+        seeds=seeds,
+        intent_type="recall",
+        limit=10,
     )
-    activated = result.activated_nodes or {}
-    top_memories = sorted(activated.items(), key=lambda x: x[1], reverse=True)[:10]
-    return {
-        "success": True,
-        "memories": [{"concept": k, "relevance": round(v, 2)} for k, v in top_memories],
-    }
+    memories = [
+        {
+            "concept": item.get("name", item.get("node_id", "")),
+            "summary": item.get("summary", ""),
+            "relevance": round(float(item.get("relevance", 0.0)), 2),
+        }
+        for item in records
+    ]
+    return {"success": True, "memories": memories}
 
 
 @immersive_tool(roles={"base"}, desc="Form or update an impression about someone or something")
@@ -231,29 +229,21 @@ async def form_impression(
     significance: str = "medium",
 ) -> Dict[str, Any]:
     """Record your impression. significance: low/medium/high."""
-    if not ctx.graph_store:
+    if not ctx.session:
         return {"success": True, "stub": True}
-
-    from app.models.graph import MemoryNode
-    from app.models.graph_scope import GraphScope
-
-    node = MemoryNode(
-        id=f"impression_{about}_{ctx.agent_id}",
-        type="impression",
+    sig_map = {"low": 0.3, "medium": 0.5, "high": 0.8}
+    node_id = ctx.session.record_memory(
+        owner_id=ctx.agent_id,
+        memory_type="impression",
         name=f"{ctx.agent_id}'s impression of {about}",
-        properties={
-            "about": about,
-            "content": impression,
-            "significance": significance,
-            "by": ctx.agent_id,
-        },
+        summary=impression,
+        importance=sig_map.get(significance, 0.5),
+        role=ctx.role,
+        about=about,
+        significance=significance,
+        by=ctx.agent_id,
     )
-    await ctx.graph_store.upsert_node_v2(
-        world_id=ctx.world_id,
-        scope=GraphScope.character(ctx.agent_id),
-        node=node,
-    )
-    return {"success": True, "about": about, "impression": impression}
+    return {"success": True, "node_id": node_id, "about": about, "impression": impression}
 
 
 @immersive_tool(roles={"base"}, desc="Notice something in your surroundings")
@@ -470,47 +460,28 @@ async def create_memory(
     """Create a memory node. scope: area/character. importance: 0.0-1.0."""
     if not content or not content.strip():
         return {"success": False, "error": "empty content"}
-    if not ctx.graph_store:
+    if not ctx.session:
         return {"success": True, "stub": True}
-
-    from app.models.graph import MemoryNode
-    from app.models.graph_scope import GraphScope
-
     importance = max(0.0, min(1.0, float(importance)))
-    node_id = f"mem_{uuid.uuid4().hex[:12]}"
-
-    node = MemoryNode(
-        id=node_id,
-        type="memory",
-        name=content[:80],
-        importance=importance,
-        properties={
-            "content": content,
-            "source": "gm_created",
-            "related_entities": list(related_entities or []),
-            "created_by": "agentic_tool",
-        },
-    )
-
-    chapter_id = ctx.chapter_id
-    area_id = ctx.area_id
     if scope == "character":
-        graph_scope = GraphScope.character("player")
-    elif chapter_id and area_id:
-        graph_scope = GraphScope.area(chapter_id, area_id)
+        owner_id = "player"
+    elif ctx.area_id:
+        owner_id = ctx.area_id
     else:
-        graph_scope = GraphScope.character("player")
-
-    try:
-        await ctx.graph_store.upsert_node_v2(
-            world_id=ctx.world_id,
-            scope=graph_scope,
-            node=node,
-            merge=True,
-        )
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
+        owner_id = "player"
+    node_id = ctx.session.record_memory(
+        owner_id=owner_id,
+        memory_type="memory",
+        name=content[:80],
+        summary=content,
+        importance=importance,
+        role=ctx.role,
+        content=content,
+        source="gm_created",
+        related_entities=list(related_entities or []),
+        created_by="agentic_tool",
+        scope=scope,
+    )
     return {"success": True, "node_id": node_id, "scope": scope}
 
 

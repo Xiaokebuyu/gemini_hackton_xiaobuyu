@@ -9,8 +9,7 @@ Usage::
 
     extra_tools = build_gm_extra_tools(
         session=session, flash_cpu=flash_cpu,
-        graph_store=graph_store, event_queue=event_queue,
-        engine_executed=engine_executed,
+        event_queue=event_queue, engine_executed=engine_executed,
     )
 """
 
@@ -35,7 +34,6 @@ def build_gm_extra_tools(
     *,
     session: Any,
     flash_cpu: Any,
-    graph_store: Any,
     event_queue: Optional[asyncio.Queue] = None,
     engine_executed: Optional[Dict[str, Any]] = None,
 ) -> List[Callable]:
@@ -76,6 +74,7 @@ def build_gm_extra_tools(
                 flash_cpu.execute_request(
                     world_id=_world_id(), session_id=_session_id(),
                     request=request, generate_narration=False,
+                    session=session,
                 ),
                 timeout=timeout,
             )
@@ -393,6 +392,7 @@ def build_gm_extra_tools(
                 flash_cpu.execute_request(
                     world_id=_world_id(), session_id=_session_id(),
                     request=request, generate_narration=False,
+                    session=session,
                 ),
                 timeout=timeout,
             )

@@ -47,7 +47,6 @@ def _orchestrator() -> PipelineOrchestrator:
         flash_cpu=object(),
         party_service=object(),
         narrative_service=object(),
-        graph_store=object(),
         teammate_response_service=object(),
         session_history_manager=object(),
         character_store=object(),
@@ -110,7 +109,7 @@ def test_build_teammate_context_filters_heavy_tool_summaries():
     )
     agentic_result = SimpleNamespace(
         tool_calls=[
-            SimpleNamespace(name="recall_memory", success=True, args={"seeds": ["a"]}),
+            SimpleNamespace(name="recall_experience", success=True, args={"seeds": ["a"]}),
             SimpleNamespace(name="generate_scene_image", success=True, args={"style": "anime"}),
             SimpleNamespace(name="choose_combat_action", success=False, args={"action_id": "atk"}),
         ]

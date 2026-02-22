@@ -24,3 +24,4 @@ class SpreadingActivationConfig(BaseModel):
     cross_chapter_decay: float = 0.4
     causal_min_signal: float = 0.6
     current_chapter_id: Optional[str] = None
+    cross_owner_decay: float = 0.3

@@ -62,9 +62,10 @@ from app.models.narrative import (
 
 
 class WorldNodeType(str, Enum):
-    """世界图节点类型 (10 种)
+    """世界图节点类型 (15 种)
 
     Z 轴层级: world → chapter → region → area → location → entities
+    记忆类型: event_group / memory_event / impression / knowledge / rumor / memory
     """
     WORLD = "world"           # Level 0: 全局唯一根节点
     CHAPTER = "chapter"       # Level 1: 叙事阶段
@@ -75,10 +76,17 @@ class WorldNodeType(str, Enum):
     PLAYER = "player"         # Level 5: 玩家实体
     EVENT_DEF = "event_def"   # Level 5: 故事事件定义
     CAMP = "camp"             # Level 1: 营地（全图唯一，与 chapter 同级）
+    # --- 记忆节点类型 (L3 M1) ---
+    EVENT_GROUP = "event_group"      # 事件组（图谱化产出）
+    MEMORY_EVENT = "memory_event"    # 记忆事件
+    IMPRESSION = "impression"        # 印象
+    KNOWLEDGE = "knowledge"          # 知识
+    RUMOR = "rumor"                   # 传闻
+    MEMORY = "memory"                # 通用记忆
 
 
 class WorldEdgeType(str, Enum):
-    """世界图边类型 (8 种)"""
+    """世界图边类型 (16 种)"""
     CONTAINS = "contains"       # 层级包含 (world→chapter→region→area→location)
     CONNECTS = "connects"       # 空间连接 (area↔area, location↔location)
     HOSTS = "hosts"             # 实体驻扎 (location→npc)
@@ -87,6 +95,15 @@ class WorldEdgeType(str, Enum):
     MEMBER_OF = "member_of"     # 成员关系 (npc/player→camp)
     GATE = "gate"               # 章节门控 (chapter→chapter)
     RELATES_TO = "relates_to"   # 角色关系 (npc↔npc)
+    # --- 记忆边类型 (L3 M1) ---
+    HAS_MEMORY = "has_memory"        # 记忆所有权 (npc→event_group)
+    OCCURRED_AT = "occurred_at"      # 事件发生地
+    PARTICIPATED = "participated"    # 参与关系
+    CAUSED = "caused"                # 因果
+    FOLLOWED_BY = "followed_by"     # 时序
+    MENTIONS = "mentions"            # 提及
+    KNOWS = "knows"                  # 认知
+    TRUSTS = "trusts"                # 信任
 
 
 class TriggerType(str, Enum):

@@ -20,7 +20,6 @@ from typing import Any, List, Optional, Dict
 from app.config import settings
 from app.services.admin.flash_cpu_service import FlashCPUService
 from app.services.admin.state_manager import StateManager
-from app.services.memory_graphizer import MemoryGraphizer
 from app.services.session_history import SessionHistoryManager
 from app.models.game import (
     CombatResolveRequest,
@@ -37,7 +36,6 @@ from app.models.admin_protocol import (
     CoordinatorResponse,
 )
 from app.services.game_session_store import GameSessionStore
-from app.services.flash_service import FlashService
 from app.services.admin.event_service import AdminEventService
 from app.services.graph_store import GraphStore
 from app.services.narrative_service import NarrativeService
@@ -46,10 +44,9 @@ from app.services.admin.world_runtime import AdminWorldRuntime
 from app.services.party_service import PartyService
 from app.services.party_store import PartyStore
 from app.services.teammate_response_service import TeammateResponseService
-from app.models.graph_scope import GraphScope
+
 from app.services.character_store import CharacterStore
 from app.services.character_service import CharacterService
-from app.services.admin.recall_orchestrator import RecallOrchestrator
 from app.models.state_delta import GameState
 
 
@@ -74,7 +71,6 @@ class AdminCoordinator:
         state_manager: Optional[StateManager] = None,
         event_service: Optional[AdminEventService] = None,
         graph_store: Optional[GraphStore] = None,
-        flash_service: Optional[FlashService] = None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
         world_runtime: Optional[AdminWorldRuntime] = None,
@@ -87,7 +83,6 @@ class AdminCoordinator:
         self._state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
         self.graph_store = graph_store or GraphStore()
-        self.flash_service = flash_service or FlashService(self.graph_store)
         self.narrative_service = narrative_service or NarrativeService(self._session_store)
         self.passerby_service = passerby_service or PasserbyService()
 
@@ -96,7 +91,6 @@ class AdminCoordinator:
             state_manager=self._state_manager,
             session_store=self._session_store,
             narrative_service=self.narrative_service,
-            event_service=self.event_service,
         )
 
         # ── 共享 InstanceManager（队友 + NPC 实例化） ──
@@ -106,7 +100,6 @@ class AdminCoordinator:
             context_window_size=settings.instance_pool_context_window_size,
             graphize_threshold=settings.instance_pool_graphize_threshold,
             keep_recent_tokens=settings.instance_pool_keep_recent_tokens,
-            graph_store=self.graph_store,
         )
 
         # ── 队伍 / 角色 / 记忆召回（flash_cpu 的前置依赖，全部上移） ──
@@ -116,63 +109,46 @@ class AdminCoordinator:
         self.character_service = CharacterService(store=self.character_store)
         self._world_background_cache: Dict[str, str] = {}
         self._character_roster_cache: Dict[str, str] = {}
-        self._character_ids_cache: Dict[str, set] = {}
-        self._area_chapter_cache: Dict[str, Dict[str, str]] = {}
-        self.recall_orchestrator = RecallOrchestrator(
-            graph_store=self.graph_store,
-            get_character_id_set=self._get_character_id_set,
-            get_area_chapter_map=self._get_area_chapter_map,
-        )
 
         # ── FlashCPU（所有依赖已就绪，无需后期注入） ──
         self.flash_cpu = flash_cpu or FlashCPUService(
             state_manager=self._state_manager,
             session_store=self._session_store,
-            event_service=self.event_service,
             narrative_service=self.narrative_service,
             passerby_service=self.passerby_service,
             instance_manager=self.instance_manager,
             party_service=self.party_service,
             character_service=self.character_service,
             character_store=self.character_store,
-            recall_orchestrator=self.recall_orchestrator,
         )
 
         # ── StateManager 一致性断言 ──
         assert self._state_manager is self.flash_cpu.state_manager, \
             "FlashCPU 持有不同的 StateManager 实例"
 
-        # ── 队友响应（依赖 flash_cpu + recall_orchestrator） ──
+        # ── 队友响应（依赖 flash_cpu） ──
         self.teammate_response_service = teammate_response_service or TeammateResponseService(
             instance_manager=self.instance_manager,
             flash_cpu=self.flash_cpu,
-            graph_store=self.graph_store,
-            recall_orchestrator=self.recall_orchestrator,
         )
 
         # ── 会话历史 + 图谱化 ──
         self.session_history_manager = SessionHistoryManager(
-            firestore_db=self.graph_store.db,
             max_tokens=settings.session_history_max_tokens,
             graphize_threshold=settings.session_history_graphize_threshold,
             keep_recent_tokens=settings.session_history_keep_recent_tokens,
         )
-        self.memory_graphizer = MemoryGraphizer(graph_store=self.graph_store)
-
         # ── V4 Pipeline Orchestrator（唯一处理管线） ──
         from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
         self._pipeline_orchestrator = PipelineOrchestrator(
             flash_cpu=self.flash_cpu,
             party_service=self.party_service,
             narrative_service=self.narrative_service,
-            graph_store=self.graph_store,
             teammate_response_service=self.teammate_response_service,
             session_history_manager=self.session_history_manager,
             character_store=self.character_store,
             state_manager=self._state_manager,
             session_store=self._session_store,
-            recall_orchestrator=self.recall_orchestrator,
-            memory_graphizer=self.memory_graphizer,
             instance_manager=self.instance_manager,
         )
         logger.info("[AdminCoordinator] V4 PipelineOrchestrator 已初始化")
@@ -219,16 +195,11 @@ class AdminCoordinator:
         session_id: str,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
-        """获取会话聊天历史（优先内存实时数据，回退 Firestore）。"""
+        """获取会话聊天历史（仅运行时内存）。"""
         in_memory = self.session_history_manager.get(world_id, session_id)
         if in_memory:
-            live_messages = in_memory.get_recent_messages_for_api(limit)
-            if live_messages:
-                return live_messages
-
-        return await self.session_history_manager.load_history_from_firestore(
-            world_id, session_id, limit, self.graph_store.db,
-        )
+            return in_memory.get_recent_messages_for_api(limit)
+        return []
 
     # ==================== GameLoop compatible methods ====================
 
@@ -503,35 +474,6 @@ class AdminCoordinator:
             logger.exception("[v4-stream] 处理失败: %s", exc)
             yield {"type": "error", "error": str(exc)}
 
-    async def _run_graphization(
-        self,
-        history: "SessionHistory",
-        game_day: int,
-        current_scene: Optional[str],
-        retry: int = 0,
-    ) -> None:
-        """Fire-and-forget graphization task with one retry."""
-        try:
-            result = await history.maybe_graphize(
-                graphizer=self.memory_graphizer,
-                graph_store=self.graph_store,
-                game_day=game_day,
-                current_scene=current_scene,
-            )
-            if result:
-                logger.info(
-                    "[图谱化] 完成: nodes=%d edges=%d freed=%d tokens",
-                    result["nodes_added"], result["edges_added"], result["tokens_freed"],
-                )
-            else:
-                logger.info("[图谱化] 跳过：无需图谱化")
-        except Exception as exc:
-            logger.error("[图谱化] 异常 (retry=%d): %s", retry, exc, exc_info=True)
-            if retry < 1:
-                await asyncio.sleep(2)
-                await self._run_graphization(history, game_day, current_scene, retry=retry + 1)
-
-
     async def resume_session(
         self,
         world_id: str,
@@ -556,7 +498,7 @@ class AdminCoordinator:
         # 2. 加载队伍（从 Firestore 加载并缓存）
         party = await self.party_service.get_party(world_id, session_id)
 
-        # 3. 加载对话历史（自动从 Firestore 恢复）
+        # 3. 加载对话历史（运行时内存）
         history = self.session_history_manager.get_or_create(world_id, session_id)
 
         # 4. 预热队友实例（恢复 state metadata）
@@ -933,43 +875,6 @@ class AdminCoordinator:
         self._character_roster_cache[world_id] = result
         return result
 
-    async def _get_character_id_set(self, world_id: str) -> set:
-        """获取世界所有角色 ID 集合（缓存）"""
-        if world_id in self._character_ids_cache:
-            return self._character_ids_cache[world_id]
-
-        char_ids: set = set()
-        try:
-            chars_ref = self.graph_store.db.collection("worlds").document(world_id).collection("characters")
-            for doc in chars_ref.stream():
-                char_ids.add(doc.id)
-        except Exception as exc:
-            logger.debug("[character_id_set] Firestore 读取失败: %s", exc)
-
-        self._character_ids_cache[world_id] = char_ids
-        return char_ids
-
-    async def _get_area_chapter_map(self, world_id: str) -> Dict[str, str]:
-        """获取 area→首次出现 chapter 映射（缓存）。"""
-        if world_id in self._area_chapter_cache:
-            return self._area_chapter_cache[world_id]
-
-        mapping: Dict[str, str] = {}
-        try:
-            chapters_ref = self.graph_store.db.collection("worlds").document(world_id).collection("chapters")
-            for doc in chapters_ref.stream():
-                ch_data = doc.to_dict() or {}
-                ch_id = ch_data.get("id") or doc.id
-                areas = ch_data.get("available_areas") or ch_data.get("available_maps") or []
-                for area_id in areas:
-                    if area_id not in mapping:
-                        mapping[area_id] = ch_id
-        except Exception as exc:
-            logger.debug("[area_chapter_map] Firestore 读取失败: %s", exc)
-
-        self._area_chapter_cache[world_id] = mapping
-        return mapping
-
     @staticmethod
     def _detect_output_anomalies(narration: str) -> Dict[str, Any]:
         """检测疑似 thought/草稿泄露，仅用于可观测性记录，不改写正文。"""
@@ -1298,57 +1203,6 @@ class AdminCoordinator:
                 for m in members
             ],
         }
-
-    # ==================== 好感度系统 ====================
-
-    async def update_disposition(
-        self,
-        world_id: str,
-        character_id: str,
-        target_id: str,
-        deltas: Dict[str, int],
-        reason: str = "",
-        game_day: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """更新角色好感度并同步 approves 边权重到角色图谱。"""
-        result = await self.graph_store.update_disposition(
-            world_id=world_id,
-            character_id=character_id,
-            target_id=target_id,
-            deltas=deltas,
-            reason=reason,
-            game_day=game_day,
-        )
-
-        # 同步 approves 边到角色图谱
-        if "approval" in deltas:
-            from app.models.graph import MemoryEdge
-
-            approval = result.get("approval", 0)
-            weight = (approval + 100) / 200.0
-            weight = max(0.0, min(1.0, weight))
-
-            char_node_id = f"character_{character_id}" if not character_id.startswith("character_") else character_id
-            target_node_id = f"character_{target_id}" if not target_id.startswith("character_") else target_id
-            edge_id = f"disposition_{character_id}_{target_id}_approves"
-
-            edge = MemoryEdge(
-                id=edge_id,
-                source=char_node_id,
-                target=target_node_id,
-                relation="approves",
-                weight=weight,
-                properties={
-                    "created_by": "disposition",
-                    "approval": approval,
-                    "trust": result.get("trust", 0),
-                    "game_day": game_day,
-                },
-            )
-            char_scope = GraphScope(scope_type="character", character_id=character_id)
-            await self.graph_store.upsert_edge_v2(world_id, char_scope, edge)
-
-        return result
 
     # ==================== Private Chat ====================
 

@@ -10,11 +10,9 @@ Memory Graphizer Service.
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.models.context_window import GraphizeRequest, WindowMessage
-from app.models.graph import MemoryEdge, MemoryNode
-from app.models.graph_scope import GraphScope
 from app.models.graph_elements import (
     EventGroupNode,
     EventNode,
@@ -29,10 +27,7 @@ from app.models.graph_elements import (
 from app.models.character_profile import CharacterProfile
 
 if TYPE_CHECKING:
-    from app.services.flash_service import FlashService
-    from app.services.graph_store import GraphStore
     from app.services.llm_service import LLMService
-    from app.services.memory_graph import MemoryGraph
 
 
 class MemoryGraphizer:
@@ -48,22 +43,18 @@ class MemoryGraphizer:
     """
 
     MODE_SESSION_HISTORY = "session_history"
-    MODE_SCENE_BUS = "scene_bus"
 
     def __init__(
         self,
         llm_service: Optional["LLMService"] = None,
-        graph_store: Optional["GraphStore"] = None,
     ):
         """
         初始化图谱化器
 
         Args:
             llm_service: LLM 服务（可选）
-            graph_store: 图谱存储服务（可选）
         """
         self._llm_service = llm_service
-        self._graph_store = graph_store
 
     @property
     def llm_service(self) -> "LLMService":
@@ -73,29 +64,19 @@ class MemoryGraphizer:
             self._llm_service = LLMService()
         return self._llm_service
 
-    @property
-    def graph_store(self) -> "GraphStore":
-        """懒加载图谱存储"""
-        if self._graph_store is None:
-            from app.services.graph_store import GraphStore
-            self._graph_store = GraphStore()
-        return self._graph_store
-
     async def graphize(
         self,
         request: GraphizeRequest,
-        flash_service: Optional["FlashService"] = None,
         npc_profile: Optional[CharacterProfile] = None,
         existing_nodes: Optional[List[Dict[str, Any]]] = None,
-        target_scope: Optional[GraphScope] = None,
         mode: str = MODE_SESSION_HISTORY,
+        world_graph=None,
     ) -> GraphizeResult:
         """
         将消息序列图谱化
 
         Args:
             request: 图谱化请求
-            flash_service: Flash 服务（可选）
             npc_profile: NPC 配置（可选）
             existing_nodes: 已有的重要节点（可选）
 
@@ -109,42 +90,25 @@ class MemoryGraphizer:
                 success=True,
                 messages_processed=0,
             )
+        if world_graph is None:
+            return GraphizeResult(
+                success=False,
+                error="world_graph is required",
+                messages_processed=len(request.messages),
+            )
 
         try:
-            if mode == self.MODE_SCENE_BUS:
-                merge_result = await self._merge_scene_bus_messages(
-                    world_id=request.world_id,
-                    scope=target_scope or GraphScope.character(request.npc_id),
-                    messages=request.messages,
-                    game_day=request.game_day,
-                    current_scene=request.current_scene,
-                )
-                processing_time_ms = int((time.time() - start_time) * 1000)
-                return GraphizeResult(
-                    success=True,
-                    nodes_added=merge_result.new_nodes,
-                    nodes_updated=merge_result.updated_nodes,
-                    edges_added=merge_result.new_edges,
-                    messages_processed=len(request.messages),
-                    tokens_processed=sum(m.token_count for m in request.messages),
-                    created_node_ids=merge_result.new_node_ids,
-                    processing_time_ms=processing_time_ms,
-                )
-
-            if mode != self.MODE_SESSION_HISTORY:
-                raise ValueError(f"unsupported graphize mode: {mode}")
 
             # 1. 获取 NPC 配置
             if npc_profile is None:
-                profile_data = await self.graph_store.get_character_profile(
-                    request.world_id, request.npc_id
-                )
-                npc_profile = CharacterProfile(**profile_data) if profile_data else CharacterProfile(name=request.npc_id)
+                npc_node = world_graph.get_node(request.npc_id)
+                npc_name = npc_node.name if npc_node else request.npc_id
+                npc_profile = CharacterProfile(name=npc_name)
 
             # 2. 获取已有的重要节点
             if existing_nodes is None:
-                existing_nodes = await self._get_important_nodes(
-                    request.world_id, request.npc_id, limit=50,
+                existing_nodes = self._get_important_nodes_from_wg(
+                    world_graph, request.npc_id, limit=50,
                     current_scene=request.current_scene,
                 )
 
@@ -162,11 +126,10 @@ class MemoryGraphizer:
             )
 
             # 5. 合并到图谱
-            merge_result = await self._merge_to_graph(
-                world_id=request.world_id,
+            merge_result = self._merge_to_world_graph(
+                world_graph=world_graph,
                 npc_id=request.npc_id,
                 extraction=extraction,
-                target_scope=target_scope,
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -519,29 +482,9 @@ class MemoryGraphizer:
             state_updates=state_updates,
         )
 
-    async def _merge_to_graph(
-        self,
-        world_id: str,
-        npc_id: str,
-        extraction: ExtractedElements,
-        target_scope: Optional[GraphScope] = None,
-    ) -> MergeResult:
-        """
-        将提取的元素合并到图谱
-
-        Args:
-            world_id: 世界 ID
-            npc_id: NPC ID
-            extraction: 提取的元素
-
-        Returns:
-            MergeResult 包含合并结果
-        """
-        result = MergeResult()
-        scope = target_scope or GraphScope.character(npc_id)
-        is_character_scope = scope.scope_type == "character"
-
-        story_event_ids: List[str] = []
+    def _extract_metadata(self, extraction: ExtractedElements):
+        """Extract story_event_ids, transition_target, chapter_id from transcript metadata."""
+        story_event_ids = []
         transition_target = ""
         chapter_id = ""
         if extraction.event_group and extraction.event_group.transcript:
@@ -561,566 +504,196 @@ class MemoryGraphizer:
                     if isinstance(raw_chapter_id, str) and raw_chapter_id.strip():
                         chapter_id = raw_chapter_id.strip()
         story_event_ids = sorted(set(story_event_ids))
+        return story_event_ids, transition_target, chapter_id
 
-        # 0. 角色作用域下确保 owner 节点存在（便于 event_group 锚定）
-        if is_character_scope:
-            existing_owner = await self.graph_store.get_nodes_by_ids_v2(
-                world_id=world_id,
-                scope=scope,
-                node_ids=[npc_id],
-            )
-            if not existing_owner:
-                owner_node = MemoryNode(
-                    id=npc_id,
-                    type="character",
-                    name=npc_id,
-                    importance=0.2,
-                    properties={
-                        "character_id": npc_id,
-                        "scope_type": "character",
-                        "created_by": "graphizer_identity",
-                    },
-                )
-                await self.graph_store.upsert_node_v2(
-                    world_id=world_id,
-                    scope=scope,
-                    node=owner_node,
-                )
+    def _merge_to_world_graph(
+        self,
+        world_graph,
+        npc_id: str,
+        extraction: ExtractedElements,
+    ) -> MergeResult:
+        """Synchronous merge to WorldGraph (L3 M2, in-memory, no Firestore)."""
+        from app.world.models import WorldNode
+        result = MergeResult()
 
-        # 1. 创建 event_group 节点
+        story_event_ids, transition_target, chapter_id = self._extract_metadata(extraction)
+
+        # 0. Ensure owner node exists
+        if not world_graph.has_node(npc_id):
+            world_graph.add_node(WorldNode(
+                id=npc_id, type="npc", name=npc_id,
+                importance=0.2,
+                properties={"character_id": npc_id, "owner": npc_id},
+            ))
+
+        # 1. event_group
         if extraction.event_group:
             eg = extraction.event_group
-            node = MemoryNode(
-                id=eg.id,
-                type="event_group",
-                name=eg.name,
+            transcript_snippet = [
+                {"role": t.role, "content": t.content}
+                for t in (eg.transcript or [])[:8]
+            ]
+            node = WorldNode(
+                id=eg.id, type="event_group", name=eg.name,
                 importance=eg.importance,
                 properties={
-                    "day": eg.day,
-                    "location": eg.location,
-                    "summary": eg.summary,
-                    "emotion": eg.emotion,
+                    "day": eg.day, "location": eg.location,
+                    "summary": eg.summary, "emotion": eg.emotion,
                     "participants": eg.participants,
                     "story_events": story_event_ids,
                     "transition_target": transition_target,
                     "chapter_id": chapter_id,
                     "source": "session_history_graphizer",
-                    "transcript": [
-                        {"role": t.role, "content": t.content}
-                        for t in eg.transcript
-                    ],
+                    "transcript_ref": f"event_group:{eg.id}",
+                    "transcript_snippet": transcript_snippet,
                     "message_count": eg.message_count,
                     "token_count": eg.token_count,
+                    "owner": npc_id,
                 },
             )
-            await self.graph_store.upsert_node_v2(
-                world_id=world_id,
-                scope=scope,
-                node=node,
-            )
+            world_graph.add_node(node)
+            world_graph.add_edge(npc_id, eg.id, "has_memory",
+                                 key=f"edge_{npc_id}_has_{eg.id}")
             result.new_nodes += 1
             result.new_node_ids.append(eg.id)
 
-        # 2. 创建 sub_event 节点
+        # 2. sub_events
         for ev in extraction.sub_events:
-            node = MemoryNode(
-                id=ev.id,
-                type="event",
-                name=ev.name,
+            node = WorldNode(
+                id=ev.id, type="memory_event", name=ev.name,
                 importance=ev.importance,
                 properties={
-                    "day": ev.day,
-                    "summary": ev.summary,
-                    "emotion": ev.emotion,
-                    "participants": ev.participants,
+                    "day": ev.day, "summary": ev.summary,
+                    "emotion": ev.emotion, "participants": ev.participants,
                     "story_events": story_event_ids,
-                    "transition_target": transition_target,
-                    "chapter_id": chapter_id,
                     "source": "session_history_graphizer",
                     "transcript_range": ev.transcript_range.model_dump() if ev.transcript_range else None,
                     "transcript_snippet": [
                         {"role": t.role, "content": t.content}
                         for t in ev.transcript_snippet
                     ] if ev.transcript_snippet else None,
+                    "owner": npc_id,
                 },
             )
-            await self.graph_store.upsert_node_v2(
-                world_id=world_id,
-                scope=scope,
-                node=node,
-            )
+            world_graph.add_node(node)
+            if extraction.event_group:
+                world_graph.add_edge(
+                    extraction.event_group.id, ev.id, "contains",
+                    key=f"edge_{extraction.event_group.id}_contains_{ev.id}",
+                )
             result.new_nodes += 1
             result.new_node_ids.append(ev.id)
 
-        # 3. 创建其他新节点
-        for node_data in extraction.new_nodes:
-            node = MemoryNode(
-                id=node_data.get("id"),
-                type=node_data.get("type"),
-                name=node_data.get("name", ""),
-                importance=float(node_data.get("importance", 0.5)),
-                properties=node_data.get("properties", {}),
+        # 3. new_nodes
+        for nd in extraction.new_nodes:
+            props = dict(nd.get("properties", {}))
+            props["owner"] = npc_id
+            node = WorldNode(
+                id=nd.get("id"), type=nd.get("type", "memory"),
+                name=nd.get("name", ""),
+                importance=float(nd.get("importance", 0.5)),
+                properties=props,
             )
-            await self.graph_store.upsert_node_v2(
-                world_id=world_id,
-                scope=scope,
-                node=node,
-            )
+            world_graph.add_node(node)
             result.new_nodes += 1
             result.new_node_ids.append(node.id)
 
-        # 3.5. 程序化锚点边（不依赖 LLM 抽取）
+        # 3.5. Anchor edges (guarded by has_node)
         if extraction.event_group:
             eg_id = extraction.event_group.id
-            eg_location = extraction.event_group.location
-            eg_participants = extraction.event_group.participants or []
-
-            anchor_edges = []
-            # 到地点
-            if eg_location:
-                anchor_edges.append(MemoryEdge(
-                    id=f"edge_{eg_id}_at_{eg_location}",
-                    source=eg_id, target=eg_location,
-                    relation="located_in", weight=0.8,
-                ))
-            if is_character_scope:
-                # 到 owner（当前实例角色）
-                anchor_edges.append(MemoryEdge(
-                    id=f"edge_{eg_id}_owner_{npc_id}",
-                    source=eg_id, target=npc_id,
-                    relation="participated", weight=0.9,
-                ))
-                # 到玩家
-                anchor_edges.append(MemoryEdge(
-                    id=f"edge_{eg_id}_player",
-                    source=eg_id, target="player",
-                    relation="participated", weight=0.9,
-                ))
-            # 到参与者
-            for participant in eg_participants:
-                if is_character_scope and participant == "player":
-                    continue  # 已添加
-                anchor_edges.append(MemoryEdge(
-                    id=f"edge_{eg_id}_part_{participant}",
-                    source=eg_id, target=participant,
-                    relation="participated", weight=0.8,
-                ))
-
-            for anchor_edge in anchor_edges:
-                await self.graph_store.upsert_edge_v2(
-                    world_id=world_id,
-                    scope=scope,
-                    edge=anchor_edge,
-                )
+            eg_loc = extraction.event_group.location
+            if eg_loc and world_graph.has_node(eg_loc):
+                world_graph.add_edge(eg_id, eg_loc, "located_in",
+                                     key=f"edge_{eg_id}_at_{eg_loc}", weight=0.8)
                 result.new_edges += 1
-                result.new_edge_ids.append(anchor_edge.id)
-
-        # 4. 创建边
-        for edge_spec in extraction.edges:
-            edge = MemoryEdge(
-                id=edge_spec.id,
-                source=edge_spec.source,
-                target=edge_spec.target,
-                relation=edge_spec.relation,
-                weight=edge_spec.weight,
-                properties=edge_spec.properties,
-            )
-            await self.graph_store.upsert_edge_v2(
-                world_id=world_id,
-                scope=scope,
-                edge=edge,
-            )
+            world_graph.add_edge(eg_id, npc_id, "participated",
+                                 key=f"edge_{eg_id}_owner_{npc_id}", weight=0.9)
             result.new_edges += 1
-            result.new_edge_ids.append(edge.id)
-
-        # 5. 更新状态
-        if extraction.state_updates and is_character_scope:
-            await self.graph_store.update_character_state(
-                world_id, npc_id, extraction.state_updates
-            )
-
-        return result
-
-    @staticmethod
-    def _build_scene_bus_utterance_id(
-        metadata: Dict[str, Any],
-        content: str,
-        fallback_id: str,
-    ) -> str:
-        """Build deterministic utterance node id for scene bus entries."""
-        entry_id = str(metadata.get("entry_id") or fallback_id)
-        digest = "|".join(
-            [
-                entry_id,
-                str(metadata.get("actor", "")),
-                str(metadata.get("entry_type", "")),
-                str(metadata.get("round", "")),
-                str(metadata.get("game_time", "")),
-                content,
-            ]
-        )
-        return f"utterance_{uuid.uuid5(uuid.NAMESPACE_URL, digest).hex[:20]}"
-
-    @staticmethod
-    def _build_scene_bus_topic_id(topic: str) -> str:
-        normalized = topic.strip().lower()
-        return f"topic_{uuid.uuid5(uuid.NAMESPACE_URL, normalized).hex[:20]}"
-
-    @staticmethod
-    def _infer_scene_bus_actor_type(actor_id: str) -> str:
-        if actor_id == "player":
-            return "character"
-        if actor_id == "gm":
-            return "gm"
-        if actor_id == "engine":
-            return "system"
-        return "person"
-
-    @staticmethod
-    def _extract_scene_bus_topics(metadata: Dict[str, Any], content: str) -> List[str]:
-        topics: List[str] = []
-
-        raw_topics = metadata.get("topics", [])
-        if isinstance(raw_topics, list):
-            for item in raw_topics:
-                if isinstance(item, str) and item.strip():
-                    topics.append(item.strip())
-
-        data = metadata.get("data", {})
-        if isinstance(data, dict):
-            tool = data.get("tool")
-            if isinstance(tool, str) and tool.strip():
-                topics.append(f"tool:{tool.strip()}")
-
-        if not topics:
-            actor = metadata.get("actor")
-            if isinstance(actor, str) and actor.strip():
-                topics.append(f"actor:{actor.strip()}")
-
-        deduped: List[str] = []
-        seen: Set[str] = set()
-        for topic in topics:
-            if topic in seen:
-                continue
-            seen.add(topic)
-            deduped.append(topic)
-        return deduped
-
-    async def _merge_scene_bus_messages(
-        self,
-        *,
-        world_id: str,
-        scope: GraphScope,
-        messages: List[WindowMessage],
-        game_day: int,
-        current_scene: Optional[str],
-    ) -> MergeResult:
-        """Merge scene bus messages into location graph with topic/utterance model."""
-        result = MergeResult()
-        scene_messages = [m for m in messages if (m.metadata or {}).get("scene_bus")]
-        if not scene_messages:
-            return result
-
-        actor_seen: Set[str] = set()
-        topic_cache: Dict[str, MemoryNode] = {}
-        new_topic_ids: Set[str] = set()
-        emitted_edge_ids: Set[str] = set()
-
-        entry_to_utterance: Dict[str, str] = {}
-        for message in scene_messages:
-            metadata = message.metadata or {}
-            entry_id = str(metadata.get("entry_id") or message.id)
-            entry_to_utterance[entry_id] = self._build_scene_bus_utterance_id(
-                metadata=metadata,
-                content=message.content,
-                fallback_id=message.id,
-            )
-
-        for message in scene_messages:
-            metadata = message.metadata or {}
-            entry_id = str(metadata.get("entry_id") or message.id)
-            utterance_id = entry_to_utterance[entry_id]
-            actor = str(metadata.get("actor") or "unknown")
-            actor_name = str(metadata.get("actor_name") or actor)
-            entry_type = str(metadata.get("entry_type") or message.role or "unknown")
-            game_time = str(metadata.get("game_time") or "")
-            responds_to = metadata.get("responds_to")
-            round_value_raw = metadata.get("round", 0)
-            try:
-                round_value = int(round_value_raw)
-            except Exception:
-                round_value = 0
-            topics = self._extract_scene_bus_topics(metadata, message.content)
-
-            utterance_node = MemoryNode(
-                id=utterance_id,
-                type="utterance",
-                name=(message.content or "")[:80] or f"utterance_{entry_id}",
-                importance=0.4,
-                properties={
-                    "scene_bus_entry_id": entry_id,
-                    "actor": actor,
-                    "actor_name": actor_name,
-                    "entry_type": entry_type,
-                    "round": round_value,
-                    "game_time": game_time,
-                    "responds_to": str(responds_to) if responds_to else "",
-                    "topics": topics,
-                    "content": message.content,
-                    "visibility": str(metadata.get("visibility", "public")),
-                    "entry_data": metadata.get("data", {}) if isinstance(metadata.get("data", {}), dict) else {},
-                    "game_day": game_day,
-                    "location": current_scene or "",
-                    "source": "scene_bus_graphizer",
-                },
-            )
-            await self.graph_store.upsert_node_v2(
-                world_id=world_id,
-                scope=scope,
-                node=utterance_node,
-            )
-            result.new_nodes += 1
-            result.new_node_ids.append(utterance_id)
-
-            if actor and actor not in actor_seen:
-                actor_seen.add(actor)
-                existing_actor = await self.graph_store.get_nodes_by_ids_v2(
-                    world_id=world_id,
-                    scope=scope,
-                    node_ids=[actor],
-                )
-                if not existing_actor:
-                    actor_node = MemoryNode(
-                        id=actor,
-                        type=self._infer_scene_bus_actor_type(actor),
-                        name=actor_name,
-                        importance=0.25,
-                        properties={
-                            "source": "scene_bus_graphizer",
-                            "last_round": round_value,
-                        },
-                    )
-                    await self.graph_store.upsert_node_v2(
-                        world_id=world_id,
-                        scope=scope,
-                        node=actor_node,
-                    )
-                    result.new_nodes += 1
-                    result.new_node_ids.append(actor)
-
-            by_edge_id = f"edge_{utterance_id}_by_{actor}"
-            if actor and by_edge_id not in emitted_edge_ids:
-                emitted_edge_ids.add(by_edge_id)
-                await self.graph_store.upsert_edge_v2(
-                    world_id=world_id,
-                    scope=scope,
-                    edge=MemoryEdge(
-                        id=by_edge_id,
-                        source=utterance_id,
-                        target=actor,
-                        relation="BY",
-                        weight=0.9,
-                    ),
-                )
+            if world_graph.has_node("player"):
+                world_graph.add_edge(eg_id, "player", "participated",
+                                     key=f"edge_{eg_id}_player", weight=0.9)
                 result.new_edges += 1
-                result.new_edge_ids.append(by_edge_id)
-
-            for topic in topics:
-                topic_id = self._build_scene_bus_topic_id(topic)
-                topic_node = topic_cache.get(topic_id)
-                if topic_node is None:
-                    existing_topic = await self.graph_store.get_nodes_by_ids_v2(
-                        world_id=world_id,
-                        scope=scope,
-                        node_ids=[topic_id],
-                    )
-                    if existing_topic:
-                        topic_node = existing_topic[0]
-                    else:
-                        topic_node = MemoryNode(
-                            id=topic_id,
-                            type="topic",
-                            name=topic,
-                            importance=0.35,
-                            properties={
-                                "mention_count": 0,
-                                "last_round": 0,
-                                "last_game_time": "",
-                                "game_day": game_day,
-                                "location": current_scene or "",
-                                "source": "scene_bus_graphizer",
-                            },
-                        )
-                        new_topic_ids.add(topic_id)
-                    topic_cache[topic_id] = topic_node
-
-                topic_props = dict(topic_node.properties or {})
-                topic_props["mention_count"] = int(topic_props.get("mention_count", 0)) + 1
-                topic_props["last_round"] = max(int(topic_props.get("last_round", 0) or 0), round_value)
-                topic_props["last_game_time"] = game_time or topic_props.get("last_game_time", "")
-                topic_props["game_day"] = game_day
-                topic_props["location"] = current_scene or topic_props.get("location", "")
-                topic_props["source"] = "scene_bus_graphizer"
-                topic_node = MemoryNode(
-                    id=topic_node.id,
-                    type=topic_node.type or "topic",
-                    name=topic_node.name or topic,
-                    importance=max(topic_node.importance, 0.35),
-                    properties=topic_props,
-                )
-                topic_cache[topic_id] = topic_node
-                await self.graph_store.upsert_node_v2(
-                    world_id=world_id,
-                    scope=scope,
-                    node=topic_node,
-                )
-                if topic_id in new_topic_ids:
-                    result.new_nodes += 1
-                    result.new_node_ids.append(topic_id)
-                    new_topic_ids.remove(topic_id)
-                else:
-                    result.updated_nodes += 1
-
-                about_edge_id = f"edge_{utterance_id}_about_{topic_id}"
-                if about_edge_id not in emitted_edge_ids:
-                    emitted_edge_ids.add(about_edge_id)
-                    await self.graph_store.upsert_edge_v2(
-                        world_id=world_id,
-                        scope=scope,
-                        edge=MemoryEdge(
-                            id=about_edge_id,
-                            source=utterance_id,
-                            target=topic_id,
-                            relation="ABOUT",
-                            weight=0.7,
-                        ),
-                    )
+            for p in (extraction.event_group.participants or []):
+                if p == "player":
+                    continue
+                if world_graph.has_node(p):
+                    world_graph.add_edge(eg_id, p, "participated",
+                                         key=f"edge_{eg_id}_part_{p}", weight=0.8)
                     result.new_edges += 1
-                    result.new_edge_ids.append(about_edge_id)
 
-            if responds_to:
-                parent_id = entry_to_utterance.get(str(responds_to))
-                if parent_id:
-                    resp_edge_id = f"edge_{utterance_id}_resp_{parent_id}"
-                    if resp_edge_id not in emitted_edge_ids:
-                        emitted_edge_ids.add(resp_edge_id)
-                        await self.graph_store.upsert_edge_v2(
-                            world_id=world_id,
-                            scope=scope,
-                            edge=MemoryEdge(
-                                id=resp_edge_id,
-                                source=utterance_id,
-                                target=parent_id,
-                                relation="RESPONDS_TO",
-                                weight=0.8,
-                            ),
-                        )
-                        result.new_edges += 1
-                        result.new_edge_ids.append(resp_edge_id)
+        # 4. LLM edges
+        for es in extraction.edges:
+            src, tgt = es.source, es.target
+            if world_graph.has_node(src) and world_graph.has_node(tgt):
+                world_graph.add_edge(src, tgt, es.relation,
+                                     key=es.id, weight=es.weight,
+                                     **(es.properties or {}))
+                result.new_edges += 1
+                result.new_edge_ids.append(es.id)
+
+        # 5. State update
+        if extraction.state_updates:
+            world_graph.merge_state(npc_id, extraction.state_updates)
 
         return result
 
-    async def _get_important_nodes(
+    def _get_important_nodes_from_wg(
         self,
-        world_id: str,
+        world_graph,
         npc_id: str,
         limit: int = 50,
         current_scene: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """获取角色图谱 + 世界图谱中的重要节点，供图谱化时引用。
-
-        同时加载世界图谱的高重要性节点，使 LLM 能引用世界级实体
-        （地点、组织、人物等），从而在角色图与世界图之间建立桥接边。
-
-        如果提供 current_scene，优先选取场景邻近节点，再用全局 importance 补充。
-        """
+        """Get important nodes from WorldGraph (L3 M2, synchronous, in-memory)."""
         char_limit = min(limit, 30)
-        world_limit = limit - char_limit  # 剩余配额给世界图谱
+        world_limit = limit - char_limit
 
-        # 1. 角色自己的重要节点
-        char_nodes: List[Dict[str, Any]] = []
-        char_data = await self.graph_store.load_graph_v2(
-            world_id,
-            GraphScope.character(npc_id),
-        )
-        if char_data and char_data.nodes:
-            sorted_char = sorted(
-                char_data.nodes,
-                key=lambda n: n.importance,
-                reverse=True,
-            )
-            char_nodes = [
-                {
-                    "id": n.id,
-                    "type": n.type,
-                    "name": n.name,
-                    "importance": n.importance,
-                    "properties": n.properties,
-                    "_scope": "character",
-                }
-                for n in sorted_char[:char_limit]
-            ]
+        # 1. Character's own memory nodes (via _owner_index)
+        char_nodes_raw = world_graph.find_memories_of(npc_id)
+        char_nodes_sorted = sorted(char_nodes_raw, key=lambda n: n.importance, reverse=True)
+        char_nodes = [
+            {
+                "id": n.id, "type": n.type, "name": n.name,
+                "importance": n.importance, "properties": n.properties,
+                "_scope": "character",
+            }
+            for n in char_nodes_sorted[:char_limit]
+        ]
 
-        # 2. 世界图谱节点 — 场景优先 + importance 补充
+        # 2. World-level nodes
         world_nodes: List[Dict[str, Any]] = []
-        seen_ids: set = set()
+        seen_ids = {n["id"] for n in char_nodes}
         if world_limit > 0:
-            # 2a. 场景邻居优先
-            if current_scene:
-                try:
-                    subgraph = await self.graph_store.load_local_subgraph_v2(
-                        world_id, GraphScope.world(),
-                        seed_nodes=[current_scene], depth=2, direction="both",
-                    )
-                    if subgraph and subgraph.nodes:
-                        scene_nodes = sorted(subgraph.nodes, key=lambda n: n.importance, reverse=True)
-                        for n in scene_nodes[:min(10, world_limit)]:
+            # 2a. Scene neighbors first
+            if current_scene and world_graph.has_node(current_scene):
+                for nid, _ in world_graph.get_neighbors(current_scene):
+                    if nid not in seen_ids and len(world_nodes) < min(10, world_limit):
+                        node = world_graph.get_node(nid)
+                        if node:
                             world_nodes.append({
-                                "id": n.id,
-                                "type": n.type,
-                                "name": n.name,
-                                "importance": n.importance,
-                                "properties": n.properties,
-                                "_scope": "world",
+                                "id": node.id, "type": node.type, "name": node.name,
+                                "importance": node.importance,
+                                "properties": node.properties, "_scope": "world",
                             })
-                            seen_ids.add(n.id)
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).debug(
-                        "[MemoryGraphizer] 场景子图加载失败: %s", e
-                    )
+                            seen_ids.add(nid)
 
-            # 2b. importance 补充
+            # 2b. Fill by importance
             remaining = world_limit - len(world_nodes)
             if remaining > 0:
-                try:
-                    world_data = await self.graph_store.load_graph_v2(
-                        world_id,
-                        GraphScope.world(),
-                    )
-                    if world_data and world_data.nodes:
-                        sorted_world = sorted(
-                            world_data.nodes,
-                            key=lambda n: n.importance,
-                            reverse=True,
-                        )
-                        for n in sorted_world:
-                            if n.id not in seen_ids:
-                                world_nodes.append({
-                                    "id": n.id,
-                                    "type": n.type,
-                                    "name": n.name,
-                                    "importance": n.importance,
-                                    "properties": n.properties,
-                                    "_scope": "world",
-                                })
-                                seen_ids.add(n.id)
-                                if len(world_nodes) >= world_limit:
-                                    break
-                except Exception as e:
-                    import logging
-                    logging.getLogger(__name__).debug(
-                        "[MemoryGraphizer] 世界图谱加载失败: %s", e
-                    )
+                all_world = []
+                for ntype in ("location", "npc", "area", "item"):
+                    for node_id in world_graph.get_by_type(ntype):
+                        if node_id not in seen_ids:
+                            node = world_graph.get_node(node_id)
+                            if node:
+                                all_world.append(node)
+                                seen_ids.add(node_id)
+                all_world.sort(key=lambda n: n.importance, reverse=True)
+                for node in all_world[:remaining]:
+                    world_nodes.append({
+                        "id": node.id, "type": node.type, "name": node.name,
+                        "importance": node.importance,
+                        "properties": node.properties, "_scope": "world",
+                    })
 
         return char_nodes + world_nodes

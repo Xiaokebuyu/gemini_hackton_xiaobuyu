@@ -330,7 +330,11 @@ class TestPrivateChatInstanceManagerGraphize:
 
             events = _collect(pipeline.process_private_chat_stream("w1", "s1", "priestess", "你好"))
 
-            im.maybe_graphize_instance.assert_called_once_with("w1", "priestess")
+            im.maybe_graphize_instance.assert_called_once_with(
+                "w1",
+                "priestess",
+                world_graph=mock_session.world_graph,
+            )
 
 
 class TestPrivateChatNarrativeCounting:

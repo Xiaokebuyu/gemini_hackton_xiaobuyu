@@ -75,33 +75,6 @@ class ContextWindowState(BaseModel):
         return self.usage_ratio >= self.graphize_threshold
 
 
-class ContextWindowSnapshot(BaseModel):
-    """上下文窗口快照（用于持久化）"""
-
-    npc_id: str
-    world_id: str
-
-    # 配置
-    max_tokens: int
-    graphize_threshold: float
-    keep_recent_tokens: int
-
-    # 状态
-    current_tokens: int
-    system_prompt_tokens: int
-    message_count: int
-
-    # 消息 ID 列表（不包含完整内容）
-    message_ids: List[str] = Field(default_factory=list)
-
-    # 统计
-    total_messages_processed: int
-    total_messages_graphized: int
-
-    # 时间戳
-    snapshot_at: datetime = Field(default_factory=datetime.now)
-
-
 class AddMessageResult(BaseModel):
     """添加消息的结果"""
 

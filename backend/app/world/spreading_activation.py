@@ -1,34 +1,36 @@
 """
-Spreading activation and subgraph extraction.
+Spreading activation on WorldGraph.
+
+L3 M1: Adapted from app.services.spreading_activation to work with WorldGraph.
+The original module (app/services/spreading_activation.py) remains untouched
+for backward compatibility with existing callers.
 """
 import logging
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 from app.models.activation import SpreadingActivationConfig
-from app.models.graph import MemoryEdge, MemoryNode
-from app.services.memory_graph import MemoryGraph
+from app.world.models import WorldNode
+from app.world.world_graph import WorldGraph
 
 
 _REVERSE_DECAY = 0.7
 
 
-def _get_node_props(graph: MemoryGraph, node_id: str) -> dict:
-    """Get node properties without constructing full MemoryNode."""
-    if node_id not in graph.graph:
-        return {}
-    data = graph.graph.nodes[node_id]
-    return data.get("properties") or {}
+def _get_node_props(graph: WorldGraph, node_id: str) -> dict:
+    """Get node properties from WorldGraph (object-ref storage)."""
+    node = graph.get_node(node_id)
+    return node.properties if node else {}
 
 
 def _compute_cross_decay(
     source_props: dict,
     target_props: dict,
-    edge: MemoryEdge,
+    edge: dict,
     config: SpreadingActivationConfig,
 ) -> float:
-    """Compute additional decay multiplier for cross-perspective/cross-chapter edges."""
+    """Compute additional decay multiplier for cross-boundary edges."""
     multiplier = 1.0
 
     # Cross-perspective decay (narrative <-> personal)
@@ -43,26 +45,28 @@ def _compute_cross_decay(
         tgt_chapter = target_props.get("chapter_id")
         src_scope = source_props.get("scope_type")
         tgt_scope = target_props.get("scope_type")
-        # Camp nodes are exempt from cross-chapter decay
         if src_scope != "camp" and tgt_scope != "camp":
-            if (
-                src_chapter
-                and tgt_chapter
-                and src_chapter != tgt_chapter
-            ):
+            if src_chapter and tgt_chapter and src_chapter != tgt_chapter:
                 multiplier *= config.cross_chapter_decay
+
+    # L3 M1: Cross-owner decay
+    src_owner = source_props.get("owner")
+    tgt_owner = target_props.get("owner")
+    if src_owner and tgt_owner and src_owner != tgt_owner:
+        multiplier *= config.cross_owner_decay
 
     return multiplier
 
 
 def _apply_causal_floor(
-    edge: MemoryEdge,
+    edge: dict,
     source_activation: float,
     signal: float,
     config: SpreadingActivationConfig,
 ) -> float:
     """Enforce minimum signal for causal edges."""
-    if edge.relation in ("caused", "led_to", "resulted_from"):
+    relation = edge.get("relation", "")
+    if relation in ("caused", "led_to", "resulted_from"):
         min_signal = source_activation * config.causal_min_signal
         if signal < min_signal:
             return min_signal
@@ -70,11 +74,12 @@ def _apply_causal_floor(
 
 
 def spread_activation(
-    graph: MemoryGraph,
+    graph: WorldGraph,
     seeds: Iterable[str],
     config: SpreadingActivationConfig,
+    initial_scores: Optional[Dict[str, float]] = None,
 ) -> Dict[str, float]:
-    """Run spreading activation (bidirectional, CRPG-aware)."""
+    """Run spreading activation on WorldGraph (bidirectional, CRPG-aware)."""
     # Exclude placeholder nodes before activation
     placeholder_ids: set = set()
     for node_id in graph.graph.nodes:
@@ -91,7 +96,7 @@ def spread_activation(
     n_active_seeds = 0
     for seed in seed_list:
         if seed in activation:
-            activation[seed] = 1.0
+            activation[seed] = (initial_scores or {}).get(seed, 1.0)
             n_active_seeds += 1
 
     if not activation:
@@ -111,17 +116,18 @@ def spread_activation(
             if act < config.fire_threshold:
                 continue
             fired_count += 1
-            degree = graph.degree(node_id)
+            deg = graph.degree(node_id)
             src_props = node_props_cache.get(node_id, {})
 
             # Propagate along outgoing edges
-            for neighbor_id, edge in graph.neighbors(node_id):
+            for neighbor_id, edge in graph.get_neighbors(node_id):
                 if neighbor_id in placeholder_ids:
                     continue
                 tgt_props = node_props_cache.get(neighbor_id, {})
                 cross_mult = _compute_cross_decay(src_props, tgt_props, edge, config)
-                signal = act * edge.weight * config.decay * cross_mult
-                if degree > config.hub_threshold:
+                weight = edge.get("weight", 1.0)
+                signal = act * weight * config.decay * cross_mult
+                if deg > config.hub_threshold:
                     signal *= config.hub_penalty
                 signal = _apply_causal_floor(edge, act, signal, config)
                 new_activation[neighbor_id] = min(
@@ -135,8 +141,9 @@ def spread_activation(
                     continue
                 tgt_props = node_props_cache.get(source_id, {})
                 cross_mult = _compute_cross_decay(src_props, tgt_props, edge, config)
-                signal = act * edge.weight * config.decay * _REVERSE_DECAY * cross_mult
-                if degree > config.hub_threshold:
+                weight = edge.get("weight", 1.0)
+                signal = act * weight * config.decay * _REVERSE_DECAY * cross_mult
+                if deg > config.hub_threshold:
                     signal *= config.hub_penalty
                 signal = _apply_causal_floor(edge, act, signal, config)
                 new_activation[source_id] = min(
@@ -158,73 +165,75 @@ def spread_activation(
             break
         activation = new_activation
 
-    result = {node_id: act for node_id, act in activation.items() if act > config.output_threshold}
+    result = {nid: act for nid, act in activation.items() if act > config.output_threshold}
 
     logger.info(
-        "[Activation] seeds=%d/%d nodes=%d placeholders=%d iters=%d fired=%s output=%d converged=%s",
+        "[WorldGraph Activation] seeds=%d/%d nodes=%d placeholders=%d iters=%d fired=%s output=%d converged=%s",
         n_active_seeds, len(seed_list), len(activation), len(placeholder_ids),
         len(fired_per_iter), fired_per_iter, len(result),
         converged_at or "no",
     )
     if result:
         top = sorted(result.items(), key=lambda x: x[1], reverse=True)[:10]
-        logger.debug("[Activation] top: %s", ", ".join(f"{nid}={v:.3f}" for nid, v in top))
+        logger.debug("[WorldGraph Activation] top: %s", ", ".join(f"{nid}={v:.3f}" for nid, v in top))
 
     return result
 
 
 def extract_subgraph(
-    graph: MemoryGraph,
+    graph: WorldGraph,
     activated_nodes: Dict[str, float],
-) -> MemoryGraph:
-    """Extract a subgraph from activation results."""
-    subgraph = MemoryGraph()
-    for node_id, act in activated_nodes.items():
+) -> List[Tuple[WorldNode, float]]:
+    """Extract activated nodes with their scores.
+
+    Returns:
+        List of (WorldNode, activation_score), sorted by score descending.
+        Returns deep copies -- safe to mutate.
+    """
+    result = []
+    for node_id, score in activated_nodes.items():
         node = graph.get_node(node_id)
-        if not node:
-            continue
-        node_copy = MemoryNode(**node.model_dump())
-        node_copy.properties = dict(node_copy.properties)
-        node_copy.properties["activation"] = act
-        subgraph.add_node(node_copy)
-
-    for edge in graph.list_edges():
-        if edge.source in activated_nodes and edge.target in activated_nodes:
-            subgraph.add_edge(edge)
-
-    return subgraph
+        if node:
+            result.append((node.model_copy(deep=True), score))
+    result.sort(key=lambda x: x[1], reverse=True)
+    return result
 
 
 def find_paths(
-    graph: MemoryGraph,
+    graph: WorldGraph,
     source: str,
     target: str,
     max_depth: int = 4,
     limit: int = 5,
-) -> List[List[Tuple[MemoryEdge, str]]]:
-    """Find connection paths."""
+) -> List[List[Tuple[dict, str]]]:
+    """Find connection paths on WorldGraph.
+
+    Returns:
+        List of paths, each path is [(edge_data_dict, next_node_id), ...].
+        Sorted by total weight descending.
+    """
     if not graph.has_node(source) or not graph.has_node(target):
         return []
 
-    paths: List[List[Tuple[MemoryEdge, str]]] = []
+    paths: List[List[Tuple[dict, str]]] = []
 
-    def dfs(current: str, depth: int, path: List[Tuple[MemoryEdge, str]], visited: set) -> None:
+    def dfs(current: str, depth: int, path: List[Tuple[dict, str]], visited: set) -> None:
         if current == target:
             paths.append(list(path))
             return
         if depth >= max_depth:
             return
-        for neighbor_id, edge in graph.neighbors(current):
+        for neighbor_id, edge_data in graph.get_neighbors(current):
             if neighbor_id in visited:
                 continue
-            path.append((edge, neighbor_id))
+            path.append((edge_data, neighbor_id))
             visited.add(neighbor_id)
             dfs(neighbor_id, depth + 1, path, visited)
             visited.remove(neighbor_id)
             path.pop()
 
     dfs(source, 0, [], {source})
-    paths.sort(key=lambda p: sum(edge.weight for edge, _ in p), reverse=True)
+    paths.sort(key=lambda p: sum(e.get("weight", 1.0) for e, _ in p), reverse=True)
     return paths[:limit]
 
 

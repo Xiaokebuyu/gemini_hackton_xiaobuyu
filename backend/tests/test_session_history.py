@@ -166,7 +166,7 @@ class TestSessionHistory:
         graphizer = AsyncMock()
         graphizer.graphize = AsyncMock(return_value=mock_result)
 
-        result = await history.maybe_graphize(graphizer=graphizer, game_day=1)
+        result = await history.maybe_graphize(graphizer=graphizer, world_graph=MagicMock(), game_day=1)
 
         assert result is not None
         assert result["success"] is True
@@ -196,7 +196,7 @@ class TestSessionHistory:
         graphizer.graphize = AsyncMock(return_value=mock_result)
 
         with pytest.raises(RuntimeError, match="Graphization failed"):
-            await history.maybe_graphize(graphizer=graphizer, game_day=1)
+            await history.maybe_graphize(graphizer=graphizer, world_graph=MagicMock(), game_day=1)
 
 
 class TestSessionHistoryManager:

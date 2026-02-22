@@ -3,7 +3,7 @@
 Validates:
 - 15 GM tools call correct SessionRuntime methods
 - complete_event rename from conclude_quest
-- create_memory graph_store integration
+- create_memory SessionRuntime facade integration
 - RoleRegistry role isolation
 """
 
@@ -37,11 +37,13 @@ def _run(coro):
 
 
 def _make_ctx(**overrides):
-    session = MagicMock()
+    session = overrides.pop("session", None) or MagicMock()
     session.game_state = None
     session.flash_results = {}
     session.chapter_id = "ch1"
     session.area_id = "area1"
+    if not hasattr(session, "record_memory"):
+        session.record_memory = MagicMock(return_value="mem_test")
     ctx = AgenticContext(
         session=session,
         agent_id="gm",
@@ -261,36 +263,41 @@ class TestCreateMemory:
         result = _run(create_memory(ctx=ctx, content=""))
         assert result["success"] is False
 
-    def test_no_graph_store_stub(self):
-        ctx = _make_ctx(graph_store=None)
+    def test_no_session_stub(self):
+        ctx = _make_ctx()
+        ctx.session = None
         result = _run(create_memory(ctx=ctx, content="something happened"))
         assert result.get("stub") is True
 
-    def test_area_scope_upsert(self):
-        gs = AsyncMock()
-        ctx = _make_ctx(graph_store=gs)
+    def test_area_scope_record_memory(self):
+        session = MagicMock()
+        session.record_memory = MagicMock(return_value="mem_area_1")
+        ctx = _make_ctx(session=session)
         result = _run(create_memory(ctx=ctx, content="found a cave", scope="area"))
         assert result["success"] is True
         assert result["scope"] == "area"
-        gs.upsert_node_v2.assert_called_once()
-        call_kwargs = gs.upsert_node_v2.call_args[1]
-        assert call_kwargs["world_id"] == "w1"
-        assert "area" in str(call_kwargs["scope"])
+        assert result["node_id"] == "mem_area_1"
+        call_kwargs = session.record_memory.call_args.kwargs
+        assert call_kwargs["owner_id"] == "area1"
+        assert call_kwargs["memory_type"] == "memory"
+        assert call_kwargs["role"] == "gm"
 
     def test_character_scope(self):
-        gs = AsyncMock()
-        ctx = _make_ctx(graph_store=gs)
+        session = MagicMock()
+        session.record_memory = MagicMock(return_value="mem_char_1")
+        ctx = _make_ctx(session=session)
         result = _run(create_memory(ctx=ctx, content="personal memory", scope="character"))
         assert result["success"] is True
-        call_kwargs = gs.upsert_node_v2.call_args[1]
-        assert "character" in str(call_kwargs["scope"]).lower() or "player" in str(call_kwargs["scope"]).lower()
+        call_kwargs = session.record_memory.call_args.kwargs
+        assert call_kwargs["owner_id"] == "player"
 
     def test_importance_clamped(self):
-        gs = AsyncMock()
-        ctx = _make_ctx(graph_store=gs)
+        session = MagicMock()
+        session.record_memory = MagicMock(return_value="mem_imp_1")
+        ctx = _make_ctx(session=session)
         _run(create_memory(ctx=ctx, content="test", importance=2.0))
-        node = gs.upsert_node_v2.call_args[1]["node"]
-        assert node.importance <= 1.0
+        call_kwargs = session.record_memory.call_args.kwargs
+        assert call_kwargs["importance"] <= 1.0
 
 
 # =========================================================================

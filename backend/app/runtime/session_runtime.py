@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from typing import Any, Dict, List, Optional, Set
 
 from app.models.narrative import NarrativeProgress
@@ -257,7 +259,7 @@ class SessionRuntime:
             )
 
     async def _restore_game_state(self) -> None:
-        """加载 GameState（StateManager 缓存 → Firestore 回退 → 空兜底）。"""
+        """加载 GameState（StateManager 缓存 → 空初始化）。"""
         # 1. StateManager 缓存
         if self._state_manager:
             cached = await self._state_manager.get_state(
@@ -266,22 +268,7 @@ class SessionRuntime:
             if cached:
                 self.game_state = cached
                 return
-        # 2. Firestore 回退
-        if self._session_store:
-            try:
-                session_data = await self._session_store.get_session(
-                    self.world_id, self.session_id
-                )
-                if session_data and session_data.metadata.get("admin_state"):
-                    self.game_state = GameState(**session_data.metadata["admin_state"])
-                    if self._state_manager:
-                        await self._state_manager.set_state(
-                            self.world_id, self.session_id, self.game_state
-                        )
-                    return
-            except Exception as exc:
-                logger.warning("[SessionRuntime] Firestore GameState 回退失败: %s", exc)
-        # 3. 空兜底
+        # 2. 空初始化
         self.game_state = GameState(
             world_id=self.world_id, session_id=self.session_id
         )
@@ -332,15 +319,6 @@ class SessionRuntime:
                     "[SessionRuntime] NarrativeProgress 加载失败: %s", exc
                 )
                 self.narrative = None
-        else:
-            # 从 GameState.narrative_progress 回退
-            if self.game_state and self.game_state.narrative_progress:
-                try:
-                    self.narrative = NarrativeProgress.from_dict(
-                        self.game_state.narrative_progress
-                    )
-                except Exception:
-                    self.narrative = None
 
     def _restore_history(self) -> None:
         """加载 SessionHistory。"""
@@ -365,11 +343,7 @@ class SessionRuntime:
 
         try:
             area_rt = AreaRuntime(area_id=current_area_id, definition=area_def)
-            await area_rt.load(
-                self.world_id, self.session_id,
-                chapter_id=self.chapter_id,
-                graph_store=self._graph_store,
-            )
+            await area_rt.load(self.world_id, self.session_id)
             self.current_area = area_rt
         except NotImplementedError:
             # Phase 2B 尚未实现 load()
@@ -462,7 +436,8 @@ class SessionRuntime:
                    .collection("sessions").document(self.session_id)
                    .collection("world_snapshot").document("current").get())
             if not doc.exists:
-                logger.info("[SessionRuntime] 无 WorldGraph 快照，使用干净构建")
+                logger.info("[SessionRuntime] 无 WorldGraph 快照，加载知识数据")
+                await self._load_knowledge_into_world_graph()
                 return
             snapshot = dict_to_snapshot(doc.to_dict())
             if snapshot:
@@ -471,6 +446,114 @@ class SessionRuntime:
                             len(snapshot.node_states), len(snapshot.spawned_nodes))
         except Exception as exc:
             logger.warning("[SessionRuntime] WorldGraph 快照恢复失败: %s", exc)
+
+    async def _load_knowledge_into_world_graph(self) -> None:
+        """首次会话：从 Firestore 加载预填充知识图谱到 WorldGraph。
+
+        graph 已 sealed → 新节点自动成为 spawned_nodes → 首次 persist 即快照。
+        后续 restore 从快照恢复，不再触发此方法。
+        """
+        if not self._graph_store or not self.world_graph:
+            logger.info("[SessionRuntime] 知识加载跳过（graph_store=%s wg=%s）",
+                        bool(self._graph_store), bool(self.world_graph))
+            return
+
+        from app.models.graph_scope import GraphScope
+
+        wg = self.world_graph
+        world_id = self.world_id
+
+        # 构建 (scope, owner_id) 列表
+        scopes: list = [(GraphScope.world(), "world_root")]
+
+        chapter_id = self.chapter_id
+        if chapter_id:
+            scopes.append((GraphScope.chapter(chapter_id), chapter_id))
+
+        area_id = self.area_id or self.player_location
+        if chapter_id and area_id:
+            scopes.append((GraphScope.area(chapter_id, area_id), area_id))
+
+        for npc_id in wg.get_by_type("npc"):
+            scopes.append((GraphScope.character(npc_id), npc_id))
+
+        scopes.append((GraphScope.camp(), "camp"))
+
+        # 并行加载
+        async def _load_one(scope, owner_id):
+            try:
+                data = await self._graph_store.load_graph_v2(world_id, scope)
+                return (owner_id, data, None)
+            except Exception as exc:
+                return (owner_id, None, exc)
+
+        results = await asyncio.gather(
+            *[_load_one(s, o) for s, o in scopes],
+        )
+
+        total_nodes = 0
+        total_edges = 0
+
+        for (scope, _), (owner_id, data, error) in zip(scopes, results):
+            if error:
+                logger.warning("[SessionRuntime] knowledge scope %s failed: %s", scope, error)
+                continue
+            if not data or (not data.nodes and not data.edges):
+                continue
+            n, e = self._inject_knowledge_scope(data, owner_id)
+            total_nodes += n
+            total_edges += e
+
+        logger.info(
+            "[SessionRuntime] 知识图谱首次加载完成: %d nodes, %d edges, %d scopes",
+            total_nodes, total_edges, len(scopes),
+        )
+
+    def _inject_knowledge_scope(self, data: Any, owner_id: str) -> tuple:
+        """将一个 scope 的知识节点/边注入 WorldGraph。返回 (nodes_added, edges_added)。"""
+        from app.world.models import WorldNode
+
+        wg = self.world_graph
+        nodes_added = 0
+        edges_added = 0
+
+        # 节点转换：MemoryNode → WorldNode
+        for mn in data.nodes:
+            if wg.has_node(mn.id):
+                continue  # GraphBuilder 已创建的结构节点，跳过
+            props = dict(mn.properties) if mn.properties else {}
+            props["owner"] = owner_id
+            node = WorldNode(
+                id=mn.id, type=mn.type, name=mn.name,
+                importance=mn.importance, properties=props,
+            )
+            wg.add_node(node)
+            nodes_added += 1
+
+        # has_memory 边：owner → 知识节点
+        for mn in data.nodes:
+            if not wg.has_node(mn.id) or not wg.has_node(owner_id):
+                continue
+            edge_key = f"has_memory_{owner_id}_{mn.id}"
+            try:
+                wg.add_edge(owner_id, mn.id, "has_memory", key=edge_key)
+                edges_added += 1
+            except Exception:
+                pass  # 边已存在或其他问题，静默跳过
+
+        # 原始知识边转换
+        for me in data.edges:
+            if not wg.has_node(me.source) or not wg.has_node(me.target):
+                continue
+            edge_key = me.id or f"{me.source}_{me.target}_{me.relation}"
+            try:
+                wg.add_edge(me.source, me.target, me.relation,
+                            key=edge_key, weight=me.weight)
+                edges_added += 1
+            except Exception:
+                pass
+
+        return nodes_added, edges_added
 
     async def _persist_world_graph_snapshot(self) -> bool:
         """保存 WorldGraph 快照到 Firestore。返回 True 表示成功。"""
@@ -487,6 +570,18 @@ class SessionRuntime:
                 game_day=game_day, game_hour=game_hour,
             )
             data = snapshot_to_dict(snapshot)
+            # L3 M3: 快照大小监控
+            import json as _json
+            try:
+                snapshot_size = len(_json.dumps(data, default=str).encode("utf-8"))
+                if snapshot_size > 500_000:
+                    logger.warning(
+                        "[SessionRuntime] WorldGraph 快照超过 500KB: %d bytes (states=%d spawned=%d edges=%d)",
+                        snapshot_size, len(snapshot.node_states),
+                        len(snapshot.spawned_nodes), len(snapshot.modified_edges),
+                    )
+            except Exception:
+                pass
             db = fs.Client(database=settings.firestore_database)
             (db.collection("worlds").document(self.world_id)
              .collection("sessions").document(self.session_id)
@@ -498,31 +593,6 @@ class SessionRuntime:
             return True
         except Exception as exc:
             logger.error("[SessionRuntime] WorldGraph 快照保存失败: %s", exc)
-            return False
-
-    async def _fallback_persist_player(self) -> bool:
-        """将当前 player 状态写入 CharacterStore 作为快照失败兜底。
-
-        PlayerNodeView.model_dump() 返回 PlayerCharacter 兼容 dict，
-        经 PlayerCharacter(**data) 重建后写入 Firestore session 文档。
-        """
-        if not self._character_store:
-            return False
-        player = self.player
-        if not player:
-            return False
-        try:
-            if isinstance(player, PlayerCharacter):
-                pc = player
-            else:
-                pc = PlayerCharacter(**player.model_dump())
-            await self._character_store.save_character(
-                self.world_id, self.session_id, pc,
-            )
-            logger.info("[SessionRuntime] Player 兜底写入 CharacterStore 成功")
-            return True
-        except Exception as exc:
-            logger.warning("[SessionRuntime] CharacterStore 兜底写入失败: %s", exc)
             return False
 
     def build_tick_context(self, phase: str = "pre") -> Optional[Any]:
@@ -856,11 +926,7 @@ class SessionRuntime:
         if area_def:
             new_area = AreaRuntime(area_id=area_id, definition=area_def)
             try:
-                await new_area.load(
-                    self.world_id, self.session_id,
-                    chapter_id=self.chapter_id,
-                    graph_store=self._graph_store,
-                )
+                await new_area.load(self.world_id, self.session_id)
             except NotImplementedError:
                 pass  # Phase 2B
             except Exception as exc:
@@ -1028,28 +1094,20 @@ class SessionRuntime:
         if self.companions:
             persisted.append("companions")
 
-        # 7a. Player 兜底写入 CharacterStore（快照前，确保有备份）
-        fallback_ok = False
-        if player_was_dirty:
-            fallback_ok = await self._fallback_persist_player()
-
-        # 7b. WorldGraph 快照 (C7a)
+        # 7a. WorldGraph 快照（主路径）
         snapshot_ok = False
         if self.world_graph and not self._world_graph_failed:
             snapshot_ok = await self._persist_world_graph_snapshot()
             if snapshot_ok:
                 persisted.append("world_graph")
 
-        # 7c. Player 脏标记清除（仅在至少一条路径成功后）
+        # 7b. Player 脏标记清除（仅在快照成功后）
         if player_was_dirty:
             if snapshot_ok:
                 self._dirty_player = False
                 persisted.append("player")
-            elif fallback_ok:
-                self._dirty_player = False
-                persisted.append("player(fallback)")
             else:
-                logger.error("[SessionRuntime] Player 数据未持久化（快照+兜底均失败），保留脏标记")
+                logger.error("[SessionRuntime] Player 数据未持久化（WorldGraph 快照失败），保留脏标记")
 
         if persisted:
             logger.info(
@@ -1918,6 +1976,178 @@ class SessionRuntime:
             if hasattr(companion, "add_event"):
                 companion.add_event(compact)
         self._applied_side_effect_events.add(f"companion_dispatch:{event_id}")
+
+    # =========================================================================
+    # 记忆门面（L2）
+    # =========================================================================
+
+    async def recall(
+        self,
+        role: str,
+        actor_id: str,
+        seeds: List[str],
+        intent_type: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """统一记忆读取门面。"""
+        start = time.perf_counter()
+
+        if not self.world_graph or self._world_graph_failed:
+            return []
+
+        from app.world.recall import WorldGraphRecallOrchestrator
+
+        orchestrator = WorldGraphRecallOrchestrator(self.world_graph)
+        response = await orchestrator.recall_for_role(
+            role=role,
+            character_id=actor_id,
+            seed_nodes=seeds,
+            intent_type=intent_type,
+        )
+
+        activated = response.activated_nodes or {}
+        ranked = sorted(
+            activated.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )[: max(1, int(limit))]
+
+        memories: List[Dict[str, Any]] = []
+        for node_id, score in ranked:
+            node = self.world_graph.get_node(node_id)
+            if not node:
+                continue
+            memories.append(
+                {
+                    "node_id": node_id,
+                    "name": node.name or node_id,
+                    "summary": node.properties.get("summary", ""),
+                    "type": node.type,
+                    "relevance": round(float(score), 4),
+                }
+            )
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            "[recall] role=%s actor=%s seeds=%s activated=%d returned=%d elapsed=%.1fms",
+            role, actor_id, seeds, len(activated), len(memories), elapsed_ms,
+        )
+        return memories
+
+    def _check_memory_write_permission(self, role: str, memory_type: str) -> None:
+        """角色级写入权限校验（无 fallback）。"""
+        normalized_role = (role or "").strip().lower()
+        normalized_type = (memory_type or "").strip().lower()
+
+        if normalized_role == "gm":
+            return
+        if normalized_role == "npc" and normalized_type == "impression":
+            return
+        if normalized_role == "teammate" and normalized_type in {
+            "impression",
+            "memory_event",
+        }:
+            return
+        raise PermissionError(
+            f"role '{normalized_role}' cannot write memory_type '{normalized_type}'"
+        )
+
+    def record_memory(
+        self,
+        owner_id: str,
+        memory_type: str,
+        name: str,
+        summary: str,
+        importance: float,
+        role: str,
+        **props: Any,
+    ) -> str:
+        """统一记忆写入门面。"""
+        if not self.world_graph or self._world_graph_failed:
+            raise RuntimeError("WorldGraph unavailable for record_memory")
+
+        self._check_memory_write_permission(role, memory_type)
+
+        owner = (owner_id or "").strip()
+        if not owner:
+            raise ValueError("owner_id is required")
+        if not self.world_graph.has_node(owner):
+            raise ValueError(f"owner node not found: {owner}")
+
+        normalized_type = memory_type.strip().lower()
+        node_id = props.pop("node_id", "")
+        if not node_id:
+            node_id = f"{normalized_type}_{uuid.uuid4().hex[:12]}"
+
+        resolved_name = (name or "").strip() or (summary or "").strip()[:80] or node_id
+        resolved_importance = max(0.0, min(1.0, float(importance)))
+
+        from app.world.models import WorldNode
+
+        properties = dict(props)
+        properties["owner"] = owner
+        properties["summary"] = summary
+        if normalized_type == "impression" and "content" not in properties:
+            properties["content"] = summary
+
+        node = WorldNode(
+            id=node_id,
+            type=normalized_type,
+            name=resolved_name,
+            importance=resolved_importance,
+            properties=properties,
+            state={},
+            behaviors=[],
+        )
+        self.world_graph.add_node(node)
+        self.world_graph.add_edge(
+            owner,
+            node_id,
+            "has_memory",
+            key=f"edge_{owner}_has_{node_id}",
+        )
+        return node_id
+
+    async def graphize_messages(
+        self,
+        owner_id: str,
+        messages: List[Any],
+        current_scene: Optional[str] = None,
+        game_day: int = 1,
+    ) -> Dict[str, Any]:
+        """统一图谱化入口（WorldGraph-only）。"""
+        if not self.world_graph or self._world_graph_failed:
+            return {"success": False, "error": "WorldGraph unavailable"}
+
+        from app.models.context_window import GraphizeRequest, WindowMessage
+        from app.services.memory_graphizer import MemoryGraphizer
+
+        normalized_messages: List[WindowMessage] = []
+        for idx, raw in enumerate(messages):
+            if isinstance(raw, WindowMessage):
+                normalized_messages.append(raw)
+                continue
+            if isinstance(raw, dict):
+                normalized_messages.append(WindowMessage(**raw))
+                continue
+            if hasattr(raw, "model_dump"):
+                normalized_messages.append(WindowMessage(**raw.model_dump()))
+                continue
+            raise TypeError(f"unsupported message type at index {idx}: {type(raw)}")
+
+        request = GraphizeRequest(
+            npc_id=owner_id,
+            world_id=self.world_id,
+            messages=normalized_messages,
+            current_scene=current_scene or self.player_location,
+            game_day=game_day,
+        )
+        graphizer = MemoryGraphizer()
+        result = await graphizer.graphize(
+            request=request,
+            world_graph=self.world_graph,
+        )
+        return result.model_dump()
 
     # =========================================================================
     # 上下文导出（供 ContextAssembler 消费）

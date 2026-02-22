@@ -128,8 +128,6 @@ class TestRunAgenticGenerationPayload:
             llm_service=MagicMock(),
             instance_manager=None,
             flash_cpu=MagicMock(),
-            graph_store=MagicMock(),
-            recall_orchestrator=MagicMock(),
         )
         kwargs.update(overrides)
         svc = TeammateResponseService(**kwargs)

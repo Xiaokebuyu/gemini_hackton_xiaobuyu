@@ -143,5 +143,5 @@ def register(game_mcp) -> None:
             world_id=world_id,
             preload_memory=False,
         )
-        await instance.persist(_instance_manager.graph_store)
+        await instance.persist()
         return json.dumps({"success": True, "npc_id": npc_id}, ensure_ascii=False)

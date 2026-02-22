@@ -71,7 +71,7 @@
 
 ### Memory: `memory_recall` — 动态图谱召回（可选）
 - 扩散激活图谱召回结果
-- 通过 `recall_memory` 工具按需召回
+- 通过 `recall_experience` 工具按需召回
 
 ---
 
@@ -84,7 +84,7 @@
 | 章节目标达成 | `complete_objective(objective_id=...)` | `chapter_context.objectives` |
 | 事件目标达成 | `complete_event_objective(event_id, objective_id)` | `area_context.events[].current_stage.objectives` |
 | 推进事件阶段 | `advance_stage(event_id, stage_id?)` | 当前阶段目标全部完成时 |
-| 纯角色扮演/闲聊 | （无必须工具，可选 `recall_memory`） | |
+| 纯角色扮演/闲聊 | （无必须工具，可选 `recall_experience`） | |
 | 与已有队友交谈 | （无需工具，队友系统自动处理） | 判断依据：对象在 `party_members` 中 |
 
 ---
@@ -352,7 +352,7 @@ stealth, persuasion, athletics, perception, investigation, sleight_of_hand, arca
 
 ## 9. 记忆召回策略
 
-**何时调用 `recall_memory`**：
+**何时调用 `recall_experience`**：
 - 玩家提及历史事件、NPC、地点
 - 需要了解人物关系或过往互动
 - 进入新区域需要背景信息
@@ -368,6 +368,14 @@ stealth, persuasion, athletics, perception, investigation, sleight_of_hand, arca
 - 补充当前章节目标相关的概念词
 - 2-6 个种子为佳
 - 返回空激活时不重复调用
+
+**返回值结构**：
+- memories 列表，每项含：
+  - concept: 记忆名称（人名/地名/事件名）
+  - summary: 内容摘要
+  - relevance: 相关度分数（0-1）
+- 优先使用高 relevance 条目，将其自然融入叙述
+- 返回空列表时不重复调用
 
 ---
 

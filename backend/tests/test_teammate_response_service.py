@@ -230,7 +230,7 @@ def test_process_round_stream_private_mode_skips_non_target():
     assert skipped[0]["reason"] == "私密对话"
 
 
-def test_generate_response_payload_falls_back_to_simple():
+def test_generate_response_payload_returns_none_when_agentic_fails():
     service = TeammateResponseService()
     member = PartyMember(
         character_id="priestess",
@@ -240,13 +240,6 @@ def test_generate_response_payload_falls_back_to_simple():
     )
 
     service._run_agentic_generation_payload = AsyncMock(side_effect=RuntimeError("boom"))
-    service._run_simple_generation_payload = AsyncMock(
-        return_value={
-            "response": "收到。",
-            "reaction": "点头",
-            "updated_mood": "steady",
-        }
-    )
 
     parsed, tool_events = asyncio.run(
         service._generate_response_payload(
@@ -258,8 +251,7 @@ def test_generate_response_payload_falls_back_to_simple():
         )
     )
 
-    assert parsed is not None
-    assert parsed["response"] == "收到。"
+    assert parsed is None
     assert tool_events == []
 
 

@@ -368,7 +368,6 @@ class TestProcessInteractStream:
         orch = self._make_orchestrator()
         orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="[]")
         orch.flash_cpu.llm_service._strip_code_block = lambda x: x
-        orch.memory_graphizer = None
 
         events = []
 
@@ -423,7 +422,6 @@ class TestProcessInteractStream:
         orch = self._make_orchestrator()
         orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="[]")
         orch.flash_cpu.llm_service._strip_code_block = lambda x: x
-        orch.memory_graphizer = None
 
         events = []
 
@@ -465,7 +463,6 @@ class TestProcessInteractStream:
         orch = self._make_orchestrator()
         orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="[]")
         orch.flash_cpu.llm_service._strip_code_block = lambda x: x
-        orch.memory_graphizer = None
 
         async def collect():
             async for _ in orch.process_interact_stream(

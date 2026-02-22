@@ -256,12 +256,12 @@ class PartyService:
         # 检查 identity 节点是否存在
         identity_path = f"worlds/{world_id}/characters/{character_id}/nodes/identity"
         try:
-            existing = await self.graph_store.get_node(
+            results = await self.graph_store.get_nodes_by_ids_v2(
                 world_id=world_id,
-                graph_type="character",
-                node_id="identity",
-                character_id=character_id,
+                scope=GraphScope.character(character_id),
+                node_ids=["identity"],
             )
+            existing = results[0] if results else None
             if existing:
                 return
         except Exception:

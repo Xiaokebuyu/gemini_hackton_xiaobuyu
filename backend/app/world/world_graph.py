@@ -94,6 +94,13 @@ class WorldGraph:
         self._parents: Dict[str, Set[str]] = defaultdict(set)
         self._entities_at: Dict[str, Set[str]] = defaultdict(set)
 
+        # ===== L3 M1 记忆索引 =====
+        self._name_index: Dict[str, Set[str]] = defaultdict(set)       # name.lower() → {nid}
+        self._day_index: Dict[int, Set[str]] = defaultdict(set)         # game_day → {nid}
+        self._participant_index: Dict[str, Set[str]] = defaultdict(set)  # participant_id → {nid}
+        self._owner_index: Dict[str, Set[str]] = defaultdict(set)       # owner_id → {nid}
+        self._edge_id_index: Dict[str, Tuple[str, str, str]] = {}       # edge_key → (src, tgt, key)
+
         # ===== 脏标记 =====
         self._dirty_nodes: Set[str] = set()
         self._dirty_edges: Set[Tuple[str, str]] = set()
@@ -133,12 +140,34 @@ class WorldGraph:
         """
         existed_before = node.id in self.graph
         if existed_before:
-            # 只移除类型索引（边驱动的索引由边本身维护，不受节点替换影响）
+            # 去旧索引（边驱动的索引由边本身维护，不受节点替换影响）
             old_node = self.get_node(node.id)
             if old_node:
                 self._type_index.get(old_node.type, set()).discard(node.id)
+                # L3 M1: 去旧记忆索引
+                if old_node.name:
+                    self._name_index.get(old_node.name.lower(), set()).discard(node.id)
+                old_day = old_node.properties.get("day") if old_node.properties.get("day") is not None else old_node.properties.get("game_day")
+                if old_day is not None:
+                    self._day_index.get(int(old_day), set()).discard(node.id)
+                for pid in old_node.properties.get("participants", []):
+                    self._participant_index.get(pid, set()).discard(node.id)
+                old_owner = old_node.properties.get("owner")
+                if old_owner:
+                    self._owner_index.get(old_owner, set()).discard(node.id)
         self.graph.add_node(node.id, _node=node)
+        # 索引写入
         self._type_index[node.type].add(node.id)
+        if node.name:
+            self._name_index[node.name.lower()].add(node.id)
+        day = node.properties.get("day") if node.properties.get("day") is not None else node.properties.get("game_day")
+        if day is not None:
+            self._day_index[int(day)].add(node.id)
+        for pid in node.properties.get("participants", []):
+            self._participant_index[pid].add(node.id)
+        owner = node.properties.get("owner")
+        if owner:
+            self._owner_index[owner].add(node.id)
 
         # C6: 追踪运行期新增
         if self._sealed and not existed_before:
@@ -298,6 +327,7 @@ class WorldGraph:
         edge_key = key or relation
         self.graph.add_edge(source, target, key=edge_key,
                             relation=relation, **attrs)
+        self._edge_id_index[edge_key] = (source, target, edge_key)
         self._dirty_edges.add((source, target))
 
         # 索引驱动
@@ -320,6 +350,7 @@ class WorldGraph:
             if not self.graph.has_edge(target, source, key=reverse_key):
                 self.graph.add_edge(target, source, key=reverse_key,
                                     relation=relation, **attrs)
+                self._edge_id_index[reverse_key] = (target, source, reverse_key)
                 self._dirty_edges.add((target, source))
                 # C6: 追踪自动反向边
                 if self._sealed:
@@ -405,6 +436,7 @@ class WorldGraph:
                     key=key, relation=relation, attrs={},
                 ))
             self.graph.remove_edge(source, target, key)
+            self._edge_id_index.pop(key, None)
             self._dirty_edges.add((source, target))
             # 安全地更新索引：检查是否还有同类型的剩余边
             self._safe_deindex_edge(source, target, relation)
@@ -429,6 +461,7 @@ class WorldGraph:
                 keys = list(self.graph[source][target].keys())
                 if not keys:
                     break
+                self._edge_id_index.pop(keys[0], None)
                 self.graph.remove_edge(source, target, keys[0])
             self._dirty_edges.add((source, target))
             # 对每条已删除的边更新索引
@@ -604,6 +637,69 @@ class WorldGraph:
         return sorted(result_set)  # 排序保证每轮顺序稳定，避免 LLM 上下文漂移
 
     # =========================================================================
+    # 查询 — 记忆系统 (L3 M1)
+    # =========================================================================
+
+    def find_nodes_by_name(self, name: str) -> List[WorldNode]:
+        """按名称查找（大小写不敏感精确匹配）。"""
+        return [n for nid in sorted(self._name_index.get(name.lower(), set()))
+                if (n := self.get_node(nid))]
+
+    def find_nodes_by_day(self, day: int) -> List[WorldNode]:
+        """按游戏日查找（properties.day 或 game_day）。"""
+        return [n for nid in sorted(self._day_index.get(day, set()))
+                if (n := self.get_node(nid))]
+
+    def find_nodes_by_participant(self, participant_id: str) -> List[WorldNode]:
+        """按参与者查找（properties.participants 列表）。"""
+        return [n for nid in sorted(self._participant_index.get(participant_id, set()))
+                if (n := self.get_node(nid))]
+
+    def find_memories_of(self, owner_id: str) -> List[WorldNode]:
+        """获取 owner 的所有记忆节点（properties.owner 索引）。"""
+        return [n for nid in sorted(self._owner_index.get(owner_id, set()))
+                if (n := self.get_node(nid))]
+
+    def in_neighbors(
+        self, node_id: str, relation: str = None
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """获取入边邻居节点 ID + 边数据。可按 relation 过滤。SA 硬依赖。"""
+        if node_id not in self.graph:
+            return []
+        result = []
+        for source, _, data in self.graph.in_edges(node_id, data=True):
+            if relation is None or data.get("relation") == relation:
+                result.append((source, dict(data)))
+        return result
+
+    def degree(self, node_id: str) -> int:
+        """节点度数（入度 + 出度）。SA 硬依赖。"""
+        if node_id not in self.graph:
+            return 0
+        return int(self.graph.degree(node_id))
+
+    def subgraph(self, node_ids) -> "WorldGraph":
+        """提取子图（深拷贝节点 + 节点间的所有边）。"""
+        sub = WorldGraph()
+        node_set = set(node_ids)
+        for nid in node_set:
+            node = self.get_node(nid)
+            if node:
+                sub.add_node(node.model_copy(deep=True))
+        # 直接复制边，跳过 add_edge() 避免 CONNECTS 自动反向重复
+        for source, target, key, data in self.graph.edges(keys=True, data=True):
+            if source in node_set and target in node_set:
+                sub.graph.add_edge(source, target, key=key, **data)
+                sub._edge_id_index[key] = (source, target, key)
+                rel = data.get("relation", "")
+                if rel == _HIERARCHY_RELATION:
+                    sub._children[source].add(target)
+                    sub._parents[target].add(source)
+                elif rel in _ENTITY_RELATIONS:
+                    sub._entities_at[source].add(target)
+        return sub
+
+    # =========================================================================
     # 查询 — 原生逃生通道
     # =========================================================================
 
@@ -706,6 +802,9 @@ class WorldGraph:
             "spawned_count": len(self._spawned_nodes),
             "removed_count": len(self._removed_node_ids),
             "edge_change_count": len(self._edge_changes),
+            "name_index_size": sum(len(v) for v in self._name_index.values()),
+            "owner_index_size": sum(len(v) for v in self._owner_index.values()),
+            "edge_id_index_size": len(self._edge_id_index),
         }
 
     # =========================================================================
@@ -717,6 +816,17 @@ class WorldGraph:
         node = self.get_node(node_id)
         if node:
             self._type_index.get(node.type, set()).discard(node_id)
+            # L3 M1: 去记忆索引
+            if node.name:
+                self._name_index.get(node.name.lower(), set()).discard(node_id)
+            day = node.properties.get("day") if node.properties.get("day") is not None else node.properties.get("game_day")
+            if day is not None:
+                self._day_index.get(int(day), set()).discard(node_id)
+            for pid in node.properties.get("participants", []):
+                self._participant_index.get(pid, set()).discard(node_id)
+            owner = node.properties.get("owner")
+            if owner:
+                self._owner_index.get(owner, set()).discard(node_id)
 
         # 从父节点的 _children 中移除自己
         for parent in self._parents.get(node_id, set()).copy():
@@ -797,6 +907,7 @@ class WorldGraph:
                         attrs={},
                     ))
                 self.graph.remove_edge(source, target, rev_key)
+                self._edge_id_index.pop(rev_key, None)
                 self._dirty_edges.add((source, target))
                 return
         # Fallback: 扫描所有边找 CONNECTS 类型的反向边
@@ -812,6 +923,7 @@ class WorldGraph:
                             attrs={},
                         ))
                     self.graph.remove_edge(source, target, k)
+                    self._edge_id_index.pop(k, None)
                     self._dirty_edges.add((source, target))
                     return
 

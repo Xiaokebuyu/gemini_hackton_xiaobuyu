@@ -84,15 +84,11 @@ class TeammateResponseService:
         llm_service: Optional[LLMService] = None,
         instance_manager: Optional["InstanceManager"] = None,
         flash_cpu: Optional[Any] = None,
-        graph_store: Optional[Any] = None,
-        recall_orchestrator: Optional[Any] = None,
     ) -> None:
         self.llm_service = llm_service or LLMService()
         self.visibility_manager = TeammateVisibilityManager()
         self.instance_manager = instance_manager
         self.flash_cpu = flash_cpu
-        self.graph_store = graph_store
-        self.recall_orchestrator = recall_orchestrator
 
         # 加载提示词模板
         self.decision_prompt_path = Path("app/prompts/teammate_decision.md")
@@ -205,10 +201,14 @@ class TeammateResponseService:
         last_responses = context.get("last_teammate_responses", [])
         if not last_responses:
             return
+        runtime_session = context.get("_runtime_session")
+        world_graph = getattr(runtime_session, "world_graph", None) if runtime_session else None
         for member in active_members:
             try:
                 instance = await self.instance_manager.get_or_create(
-                    member.character_id, world_id
+                    member.character_id,
+                    world_id,
+                    world_graph=world_graph,
                 )
                 for resp in last_responses:
                     if resp.get("character_id") != member.character_id and resp.get("response"):
@@ -229,6 +229,7 @@ class TeammateResponseService:
         *,
         active_members: List[PartyMember],
         world_id: str,
+        world_graph: Any = None,
         player_input: str,
         gm_narration_full: str,
         is_private: bool,
@@ -251,6 +252,7 @@ class TeammateResponseService:
                 world_id=world_id,
                 player_input=inject_player,
                 gm_response=gm_narration_full,
+                world_graph=world_graph,
             )
             return member.character_id, history_text
 
@@ -345,6 +347,7 @@ class TeammateResponseService:
         preloaded_histories = await self._inject_round_histories(
             active_members=active_members,
             world_id=world_id,
+            world_graph=getattr(context.get("_runtime_session"), "world_graph", None),
             player_input=player_input,
             gm_narration_full=gm_narration_full,
             is_private=is_private,
@@ -653,6 +656,7 @@ class TeammateResponseService:
         world_id: str,
         player_input: str,
         gm_response: str,
+        world_graph: Any = None,
     ) -> Optional[str]:
         """将当前轮公共信息写入队友实例的 context_window，返回最近对话历史文本。"""
         if not self.instance_manager:
@@ -660,7 +664,9 @@ class TeammateResponseService:
 
         try:
             instance = await self.instance_manager.get_or_create(
-                member.character_id, world_id
+                member.character_id,
+                world_id,
+                world_graph=world_graph,
             )
             # 写入公共信息
             user_add = instance.context_window.add_message(
@@ -673,6 +679,7 @@ class TeammateResponseService:
                 await self.instance_manager.maybe_graphize_instance(
                     world_id=world_id,
                     npc_id=member.character_id,
+                    world_graph=world_graph,
                 )
             # 提取最近对话历史
             recent = instance.context_window.get_recent_messages(count=10)
@@ -690,6 +697,7 @@ class TeammateResponseService:
         member: PartyMember,
         world_id: str,
         response_text: str,
+        world_graph: Any = None,
     ) -> None:
         """将队友回复写回其实例 context_window。"""
         if not self.instance_manager:
@@ -704,6 +712,7 @@ class TeammateResponseService:
                     await self.instance_manager.maybe_graphize_instance(
                         world_id=world_id,
                         npc_id=member.character_id,
+                        world_graph=world_graph,
                     )
                 instance.state.conversation_turn_count += 1
         except Exception as e:
@@ -768,6 +777,7 @@ class TeammateResponseService:
         preloaded_histories = await self._inject_round_histories(
             active_members=active_members,
             world_id=world_id,
+            world_graph=getattr(context.get("_runtime_session"), "world_graph", None),
             player_input=player_input,
             gm_narration_full=gm_narration_full,
             is_private=is_private,
@@ -954,20 +964,6 @@ class TeammateResponseService:
             prompt += f"\n\n## 你的记忆摘要\n{memory_summary}\n"
         return prompt
 
-    async def _run_simple_generation_payload(
-        self,
-        *,
-        prompt: str,
-        model: str,
-        thinking_level: str,
-    ) -> Optional[Dict[str, Any]]:
-        result = await self.llm_service.generate_simple(
-            prompt,
-            model_override=model,
-            thinking_level=thinking_level,
-        )
-        return self.llm_service.parse_json(result)
-
     async def _run_agentic_generation_payload(
         self,
         *,
@@ -986,6 +982,8 @@ class TeammateResponseService:
 
         event_queue: asyncio.Queue = asyncio.Queue()
 
+        _wg = getattr(session, "world_graph", None)
+
         ctx = AgenticContext(
             session=session,
             agent_id=member.character_id,
@@ -995,8 +993,7 @@ class TeammateResponseService:
             chapter_id=getattr(session, "chapter_id", ""),
             area_id=getattr(session, "area_id", ""),
             location_id=getattr(session, "sub_location", ""),
-            recall_orchestrator=self.recall_orchestrator,
-            graph_store=self.graph_store,
+            world_graph=_wg,
         )
 
         # 战斗时注入 extra_tool
@@ -1037,11 +1034,8 @@ class TeammateResponseService:
         model: str,
         thinking_level: str,
     ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
-        tool_events: List[Dict[str, Any]] = []
-        parsed: Optional[Dict[str, Any]] = None
-
         try:
-            parsed, tool_events = await self._run_agentic_generation_payload(
+            return await self._run_agentic_generation_payload(
                 member=member,
                 context=context,
                 prompt=prompt,
@@ -1050,28 +1044,11 @@ class TeammateResponseService:
             )
         except Exception as exc:
             logger.warning(
-                "[TeammateResponse] agentic生成失败 (%s), fallback到simple: %s",
+                "[TeammateResponse] agentic生成失败 (%s): %s",
                 member.name,
                 exc,
             )
-
-        if parsed:
-            return parsed, tool_events
-
-        try:
-            parsed = await self._run_simple_generation_payload(
-                prompt=prompt,
-                model=model,
-                thinking_level=thinking_level,
-            )
-            return parsed, tool_events
-        except Exception as exc:
-            logger.warning(
-                "[TeammateResponse] simple生成失败 (%s): %s",
-                member.name,
-                exc,
-            )
-            return None, tool_events
+            return None, []
 
     async def _generate_single_response_core(
         self,
@@ -1086,6 +1063,7 @@ class TeammateResponseService:
         inject_round: bool = True,
     ) -> Tuple[TeammateResponseResult, List[Dict[str, Any]]]:
         world_id = context.get("world_id") or ""
+        world_graph = getattr(context.get("_runtime_session"), "world_graph", None)
         instance_history = preloaded_history
         if inject_round:
             instance_history = await self._inject_round_to_instance(
@@ -1093,6 +1071,7 @@ class TeammateResponseService:
                 world_id,
                 player_input,
                 gm_response,
+                world_graph=world_graph,
             )
 
         prompt = self._build_response_prompt(
@@ -1144,7 +1123,12 @@ class TeammateResponseService:
 
         response_text = parsed.get("response")
         if response_text:
-            await self._write_response_to_instance(member, world_id, response_text)
+            await self._write_response_to_instance(
+                member,
+                world_id,
+                response_text,
+                world_graph=world_graph,
+            )
 
         return (
             TeammateResponseResult(
@@ -1175,4 +1159,3 @@ class TeammateResponseService:
         if not compact:
             compact = package
         return json.dumps(compact, ensure_ascii=False)
-

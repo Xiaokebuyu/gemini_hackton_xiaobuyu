@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 from app.models.state_delta import GameState, GameTimeState
 from app.services.admin.state_manager import StateManager
-from app.services.admin.event_service import AdminEventService
 from app.services.narrative_service import NarrativeService
 from app.services.game_session_store import GameSessionStore
 from app.services.area_navigator import AreaNavigator
@@ -26,12 +25,10 @@ class AdminWorldRuntime:
         state_manager: StateManager,
         session_store: Optional[GameSessionStore] = None,
         narrative_service: Optional[NarrativeService] = None,
-        event_service: Optional[AdminEventService] = None,
     ) -> None:
         self.state_manager = state_manager
         self.session_store = session_store or GameSessionStore()
         self.narrative_service = narrative_service or NarrativeService(self.session_store)
-        self.event_service = event_service or AdminEventService()
 
     @lru_cache(maxsize=10)
     def _get_navigator(self, world_id: str) -> AreaNavigator:

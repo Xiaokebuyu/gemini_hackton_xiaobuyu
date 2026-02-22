@@ -18,7 +18,6 @@ except ImportError:
 
 from app.models.context_window import (
     AddMessageResult,
-    ContextWindowSnapshot,
     ContextWindowState,
     GraphizeRequest,
     RemoveGraphizedResult,
@@ -456,22 +455,6 @@ class ContextWindow:
             total_messages_graphized=self._total_messages_graphized,
             created_at=self._created_at,
             updated_at=self._updated_at,
-        )
-
-    def to_snapshot(self) -> ContextWindowSnapshot:
-        """转换为快照（用于持久化，不包含完整消息内容）"""
-        return ContextWindowSnapshot(
-            npc_id=self.npc_id,
-            world_id=self.world_id,
-            max_tokens=self.max_tokens,
-            graphize_threshold=self.graphize_threshold,
-            keep_recent_tokens=self.keep_recent_tokens,
-            current_tokens=self._current_tokens,
-            system_prompt_tokens=self._system_prompt_tokens,
-            message_count=len(self._messages),
-            message_ids=[msg.id for msg in self._messages],
-            total_messages_processed=self._total_messages_processed,
-            total_messages_graphized=self._total_messages_graphized,
         )
 
     @classmethod

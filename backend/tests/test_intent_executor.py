@@ -59,6 +59,7 @@ def _make_session(
     session.update_time = MagicMock()
     session.advance_time = MagicMock(return_value={"success": True, "time": {"day": 1, "hour": 11, "minute": 0}, "events": []})
     session.build_tick_context = MagicMock(return_value=None)
+    session.recall = AsyncMock(return_value=[])
 
     return session
 
@@ -197,14 +198,14 @@ class TestExecuteSublocation:
         session.world_id = "world_1"
         session.area_id = "town_square"
         session.player = MagicMock(character_id="player")
+        session.recall = AsyncMock(
+            return_value=[
+                {"node_id": "topic_old_friend", "name": "老友", "relevance": 0.91},
+                {"node_id": "event_quest_1", "name": "旧任务", "relevance": 0.72},
+            ]
+        )
         bus = SceneBus(area_id="town_square")
-        recall_result = MagicMock()
-        recall_result.activated_nodes = {"topic_old_friend": 0.91, "event_quest_1": 0.72}
-        recall_result.translated_memory = None
-        recall_result.used_subgraph = True
-        recall_orchestrator = MagicMock()
-        recall_orchestrator.recall = AsyncMock(return_value=recall_result)
-        executor = IntentExecutor(session, bus, recall_orchestrator=recall_orchestrator)
+        executor = IntentExecutor(session, bus)
         intent = ResolvedIntent(
             type=IntentType.MOVE, target="smithy", target_name="铁匠铺",
             params={"is_sublocation": True},
@@ -216,19 +217,18 @@ class TestExecuteSublocation:
         assert len(result.bus_entries) == 2
         assert result.bus_entries[1].type == BusEntryType.SYSTEM
         assert "历史线索" in result.bus_entries[1].content
-        recall_orchestrator.recall.assert_called_once()
-        kwargs = recall_orchestrator.recall.call_args.kwargs
+        session.recall.assert_called_once()
+        kwargs = session.recall.call_args.kwargs
         assert kwargs["intent_type"] == "enter_sublocation"
-        assert kwargs["location_id"] == "smithy"
+        assert kwargs["seeds"][0] == "smithy"
 
     def test_sublocation_enter_recall_failure_is_fail_open(self):
         session = _make_session()
         session.world_id = "world_1"
         session.area_id = "town_square"
+        session.recall = AsyncMock(side_effect=RuntimeError("boom"))
         bus = SceneBus(area_id="town_square")
-        recall_orchestrator = MagicMock()
-        recall_orchestrator.recall = AsyncMock(side_effect=RuntimeError("boom"))
-        executor = IntentExecutor(session, bus, recall_orchestrator=recall_orchestrator)
+        executor = IntentExecutor(session, bus)
         intent = ResolvedIntent(
             type=IntentType.MOVE, target="smithy", target_name="铁匠铺",
             params={"is_sublocation": True},

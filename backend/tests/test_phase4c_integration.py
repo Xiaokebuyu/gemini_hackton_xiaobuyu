@@ -49,7 +49,6 @@ def _make_pipeline():
         flash_cpu=flash_cpu,
         party_service=MagicMock(),
         narrative_service=MagicMock(),
-        graph_store=MagicMock(),
         teammate_response_service=MagicMock(),
         session_history_manager=MagicMock(),
         character_store=MagicMock(),

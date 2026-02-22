@@ -7,13 +7,11 @@ Direction A.2 实现。
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from app.config import settings
 from app.world.intent_resolver import IntentType, ResolvedIntent
 from app.world import stats_manager
 from app.world.scene_bus import BusEntry, BusEntryType
@@ -68,11 +66,9 @@ class IntentExecutor:
         self,
         session: Any,
         scene_bus: Any,
-        recall_orchestrator: Optional[Any] = None,
     ) -> None:
         self.session = session
         self.scene_bus = scene_bus
-        self.recall_orchestrator = recall_orchestrator
 
     async def dispatch(self, intent: ResolvedIntent) -> EngineResult:
         """分派意图到对应执行器。"""
@@ -364,13 +360,11 @@ class IntentExecutor:
 
         Fail-open design: recall errors only log warnings and never block movement.
         """
-        if self.recall_orchestrator is None:
+        if not self.session:
             return None
 
-        world_id = getattr(self.session, "world_id", "")
-        chapter_id = getattr(self.session, "chapter_id", None)
         area_id = getattr(self.session, "area_id", None) or getattr(self.session, "player_location", None)
-        if not world_id or not chapter_id or not area_id:
+        if not area_id:
             return None
 
         character_id = "player"
@@ -385,25 +379,13 @@ class IntentExecutor:
             return None
 
         try:
-            recall = await asyncio.wait_for(
-                self.recall_orchestrator.recall(
-                    world_id=world_id,
-                    character_id=character_id,
-                    seed_nodes=seed_nodes,
-                    intent_type="enter_sublocation",
-                    chapter_id=chapter_id,
-                    area_id=area_id,
-                    location_id=sub_id,
-                ),
-                timeout=settings.admin_agentic_tool_timeout_seconds,
+            memories = await self.session.recall(
+                role="player",
+                actor_id=character_id,
+                seeds=seed_nodes,
+                intent_type="enter_sublocation",
+                limit=5,
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "[IntentExecutor] enter_sublocation recall timeout: sub=%s seeds=%s",
-                sub_id,
-                seed_nodes,
-            )
-            return None
         except Exception as exc:
             logger.warning(
                 "[IntentExecutor] enter_sublocation recall failed: sub=%s error=%s",
@@ -412,34 +394,33 @@ class IntentExecutor:
             )
             return None
 
-        activated = getattr(recall, "activated_nodes", {}) or {}
-        if not activated:
+        if not memories:
             return None
 
-        ranked = sorted(activated.items(), key=lambda item: item[1], reverse=True)
-        top_items = ranked[:5]
-        translated = getattr(recall, "translated_memory", None)
-        if translated:
-            summary = f"进入{sub_name or sub_id}时，旧记忆被唤起：{str(translated)[:240]}"
-        else:
-            compact = "、".join(f"{node_id}({score:.2f})" for node_id, score in top_items)
-            summary = f"进入{sub_name or sub_id}时触发了历史线索：{compact}"
+        compact = "、".join(
+            f"{item.get('name', item.get('node_id', ''))}({float(item.get('relevance', 0.0)):.2f})"
+            for item in memories[:5]
+        )
+        summary = f"进入{sub_name or sub_id}时触发了历史线索：{compact}"
 
         return BusEntry(
             actor="engine",
             type=BusEntryType.SYSTEM,
             content=summary,
             data={
-                "tool": "recall_memory",
+                "tool": "recall_experience",
                 "source": "enter_sublocation",
                 "sub_location": sub_id,
                 "seed_nodes": seed_nodes,
-                "activated_count": len(activated),
+                "activated_count": len(memories),
                 "activated_top": [
-                    {"node_id": node_id, "score": score}
-                    for node_id, score in top_items
+                    {
+                        "node_id": item.get("node_id", ""),
+                        "name": item.get("name", ""),
+                        "score": float(item.get("relevance", 0.0)),
+                    }
+                    for item in memories[:5]
                 ],
-                "used_subgraph": bool(getattr(recall, "used_subgraph", False)),
             },
         )
 

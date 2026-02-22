@@ -1,8 +1,19 @@
 # 阶段 4：上层 Agent 改造
 
-> 状态：⏸️ 待启动
+> 状态：✅ 核心完成（4a/4b/4c + 收尾 + WorldGraph L1 清理），新功能迭代中
 > 目标：Agent 通过沉浸式接口与世界交互，搭建回合系统和新功能。
 > 前置：阶段 3 完成
+
+---
+
+## 执行快照（2026-02-22）
+
+- GM/NPC/队友主路径已统一到 `AgenticExecutor + RoleRegistry`。
+- `/interact/stream` 与 `/private-chat/stream` 均已进入 Pipeline 管线。
+- D9 自动时间推进（每轮 +10）已落地；`move_area/rest` 不重复推进。
+- D11/D12 已落地：私聊旁路与 trigger_event 旧路径均已清理。
+- **WorldGraph L1 清理已完成**：FlashService 全删（-1010 行）、AdminEventService 分发移除（-550 行）、观测标记 + Prompt 更新。详见 `图谱系统优化专项/L1-上层改造执行方案.md`。
+- 4.4 中商店/装备/背包结构化仍属后续迭代范围。
 
 ---
 
@@ -206,17 +217,17 @@ class SceneBus:
 
 ## 4.3 私聊接入 Pipeline
 
-- `process_private_chat_stream()` 改为调用 `PipelineOrchestrator.process(is_private=True)`
-- ContextAssembler 添加 `is_private` 支持
-- V4AgenticToolRegistry 工具 gate（私聊模式禁用高权限工具）
-- SessionHistory 支持 `visibility="private"` 标记
-- TeammateResponseService 支持"隐秘对话"选项
+- `AdminCoordinator.process_private_chat_stream()` 已委托 `PipelineOrchestrator.process_private_chat_stream()`
+- 私聊流程已对齐 `/interact/stream` 主流程：`restore -> agentic -> history -> persist`
+- 私聊 NPC 响应已使用 `AgenticExecutor + RoleRegistry`，并复用 SceneBus/图谱化链路
+- 私密模式下默认跳过 GM/队友旁观输出，仅保留 NPC 私聊结果
+- SSE 事件已统一为 `interact_start -> tool events -> npc_response -> dialogue_options -> complete`
 
 ---
 
 ## 4.4 新功能搭建（部分未实现，可跳过）
 
-- [ ] 回合时间系统（每轮 +10 分钟）
+- [x] 回合时间系统（每轮 +10 分钟，Pipeline C 自动推进）
 - [ ] 商店系统（ShopManager + 好感度联动定价）
 - [ ] 装备系统（EquipManager）
 - [ ] 背包结构化（InventoryManager）
@@ -226,7 +237,7 @@ class SceneBus:
 
 ## 4.5 废弃旧路径清理（阶段 3 遗留）
 
-阶段 3 标记了 deprecated 但保留了代码（因调用方仍活跃）。阶段 4 迁移调用方后删除：
+阶段 3 标记的 deprecated 路径已在阶段 4 收尾中完成主要删除。以下列表保留为追溯记录（详见《阶段4-收尾清理完成报告》）。
 
 ### 旧路径删除清单
 
@@ -256,12 +267,12 @@ class SceneBus:
 
 ## 验证标准
 
-- [ ] 所有 Agent 通过沉浸式接口与世界交互
-- [ ] RoleRegistry 生效（不同角色看到不同工具集）
-- [ ] SceneBus 成员模型工作正常（接触制 + 场景切换清空）
-- [ ] 私聊记录在 SessionHistory 中可查
-- [ ] 回合时间系统正确推进
-- [ ] `pytest tests/ -v` 全量通过
+- [x] 所有 Agent 主路径通过沉浸式接口与世界交互
+- [x] RoleRegistry 生效（不同角色看到不同工具集）
+- [x] SceneBus 成员模型工作正常（接触制 + 场景切换清空）
+- [x] 私聊记录在 SessionHistory 中可查
+- [x] 回合时间系统正确推进
+- [ ] `pytest tests/ -v` 全量通过（当前剩余失败集中在旧 E2E 断言与 MCP 环境依赖）
 
 ---
 
@@ -273,3 +284,5 @@ class SceneBus:
 | 2026-02-20 | 重写：加入架构决策（D5-D11）、预期体验、沉浸式接口设计、SceneBus 成员模型、翻译层 |
 | 2026-02-21 | 补充 D11（私聊影响全局状态）+ 新增 D12（trigger_event 旧路径融合），均从阶段 3 推迟而来 |
 | 2026-02-21 | 重写 4.5：详细列出阶段 3 遗留的废弃路径删除清单（12 条）+ 删除策略 |
+| 2026-02-21 | 增量同步：阶段状态改为”核心完成”，补充执行快照，更新 4.3/4.4/验证标准为当前代码状态 |
+| 2026-02-22 | WorldGraph L1 清理完成：FlashService 全删、AdminEventService 分发移除、观测标记、Prompt 更新（-1710 行，799/33 基线不变） |

@@ -11,6 +11,7 @@ V4 关键变化:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import uuid
@@ -40,27 +41,22 @@ class PipelineOrchestrator:
         flash_cpu: Any,
         party_service: Any,
         narrative_service: Any,
-        graph_store: Any,
         teammate_response_service: Any,
         session_history_manager: Any,
         character_store: Any,
         state_manager: Any,
         session_store: Any = None,
-        recall_orchestrator: Any = None,
-        memory_graphizer: Any = None,
         instance_manager: Any = None,
+        **_kwargs: Any,
     ) -> None:
         self.flash_cpu = flash_cpu
         self.party_service = party_service
         self.narrative_service = narrative_service
-        self.graph_store = graph_store
         self.teammate_response_service = teammate_response_service
         self.session_history_manager = session_history_manager
         self.character_store = character_store
         self.state_manager = state_manager
         self.session_store = session_store
-        self.recall_orchestrator = recall_orchestrator
-        self.memory_graphizer = memory_graphizer
         self.instance_manager = instance_manager
 
     async def process(
@@ -90,7 +86,7 @@ class PipelineOrchestrator:
             session_history_manager=self.session_history_manager,
             character_store=self.character_store,
             session_store=self.session_store,
-            graph_store=self.graph_store,
+
         )
         await session.restore()
 
@@ -211,7 +207,6 @@ class PipelineOrchestrator:
                 executor = IntentExecutor(
                     session,
                     session.scene_bus,
-                    recall_orchestrator=self.recall_orchestrator,
                 )
                 engine_result = await executor.dispatch(intent)
                 if engine_result.success:
@@ -298,8 +293,7 @@ class PipelineOrchestrator:
             chapter_id=session.chapter_id,
             area_id=session.area_id,
             location_id=session.sub_location or "",
-            recall_orchestrator=self.recall_orchestrator,
-            graph_store=self.graph_store,
+            world_graph=getattr(session, "world_graph", None),
             image_service=getattr(self.flash_cpu, "image_service", None),
             flash_cpu=self.flash_cpu,
         )
@@ -307,7 +301,7 @@ class PipelineOrchestrator:
         extra_tools = build_gm_extra_tools(
             session=session,
             flash_cpu=self.flash_cpu,
-            graph_store=self.graph_store,
+
             event_queue=event_queue,
             engine_executed=context_dict.get("engine_executed"),
         )
@@ -539,23 +533,7 @@ class PipelineOrchestrator:
                     dialogue=r["dialogue"],
                 )
 
-        # SceneBus: 回合末图谱化（F18）
-        if session.scene_bus and self.memory_graphizer:
-            try:
-                from app.services.scene_bus_graphizer import graphize_scene_bus_round
-
-                graphize_result = await graphize_scene_bus_round(
-                    scene_bus=session.scene_bus,
-                    session=session,
-                    memory_graphizer=self.memory_graphizer,
-                )
-                if not graphize_result.success:
-                    logger.warning(
-                        "[v4] scene bus graphize skipped/failed: %s",
-                        graphize_result.error,
-                    )
-            except Exception as exc:
-                logger.error("[v4] scene bus graphize raised: %s", exc, exc_info=True)
+        await self._maybe_graphize_session_history(session, source="v4_pipeline")
 
         # SceneBus: persist 前 clear
         if session.scene_bus:
@@ -698,7 +676,7 @@ class PipelineOrchestrator:
                     "tool_calls": [
                         tc.model_dump(
                             exclude={"result"} if tc.name in {
-                                "recall_memory", "npc_dialogue",
+                                "recall_experience", "npc_dialogue",
                                 "get_combat_options", "choose_combat_action",
                                 "generate_scene_image",
                             } else set()
@@ -747,7 +725,7 @@ class PipelineOrchestrator:
             session_history_manager=self.session_history_manager,
             character_store=self.character_store,
             session_store=self.session_store,
-            graph_store=self.graph_store,
+
         )
         await session.restore()
 
@@ -797,8 +775,7 @@ class PipelineOrchestrator:
                 chapter_id=getattr(session, "chapter_id", ""),
                 area_id=getattr(session, "area_id", ""),
                 location_id=getattr(session, "sub_location", ""),
-                recall_orchestrator=self.recall_orchestrator,
-                graph_store=self.graph_store,
+                world_graph=getattr(session, "world_graph", None),
             )
 
             npc_system_prompt = self._build_npc_system_prompt(npc_node, session)
@@ -860,8 +837,7 @@ class PipelineOrchestrator:
                 chapter_id=getattr(session, "chapter_id", ""),
                 area_id=getattr(session, "area_id", ""),
                 location_id=getattr(session, "sub_location", ""),
-                recall_orchestrator=self.recall_orchestrator,
-                graph_store=self.graph_store,
+                world_graph=getattr(session, "world_graph", None),
             )
             gm_prompt = (
                 f"玩家正在与{npc_name}对话。作为 GM，观察这次交互。\n"
@@ -951,17 +927,9 @@ class PipelineOrchestrator:
                 npc_interactions[npc_id] = npc_interactions.get(npc_id, 0) + 1
             session.mark_narrative_dirty()
 
-        # SceneBus 图谱化 + clear
-        if session.scene_bus and self.memory_graphizer:
-            try:
-                from app.services.scene_bus_graphizer import graphize_scene_bus_round
-                await graphize_scene_bus_round(
-                    scene_bus=session.scene_bus,
-                    session=session,
-                    memory_graphizer=self.memory_graphizer,
-                )
-            except Exception as exc:
-                logger.warning("[interact] graphize failed: %s", exc)
+        await self._maybe_graphize_session_history(session, source="interact")
+
+        # SceneBus clear
         if session.scene_bus:
             session.scene_bus.clear()
 
@@ -1008,7 +976,7 @@ class PipelineOrchestrator:
             session_history_manager=self.session_history_manager,
             character_store=self.character_store,
             session_store=self.session_store,
-            graph_store=self.graph_store,
+
         )
         await session.restore()
 
@@ -1033,7 +1001,11 @@ class PipelineOrchestrator:
             yield {"type": "error", "error": "InstanceManager 不可用。"}
             return
 
-        instance = await self.instance_manager.get_or_create(npc_id, world_id)
+        instance = await self.instance_manager.get_or_create(
+            npc_id,
+            world_id,
+            world_graph=wg,
+        )
         instance.context_window.add_message("user", player_input)
 
         # SceneBus: contact + 写入玩家发言
@@ -1067,8 +1039,7 @@ class PipelineOrchestrator:
                 chapter_id=getattr(session, "chapter_id", ""),
                 area_id=getattr(session, "area_id", ""),
                 location_id=getattr(session, "sub_location", ""),
-                recall_orchestrator=self.recall_orchestrator,
-                graph_store=self.graph_store,
+                world_graph=getattr(session, "world_graph", None),
             )
 
             # 系统提示来自 InstanceManager（保留双层认知 + 记忆注入）
@@ -1154,23 +1125,19 @@ class PipelineOrchestrator:
                 npc_interactions[npc_id] = npc_interactions.get(npc_id, 0) + 1
             session.mark_narrative_dirty()
 
-        # C4: SceneBus 图谱化 + clear
-        if session.scene_bus and self.memory_graphizer:
-            try:
-                from app.services.scene_bus_graphizer import graphize_scene_bus_round
-                await graphize_scene_bus_round(
-                    scene_bus=session.scene_bus,
-                    session=session,
-                    memory_graphizer=self.memory_graphizer,
-                )
-            except Exception as exc:
-                logger.warning("[private_chat] graphize failed: %s", exc)
+        await self._maybe_graphize_session_history(session, source="private_chat")
+
+        # C4: SceneBus clear
         if session.scene_bus:
             session.scene_bus.clear()
 
         # C5: InstanceManager 图谱化检查
         try:
-            await self.instance_manager.maybe_graphize_instance(world_id, npc_id)
+            await self.instance_manager.maybe_graphize_instance(
+                world_id,
+                npc_id,
+                world_graph=session.world_graph,
+            )
         except Exception as exc:
             logger.debug("[private_chat] instance graphize check failed: %s", exc)
 
@@ -1267,6 +1234,45 @@ class PipelineOrchestrator:
             DialogueOption(text="告辞离开", intent="leave", tone="neutral"),
             DialogueOption(text="追问细节", intent="dig_deeper", tone="curious"),
         ]
+
+    async def _maybe_graphize_session_history(
+        self,
+        session: SessionRuntime,
+        *,
+        source: str,
+    ) -> None:
+        """尝试触发 SessionHistory 图谱化；失败只记日志，不中断主流程。"""
+        history = getattr(session, "history", None)
+        if not history:
+            return
+
+        maybe_graphize = getattr(history, "maybe_graphize", None)
+        # 测试里常用 MagicMock；只调用真实 async 方法/AsyncMock。
+        if not maybe_graphize or not inspect.iscoroutinefunction(maybe_graphize):
+            return
+
+        if not session.world_graph or session._world_graph_failed:
+            return
+
+        try:
+            from app.services.memory_graphizer import MemoryGraphizer
+
+            result = await maybe_graphize(
+                graphizer=MemoryGraphizer(),
+                world_graph=session.world_graph,
+                game_day=session.time.day if session.time else 1,
+                current_scene=session.player_location,
+            )
+            if result:
+                logger.info(
+                    "[v4] SessionHistory 图谱化(%s): nodes=%d edges=%d removed=%d",
+                    source,
+                    result.get("nodes_added", 0),
+                    result.get("edges_added", 0),
+                    result.get("messages_removed", 0),
+                )
+        except Exception as exc:
+            logger.warning("[v4] SessionHistory 图谱化失败(%s): %s", source, exc)
 
     @staticmethod
     def _build_world_state_update(session: Any, tick_result: Any) -> Dict[str, Any]:
@@ -1399,6 +1405,7 @@ class PipelineOrchestrator:
                 session_id=session.session_id,
                 request=req,
                 generate_narration=False,
+                session=session,
             )
             if resp.success and isinstance(resp.result, dict):
                 response_text = resp.result.get("response", "")
@@ -1461,7 +1468,7 @@ class PipelineOrchestrator:
         tool_summaries: List[Dict[str, Any]] = []
         for call in getattr(agentic_result, "tool_calls", []) or []:
             name = getattr(call, "name", "")
-            if name in {"recall_memory", "generate_scene_image"}:
+            if name in {"recall_experience", "generate_scene_image"}:
                 continue
             tool_summaries.append(
                 {

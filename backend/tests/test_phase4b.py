@@ -56,19 +56,19 @@ def _make_ctx(
     role: str = "npc",
     session: Any = None,
     scene_bus: Any = None,
-    recall_orchestrator: Any = None,
-    graph_store: Any = None,
     image_service: Any = None,
     world_id: str = "w1",
 ) -> AgenticContext:
+    if session is None:
+        session = MagicMock()
+        session.recall = AsyncMock(return_value=[])
+        session.record_memory = MagicMock(return_value="mem_test")
     return AgenticContext(
-        session=session or MagicMock(),
+        session=session,
         agent_id=agent_id,
         role=role,
         scene_bus=scene_bus,
         world_id=world_id,
-        recall_orchestrator=recall_orchestrator,
-        graph_store=graph_store,
         image_service=image_service,
     )
 
@@ -83,8 +83,6 @@ class TestAgenticContext:
         ctx = AgenticContext(session=None, agent_id="test", role="npc", scene_bus=None)
         assert ctx.agent_id == "test"
         assert ctx.role == "npc"
-        assert ctx.recall_orchestrator is None
-        assert ctx.graph_store is None
 
     def test_bind_tool_strips_ctx(self):
         """bind_tool 后，ctx 不应出现在签名和注解中。"""
@@ -332,18 +330,21 @@ class TestShareThought:
 
 
 class TestRecallExperience:
-    def test_calls_recall_orchestrator(self):
-        """recall_experience 应调用 recall_for_role。"""
+    def test_calls_session_recall(self):
+        """recall_experience 应调用 session.recall。"""
         from app.world.immersive_tools import recall_experience
 
-        mock_recall = MagicMock()
-        mock_result = MagicMock()
-        mock_result.activated_nodes = {"beer": 0.9, "tavern": 0.7, "quest": 0.5}
-        mock_recall.recall_for_role = AsyncMock(return_value=mock_result)
-
+        mock_session = MagicMock()
+        mock_session.recall = AsyncMock(
+            return_value=[
+                {"name": "beer", "summary": "", "relevance": 0.9},
+                {"name": "tavern", "summary": "", "relevance": 0.7},
+                {"name": "quest", "summary": "", "relevance": 0.5},
+            ]
+        )
         ctx = _make_ctx(
             agent_id="bartender",
-            recall_orchestrator=mock_recall,
+            session=mock_session,
             world_id="w1",
         )
 
@@ -351,41 +352,51 @@ class TestRecallExperience:
         assert result["success"]
         assert len(result["memories"]) == 3
         assert result["memories"][0]["concept"] == "beer"
-        mock_recall.recall_for_role.assert_called_once()
+        mock_session.recall.assert_called_once_with(
+            role="npc",
+            actor_id="bartender",
+            seeds=["beer", "rumors"],
+            intent_type="recall",
+            limit=10,
+        )
 
-    def test_no_orchestrator_returns_stub(self):
-        """无 recall_orchestrator 时返回 stub。"""
+    def test_no_session_returns_stub(self):
+        """无 session 时返回 stub。"""
         from app.world.immersive_tools import recall_experience
 
-        ctx = _make_ctx(recall_orchestrator=None)
+        ctx = _make_ctx(session=None)
+        ctx.session = None
         result = asyncio.run(recall_experience(ctx=ctx, seeds=["test"]))
         assert result.get("stub") is True
 
 
 class TestFormImpression:
-    def test_calls_graph_store(self):
-        """form_impression 应调用 graph_store.upsert_node_v2。"""
+    def test_calls_session_record_memory(self):
+        """form_impression 应调用 session.record_memory。"""
         from app.world.immersive_tools import form_impression
 
-        mock_graph = MagicMock()
-        mock_graph.upsert_node_v2 = AsyncMock()
-        ctx = _make_ctx(agent_id="bartender", graph_store=mock_graph, world_id="w1")
+        mock_session = MagicMock()
+        mock_session.record_memory = MagicMock(return_value="impression_1")
+        ctx = _make_ctx(agent_id="bartender", session=mock_session, world_id="w1")
 
         result = asyncio.run(form_impression(
             ctx=ctx, about="adventurer", impression="Seems trustworthy",
         ))
         assert result["success"]
         assert result["about"] == "adventurer"
-        mock_graph.upsert_node_v2.assert_called_once()
-        call_kwargs = mock_graph.upsert_node_v2.call_args.kwargs
-        assert call_kwargs["world_id"] == "w1"
-        assert call_kwargs["node"].type == "impression"
+        assert result["node_id"] == "impression_1"
+        mock_session.record_memory.assert_called_once()
+        call_kwargs = mock_session.record_memory.call_args.kwargs
+        assert call_kwargs["memory_type"] == "impression"
+        assert call_kwargs["owner_id"] == "bartender"
+        assert call_kwargs["role"] == "npc"
 
-    def test_no_graph_store_returns_stub(self):
-        """无 graph_store 时返回 stub。"""
+    def test_no_session_returns_stub(self):
+        """无 session 时返回 stub。"""
         from app.world.immersive_tools import form_impression
 
-        ctx = _make_ctx(graph_store=None)
+        ctx = _make_ctx(session=None)
+        ctx.session = None
         result = asyncio.run(form_impression(ctx=ctx, about="x", impression="y"))
         assert result.get("stub") is True
 

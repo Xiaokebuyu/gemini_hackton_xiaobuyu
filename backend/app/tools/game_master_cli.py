@@ -166,51 +166,7 @@ class GameMasterCLI:
             )
             print(f"  ✓ 创建角色: {profile.name} ({char_id})")
 
-        # 初始化角色的初始记忆
-        print_subheader("初始化角色记忆")
-        await self._init_character_memories()
-
         print(colorize("\n✓ 演示世界设置完成！", Colors.GREEN))
-
-    async def _init_character_memories(self) -> None:
-        """初始化角色的初始记忆"""
-        from app.models.flash import NaturalEventIngestRequest
-
-        # Gorn 的初始记忆
-        await self.gm_service.flash_service.ingest_event_natural(
-            self.world_id,
-            "gorn",
-            NaturalEventIngestRequest(
-                event_description="我已经在这个镇上当了二十年铁匠。我的炉子最近有点问题，需要找人帮忙。",
-                game_day=0,
-                location="铁匠铺",
-            ),
-        )
-        print("  ✓ Gorn 初始记忆已设置")
-
-        # Marcus 的初始记忆
-        await self.gm_service.flash_service.ingest_event_natural(
-            self.world_id,
-            "marcus",
-            NaturalEventIngestRequest(
-                event_description="我是这片森林最好的猎人。最近森林里有些不对劲，好像有什么东西在活动。",
-                game_day=0,
-                location="森林",
-            ),
-        )
-        print("  ✓ Marcus 初始记忆已设置")
-
-        # Elena 的初始记忆
-        await self.gm_service.flash_service.ingest_event_natural(
-            self.world_id,
-            "elena",
-            NaturalEventIngestRequest(
-                event_description="金麦旅店是我和已故丈夫一起建的。这里是镇上消息最灵通的地方。",
-                game_day=0,
-                location="金麦旅店",
-            ),
-        )
-        print("  ✓ Elena 初始记忆已设置")
 
     async def start_game(self) -> None:
         """开始新游戏"""

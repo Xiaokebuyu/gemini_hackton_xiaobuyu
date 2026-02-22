@@ -42,13 +42,11 @@ def _make_deps(**overrides):
     flash_cpu.execute_request = AsyncMock(return_value=_make_flash_response())
     flash_cpu.call_combat_tool = AsyncMock(return_value={})
 
-    graph_store = MagicMock()
     event_queue = asyncio.Queue()
 
     deps = {
         "session": session,
         "flash_cpu": flash_cpu,
-        "graph_store": graph_store,
         "event_queue": event_queue,
     }
     deps.update(overrides)

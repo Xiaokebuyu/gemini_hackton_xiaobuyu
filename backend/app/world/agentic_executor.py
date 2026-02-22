@@ -153,6 +153,11 @@ class AgenticExecutor:
                 result=result or {},
             ))
 
+            # memory_op 观测标记
+            _MEMORY_TOOLS = {"recall_experience": "read", "form_impression": "write", "create_memory": "write"}
+            if tool_fn.__name__ in _MEMORY_TOOLS:
+                tool_calls[-1].result["_memory_op"] = _MEMORY_TOOLS[tool_fn.__name__]
+
             # SSE 推送
             if event_queue is not None:
                 event: Dict[str, Any] = {

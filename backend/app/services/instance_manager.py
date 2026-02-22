@@ -4,14 +4,14 @@ NPC Instance Manager.
 实例池管理器，负责：
 - 懒加载 NPC 实例（首次交互时创建）
 - LRU 淘汰策略（内存不足时清理不活跃实例）
-- 持久化状态（实例销毁前保存到 Firestore）
+- 持久化状态（实例销毁前保存到进程内状态）
 """
 import asyncio
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 from app.models.npc_instance import (
     NPCConfig,
@@ -21,11 +21,6 @@ from app.models.npc_instance import (
 from app.models.character_profile import CharacterProfile
 from app.services.context_window import ContextWindow
 
-if TYPE_CHECKING:
-    from app.services.flash_service import FlashService
-    from app.services.graph_store import GraphStore
-    from app.services.memory_graph import MemoryGraph
-
 logger = logging.getLogger(__name__)
 
 
@@ -34,9 +29,8 @@ class NPCInstance:
     """
     单个 NPC 的完整认知实例
 
-    双层认知系统：
+    认知系统：
     - 实时上下文层（工作记忆）：ContextWindow 管理 200K 上下文
-    - Flash 层（潜意识）：FlashService + MemoryGraph 管理长期记忆
     """
 
     npc_id: str
@@ -44,10 +38,6 @@ class NPCInstance:
 
     # 实时上下文层（工作记忆）
     context_window: ContextWindow
-
-    # Flash 层（潜意识）- 延迟初始化
-    _flash_service: Optional["FlashService"] = None
-    _memory_graph: Optional["MemoryGraph"] = None
 
     # 配置
     config: Optional[NPCConfig] = None
@@ -58,36 +48,10 @@ class NPCInstance:
         npc_id="", world_id=""
     ))
 
-    # 回调（用于获取依赖）
-    _get_flash_service: Optional[Callable] = None
-    _get_memory_graph: Optional[Callable] = None
-
     def __post_init__(self):
         """初始化后设置状态"""
         self.state.npc_id = self.npc_id
         self.state.world_id = self.world_id
-
-    @property
-    def flash_service(self) -> "FlashService":
-        """懒加载 Flash 服务"""
-        if self._flash_service is None:
-            if self._get_flash_service:
-                self._flash_service = self._get_flash_service()
-            else:
-                from app.services.flash_service import FlashService
-                self._flash_service = FlashService()
-        return self._flash_service
-
-    @property
-    def memory_graph(self) -> "MemoryGraph":
-        """懒加载记忆图谱"""
-        if self._memory_graph is None:
-            if self._get_memory_graph:
-                self._memory_graph = self._get_memory_graph()
-            else:
-                from app.services.memory_graph import MemoryGraph
-                self._memory_graph = MemoryGraph()
-        return self._memory_graph
 
     @property
     def is_active(self) -> bool:
@@ -116,30 +80,10 @@ class NPCInstance:
             graphize_count=self.state.graphize_count,
         )
 
-    async def persist(self, graph_store: "GraphStore") -> None:
+    async def persist(self) -> None:
         """
-        持久化实例状态
-
-        Args:
-            graph_store: 图谱存储服务
+        持久化实例状态（当前为内存态清理，无外部存储写入）。
         """
-        # 保存状态到 Firestore
-        state_data = {
-            "npc_id": self.npc_id,
-            "is_active": self.state.is_active,
-            "last_access": self.state.last_access.isoformat(),
-            "conversation_turn_count": self.state.conversation_turn_count,
-            "total_tokens_used": self.state.total_tokens_used,
-            "graphize_count": self.state.graphize_count,
-            "last_persist": datetime.now().isoformat(),
-        }
-
-        await graph_store.update_character_state(
-            self.world_id,
-            self.npc_id,
-            {"instance_state": state_data},
-        )
-
         self.state.is_dirty = False
         self.state.last_persist = datetime.now()
 
@@ -151,7 +95,7 @@ class InstanceManager:
     功能：
     1. 懒加载 NPC 实例（首次交互时创建）
     2. LRU 淘汰策略（内存不足时清理不活跃实例）
-    3. 持久化状态（实例销毁前保存到 Firestore）
+    3. 持久化状态（实例销毁前保存到进程内状态）
     """
 
     def __init__(
@@ -161,7 +105,6 @@ class InstanceManager:
         context_window_size: int = 200_000,
         graphize_threshold: float = 0.8,
         keep_recent_tokens: int = 50_000,
-        graph_store: Optional["GraphStore"] = None,
     ):
         """
         初始化实例管理器
@@ -172,7 +115,6 @@ class InstanceManager:
             context_window_size: 上下文窗口大小（tokens）
             graphize_threshold: 图谱化阈值
             keep_recent_tokens: 图谱化后保留的 token 数
-            graph_store: 图谱存储服务（可选）
         """
         self.max_instances = max_instances
         self.evict_after = evict_after
@@ -183,23 +125,12 @@ class InstanceManager:
         # 实例存储（使用 OrderedDict 保持 LRU 顺序）
         self._instances: OrderedDict[str, NPCInstance] = OrderedDict()
 
-        # 依赖
-        self._graph_store = graph_store
-
         # 锁（防止并发创建同一实例）
         self._locks: Dict[str, asyncio.Lock] = {}
 
         # 统计
         self._total_created: int = 0
         self._total_evicted: int = 0
-
-    @property
-    def graph_store(self) -> "GraphStore":
-        """懒加载 GraphStore"""
-        if self._graph_store is None:
-            from app.services.graph_store import GraphStore
-            self._graph_store = GraphStore()
-        return self._graph_store
 
     def _make_key(self, world_id: str, npc_id: str) -> str:
         """生成实例键"""
@@ -219,6 +150,7 @@ class InstanceManager:
         world_id: str,
         config: Optional[NPCConfig] = None,
         preload_memory: bool = True,
+        world_graph: Any = None,
     ) -> NPCInstance:
         """
         获取或创建 NPC 实例（懒加载）
@@ -253,7 +185,7 @@ class InstanceManager:
 
             # 创建新实例
             instance = await self._create_instance(
-                npc_id, world_id, config, preload_memory
+                npc_id, world_id, config, preload_memory, world_graph
             )
             self._instances[key] = instance
             self._total_created += 1
@@ -266,6 +198,7 @@ class InstanceManager:
         world_id: str,
         config: Optional[NPCConfig] = None,
         preload_memory: bool = True,
+        world_graph: Any = None,
     ) -> NPCInstance:
         """
         创建新的 NPC 实例
@@ -290,10 +223,10 @@ class InstanceManager:
 
         # 获取或创建配置
         if config is None:
-            config = await self._load_npc_config(world_id, npc_id)
+            config = await self._load_npc_config(npc_id, world_graph)
 
         # 获取角色 profile
-        profile = await self._load_profile(world_id, npc_id)
+        profile = await self._load_profile(npc_id, world_graph)
 
         # 设置系统提示词
         system_prompt = self._build_system_prompt(config, profile)
@@ -306,41 +239,58 @@ class InstanceManager:
             context_window=context_window,
             config=config,
             profile=profile,
-            _get_flash_service=lambda: self._create_flash_service(world_id, npc_id),
         )
-
-        # 恢复之前的状态（如果存在）
-        await self._restore_instance_state(instance)
 
         return instance
 
-    async def _load_npc_config(self, world_id: str, npc_id: str) -> NPCConfig:
-        """加载 NPC 配置"""
-        # 从 profile 中获取配置信息
-        profile_data = await self.graph_store.get_character_profile(world_id, npc_id)
+    @staticmethod
+    def _extract_npc_properties(npc_id: str, world_graph: Any) -> Dict[str, Any]:
+        """优先从 WorldGraph NPC 节点读取配置属性。"""
+        if world_graph is None or not hasattr(world_graph, "get_node"):
+            return {}
+        node = world_graph.get_node(npc_id)
+        if not node:
+            return {}
+        props = getattr(node, "properties", {}) or {}
+        if not isinstance(props, dict):
+            return {}
+        return props
 
-        if profile_data:
-            return NPCConfig(
-                npc_id=npc_id,
-                name=profile_data.get("name", npc_id),
-                occupation=profile_data.get("occupation"),
-                age=profile_data.get("age"),
-                personality=profile_data.get("personality", ""),
-                speech_pattern=profile_data.get("speech_pattern", ""),
-                example_dialogue=profile_data.get("example_dialogue"),
-                system_prompt=profile_data.get("system_prompt"),
-                metadata=profile_data.get("metadata", {}),
-            )
+    async def _load_npc_config(self, npc_id: str, world_graph: Any = None) -> NPCConfig:
+        """加载 NPC 配置（WorldGraph 优先，缺失则回退默认）。"""
+        props = self._extract_npc_properties(npc_id, world_graph)
+        metadata = props.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
 
-        # 默认配置
-        return NPCConfig(npc_id=npc_id, name=npc_id)
+        return NPCConfig(
+            npc_id=npc_id,
+            name=props.get("name", npc_id),
+            occupation=props.get("occupation"),
+            age=props.get("age"),
+            personality=props.get("personality", ""),
+            speech_pattern=props.get("speech_pattern", ""),
+            example_dialogue=props.get("example_dialogue"),
+            system_prompt=props.get("system_prompt"),
+            metadata=metadata,
+        )
 
-    async def _load_profile(self, world_id: str, npc_id: str) -> CharacterProfile:
-        """加载角色 Profile"""
-        profile_data = await self.graph_store.get_character_profile(world_id, npc_id)
-        if profile_data:
-            return CharacterProfile(**profile_data)
-        return CharacterProfile(name=npc_id)
+    async def _load_profile(self, npc_id: str, world_graph: Any = None) -> CharacterProfile:
+        """加载角色 Profile（WorldGraph 优先，缺失则默认）。"""
+        props = self._extract_npc_properties(npc_id, world_graph)
+        metadata = props.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        return CharacterProfile(
+            name=props.get("name", npc_id),
+            occupation=props.get("occupation"),
+            age=props.get("age"),
+            personality=props.get("personality"),
+            speech_pattern=props.get("speech_pattern"),
+            example_dialogue=props.get("example_dialogue"),
+            system_prompt=props.get("system_prompt"),
+            metadata=metadata,
+        )
 
     def _build_system_prompt(
         self,
@@ -374,23 +324,6 @@ class InstanceManager:
 
         return "\n".join(parts)
 
-    def _create_flash_service(self, world_id: str, npc_id: str) -> "FlashService":
-        """创建 Flash 服务"""
-        from app.services.flash_service import FlashService
-        return FlashService(graph_store=self.graph_store)
-
-    async def _restore_instance_state(self, instance: NPCInstance) -> None:
-        """恢复实例之前的状态"""
-        state_data = await self.graph_store.get_character_state(
-            instance.world_id, instance.npc_id
-        )
-
-        if state_data and "instance_state" in state_data:
-            saved = state_data["instance_state"]
-            instance.state.conversation_turn_count = saved.get("conversation_turn_count", 0)
-            instance.state.total_tokens_used = saved.get("total_tokens_used", 0)
-            instance.state.graphize_count = saved.get("graphize_count", 0)
-
     # ==================== LRU 淘汰 ====================
 
     def _touch(self, key: str) -> None:
@@ -421,29 +354,11 @@ class InstanceManager:
         await self._evict_instance(evict_key)
 
     async def _evict_instance(self, key: str) -> None:
-        """淘汰指定实例（含对话图谱化）"""
+        """淘汰指定实例。"""
         instance = self._instances.pop(key, None)
         if instance:
-            # 图谱化剩余对话
-            if instance.context_window.message_count > 0:
-                try:
-                    graphized = await self._graphize_messages(
-                        instance=instance,
-                        current_scene=None,
-                        game_day=1,
-                        force_all=True,
-                    )
-                    if graphized and graphized.get("success"):
-                        logger.info(
-                            "[InstanceManager] 淘汰图谱化 %s: nodes=%d edges=%d",
-                            key,
-                            graphized.get("nodes_added", 0),
-                            graphized.get("edges_added", 0),
-                        )
-                except Exception as e:
-                    logger.error("[InstanceManager] 淘汰图谱化失败 %s: %s", key, e, exc_info=True)
             # 持久化状态
-            await instance.persist(self.graph_store)
+            await instance.persist()
             self._total_evicted += 1
 
     async def maybe_graphize_instance(
@@ -452,6 +367,7 @@ class InstanceManager:
         npc_id: str,
         current_scene: Optional[str] = None,
         game_day: int = 1,
+        world_graph: Any = None,
     ) -> Optional[Dict[str, Any]]:
         """达到阈值时实时图谱化实例上下文。"""
         key = self._make_key(world_id, npc_id)
@@ -465,6 +381,7 @@ class InstanceManager:
                 current_scene=current_scene,
                 game_day=game_day,
                 force_all=False,
+                world_graph=world_graph,
             )
 
     async def _graphize_messages(
@@ -473,10 +390,15 @@ class InstanceManager:
         current_scene: Optional[str],
         game_day: int,
         force_all: bool = False,
+        world_graph: Any = None,
     ) -> Optional[Dict[str, Any]]:
         """执行实例图谱化并回收已图谱化消息。"""
         from app.models.context_window import GraphizeRequest
         from app.services.memory_graphizer import MemoryGraphizer
+
+        if world_graph is None:
+            logger.debug("[InstanceManager] 跳过图谱化（world_graph is None）")
+            return None
 
         if force_all:
             messages = [
@@ -503,8 +425,8 @@ class InstanceManager:
         if not request.messages:
             return None
 
-        graphizer = MemoryGraphizer(graph_store=self.graph_store)
-        result = await graphizer.graphize(request)
+        graphizer = MemoryGraphizer()
+        result = await graphizer.graphize(request, world_graph=world_graph)
         if not result.success:
             logger.error(
                 "[InstanceManager] 实时图谱化失败 %s:%s: %s",
@@ -576,7 +498,7 @@ class InstanceManager:
 
         if instance:
             if persist:
-                await instance.persist(self.graph_store)
+                await instance.persist()
             return True
 
         return False
@@ -607,7 +529,7 @@ class InstanceManager:
         count = 0
         for instance in self._instances.values():
             if instance.state.is_dirty:
-                await instance.persist(self.graph_store)
+                await instance.persist()
                 count += 1
         return count
 
@@ -625,7 +547,7 @@ class InstanceManager:
 
         if persist:
             for instance in self._instances.values():
-                await instance.persist(self.graph_store)
+                await instance.persist()
 
         self._instances.clear()
         return count

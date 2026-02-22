@@ -9,31 +9,19 @@ Responsibilities:
 2. Provide recent conversation history for context continuity
 3. Trigger MemoryGraphizer when token threshold is reached
 4. Remove graphized messages to free context space
-5. Persist messages to Firestore for cross-restart recovery
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
-from google.cloud import firestore as firestore_lib
 
 from app.models.context_window import WindowMessage
 from app.services.context_window import ContextWindow
 
 if TYPE_CHECKING:
-    from app.services.graph_store import GraphStore
     from app.services.memory_graphizer import MemoryGraphizer
 
 logger = logging.getLogger(__name__)
-
-
-def _firestore_messages_path(world_id: str, session_id: str) -> str:
-    """Firestore collection path for session messages."""
-    return f"worlds/{world_id}/sessions/{session_id}/messages"
-
 
 def _normalize_message_for_api(
     role: str,
@@ -75,7 +63,7 @@ def _normalize_message_for_api(
         normalized_role = role
 
     return {
-        # Preserve original role for backward compatibility with existing front-end parsers.
+        # Keep original role for UI rendering and debugging.
         "role": role,
         "original_role": role,
         "normalized_role": normalized_role,
@@ -103,11 +91,9 @@ class SessionHistory:
         max_tokens: int = 1_000_000,
         graphize_threshold: float = 0.9,
         keep_recent_tokens: int = 100_000,
-        firestore_db: Any = None,
     ) -> None:
         self.world_id = world_id
         self.session_id = session_id
-        self._firestore_db = firestore_db
         self._window = ContextWindow(
             npc_id="player",
             world_id=world_id,
@@ -143,26 +129,6 @@ class SessionHistory:
             metadata={"source": "gm_narration", **(metadata or {})},
         )
 
-        # Fire-and-forget Firestore persistence
-        if self._firestore_db:
-            try:
-                now = datetime.now(timezone.utc)
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    self._persist_messages_sync,
-                    [
-                        {"role": "user", "content": player_input, "timestamp": now, "metadata": metadata or {}},
-                        {
-                            "role": "assistant",
-                            "content": gm_response,
-                            "timestamp": now,
-                            "metadata": {"source": "gm_narration", **(metadata or {})},
-                        },
-                    ],
-                )
-            except Exception as exc:
-                logger.debug("[SessionHistory] Firestore persist failed: %s", exc)
-
         return {
             "round_tokens": user_result.token_count + assistant_result.token_count,
             "total_tokens": assistant_result.current_tokens,
@@ -184,25 +150,6 @@ class SessionHistory:
             metadata={"source": "npc_dialogue", "character_id": character_id, "name": name},
         )
 
-        # Fire-and-forget Firestore persistence
-        if self._firestore_db:
-            try:
-                now = datetime.now(timezone.utc)
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    self._persist_messages_sync,
-                    [
-                        {
-                            "role": "system",
-                            "content": f"[NPC:{name}] {dialogue}",
-                            "timestamp": now,
-                            "metadata": {"source": "npc_dialogue", "character_id": character_id, "name": name},
-                        },
-                    ],
-                )
-            except Exception as exc:
-                logger.debug("[SessionHistory] Firestore persist failed: %s", exc)
-
     def record_teammate_response(
         self,
         character_id: str,
@@ -215,32 +162,6 @@ class SessionHistory:
             content=f"[{name}] {response}",
             metadata={"source": "teammate", "character_id": character_id, "name": name},
         )
-
-        # Fire-and-forget Firestore persistence
-        if self._firestore_db:
-            try:
-                now = datetime.now(timezone.utc)
-                asyncio.get_event_loop().run_in_executor(
-                    None,
-                    self._persist_messages_sync,
-                    [
-                        {
-                            "role": "system",
-                            "content": f"[{name}] {response}",
-                            "timestamp": now,
-                            "metadata": {"source": "teammate", "character_id": character_id, "name": name},
-                        },
-                    ],
-                )
-            except Exception as exc:
-                logger.debug("[SessionHistory] Firestore persist failed: %s", exc)
-
-    def _persist_messages_sync(self, messages: List[Dict[str, Any]]) -> None:
-        """Synchronously write messages to Firestore (runs in executor)."""
-        col_path = _firestore_messages_path(self.world_id, self.session_id)
-        col_ref = self._firestore_db.collection(col_path)
-        for msg in messages:
-            col_ref.add(msg)
 
     def get_recent_history(self, max_tokens: int = 4000) -> str:
         """
@@ -327,7 +248,7 @@ class SessionHistory:
     async def maybe_graphize(
         self,
         graphizer: MemoryGraphizer,
-        graph_store: Optional[GraphStore] = None,
+        world_graph: Optional[Any] = None,
         game_day: int = 1,
         current_scene: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
@@ -365,7 +286,7 @@ class SessionHistory:
                 logger.info("[SessionHistory] No messages to graphize")
                 return None
 
-            result = await graphizer.graphize(request)
+            result = await graphizer.graphize(request, world_graph=world_graph)
 
             if result.success:
                 message_ids = [m.id for m in request.messages]
@@ -425,13 +346,11 @@ class SessionHistoryManager:
 
     def __init__(
         self,
-        firestore_db: Any = None,
         max_tokens: int = 1_000_000,
         graphize_threshold: float = 0.9,
         keep_recent_tokens: int = 100_000,
     ) -> None:
         self._histories: Dict[str, SessionHistory] = {}
-        self._firestore_db = firestore_db
         self._max_tokens = max_tokens
         self._graphize_threshold = graphize_threshold
         self._keep_recent_tokens = keep_recent_tokens
@@ -450,79 +369,9 @@ class SessionHistoryManager:
                 max_tokens=self._max_tokens,
                 graphize_threshold=self._graphize_threshold,
                 keep_recent_tokens=self._keep_recent_tokens,
-                firestore_db=self._firestore_db,
             )
-            # Try to restore from Firestore on first access
-            if self._firestore_db:
-                try:
-                    self._restore_from_firestore_sync(history)
-                except Exception as exc:
-                    logger.debug("[SessionHistoryManager] Firestore restore failed: %s", exc)
             self._histories[key] = history
         return self._histories[key]
-
-    def _restore_from_firestore_sync(self, history: SessionHistory) -> None:
-        """Restore messages from Firestore into the ContextWindow."""
-        col_path = _firestore_messages_path(history.world_id, history.session_id)
-        col_ref = self._firestore_db.collection(col_path)
-        docs = col_ref.order_by("timestamp").stream()
-
-        count = 0
-        for doc in docs:
-            data = doc.to_dict()
-            if not data:
-                continue
-            role = data.get("role", "system")
-            content = data.get("content", "")
-            metadata = data.get("metadata") or {}
-            if content:
-                history._window.add_message(
-                    role=role,
-                    content=content,
-                    metadata=metadata,
-                )
-                count += 1
-
-        if count > 0:
-            logger.info(
-                "[SessionHistoryManager] Restored %d messages from Firestore for %s:%s",
-                count, history.world_id, history.session_id,
-            )
-
-    async def load_history_from_firestore(
-        self,
-        world_id: str,
-        session_id: str,
-        limit: int = 50,
-        firestore_db: Any = None,
-    ) -> List[Dict[str, Any]]:
-        """Load message history from Firestore for API response."""
-        db = firestore_db or self._firestore_db
-        if not db:
-            return []
-
-        col_path = _firestore_messages_path(world_id, session_id)
-        col_ref = db.collection(col_path)
-
-        # Get recent messages ordered by timestamp descending, then reverse
-        query = col_ref.order_by("timestamp", direction=firestore_lib.Query.DESCENDING).limit(limit)
-
-        messages = []
-        for doc in query.stream():
-            data = doc.to_dict()
-            if not data:
-                continue
-            messages.append(
-                _normalize_message_for_api(
-                    role=data.get("role", "system"),
-                    content=data.get("content", ""),
-                    metadata=data.get("metadata") or {},
-                    timestamp=data.get("timestamp"),
-                )
-            )
-
-        messages.reverse()  # oldest first
-        return messages
 
     def get(self, world_id: str, session_id: str) -> Optional[SessionHistory]:
         """Get SessionHistory if it exists, None otherwise."""
