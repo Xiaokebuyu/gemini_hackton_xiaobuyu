@@ -39,9 +39,9 @@ _install_mcp_stubs()
 
 import asyncio
 
-from app.world.world_graph import WorldGraph
-from app.world.models import WorldNode
-from app.world.recall import WorldGraphRecallOrchestrator, RECALL_CONFIGS
+from app.world.graph.world_graph import WorldGraph
+from app.world.graph.models import WorldNode
+from app.world.memory.recall import WorldGraphRecallOrchestrator, RECALL_CONFIGS
 
 
 def _run(coro):

@@ -10,7 +10,6 @@ from typing import Dict, Any, List, Optional
 from google.cloud import firestore
 
 from app.config import settings
-from app.services.graph_store import GraphStore
 from app.tools.worldbook_graphizer.models import CharactersData, CharacterInfo, NPCTier
 from app.models.passerby import PasserbySpawnConfig, PasserbyTemplate
 
@@ -28,7 +27,6 @@ class CharacterLoader:
         self.db = firestore_client or firestore.Client(
             database=settings.firestore_database
         )
-        self.graph_store = GraphStore(firestore_client=self.db)
 
     def _get_map_npcs_ref(
         self,
@@ -183,24 +181,21 @@ class CharacterLoader:
             }
         }
 
-        # 使用 GraphStore 的接口保存
-        await self.graph_store.set_character_profile(
-            world_id=world_id,
-            character_id=char.id,
-            profile=profile,
-            merge=True,
+        # 直接写入 Firestore
+        char_ref = (
+            self.db.collection("worlds")
+            .document(world_id)
+            .collection("characters")
+            .document(char.id)
         )
+        char_ref.set({"profile": profile}, merge=True)
 
         # 初始化角色状态
         initial_state = {
             "current_map": char.default_map,
             "status": "active",
         }
-        await self.graph_store.update_character_state(
-            world_id=world_id,
-            character_id=char.id,
-            updates=initial_state,
-        )
+        char_ref.set({"state": initial_state}, merge=True)
 
     async def _load_map_assignments(
         self,
@@ -297,12 +292,13 @@ class CharacterLoader:
                     print(f"  Loading profile: {char_id} ({profile.get('name', 'Unknown')})")
 
                 if not dry_run:
-                    await self.graph_store.set_character_profile(
-                        world_id=world_id,
-                        character_id=char_id,
-                        profile=profile,
-                        merge=True,
+                    char_ref = (
+                        self.db.collection("worlds")
+                        .document(world_id)
+                        .collection("characters")
+                        .document(char_id)
                     )
+                    char_ref.set({"profile": profile}, merge=True)
 
                     # 初始化状态
                     metadata = profile.get("metadata", {})
@@ -310,11 +306,7 @@ class CharacterLoader:
                         "current_map": metadata.get("default_map"),
                         "status": "active",
                     }
-                    await self.graph_store.update_character_state(
-                        world_id=world_id,
-                        character_id=char_id,
-                        updates=initial_state,
-                    )
+                    char_ref.set({"state": initial_state}, merge=True)
 
                 stats["profiles_loaded"] += 1
 
@@ -378,7 +370,17 @@ class CharacterLoader:
         character_id: str,
     ) -> Optional[Dict[str, Any]]:
         """获取角色 Profile"""
-        return await self.graph_store.get_character_profile(world_id, character_id)
+        char_ref = (
+            self.db.collection("worlds")
+            .document(world_id)
+            .collection("characters")
+            .document(character_id)
+        )
+        doc = char_ref.get()
+        if not doc.exists:
+            return {}
+        data = doc.to_dict() or {}
+        return data.get("profile", {}) or {}
 
     async def list_characters(self, world_id: str) -> List[str]:
         """列出所有角色 ID"""

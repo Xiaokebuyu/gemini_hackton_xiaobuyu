@@ -1,7 +1,7 @@
 """
 Admin event service for event recording.
 
-世界级事件持久化（GraphStore world scope）。
+世界级事件持久化（直连 Firestore，world scope）。
 Per-character 分发已移除 — 在线事件走 BehaviorEngine → SceneBus → ContextWindow → MemoryGraphizer。
 """
 import logging
@@ -9,6 +9,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from google.cloud import firestore
+
+from app.config import settings
 from app.models.event import (
     GMEventIngestRequest,
     GMEventIngestResponse,
@@ -17,9 +20,8 @@ from app.models.event import (
 )
 from app.models.graph import MemoryEdge, MemoryNode
 from app.models.graph_scope import GraphScope
-from app.services.event_bus import EventBus
-from app.services.graph_schema import GraphSchemaOptions, validate_edge, validate_node
-from app.services.graph_store import GraphStore
+from app.world.events.event_bus import EventBus
+from app.world.graph.schema import GraphSchemaOptions, validate_edge, validate_node
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,9 @@ class AdminEventService:
 
     def __init__(
         self,
-        graph_store: Optional[GraphStore] = None,
         event_bus: Optional[EventBus] = None,
     ) -> None:
-        self.graph_store = graph_store or GraphStore()
+        self._db = firestore.Client(database=settings.firestore_database)
         self.event_bus = event_bus or EventBus()
         self._llm_service: Optional["EventLLMService"] = None
 
@@ -40,7 +41,7 @@ class AdminEventService:
     def llm_service(self) -> "EventLLMService":
         """懒加载事件LLM服务"""
         if self._llm_service is None:
-            from app.services.admin.event_llm_service import EventLLMService
+            from app.services.event_llm_service import EventLLMService
             self._llm_service = EventLLMService()
         return self._llm_service
 
@@ -90,18 +91,11 @@ class AdminEventService:
                 if errors:
                     raise ValueError(f"Invalid edge {edge.id}: {errors}")
 
+        nodes_ref, edges_ref = self._get_scope_refs(world_id, gm_scope)
         for node in gm_nodes:
-            await self.graph_store.upsert_node_v2(
-                world_id=world_id,
-                scope=gm_scope,
-                node=node,
-            )
+            nodes_ref.document(node.id).set(node.model_dump(), merge=True)
         for edge in gm_edges:
-            await self.graph_store.upsert_edge_v2(
-                world_id=world_id,
-                scope=gm_scope,
-                edge=edge,
-            )
+            edges_ref.document(edge.id).set(edge.model_dump(), merge=True)
 
         if self.event_bus:
             await self.event_bus.publish(event)
@@ -117,6 +111,23 @@ class AdminEventService:
             dispatched=False,
             recipients=[],
         )
+
+    # ==================== Firestore 寻址 ====================
+
+    def _get_scope_refs(
+        self,
+        world_id: str,
+        scope: GraphScope,
+    ) -> tuple:
+        """将 GraphScope 映射为 Firestore nodes/edges 集合引用。"""
+        worlds_ref = self._db.collection("worlds").document(world_id)
+        if scope.scope_type == "world":
+            base = worlds_ref.collection("graphs").document("world")
+        elif scope.scope_type == "character":
+            base = worlds_ref.collection("characters").document(scope.character_id)
+        else:
+            raise ValueError(f"EventService 不支持的 scope: {scope.scope_type}")
+        return base.collection("nodes"), base.collection("edges")
 
     # ==================== 内部辅助 ====================
 
@@ -239,19 +250,11 @@ class AdminEventService:
         gm_edges = [MemoryEdge(**e) for e in gm_encoded.get("edges", [])]
         gm_scope = GraphScope.world()
 
+        nodes_ref, edges_ref = self._get_scope_refs(world_id, gm_scope)
         for node in gm_nodes:
-            await self.graph_store.upsert_node_v2(
-                world_id=world_id,
-                scope=gm_scope,
-                node=node,
-            )
-
+            nodes_ref.document(node.id).set(node.model_dump(), merge=True)
         for edge in gm_edges:
-            await self.graph_store.upsert_edge_v2(
-                world_id=world_id,
-                scope=gm_scope,
-                edge=edge,
-            )
+            edges_ref.document(edge.id).set(edge.model_dump(), merge=True)
 
         return NaturalEventIngestResponse(
             event_id=event_id,
@@ -268,20 +271,21 @@ class AdminEventService:
         limit: int = 30,
     ) -> List[Dict[str, Any]]:
         """获取GM图谱中的重要节点"""
-        graph_data = await self.graph_store.load_graph_v2(
-            world_id,
-            GraphScope.world(),
-        )
+        nodes_ref, _ = self._get_scope_refs(world_id, GraphScope.world())
+        nodes = []
+        for doc in nodes_ref.stream():
+            data = doc.to_dict()
+            if not data:
+                continue
+            if "id" not in data:
+                data["id"] = doc.id
+            nodes.append(MemoryNode(**data))
 
-        if not graph_data or not graph_data.nodes:
+        if not nodes:
             return []
 
         # 按importance排序，取前N个
-        sorted_nodes = sorted(
-            graph_data.nodes,
-            key=lambda n: n.importance,
-            reverse=True
-        )
+        sorted_nodes = sorted(nodes, key=lambda n: n.importance, reverse=True)
 
         return [
             {

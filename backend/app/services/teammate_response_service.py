@@ -25,10 +25,10 @@ from app.models.party import (
     TeammateRoundResult,
 )
 from app.services.llm_service import LLMService
-from app.services.teammate_visibility_manager import TeammateVisibilityManager
+from app.world.npc.visibility import TeammateVisibilityManager
 
 if TYPE_CHECKING:
-    from app.services.instance_manager import InstanceManager
+    from app.world.npc.instance_manager import InstanceManager
 
 logger = logging.getLogger(__name__)
 
@@ -203,12 +203,14 @@ class TeammateResponseService:
             return
         runtime_session = context.get("_runtime_session")
         world_graph = getattr(runtime_session, "world_graph", None) if runtime_session else None
+        session_id = getattr(runtime_session, "session_id", "") if runtime_session else ""
         for member in active_members:
             try:
                 instance = await self.instance_manager.get_or_create(
                     member.character_id,
                     world_id,
                     world_graph=world_graph,
+                    session_id=session_id,
                 )
                 for resp in last_responses:
                     if resp.get("character_id") != member.character_id and resp.get("response"):
@@ -236,6 +238,7 @@ class TeammateResponseService:
         private_target: Optional[str],
         parallel: bool,
         skip_non_target_in_private: bool,
+        session_id: str = "",
     ) -> Dict[str, Optional[str]]:
         preloaded_histories: Dict[str, Optional[str]] = {}
         if self.instance_manager is None or not world_id:
@@ -253,6 +256,7 @@ class TeammateResponseService:
                 player_input=inject_player,
                 gm_response=gm_narration_full,
                 world_graph=world_graph,
+                session_id=session_id,
             )
             return member.character_id, history_text
 
@@ -338,6 +342,9 @@ class TeammateResponseService:
                 responding_count=0,
             )
 
+        _rt_session = context.get("_runtime_session")
+        _session_id = getattr(_rt_session, "session_id", "") if _rt_session else ""
+
         # 所有队友先接收本轮消息（即使后续不发言，也会更新独立上下文）
         await self._inject_last_teammate_responses(
             active_members=active_members,
@@ -347,13 +354,14 @@ class TeammateResponseService:
         preloaded_histories = await self._inject_round_histories(
             active_members=active_members,
             world_id=world_id,
-            world_graph=getattr(context.get("_runtime_session"), "world_graph", None),
+            world_graph=getattr(_rt_session, "world_graph", None) if _rt_session else None,
             player_input=player_input,
             gm_narration_full=gm_narration_full,
             is_private=is_private,
             private_target=private_target,
             parallel=True,
             skip_non_target_in_private=False,
+            session_id=_session_id,
         )
 
         # 3. 每个队友独立决策是否回复
@@ -657,6 +665,7 @@ class TeammateResponseService:
         player_input: str,
         gm_response: str,
         world_graph: Any = None,
+        session_id: str = "",
     ) -> Optional[str]:
         """将当前轮公共信息写入队友实例的 context_window，返回最近对话历史文本。"""
         if not self.instance_manager:
@@ -667,6 +676,7 @@ class TeammateResponseService:
                 member.character_id,
                 world_id,
                 world_graph=world_graph,
+                session_id=session_id,
             )
             # 写入公共信息
             user_add = instance.context_window.add_message(
@@ -680,6 +690,7 @@ class TeammateResponseService:
                     world_id=world_id,
                     npc_id=member.character_id,
                     world_graph=world_graph,
+                    session_id=session_id,
                 )
             # 提取最近对话历史
             recent = instance.context_window.get_recent_messages(count=10)
@@ -698,12 +709,13 @@ class TeammateResponseService:
         world_id: str,
         response_text: str,
         world_graph: Any = None,
+        session_id: str = "",
     ) -> None:
         """将队友回复写回其实例 context_window。"""
         if not self.instance_manager:
             return
         try:
-            instance = self.instance_manager.get(world_id, member.character_id)
+            instance = self.instance_manager.get(world_id, member.character_id, session_id=session_id)
             if instance:
                 add_result = instance.context_window.add_message(
                     "assistant", f"[{member.name}] {response_text}"
@@ -713,6 +725,7 @@ class TeammateResponseService:
                         world_id=world_id,
                         npc_id=member.character_id,
                         world_graph=world_graph,
+                        session_id=session_id,
                     )
                 instance.state.conversation_turn_count += 1
         except Exception as e:
@@ -768,6 +781,9 @@ class TeammateResponseService:
         if not active_members:
             return
 
+        _rt_session = context.get("_runtime_session")
+        _session_id = getattr(_rt_session, "session_id", "") if _rt_session else ""
+
         # 消息注入（复用同步逻辑）
         await self._inject_last_teammate_responses(
             active_members=active_members,
@@ -777,12 +793,13 @@ class TeammateResponseService:
         preloaded_histories = await self._inject_round_histories(
             active_members=active_members,
             world_id=world_id,
-            world_graph=getattr(context.get("_runtime_session"), "world_graph", None),
+            world_graph=getattr(_rt_session, "world_graph", None) if _rt_session else None,
             player_input=player_input,
             gm_narration_full=gm_narration_full,
             is_private=is_private,
             private_target=private_target,
             parallel=False,
+            session_id=_session_id,
             skip_non_target_in_private=True,
         )
 
@@ -977,12 +994,15 @@ class TeammateResponseService:
         if session is None:
             return None, []
 
-        from app.world.agentic_executor import AgenticExecutor
-        from app.world.immersive_tools import AgenticContext
+        from app.agentic.agentic_executor import AgenticExecutor
+        from app.agentic.immersive_tools import AgenticContext
 
         event_queue: asyncio.Queue = asyncio.Queue()
 
         _wg = getattr(session, "world_graph", None)
+
+        from app.services.world_api import WorldAPI
+        tm_api = WorldAPI(session, role="teammate", agent_id=member.character_id)
 
         ctx = AgenticContext(
             session=session,
@@ -994,6 +1014,7 @@ class TeammateResponseService:
             area_id=getattr(session, "area_id", ""),
             location_id=getattr(session, "sub_location", ""),
             world_graph=_wg,
+            api=tm_api,
         )
 
         # 战斗时注入 extra_tool
@@ -1063,7 +1084,9 @@ class TeammateResponseService:
         inject_round: bool = True,
     ) -> Tuple[TeammateResponseResult, List[Dict[str, Any]]]:
         world_id = context.get("world_id") or ""
-        world_graph = getattr(context.get("_runtime_session"), "world_graph", None)
+        _rt = context.get("_runtime_session")
+        world_graph = getattr(_rt, "world_graph", None) if _rt else None
+        _sid = getattr(_rt, "session_id", "") if _rt else ""
         instance_history = preloaded_history
         if inject_round:
             instance_history = await self._inject_round_to_instance(
@@ -1072,6 +1095,7 @@ class TeammateResponseService:
                 player_input,
                 gm_response,
                 world_graph=world_graph,
+                session_id=_sid,
             )
 
         prompt = self._build_response_prompt(
@@ -1128,6 +1152,7 @@ class TeammateResponseService:
                 world_id,
                 response_text,
                 world_graph=world_graph,
+                session_id=_sid,
             )
 
         return (

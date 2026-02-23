@@ -1,9 +1,9 @@
 """
-Tests for MemoryGraphizer WorldGraph write path (L3 M2 Phase 3).
+Tests for graph_writer (L3) + MemoryGraphizer WorldGraph integration.
 
 Tests cover:
-- _merge_to_world_graph: synchronous merge of extracted elements into WorldGraph
-- _get_important_nodes_from_wg: synchronous retrieval of important nodes from WorldGraph
+- merge_extraction: synchronous merge of extracted elements into WorldGraph
+- get_context_nodes: synchronous retrieval of important nodes from WorldGraph
 - _extract_metadata: extraction of story_event_ids, transition_target, chapter_id
 - graphize(..., world_graph=wg): async path routing to WorldGraph
 """
@@ -43,8 +43,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from app.world.world_graph import WorldGraph
-from app.world.models import WorldNode
+from app.world.graph.world_graph import WorldGraph
+from app.world.graph.models import WorldNode
 from app.models.graph_elements import (
     ExtractedElements,
     EventGroupNode,
@@ -55,6 +55,7 @@ from app.models.graph_elements import (
 )
 from app.models.context_window import GraphizeRequest, WindowMessage
 from app.services.memory_graphizer import MemoryGraphizer
+from app.world.memory.graph_writer import merge_extraction, get_context_nodes, _extract_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +128,7 @@ class TestMergeToWorldGraphCreatesEventGroup:
         extraction = _make_extraction()
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         # event_group node should exist
         eg_node = wg.get_node("eg_1")
@@ -161,7 +162,7 @@ class TestMergeToWorldGraphCreatesSubEvents:
         )
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         # Sub-event nodes exist
         ev1 = wg.get_node("ev_1")
@@ -195,7 +196,7 @@ class TestMergeToWorldGraphCreatesHasMemoryEdge:
         extraction = _make_extraction()
         graphizer = MemoryGraphizer()
 
-        graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        merge_extraction(wg,"npc_1", extraction)
 
         # npc_1 --has_memory--> eg_1
         edge = wg.get_edge("npc_1", "eg_1", key=f"edge_npc_1_has_eg_1")
@@ -220,7 +221,7 @@ class TestMergeToWorldGraphCreatesNewNodes:
         )
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         sword = wg.get_node("item_sword")
         assert sword is not None
@@ -248,7 +249,7 @@ class TestMergeToWorldGraphAnchorEdgesGuarded:
         extraction = _make_extraction(eg_location="tavern")
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         # located_in edge should NOT exist (tavern node missing)
         edge = wg.get_edge("eg_1", "tavern")
@@ -260,7 +261,7 @@ class TestMergeToWorldGraphAnchorEdgesGuarded:
         extraction = _make_extraction(eg_location="tavern")
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         edge = wg.get_edge("eg_1", "tavern")
         assert edge is not None
@@ -291,7 +292,7 @@ class TestMergeToWorldGraphLLMEdges:
         )
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         edge = wg.get_edge("eg_1", "item_sword", key="edge_eg1_sword")
         assert edge is not None
@@ -310,7 +311,7 @@ class TestMergeToWorldGraphLLMEdges:
         )
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         # Edge should NOT exist because ghost_node is not in graph
         assert "edge_eg1_ghost" not in result.new_edge_ids
@@ -328,7 +329,7 @@ class TestMergeToWorldGraphLLMEdges:
         )
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         assert "edge_phantom_x" not in result.new_edge_ids
 
@@ -345,7 +346,7 @@ class TestMergeToWorldGraphStateUpdates:
         )
         graphizer = MemoryGraphizer()
 
-        graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        merge_extraction(wg,"npc_1", extraction)
 
         state = wg.get_node_state("npc_1")
         assert state.get("mood") == "happy"
@@ -364,7 +365,7 @@ class TestMergeToWorldGraphEnsuresOwnerNode:
         extraction = _make_extraction()
         graphizer = MemoryGraphizer()
 
-        graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        merge_extraction(wg,"npc_1", extraction)
 
         # Owner node should have been auto-created
         owner = wg.get_node("npc_1")
@@ -380,7 +381,7 @@ class TestMergeToWorldGraphEnsuresOwnerNode:
         extraction = _make_extraction()
         graphizer = MemoryGraphizer()
 
-        graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        merge_extraction(wg,"npc_1", extraction)
 
         # Should keep original name
         assert wg.get_node("npc_1").name == original_name
@@ -407,7 +408,7 @@ class TestGetImportantNodesFromWGCharacterFirst:
         ))
 
         graphizer = MemoryGraphizer()
-        nodes = graphizer._get_important_nodes_from_wg(wg, "npc_1", limit=50)
+        nodes = get_context_nodes(wg, "npc_1", limit=50)
 
         # Character nodes should appear first
         char_nodes = [n for n in nodes if n["_scope"] == "character"]
@@ -455,7 +456,7 @@ class TestGetImportantNodesFromWGSceneNeighbors:
                      key="edge_tavern_ale")
 
         graphizer = MemoryGraphizer()
-        nodes = graphizer._get_important_nodes_from_wg(
+        nodes = get_context_nodes(
             wg, "npc_1", limit=50, current_scene="scene_tavern",
         )
 
@@ -480,7 +481,7 @@ class TestGetImportantNodesFromWGWorldFill:
             ))
         graphizer = MemoryGraphizer()
 
-        nodes = graphizer._get_important_nodes_from_wg(
+        nodes = get_context_nodes(
             wg, "npc_1", limit=50,
         )
 
@@ -501,7 +502,7 @@ class TestGetImportantNodesFromWGWorldFill:
         graphizer = MemoryGraphizer()
 
         # With limit=35, char_limit=min(35,30)=30, world_limit=5
-        nodes = graphizer._get_important_nodes_from_wg(
+        nodes = get_context_nodes(
             wg, "npc_1", limit=35,
         )
         world_nodes = [n for n in nodes if n["_scope"] == "world"]
@@ -534,7 +535,7 @@ class TestExtractMetadata:
         )
         graphizer = MemoryGraphizer()
 
-        story_ids, transition, chapter = graphizer._extract_metadata(extraction)
+        story_ids, transition, chapter = _extract_metadata(extraction)
 
         # story_event_ids should be sorted unique set
         assert story_ids == ["event_A", "event_B", "event_C"]
@@ -551,7 +552,7 @@ class TestExtractMetadata:
         )
         graphizer = MemoryGraphizer()
 
-        story_ids, transition, chapter = graphizer._extract_metadata(extraction)
+        story_ids, transition, chapter = _extract_metadata(extraction)
 
         assert story_ids == []
         assert transition == ""
@@ -562,7 +563,7 @@ class TestExtractMetadata:
         extraction = ExtractedElements()
         graphizer = MemoryGraphizer()
 
-        story_ids, transition, chapter = graphizer._extract_metadata(extraction)
+        story_ids, transition, chapter = _extract_metadata(extraction)
 
         assert story_ids == []
         assert transition == ""
@@ -673,7 +674,7 @@ class TestMergeEdgeCases:
         graphizer = MemoryGraphizer()
 
         # npc_2 does not exist in graph
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         # No edge to player (player not in graph)
         edge_player = wg.get_edge("eg_1", "player")
@@ -695,7 +696,7 @@ class TestMergeEdgeCases:
         )
         graphizer = MemoryGraphizer()
 
-        result = graphizer._merge_to_world_graph(wg, "npc_1", extraction)
+        result = merge_extraction(wg,"npc_1", extraction)
 
         potion = wg.get_node("item_potion")
         assert potion is not None

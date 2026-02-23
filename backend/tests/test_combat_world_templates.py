@@ -1,4 +1,4 @@
-from app.combat import enemy_registry
+from app.world.combat import enemy_registry
 
 
 class _RepoStub:

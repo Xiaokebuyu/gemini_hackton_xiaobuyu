@@ -9,7 +9,6 @@ from app.runtime.models.area_state import (
     EventUpdate,
 )
 from app.runtime.models.layered_context import LayeredContext
-from app.runtime.models.companion_state import CompanionEmotionalState, CompactEvent
 
 __all__ = [
     "WorldConstants",
@@ -19,6 +18,4 @@ __all__ = [
     "VisitSummary",
     "EventUpdate",
     "LayeredContext",
-    "CompanionEmotionalState",
-    "CompactEvent",
 ]

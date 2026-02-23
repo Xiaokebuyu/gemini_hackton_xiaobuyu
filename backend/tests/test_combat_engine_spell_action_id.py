@@ -1,6 +1,6 @@
-from app.combat.combat_engine import CombatEngine
-from app.combat.models.combat_session import CombatSession
-from app.combat.models.combatant import Combatant, CombatantType
+from app.world.combat.combat_engine import CombatEngine
+from app.world.combat.models.combat_session import CombatSession
+from app.world.combat.models.combatant import Combatant, CombatantType
 
 
 def _session_with_enemy(enemy_id: str) -> CombatSession:

@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.narrative_service import NarrativeService
+from app.world.narrative.narrative_service import NarrativeService
 
 
 class _DummySession:

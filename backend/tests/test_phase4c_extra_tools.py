@@ -10,7 +10,7 @@ Validates:
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.world.gm_extra_tools import build_gm_extra_tools, ENGINE_TOOL_EXCLUSIONS
+from app.agentic.gm_extra_tools import build_gm_extra_tools, ENGINE_TOOL_EXCLUSIONS
 
 
 def _run(coro):

@@ -44,21 +44,21 @@ from app.models.state_delta import GameState, GameTimeState
 from app.runtime.models.area_state import AreaConnection, AreaDefinition, SubLocationDef
 from app.runtime.models.world_constants import WorldConstants
 from app.runtime.session_runtime import SessionRuntime
-from app.world.graph_builder import GraphBuilder
-from app.world.models import (
+from app.world.graph.builder import GraphBuilder
+from app.world.graph.models import (
     EventStatus,
     TickContext,
     TickResult,
     WorldEdgeType,
     WorldNodeType,
 )
-from app.world.snapshot import (
+from app.world.graph.snapshot import (
     capture_snapshot,
     dict_to_snapshot,
     restore_snapshot,
     snapshot_to_dict,
 )
-from app.world.world_graph import WorldGraph
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================
@@ -380,7 +380,7 @@ class TestC7bBehaviorEngine:
         session = _make_session_runtime()
         wg = _build_world_graph(session)
         session.world_graph = wg
-        from app.world.behavior_engine import BehaviorEngine
+        from app.world.events.behavior_engine import BehaviorEngine
         engine = BehaviorEngine(wg)
         session._behavior_engine = engine
 
@@ -406,7 +406,7 @@ class TestC7cToolWorldGraph:
         session = _make_session_runtime()
         wg = _build_world_graph(session)
         session.world_graph = wg
-        from app.world.behavior_engine import BehaviorEngine
+        from app.world.events.behavior_engine import BehaviorEngine
         session._behavior_engine = BehaviorEngine(wg)
 
         dark_forest = wg.get_node("dark_forest")
@@ -593,7 +593,7 @@ class TestU2SessionPlayerProperty:
 
     def test_player_returns_view_when_graph_available(self):
         """有 WorldGraph 时 session.player 返回 PlayerNodeView。"""
-        from app.world.player_node import PlayerNodeView
+        from app.world.player.node_view import PlayerNodeView
 
         session = _make_session_with_player()
         session._build_world_graph()

@@ -162,10 +162,10 @@ class TestRunAgenticGenerationPayload:
         assert parsed is None
         assert events == []
 
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_ctx_built_correctly(self, MockExecutor):
         """验证 AgenticContext 从 session + member 正确构建。"""
-        from app.world.immersive_tools import AgenticContext
+        from app.agentic.immersive_tools import AgenticContext
         from app.models.admin_protocol import AgenticResult
 
         mock_run = AsyncMock(return_value=AgenticResult(narration='{"response":"hi"}'))
@@ -192,7 +192,7 @@ class TestRunAgenticGenerationPayload:
         assert ctx.area_id == "tavern"
         assert ctx.location_id == "bar"
 
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_no_combat_extra_tools(self, MockExecutor):
         """非战斗时 extra_tools=None。"""
         from app.models.admin_protocol import AgenticResult
@@ -214,7 +214,7 @@ class TestRunAgenticGenerationPayload:
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs["extra_tools"] is None
 
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_combat_extra_tool_injected(self, MockExecutor):
         """战斗时 extra_tools 包含 choose_battle_action。"""
         from app.models.admin_protocol import AgenticResult
@@ -239,7 +239,7 @@ class TestRunAgenticGenerationPayload:
         assert len(extra) == 1
         assert extra[0].__name__ == "choose_battle_action"
 
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_tool_events_tagged(self, MockExecutor):
         """event_queue 事件被标记 character_id + teammate_tool_call。"""
         from app.models.admin_protocol import AgenticResult
@@ -270,7 +270,7 @@ class TestRunAgenticGenerationPayload:
         assert events[0]["character_id"] == "warrior_01"
         assert events[0]["name"] == "react_to_interaction"
 
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_narration_parsed_as_json(self, MockExecutor):
         """AgenticResult.narration 被 parse_json 正确解析。"""
         from app.models.admin_protocol import AgenticResult

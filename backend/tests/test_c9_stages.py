@@ -54,8 +54,8 @@ from app.models.narrative import (
     NarrativeProgress,
     StoryEvent,
 )
-from app.world.behavior_engine import BehaviorEngine, ConditionEvaluator
-from app.world.models import (
+from app.world.events.behavior_engine import BehaviorEngine, ConditionEvaluator
+from app.world.graph.models import (
     Action,
     ActionType,
     Behavior,
@@ -66,7 +66,7 @@ from app.world.models import (
     WorldNode,
     WorldNodeType,
 )
-from app.world.world_graph import WorldGraph
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================
@@ -156,7 +156,7 @@ def _make_simple_event() -> StoryEvent:
 
 def _build_test_graph(events: list[StoryEvent], area_id: str = "town_square") -> WorldGraph:
     """构建包含指定事件的测试 WorldGraph。"""
-    from app.world.graph_builder import _event_to_behaviors
+    from app.world.graph.builder import _event_to_behaviors
 
     wg = WorldGraph()
 
@@ -263,6 +263,13 @@ class _MockSession:
         self.companions = {}
         self.world = None
         self.current_area = None
+        self.sub_location = None
+        self.chapter_id = "ch1"
+        self.party = None
+        self.flash_results = []
+        # P5+P7: EventMachine 提取后，薄委托通过 self._events 转发
+        from app.runtime.event_machine import EventMachine
+        self._events = EventMachine(self)
 
     def build_tick_context(self, phase="pre"):
         return _make_ctx(self.world_graph, session=self, phase=phase)
@@ -703,6 +710,9 @@ class TestContextOutputWithStages:
         # 直接调用方法
         rt = SessionRuntime.__new__(SessionRuntime)
         rt.world_graph = wg
+        rt._world_graph_failed = False
+        from app.runtime.event_machine import EventMachine
+        rt._events = EventMachine(rt)
         summaries = rt.get_event_summaries_from_graph("town_square")
 
         assert len(summaries) == 1
@@ -746,6 +756,9 @@ class TestContextOutputWithStages:
 
         rt = SessionRuntime.__new__(SessionRuntime)
         rt.world_graph = wg
+        rt._world_graph_failed = False
+        from app.runtime.event_machine import EventMachine
+        rt._events = EventMachine(rt)
         summaries = rt.get_event_summaries_from_graph("area1")
 
         assert len(summaries) == 1

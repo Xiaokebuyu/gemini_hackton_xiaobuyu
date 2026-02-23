@@ -12,11 +12,13 @@ Responsibilities:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.models.context_window import WindowMessage
-from app.services.context_window import ContextWindow
+from app.world.npc.context_window import ContextWindow
 
 if TYPE_CHECKING:
     from app.services.memory_graphizer import MemoryGraphizer
@@ -102,6 +104,7 @@ class SessionHistory:
             keep_recent_tokens=keep_recent_tokens,
         )
         self._graphize_in_progress = False
+        self._graphize_lock = asyncio.Lock()
         self._total_graphize_runs = 0
 
     def record_round(
@@ -261,21 +264,22 @@ class SessionHistory:
 
         Returns graphization result dict, or None if not triggered.
         """
-        if self._graphize_in_progress:
-            logger.info("[SessionHistory] Graphization already in progress, skipping")
-            return None
+        async with self._graphize_lock:
+            if self._graphize_in_progress:
+                logger.info("[SessionHistory] Graphization already in progress, skipping")
+                return None
 
-        trigger = self._window.check_graphize_trigger()
-        if not trigger.should_graphize:
-            return None
+            trigger = self._window.check_graphize_trigger()
+            if not trigger.should_graphize:
+                return None
 
-        logger.info(
-            "[SessionHistory] Graphization triggered: %s (urgency=%.2f)",
-            trigger.reason,
-            trigger.urgency,
-        )
+            logger.info(
+                "[SessionHistory] Graphization triggered: %s (urgency=%.2f)",
+                trigger.reason,
+                trigger.urgency,
+            )
 
-        self._graphize_in_progress = True
+            self._graphize_in_progress = True
         try:
             request = self._window.get_graphize_request(
                 current_scene=current_scene,
@@ -318,7 +322,14 @@ class SessionHistory:
                 logger.error(
                     "[SessionHistory] Graphization failed: %s", result.error
                 )
-                raise RuntimeError(f"Graphization failed: {result.error}")
+                # 失败也释放消息，避免死循环重试
+                message_ids = [m.id for m in request.messages]
+                self._window.mark_messages_graphized(message_ids)
+                self._window.remove_graphized_messages()
+                logger.warning(
+                    "[SessionHistory] 图谱化失败，已强制释放 %d 条消息",
+                    len(message_ids),
+                )
 
         finally:
             self._graphize_in_progress = False
@@ -349,11 +360,13 @@ class SessionHistoryManager:
         max_tokens: int = 1_000_000,
         graphize_threshold: float = 0.9,
         keep_recent_tokens: int = 100_000,
+        max_sessions: int = 50,
     ) -> None:
-        self._histories: Dict[str, SessionHistory] = {}
+        self._histories: OrderedDict[str, SessionHistory] = OrderedDict()
         self._max_tokens = max_tokens
         self._graphize_threshold = graphize_threshold
         self._keep_recent_tokens = keep_recent_tokens
+        self._max_sessions = max_sessions
 
     def get_or_create(
         self,
@@ -362,16 +375,22 @@ class SessionHistoryManager:
     ) -> SessionHistory:
         """Get existing or create new SessionHistory for a session."""
         key = f"{world_id}:{session_id}"
-        if key not in self._histories:
-            history = SessionHistory(
-                world_id=world_id,
-                session_id=session_id,
-                max_tokens=self._max_tokens,
-                graphize_threshold=self._graphize_threshold,
-                keep_recent_tokens=self._keep_recent_tokens,
-            )
-            self._histories[key] = history
-        return self._histories[key]
+        if key in self._histories:
+            self._histories.move_to_end(key)
+            return self._histories[key]
+        # 淘汰最旧
+        while len(self._histories) >= self._max_sessions:
+            evicted_key, _ = self._histories.popitem(last=False)
+            logger.info("[SessionHistoryManager] 淘汰 %s", evicted_key)
+        history = SessionHistory(
+            world_id=world_id,
+            session_id=session_id,
+            max_tokens=self._max_tokens,
+            graphize_threshold=self._graphize_threshold,
+            keep_recent_tokens=self._keep_recent_tokens,
+        )
+        self._histories[key] = history
+        return history
 
     def get(self, world_id: str, session_id: str) -> Optional[SessionHistory]:
         """Get SessionHistory if it exists, None otherwise."""

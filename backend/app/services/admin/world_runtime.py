@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 
 from app.models.state_delta import GameState, GameTimeState
 from app.services.admin.state_manager import StateManager
-from app.services.narrative_service import NarrativeService
+from app.world.narrative.narrative_service import NarrativeService
 from app.services.game_session_store import GameSessionStore
 from app.services.area_navigator import AreaNavigator
-from app.services.time_manager import GameTime, TimeManager
+from app.world.time import GameTime, TimeManager
 
 
 class AdminWorldRuntime:

@@ -40,7 +40,7 @@ def _install_mcp_stubs() -> None:
 
 _install_mcp_stubs()
 
-from app.world.scene_bus import BusEntry, BusEntryType, SceneBus
+from app.world.scene import BusEntry, BusEntryType, SceneBus
 
 
 # =========================================================================
@@ -139,7 +139,7 @@ class TestSceneBusMembers:
 
 class TestFeelingMap:
     def setup_method(self):
-        from app.world.immersive_tools import FEELING_MAP
+        from app.agentic.immersive_tools import FEELING_MAP
         self.fmap = FEELING_MAP
 
     def test_24_entries(self):
@@ -180,8 +180,8 @@ class TestFeelingMap:
 
 class TestRoleRegistry:
     def setup_method(self):
-        from app.world.immersive_tools import AgenticContext
-        from app.world.role_registry import RoleRegistry
+        from app.agentic.immersive_tools import AgenticContext
+        from app.agentic.role_registry import RoleRegistry
         self.RoleRegistry = RoleRegistry
         self.AgenticContext = AgenticContext
 
@@ -219,7 +219,6 @@ class TestRoleRegistry:
         names = {t.__name__ for t in tools}
         assert "react_to_interaction" in names
         assert "express_need" in names
-        assert "choose_battle_action" in names
         assert "generate_scene_image" not in names
 
     def test_binding_strips_internal_params(self):

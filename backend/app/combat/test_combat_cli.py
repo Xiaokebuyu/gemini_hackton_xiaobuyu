@@ -3,8 +3,8 @@
 """
 import random
 
-from app.combat.combat_engine import CombatEngine
-from app.combat.models.action import ActionType
+from app.world.combat.combat_engine import CombatEngine
+from app.world.combat.models.action import ActionType
 
 
 def test_simple_combat():

@@ -1,0 +1,70 @@
+"""graph/ — 图谱容器子系统：世界知识结构的存储、索引、查询、Schema、序列化。"""
+
+from app.world.graph.world_graph import WorldGraph, EdgeChange
+from app.world.graph.models import (
+    WorldNodeType,
+    WorldEdgeType,
+    TriggerType,
+    ActionType,
+    EventStatus,
+    ChapterStatus,
+    Action,
+    Behavior,
+    BehaviorResult,
+    EventObjective,
+    EventStage,
+    EventOutcome,
+    WorldNode,
+    WorldEvent,
+    TickContext,
+    EvalResult,
+    TickResult,
+)
+from app.world.graph.builder import GraphBuilder
+from app.world.graph.snapshot import (
+    WorldSnapshot,
+    EdgeChangeRecord,
+    capture_snapshot,
+    restore_snapshot,
+    snapshot_to_dict,
+    dict_to_snapshot,
+)
+from app.world.graph.schema import (
+    GraphSchemaOptions,
+    validate_graph_data,
+    validate_edge,
+    validate_node,
+)
+
+__all__ = [
+    "WorldGraph",
+    "EdgeChange",
+    "GraphBuilder",
+    "WorldSnapshot",
+    "EdgeChangeRecord",
+    "capture_snapshot",
+    "restore_snapshot",
+    "snapshot_to_dict",
+    "dict_to_snapshot",
+    "GraphSchemaOptions",
+    "validate_graph_data",
+    "validate_edge",
+    "validate_node",
+    "WorldNodeType",
+    "WorldEdgeType",
+    "TriggerType",
+    "ActionType",
+    "EventStatus",
+    "ChapterStatus",
+    "Action",
+    "Behavior",
+    "BehaviorResult",
+    "EventObjective",
+    "EventStage",
+    "EventOutcome",
+    "WorldNode",
+    "WorldEvent",
+    "TickContext",
+    "EvalResult",
+    "TickResult",
+]

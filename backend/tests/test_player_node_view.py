@@ -40,10 +40,10 @@ if "mcp" not in sys.modules:
     sys.modules["mcp.client.streamable_http"] = _mcp_http
     sys.modules["mcp.types"] = _mcp_types
 
-from app.world.constants import default_player_state
-from app.world.models import WorldNode, WorldNodeType
-from app.world.player_node import PlayerNodeView, translate_character_to_node
-from app.world.world_graph import WorldGraph
+from app.world.player.constants import default_player_state
+from app.world.graph.models import WorldNode, WorldNodeType
+from app.world.player.node_view import PlayerNodeView, translate_character_to_node
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================

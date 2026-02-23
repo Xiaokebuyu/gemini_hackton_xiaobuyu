@@ -1,7 +1,7 @@
 """Narrative tools for MCP server."""
 import json
 
-from app.services.narrative_service import NarrativeService
+from app.world.narrative.narrative_service import NarrativeService
 
 _narrative_service = NarrativeService()
 

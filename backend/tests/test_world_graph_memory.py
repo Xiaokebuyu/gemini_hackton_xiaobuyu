@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.world.models import WorldEdgeType, WorldNode, WorldNodeType
-from app.world.snapshot import (
+from app.world.graph.models import WorldEdgeType, WorldNode, WorldNodeType
+from app.world.graph.snapshot import (
     WorldSnapshot,
     capture_snapshot,
     restore_snapshot,
 )
-from app.world.world_graph import WorldGraph
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================

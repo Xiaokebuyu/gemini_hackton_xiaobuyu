@@ -9,7 +9,10 @@ import uuid
 import asyncio
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.llm_service import LLMService
 
 from app.config import settings
 from app.models.admin_protocol import (
@@ -19,13 +22,11 @@ from app.models.admin_protocol import (
 )
 from app.models.state_delta import GameTimeState, StateDelta
 from app.services.admin.state_manager import StateManager
-from app.services.game_session_store import GameSessionStore
-from app.services.narrative_service import NarrativeService
+from app.world.narrative.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
-from app.services.llm_service import LLMService
 from app.services.mcp_client_pool import MCPClientPool, MCPServiceUnavailableError
 from app.services.image_generation_service import ImageGenerationService
-from app.world import stats_manager
+from app.world.player import stats as stats_manager
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,10 @@ class FlashCPUService:
     def __init__(
         self,
         state_manager: Optional[StateManager] = None,
-        session_store: Optional[GameSessionStore] = None,
+        session_store=None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
-        llm_service: Optional[LLMService] = None,
+        llm_service: Optional["LLMService"] = None,
         agentic_prompt_path: Optional[Path] = None,
         instance_manager: Optional[Any] = None,
         party_service: Optional[Any] = None,
@@ -50,10 +51,13 @@ class FlashCPUService:
         if state_manager is None:
             logger.warning("[FlashCPU] 使用独立 StateManager 实例（仅限测试）")
         self.state_manager = state_manager or StateManager()
-        self.session_store = session_store or GameSessionStore()
+        self.session_store = session_store
         self.narrative_service = narrative_service
         self.passerby_service = passerby_service or PasserbyService()
-        self.llm_service = llm_service or LLMService()
+        if llm_service is None:
+            from app.services.llm_service import LLMService
+            llm_service = LLMService()
+        self.llm_service = llm_service
         self.agentic_prompt_path = agentic_prompt_path or Path("app/prompts/flash_agentic_system.md")
         self.instance_manager = instance_manager
         self.party_service = party_service
@@ -144,6 +148,7 @@ class FlashCPUService:
                         world_id,
                         npc_id,
                         message,
+                        session_id=session_id,
                         world_graph=world_graph,
                     )
                     payload = {"response": response_text}
@@ -214,14 +219,15 @@ class FlashCPUService:
                 if not character_id:
                     return FlashResponse(success=False, operation=op, error="missing character_id")
                 # 图谱化并持久化该队友的实例（保存对话记忆）
-                if self.instance_manager is not None and self.instance_manager.has(world_id, character_id):
+                if self.instance_manager is not None and self.instance_manager.has(world_id, character_id, session_id=session_id):
                     try:
                         await self.instance_manager.maybe_graphize_instance(
                             world_id,
                             character_id,
                             world_graph=world_graph,
+                            session_id=session_id,
                         )
-                        instance = self.instance_manager.get(world_id, character_id)
+                        instance = self.instance_manager.get(world_id, character_id, session_id=session_id)
                         if instance and hasattr(instance, "persist"):
                             await instance.persist()
                     except Exception as exc:
@@ -263,14 +269,15 @@ class FlashCPUService:
                 party_members_before_disband = self._extract_party_members(party)
                 saved_members = []
                 for member in party.get_active_members():
-                    if self.instance_manager is not None and self.instance_manager.has(world_id, member.character_id):
+                    if self.instance_manager is not None and self.instance_manager.has(world_id, member.character_id, session_id=session_id):
                         try:
                             await self.instance_manager.maybe_graphize_instance(
                                 world_id,
                                 member.character_id,
                                 world_graph=world_graph,
+                                session_id=session_id,
                             )
-                            inst = self.instance_manager.get(world_id, member.character_id)
+                            inst = self.instance_manager.get(world_id, member.character_id, session_id=session_id)
                             if inst and hasattr(inst, "persist"):
                                 await inst.persist()
                             saved_members.append(member.name)
@@ -304,7 +311,7 @@ class FlashCPUService:
                 )
 
             if op == FlashOperation.ABILITY_CHECK:
-                from app.services.ability_check_service import AbilityCheckService
+                from app.world.player.ability_check import AbilityCheckService
                 check_service = AbilityCheckService(store=self.character_store)
                 result = await check_service.perform_check(
                     world_id=world_id,
@@ -409,12 +416,14 @@ class FlashCPUService:
         npc_id: str,
         message: str,
         world_graph: Any = None,
+        session_id: str = "",
     ) -> str:
         """通过 InstanceManager 进行 NPC 对话（维护多轮上下文）"""
         instance = await self.instance_manager.get_or_create(
             npc_id,
             world_id,
             world_graph=world_graph,
+            session_id=session_id,
         )
         user_add = instance.context_window.add_message("user", message)
         if user_add.should_graphize:
@@ -422,6 +431,7 @@ class FlashCPUService:
                 world_id,
                 npc_id,
                 world_graph=world_graph,
+                session_id=session_id,
             )
 
         # 构建最近对话历史
@@ -453,6 +463,7 @@ class FlashCPUService:
                 world_id,
                 npc_id,
                 world_graph=world_graph,
+                session_id=session_id,
             )
         instance.state.conversation_turn_count += 1
         return result

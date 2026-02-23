@@ -9,7 +9,7 @@ Step C5: EventPropagator (event_propagation.py) ✅
 Step C6: Snapshot (snapshot.py)              ✅
 后续步骤: C7 (管线集成)
 """
-from app.world.models import (
+from app.world.graph.models import (
     # Enums
     WorldNodeType,
     WorldEdgeType,
@@ -34,19 +34,19 @@ from app.world.models import (
     TickResult,
 )
 
-from app.world.world_graph import WorldGraph
+from app.world.graph.world_graph import WorldGraph
 
-from app.world.graph_builder import GraphBuilder
+from app.world.graph.builder import GraphBuilder
 
-from app.world.behavior_engine import (
+from app.world.events.behavior_engine import (
     ConditionEvaluator,
     ActionExecutor,
     BehaviorEngine,
 )
 
-from app.world.event_propagation import EventPropagator
+from app.world.events.propagation import EventPropagator
 
-from app.world.snapshot import (
+from app.world.graph.snapshot import (
     WorldSnapshot,
     EdgeChangeRecord,
     capture_snapshot,
@@ -55,7 +55,7 @@ from app.world.snapshot import (
     dict_to_snapshot,
 )
 
-from app.world.constants import (
+from app.world.player.constants import (
     ABILITY_SCORES,
     SKILLS,
     DAMAGE_TYPES,

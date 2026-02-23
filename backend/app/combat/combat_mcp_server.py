@@ -10,16 +10,17 @@ from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .combat_engine import CombatEngine
-from .enemy_registry import (
+from app.world.combat.combat_engine import CombatEngine
+from app.world.combat.enemy_registry import (
     list_templates,
     load_world_templates,
     register_archetype,
     register_template,
 )
-from .data_repository import CombatDataRepository
-from .template_mapper import skill_to_spell_template, slugify
-from .models.combat_session import CombatState
+# CombatDataRepository 已删除（L3 迁移）。待重建：改接 WorldInstance 缓存。
+# 见：架构与设计/图世界活物化专项/三层世界地图/Firestore残留Store迁移清单.md §六
+from app.world.combat.template_mapper import skill_to_spell_template, slugify
+from app.world.combat.models.combat_session import CombatState
 from app.models.event import Event, EventContent, EventType, GMEventIngestRequest
 from app.models.game import CombatContext
 from app.services.game_session_store import GameSessionStore
@@ -110,7 +111,11 @@ def _build_world_skill_templates(
     template_version: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Build session-level skill templates from world skills."""
-    repository = CombatDataRepository(world_id=world_id, template_version=template_version)
+    raise NotImplementedError(
+        "CombatDataRepository removed (L3 migration). "
+        "Rebuild: wire to WorldInstance cache. "
+        "See: Firestore残留Store迁移清单.md §六"
+    )
     templates: Dict[str, Dict[str, Any]] = {}
 
     for skill in repository.list_skills():

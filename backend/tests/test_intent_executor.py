@@ -3,9 +3,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from app.world.intent_executor import IntentExecutor, EngineResult, update_hosts_edges, update_party_hosts_edges
-from app.world.intent_resolver import IntentType, ResolvedIntent
-from app.world.scene_bus import BusEntryType, SceneBus
+from app.world.intent.executor import IntentExecutor, EngineResult, update_hosts_edges, update_party_hosts_edges
+from app.world.intent.resolver import IntentType, ResolvedIntent
+from app.world.scene import BusEntryType, SceneBus
 
 
 def _make_session(

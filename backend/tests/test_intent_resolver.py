@@ -4,7 +4,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from app.world.intent_resolver import IntentResolver, IntentType
+from app.world.intent.resolver import IntentResolver, IntentType
 
 
 def _make_mock_node(node_id: str, name: str, node_type: str = "area", state: dict = None):

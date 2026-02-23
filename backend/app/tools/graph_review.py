@@ -13,7 +13,7 @@ from typing import Dict, Iterable, List, Tuple
 
 from app.models.graph import GraphData, MemoryEdge, MemoryNode
 from app.models.graph_schema import GRAPH_NODE_TYPES, GRAPH_RELATIONS
-from app.services.graph_schema import GraphSchemaOptions, validate_graph_data
+from app.world.graph.schema import GraphSchemaOptions, validate_graph_data
 
 
 def _load_payloads(path: Path) -> List[dict]:

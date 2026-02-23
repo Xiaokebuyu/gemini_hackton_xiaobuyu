@@ -1,7 +1,7 @@
 """Tests for SceneBus (Direction A.1)."""
 
 import pytest
-from app.world.scene_bus import BusEntry, BusEntryType, SceneBus
+from app.world.scene import BusEntry, BusEntryType, SceneBus
 
 
 class TestBusEntry:

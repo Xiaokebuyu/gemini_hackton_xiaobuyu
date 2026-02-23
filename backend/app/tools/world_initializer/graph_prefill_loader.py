@@ -25,7 +25,6 @@ from google.cloud import firestore
 from app.config import settings
 from app.models.graph import GraphData, MemoryEdge, MemoryNode
 from app.models.graph_scope import GraphScope
-from app.services.graph_store import GraphStore
 
 
 class GraphPrefillLoader:
@@ -35,7 +34,6 @@ class GraphPrefillLoader:
         self.db = firestore_client or firestore.Client(
             database=settings.firestore_database
         )
-        self.graph_store = GraphStore(firestore_client=self.db)
 
     async def load_prefilled_graph(
         self,
@@ -148,12 +146,7 @@ class GraphPrefillLoader:
             graph_data = GraphData(nodes=scope_node_list, edges=scope_edge_list)
 
             if not dry_run:
-                await self.graph_store.save_graph_v2(
-                    world_id=world_id,
-                    scope=scope,
-                    graph=graph_data,
-                    merge=True,
-                )
+                self._save_graph_v2(world_id, scope, graph_data, merge=True)
 
             stats["nodes_written"] += len(scope_node_list)
             stats["edges_written"] += len(scope_edge_list)
@@ -440,6 +433,58 @@ class GraphPrefillLoader:
             raise ValueError(
                 "strict-v2 导入失败" + base + ": " + " | ".join(problems)
             )
+
+    # ---- Graph persistence helpers ----
+
+    def _get_base_ref_v2(
+        self, world_id: str, scope: GraphScope
+    ) -> firestore.DocumentReference:
+        """Resolve GraphScope to Firestore document reference."""
+        worlds_ref = self.db.collection("worlds").document(world_id)
+        if scope.scope_type == "world":
+            return worlds_ref.collection("graphs").document("world")
+        if scope.scope_type == "chapter":
+            return worlds_ref.collection("chapters").document(scope.chapter_id).collection("graph").document("data")
+        if scope.scope_type == "area":
+            return worlds_ref.collection("chapters").document(scope.chapter_id).collection("areas").document(scope.area_id).collection("graph").document("data")
+        if scope.scope_type == "location":
+            return worlds_ref.collection("chapters").document(scope.chapter_id).collection("areas").document(scope.area_id).collection("locations").document(scope.location_id).collection("graph").document("data")
+        if scope.scope_type == "character":
+            return worlds_ref.collection("characters").document(scope.character_id)
+        if scope.scope_type == "camp":
+            return worlds_ref.collection("camp").document("graph")
+        raise ValueError(f"Unknown scope_type: {scope.scope_type}")
+
+    def _save_graph_v2(
+        self,
+        world_id: str,
+        scope: GraphScope,
+        graph: GraphData,
+        merge: bool = True,
+    ) -> None:
+        """Save a full graph using GraphScope addressing (batched writes)."""
+        base_ref = self._get_base_ref_v2(world_id, scope)
+        nodes_ref = base_ref.collection("nodes")
+        edges_ref = base_ref.collection("edges")
+
+        batch = self.db.batch()
+        op_count = 0
+        for node in graph.nodes:
+            batch.set(nodes_ref.document(node.id), node.model_dump(), merge=merge)
+            op_count += 1
+            if op_count >= 450:
+                batch.commit()
+                batch = self.db.batch()
+                op_count = 0
+        for edge in graph.edges:
+            batch.set(edges_ref.document(edge.id), edge.model_dump(), merge=merge)
+            op_count += 1
+            if op_count >= 450:
+                batch.commit()
+                batch = self.db.batch()
+                op_count = 0
+        if op_count:
+            batch.commit()
 
     # ---- Scope routing ----
 

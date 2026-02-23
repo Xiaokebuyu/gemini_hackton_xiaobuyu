@@ -3,7 +3,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from app.config import settings
-from app.services.instance_manager import InstanceManager
+from app.world.npc.instance_manager import InstanceManager
 from app.services.llm_service import LLMService
 
 _instance_manager = InstanceManager(

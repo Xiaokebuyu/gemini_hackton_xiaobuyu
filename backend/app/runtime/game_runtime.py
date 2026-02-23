@@ -21,6 +21,8 @@ class GameRuntime:
     def __init__(self) -> None:
         from app.runtime.world_instance import WorldInstance
         self._worlds: Dict[str, WorldInstance] = {}
+        self._world_locks: Dict[str, asyncio.Lock] = {}
+        self._meta_lock = asyncio.Lock()
 
     @classmethod
     async def get_instance(cls) -> "GameRuntime":
@@ -38,14 +40,21 @@ class GameRuntime:
         cls._instance = None
 
     async def get_world(self, world_id: str) -> "WorldInstance":
-        """获取 WorldInstance，首次访问时自动初始化。"""
+        """获取 WorldInstance，首次访问时自动初始化（per-world 双检锁防竞态）。"""
         from app.runtime.world_instance import WorldInstance
 
-        if world_id not in self._worlds:
-            world = WorldInstance(world_id=world_id)
-            await world.initialize()
-            self._worlds[world_id] = world
-            logger.info(f"WorldInstance '{world_id}' 已初始化")
+        if world_id in self._worlds:
+            return self._worlds[world_id]
+
+        async with self._meta_lock:
+            if world_id not in self._world_locks:
+                self._world_locks[world_id] = asyncio.Lock()
+        async with self._world_locks[world_id]:
+            if world_id not in self._worlds:
+                world = WorldInstance(world_id=world_id)
+                await world.initialize()
+                self._worlds[world_id] = world
+                logger.info(f"WorldInstance '{world_id}' 已初始化")
         return self._worlds[world_id]
 
     def get_world_cached(self, world_id: str) -> Optional["WorldInstance"]:

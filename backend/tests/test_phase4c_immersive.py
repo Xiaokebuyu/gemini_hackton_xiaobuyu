@@ -11,7 +11,7 @@ import asyncio
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.world.immersive_tools import (
+from app.agentic.immersive_tools import (
     AgenticContext,
     activate_event,
     add_item,
@@ -29,7 +29,7 @@ from app.world.immersive_tools import (
     report_flash_evaluation,
     update_disposition,
 )
-from app.world.role_registry import RoleRegistry
+from app.agentic.role_registry import RoleRegistry
 
 
 def _run(coro):
@@ -44,6 +44,7 @@ def _make_ctx(**overrides):
     session.area_id = "area1"
     if not hasattr(session, "record_memory"):
         session.record_memory = MagicMock(return_value="mem_test")
+    api = overrides.pop("api", None) or MagicMock()
     ctx = AgenticContext(
         session=session,
         agent_id="gm",
@@ -52,6 +53,7 @@ def _make_ctx(**overrides):
         world_id="w1",
         chapter_id="ch1",
         area_id="area1",
+        api=api,
         **overrides,
     )
     return ctx
@@ -65,57 +67,57 @@ def _make_ctx(**overrides):
 class TestHealPlayer:
     def test_calls_session_heal(self):
         ctx = _make_ctx()
-        ctx.session.heal.return_value = {"success": True, "hp": 50}
+        ctx.api.heal.return_value = {"success": True, "hp": 50}
         result = _run(heal_player(ctx=ctx, amount=10))
-        ctx.session.heal.assert_called_once_with(10)
+        ctx.api.heal.assert_called_once_with(10)
         assert result["success"] is True
 
     def test_int_coercion(self):
         ctx = _make_ctx()
-        ctx.session.heal.return_value = {"success": True}
+        ctx.api.heal.return_value = {"success": True}
         _run(heal_player(ctx=ctx, amount=10.7))
-        ctx.session.heal.assert_called_once_with(10)
+        ctx.api.heal.assert_called_once_with(10)
 
 
 class TestDamagePlayer:
     def test_calls_session_damage(self):
         ctx = _make_ctx()
-        ctx.session.damage.return_value = {"success": True, "hp": 40}
+        ctx.api.damage.return_value = {"success": True, "hp": 40}
         result = _run(damage_player(ctx=ctx, amount=5))
-        ctx.session.damage.assert_called_once_with(5)
+        ctx.api.damage.assert_called_once_with(5)
         assert result["success"] is True
 
 
 class TestAddXp:
     def test_calls_session_add_xp(self):
         ctx = _make_ctx()
-        ctx.session.add_xp.return_value = {"success": True, "xp": 100}
+        ctx.api.add_xp.return_value = {"success": True, "xp": 100}
         result = _run(add_xp(ctx=ctx, amount=50))
-        ctx.session.add_xp.assert_called_once_with(50)
+        ctx.api.add_xp.assert_called_once_with(50)
         assert result["success"] is True
 
 
 class TestAddItem:
     def test_calls_session_add_item(self):
         ctx = _make_ctx()
-        ctx.session.add_item.return_value = {"success": True}
+        ctx.api.add_item.return_value = {"success": True}
         result = _run(add_item(ctx=ctx, item_id="potion", item_name="治疗药水", quantity=3))
-        ctx.session.add_item.assert_called_once_with("potion", "治疗药水", 3)
+        ctx.api.add_item.assert_called_once_with("potion", "治疗药水", 3)
         assert result["success"] is True
 
     def test_default_quantity(self):
         ctx = _make_ctx()
-        ctx.session.add_item.return_value = {"success": True}
+        ctx.api.add_item.return_value = {"success": True}
         _run(add_item(ctx=ctx, item_id="sword", item_name="铁剑"))
-        ctx.session.add_item.assert_called_once_with("sword", "铁剑", 1)
+        ctx.api.add_item.assert_called_once_with("sword", "铁剑", 1)
 
 
 class TestRemoveItem:
     def test_calls_session_remove_item(self):
         ctx = _make_ctx()
-        ctx.session.remove_item.return_value = {"success": True}
+        ctx.api.remove_item.return_value = {"success": True}
         result = _run(remove_item(ctx=ctx, item_id="potion", quantity=2))
-        ctx.session.remove_item.assert_called_once_with("potion", 2)
+        ctx.api.remove_item.assert_called_once_with("potion", 2)
         assert result["success"] is True
 
 
@@ -127,29 +129,29 @@ class TestRemoveItem:
 class TestActivateEvent:
     def test_calls_session(self):
         ctx = _make_ctx()
-        ctx.session.activate_event.return_value = {"success": True}
+        ctx.api.activate_event.return_value = {"success": True}
         result = _run(activate_event(ctx=ctx, event_id="ev1"))
-        ctx.session.activate_event.assert_called_once_with("ev1")
+        ctx.api.activate_event.assert_called_once_with("ev1")
         assert result["success"] is True
 
 
 class TestCompleteEvent:
     def test_calls_session_with_outcome(self):
         ctx = _make_ctx()
-        ctx.session.complete_event.return_value = {"success": True}
+        ctx.api.complete_event.return_value = {"success": True}
         result = _run(complete_event(ctx=ctx, event_id="ev1", outcome_key="victory"))
-        ctx.session.complete_event.assert_called_once_with("ev1", "victory")
+        ctx.api.complete_event.assert_called_once_with("ev1", "victory")
         assert result["success"] is True
 
     def test_no_session_returns_stub(self):
         ctx = _make_ctx()
-        ctx.session = None
+        ctx.api = None
         result = _run(complete_event(ctx=ctx, event_id="ev1"))
         assert result.get("stub") is True
 
     def test_exception_returns_error(self):
         ctx = _make_ctx()
-        ctx.session.complete_event.side_effect = ValueError("not found")
+        ctx.api.complete_event.side_effect = ValueError("not found")
         result = _run(complete_event(ctx=ctx, event_id="ev1"))
         assert result["success"] is False
         assert "not found" in result["error"]
@@ -158,25 +160,25 @@ class TestCompleteEvent:
 class TestCompleteObjective:
     def test_calls_session(self):
         ctx = _make_ctx()
-        ctx.session.complete_objective.return_value = {"success": True}
+        ctx.api.complete_objective.return_value = {"success": True}
         result = _run(complete_objective(ctx=ctx, objective_id="obj1"))
-        ctx.session.complete_objective.assert_called_once_with("obj1")
+        ctx.api.complete_objective.assert_called_once_with("obj1")
 
 
 class TestAdvanceStage:
     def test_calls_session(self):
         ctx = _make_ctx()
-        ctx.session.advance_stage.return_value = {"success": True}
+        ctx.api.advance_stage.return_value = {"success": True}
         result = _run(advance_stage(ctx=ctx, event_id="ev1", stage_id="s2"))
-        ctx.session.advance_stage.assert_called_once_with("ev1", "s2")
+        ctx.api.advance_stage.assert_called_once_with("ev1", "s2")
 
 
 class TestCompleteEventObjective:
     def test_calls_session(self):
         ctx = _make_ctx()
-        ctx.session.complete_event_objective.return_value = {"success": True}
+        ctx.api.complete_event_objective.return_value = {"success": True}
         result = _run(complete_event_objective(ctx=ctx, event_id="ev1", objective_id="obj1"))
-        ctx.session.complete_event_objective.assert_called_once_with("ev1", "obj1")
+        ctx.api.complete_event_objective.assert_called_once_with("ev1", "obj1")
 
 
 # =========================================================================
@@ -192,14 +194,14 @@ class TestCompleteEventObjective:
 class TestAdvanceChapter:
     def test_calls_session(self):
         ctx = _make_ctx()
-        ctx.session.advance_chapter.return_value = {"success": True, "chapter_id": "ch2"}
+        ctx.api.advance_chapter.return_value = {"success": True, "chapter_id": "ch2"}
         result = _run(advance_chapter(ctx=ctx, target_chapter_id="ch2", transition_type="branch"))
-        ctx.session.advance_chapter.assert_called_once_with("ch2", "branch")
+        ctx.api.advance_chapter.assert_called_once_with("ch2", "branch")
         assert result["success"] is True
 
     def test_no_session_returns_stub(self):
         ctx = _make_ctx()
-        ctx.session = None
+        ctx.api = None
         result = _run(advance_chapter(ctx=ctx, target_chapter_id="ch2"))
         assert result.get("stub") is True
 
@@ -207,13 +209,13 @@ class TestAdvanceChapter:
 class TestFailEvent:
     def test_calls_session(self):
         ctx = _make_ctx()
-        ctx.session.fail_event.return_value = {"success": True}
+        ctx.api.fail_event.return_value = {"success": True}
         result = _run(fail_event(ctx=ctx, event_id="ev1", reason="timeout"))
-        ctx.session.fail_event.assert_called_once_with("ev1", "timeout")
+        ctx.api.fail_event.assert_called_once_with("ev1", "timeout")
 
     def test_no_session_returns_stub(self):
         ctx = _make_ctx()
-        ctx.session = None
+        ctx.api = None
         result = _run(fail_event(ctx=ctx, event_id="ev1"))
         assert result.get("stub") is True
 
@@ -224,16 +226,16 @@ class TestReportFlashEvaluation:
         result = _run(report_flash_evaluation(ctx=ctx, prompt="Is it raining?", result=True))
         assert result["success"] is True
         assert result["stored"] is True
-        assert ctx.session.flash_results["Is it raining?"] is True
+        ctx.api.set_flash_result.assert_called_once_with("Is it raining?", True)
 
     def test_empty_prompt_error(self):
         ctx = _make_ctx()
         result = _run(report_flash_evaluation(ctx=ctx, prompt="", result=True))
         assert result["success"] is False
 
-    def test_no_flash_results_attr(self):
+    def test_no_api_returns_error(self):
         ctx = _make_ctx()
-        del ctx.session.flash_results
+        ctx.api = None
         result = _run(report_flash_evaluation(ctx=ctx, prompt="test", result=False))
         assert result["success"] is False
 
@@ -246,9 +248,9 @@ class TestReportFlashEvaluation:
 class TestUpdateDisposition:
     def test_calls_session_with_deltas(self):
         ctx = _make_ctx()
-        ctx.session.update_disposition.return_value = {"success": True, "npc_id": "npc1"}
+        ctx.api.update_disposition.return_value = {"success": True, "npc_id": "npc1"}
         result = _run(update_disposition(ctx=ctx, npc_id="npc1", deltas={"approval": 10}, reason="helped"))
-        ctx.session.update_disposition.assert_called_once_with("npc1", {"approval": 10}, "helped")
+        ctx.api.update_disposition.assert_called_once_with("npc1", {"approval": 10}, "helped")
         assert result["success"] is True
 
 
@@ -265,38 +267,35 @@ class TestCreateMemory:
 
     def test_no_session_stub(self):
         ctx = _make_ctx()
-        ctx.session = None
+        ctx.api = None
         result = _run(create_memory(ctx=ctx, content="something happened"))
         assert result.get("stub") is True
 
     def test_area_scope_record_memory(self):
-        session = MagicMock()
-        session.record_memory = MagicMock(return_value="mem_area_1")
-        ctx = _make_ctx(session=session)
+        ctx = _make_ctx()
+        ctx.api.record_memory = MagicMock(return_value="mem_area_1")
         result = _run(create_memory(ctx=ctx, content="found a cave", scope="area"))
         assert result["success"] is True
         assert result["scope"] == "area"
         assert result["node_id"] == "mem_area_1"
-        call_kwargs = session.record_memory.call_args.kwargs
+        call_kwargs = ctx.api.record_memory.call_args.kwargs
         assert call_kwargs["owner_id"] == "area1"
         assert call_kwargs["memory_type"] == "memory"
         assert call_kwargs["role"] == "gm"
 
     def test_character_scope(self):
-        session = MagicMock()
-        session.record_memory = MagicMock(return_value="mem_char_1")
-        ctx = _make_ctx(session=session)
+        ctx = _make_ctx()
+        ctx.api.record_memory = MagicMock(return_value="mem_char_1")
         result = _run(create_memory(ctx=ctx, content="personal memory", scope="character"))
         assert result["success"] is True
-        call_kwargs = session.record_memory.call_args.kwargs
+        call_kwargs = ctx.api.record_memory.call_args.kwargs
         assert call_kwargs["owner_id"] == "player"
 
     def test_importance_clamped(self):
-        session = MagicMock()
-        session.record_memory = MagicMock(return_value="mem_imp_1")
-        ctx = _make_ctx(session=session)
+        ctx = _make_ctx()
+        ctx.api.record_memory = MagicMock(return_value="mem_imp_1")
         _run(create_memory(ctx=ctx, content="test", importance=2.0))
-        call_kwargs = session.record_memory.call_args.kwargs
+        call_kwargs = ctx.api.record_memory.call_args.kwargs
         assert call_kwargs["importance"] <= 1.0
 
 

@@ -2,9 +2,9 @@
 import pytest
 
 from app.models.activation import SpreadingActivationConfig
-from app.world.models import WorldNode, WorldNodeType, WorldEdgeType
-from app.world.world_graph import WorldGraph
-from app.world.spreading_activation import (
+from app.world.graph.models import WorldNode, WorldNodeType, WorldEdgeType
+from app.world.graph.world_graph import WorldGraph
+from app.world.memory.activation import (
     spread_activation,
     extract_subgraph,
     find_paths,

@@ -20,13 +20,13 @@ from app.models.narrative import (
 from app.models.party import Party, PartyMember, TeammateRole
 from app.runtime.models.area_state import AreaConnection, AreaDefinition, SubLocationDef
 from app.runtime.models.world_constants import WorldConstants
-from app.world.graph_builder import (
+from app.world.graph.builder import (
     GraphBuilder,
     _event_to_behaviors,
     _extract_char_field,
     _sanitize_region_id,
 )
-from app.world.models import (
+from app.world.graph.models import (
     EventStatus,
     WorldEdgeType,
     WorldNodeType,
@@ -964,7 +964,7 @@ class TestActivationTypeBehaviors:
 
     def test_npc_given_no_unlock_behavior(self):
         """npc_given 事件不生成 unlock behavior。"""
-        from app.world.models import TriggerType
+        from app.world.graph.models import TriggerType
         event = _make_story_event("evt_npc", activation_type="npc_given")
         behaviors = _event_to_behaviors(event, "evt_npc", "ch_01")
         # 没有任何 bh_unlock_ 开头的 behavior
@@ -973,7 +973,7 @@ class TestActivationTypeBehaviors:
 
     def test_auto_enter_on_enter_trigger(self):
         """auto_enter 事件生成 ON_ENTER trigger 的 unlock behavior。"""
-        from app.world.models import TriggerType
+        from app.world.graph.models import TriggerType
         event = _make_story_event("evt_enter", activation_type="auto_enter")
         behaviors = _event_to_behaviors(event, "evt_enter", "ch_01")
         unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_enter"), None)
@@ -990,7 +990,7 @@ class TestActivationTypeBehaviors:
 
     def test_discovery_on_enter_with_narrative_hint(self):
         """discovery 事件生成 ON_ENTER + NARRATIVE_HINT action。"""
-        from app.world.models import ActionType, TriggerType
+        from app.world.graph.models import ActionType, TriggerType
         discovery_check = {"skill": "感知", "dc": 15}
         event = _make_story_event("evt_disc", activation_type="discovery", discovery_check=discovery_check)
         behaviors = _event_to_behaviors(event, "evt_disc", "ch_01")
@@ -1007,7 +1007,7 @@ class TestActivationTypeBehaviors:
 
     def test_discovery_default_check_values(self):
         """discovery 事件无 discovery_check 时使用默认值。"""
-        from app.world.models import ActionType, TriggerType
+        from app.world.graph.models import ActionType, TriggerType
         event = _make_story_event("evt_disc2", activation_type="discovery")
         behaviors = _event_to_behaviors(event, "evt_disc2", "ch_01")
         unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_disc2"), None)
@@ -1019,7 +1019,7 @@ class TestActivationTypeBehaviors:
 
     def test_event_driven_on_tick_trigger(self):
         """event_driven 事件保持 ON_TICK trigger（临时策略）。"""
-        from app.world.models import TriggerType
+        from app.world.graph.models import TriggerType
         event = _make_story_event("evt_driven", activation_type="event_driven")
         behaviors = _event_to_behaviors(event, "evt_driven", "ch_01")
         unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_driven"), None)
@@ -1028,7 +1028,7 @@ class TestActivationTypeBehaviors:
 
     def test_default_activation_type_on_tick(self):
         """activation_type 为空/默认时保持 ON_TICK trigger。"""
-        from app.world.models import TriggerType
+        from app.world.graph.models import TriggerType
         event = StoryEvent(id="evt_def", name="Default Event")  # activation_type 默认 "event_driven"
         behaviors = _event_to_behaviors(event, "evt_def", "ch_01")
         unlock_bh = next((b for b in behaviors if b.id == "bh_unlock_evt_def"), None)
@@ -1042,7 +1042,7 @@ class TestTimeoutBehavior:
     def test_time_limit_generates_timeout_behavior(self):
         """有 time_limit 的事件生成 bh_timeout_ 行为。"""
         from app.models.narrative import ConditionType
-        from app.world.models import ActionType, TriggerType
+        from app.world.graph.models import ActionType, TriggerType
         event = _make_story_event("evt_timed", time_limit=5)
         behaviors = _event_to_behaviors(event, "evt_timed", "ch_01")
         timeout_bh = next((b for b in behaviors if b.id == "bh_timeout_evt_timed"), None)
@@ -1073,7 +1073,7 @@ class TestTimeoutBehavior:
 
     def test_timeout_priority_lower_than_complete(self):
         """超时 priority(3) < complete priority(5)，确保完成优先。"""
-        from app.world.models import TriggerType
+        from app.world.graph.models import TriggerType
         event = _make_story_event(
             "evt_both",
             time_limit=3,
@@ -1094,7 +1094,7 @@ class TestCooldownBehavior:
     def test_repeatable_with_cooldown_generates_cooldown_behavior(self):
         """is_repeatable + cooldown_rounds > 0 生成 bh_cooldown_ 行为。"""
         from app.models.narrative import ConditionType
-        from app.world.models import ActionType, TriggerType
+        from app.world.graph.models import ActionType, TriggerType
         event = _make_story_event("evt_rep", is_repeatable=True, cooldown_rounds=3)
         behaviors = _event_to_behaviors(event, "evt_rep", "ch_01")
         cooldown_bh = next((b for b in behaviors if b.id == "bh_cooldown_evt_rep"), None)

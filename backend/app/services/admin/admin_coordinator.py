@@ -37,16 +37,15 @@ from app.models.admin_protocol import (
 )
 from app.services.game_session_store import GameSessionStore
 from app.services.admin.event_service import AdminEventService
-from app.services.graph_store import GraphStore
-from app.services.narrative_service import NarrativeService
+from app.world.narrative.narrative_service import NarrativeService
 from app.services.passerby_service import PasserbyService
 from app.services.admin.world_runtime import AdminWorldRuntime
-from app.services.party_service import PartyService
+from app.world.party.party_service import PartyService
 from app.services.party_store import PartyStore
 from app.services.teammate_response_service import TeammateResponseService
 
 from app.services.character_store import CharacterStore
-from app.services.character_service import CharacterService
+from app.world.player.character import CharacterService
 from app.models.state_delta import GameState
 
 
@@ -70,7 +69,6 @@ class AdminCoordinator:
         session_store: Optional[GameSessionStore] = None,
         state_manager: Optional[StateManager] = None,
         event_service: Optional[AdminEventService] = None,
-        graph_store: Optional[GraphStore] = None,
         narrative_service: Optional[NarrativeService] = None,
         passerby_service: Optional[PasserbyService] = None,
         world_runtime: Optional[AdminWorldRuntime] = None,
@@ -82,7 +80,6 @@ class AdminCoordinator:
         self._session_store = session_store or GameSessionStore()
         self._state_manager = state_manager or StateManager()
         self.event_service = event_service or AdminEventService()
-        self.graph_store = graph_store or GraphStore()
         self.narrative_service = narrative_service or NarrativeService(self._session_store)
         self.passerby_service = passerby_service or PasserbyService()
 
@@ -94,7 +91,7 @@ class AdminCoordinator:
         )
 
         # ── 共享 InstanceManager（队友 + NPC 实例化） ──
-        from app.services.instance_manager import InstanceManager
+        from app.world.npc.instance_manager import InstanceManager
         self.instance_manager = InstanceManager(
             max_instances=settings.instance_pool_max_instances,
             context_window_size=settings.instance_pool_context_window_size,
@@ -104,7 +101,7 @@ class AdminCoordinator:
 
         # ── 队伍 / 角色 / 记忆召回（flash_cpu 的前置依赖，全部上移） ──
         self.party_store = PartyStore()
-        self.party_service = party_service or PartyService(self.graph_store, self.party_store)
+        self.party_service = party_service or PartyService(self.party_store)
         self.character_store = CharacterStore()
         self.character_service = CharacterService(store=self.character_store)
         self._world_background_cache: Dict[str, str] = {}
@@ -172,7 +169,10 @@ class AdminCoordinator:
         子集合（meta/info, maps/, characters/ 等）而不一定创建根文档。
         list_documents() 能发现这些"虚拟"父文档。
         """
-        worlds_ref = self.graph_store.db.collection("worlds")
+        from google.cloud import firestore
+        from app.config import settings
+        db = firestore.Client(database=settings.firestore_database)
+        worlds_ref = db.collection("worlds")
         worlds = []
         for doc_ref in worlds_ref.list_documents():
             world_id = doc_ref.id
@@ -508,6 +508,7 @@ class AdminCoordinator:
                 try:
                     await self.instance_manager.get_or_create(
                         member.character_id, world_id,
+                        session_id=session_id,
                     )
                     prewarmed_members.append(member.name)
                 except Exception as exc:
@@ -768,31 +769,27 @@ class AdminCoordinator:
             return f"故事进入了新篇章——{chapter_name}。{maps_text}"
 
     async def _get_world_background(self, world_id: str, session_id: Optional[str] = None) -> str:
-        """获取世界背景描述（缓存）"""
+        """获取世界背景描述（缓存）。
+
+        从 WorldInstance.world_constants 读取，不再访问 Firestore。
+        """
         if world_id in self._world_background_cache:
             base_text = self._world_background_cache[world_id]
         else:
             parts = []
             try:
-                world_ref = self.graph_store.db.collection("worlds").document(world_id)
-                # 优先读取初始化器写入的 worlds/{world_id}/meta/info
-                meta_doc = world_ref.collection("meta").document("info").get()
-                data = meta_doc.to_dict() if meta_doc.exists else {}
-                # 兼容旧数据结构（世界根文档）
-                if not data:
-                    root_doc = world_ref.get()
-                    if root_doc.exists:
-                        data = root_doc.to_dict() or {}
-
-                if data:
-                    desc = data.get("description") or data.get("overview") or ""
+                from app.runtime.game_runtime import GameRuntime
+                world_instance = GameRuntime.get_instance().get_world(world_id)
+                if world_instance and world_instance.world_constants:
+                    wc = world_instance.world_constants
+                    desc = wc.description or wc.background or ""
                     if desc:
                         parts.append(desc)
-                    name = data.get("name") or data.get("title") or ""
+                    name = wc.name or ""
                     if name and not desc.startswith(name):
                         parts.insert(0, f"世界: {name}")
             except Exception as exc:
-                logger.debug("[world_background] Firestore 读取失败: %s", exc)
+                logger.debug("[world_background] WorldInstance 读取失败: %s", exc)
 
             base_text = "\n".join(parts) if parts else ""
             self._world_background_cache[world_id] = base_text
@@ -828,48 +825,50 @@ class AdminCoordinator:
         return result.replace("{{user}}", "冒险者").replace("{{char}}", "")
 
     async def _get_character_roster(self, world_id: str) -> str:
-        """获取世界角色花名册（缓存）"""
+        """获取世界角色花名册（缓存）。
+
+        从 WorldInstance.character_registry 读取，不再访问 Firestore。
+        """
         if world_id in self._character_roster_cache:
             return self._character_roster_cache[world_id]
 
         entries = []
         try:
-            chars_ref = self.graph_store.db.collection("worlds").document(world_id).collection("characters")
-            docs = chars_ref.stream()
-            for doc in docs:
-                data = doc.to_dict() or {}
-                profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
-                metadata = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
-                state = data.get("state") if isinstance(data.get("state"), dict) else {}
-                char_id = doc.id
-                name = profile.get("name") or data.get("name") or char_id
-                occupation = (
-                    profile.get("occupation")
-                    or data.get("occupation")
-                    or profile.get("role")
-                    or data.get("role")
-                    or ""
-                )
-                default_map = (
-                    metadata.get("default_map")
-                    or profile.get("default_map")
-                    or data.get("default_map")
-                    or state.get("current_map")
-                    or data.get("default_location")
-                    or ""
-                )
-                default_sub = metadata.get("default_sub_location") or profile.get("default_sub_location") or ""
-                parts = [f"{name}(id={char_id}"]
-                if occupation:
-                    parts[0] += f", {occupation}"
-                if default_map:
-                    parts[0] += f", 常驻:{default_map}"
-                if default_sub:
-                    parts[0] += f"/{default_sub}"
-                parts[0] += ")"
-                entries.append(parts[0])
+            from app.runtime.game_runtime import GameRuntime
+            world_instance = GameRuntime.get_instance().get_world(world_id)
+            if world_instance:
+                for char_id, data in world_instance.character_registry.items():
+                    profile = data.get("profile") if isinstance(data.get("profile"), dict) else {}
+                    metadata = profile.get("metadata") if isinstance(profile.get("metadata"), dict) else {}
+                    state = data.get("state") if isinstance(data.get("state"), dict) else {}
+                    name = profile.get("name") or data.get("name") or char_id
+                    occupation = (
+                        profile.get("occupation")
+                        or data.get("occupation")
+                        or profile.get("role")
+                        or data.get("role")
+                        or ""
+                    )
+                    default_map = (
+                        metadata.get("default_map")
+                        or profile.get("default_map")
+                        or data.get("default_map")
+                        or state.get("current_map")
+                        or data.get("default_location")
+                        or ""
+                    )
+                    default_sub = metadata.get("default_sub_location") or profile.get("default_sub_location") or ""
+                    entry = f"{name}(id={char_id}"
+                    if occupation:
+                        entry += f", {occupation}"
+                    if default_map:
+                        entry += f", 常驻:{default_map}"
+                    if default_sub:
+                        entry += f"/{default_sub}"
+                    entry += ")"
+                    entries.append(entry)
         except Exception as exc:
-            logger.debug("[character_roster] Firestore 读取失败: %s", exc)
+            logger.debug("[character_roster] WorldInstance 读取失败: %s", exc)
 
         result = ", ".join(entries) if entries else ""
         self._character_roster_cache[world_id] = result

@@ -149,19 +149,19 @@ class TestExcludeToolsPassthrough:
 
     def test_engine_talk_excludes_npc_dialogue(self):
         """当 engine_executed.type='talk' 时，exclude_tools 包含 npc_dialogue。"""
-        from app.world.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
+        from app.agentic.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
 
         assert "npc_dialogue" in ENGINE_TOOL_EXCLUSIONS["talk"]
 
     def test_engine_use_item_excludes_inventory_tools(self):
-        from app.world.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
+        from app.agentic.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
 
         assert "add_item" in ENGINE_TOOL_EXCLUSIONS["use_item"]
         assert "remove_item" in ENGINE_TOOL_EXCLUSIONS["use_item"]
 
     def test_move_area_and_rest_not_in_exclusions(self):
         """move_area/rest 不再有排除项（update_time 已删除）。"""
-        from app.world.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
+        from app.agentic.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
 
         assert "move_area" not in ENGINE_TOOL_EXCLUSIONS
         assert "rest" not in ENGINE_TOOL_EXCLUSIONS

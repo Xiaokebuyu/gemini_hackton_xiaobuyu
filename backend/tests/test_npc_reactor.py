@@ -3,8 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.world.npc_reactor import NPCReactor, MAX_REACTIONS_PER_ROUND
-from app.world.scene_bus import BusEntry, BusEntryType, SceneBus
+from app.world.npc.reactor import NPCReactor, MAX_REACTIONS_PER_ROUND
+from app.world.scene import BusEntry, BusEntryType, SceneBus
 
 
 def _run(coro):

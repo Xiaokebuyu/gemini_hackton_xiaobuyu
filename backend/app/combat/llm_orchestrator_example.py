@@ -8,8 +8,8 @@
 import random
 from typing import Callable, Dict, List
 
-from app.combat.combat_engine import CombatEngine
-from app.combat.models.action import ActionOption, ActionType
+from app.world.combat.combat_engine import CombatEngine
+from app.world.combat.models.action import ActionOption, ActionType
 
 
 class FakeLLM:

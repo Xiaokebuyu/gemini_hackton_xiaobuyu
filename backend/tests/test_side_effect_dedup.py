@@ -42,7 +42,7 @@ from app.models.narrative import NarrativeProgress
 from app.models.player_character import CharacterClass, CharacterRace, PlayerCharacter
 from app.models.state_delta import GameState, GameTimeState
 from app.runtime.session_runtime import SessionRuntime
-from app.world.models import WorldEvent
+from app.world.graph.models import WorldEvent
 
 
 # =============================================================================

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.world.constants import PROFICIENCY_BY_LEVEL, XP_BY_LEVEL
-from app.world.stats_manager import add_gold, add_hp, add_xp, remove_gold, remove_hp, set_hp, sync_combat_rewards
+from app.world.player.constants import PROFICIENCY_BY_LEVEL, XP_BY_LEVEL
+from app.world.player.stats import add_gold, add_hp, add_xp, remove_gold, remove_hp, set_hp, sync_combat_rewards
 
 
 # ---------------------------------------------------------------------------

@@ -194,14 +194,14 @@ class LLMService:
         try:
             thinking_config = self._get_thinking_config(thinking_level)
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.main_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     thinking_config=thinking_config
                 )
             )
-            
+
             return self._extract_response(response, thinking_level)
             
         except Exception as e:
@@ -428,7 +428,7 @@ class LLMService:
         try:
             thinking_config = self._get_thinking_config(thinking_level)
             
-            for chunk in self.client.models.generate_content_stream(
+            async for chunk in await self.client.aio.models.generate_content_stream(
                 model=self.main_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
@@ -488,7 +488,7 @@ Artifact 要求:
                 include_thoughts=False
             )
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.flash_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
@@ -545,7 +545,7 @@ Artifact 要求:
                 include_thoughts=False
             )
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.flash_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
@@ -596,14 +596,14 @@ Artifact 要求:
                 include_thoughts=False
             )
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.main_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     thinking_config=thinking_config
                 )
             )
-            
+
             text = ""
             if hasattr(response, 'candidates') and response.candidates:
                 for part in response.candidates[0].content.parts:
@@ -729,7 +729,7 @@ Artifact 要求:
                 include_thoughts=False
             )
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.flash_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
@@ -895,7 +895,7 @@ Artifact 要求:
                     )
                 tool_config = types.Tool(function_declarations=function_declarations)
             
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.main_model,
                 contents=contents,
                 config=types.GenerateContentConfig(

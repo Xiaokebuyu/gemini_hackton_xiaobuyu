@@ -51,10 +51,10 @@ from app.models.state_delta import GameState, GameTimeState
 from app.runtime.models.area_state import AreaConnection, AreaDefinition, SubLocationDef
 from app.runtime.models.world_constants import WorldConstants
 from app.runtime.session_runtime import SessionRuntime
-from app.world.behavior_engine import BehaviorEngine
-from app.world.graph_builder import GraphBuilder
-from app.world.models import EventStatus, TickResult, WorldEdgeType, WorldNodeType
-from app.world.world_graph import WorldGraph
+from app.world.events.behavior_engine import BehaviorEngine
+from app.world.graph.builder import GraphBuilder
+from app.world.graph.models import EventStatus, TickResult, WorldEdgeType, WorldNodeType
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================

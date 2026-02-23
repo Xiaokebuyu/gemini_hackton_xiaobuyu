@@ -12,23 +12,24 @@ import pytest
 from app.models.party import Party, PartyMember, TeammateRole
 from app.runtime.models.area_state import AreaConnection, AreaDefinition, SubLocationDef
 from app.runtime.models.world_constants import WorldConstants
-from app.world.graph_builder import GraphBuilder
-from app.world.models import (
+from app.world.graph.builder import GraphBuilder
+from app.world.graph.models import (
     Behavior,
     TriggerType,
     WorldEdgeType,
     WorldNode,
     WorldNodeType,
 )
-from app.world.snapshot import (
+from app.world.graph.snapshot import (
     EdgeChangeRecord,
     WorldSnapshot,
     capture_snapshot,
     dict_to_snapshot,
+    merge_snapshots,
     restore_snapshot,
     snapshot_to_dict,
 )
-from app.world.world_graph import EdgeChange, WorldGraph
+from app.world.graph.world_graph import EdgeChange, WorldGraph
 
 
 # =============================================================================
@@ -841,3 +842,156 @@ class TestRestoreIndexConsistency:
 
         entities = wg.get_entities_at("town_square")
         assert "npc_guard" in entities
+
+
+# =============================================================================
+# merge_snapshots 测试 (9)
+# =============================================================================
+
+
+class TestMergeSnapshots:
+    """merge_snapshots() 跨回合合并测试。"""
+
+    def test_node_states_accumulate(self):
+        """Round 1 states {A,B} + Round 2 states {C} → merged {A,B,C}."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"a": {"x": 1}, "b": {"y": 2}},
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"c": {"z": 3}},
+        )
+        merged = merge_snapshots(existing, new)
+        assert set(merged.node_states.keys()) == {"a", "b", "c"}
+        assert merged.node_states["a"] == {"x": 1}
+        assert merged.node_states["c"] == {"z": 3}
+
+    def test_node_states_overwrite_per_key(self):
+        """Same node_id in both → new fully overwrites old."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"a": {"x": 1, "y": 2}},
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"a": {"x": 99}},
+        )
+        merged = merge_snapshots(existing, new)
+        assert merged.node_states["a"] == {"x": 99}
+
+    def test_spawned_accumulate(self):
+        """Round 1 spawns X, Round 2 spawns Y → merged has both."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            spawned_nodes=[{"id": "x", "type": "npc", "name": "X"}],
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            spawned_nodes=[{"id": "y", "type": "npc", "name": "Y"}],
+        )
+        merged = merge_snapshots(existing, new)
+        ids = {n["id"] for n in merged.spawned_nodes}
+        assert ids == {"x", "y"}
+
+    def test_removed_accumulate(self):
+        """Round 1 removes A, Round 2 removes B → merged removes both."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            removed_node_ids=["a"],
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            removed_node_ids=["b"],
+        )
+        merged = merge_snapshots(existing, new)
+        assert set(merged.removed_node_ids) == {"a", "b"}
+
+    def test_spawned_then_removed_cancel(self):
+        """Spawned in round 1, removed in round 2 → both pruned (net zero)."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            spawned_nodes=[{"id": "x", "type": "npc", "name": "X"}],
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            removed_node_ids=["x"],
+        )
+        merged = merge_snapshots(existing, new)
+        assert all(n["id"] != "x" for n in merged.spawned_nodes)
+        assert "x" not in merged.removed_node_ids
+
+    def test_edge_changes_compact_across_rounds(self):
+        """Round 1 adds edge, Round 2 removes same edge → net cancel."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            modified_edges=[EdgeChangeRecord(
+                operation="add", source="a", target="b",
+                key="k1", relation="hosts",
+            )],
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            modified_edges=[EdgeChangeRecord(
+                operation="remove", source="a", target="b",
+                key="k1", relation="hosts",
+            )],
+        )
+        merged = merge_snapshots(existing, new)
+        assert len(merged.modified_edges) == 0
+
+    def test_game_time_from_new(self):
+        """game_day/game_hour from new snapshot."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            game_day=1, game_hour=8,
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            game_day=2, game_hour=14,
+        )
+        merged = merge_snapshots(existing, new)
+        assert merged.game_day == 2
+        assert merged.game_hour == 14
+
+    def test_removed_node_state_pruned(self):
+        """Node state from round 1 pruned if node removed in round 2."""
+        existing = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"a": {"x": 1}},
+        )
+        new = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            removed_node_ids=["a"],
+        )
+        merged = merge_snapshots(existing, new)
+        assert "a" not in merged.node_states
+
+    def test_multi_round_accumulation(self):
+        """Simulates 3 rounds of merge — all data accumulates correctly."""
+        r1 = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"a": {"v": 1}},
+            spawned_nodes=[{"id": "s1_node", "type": "npc", "name": "S1"}],
+            game_day=1, game_hour=8,
+        )
+        r2 = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"b": {"v": 2}},
+            spawned_nodes=[{"id": "s2_node", "type": "npc", "name": "S2"}],
+            game_day=1, game_hour=10,
+        )
+        r3 = WorldSnapshot(
+            world_id="w1", session_id="s1",
+            node_states={"c": {"v": 3}},
+            removed_node_ids=["s1_node"],
+            game_day=1, game_hour=12,
+        )
+
+        merged_12 = merge_snapshots(r1, r2)
+        merged_123 = merge_snapshots(merged_12, r3)
+
+        assert set(merged_123.node_states.keys()) == {"a", "b", "c"}
+        assert {n["id"] for n in merged_123.spawned_nodes} == {"s2_node"}
+        assert "s1_node" not in merged_123.removed_node_ids  # spawn+remove 互抵
+        assert merged_123.game_hour == 12

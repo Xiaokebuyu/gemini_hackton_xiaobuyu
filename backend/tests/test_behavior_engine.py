@@ -11,13 +11,13 @@ from typing import Optional
 import pytest
 
 from app.models.narrative import Condition, ConditionGroup, ConditionType
-from app.world.behavior_engine import (
+from app.world.events.behavior_engine import (
     ActionExecutor,
     BehaviorEngine,
     ConditionEvaluator,
     _ActionResult,
 )
-from app.world.models import (
+from app.world.graph.models import (
     Action,
     ActionType,
     Behavior,
@@ -31,7 +31,7 @@ from app.world.models import (
     WorldNode,
     WorldNodeType,
 )
-from app.world.world_graph import WorldGraph
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================
@@ -1236,7 +1236,7 @@ class TestEvalEventRoundsElapsed:
         ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=7)
         result = ConditionEvaluator().evaluate(None, ctx)  # 仅测基础满足
         # 直接测 handler
-        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is True
         assert result.details["elapsed"] == 3
@@ -1249,7 +1249,7 @@ class TestEvalEventRoundsElapsed:
             params={"event_id": "evt_x", "min_rounds": 5},
         )
         ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=7)
-        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is False
         assert result.details["elapsed"] == 3
@@ -1261,7 +1261,7 @@ class TestEvalEventRoundsElapsed:
             params={"event_id": "evt_x", "min_rounds": 5},
         )
         ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=None)
-        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         # None → 0，elapsed = 10 - 0 = 10 >= 5
         assert result.satisfied is True
@@ -1278,7 +1278,7 @@ class TestEvalEventRoundsElapsed:
         session.world_graph = None
         ctx = _ctx(round_count=5)
         ctx.session = session
-        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is False
         assert "error" in result.details
@@ -1290,7 +1290,7 @@ class TestEvalEventRoundsElapsed:
             params={"event_id": "nonexistent_node", "min_rounds": 1},
         )
         ctx = self._ctx_with_wg(round_count=5, node_id="evt_x", activated_at=0)
-        from app.world.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is False
         assert "error" in result.details

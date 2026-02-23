@@ -43,7 +43,7 @@ def _install_mcp_stubs() -> None:
 
 _install_mcp_stubs()
 
-from app.world.immersive_tools import AgenticContext, bind_tool, get_tool_registry
+from app.agentic.immersive_tools import AgenticContext, bind_tool, get_tool_registry
 
 
 # =========================================================================
@@ -58,11 +58,16 @@ def _make_ctx(
     scene_bus: Any = None,
     image_service: Any = None,
     world_id: str = "w1",
+    api: Any = None,
 ) -> AgenticContext:
     if session is None:
         session = MagicMock()
         session.recall = AsyncMock(return_value=[])
         session.record_memory = MagicMock(return_value="mem_test")
+    if api is None:
+        api = MagicMock()
+        api.recall = AsyncMock(return_value=[])
+        api.record_memory = MagicMock(return_value="mem_test")
     return AgenticContext(
         session=session,
         agent_id=agent_id,
@@ -70,6 +75,7 @@ def _make_ctx(
         scene_bus=scene_bus,
         world_id=world_id,
         image_service=image_service,
+        api=api,
     )
 
 
@@ -100,9 +106,9 @@ class TestAgenticContext:
 
     def test_bound_tool_calls_with_ctx(self):
         """绑定的工具调用时应将 ctx 传入。"""
-        mock_session = MagicMock()
-        mock_session.update_disposition = MagicMock(return_value={"success": True, "approval": 55})
-        ctx = _make_ctx(session=mock_session, agent_id="bartender")
+        mock_api = MagicMock()
+        mock_api.update_disposition = MagicMock(return_value={"success": True, "approval": 55})
+        ctx = _make_ctx(api=mock_api, agent_id="bartender")
 
         registry = get_tool_registry()
         react_def = next(td for td in registry if td.name == "react_to_interaction")
@@ -112,7 +118,7 @@ class TestAgenticContext:
             dimension="approval", level="slight", is_positive=True, reason="good beer",
         ))
         assert result["success"]
-        mock_session.update_disposition.assert_called_once_with(
+        mock_api.update_disposition.assert_called_once_with(
             npc_id="bartender", deltas={"approval": 5}, reason="good beer",
         )
 
@@ -141,7 +147,7 @@ class _FakeLLMResponse:
 
 class TestAgenticExecutor:
     def setup_method(self):
-        from app.world.agentic_executor import AgenticExecutor
+        from app.agentic.agentic_executor import AgenticExecutor
         self.AgenticExecutor = AgenticExecutor
 
     def _make_executor(self, text: str = "The tavern keeper nods.") -> Any:
@@ -297,7 +303,7 @@ class TestAgenticExecutor:
 class TestShareThought:
     def test_publishes_to_scene_bus(self):
         """share_thought 应 publish 到 SceneBus。"""
-        from app.world.immersive_tools import share_thought
+        from app.agentic.immersive_tools import share_thought
 
         mock_bus = MagicMock()
         ctx = _make_ctx(agent_id="warrior", scene_bus=mock_bus)
@@ -311,7 +317,7 @@ class TestShareThought:
 
     def test_internal_visibility_is_private(self):
         """visibility=internal 应设为 private。"""
-        from app.world.immersive_tools import share_thought
+        from app.agentic.immersive_tools import share_thought
 
         mock_bus = MagicMock()
         ctx = _make_ctx(agent_id="mage", scene_bus=mock_bus)
@@ -322,7 +328,7 @@ class TestShareThought:
 
     def test_no_scene_bus_returns_stub(self):
         """无 scene_bus 时返回 stub。"""
-        from app.world.immersive_tools import share_thought
+        from app.agentic.immersive_tools import share_thought
 
         ctx = _make_ctx(scene_bus=None)
         result = asyncio.run(share_thought(ctx=ctx, thought="test"))
@@ -330,12 +336,12 @@ class TestShareThought:
 
 
 class TestRecallExperience:
-    def test_calls_session_recall(self):
-        """recall_experience 应调用 session.recall。"""
-        from app.world.immersive_tools import recall_experience
+    def test_calls_api_recall(self):
+        """recall_experience 应调用 api.recall。"""
+        from app.agentic.immersive_tools import recall_experience
 
-        mock_session = MagicMock()
-        mock_session.recall = AsyncMock(
+        mock_api = MagicMock()
+        mock_api.recall = AsyncMock(
             return_value=[
                 {"name": "beer", "summary": "", "relevance": 0.9},
                 {"name": "tavern", "summary": "", "relevance": 0.7},
@@ -344,7 +350,7 @@ class TestRecallExperience:
         )
         ctx = _make_ctx(
             agent_id="bartender",
-            session=mock_session,
+            api=mock_api,
             world_id="w1",
         )
 
@@ -352,7 +358,7 @@ class TestRecallExperience:
         assert result["success"]
         assert len(result["memories"]) == 3
         assert result["memories"][0]["concept"] == "beer"
-        mock_session.recall.assert_called_once_with(
+        mock_api.recall.assert_called_once_with(
             role="npc",
             actor_id="bartender",
             seeds=["beer", "rumors"],
@@ -360,24 +366,24 @@ class TestRecallExperience:
             limit=10,
         )
 
-    def test_no_session_returns_stub(self):
-        """无 session 时返回 stub。"""
-        from app.world.immersive_tools import recall_experience
+    def test_no_api_returns_stub(self):
+        """无 api 时返回 stub。"""
+        from app.agentic.immersive_tools import recall_experience
 
-        ctx = _make_ctx(session=None)
-        ctx.session = None
+        ctx = _make_ctx()
+        ctx.api = None
         result = asyncio.run(recall_experience(ctx=ctx, seeds=["test"]))
         assert result.get("stub") is True
 
 
 class TestFormImpression:
-    def test_calls_session_record_memory(self):
-        """form_impression 应调用 session.record_memory。"""
-        from app.world.immersive_tools import form_impression
+    def test_calls_api_record_memory(self):
+        """form_impression 应调用 api.record_memory。"""
+        from app.agentic.immersive_tools import form_impression
 
-        mock_session = MagicMock()
-        mock_session.record_memory = MagicMock(return_value="impression_1")
-        ctx = _make_ctx(agent_id="bartender", session=mock_session, world_id="w1")
+        mock_api = MagicMock()
+        mock_api.record_memory = MagicMock(return_value="impression_1")
+        ctx = _make_ctx(agent_id="bartender", api=mock_api, world_id="w1")
 
         result = asyncio.run(form_impression(
             ctx=ctx, about="adventurer", impression="Seems trustworthy",
@@ -385,18 +391,18 @@ class TestFormImpression:
         assert result["success"]
         assert result["about"] == "adventurer"
         assert result["node_id"] == "impression_1"
-        mock_session.record_memory.assert_called_once()
-        call_kwargs = mock_session.record_memory.call_args.kwargs
+        mock_api.record_memory.assert_called_once()
+        call_kwargs = mock_api.record_memory.call_args.kwargs
         assert call_kwargs["memory_type"] == "impression"
         assert call_kwargs["owner_id"] == "bartender"
         assert call_kwargs["role"] == "npc"
 
-    def test_no_session_returns_stub(self):
-        """无 session 时返回 stub。"""
-        from app.world.immersive_tools import form_impression
+    def test_no_api_returns_stub(self):
+        """无 api 时返回 stub。"""
+        from app.agentic.immersive_tools import form_impression
 
-        ctx = _make_ctx(session=None)
-        ctx.session = None
+        ctx = _make_ctx()
+        ctx.api = None
         result = asyncio.run(form_impression(ctx=ctx, about="x", impression="y"))
         assert result.get("stub") is True
 
@@ -404,7 +410,7 @@ class TestFormImpression:
 class TestNoticeSomething:
     def test_publishes_to_scene_bus(self):
         """notice_something 应 publish 到 SceneBus。"""
-        from app.world.immersive_tools import notice_something
+        from app.agentic.immersive_tools import notice_something
 
         mock_bus = MagicMock()
         ctx = _make_ctx(agent_id="guard", scene_bus=mock_bus)
@@ -420,7 +426,7 @@ class TestNoticeSomething:
 
     def test_no_scene_bus_returns_stub(self):
         """无 scene_bus 时返回 stub。"""
-        from app.world.immersive_tools import notice_something
+        from app.agentic.immersive_tools import notice_something
 
         ctx = _make_ctx(scene_bus=None)
         result = asyncio.run(notice_something(ctx=ctx, observation="test"))
@@ -429,20 +435,20 @@ class TestNoticeSomething:
 
 class TestCompleteEvent:
     def test_calls_complete_event(self):
-        """complete_event 应调用 session.complete_event。"""
-        from app.world.immersive_tools import complete_event
+        """complete_event 应调用 api.complete_event。"""
+        from app.agentic.immersive_tools import complete_event
 
-        mock_session = MagicMock()
-        mock_session.complete_event.return_value = {"success": True, "event_id": "quest_01"}
-        ctx = _make_ctx(session=mock_session)
+        mock_api = MagicMock()
+        mock_api.complete_event.return_value = {"success": True, "event_id": "quest_01"}
+        ctx = _make_ctx(api=mock_api)
 
         result = asyncio.run(complete_event(ctx=ctx, event_id="quest_01"))
         assert result["success"]
-        mock_session.complete_event.assert_called_once_with("quest_01", "")
+        mock_api.complete_event.assert_called_once_with("quest_01", "")
 
-    def test_no_session_returns_stub(self):
-        """无 session 时返回 stub。"""
-        from app.world.immersive_tools import complete_event
+    def test_no_api_returns_stub(self):
+        """无 api 时返回 stub。"""
+        from app.agentic.immersive_tools import complete_event
 
         ctx = AgenticContext(session=None, agent_id="test", role="npc", scene_bus=None)
         result = asyncio.run(complete_event(ctx=ctx, event_id="q1"))
@@ -452,7 +458,7 @@ class TestCompleteEvent:
 class TestGenerateSceneImage:
     def test_calls_image_service(self):
         """generate_scene_image 应调用 image_service.generate。"""
-        from app.world.immersive_tools import generate_scene_image
+        from app.agentic.immersive_tools import generate_scene_image
 
         mock_img = MagicMock()
         mock_img.generate = AsyncMock(return_value={"url": "http://test.com/img.png"})
@@ -466,7 +472,7 @@ class TestGenerateSceneImage:
 
     def test_no_image_service_returns_stub(self):
         """无 image_service 时返回 stub。"""
-        from app.world.immersive_tools import generate_scene_image
+        from app.agentic.immersive_tools import generate_scene_image
 
         ctx = _make_ctx(image_service=None)
         result = asyncio.run(generate_scene_image(ctx=ctx, scene_description="test"))
@@ -476,28 +482,28 @@ class TestGenerateSceneImage:
 class TestStubToolsStillWork:
     """保持 stub 的工具仍应正常返回。"""
 
-    def test_advance_chapter_calls_session(self):
-        from app.world.immersive_tools import advance_chapter
+    def test_advance_chapter_calls_api(self):
+        from app.agentic.immersive_tools import advance_chapter
 
-        mock_session = MagicMock()
-        mock_session.advance_chapter.return_value = {"success": True}
-        ctx = _make_ctx(session=mock_session)
+        mock_api = MagicMock()
+        mock_api.advance_chapter.return_value = {"success": True}
+        ctx = _make_ctx(api=mock_api)
         result = asyncio.run(advance_chapter(ctx=ctx, target_chapter_id="ch2"))
         assert result["success"]
-        mock_session.advance_chapter.assert_called_once()
+        mock_api.advance_chapter.assert_called_once()
 
-    def test_fail_event_calls_session(self):
-        from app.world.immersive_tools import fail_event
+    def test_fail_event_calls_api(self):
+        from app.agentic.immersive_tools import fail_event
 
-        mock_session = MagicMock()
-        mock_session.fail_event.return_value = {"success": True}
-        ctx = _make_ctx(session=mock_session)
+        mock_api = MagicMock()
+        mock_api.fail_event.return_value = {"success": True}
+        ctx = _make_ctx(api=mock_api)
         result = asyncio.run(fail_event(ctx=ctx, event_id="e1"))
         assert result["success"]
-        mock_session.fail_event.assert_called_once()
+        mock_api.fail_event.assert_called_once()
 
     def test_evaluate_offer_stub(self):
-        from app.world.immersive_tools import evaluate_offer
+        from app.agentic.immersive_tools import evaluate_offer
 
         ctx = _make_ctx()
         result = asyncio.run(evaluate_offer(ctx=ctx, item_id="sword", offered_price=100))
@@ -505,7 +511,7 @@ class TestStubToolsStillWork:
         assert result.get("stub") is True
 
     def test_express_need_stub(self):
-        from app.world.immersive_tools import express_need
+        from app.agentic.immersive_tools import express_need
 
         ctx = _make_ctx()
         result = asyncio.run(express_need(ctx=ctx, need="I need rest"))

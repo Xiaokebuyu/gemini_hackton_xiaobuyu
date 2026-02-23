@@ -10,14 +10,14 @@ Tests for EventPropagator (C5).
 """
 import pytest
 
-from app.world.event_propagation import EventPropagator, DEFAULT_DECAY, MAX_DEPTH_SCOPE, MAX_DEPTH_GLOBAL
-from app.world.models import (
+from app.world.events.propagation import EventPropagator, DEFAULT_DECAY, MAX_DEPTH_SCOPE, MAX_DEPTH_GLOBAL
+from app.world.graph.models import (
     WorldEdgeType,
     WorldEvent,
     WorldNode,
     WorldNodeType,
 )
-from app.world.world_graph import WorldGraph
+from app.world.graph.world_graph import WorldGraph
 
 
 # =============================================================================

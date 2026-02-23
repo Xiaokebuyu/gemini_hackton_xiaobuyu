@@ -180,7 +180,7 @@ class PipelineOrchestrator:
         # ===== SceneBus: 写入玩家输入 + pre-tick hints =====
         # 对齐 Direction A 手册顺序：玩家输入先写总线，再做引擎前置执行。
         if session.scene_bus:
-            from app.world.scene_bus import BusEntry, BusEntryType
+            from app.world.scene import BusEntry, BusEntryType
             _vis = f"private:{private_target}" if is_private and private_target else "public"
             session.scene_bus.publish(BusEntry(
                 actor="player",
@@ -199,8 +199,8 @@ class PipelineOrchestrator:
 
         # ===== A.2: 引擎前置执行（高置信度机械意图）=====
         if session.world_graph:
-            from app.world.intent_resolver import IntentResolver
-            from app.world.intent_executor import IntentExecutor
+            from app.world.intent.resolver import IntentResolver
+            from app.world.intent.executor import IntentExecutor
             resolver = IntentResolver(session.world_graph, session)
             intent = resolver.resolve(player_input)
             if intent is not None:
@@ -257,13 +257,13 @@ class PipelineOrchestrator:
         npc_autonomous_responses: List[Dict[str, Any]] = []
         if session.scene_bus:
             try:
-                from app.services.npc_reactor import NPCReactor
+                from app.world.npc.reactor import NPCReactor
                 wg = getattr(session, "world_graph", None)
                 reactor = NPCReactor(world_graph=wg)
                 npc_reactions = await reactor.collect_reactions(
                     session.scene_bus, session, context_dict,
                 )
-                from app.world.scene_bus import BusEntry as _BE
+                from app.world.scene import BusEntry as _BE
                 for r in npc_reactions:
                     session.scene_bus.publish(r, event_queue)
                     npc_autonomous_responses.append({
@@ -280,9 +280,12 @@ class PipelineOrchestrator:
                 logger.error("[v4] NPC reactor failed: %s", exc, exc_info=True)
 
         # ===== B 阶段: Agentic 会话（AgenticExecutor + RoleRegistry + extra_tools）=====
-        from app.world.agentic_executor import AgenticExecutor
-        from app.world.immersive_tools import AgenticContext
-        from app.world.gm_extra_tools import build_gm_extra_tools, ENGINE_TOOL_EXCLUSIONS
+        from app.agentic.agentic_executor import AgenticExecutor
+        from app.agentic.immersive_tools import AgenticContext
+        from app.agentic.gm_extra_tools import build_gm_extra_tools, ENGINE_TOOL_EXCLUSIONS
+
+        from app.services.world_api import WorldAPI
+        gm_api = WorldAPI(session, role="gm", agent_id="gm")
 
         gm_ctx = AgenticContext(
             session=session,
@@ -296,6 +299,7 @@ class PipelineOrchestrator:
             world_graph=getattr(session, "world_graph", None),
             image_service=getattr(self.flash_cpu, "image_service", None),
             flash_cpu=self.flash_cpu,
+            api=gm_api,
         )
 
         extra_tools = build_gm_extra_tools(
@@ -358,7 +362,7 @@ class PipelineOrchestrator:
 
         # ===== SceneBus: B 阶段后写入工具结果 + NPC 响应 + GM 叙述 =====
         if session.scene_bus:
-            from app.world.scene_bus import BusEntry, BusEntryType
+            from app.world.scene import BusEntry, BusEntryType
             for tc in agentic_result.tool_calls:
                 if tc.success:
                     session.scene_bus.publish(BusEntry(
@@ -493,7 +497,7 @@ class PipelineOrchestrator:
 
         # ===== SceneBus: C 阶段写入队友响应 + clear =====
         if session.scene_bus:
-            from app.world.scene_bus import BusEntry, BusEntryType as _BET
+            from app.world.scene import BusEntry, BusEntryType as _BET
             for t in teammate_responses:
                 session.scene_bus.publish(BusEntry(
                     actor=t["character_id"],
@@ -747,7 +751,7 @@ class PipelineOrchestrator:
 
         # SceneBus: contact + 写入玩家发言
         if session.scene_bus:
-            from app.world.scene_bus import BusEntry, BusEntryType
+            from app.world.scene import BusEntry, BusEntryType
             session.scene_bus.contact(npc_id)
             session.scene_bus.publish(BusEntry(
                 actor="player",
@@ -760,11 +764,14 @@ class PipelineOrchestrator:
 
         # ── B1: NPC Agentic Response ──
         try:
-            from app.world.agentic_executor import AgenticExecutor
-            from app.world.immersive_tools import AgenticContext
+            from app.agentic.agentic_executor import AgenticExecutor
+            from app.agentic.immersive_tools import AgenticContext
 
             npc_traits = set(npc_node.properties.get("traits", []))
             event_queue: asyncio.Queue = asyncio.Queue()
+
+            from app.services.world_api import WorldAPI
+            npc_api = WorldAPI(session, role="npc", agent_id=npc_id)
 
             npc_ctx = AgenticContext(
                 session=session,
@@ -776,6 +783,7 @@ class PipelineOrchestrator:
                 area_id=getattr(session, "area_id", ""),
                 location_id=getattr(session, "sub_location", ""),
                 world_graph=getattr(session, "world_graph", None),
+                api=npc_api,
             )
 
             npc_system_prompt = self._build_npc_system_prompt(npc_node, session)
@@ -814,7 +822,7 @@ class PipelineOrchestrator:
 
             # 写入总线
             if session.scene_bus and npc_response_text:
-                from app.world.scene_bus import BusEntry, BusEntryType
+                from app.world.scene import BusEntry, BusEntryType
                 session.scene_bus.publish(BusEntry(
                     actor=npc_id,
                     actor_name=npc_name,
@@ -828,6 +836,7 @@ class PipelineOrchestrator:
 
         # ── B2: GM Observer (可 [PASS]) ──
         try:
+            gm_obs_api = WorldAPI(session, role="gm", agent_id="gm")
             gm_ctx = AgenticContext(
                 session=session,
                 agent_id="gm",
@@ -838,6 +847,7 @@ class PipelineOrchestrator:
                 area_id=getattr(session, "area_id", ""),
                 location_id=getattr(session, "sub_location", ""),
                 world_graph=getattr(session, "world_graph", None),
+                api=gm_obs_api,
             )
             gm_prompt = (
                 f"玩家正在与{npc_name}对话。作为 GM，观察这次交互。\n"
@@ -855,7 +865,7 @@ class PipelineOrchestrator:
                 system_prompt="你是游戏 GM。简洁观察，必要时渲染氛围。不必要时输出[PASS]。",
                 user_prompt=gm_prompt,
                 model_override=settings.admin_agentic_model,
-                thinking_level=settings.admin_agentic_thinking,
+                thinking_level=settings.admin_flash_thinking_level,
             )
             gm_narration = gm_result.narration or ""
             if gm_narration:
@@ -1005,12 +1015,13 @@ class PipelineOrchestrator:
             npc_id,
             world_id,
             world_graph=wg,
+            session_id=session_id,
         )
         instance.context_window.add_message("user", player_input)
 
         # SceneBus: contact + 写入玩家发言
         if session.scene_bus:
-            from app.world.scene_bus import BusEntry, BusEntryType
+            from app.world.scene import BusEntry, BusEntryType
             session.scene_bus.contact(npc_id)
             session.scene_bus.publish(BusEntry(
                 actor="player",
@@ -1024,11 +1035,14 @@ class PipelineOrchestrator:
         # ── B: NPC Agentic Response ──
         npc_response_text = ""
         try:
-            from app.world.agentic_executor import AgenticExecutor
-            from app.world.immersive_tools import AgenticContext
+            from app.agentic.agentic_executor import AgenticExecutor
+            from app.agentic.immersive_tools import AgenticContext
 
             npc_traits = set(npc_node.properties.get("traits", []))
             event_queue: asyncio.Queue = asyncio.Queue()
+
+            from app.services.world_api import WorldAPI
+            npc_api = WorldAPI(session, role="npc", agent_id=npc_id)
 
             npc_ctx = AgenticContext(
                 session=session,
@@ -1040,6 +1054,7 @@ class PipelineOrchestrator:
                 area_id=getattr(session, "area_id", ""),
                 location_id=getattr(session, "sub_location", ""),
                 world_graph=getattr(session, "world_graph", None),
+                api=npc_api,
             )
 
             # 系统提示来自 InstanceManager（保留双层认知 + 记忆注入）
@@ -1083,7 +1098,7 @@ class PipelineOrchestrator:
             # 写回 InstanceManager 上下文 + SceneBus
             instance.context_window.add_message("assistant", npc_response_text)
             if session.scene_bus and npc_response_text:
-                from app.world.scene_bus import BusEntry, BusEntryType
+                from app.world.scene import BusEntry, BusEntryType
                 session.scene_bus.publish(BusEntry(
                     actor=npc_id,
                     actor_name=npc_name,
@@ -1137,6 +1152,7 @@ class PipelineOrchestrator:
                 world_id,
                 npc_id,
                 world_graph=session.world_graph,
+                session_id=session_id,
             )
         except Exception as exc:
             logger.debug("[private_chat] instance graphize check failed: %s", exc)
@@ -1283,7 +1299,7 @@ class PipelineOrchestrator:
           - all_events: WorldEvent 列表（XP/物品/声望/世界标记等副作用）
           - narrative_hints: 引擎行为产生的叙事文本
         """
-        from app.world.models import WorldNodeType
+        from app.world.graph.models import WorldNodeType
         update: Dict[str, Any] = {}
         newly_available: List[Dict] = []
         auto_completed: List[Dict] = []
@@ -1417,7 +1433,7 @@ class PipelineOrchestrator:
                         else npc_id
                     )
                     if session.scene_bus:
-                        from app.world.scene_bus import BusEntry, BusEntryType
+                        from app.world.scene import BusEntry, BusEntryType
                         session.scene_bus.publish(
                             BusEntry(
                                 actor=npc_id,
@@ -1546,7 +1562,7 @@ class PipelineOrchestrator:
         Format: /roll <skill_or_ability> [DC]
         Examples: /roll stealth 15, /roll dex, /roll perception
         """
-        from app.services.ability_check_service import (
+        from app.world.player.ability_check import (
             AbilityCheckService,
             SKILL_ABILITY_MAP,
             VALID_ABILITIES,

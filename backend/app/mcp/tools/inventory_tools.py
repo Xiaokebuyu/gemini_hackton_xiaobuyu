@@ -2,7 +2,7 @@
 import json
 from typing import Optional
 
-from app.services.character_service import CharacterService
+from app.world.player.character import CharacterService
 from app.services.character_store import CharacterStore
 from app.services import item_registry
 

@@ -65,6 +65,16 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """应用关闭时的清理"""
+    # flush NPC 实例上下文到图谱
+    try:
+        from app.dependencies import get_instance_manager
+        instance_manager = get_instance_manager()
+        await instance_manager.flush_all()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "InstanceManager flush_all failed on shutdown: %s", exc
+        )
     await MCPClientPool.shutdown()
 
 

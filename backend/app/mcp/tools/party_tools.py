@@ -1,12 +1,10 @@
 """Party tools for MCP server."""
 import json
 
-from app.services.graph_store import GraphStore
-from app.services.party_service import PartyService
+from app.world.party.party_service import PartyService
 from app.services.party_store import PartyStore
 
 _party_service = PartyService(
-    graph_store=GraphStore(),
     party_store=PartyStore(),
 )
 

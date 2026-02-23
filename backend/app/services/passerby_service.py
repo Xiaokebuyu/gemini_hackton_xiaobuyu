@@ -287,14 +287,15 @@ class PasserbyService:
             for t_id, t_data in templates_data.items():
                 try:
                     self._templates[key][t_id] = PasserbyTemplate(**t_data)
-                except Exception:
-                    pass  # 忽略无效模板
+                except Exception as e:
+                    logger.warning("Invalid passerby template %s: %s", t_id, e)
 
             shared_memories = []
             for memory_data in shared_memories_data:
                 try:
                     shared_memories.append(SharedMemoryContribution(**memory_data))
-                except Exception:
+                except Exception as e:
+                    logger.warning("Invalid shared memory data: %s", e)
                     continue
 
             return LocationPasserbyPool(
@@ -447,7 +448,8 @@ class PasserbyService:
 
             return "\n".join(contents)
 
-        except Exception:
+        except Exception as e:
+            logger.warning("_generate_description failed: %s", e)
             return ""
 
     def _generate_name(self, template_id: str) -> str:

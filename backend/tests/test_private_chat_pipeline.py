@@ -109,7 +109,6 @@ def _make_pipeline_with_instance_manager():
         flash_cpu=flash_cpu,
         party_service=MagicMock(),
         narrative_service=MagicMock(),
-        graph_store=MagicMock(),
         teammate_response_service=MagicMock(),
         session_history_manager=MagicMock(),
         character_store=MagicMock(),
@@ -334,6 +333,7 @@ class TestPrivateChatInstanceManagerGraphize:
                 "w1",
                 "priestess",
                 world_graph=mock_session.world_graph,
+                session_id="s1",
             )
 
 

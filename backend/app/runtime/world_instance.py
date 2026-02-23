@@ -86,12 +86,12 @@ class WorldInstance:
             len(self.skill_registry),
         )
 
-    # ---- Firestore 加载方法 ----
+    # ---- Firestore 加载方法（sync 实体 + async 包装）----
 
-    async def _load_world_constants(
+    def _load_world_constants_sync(
         self, world_ref: firestore.DocumentReference
     ) -> None:
-        """加载 worlds/{wid}/meta/info 单文档。"""
+        """同步加载 worlds/{wid}/meta/info 单文档。"""
         doc = world_ref.collection("meta").document("info").get()
         if not doc.exists:
             logger.warning(
@@ -102,10 +102,15 @@ class WorldInstance:
         data.setdefault("world_id", self.world_id)
         self.world_constants = WorldConstants(**data)
 
-    async def _load_characters(
+    async def _load_world_constants(
         self, world_ref: firestore.DocumentReference
     ) -> None:
-        """加载 worlds/{wid}/characters/ 集合遍历。"""
+        await asyncio.to_thread(self._load_world_constants_sync, world_ref)
+
+    def _load_characters_sync(
+        self, world_ref: firestore.DocumentReference
+    ) -> None:
+        """同步加载 worlds/{wid}/characters/ 集合遍历。"""
         chars_ref = world_ref.collection("characters")
         for doc in chars_ref.stream():
             data = doc.to_dict()
@@ -114,10 +119,15 @@ class WorldInstance:
             data["id"] = doc.id
             self.character_registry[doc.id] = data
 
-    async def _load_areas(
+    async def _load_characters(
         self, world_ref: firestore.DocumentReference
     ) -> None:
-        """加载 worlds/{wid}/maps/ 集合（含 info/data 子文档）。"""
+        await asyncio.to_thread(self._load_characters_sync, world_ref)
+
+    def _load_areas_sync(
+        self, world_ref: firestore.DocumentReference
+    ) -> None:
+        """同步加载 worlds/{wid}/maps/ 集合（含 info/data 子文档）。"""
         maps_ref = world_ref.collection("maps")
         for map_doc in maps_ref.stream():
             info_doc = (
@@ -131,10 +141,15 @@ class WorldInstance:
                 area_id, info
             )
 
-    async def _load_chapters(
+    async def _load_areas(
         self, world_ref: firestore.DocumentReference
     ) -> None:
-        """加载 worlds/{wid}/chapters/ 集合遍历。"""
+        await asyncio.to_thread(self._load_areas_sync, world_ref)
+
+    def _load_chapters_sync(
+        self, world_ref: firestore.DocumentReference
+    ) -> None:
+        """同步加载 worlds/{wid}/chapters/ 集合遍历。"""
         chapters_ref = world_ref.collection("chapters")
         for doc in chapters_ref.stream():
             data = doc.to_dict()
@@ -143,10 +158,15 @@ class WorldInstance:
             data["id"] = doc.id
             self.chapter_registry[doc.id] = data
 
-    async def _load_mainlines(
+    async def _load_chapters(
         self, world_ref: firestore.DocumentReference
     ) -> None:
-        """加载 worlds/{wid}/mainlines/ 集合遍历。"""
+        await asyncio.to_thread(self._load_chapters_sync, world_ref)
+
+    def _load_mainlines_sync(
+        self, world_ref: firestore.DocumentReference
+    ) -> None:
+        """同步加载 worlds/{wid}/mainlines/ 集合遍历。"""
         mainlines_ref = world_ref.collection("mainlines")
         for doc in mainlines_ref.stream():
             data = doc.to_dict()
@@ -155,10 +175,15 @@ class WorldInstance:
             data["id"] = doc.id
             self.mainline_registry[doc.id] = data
 
-    async def _load_combat_entities(
+    async def _load_mainlines(
+        self, world_ref: firestore.DocumentReference
+    ) -> None:
+        await asyncio.to_thread(self._load_mainlines_sync, world_ref)
+
+    def _load_combat_entities_sync(
         self, world_ref: firestore.DocumentReference, entity_type: str
     ) -> None:
-        """加载 worlds/{wid}/combat_entities/{type} 文档中的 entries 数组。"""
+        """同步加载 worlds/{wid}/combat_entities/{type} 文档中的 entries 数组。"""
         doc = (
             world_ref.collection("combat_entities")
             .document(entity_type)
@@ -185,6 +210,11 @@ class WorldInstance:
             entry_id = entry.get("id") or entry.get("name", "")
             if entry_id:
                 registry[str(entry_id)] = entry
+
+    async def _load_combat_entities(
+        self, world_ref: firestore.DocumentReference, entity_type: str
+    ) -> None:
+        await asyncio.to_thread(self._load_combat_entities_sync, world_ref, entity_type)
 
     # ---- 数据解析辅助 ----
 

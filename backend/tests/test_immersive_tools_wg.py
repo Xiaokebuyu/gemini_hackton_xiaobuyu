@@ -40,14 +40,14 @@ def _install_mcp_stubs() -> None:
 
 _install_mcp_stubs()
 
-from app.world.immersive_tools import (
+from app.agentic.immersive_tools import (
     AgenticContext,
     create_memory,
     form_impression,
     recall_experience,
 )
-from app.world.models import WorldNode
-from app.world.world_graph import WorldGraph
+from app.world.graph.models import WorldNode
+from app.world.graph.world_graph import WorldGraph
 
 
 def _run(coro):
@@ -113,6 +113,7 @@ def _make_ctx(world_graph=None, agent_id="npc_1", role="npc", recall_records=Non
         area_id="area_1",
         location_id="loc_1",
         world_graph=world_graph,
+        api=session,  # _FakeSession implements same interface as WorldAPI
     )
 
 
@@ -145,9 +146,9 @@ def test_form_impression_world_graph():
     assert node.importance == 0.8
 
 
-def test_form_impression_stub_without_session():
+def test_form_impression_stub_without_api():
     ctx = _make_ctx(world_graph=None)
-    ctx.session = None
+    ctx.api = None
     result = _run(form_impression(ctx=ctx, about="player", impression="Seems nice"))
     assert result["success"] is True
     assert result.get("stub") is True
@@ -247,9 +248,9 @@ def test_recall_experience_with_session_recall():
     assert ctx.session.last_recall_kwargs["actor_id"] == "npc_1"
 
 
-def test_recall_experience_stub_without_session():
+def test_recall_experience_stub_without_api():
     ctx = _make_ctx(world_graph=None)
-    ctx.session = None
+    ctx.api = None
     result = _run(recall_experience(ctx=ctx, seeds=["anything"]))
     assert result["success"] is True
     assert result.get("stub") is True

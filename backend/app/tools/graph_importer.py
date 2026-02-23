@@ -10,11 +10,87 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
+from google.cloud import firestore
+
+from app.config import settings
 from app.models.graph import GraphData, MemoryEdge, MemoryNode
-from app.services.graph_schema import GraphSchemaOptions, validate_graph_data
-from app.services.graph_store import GraphStore
+from app.world.graph.schema import GraphSchemaOptions, validate_graph_data
+
+
+def _get_base_ref(
+    db: firestore.Client,
+    world_id: str,
+    graph_type: str,
+    character_id: Optional[str] = None,
+) -> firestore.DocumentReference:
+    if graph_type == "character":
+        if not character_id:
+            raise ValueError("character graph requires character_id")
+        return (
+            db.collection("worlds")
+            .document(world_id)
+            .collection("characters")
+            .document(character_id)
+        )
+    return (
+        db.collection("worlds")
+        .document(world_id)
+        .collection("graphs")
+        .document(graph_type)
+    )
+
+
+def _sanitize_index_key(value: str) -> str:
+    return value.replace("/", "_").strip()
+
+
+def _index_node_operations(
+    base_ref: firestore.DocumentReference,
+    node: MemoryNode,
+) -> list:
+    operations = []
+    payload = {
+        "node_id": node.id,
+        "name": node.name,
+        "type": node.type,
+    }
+    if node.type:
+        type_ref = (
+            base_ref.collection("type_index")
+            .document(node.type)
+            .collection("nodes")
+            .document(node.id)
+        )
+        operations.append((type_ref, payload, True))
+    if node.name:
+        name_key = _sanitize_index_key(node.name.lower())
+        name_ref = (
+            base_ref.collection("name_index")
+            .document(name_key)
+            .collection("nodes")
+            .document(node.id)
+        )
+        operations.append((name_ref, payload, True))
+    return operations
+
+
+def _commit_in_batches(
+    db: firestore.Client,
+    operations: Iterable[Tuple[firestore.DocumentReference, dict, bool]],
+) -> None:
+    batch = db.batch()
+    op_count = 0
+    for doc_ref, payload, merge in operations:
+        batch.set(doc_ref, payload, merge=merge)
+        op_count += 1
+        if op_count >= 450:
+            batch.commit()
+            batch = db.batch()
+            op_count = 0
+    if op_count:
+        batch.commit()
 
 
 def _load_payloads(path: Path) -> List[dict]:
@@ -60,7 +136,7 @@ async def import_graph(
     validate: bool,
     strict: bool,
 ) -> Tuple[int, int]:
-    store = GraphStore()
+    db = firestore.Client(database=settings.firestore_database)
     payloads = []
     for file_path in _collect_input_files(input_path):
         payloads.extend(_load_payloads(file_path))
@@ -76,14 +152,20 @@ async def import_graph(
         if errors:
             raise ValueError(f"Schema validation failed: {errors}")
 
-    await store.save_graph(
-        world_id=world_id,
-        graph_type=graph_type,
-        graph=graph_data,
-        character_id=character_id,
-        merge=merge,
-        build_indexes=build_indexes,
-    )
+    base_ref = _get_base_ref(db, world_id, graph_type, character_id)
+    nodes_ref = base_ref.collection("nodes")
+    edges_ref = base_ref.collection("edges")
+
+    operations = []
+    for node in graph_data.nodes:
+        operations.append((nodes_ref.document(node.id), node.model_dump(), merge))
+    for edge in graph_data.edges:
+        operations.append((edges_ref.document(edge.id), edge.model_dump(), merge))
+    if build_indexes:
+        for node in graph_data.nodes:
+            operations.extend(_index_node_operations(base_ref, node))
+    _commit_in_batches(db, operations)
+
     return len(graph_data.nodes), len(graph_data.edges)
 
 

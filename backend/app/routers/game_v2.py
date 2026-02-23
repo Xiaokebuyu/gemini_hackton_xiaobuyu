@@ -665,7 +665,7 @@ async def player_dice_roll(
 ):
     """玩家通过 UI 按钮发起掷骰（不触发 LLM 叙述）。"""
     try:
-        from app.services.ability_check_service import AbilityCheckService
+        from app.world.player.ability_check import AbilityCheckService
 
         svc = AbilityCheckService(store=coordinator.character_store)
         result = await svc.perform_check(

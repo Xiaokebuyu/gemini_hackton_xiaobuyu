@@ -80,7 +80,7 @@ class TestBuildNpcSystemPrompt:
             flash_cpu=MagicMock(),
             party_service=MagicMock(),
             narrative_service=MagicMock(),
-            graph_store=MagicMock(),
+
             teammate_response_service=MagicMock(),
             session_history_manager=MagicMock(),
             character_store=MagicMock(),
@@ -188,7 +188,7 @@ class TestGenerateDialogueOptions:
             flash_cpu=MagicMock(),
             party_service=MagicMock(),
             narrative_service=MagicMock(),
-            graph_store=MagicMock(),
+
             teammate_response_service=MagicMock(),
             session_history_manager=MagicMock(),
             character_store=MagicMock(),
@@ -256,7 +256,7 @@ class TestProcessInteractStream:
             flash_cpu=MagicMock(),
             party_service=MagicMock(),
             narrative_service=MagicMock(),
-            graph_store=MagicMock(),
+
             teammate_response_service=MagicMock(),
             session_history_manager=MagicMock(),
             character_store=MagicMock(),
@@ -303,7 +303,7 @@ class TestProcessInteractStream:
 
     @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
     @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     @patch("app.services.admin.pipeline_orchestrator.settings")
     def test_npc_not_found_yields_error(self, mock_settings, MockExecutor, MockSR, MockGR):
         mock_settings.npc_tier_config.passerby_model = "flash"
@@ -333,7 +333,7 @@ class TestProcessInteractStream:
 
     @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
     @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     @patch("app.services.admin.pipeline_orchestrator.settings")
     def test_event_sequence_has_interact_start_and_complete(
         self, mock_settings, MockExecutor, MockSR, MockGR,
@@ -387,7 +387,7 @@ class TestProcessInteractStream:
 
     @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
     @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     @patch("app.services.admin.pipeline_orchestrator.settings")
     def test_gm_pass_produces_no_observation(
         self, mock_settings, MockExecutor, MockSR, MockGR,
@@ -436,7 +436,7 @@ class TestProcessInteractStream:
 
     @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
     @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     @patch("app.services.admin.pipeline_orchestrator.settings")
     def test_scene_bus_cleared_after_interact(
         self, mock_settings, MockExecutor, MockSR, MockGR,
@@ -476,7 +476,7 @@ class TestProcessInteractStream:
 
     @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
     @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
-    @patch("app.world.agentic_executor.AgenticExecutor")
+    @patch("app.agentic.agentic_executor.AgenticExecutor")
     @patch("app.services.admin.pipeline_orchestrator.settings")
     def test_no_player_yields_error(
         self, mock_settings, MockExecutor, MockSR, MockGR,
