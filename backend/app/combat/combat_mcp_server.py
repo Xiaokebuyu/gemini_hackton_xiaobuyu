@@ -23,7 +23,6 @@ from app.world.combat.template_mapper import skill_to_spell_template, slugify
 from app.world.combat.models.combat_session import CombatState
 from app.models.event import Event, EventContent, EventType, GMEventIngestRequest
 from app.models.game import CombatContext
-from app.services.game_session_store import GameSessionStore
 from app.services.admin.event_service import AdminEventService
 
 
@@ -52,7 +51,7 @@ combat_mcp = FastMCP(
 
 # 全局战斗引擎实例
 combat_engine = CombatEngine()
-session_store = GameSessionStore()
+session_store = None  # GameSessionStore 已废弃，待战斗系统重建
 event_service = AdminEventService()
 
 

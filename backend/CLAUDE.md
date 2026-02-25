@@ -22,30 +22,11 @@ pytest -v                                        # 全部测试
 pytest tests/test_spreading_activation.py -v     # 单个测试文件
 
 # MCP 服务器（独立启动，通常不需要——stdio 模式自动管理）
-python -m app.mcp.game_tools_server                                         # Game Tools (stdio)
-python -m app.mcp.game_tools_server --transport streamable-http --port 9101 # Game Tools (HTTP)
 python -m app.combat.combat_mcp_server                                      # Combat (stdio)
 python -m app.combat.combat_mcp_server --transport streamable-http --port 9102 # Combat (HTTP)
 
 # 使用启动脚本
 bash 启动服务/run_fastapi.sh
-bash 启动服务/run_mcp_services.sh    # 一键启动 MCP (HTTP 模式)
-```
-
-### E2E 测试
-
-需先启动 MCP 服务（HTTP 模式）：
-
-```bash
-bash 启动服务/run_e2e_tests.sh              # 运行所有阶段
-bash 启动服务/run_e2e_tests.sh phase1       # 单阶段: 基础连通性
-bash 启动服务/run_e2e_tests.sh --check      # 只检查前置条件
-
-# 手动运行
-PYTHONPATH=. \
-  MCP_TOOLS_TRANSPORT=streamable-http MCP_TOOLS_ENDPOINT=http://127.0.0.1:9101/mcp \
-  MCP_COMBAT_TRANSPORT=streamable-http MCP_COMBAT_ENDPOINT=http://127.0.0.1:9102/mcp \
-  pytest tests/test_fastapi_to_mcp.py -v -s
 ```
 
 ### 世界数据提取（统一管线）
@@ -184,14 +165,12 @@ Setup → InstanceManager 双层认知 → NPC Agentic Response → Dialogue Opt
    - 队友位置随玩家导航自动同步
    - 队友使用 `AgenticExecutor` + RoleRegistry 沉浸式工具（4b 迁移完成）
 
-6. **MCP 工具层** (`app/mcp/`, `app/services/mcp_client_pool.py`)
-   - `game_tools_server.py`: 游戏 MCP 服务器
-   - `app/combat/combat_mcp_server.py`: 战斗 MCP 服务器
-   - 工具模块在 `app/mcp/tools/`：graph、narrative、navigation、npc、party、passerby、time
+6. **MCP 工具层** (`app/services/mcp_client_pool.py`, `app/combat/combat_mcp_server.py`)
+   - 仅 Combat MCP 服务器在用（Game Tools MCP 已随 immersive_tools 替代删除）
    - **MCPClientPool 单例**（`mcp_client_pool.py`）：
      - 每服务器调用锁（防止 stdio 交错）+ 连接锁（防止并发重连）
      - 健康检查 + 自动重连 + 30 秒冷却（超时错误豁免冷却）
-     - 工具级超时：默认 20s，`npc_respond` 90s
+     - 工具级超时：默认 20s
 
 7. **知识图谱** (`app/services/memory_graph.py`, `spreading_activation.py`)
    - 扩散激活算法查找相关概念
@@ -219,7 +198,7 @@ Setup → InstanceManager 双层认知 → NPC Agentic Response → Dialogue Opt
 - 角色创建: `GET .../character-creation/options`, `POST .../character`, `GET .../character`
 - 导航: `GET .../location`, `POST .../navigate`, `GET .../sub-locations`, `POST .../sub-location/enter`, `POST .../sub-location/leave`
 - 时间: `GET .../time`, `POST .../time/advance`, `POST .../advance-day`
-- 游戏: `POST .../input`（主入口）, `POST .../input/stream`（SSE）, `POST .../scene`, `GET .../context`
+- 游戏: `POST .../input/stream`（SSE，主入口）, `POST .../scene`, `GET .../context`
 - NPC 交互: `POST .../interact/stream`（SSE，NPC 直接交互：NPC回复→GM观察→队友旁观→对话选项）
 - 对话: `POST .../dialogue/start`, `POST .../dialogue/end`, `POST .../private-chat/stream`（SSE，私聊走 Pipeline：NPC Agentic 回复→对话选项→持久化，GM/队友跳过）
 - 战斗: `POST .../combat/trigger`, `POST .../combat/start`, `POST .../combat/action`, `POST .../combat/resolve`
@@ -281,10 +260,8 @@ users/{user_id}/
 - `NPC_PASSERBY_MODEL` / `NPC_SECONDARY_MODEL` / `NPC_MAIN_MODEL`: NPC 三层模型
 
 **MCP 传输配置：**
-- `MCP_TOOLS_TRANSPORT` / `MCP_TOOLS_ENDPOINT`: Game Tools（默认 stdio）
 - `MCP_COMBAT_TRANSPORT` / `MCP_COMBAT_ENDPOINT`: Combat（默认 stdio）
 - `MCP_TOOL_TIMEOUT_SECONDS`: MCP 工具超时（默认: `20`）
-- `MCP_NPC_TOOL_TIMEOUT_SECONDS`: NPC 工具超时（默认: `90`）
 
 **其他：**
 - `FIRESTORE_DATABASE`: 数据库名称（默认: `(default)`）

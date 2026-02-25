@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NPCConfig(BaseModel):
@@ -99,8 +99,7 @@ class NPCInstanceInfo(BaseModel):
     context_usage_ratio: float  # 上下文使用率
     graphize_count: int  # 图谱化次数
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NPCInstanceCreateRequest(BaseModel):

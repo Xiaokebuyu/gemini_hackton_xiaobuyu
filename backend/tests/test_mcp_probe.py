@@ -84,14 +84,13 @@ async def test_probe_dependencies_returns_all_targets(monkeypatch):
     pool = MCPClientPool()
 
     async def _fake_probe(server_type: str, timeout_seconds: float = 2.0):
-        return {"ok": server_type == MCPClientPool.GAME_TOOLS, "server_type": server_type}
+        return {"ok": True, "server_type": server_type}
 
     monkeypatch.setattr(pool, "probe", _fake_probe)
 
     result = await pool.probe_dependencies(
         timeout_seconds=0.5,
-        server_types=[MCPClientPool.GAME_TOOLS, MCPClientPool.COMBAT],
+        server_types=[MCPClientPool.COMBAT],
     )
-    assert set(result.keys()) == {MCPClientPool.GAME_TOOLS, MCPClientPool.COMBAT}
-    assert result[MCPClientPool.GAME_TOOLS]["ok"] is True
-    assert result[MCPClientPool.COMBAT]["ok"] is False
+    assert set(result.keys()) == {MCPClientPool.COMBAT}
+    assert result[MCPClientPool.COMBAT]["ok"] is True

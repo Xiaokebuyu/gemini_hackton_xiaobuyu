@@ -317,7 +317,7 @@ class IntentResolver:
                     event_name = str(event.get("name", "")).strip() or event_id
                     if event_id:
                         candidates.append((event_id, event_name))
-            except Exception as e:
+            except (KeyError, AttributeError, TypeError) as e:
                 logger.debug("event candidate extraction failed: %s", e)
 
         match = self._find_best_match(text, candidates)
@@ -385,7 +385,7 @@ class IntentResolver:
                     inv = getattr(player, "inventory", []) or []
                 if isinstance(inv, list):
                     return inv
-        except Exception as e:
+        except (KeyError, AttributeError, TypeError) as e:
             logger.debug("_get_inventory primary path failed: %s", e)
 
         # 2) 兼容旧路径：session.state.player_character
@@ -399,7 +399,7 @@ class IntentResolver:
                     inv = getattr(player, "inventory", []) or []
                 if isinstance(inv, list):
                     return inv
-        except Exception as e:
+        except (KeyError, AttributeError, TypeError) as e:
             logger.debug("_get_inventory fallback path failed: %s", e)
 
         return []

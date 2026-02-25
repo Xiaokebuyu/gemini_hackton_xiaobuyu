@@ -31,8 +31,9 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
+from app.exceptions import SessionRestoreError, WorldGraphError
 from app.world.graph.models import WorldNode
 from app.world.graph.world_graph import EdgeChange, WorldGraph
 
@@ -296,25 +297,16 @@ def restore_snapshot(wg: WorldGraph, snapshot: WorldSnapshot) -> None:
         try:
             node = WorldNode(**node_data)
             wg.add_node(node)
-        except Exception as exc:
-            logger.warning(
-                "[Snapshot] 恢复 spawned 节点失败 '%s': %s",
-                node_data.get("id", "?"), exc,
-            )
+        except (ValidationError, KeyError, ValueError) as exc:
+            raise WorldGraphError(
+                f"快照恢复: spawned 节点 '{node_data.get('id', '?')}' 重建失败: {exc}"
+            ) from exc
 
     # Phase 3: 删除 removed 节点
     for nid in snapshot.removed_node_ids:
-        if wg.has_node(nid):
-            try:
-                wg.remove_node(nid)
-            except KeyError:
-                logger.warning(
-                    "[Snapshot] 恢复时删除节点 '%s' 失败: 不存在", nid,
-                )
-        else:
-            logger.warning(
-                "[Snapshot] 恢复时节点 '%s' 不存在，跳过删除", nid,
-            )
+        if not wg.has_node(nid):
+            raise WorldGraphError(f"快照恢复: 待删除节点 '{nid}' 不存在")
+        wg.remove_node(nid)
 
     # Phase 4: 重放 edge 变更
     for ec in snapshot.modified_edges:
@@ -352,21 +344,17 @@ def restore_snapshot(wg: WorldGraph, snapshot: WorldSnapshot) -> None:
                         "[Snapshot] 恢复边 remove (%s→%s, key=%s) 时边不存在",
                         ec.source, ec.target, ec.key,
                     )
-        except Exception as exc:
-            logger.warning(
-                "[Snapshot] 恢复边变更失败 (%s %s→%s): %s",
-                ec.operation, ec.source, ec.target, exc,
-            )
+        except (ValidationError, KeyError, ValueError) as exc:
+            raise WorldGraphError(
+                f"快照恢复: 边 ({ec.operation} {ec.source}→{ec.target}) 失败: {exc}"
+            ) from exc
 
     # Phase 5: 恢复 node states（最后执行，覆盖副作用）
     for nid, state in snapshot.node_states.items():
         node = wg.get_node(nid)
-        if node:
-            node.state = copy.deepcopy(state)
-        else:
-            logger.warning(
-                "[Snapshot] 恢复 state 时节点 '%s' 不存在，跳过", nid,
-            )
+        if not node:
+            raise WorldGraphError(f"快照恢复: 节点 '{nid}' 不存在，无法恢复 state")
+        node.state = copy.deepcopy(state)
 
     # Phase 6: 重新 seal + clear_dirty
     wg._sealed = True
@@ -395,16 +383,15 @@ def snapshot_to_dict(snapshot: WorldSnapshot) -> Dict[str, Any]:
     return _convert_datetimes(data)
 
 
-def dict_to_snapshot(data: Dict[str, Any]) -> Optional[WorldSnapshot]:
-    """Firestore dict → WorldSnapshot。无效数据返回 None。"""
+def dict_to_snapshot(data: Dict[str, Any]) -> WorldSnapshot:
+    """Firestore dict → WorldSnapshot。无效数据直接 raise。"""
     if not data or not isinstance(data, dict):
-        return None
+        raise SessionRestoreError("世界快照数据为空或类型错误")
     try:
         # ISO string → datetime
         if isinstance(data.get("created_at"), str):
             data = dict(data)  # 防止修改原 dict
             data["created_at"] = datetime.fromisoformat(data["created_at"])
         return WorldSnapshot(**data)
-    except Exception as exc:
-        logger.warning("[Snapshot] 反序列化失败: %s", exc)
-        return None
+    except (ValidationError, KeyError, ValueError) as exc:
+        raise SessionRestoreError(f"世界快照反序列化失败: {exc}") from exc

@@ -21,7 +21,7 @@ from app.models.context_window import WindowMessage
 from app.world.npc.context_window import ContextWindow
 
 if TYPE_CHECKING:
-    from app.services.memory_graphizer import MemoryGraphizer
+    from app.agentic.memory_graphizer import MemoryGraphizer
 
 logger = logging.getLogger(__name__)
 

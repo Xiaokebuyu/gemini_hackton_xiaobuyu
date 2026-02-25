@@ -175,8 +175,8 @@ class TestSessionHistory:
         graphizer.graphize.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_maybe_graphize_failure_raises(self):
-        """maybe_graphize raises when graphizer fails."""
+    async def test_maybe_graphize_failure_graceful_degradation(self):
+        """maybe_graphize gracefully degrades when graphizer fails (no raise)."""
         history = SessionHistory(
             world_id="test_world",
             session_id="test_session",
@@ -195,8 +195,9 @@ class TestSessionHistory:
         graphizer = AsyncMock()
         graphizer.graphize = AsyncMock(return_value=mock_result)
 
-        with pytest.raises(RuntimeError, match="Graphization failed"):
-            await history.maybe_graphize(graphizer=graphizer, world_graph=MagicMock(), game_day=1)
+        # 不再抛异常，而是 graceful 降级（强制释放消息避免死循环重试）
+        result = await history.maybe_graphize(graphizer=graphizer, world_graph=MagicMock(), game_day=1)
+        assert result is None  # 失败时无返回值
 
 
 class TestSessionHistoryManager:

@@ -75,9 +75,8 @@ class TestInteractModels:
 
 class TestBuildNpcSystemPrompt:
     def _make_orchestrator(self):
-        from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
-        return PipelineOrchestrator(
-            flash_cpu=MagicMock(),
+        from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
+        return NPCInteractionCoordinator(
             party_service=MagicMock(),
             narrative_service=MagicMock(),
 
@@ -147,31 +146,31 @@ class TestSelectNpcModel:
         node.state = {"is_essential": is_essential}
         return node
 
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_main_tier_uses_main_model(self, mock_settings):
-        from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
+        from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
         mock_settings.npc_tier_config.main_model = "gemini-main"
         mock_settings.npc_tier_config.main_thinking = "low"
-        model, thinking = PipelineOrchestrator._select_npc_model(self._make_node(tier="main"))
+        model, thinking = NPCInteractionCoordinator._select_npc_model(self._make_node(tier="main"))
         assert model == "gemini-main"
         assert thinking == "low"
 
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_essential_npc_uses_main_model(self, mock_settings):
-        from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
+        from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
         mock_settings.npc_tier_config.main_model = "gemini-main"
         mock_settings.npc_tier_config.main_thinking = "low"
-        model, thinking = PipelineOrchestrator._select_npc_model(
+        model, thinking = NPCInteractionCoordinator._select_npc_model(
             self._make_node(tier="secondary", is_essential=True),
         )
         assert model == "gemini-main"
 
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_secondary_tier_uses_secondary_model(self, mock_settings):
-        from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
+        from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
         mock_settings.npc_tier_config.secondary_model = "gemini-secondary"
         mock_settings.npc_tier_config.secondary_thinking = "medium"
-        model, thinking = PipelineOrchestrator._select_npc_model(self._make_node(tier="secondary"))
+        model, thinking = NPCInteractionCoordinator._select_npc_model(self._make_node(tier="secondary"))
         assert model == "gemini-secondary"
         assert thinking == "medium"
 
@@ -183,9 +182,9 @@ class TestSelectNpcModel:
 
 class TestGenerateDialogueOptions:
     def _make_orchestrator(self):
-        from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
-        orch = PipelineOrchestrator(
-            flash_cpu=MagicMock(),
+        from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
+        orch = NPCInteractionCoordinator(
+            llm_service=MagicMock(),
             party_service=MagicMock(),
             narrative_service=MagicMock(),
 
@@ -196,17 +195,17 @@ class TestGenerateDialogueOptions:
         )
         return orch
 
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_llm_returns_valid_options(self, mock_settings):
         mock_settings.npc_tier_config.passerby_model = "flash"
         orch = self._make_orchestrator()
-        orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value=json.dumps([
+        orch.llm_service.generate_simple = AsyncMock(return_value=json.dumps([
             {"text": "告诉我更多", "intent": "inquire", "tone": "curious"},
             {"text": "谢谢你", "intent": "thank", "tone": "friendly"},
             {"text": "我走了", "intent": "leave", "tone": "neutral"},
             {"text": "你在隐瞒什么", "intent": "pressure", "tone": "threatening"},
         ]))
-        orch.flash_cpu.llm_service._strip_code_block = lambda x: x
+        orch.llm_service._strip_code_block = lambda x: x
 
         options = asyncio.run(orch._generate_dialogue_options(
             "酒保", MagicMock(), "你好", "欢迎光临！", MagicMock(),
@@ -215,11 +214,12 @@ class TestGenerateDialogueOptions:
         assert options[0].text == "告诉我更多"
         assert options[0].tone == "curious"
 
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_llm_failure_returns_fallback(self, mock_settings):
         mock_settings.npc_tier_config.passerby_model = "flash"
         orch = self._make_orchestrator()
-        orch.flash_cpu.llm_service.generate_simple = AsyncMock(side_effect=Exception("LLM error"))
+        from app.exceptions import LLMServiceError
+        orch.llm_service.generate_simple = AsyncMock(side_effect=LLMServiceError("LLM error"))
 
         options = asyncio.run(orch._generate_dialogue_options(
             "酒保", MagicMock(), "你好", "欢迎光临！", MagicMock(),
@@ -228,12 +228,12 @@ class TestGenerateDialogueOptions:
         assert options[0].text == "继续询问"
         assert options[2].text == "告辞离开"
 
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_invalid_json_returns_fallback(self, mock_settings):
         mock_settings.npc_tier_config.passerby_model = "flash"
         orch = self._make_orchestrator()
-        orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="not json at all")
-        orch.flash_cpu.llm_service._strip_code_block = lambda x: x
+        orch.llm_service.generate_simple = AsyncMock(return_value="not json at all")
+        orch.llm_service._strip_code_block = lambda x: x
 
         options = asyncio.run(orch._generate_dialogue_options(
             "酒保", MagicMock(), "你好", "回复", MagicMock(),
@@ -251,9 +251,9 @@ class TestProcessInteractStream:
     """测试 process_interact_stream 事件序列。"""
 
     def _make_orchestrator(self):
-        from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
-        orch = PipelineOrchestrator(
-            flash_cpu=MagicMock(),
+        from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
+        orch = NPCInteractionCoordinator(
+            llm_service=MagicMock(),
             party_service=MagicMock(),
             narrative_service=MagicMock(),
 
@@ -301,10 +301,10 @@ class TestProcessInteractStream:
 
         return session
 
-    @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
-    @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.GameRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.SessionRuntime")
     @patch("app.agentic.agentic_executor.AgenticExecutor")
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_npc_not_found_yields_error(self, mock_settings, MockExecutor, MockSR, MockGR):
         mock_settings.npc_tier_config.passerby_model = "flash"
         mock_settings.admin_agentic_model = "flash"
@@ -331,10 +331,10 @@ class TestProcessInteractStream:
         assert len(error_events) >= 1
         assert "不存在" in error_events[0]["error"]
 
-    @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
-    @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.GameRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.SessionRuntime")
     @patch("app.agentic.agentic_executor.AgenticExecutor")
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_event_sequence_has_interact_start_and_complete(
         self, mock_settings, MockExecutor, MockSR, MockGR,
     ):
@@ -366,8 +366,8 @@ class TestProcessInteractStream:
         MockExecutor.return_value.run = fake_run
 
         orch = self._make_orchestrator()
-        orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="[]")
-        orch.flash_cpu.llm_service._strip_code_block = lambda x: x
+        orch.llm_service.generate_simple = AsyncMock(return_value="[]")
+        orch.llm_service._strip_code_block = lambda x: x
 
         events = []
 
@@ -385,10 +385,10 @@ class TestProcessInteractStream:
         assert "dialogue_options" in types_seen
         assert "complete" in types_seen
 
-    @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
-    @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.GameRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.SessionRuntime")
     @patch("app.agentic.agentic_executor.AgenticExecutor")
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_gm_pass_produces_no_observation(
         self, mock_settings, MockExecutor, MockSR, MockGR,
     ):
@@ -420,8 +420,8 @@ class TestProcessInteractStream:
         MockExecutor.return_value.run = fake_run
 
         orch = self._make_orchestrator()
-        orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="[]")
-        orch.flash_cpu.llm_service._strip_code_block = lambda x: x
+        orch.llm_service.generate_simple = AsyncMock(return_value="[]")
+        orch.llm_service._strip_code_block = lambda x: x
 
         events = []
 
@@ -434,10 +434,10 @@ class TestProcessInteractStream:
         asyncio.run(collect())
         assert not any(e.get("type") == "gm_observation" for e in events)
 
-    @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
-    @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.GameRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.SessionRuntime")
     @patch("app.agentic.agentic_executor.AgenticExecutor")
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_scene_bus_cleared_after_interact(
         self, mock_settings, MockExecutor, MockSR, MockGR,
     ):
@@ -461,8 +461,8 @@ class TestProcessInteractStream:
         )
 
         orch = self._make_orchestrator()
-        orch.flash_cpu.llm_service.generate_simple = AsyncMock(return_value="[]")
-        orch.flash_cpu.llm_service._strip_code_block = lambda x: x
+        orch.llm_service.generate_simple = AsyncMock(return_value="[]")
+        orch.llm_service._strip_code_block = lambda x: x
 
         async def collect():
             async for _ in orch.process_interact_stream(
@@ -474,10 +474,10 @@ class TestProcessInteractStream:
         session.scene_bus.clear.assert_called()
         session.persist.assert_called_once()
 
-    @patch("app.services.admin.pipeline_orchestrator.GameRuntime")
-    @patch("app.services.admin.pipeline_orchestrator.SessionRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.GameRuntime")
+    @patch("app.services.admin.npc_interaction_coordinator.SessionRuntime")
     @patch("app.agentic.agentic_executor.AgenticExecutor")
-    @patch("app.services.admin.pipeline_orchestrator.settings")
+    @patch("app.services.admin.npc_interaction_coordinator.settings")
     def test_no_player_yields_error(
         self, mock_settings, MockExecutor, MockSR, MockGR,
     ):

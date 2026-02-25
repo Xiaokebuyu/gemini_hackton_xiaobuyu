@@ -44,7 +44,6 @@ from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
 
 def _orchestrator() -> PipelineOrchestrator:
     return PipelineOrchestrator(
-        flash_cpu=object(),
         party_service=object(),
         narrative_service=object(),
         teammate_response_service=object(),

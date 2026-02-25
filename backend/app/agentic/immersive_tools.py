@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import logging
@@ -38,7 +39,6 @@ class AgenticContext:
     # 按需注入的服务
     world_graph: Any = None       # 只读辅助（写入统一走 SessionRuntime 门面）
     image_service: Any = None
-    flash_cpu: Any = None         # GM extra_tools 需要（MCP 调用）
     api: Any = None               # L2 WorldAPI — 所有游戏操作走此接口
 
 # =========================================================================
@@ -287,7 +287,7 @@ async def generate_scene_image(
             description=scene_description, style=style,
         )
         return {"success": True, "image_data": image_data}
-    except Exception as e:
+    except (OSError, asyncio.TimeoutError, RuntimeError) as e:
         logger.warning("[generate_scene_image] failed: %s", e)
         return {"success": False, "error": str(e)}
 
@@ -304,7 +304,7 @@ async def complete_event(
     try:
         result = ctx.api.complete_event(event_id, outcome_key)
         return result
-    except Exception as e:
+    except (ValueError, KeyError, RuntimeError, OSError) as e:
         return {"success": False, "error": str(e)}
 
 
@@ -320,7 +320,7 @@ async def advance_chapter(
     try:
         result = ctx.api.advance_chapter(target_chapter_id, transition_type)
         return result
-    except Exception as e:
+    except (ValueError, KeyError, RuntimeError, OSError) as e:
         return {"success": False, "error": str(e)}
 
 
@@ -336,7 +336,7 @@ async def fail_event(
     try:
         result = ctx.api.fail_event(event_id, reason)
         return result
-    except Exception as e:
+    except (ValueError, KeyError, RuntimeError, OSError) as e:
         return {"success": False, "error": str(e)}
 
 

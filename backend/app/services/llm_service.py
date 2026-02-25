@@ -3,12 +3,16 @@ LLM 服务模块 - 支持 Gemini 3 思考功能
 """
 import asyncio
 import json
+import logging
 import re
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from google import genai
 from google.genai import types
 from app.config import settings
+from app.exceptions import LLMServiceError
 
 
 @dataclass
@@ -74,7 +78,7 @@ class LLMService:
         cleaned = self._strip_code_block(text)
         try:
             return json.loads(cleaned)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             return None
 
     def parse_json(self, text: str) -> Optional[Dict[str, Any]]:
@@ -86,7 +90,8 @@ class LLMService:
         try:
             result = await self.generate_simple(prompt)
             return self._parse_json(result)
-        except Exception:
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.debug("[LLMService] generate_json 解析失败: %s", exc)
             return None
     
     def _extract_response(self, response, level: str = None) -> LLMResponse:
@@ -203,9 +208,9 @@ class LLMService:
             )
 
             return self._extract_response(response, thinking_level)
-            
-        except Exception as e:
-            error_msg = f"抱歉，生成回复时出错: {str(e)}"
+
+        except (LLMServiceError, asyncio.TimeoutError) as e:
+            error_msg = f"抱歉，生成回复时出错: {e}"
             return LLMResponse(
                 text=error_msg,
                 thinking=ThinkingMetadata(
@@ -284,9 +289,11 @@ class LLMService:
                             )
 
             return self._extract_response(response, thinking_level)
-        except Exception as e:
-            _logger.error("agentic_generate failed (model=%s): %s", model, e, exc_info=True)
+        except LLMServiceError:
             raise
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as e:
+            _logger.error("agentic_generate failed (model=%s): %s", model, e, exc_info=True)
+            raise LLMServiceError(f"agentic_generate failed: {e}") from e
 
     async def agentic_force_tool_calls(
         self,
@@ -447,9 +454,9 @@ class LLMService:
                     else:
                         yield {"type": "answer", "text": part.text}
                         
-        except Exception as e:
-            yield {"type": "error", "text": f"生成出错: {str(e)}"}
-    
+        except (LLMServiceError, asyncio.TimeoutError) as e:
+            yield {"type": "error", "text": f"生成出错: {e}"}
+
     async def analyze_messages_for_archive(
         self, 
         messages: List[Dict[str, str]]
@@ -507,8 +514,8 @@ Artifact 要求:
             if result:
                 return result
                 
-        except Exception as e:
-            print(f"归档分析失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("归档分析失败: %s", e)
         
         return {
             "title": "未分类主题",
@@ -564,8 +571,8 @@ Artifact 要求:
             if isinstance(result, dict):
                 return bool(result.get("should_merge", False))
                 
-        except Exception as e:
-            print(f"主题合并判断失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("主题合并判断失败: %s", e)
         
         return False
     
@@ -613,8 +620,8 @@ Artifact 要求:
             
             return self._strip_code_block(text)
             
-        except Exception as e:
-            print(f"Artifact 合并失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("Artifact 合并失败: %s", e)
             return existing_artifact
     
     # ==================== MCP 扩展方法 ====================
@@ -654,8 +661,8 @@ Artifact 要求:
                     else:
                         yield {"type": "answer", "text": part.text}
 
-        except Exception as e:
-            yield {"type": "error", "text": f"流式生成出错: {str(e)}"}
+        except (LLMServiceError, asyncio.TimeoutError) as e:
+            yield {"type": "error", "text": f"流式生成出错: {e}"}
 
     async def generate_simple(
         self,
@@ -700,10 +707,12 @@ Artifact 要求:
 
             return text.strip()
 
-        except asyncio.TimeoutError:
-            raise Exception(f"LLM 调用超时({timeout}s)")
-        except Exception as e:
-            raise Exception(f"文本生成失败: {str(e)}")
+        except asyncio.TimeoutError as e:
+            raise LLMServiceError(f"LLM 调用超时({timeout}s)") from e
+        except LLMServiceError:
+            raise
+        except (asyncio.TimeoutError, OSError, RuntimeError, ValueError) as e:
+            raise LLMServiceError(f"文本生成失败: {str(e)}") from e
     
     async def classify_for_archive(self, prompt: str) -> Dict[str, Any]:
         """
@@ -751,8 +760,8 @@ Artifact 要求:
             # 解析失败，返回默认值
             return self._default_classification_result()
             
-        except Exception as e:
-            print(f"MCP 分类失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("MCP 分类失败: %s", e)
             return self._default_classification_result()
     
     def _default_classification_result(self) -> Dict[str, Any]:
@@ -790,8 +799,8 @@ Artifact 要求:
         
         try:
             return await self.generate_simple(prompt)
-        except Exception as e:
-            print(f"见解提取失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("见解提取失败: %s", e)
             return "见解提取失败"
     
     async def generate_evolution_note(
@@ -824,8 +833,8 @@ Artifact 要求:
         try:
             result = await self.generate_simple(prompt)
             return result.strip()[:200]  # 限制长度
-        except Exception as e:
-            print(f"演变说明生成失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("演变说明生成失败: %s", e)
             return "理解有所更新"
     
     async def generate_thread_summary(self, insights_text: str) -> str:
@@ -849,8 +858,8 @@ Artifact 要求:
         try:
             result = await self.generate_simple(prompt)
             return result.strip()[:100]  # 限制长度
-        except Exception as e:
-            print(f"话题总结生成失败: {str(e)}")
+        except LLMServiceError as e:
+            logger.error("话题总结生成失败: %s", e)
             return "话题讨论"
     
     async def generate_with_tools(
@@ -906,8 +915,8 @@ Artifact 要求:
             
             return self._extract_response(response, thinking_level)
             
-        except Exception as e:
-            error_msg = f"工具调用生成失败: {str(e)}"
+        except (LLMServiceError, asyncio.TimeoutError) as e:
+            error_msg = f"工具调用生成失败: {e}"
             return LLMResponse(
                 text=error_msg,
                 thinking=ThinkingMetadata(

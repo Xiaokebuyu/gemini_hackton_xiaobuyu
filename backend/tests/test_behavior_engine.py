@@ -1236,7 +1236,7 @@ class TestEvalEventRoundsElapsed:
         ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=7)
         result = ConditionEvaluator().evaluate(None, ctx)  # 仅测基础满足
         # 直接测 handler
-        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.condition_evaluator import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is True
         assert result.details["elapsed"] == 3
@@ -1249,7 +1249,7 @@ class TestEvalEventRoundsElapsed:
             params={"event_id": "evt_x", "min_rounds": 5},
         )
         ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=7)
-        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.condition_evaluator import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is False
         assert result.details["elapsed"] == 3
@@ -1261,7 +1261,7 @@ class TestEvalEventRoundsElapsed:
             params={"event_id": "evt_x", "min_rounds": 5},
         )
         ctx = self._ctx_with_wg(round_count=10, node_id="evt_x", activated_at=None)
-        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.condition_evaluator import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         # None → 0，elapsed = 10 - 0 = 10 >= 5
         assert result.satisfied is True
@@ -1278,7 +1278,7 @@ class TestEvalEventRoundsElapsed:
         session.world_graph = None
         ctx = _ctx(round_count=5)
         ctx.session = session
-        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.condition_evaluator import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is False
         assert "error" in result.details
@@ -1290,7 +1290,7 @@ class TestEvalEventRoundsElapsed:
             params={"event_id": "nonexistent_node", "min_rounds": 1},
         )
         ctx = self._ctx_with_wg(round_count=5, node_id="evt_x", activated_at=0)
-        from app.world.events.behavior_engine import _eval_event_rounds_elapsed
+        from app.world.events.condition_evaluator import _eval_event_rounds_elapsed
         result = _eval_event_rounds_elapsed(cond, ctx)
         assert result.satisfied is False
         assert "error" in result.details
@@ -1431,3 +1431,42 @@ class TestRoundDedup:
         # 回合 2（新 engine = 新回合）
         r2 = BehaviorEngine(wg).tick(_ctx(player_location="loc_1"))
         assert any(r.behavior_id == "bh_rep" for r in r2.results)
+
+
+# =============================================================================
+# Phase 3 — 畸形条件 raise EventConditionError（严格模式）
+# =============================================================================
+
+
+class TestConditionEvaluatorMalformed:
+    """畸形条件 dict → 严格模式下 raise EventConditionError。"""
+
+    def test_malformed_dict_raises(self):
+        """缺少 type 字段的 dict → ValidationError → EventConditionError。"""
+        from app.exceptions import EventConditionError
+        evaluator = ConditionEvaluator()
+        with pytest.raises(EventConditionError, match="畸形条件 dict"):
+            evaluator._eval_single(
+                {"bogus_key": "bogus_value"},
+                _ctx(),
+            )
+
+    def test_extra_invalid_fields_raises(self):
+        """type 值不合法 → ValidationError → EventConditionError。"""
+        from app.exceptions import EventConditionError
+        evaluator = ConditionEvaluator()
+        with pytest.raises(EventConditionError, match="畸形条件 dict"):
+            evaluator._eval_single(
+                {"type": "location_is", "value": 123, "not_a_field": True},
+                _ctx(),
+            )
+
+    def test_none_type_raises(self):
+        """type=None → ValidationError → EventConditionError。"""
+        from app.exceptions import EventConditionError
+        evaluator = ConditionEvaluator()
+        with pytest.raises(EventConditionError, match="畸形条件 dict"):
+            evaluator._eval_single(
+                {"type": None, "value": "x"},
+                _ctx(),
+            )

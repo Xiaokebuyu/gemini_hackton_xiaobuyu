@@ -2,14 +2,14 @@
 
 from .admin_coordinator import AdminCoordinator
 from .event_service import AdminEventService
-from .flash_cpu_service import FlashCPUService
+from .npc_interaction_coordinator import NPCInteractionCoordinator
 from .state_manager import StateManager
 from .world_runtime import AdminWorldRuntime
 
 __all__ = [
     "AdminCoordinator",
     "AdminEventService",
-    "FlashCPUService",
+    "NPCInteractionCoordinator",
     "StateManager",
     "AdminWorldRuntime",
 ]

@@ -400,7 +400,7 @@ class InstanceManager:
     ) -> Optional[Dict[str, Any]]:
         """执行实例图谱化并回收已图谱化消息。"""
         from app.models.context_window import GraphizeRequest
-        from app.services.memory_graphizer import MemoryGraphizer
+        from app.agentic.memory_graphizer import MemoryGraphizer
 
         if world_graph is None:
             logger.debug("[InstanceManager] 跳过图谱化（world_graph is None）")
@@ -555,7 +555,7 @@ class InstanceManager:
                         world_graph=world_graph,
                     )
                     flushed += 1
-                except Exception as e:
+                except (OSError, KeyError, ValueError) as e:
                     logger.warning("[InstanceManager] flush %s failed: %s", key, e)
         logger.info(
             "[InstanceManager] flush_all: %d/%d instances flushed",

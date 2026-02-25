@@ -280,8 +280,9 @@ class AreaNavigator:
                 # Firestore 的 map_id 在文档 ID 上，运行时需要补回到数据体。
                 map_payload = {"id": map_doc.id, **info}
                 maps_data.append(map_payload)
-        except Exception as exc:
-            raise RuntimeError(
+        except (OSError, RuntimeError) as exc:
+            from app.exceptions import FirestoreIOError
+            raise FirestoreIOError(
                 f"加载 Firestore 地图数据失败: world={self.world_id}"
             ) from exc
 
@@ -292,7 +293,7 @@ class AreaNavigator:
 
         try:
             self._load_maps({"maps": maps_data})
-        except Exception as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(
                 f"解析 Firestore 地图数据失败: world={self.world_id}"
             ) from exc

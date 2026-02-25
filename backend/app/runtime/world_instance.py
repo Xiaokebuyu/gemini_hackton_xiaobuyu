@@ -33,6 +33,7 @@ class WorldInstance:
         self.skill_registry: Dict[str, Dict[str, Any]] = {}
         self.chapter_registry: Dict[str, Any] = {}
         self.mainline_registry: Dict[str, Any] = {}
+        self.character_creation_config: Dict[str, Any] = {}
         self._initialized: bool = False
 
     async def initialize(self) -> None:
@@ -55,6 +56,7 @@ class WorldInstance:
             self._load_combat_entities(world_ref, "monsters"),
             self._load_combat_entities(world_ref, "skills"),
             self._load_combat_entities(world_ref, "items"),
+            self._load_character_creation_config(world_ref),
             return_exceptions=True,
         )
 
@@ -62,6 +64,7 @@ class WorldInstance:
         labels = [
             "world_constants", "characters", "areas",
             "chapters", "mainlines", "monsters", "skills", "items",
+            "character_creation",
         ]
         for label, result in zip(labels, results):
             if isinstance(result, Exception):
@@ -215,6 +218,21 @@ class WorldInstance:
         self, world_ref: firestore.DocumentReference, entity_type: str
     ) -> None:
         await asyncio.to_thread(self._load_combat_entities_sync, world_ref, entity_type)
+
+    async def _load_character_creation_config(
+        self, world_ref: firestore.DocumentReference
+    ) -> None:
+        """加载角色创建配置（races/classes/backgrounds/point_buy/leveling）。"""
+        def _sync() -> None:
+            doc = world_ref.collection("meta").document("character_creation").get()
+            if doc.exists:
+                self.character_creation_config = doc.to_dict() or {}
+            else:
+                logger.debug(
+                    "WorldInstance '%s': meta/character_creation 不存在，角色创建配置为空",
+                    self.world_id,
+                )
+        await asyncio.to_thread(_sync)
 
     # ---- 数据解析辅助 ----
 

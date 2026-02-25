@@ -1,6 +1,6 @@
 """SessionRuntime — 会话级状态统一层（Phase 2A 实现）。
 
-包装现有服务（StateManager / PartyService / NarrativeService / SessionHistory / CharacterStore），
+包装现有服务（StateManager / PartyService / NarrativeService / SessionHistory），
 提供统一的会话状态访问与生命周期管理。初始阶段采用委托模式，不修改原有服务。
 """
 
@@ -10,8 +10,11 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, ClassVar, Dict, List, Optional, Set, Tuple
 
+from pydantic import ValidationError
+
+from app.exceptions import FirestoreIOError, SessionRestoreError
 from app.models.narrative import NarrativeProgress
 from app.models.party import Party
 from app.models.player_character import PlayerCharacter
@@ -37,6 +40,34 @@ class SessionRuntime:
         await session.persist()          # 统一持久化
     """
 
+    # -- 会话缓存（路由层 + Pipeline 共享，避免重复 restore） --
+    _cache: ClassVar[Dict[Tuple[str, str], "SessionRuntime"]] = {}
+
+    @classmethod
+    async def get_or_restore(cls, world_id: str, session_id: str) -> "SessionRuntime":
+        """获取已缓存的 SessionRuntime，或创建并 restore 一个新的。"""
+        key = (world_id, session_id)
+        cached = cls._cache.get(key)
+        if cached and cached._restored:
+            return cached
+        from app.runtime.game_runtime import GameRuntime
+        rt = await GameRuntime.get_instance()
+        world = await rt.get_world(world_id)
+        session = cls(world_id=world_id, session_id=session_id, world=world)
+        await session.restore()
+        cls._cache[key] = session
+        return session
+
+    @classmethod
+    def invalidate_cache(cls, world_id: str, session_id: str) -> None:
+        """persist 后调用，清除过期缓存。"""
+        cls._cache.pop((world_id, session_id), None)
+
+    @classmethod
+    def cache_session(cls, session: "SessionRuntime") -> None:
+        """Pipeline 创建的 session 主动注入缓存，路由层直接复用。"""
+        cls._cache[(session.world_id, session.session_id)] = session
+
     def __init__(
         self,
         world_id: str,
@@ -47,12 +78,9 @@ class SessionRuntime:
         party_service: Optional[Any] = None,
         narrative_service: Optional[Any] = None,
         session_history_manager: Optional[Any] = None,
-        character_store: Optional[Any] = None,
         session_store: Optional[Any] = None,
-        graph_store: Optional[Any] = None,
+        character_store: Optional[Any] = None,  # 已废弃，保留签名兼容旧调用方
     ) -> None:
-        from app.runtime.area_runtime import AreaRuntime
-
         self.world_id = world_id
         self.session_id = session_id
         self.world = world  # WorldInstance (Phase 1)
@@ -62,9 +90,7 @@ class SessionRuntime:
         self._party_service = party_service
         self._narrative_service = narrative_service
         self._session_history_manager = session_history_manager
-        self._character_store = character_store
         self._session_store = session_store
-        self._graph_store = graph_store
 
         # -- 状态组件（restore() 填充） --
         self.game_state: Optional[GameState] = None
@@ -73,13 +99,13 @@ class SessionRuntime:
         self.time: Optional[GameTimeState] = None
         self.narrative: Optional[NarrativeProgress] = None
         self.history: Optional[Any] = None  # SessionHistory
-        self.companions: Dict[str, Any] = {}  # Phase 5
-        self.current_area: Optional[AreaRuntime] = None
+        self.companions: Dict[str, Any] = {}  # 空 dict，event_machine 引用安全
+        self.current_area = None  # 已废弃，保留字段避免 getattr 报错
 
         # -- WorldGraph (C7) --
         self.world_graph: Optional[Any] = None       # WorldGraph
         self._behavior_engine: Optional[Any] = None  # BehaviorEngine
-        self._world_graph_failed: bool = False       # 降级标记
+        # _world_graph_failed 已移除 — 严格模式下构建失败即 raise
         self._applied_side_effect_events: Set[str] = set()  # C8: 去重，防止副作用重复发放
         self.delta_log: List[StateDelta] = []
 
@@ -140,7 +166,7 @@ class SessionRuntime:
         优先从 WorldGraph 返回 PlayerNodeView（图为唯一真理源）；
         图不可用时降级返回 _player_character（初始种子）。
         """
-        if self.world_graph and not self._world_graph_failed:
+        if self.world_graph:
             node = self.world_graph.get_node("player")
             if node is not None:
                 from app.world.player.node_view import PlayerNodeView
@@ -165,8 +191,7 @@ class SessionRuntime:
             "has_party": self.party is not None,
             "has_narrative": self.narrative is not None,
             "has_area": self.current_area is not None,
-            "world_graph_failed": self._world_graph_failed,
-            "companion_count": len(self.companions),
+            "world_graph_ok": self.world_graph is not None,
         }
 
     # =========================================================================
@@ -176,9 +201,9 @@ class SessionRuntime:
     async def restore(self) -> None:
         """从 Firestore 恢复完整会话状态（分波并行）。
 
-        Wave 1（并行）：GameState + Player + Party + Narrative（主路径）
+        Wave 1（并行）：GameState + Party + Narrative（主路径）
         Wave 1（内联）：SessionHistory（同步）
-        Wave 2（串行）：时间提取 → Narrative fallback → AreaRuntime
+        Wave 2（串行）：时间提取 → Narrative fallback → SceneBus → WorldGraph（player 从快照恢复）
         """
         logger.info(
             "[SessionRuntime] restore 开始: world=%s session=%s",
@@ -189,7 +214,6 @@ class SessionRuntime:
         # ── Wave 1: 独立数据源并行加载 ──
         wave1_tasks = [
             self._restore_game_state(),
-            self._restore_player(),
             self._restore_party(),
         ]
         # Narrative 主路径（有 _narrative_service 时）才加入并行
@@ -198,13 +222,19 @@ class SessionRuntime:
             wave1_tasks.append(self._restore_narrative())
 
         results = await asyncio.gather(*wave1_tasks, return_exceptions=True)
-        wave1_names = ["game_state", "player", "party"]
+        wave1_names = ["game_state", "party"]
         if has_narrative_service:
             wave1_names.append("narrative")
+        errors = []
         for i, result in enumerate(results):
             name = wave1_names[i] if i < len(wave1_names) else f"task_{i}"
             if isinstance(result, Exception):
-                logger.error("[SessionRuntime] Wave 1 '%s' 失败: %s", name, result)
+                errors.append((name, result))
+        if errors:
+            names = [n for n, _ in errors]
+            raise SessionRestoreError(
+                f"会话恢复失败 [{', '.join(names)}]"
+            ) from errors[0][1]
 
         # SessionHistory（同步，无 I/O）
         self._restore_history()
@@ -223,11 +253,8 @@ class SessionRuntime:
             if isinstance(saved_dedup, list):
                 self._applied_side_effect_events = set(saved_dedup[-200:])
 
-        # AreaRuntime（依赖 game_state + narrative + world）
+        # SceneBus 挂载（依赖 game_state.player_location）
         await self._restore_area()
-
-        # 同伴实例（依赖 party）
-        await self._restore_companions()
 
         # WorldGraph (C7a): 构建 + 恢复快照
         self._build_world_graph()
@@ -243,29 +270,25 @@ class SessionRuntime:
             failed.append("party")
         if not self.narrative:
             failed.append("narrative")
-        if self._world_graph_failed:
-            failed.append("world_graph")
         if not self.current_area:
             failed.append("area")
 
         if failed:
             logger.warning(
                 "[SessionRuntime] restore 完成(降级): location=%s chapter=%s "
-                "failed_components=%s party_size=%d companions=%d",
+                "failed_components=%s party_size=%d",
                 self.player_location,
                 self.chapter_id,
                 failed,
                 len(self.party.members) if self.party else 0,
-                len(self.companions),
             )
         else:
             logger.info(
                 "[SessionRuntime] restore 完成: location=%s chapter=%s "
-                "party_size=%d companions=%d graph=%s",
+                "party_size=%d graph=%s",
                 self.player_location,
                 self.chapter_id,
                 len(self.party.members) if self.party else 0,
-                len(self.companions),
                 "ok" if self.world_graph else "disabled",
             )
 
@@ -288,48 +311,21 @@ class SessionRuntime:
                 self.world_id, self.session_id, self.game_state
             )
 
-    async def _restore_player(self) -> None:
-        """加载 PlayerCharacter 初始种子（图构建时翻译为图节点）。"""
-        if self._character_store:
-            try:
-                self._player_character = await self._character_store.get_character(
-                    self.world_id, self.session_id
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] PlayerCharacter 加载失败: %s", exc
-                )
-                self._player_character = None
-        else:
-            self._player_character = None
-
     async def _restore_party(self) -> None:
-        """加载 Party。"""
+        """加载 Party。失败直接传播到 gather → SessionRestoreError。"""
         if self._party_service:
-            try:
-                self.party = await self._party_service.get_party(
-                    self.world_id, self.session_id
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] Party 加载失败: %s", exc
-                )
-                self.party = None
+            self.party = await self._party_service.get_party(
+                self.world_id, self.session_id
+            )
         else:
             self.party = None
 
     async def _restore_narrative(self) -> None:
-        """加载 NarrativeProgress。"""
+        """加载 NarrativeProgress。失败直接传播到 gather → SessionRestoreError。"""
         if self._narrative_service:
-            try:
-                self.narrative = await self._narrative_service.get_progress(
-                    self.world_id, self.session_id
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] NarrativeProgress 加载失败: %s", exc
-                )
-                self.narrative = None
+            self.narrative = await self._narrative_service.get_progress(
+                self.world_id, self.session_id
+            )
 
     def _restore_history(self) -> None:
         """加载 SessionHistory。"""
@@ -341,34 +337,9 @@ class SessionRuntime:
             self.history = None
 
     async def _restore_area(self) -> None:
-        """如果有当前区域，创建并加载 AreaRuntime。"""
-        current_area_id = self.player_location
-        if not current_area_id or not self.world:
+        """恢复区域上下文 — SceneBus 挂载。"""
+        if not self.player_location:
             return
-
-        area_def = self.world.get_area_definition(current_area_id)
-        if not area_def:
-            return
-
-        from app.runtime.area_runtime import AreaRuntime
-
-        try:
-            area_rt = AreaRuntime(area_id=current_area_id, definition=area_def)
-            await area_rt.load(self.world_id, self.session_id)
-            self.current_area = area_rt
-        except NotImplementedError:
-            # Phase 2B 尚未实现 load()
-            self.current_area = AreaRuntime(
-                area_id=current_area_id, definition=area_def
-            )
-        except Exception as exc:
-            logger.warning(
-                "[SessionRuntime] AreaRuntime 加载失败: area=%s err=%s",
-                current_area_id,
-                exc,
-            )
-
-        # SceneBus 挂载
         self._init_scene_bus()
 
     def _init_scene_bus(self) -> None:
@@ -387,30 +358,6 @@ class SessionRuntime:
             permanent_members=permanent,
         )
 
-    async def _restore_companions(self) -> None:
-        """从 Party 成员创建并加载 CompanionInstance。"""
-        if not self.party:
-            return
-
-        from app.runtime.companion_instance import CompanionInstance
-
-        for member in self.party.get_active_members():
-            companion = CompanionInstance(
-                character_id=member.character_id,
-                name=member.name,
-                world_id=self.world_id,
-                session_id=self.session_id,
-            )
-            try:
-                await companion.load()
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] 同伴 '%s' 加载失败: %s",
-                    member.character_id, exc,
-                )
-                continue
-            self.companions[member.character_id] = companion
-
     # =========================================================================
     # WorldGraph (C7) — 构建 + 快照 I/O
     # =========================================================================
@@ -428,148 +375,35 @@ class SessionRuntime:
             self._behavior_engine = BehaviorEngine(wg)
             stats = wg.stats()
             logger.info("[SessionRuntime] WorldGraph built: %s", stats)
-        except Exception as exc:
-            logger.error("[SessionRuntime] WorldGraph build failed: %s", exc, exc_info=True)
-            self._world_graph_failed = True
+        except (KeyError, ValueError, RuntimeError) as exc:
+            raise SessionRestoreError(f"WorldGraph 构建失败: {exc}") from exc
 
     async def _restore_world_graph_snapshot(self) -> None:
         """从 Firestore 加载快照并恢复到 world_graph。
         路径: worlds/{wid}/sessions/{sid}/world_snapshot/current
+        失败直接传播 SessionRestoreError / WorldGraphError。
         """
         if not self.world_graph:
             return
-        try:
-            from google.cloud import firestore as fs
-            from app.config import settings
-            from app.world.graph.snapshot import dict_to_snapshot, restore_snapshot
-            db = fs.Client(database=settings.firestore_database)
-            doc = (db.collection("worlds").document(self.world_id)
-                   .collection("sessions").document(self.session_id)
-                   .collection("world_snapshot").document("current").get())
-            if not doc.exists:
-                logger.info("[SessionRuntime] 无 WorldGraph 快照，加载知识数据")
-                await self._load_knowledge_into_world_graph()
-                return
-            snapshot = dict_to_snapshot(doc.to_dict())
-            if snapshot:
-                restore_snapshot(self.world_graph, snapshot)
-                logger.info("[SessionRuntime] WorldGraph 快照恢复: %d states, %d spawned",
-                            len(snapshot.node_states), len(snapshot.spawned_nodes))
-        except Exception as exc:
-            logger.warning("[SessionRuntime] WorldGraph 快照恢复失败: %s", exc)
-
-    async def _load_knowledge_into_world_graph(self) -> None:
-        """首次会话：从 Firestore 加载预填充知识图谱到 WorldGraph。
-
-        graph 已 sealed → 新节点自动成为 spawned_nodes → 首次 persist 即快照。
-        后续 restore 从快照恢复，不再触发此方法。
-        """
-        if not self._graph_store or not self.world_graph:
-            logger.info("[SessionRuntime] 知识加载跳过（graph_store=%s wg=%s）",
-                        bool(self._graph_store), bool(self.world_graph))
+        from google.cloud import firestore as fs
+        from app.config import settings
+        from app.world.graph.snapshot import dict_to_snapshot, restore_snapshot
+        db = fs.Client(database=settings.firestore_database)
+        doc = (db.collection("worlds").document(self.world_id)
+               .collection("sessions").document(self.session_id)
+               .collection("world_snapshot").document("current").get())
+        if not doc.exists:
+            logger.info("[SessionRuntime] 无 WorldGraph 快照（首次会话）")
             return
+        snapshot = dict_to_snapshot(doc.to_dict())
+        restore_snapshot(self.world_graph, snapshot)
+        logger.info("[SessionRuntime] WorldGraph 快照恢复: %d states, %d spawned",
+                    len(snapshot.node_states), len(snapshot.spawned_nodes))
 
-        from app.models.graph_scope import GraphScope
-
-        wg = self.world_graph
-        world_id = self.world_id
-
-        # 构建 (scope, owner_id) 列表
-        scopes: list = [(GraphScope.world(), "world_root")]
-
-        chapter_id = self.chapter_id
-        if chapter_id:
-            scopes.append((GraphScope.chapter(chapter_id), chapter_id))
-
-        area_id = self.area_id or self.player_location
-        if chapter_id and area_id:
-            scopes.append((GraphScope.area(chapter_id, area_id), area_id))
-
-        for npc_id in wg.get_by_type("npc"):
-            scopes.append((GraphScope.character(npc_id), npc_id))
-
-        scopes.append((GraphScope.camp(), "camp"))
-
-        # 并行加载
-        async def _load_one(scope, owner_id):
-            try:
-                data = await self._graph_store.load_graph_v2(world_id, scope)
-                return (owner_id, data, None)
-            except Exception as exc:
-                return (owner_id, None, exc)
-
-        results = await asyncio.gather(
-            *[_load_one(s, o) for s, o in scopes],
-        )
-
-        total_nodes = 0
-        total_edges = 0
-
-        for (scope, _), (owner_id, data, error) in zip(scopes, results):
-            if error:
-                logger.warning("[SessionRuntime] knowledge scope %s failed: %s", scope, error)
-                continue
-            if not data or (not data.nodes and not data.edges):
-                continue
-            n, e = self._inject_knowledge_scope(data, owner_id)
-            total_nodes += n
-            total_edges += e
-
-        logger.info(
-            "[SessionRuntime] 知识图谱首次加载完成: %d nodes, %d edges, %d scopes",
-            total_nodes, total_edges, len(scopes),
-        )
-
-    def _inject_knowledge_scope(self, data: Any, owner_id: str) -> tuple:
-        """将一个 scope 的知识节点/边注入 WorldGraph。返回 (nodes_added, edges_added)。"""
-        from app.world.graph.models import WorldNode
-
-        wg = self.world_graph
-        nodes_added = 0
-        edges_added = 0
-
-        # 节点转换：MemoryNode → WorldNode
-        for mn in data.nodes:
-            if wg.has_node(mn.id):
-                continue  # GraphBuilder 已创建的结构节点，跳过
-            props = dict(mn.properties) if mn.properties else {}
-            props["owner"] = owner_id
-            node = WorldNode(
-                id=mn.id, type=mn.type, name=mn.name,
-                importance=mn.importance, properties=props,
-            )
-            wg.add_node(node)
-            nodes_added += 1
-
-        # has_memory 边：owner → 知识节点
-        for mn in data.nodes:
-            if not wg.has_node(mn.id) or not wg.has_node(owner_id):
-                continue
-            edge_key = f"has_memory_{owner_id}_{mn.id}"
-            try:
-                wg.add_edge(owner_id, mn.id, "has_memory", key=edge_key)
-                edges_added += 1
-            except Exception:
-                pass  # 边已存在或其他问题，静默跳过
-
-        # 原始知识边转换
-        for me in data.edges:
-            if not wg.has_node(me.source) or not wg.has_node(me.target):
-                continue
-            edge_key = me.id or f"{me.source}_{me.target}_{me.relation}"
-            try:
-                wg.add_edge(me.source, me.target, me.relation,
-                            key=edge_key, weight=me.weight)
-                edges_added += 1
-            except Exception:
-                pass
-
-        return nodes_added, edges_added
-
-    async def _persist_world_graph_snapshot(self) -> bool:
-        """保存 WorldGraph 快照到 Firestore。返回 True 表示成功。"""
-        if not self.world_graph or self._world_graph_failed:
-            return False
+    async def _persist_world_graph_snapshot(self) -> None:
+        """保存 WorldGraph 快照到 Firestore。失败 raise FirestoreIOError。"""
+        if not self.world_graph:
+            return
         try:
             from google.cloud import firestore as fs
             from app.config import settings
@@ -591,8 +425,8 @@ class SessionRuntime:
                         snapshot_size, len(snapshot.node_states),
                         len(snapshot.spawned_nodes), len(snapshot.modified_edges),
                     )
-            except Exception:
-                pass
+            except (TypeError, ValueError, OverflowError) as exc:
+                logger.debug("[SessionRuntime] 快照大小检测失败: %s", exc)
             db = fs.Client(database=settings.firestore_database)
             (db.collection("worlds").document(self.world_id)
              .collection("sessions").document(self.session_id)
@@ -601,10 +435,8 @@ class SessionRuntime:
             logger.info("[SessionRuntime] WorldGraph 快照保存: %d states, %d spawned, %d edges",
                         len(snapshot.node_states), len(snapshot.spawned_nodes),
                         len(snapshot.modified_edges))
-            return True
-        except Exception as exc:
-            logger.error("[SessionRuntime] WorldGraph 快照保存失败: %s", exc)
-            return False
+        except (OSError, KeyError, ValueError, RuntimeError) as exc:
+            raise FirestoreIOError(f"WorldGraph 快照保存失败: {exc}") from exc
 
     # =========================================================================
     # Delegates — Event Machine (tick / 状态机 / 奖励 / 同伴分发)
@@ -636,64 +468,22 @@ class SessionRuntime:
     # =========================================================================
 
     async def enter_area(self, area_id: str) -> Dict[str, Any]:
-        """进入区域 — 完整区域切换生命周期。
-
-        1. 如果有 current_area → unload 旧区域
-        2. 创建新 AreaRuntime → load
-        3. 更新 GameState.player_location
-        4. 同步队伍位置
-        5. 返回区域切换结果
-        """
-        from app.runtime.area_runtime import AreaRuntime
-
+        """进入区域 — 更新状态 + 同步队伍 + 切换 SceneBus。"""
         old_area_id = self.player_location
-
-        # 1. Unload 旧区域
-        visit_summary = None
-        if self.current_area:
-            try:
-                visit_summary = await self.current_area.unload(self)
-            except NotImplementedError:
-                pass  # Phase 2B
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] 旧区域 unload 失败: %s", exc
-                )
-            self.current_area = None
-
-        # 2. 创建并加载新 AreaRuntime
         area_def = self.world.get_area_definition(area_id) if self.world else None
-        if area_def:
-            new_area = AreaRuntime(area_id=area_id, definition=area_def)
-            try:
-                await new_area.load(self.world_id, self.session_id)
-            except NotImplementedError:
-                pass  # Phase 2B
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] 新区域 load 失败: area=%s err=%s",
-                    area_id,
-                    exc,
-                )
-            self.current_area = new_area
 
-        # 3. 更新 GameState
+        # 1. 更新 GameState
         if self.game_state:
             self.game_state.player_location = area_id
             self.game_state.area_id = area_id
             self.game_state.sub_location = None
             self._dirty_game_state = True
 
-        # 4. 同步队伍位置
+        # 4. 同步队伍位置（纯内存）
         if self._party_service:
-            try:
-                await self._party_service.sync_locations(
-                    self.world_id, self.session_id, area_id, None
-                )
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] 队伍位置同步失败: %s", exc
-                )
+            await self._party_service.sync_locations(
+                self.world_id, self.session_id, area_id, None
+            )
 
         # 5. 同步到 StateManager
         if self._state_manager and self.game_state:
@@ -720,9 +510,7 @@ class SessionRuntime:
             "previous_area": old_area_id,
             "new_area": area_id,
             "area_name": area_def.name if area_def else area_id,
-            "visit_summary": (
-                visit_summary.model_dump() if visit_summary else None
-            ),
+            "visit_summary": None,
         }
 
     # =========================================================================
@@ -792,11 +580,30 @@ class SessionRuntime:
                 await self._state_manager.set_state(
                     self.world_id, self.session_id, self.game_state
                 )
+            # Firestore 持久化：优先用 session_store，否则直接写
             if self._session_store:
                 await self._session_store.update_session(
                     self.world_id, self.session_id,
-                    {"metadata.admin_state": self.game_state.model_dump()},
+                    {
+                        "metadata.admin_state": self.game_state.model_dump(),
+                        "metadata.has_character": self.player is not None,
+                    },
                 )
+            else:
+                try:
+                    from google.cloud import firestore as _fs
+                    from app.config import settings as _cfg
+                    from datetime import datetime
+                    _db = _fs.Client(database=_cfg.firestore_database)
+                    _db.collection("worlds").document(self.world_id)\
+                       .collection("sessions").document(self.session_id)\
+                       .update({
+                           "metadata.admin_state": self.game_state.model_dump(),
+                           "metadata.has_character": self.player is not None,
+                           "updated_at": datetime.now(),
+                       })
+                except (OSError, RuntimeError) as exc:
+                    raise FirestoreIOError(f"GameState 持久化失败: {exc}") from exc
             self._dirty_game_state = False
             persisted.append("game_state")
 
@@ -817,37 +624,15 @@ class SessionRuntime:
             self._dirty_party = False
             persisted.append("party")
 
-        # 5. AreaRuntime — 每轮增量持久化 state + events
-        if self.current_area:
-            await self.current_area.persist_state()
-            persisted.append("area")
+        # 7a. WorldGraph 快照（主路径，失败 raise FirestoreIOError）
+        if self.world_graph:
+            await self._persist_world_graph_snapshot()
+            persisted.append("world_graph")
 
-        # 6. Companions — 保存同伴状态/事件/摘要
-        for companion in self.companions.values():
-            try:
-                await companion.save()
-            except Exception as exc:
-                logger.warning(
-                    "[SessionRuntime] 同伴 '%s' 持久化失败: %s",
-                    getattr(companion, "character_id", "?"), exc,
-                )
-        if self.companions:
-            persisted.append("companions")
-
-        # 7a. WorldGraph 快照（主路径）
-        snapshot_ok = False
-        if self.world_graph and not self._world_graph_failed:
-            snapshot_ok = await self._persist_world_graph_snapshot()
-            if snapshot_ok:
-                persisted.append("world_graph")
-
-        # 7b. Player 脏标记清除（仅在快照成功后）
+        # 7b. Player 脏标记清除
         if player_was_dirty:
-            if snapshot_ok:
-                self._dirty_player = False
-                persisted.append("player")
-            else:
-                logger.error("[SessionRuntime] Player 数据未持久化（WorldGraph 快照失败），保留脏标记")
+            self._dirty_player = False
+            persisted.append("player")
 
         if persisted:
             logger.info(
@@ -872,7 +657,7 @@ class SessionRuntime:
         同时标记 WorldGraph 脏节点，确保 snapshot 捕获。
         """
         self._dirty_player = True
-        if self.world_graph and not self._world_graph_failed:
+        if self.world_graph:
             self.world_graph._dirty_nodes.add("player")
 
     def apply_delta(self, delta: StateDelta) -> None:
@@ -997,3 +782,118 @@ class SessionRuntime:
     # =========================================================================
     # 上下文导出（供 ContextAssembler 消费）
     # =========================================================================
+
+    # =========================================================================
+    # Session CRUD 类方法（替代已删除的 GameSessionStore）
+    # =========================================================================
+
+    @classmethod
+    async def create(
+        cls,
+        world_id: str,
+        session_id: Optional[str] = None,
+        participants: Optional[List[str]] = None,
+    ) -> "GameSessionState":
+        """创建会话文档（Firestore）。
+
+        替代 GameSessionStore.create_session()。
+        """
+        from google.cloud import firestore as fs
+        from app.config import settings as _settings
+        from app.models.game import GameSessionState
+        from datetime import datetime
+
+        db = fs.Client(database=_settings.firestore_database)
+        sessions_ref = db.collection("worlds").document(world_id).collection("sessions")
+
+        if session_id:
+            doc = sessions_ref.document(session_id).get()
+            if doc.exists:
+                raise ValueError(
+                    f"session_id '{session_id}' already exists; "
+                    "use resume endpoint or a new session_id"
+                )
+        else:
+            for _ in range(8):
+                candidate = f"sess_{uuid.uuid4().hex[:8]}"
+                doc = sessions_ref.document(candidate).get()
+                if not doc.exists:
+                    session_id = candidate
+                    break
+            if not session_id:
+                raise RuntimeError("failed to allocate unique session_id")
+
+        state = GameSessionState(
+            session_id=session_id,
+            world_id=world_id,
+            participants=participants or [],
+            updated_at=datetime.now(),
+        )
+        sessions_ref.document(session_id).set(state.model_dump())
+        return state
+
+    @classmethod
+    async def list_sessions(
+        cls,
+        world_id: str,
+        user_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List["GameSessionState"]:
+        """列出世界内会话（按更新时间倒序）。
+
+        替代 GameSessionStore.list_sessions()。
+        """
+        from google.cloud import firestore as fs
+        from app.config import settings as _settings
+        from app.models.game import GameSessionState
+        from datetime import datetime, timezone
+
+        db = fs.Client(database=_settings.firestore_database)
+        sessions_ref = db.collection("worlds").document(world_id).collection("sessions")
+        query = sessions_ref
+        if user_id:
+            query = query.where("participants", "array_contains", user_id)
+
+        docs = list(query.stream())
+        sessions: List[GameSessionState] = []
+        for doc in docs:
+            data = doc.to_dict() or {}
+            try:
+                sessions.append(GameSessionState(**data))
+            except (ValidationError, TypeError, KeyError) as exc:
+                logger.warning("[SessionRuntime] 会话反序列化跳过 doc=%s: %s", doc.id, exc)
+                continue
+
+        def _sort_key(s: GameSessionState) -> datetime:
+            updated = s.updated_at
+            if isinstance(updated, datetime):
+                if updated.tzinfo is None:
+                    return updated.replace(tzinfo=timezone.utc)
+                return updated
+            return datetime.min.replace(tzinfo=timezone.utc)
+
+        sessions.sort(key=_sort_key, reverse=True)
+        safe_limit = max(1, min(int(limit), 100))
+        return sessions[:safe_limit]
+
+    @classmethod
+    async def get_session_meta(
+        cls,
+        world_id: str,
+        session_id: str,
+    ) -> Optional["GameSessionState"]:
+        """轻量读取会话元数据（不完整 restore）。
+
+        替代 GameSessionStore.get_session()。
+        """
+        from google.cloud import firestore as fs
+        from app.config import settings as _settings
+        from app.models.game import GameSessionState
+
+        db = fs.Client(database=_settings.firestore_database)
+        doc = (db.collection("worlds").document(world_id)
+               .collection("sessions").document(session_id).get())
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        return GameSessionState(**data)

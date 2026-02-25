@@ -258,20 +258,17 @@ class TestC7aMounting:
 
         assert session.world_graph is not None
         assert session._behavior_engine is not None
-        assert not session._world_graph_failed
 
         stats = session.world_graph.stats()
         assert stats["node_count"] > 0
 
-    def test_build_failure_graceful(self):
-        """GraphBuilder 抛异常时 _world_graph_failed=True，不影响管线。"""
+    def test_build_failure_raises(self):
+        """严格模式：GraphBuilder 抛异常 → raise SessionRestoreError。"""
+        from app.exceptions import SessionRestoreError
         session = _make_session_runtime()
-        with patch("app.world.graph_builder.GraphBuilder.build", side_effect=RuntimeError("boom")):
-            session._build_world_graph()
-
-        assert session.world_graph is None
-        assert session._behavior_engine is None
-        assert session._world_graph_failed is True
+        with patch("app.world.graph.builder.GraphBuilder.build", side_effect=RuntimeError("boom")):
+            with pytest.raises(SessionRestoreError, match="WorldGraph 构建失败"):
+                session._build_world_graph()
 
     def test_snapshot_persist_and_restore(self):
         """快照捕获 → 序列化 → 反序列化 → 恢复 roundtrip。"""
@@ -326,7 +323,6 @@ class TestC7aMounting:
 
         assert session.world_graph is None
         assert session._behavior_engine is None
-        assert not session._world_graph_failed
 
     def test_no_world_no_build(self):
         """world=None 时不构建。"""
@@ -367,12 +363,10 @@ class TestC7bBehaviorEngine:
         assert session.world_graph is None
         assert session.build_tick_context("pre") is None
 
-    def test_tick_context_none_when_failed(self):
-        """_world_graph_failed 时返回 None。"""
+    def test_tick_context_none_when_no_graph(self):
+        """world_graph=None 时返回 None。"""
         session = _make_session_runtime()
-        wg = _build_world_graph(session)
-        session.world_graph = wg
-        session._world_graph_failed = True
+        session.world_graph = None
         assert session.build_tick_context("pre") is None
 
     def test_pre_tick_runs_behavior_engine(self):

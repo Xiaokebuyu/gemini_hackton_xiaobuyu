@@ -3,9 +3,7 @@ import types
 
 import pytest
 
-from app.models.admin_protocol import FlashOperation, FlashRequest
 from app.models.state_delta import GameState
-from app.services.admin.flash_cpu_service import FlashCPUService
 from app.services.admin.state_manager import StateManager
 from app.services.admin.world_runtime import AdminWorldRuntime
 from app.services.area_navigator import AreaNavigator
@@ -163,7 +161,6 @@ async def test_world_runtime_get_current_location_self_heals_invalid_location(mo
     healed = await state_manager.get_state("test_world", "sess_1")
     assert healed is not None
     assert healed.player_location == "frontier_town"
-    assert any("metadata.admin_state" in updates for _, _, updates in store.updated)
 
 
 class _DummyRuntime:
@@ -233,125 +230,3 @@ class _DummyRuntime:
         )
 
 
-class _DummyPartyOps:
-    def __init__(self) -> None:
-        self.party_id = "party_ops"
-        self.members = []
-
-    def is_full(self):
-        return False
-
-    def get_member(self, character_id: str):
-        for member in self.members:
-            if member.character_id == character_id:
-                return member
-        return None
-
-    def get_active_members(self):
-        return list(self.members)
-
-
-class _DummyPartyOpsService:
-    def __init__(self) -> None:
-        self.party = _DummyPartyOps()
-
-    async def get_or_create_party(self, world_id: str, session_id: str):
-        if self.party is None:
-            self.party = _DummyPartyOps()
-        return self.party
-
-    async def get_party(self, world_id: str, session_id: str):
-        return self.party
-
-    async def add_member(
-        self,
-        world_id: str,
-        session_id: str,
-        character_id: str,
-        name: str,
-        role,
-        personality: str = "",
-        response_tendency: float = 0.5,
-    ):
-        member = types.SimpleNamespace(
-            character_id=character_id,
-            name=name,
-            role=role,
-            personality=personality,
-            response_tendency=response_tendency,
-            current_mood="neutral",
-        )
-        self.party.members.append(member)
-        return member
-
-    async def remove_member(self, world_id: str, session_id: str, character_id: str):
-        if self.party is None:
-            return False
-        for idx, member in enumerate(self.party.members):
-            if member.character_id == character_id:
-                self.party.members.pop(idx)
-                return True
-        return False
-
-    async def disband_party(self, world_id: str, session_id: str):
-        existed = self.party is not None
-        self.party = None
-        return existed
-
-
-@pytest.mark.asyncio
-async def test_party_and_story_event_ops_return_state_delta():
-    party_service = _DummyPartyOpsService()
-    service = FlashCPUService(
-        party_service=party_service,
-    )
-
-    add_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ADD_TEAMMATE,
-            parameters={"character_id": "ally_2", "name": "队友二", "role": "support"},
-        ),
-    )
-    assert add_result.success is True
-    assert add_result.state_delta is not None
-    assert add_result.state_delta.changes.get("party_member_count") == 1
-    assert add_result.state_delta.changes.get("party_update", {}).get("action") == "add_member"
-
-    remove_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.REMOVE_TEAMMATE,
-            parameters={"character_id": "ally_2", "reason": "剧情分队"},
-        ),
-    )
-    assert remove_result.success is True
-    assert remove_result.state_delta is not None
-    assert remove_result.state_delta.changes.get("party_member_count") == 0
-    assert remove_result.state_delta.changes.get("party_update", {}).get("action") == "remove_member"
-
-    add_again_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.ADD_TEAMMATE,
-            parameters={"character_id": "ally_3", "name": "队友三"},
-        ),
-    )
-    assert add_again_result.success is True
-
-    disband_result = await service.execute_request(
-        world_id="test_world",
-        session_id="test_session",
-        request=FlashRequest(
-            operation=FlashOperation.DISBAND_PARTY,
-            parameters={"reason": "任务结束"},
-        ),
-    )
-    assert disband_result.success is True
-    assert disband_result.state_delta is not None
-    assert disband_result.state_delta.changes.get("has_party") is False
-    assert disband_result.state_delta.changes.get("party_member_count") == 0
-    assert disband_result.state_delta.changes.get("party_update", {}).get("action") == "disband"

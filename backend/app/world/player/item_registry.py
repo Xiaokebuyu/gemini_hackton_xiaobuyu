@@ -45,7 +45,7 @@ def _load() -> None:
             if item_id:
                 _ITEM_LOOKUP[item_id] = item
         logger.info("Loaded %d items from %s", len(_ITEM_LOOKUP), _ITEMS_PATH)
-    except Exception as exc:
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
         logger.error("Failed to load items: %s", exc)
     _LOADED = True
 

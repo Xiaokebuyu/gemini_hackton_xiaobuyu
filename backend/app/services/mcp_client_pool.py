@@ -27,20 +27,9 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from app.config import settings
+from app.exceptions import MCPServiceUnavailableError
 
 logger = logging.getLogger(__name__)
-
-
-class MCPServiceUnavailableError(RuntimeError):
-    """Raised when an MCP service endpoint is unavailable."""
-
-    def __init__(self, server_type: str, endpoint: str, detail: str) -> None:
-        self.server_type = server_type
-        self.endpoint = endpoint
-        self.detail = detail
-        super().__init__(
-            f"MCP service unavailable ({server_type}) at {endpoint or '<unset>'}: {detail}"
-        )
 
 
 @dataclass
@@ -70,7 +59,6 @@ class MCPClientPool:
     _lock: asyncio.Lock = asyncio.Lock()
 
     # Server type constants
-    GAME_TOOLS = "game_tools"
     COMBAT = "combat"
 
     def __init__(self) -> None:
@@ -88,26 +76,13 @@ class MCPClientPool:
 
         self._cooldown_seconds = 30.0
         self._tool_timeout_seconds = float(settings.mcp_tool_timeout_seconds)
-        self._tool_timeouts: Dict[str, Dict[str, float]] = {
-            self.GAME_TOOLS: {
-                # NPC 对话可能触发二次模型调用（工具回忆），通常明显慢于其他轻量工具。
-                "npc_respond": float(settings.mcp_npc_tool_timeout_seconds),
-            },
-        }
+        self._tool_timeouts: Dict[str, Dict[str, float]] = {}
         self._ping_timeout_seconds = 2.0
         self._protocol_health_check_interval_seconds = 5.0
 
         self._server_root = Path(__file__).resolve().parents[2]
 
         self._configs = {
-            self.GAME_TOOLS: ServerConfig(
-                command=settings.mcp_tools_command,
-                args=settings.mcp_tools_args,
-                cwd=self._server_root,
-                name="Game Tools MCP",
-                transport=settings.mcp_tools_transport,
-                endpoint=settings.mcp_tools_endpoint,
-            ),
             self.COMBAT: ServerConfig(
                 command=settings.mcp_combat_command,
                 args=settings.mcp_combat_args,
@@ -313,7 +288,7 @@ class MCPClientPool:
                 "url": url,
                 "status_code": response.status_code,
             }
-        except Exception as exc:
+        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
             return {
                 "ok": False,
                 "url": url,
@@ -359,7 +334,7 @@ class MCPClientPool:
 
             handshake["ok"] = True
             handshake["tool_count"] = len(tools)
-        except Exception as exc:
+        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
             handshake["error"] = f"{type(exc).__name__}: {exc}"
             handshake["error_kind"] = self._classify_probe_error(exc)
         finally:
@@ -570,7 +545,7 @@ class MCPClientPool:
                     return decoded
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:
+                except (asyncio.TimeoutError, OSError, RuntimeError, ExceptionGroup) as exc:
                     last_error = exc
                     elapsed_ms = int((time.perf_counter() - started) * 1000)
                     error_type = type(exc).__name__
@@ -723,7 +698,7 @@ class MCPClientPool:
         except asyncio.CancelledError:
             await exit_stack.aclose()
             raise
-        except Exception as exc:
+        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
             await exit_stack.aclose()
             self._mark_cooldown(server_type, exc)
             raise MCPServiceUnavailableError(
@@ -751,7 +726,7 @@ class MCPClientPool:
                     )
                     self._last_protocol_check[server_type] = now
             return True
-        except Exception as exc:
+        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
             self._record_error(
                 {
                     "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -770,7 +745,7 @@ class MCPClientPool:
         if server_type in self._exit_stacks:
             try:
                 await self._exit_stacks[server_type].aclose()
-            except Exception as exc:
+            except (OSError, RuntimeError) as exc:
                 logger.warning("[MCPPool] Error closing %s: %s", server_type, exc)
             finally:
                 self._sessions.pop(server_type, None)
@@ -848,7 +823,7 @@ class MCPClientPool:
             return None
         try:
             return json.loads(stripped)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             return None
 
     def _normalize_structured_content(self, payload: Any) -> Dict[str, Any]:

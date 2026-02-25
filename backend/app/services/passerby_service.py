@@ -10,12 +10,14 @@ Passerby Service - 路人NPC管理服务
 Firestore结构：
     worlds/{world_id}/maps/{map_id}/passerby_pool/config
 """
+import logging
 import random
 import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from google.cloud import firestore
+from pydantic import ValidationError
 
 from app.config import settings
 from app.models.passerby import (
@@ -25,8 +27,8 @@ from app.models.passerby import (
     PasserbyTemplate,
     SharedMemoryContribution,
 )
-from app.services.tiered_ai_service import AITier, TieredAIService
-from app.tools.worldbook_graphizer.models import NPCTier
+
+logger = logging.getLogger(__name__)
 
 
 class PasserbyService:
@@ -67,17 +69,14 @@ class PasserbyService:
 
     def __init__(
         self,
-        tiered_ai: Optional[TieredAIService] = None,
         firestore_client: Optional[firestore.Client] = None,
     ):
         """
         初始化路人服务
 
         Args:
-            tiered_ai: 三层AI服务
             firestore_client: Firestore客户端
         """
-        self._tiered_ai = tiered_ai or TieredAIService()
         self._db = firestore_client or firestore.Client(database=settings.firestore_database)
 
         # 内存缓存
@@ -193,15 +192,15 @@ class PasserbyService:
             "shared_context": shared_memory,
         }
 
-        response = await self._tiered_ai.respond(
-            world_id=world_id,
-            npc_id=instance_id,
-            npc_tier=NPCTier.PASSERBY,
+        from app.agentic.passerby_llm import generate_passerby_response
+        from app.services.llm_service import LLMService
+        response = await generate_passerby_response(
+            llm_service=LLMService(),
             query=player_message,
-            location_id=map_id,
             npc_profile=npc_profile,
-            force_tier=AITier.FAST,
-            sub_location_id=instance.sub_location_id,  # 传递路人所在子地点
+            location_id=map_id,
+            sub_location_id=instance.sub_location_id,
+            model=settings.npc_tier_config.passerby_model,
         )
 
         # 更新交互计数
@@ -211,11 +210,11 @@ class PasserbyService:
 
         return {
             "success": True,
-            "response": response.content,
+            "response": response["content"],
             "speaker": instance.name,
-            "tier_used": response.tier_used.value,
-            "latency_ms": response.latency_ms,
-            "cache_hit": response.cache_hit,
+            "tier_used": "fast",
+            "latency_ms": response["latency_ms"],
+            "cache_hit": response["cache_hit"],
         }
 
     async def get_active_passersby(
@@ -287,14 +286,14 @@ class PasserbyService:
             for t_id, t_data in templates_data.items():
                 try:
                     self._templates[key][t_id] = PasserbyTemplate(**t_data)
-                except Exception as e:
+                except (ValidationError, TypeError) as e:
                     logger.warning("Invalid passerby template %s: %s", t_id, e)
 
             shared_memories = []
             for memory_data in shared_memories_data:
                 try:
                     shared_memories.append(SharedMemoryContribution(**memory_data))
-                except Exception as e:
+                except (ValidationError, TypeError) as e:
                     logger.warning("Invalid shared memory data: %s", e)
                     continue
 
@@ -448,7 +447,7 @@ class PasserbyService:
 
             return "\n".join(contents)
 
-        except Exception as e:
+        except (KeyError, TypeError) as e:
             logger.warning("_generate_description failed: %s", e)
             return ""
 

@@ -14,8 +14,6 @@ RELOAD="${API_RELOAD:-true}"
 CHECK_MCP="${CHECK_MCP:-true}"
 PROBE_TIMEOUT="${MCP_PROBE_TIMEOUT_SECONDS:-2}"
 
-MCP_TOOLS_TRANSPORT="${MCP_TOOLS_TRANSPORT:-streamable-http}"
-MCP_TOOLS_ENDPOINT="${MCP_TOOLS_ENDPOINT:-http://127.0.0.1:9101/mcp}"
 MCP_COMBAT_TRANSPORT="${MCP_COMBAT_TRANSPORT:-streamable-http}"
 MCP_COMBAT_ENDPOINT="${MCP_COMBAT_ENDPOINT:-http://127.0.0.1:9102/mcp}"
 
@@ -56,14 +54,6 @@ if [ "$RELOAD" = "true" ]; then
 fi
 
 if [ "$CHECK_MCP" = "true" ]; then
-  if needs_http_probe "$MCP_TOOLS_TRANSPORT"; then
-    if ! probe_endpoint "game_tools"; then
-      echo "Game Tools MCP 不可用: $MCP_TOOLS_ENDPOINT"
-      echo "请先启动: bash 启动服务/run_mcp_services.sh"
-      exit 1
-    fi
-  fi
-
   if needs_http_probe "$MCP_COMBAT_TRANSPORT"; then
     if ! probe_endpoint "combat"; then
       echo "Combat MCP 不可用: $MCP_COMBAT_ENDPOINT"

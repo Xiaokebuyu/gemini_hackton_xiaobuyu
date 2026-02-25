@@ -221,8 +221,6 @@ class ContextAssembler:
         Returns:
             LayeredContext 分层上下文。
         """
-        area = getattr(session, "current_area", None)
-
         # Layer 0: 世界常量 + 角色花名册
         world_ctx: Dict[str, Any] = (
             world.world_constants.to_context()
@@ -247,16 +245,8 @@ class ContextAssembler:
         return LayeredContext(
             world=world_ctx,
             chapter=_get_chapter_context(session),
-            area=(
-                area.get_area_context(world, session)
-                if area
-                else {}
-            ),
-            location=(
-                area.get_location_context(session.sub_location)
-                if area and getattr(session, "sub_location", None)
-                else None
-            ),
+            area={},
+            location=None,
             dynamic=ContextAssembler._build_dynamic_state(session),
             memory=None,  # 由 PipelineOrchestrator 后续填充
         )
@@ -327,7 +317,7 @@ class ContextAssembler:
         state["world_flags"] = {}
         state["faction_reputations"] = {}
         wg = getattr(session, "world_graph", None)
-        if wg and not getattr(session, "_world_graph_failed", False):
+        if wg:
             world_root_node = wg.get_node("world_root")
             if world_root_node:
                 state["world_flags"] = dict(world_root_node.state.get("world_flags", {}))

@@ -22,6 +22,7 @@ import logging
 import time
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from app.exceptions import CATCHABLE_EXCEPTIONS
 from app.models.admin_protocol import AgenticResult, AgenticToolCall
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ class AgenticExecutor:
                 result = {"success": False, "error": f"timeout: {tool_fn.__name__}"}
                 success = False
                 error = f"timeout: {tool_fn.__name__}"
-            except Exception as e:
+            except CATCHABLE_EXCEPTIONS as e:
                 result = {"success": False, "error": f"{type(e).__name__}: {e}"}
                 success = False
                 error = f"{type(e).__name__}: {e}"
@@ -186,7 +187,7 @@ class AgenticExecutor:
                     }
                 try:
                     event_queue.put_nowait(event)
-                except Exception as e:
+                except (asyncio.QueueFull, RuntimeError) as e:
                     logger.debug("SSE push failed: %s", e)
 
             return result

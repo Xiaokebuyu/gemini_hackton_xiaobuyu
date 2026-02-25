@@ -34,6 +34,7 @@ if "mcp" not in sys.modules:
     sys.modules["mcp.client.streamable_http"] = _mcp_http
     sys.modules["mcp.types"] = _mcp_types
 
+from app.exceptions import FirestoreIOError
 from app.models.player_character import (
     CharacterClass,
     CharacterRace,
@@ -68,7 +69,6 @@ def _make_player_character() -> PlayerCharacter:
 def _make_session(
     *,
     world_graph: Any = None,
-    world_graph_failed: bool = False,
     character_store: Any = None,
     player_character: Optional[PlayerCharacter] = None,
     dirty_player: bool = True,
@@ -80,7 +80,6 @@ def _make_session(
         character_store=character_store,
     )
     session.world_graph = world_graph
-    session._world_graph_failed = world_graph_failed
     session._player_character = player_character or _make_player_character()
     session._dirty_player = dirty_player
     session._restored = True
@@ -94,7 +93,7 @@ def _make_session(
 def test_persist_snapshot_ok_clears_dirty():
     """快照成功 → _dirty_player 清除 + 'player' in persisted。"""
     session = _make_session(world_graph=MagicMock())
-    session._persist_world_graph_snapshot = AsyncMock(return_value=True)
+    session._persist_world_graph_snapshot = AsyncMock(return_value=None)
 
     _run(session.persist())
 
@@ -102,53 +101,27 @@ def test_persist_snapshot_ok_clears_dirty():
     session._persist_world_graph_snapshot.assert_awaited_once()
 
 
-def test_persist_snapshot_fail_retains_dirty():
-    """快照失败时（无 fallback）应保留 _dirty_player。"""
+def test_persist_snapshot_fail_raises_firestore_io_error():
+    """严格模式：快照失败 raise FirestoreIOError，不静默降级。"""
     session = _make_session(world_graph=MagicMock())
-    session._persist_world_graph_snapshot = AsyncMock(return_value=False)
-
-    with patch.object(logging.getLogger("app.runtime.session_runtime"), "error") as mock_err:
-        _run(session.persist())
-
-    assert session._dirty_player is True
-    err_calls = [str(c) for c in mock_err.call_args_list]
-    assert any("Player 数据未持久化" in c for c in err_calls)
-
-
-def test_persist_world_graph_failed_retains_dirty():
-    """world_graph_failed=True 时跳过快照并保留 _dirty_player。"""
-    mock_store = MagicMock()
-    mock_store.save_character = AsyncMock()
-
-    session = _make_session(
-        world_graph=MagicMock(),
-        world_graph_failed=True,
-        character_store=mock_store,
+    session._persist_world_graph_snapshot = AsyncMock(
+        side_effect=FirestoreIOError("firestore down")
     )
 
-    _run(session.persist())
-
-    # 无 fallback：CharacterStore 不应被触发
-    mock_store.save_character.assert_not_awaited()
-    assert session._dirty_player is True
+    with pytest.raises(FirestoreIOError, match="firestore down"):
+        _run(session.persist())
 
 
-def test_snapshot_fail_logs_error_not_warning():
-    """快照失败记录 error 级别（非 warning）。"""
+def test_snapshot_fail_raises_firestore_io_error():
+    """严格模式：capture_snapshot 异常 → raise FirestoreIOError。"""
     session = _make_session(world_graph=MagicMock())
 
-    # 让 capture_snapshot 抛异常
-    with patch("app.runtime.session_runtime.logger") as mock_logger:
-        with patch(
-            "app.world.snapshot.capture_snapshot",
-            side_effect=RuntimeError("firestore down"),
-        ):
-            result = _run(session._persist_world_graph_snapshot())
-
-    assert result is False
-    mock_logger.error.assert_called()
-    err_msg = str(mock_logger.error.call_args)
-    assert "快照保存失败" in err_msg
+    with patch(
+        "app.world.graph.snapshot.capture_snapshot",
+        side_effect=RuntimeError("firestore down"),
+    ):
+        with pytest.raises(FirestoreIOError, match="快照保存失败"):
+            _run(session._persist_world_graph_snapshot())
 
 
 def test_snapshot_ok_does_not_touch_character_store():
@@ -157,29 +130,21 @@ def test_snapshot_ok_does_not_touch_character_store():
     mock_store.save_character = AsyncMock()
 
     session = _make_session(world_graph=MagicMock())
-    session._character_store = mock_store
-    session._persist_world_graph_snapshot = AsyncMock(return_value=True)
+    session._persist_world_graph_snapshot = AsyncMock(return_value=None)
 
     _run(session.persist())
 
-    mock_store.save_character.assert_not_awaited()
     assert session._dirty_player is False
 
 
-def test_persist_player_not_dirty_skips_both():
-    """player 未脏时，不触发 CharacterStore 路径。"""
-    mock_store = MagicMock()
-    mock_store.save_character = AsyncMock()
-
+def test_persist_player_not_dirty_skips():
+    """player 未脏时，不额外持久化。"""
     session = _make_session(
         world_graph=MagicMock(),
-        character_store=mock_store,
         dirty_player=False,
     )
-    session._persist_world_graph_snapshot = AsyncMock(return_value=True)
+    session._persist_world_graph_snapshot = AsyncMock(return_value=None)
 
     _run(session.persist())
 
-    # 兜底不应被调用（player 不脏）
-    mock_store.save_character.assert_not_awaited()
     assert session._dirty_player is False

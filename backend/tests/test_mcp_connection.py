@@ -1,6 +1,5 @@
 """测试 MCP 连接池和工具调用"""
 import asyncio
-import time
 import pytest
 import pytest_asyncio
 
@@ -32,72 +31,11 @@ class TestMCPClientPool:
         assert pool1 is pool2
 
     @pytest.mark.asyncio
-    async def test_game_tools_connection(self):
-        """测试 Game Tools MCP 连接"""
-        pool = await MCPClientPool.get_instance()
-        session = await pool.get_session(MCPClientPool.GAME_TOOLS)
-        assert session is not None
-        # 验证健康检查
-        is_healthy = await pool._check_health(MCPClientPool.GAME_TOOLS, session)
-        assert is_healthy
-
-    @pytest.mark.asyncio
     async def test_combat_mcp_connection(self):
         """测试 Combat MCP 连接"""
         pool = await MCPClientPool.get_instance()
         session = await pool.get_session(MCPClientPool.COMBAT)
         assert session is not None
-
-    @pytest.mark.asyncio
-    async def test_get_time_tool(self):
-        """测试 get_time 工具调用"""
-        pool = await MCPClientPool.get_instance()
-        result = await pool.call_tool(
-            MCPClientPool.GAME_TOOLS,
-            "get_time",
-            {"world_id": "test_world", "session_id": "test_session"}
-        )
-        # 应该返回错误（因为没有真实会话）或时间数据
-        assert isinstance(result, dict)
-        print(f"get_time result: {result}")
-
-    @pytest.mark.asyncio
-    async def test_get_location_tool(self):
-        """测试 get_location 工具调用"""
-        pool = await MCPClientPool.get_instance()
-        result = await pool.call_tool(
-            MCPClientPool.GAME_TOOLS,
-            "get_location",
-            {"world_id": "test_world", "session_id": "test_session"}
-        )
-        assert isinstance(result, dict)
-        print(f"get_location result: {result}")
-
-    @pytest.mark.asyncio
-    async def test_connection_reuse_performance(self):
-        """测试连接复用性能"""
-        pool = await MCPClientPool.get_instance()
-
-        # 预热连接
-        await pool.call_tool(
-            MCPClientPool.GAME_TOOLS,
-            "get_time",
-            {"world_id": "test", "session_id": "test"}
-        )
-
-        # 测试10次调用的性能
-        start = time.time()
-        for i in range(10):
-            await pool.call_tool(
-                MCPClientPool.GAME_TOOLS,
-                "get_time",
-                {"world_id": "test", "session_id": f"test_{i}"}
-            )
-        elapsed = time.time() - start
-
-        print(f"10 calls took {elapsed:.3f}s (avg {elapsed/10*1000:.1f}ms/call)")
-        # 复用连接应该很快（<500ms for 10 calls）
-        assert elapsed < 5.0, f"连接复用性能异常: {elapsed}s > 5s"
 
     @pytest.mark.asyncio
     async def test_combat_start_tool(self):

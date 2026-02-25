@@ -2,12 +2,25 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.runtime.session_runtime import SessionRuntime
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CompactEvent:
+    """同伴事件分发用的轻量事件摘要。"""
+    event_id: str
+    event_name: str
+    summary: str = ""
+    area_id: str = ""
+    game_day: int = 1
+    importance: str = "side"
+    player_role: str = ""
 
 
 class EventMachine:
@@ -22,7 +35,7 @@ class EventMachine:
 
     def build_tick_context(self, phase: str = "pre") -> Optional[Any]:
         """从当前会话状态构建 TickContext。无 WorldGraph 时返回 None。"""
-        if not self._s.world_graph or self._s._world_graph_failed:
+        if not self._s.world_graph:
             return None
         from app.world.graph.models import TickContext
         # 从 world_root 节点读取 world_flags 和 faction_reputations，供条件评估使用
@@ -53,7 +66,7 @@ class EventMachine:
 
     def run_behavior_tick(self, phase: str = "pre") -> Optional[Any]:
         """BehaviorEngine.tick() + narrative 同步 + 副作用。返回 TickResult 或 None。"""
-        if not self._s._behavior_engine or self._s._world_graph_failed:
+        if not self._s._behavior_engine:
             return None
         ctx = self.build_tick_context(phase)
         if ctx is None:
@@ -68,7 +81,7 @@ class EventMachine:
             self._sync_tick_to_narrative(tick_result)
             self._apply_tick_side_effects(tick_result)
             return tick_result
-        except Exception as exc:
+        except (KeyError, ValueError) as exc:
             logger.error("[SessionRuntime] tick(%s) failed: %s", phase, exc, exc_info=True)
             return None
 
@@ -175,7 +188,7 @@ class EventMachine:
         """将完成的事件分发到同伴实例。去重防止工具已分发的事件再次发放。"""
         if not self._s.companions or not self._s.world_graph:
             return
-        from app.runtime.models.companion_state import CompactEvent
+        # CompactEvent 定义在本模块顶部
         game_day = self._s.time.day if self._s.time else 1
         area_id = self._s.player_location or ""
         from app.world.graph.models import EventStatus
@@ -261,14 +274,6 @@ class EventMachine:
             if node.properties.get("narrative_directive"):
                 entry["narrative_directive"] = node.properties["narrative_directive"]
             if status == _ES.ACTIVE:
-                if node.properties.get("completion_conditions"):
-                    from app.runtime.area_runtime import AreaRuntime
-                    hint = AreaRuntime._summarize_completion_conditions(
-                        node.properties["completion_conditions"]
-                    )
-                    if hint:
-                        entry["completion_hint"] = hint
-
                 stages_raw = node.properties.get("stages", [])
                 current_stage_id = node.state.get("current_stage")
                 if stages_raw and current_stage_id:
@@ -318,7 +323,7 @@ class EventMachine:
 
         wg = self._s.world_graph
         engine = self._s._behavior_engine
-        if not wg or self._s._world_graph_failed:
+        if not wg:
             return {"success": False, "error": "WorldGraph not available"}
 
         node = wg.get_node(event_id)
@@ -337,22 +342,17 @@ class EventMachine:
             if ctx:
                 try:
                     engine.tick(ctx)
-                except Exception as exc:
+                except (KeyError, ValueError) as exc:
                     logger.warning("[session] pre-activate tick failed: %s", exc)
             node = wg.get_node(event_id)
             current_status = node.state.get("status", EventStatus.LOCKED) if node else EventStatus.LOCKED
 
         if current_status == EventStatus.LOCKED:
-            from app.runtime.area_runtime import AreaRuntime
-            hint = AreaRuntime._summarize_completion_conditions(
-                node.properties.get("trigger_conditions") or node.properties.get("completion_conditions"),
-            )
             return {
                 "success": False,
                 "event_id": event_id,
                 "current_status": EventStatus.LOCKED,
                 "error": f"事件 '{node.name}' 尚未解锁",
-                "unmet_conditions": hint or "未知条件",
                 "available_events": [
                     eid for eid in wg.find_events_in_scope(self._s.player_location or "")
                     if (n := wg.get_node(eid)) and n.state.get("status") == EventStatus.AVAILABLE
@@ -393,11 +393,8 @@ class EventMachine:
                         visibility="scope",
                     )
                     engine.handle_event(evt, ctx)
-            except Exception as exc:
+            except (KeyError, ValueError) as exc:
                 logger.warning("[session] 事件传播失败 '%s': %s", event_id, exc)
-
-        if self._s.current_area:
-            self._s.current_area.record_action(f"activated_event:{event_id}")
 
         return {
             "success": True,
@@ -413,7 +410,7 @@ class EventMachine:
 
         wg = self._s.world_graph
         engine = self._s._behavior_engine
-        if not wg or self._s._world_graph_failed:
+        if not wg:
             return {"success": False, "error": "WorldGraph not available"}
 
         node = wg.get_node(event_id)
@@ -499,14 +496,11 @@ class EventMachine:
                     for nid, changes in cascade_result.state_changes.items():
                         if changes.get("status") in ("available", "active") and nid not in newly_available:
                             newly_available.append(nid)
-            except Exception as exc:
+            except (KeyError, ValueError) as exc:
                 logger.warning("[session] 级联解锁失败 '%s': %s", event_id, exc)
 
         # 分发到同伴
         self._dispatch_event_to_companions_from_graph(event_id, node)
-
-        if self._s.current_area:
-            self._s.current_area.record_action(f"completed_event:{event_id}")
 
         payload: Dict[str, Any] = {
             "success": True,
@@ -528,7 +522,7 @@ class EventMachine:
 
         wg = self._s.world_graph
         engine = self._s._behavior_engine
-        if not wg or self._s._world_graph_failed:
+        if not wg:
             return {"success": False, "error": "WorldGraph 不可用"}
 
         node = wg.get_node(event_id)
@@ -558,11 +552,8 @@ class EventMachine:
                     fail_result = engine.handle_event(evt, ctx)
                     self._sync_tick_to_narrative(fail_result)
                     self._apply_tick_side_effects(fail_result)
-            except Exception as exc:
+            except (KeyError, ValueError) as exc:
                 logger.warning("[session] fail_event 事件传播失败 '%s': %s", event_id, exc)
-
-        if self._s.current_area:
-            self._s.current_area.record_action(f"failed_event:{event_id}")
 
         return {"success": True, "event_id": event_id, "status": "failed", "reason": reason or "manual_fail"}
 
@@ -572,7 +563,7 @@ class EventMachine:
 
         wg = self._s.world_graph
         engine = self._s._behavior_engine
-        if not wg or self._s._world_graph_failed:
+        if not wg:
             return {"success": False, "error": "WorldGraph not available"}
 
         node = wg.get_node(event_id)
@@ -651,7 +642,7 @@ class EventMachine:
                 if ctx:
                     tick_result = engine.tick(ctx)
                     self._sync_tick_to_narrative(tick_result)
-            except Exception as exc:
+            except (KeyError, ValueError) as exc:
                 logger.warning("[session] advance_stage 补偿 tick 失败: %s", exc)
 
         ts = target_stage if isinstance(target_stage, dict) else target_stage.model_dump()
@@ -670,7 +661,7 @@ class EventMachine:
 
         wg = self._s.world_graph
         engine = self._s._behavior_engine
-        if not wg or self._s._world_graph_failed:
+        if not wg:
             return {"success": False, "error": "WorldGraph not available"}
 
         node = wg.get_node(event_id)
@@ -727,7 +718,7 @@ class EventMachine:
                 if ctx:
                     tick_result = engine.tick(ctx)
                     self._sync_tick_to_narrative(tick_result)
-            except Exception as exc:
+            except (KeyError, ValueError) as exc:
                 logger.warning("[session] complete_event_objective 补偿 tick 失败: %s", exc)
 
         return {"success": True, "event_id": event_id, "objective_id": objective_id, "remaining_objectives": remaining}
@@ -844,7 +835,7 @@ class EventMachine:
         companions = self._s.companions
         if not companions:
             return
-        from app.runtime.models.companion_state import CompactEvent
+        # CompactEvent 定义在本模块顶部
         game_day = self._s.time.day if self._s.time else 1
         area_id = self._s.player_location or ""
         compact = CompactEvent(

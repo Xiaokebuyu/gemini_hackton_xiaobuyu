@@ -12,6 +12,7 @@ from app.world.player.constants import (
     default_character_state, default_npc_state, default_player_state,
 )
 from app.world.player.item_registry import get_item, list_items, search_items
-# CharacterService / AbilityCheckService 暂不 re-export：
-# 它们依赖已删除的 CharacterStore，eager import 会传染断裂。
-# 调用方直接 from app.world.player.character import CharacterService
+from app.world.player.operations import (
+    create_player_node, level_up, equip_item, unequip_item,
+    validate_point_buy, recalculate_ac,
+)

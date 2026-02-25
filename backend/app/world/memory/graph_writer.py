@@ -82,6 +82,7 @@ def merge_extraction(
         world_graph.add_edge(npc_id, eg.id, "has_memory",
                              key=f"edge_{npc_id}_has_{eg.id}")
         result.new_nodes += 1
+        result.new_edges += 1
         result.new_node_ids.append(eg.id)
 
     # 2. sub_events
@@ -108,6 +109,7 @@ def merge_extraction(
                 extraction.event_group.id, ev.id, "contains",
                 key=f"edge_{extraction.event_group.id}_contains_{ev.id}",
             )
+            result.new_edges += 1
         result.new_nodes += 1
         result.new_node_ids.append(ev.id)
 

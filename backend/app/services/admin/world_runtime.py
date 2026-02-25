@@ -9,10 +9,12 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+from google.cloud import firestore as _fs
+
+from app.config import settings as _settings
 from app.models.state_delta import GameState, GameTimeState
 from app.services.admin.state_manager import StateManager
 from app.world.narrative.narrative_service import NarrativeService
-from app.services.game_session_store import GameSessionStore
 from app.services.area_navigator import AreaNavigator
 from app.world.time import GameTime, TimeManager
 
@@ -23,12 +25,12 @@ class AdminWorldRuntime:
     def __init__(
         self,
         state_manager: StateManager,
-        session_store: Optional[GameSessionStore] = None,
+        session_store: Any = None,  # 已废弃，保留签名兼容性
         narrative_service: Optional[NarrativeService] = None,
     ) -> None:
         self.state_manager = state_manager
-        self.session_store = session_store or GameSessionStore()
-        self.narrative_service = narrative_service or NarrativeService(self.session_store)
+        self._db = _fs.Client(database=_settings.firestore_database)
+        self.narrative_service = narrative_service or NarrativeService()
 
     @lru_cache(maxsize=10)
     def _get_navigator(self, world_id: str) -> AreaNavigator:
@@ -49,27 +51,36 @@ class AdminWorldRuntime:
         self._get_navigator.cache_clear()
         return self._get_navigator(world_id)
 
+    def _session_ref(self, world_id: str, session_id: str):
+        return (self._db.collection("worlds").document(world_id)
+                .collection("sessions").document(session_id))
+
     async def get_state(self, world_id: str, session_id: str) -> GameState:
         cached = await self.state_manager.get_state(world_id, session_id)
         if cached:
             return cached
 
-        session = await self.session_store.get_session(world_id, session_id)
-        if session and session.metadata.get("admin_state"):
-            state = GameState(**session.metadata.get("admin_state"))
-        else:
-            state = GameState(world_id=world_id, session_id=session_id)
+        doc = self._session_ref(world_id, session_id).get()
+        if doc.exists:
+            data = doc.to_dict() or {}
+            metadata = data.get("metadata") or {}
+            admin_state = metadata.get("admin_state")
+            if isinstance(admin_state, dict):
+                state = GameState(**admin_state)
+                await self.state_manager.set_state(world_id, session_id, state)
+                return state
 
+        state = GameState(world_id=world_id, session_id=session_id)
         await self.state_manager.set_state(world_id, session_id, state)
         return state
 
     async def _persist_state(self, state: GameState) -> None:
         """内部持久化辅助（写 Firestore）。"""
-        await self.session_store.update_session(
-            state.world_id,
-            state.session_id,
-            {"metadata.admin_state": state.model_dump()},
-        )
+        from datetime import datetime
+        self._session_ref(state.world_id, state.session_id).set({
+            "metadata.admin_state": state.model_dump(),
+            "updated_at": datetime.now(),
+        }, merge=True)
 
     def _time_manager_from_state(self, state: GameState) -> TimeManager:
         return TimeManager.from_dict(state.game_time.model_dump())
@@ -124,7 +135,7 @@ class AdminWorldRuntime:
                             if area in navigator.maps:
                                 current_location = area
                                 break
-            except Exception as exc:
+            except (OSError, RuntimeError) as exc:
                 logger.warning("[start_session] 章节进度加载失败，使用 fallback: %s", exc)
 
         if not current_location:
@@ -135,7 +146,8 @@ class AdminWorldRuntime:
             if not current_location:
                 current_location = list(navigator.maps.keys())[0]
 
-        state = await self.session_store.create_session(world_id, session_id, participants)
+        from app.runtime.session_runtime import SessionRuntime
+        state = await SessionRuntime.create(world_id, session_id, participants)
 
         progress = await self.narrative_service.get_progress(world_id, state.session_id)
 

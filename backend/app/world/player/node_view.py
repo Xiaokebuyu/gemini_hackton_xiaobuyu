@@ -325,7 +325,7 @@ class PlayerNodeView:
             item = get_item(weapon_id)
             if item and item.get("type") == "weapon":
                 return item
-        except Exception as e:
+        except (KeyError, ValueError) as e:
             logger.debug("get_equipped_weapon failed: %s", e)
         return None
 

@@ -7,8 +7,8 @@ from .admin.event_service import AdminEventService
 # NPC Instance Pool services
 from app.world.npc.context_window import ContextWindow, count_tokens
 from app.world.npc.instance_manager import InstanceManager, NPCInstance
-from .memory_graphizer import MemoryGraphizer
-from .admin import AdminCoordinator, FlashCPUService, StateManager, AdminWorldRuntime
+from app.agentic.memory_graphizer import MemoryGraphizer
+from .admin import AdminCoordinator, StateManager, AdminWorldRuntime
 
 __all__ = [
     "LLMService",
@@ -21,7 +21,6 @@ __all__ = [
     "NPCInstance",
     "MemoryGraphizer",
     "AdminCoordinator",
-    "FlashCPUService",
     "StateManager",
     "AdminWorldRuntime",
 ]

@@ -54,7 +54,7 @@ from app.models.graph_elements import (
     TranscriptMessage,
 )
 from app.models.context_window import GraphizeRequest, WindowMessage
-from app.services.memory_graphizer import MemoryGraphizer
+from app.agentic.memory_graphizer import MemoryGraphizer
 from app.world.memory.graph_writer import merge_extraction, get_context_nodes, _extract_metadata
 
 

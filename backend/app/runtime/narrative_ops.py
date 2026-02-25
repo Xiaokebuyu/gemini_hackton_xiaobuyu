@@ -158,7 +158,7 @@ class NarrativeOps:
             return {"success": False, "error": "no valid disposition deltas"}
 
         wg = self._s.world_graph
-        if not wg or self._s._world_graph_failed:
+        if not wg:
             return {"success": False, "error": "WorldGraph not available"}
 
         node = wg.get_node(npc_id)

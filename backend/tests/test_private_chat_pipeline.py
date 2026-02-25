@@ -1,7 +1,7 @@
 """Tests for D11 — Private Chat Pipeline Integration.
 
 Validates:
-- Private chat uses PipelineOrchestrator (SessionRuntime + AgenticExecutor)
+- Private chat uses NPCInteractionCoordinator (SessionRuntime + AgenticExecutor)
 - InstanceManager dual-layer cognition preserved (context_window read/write)
 - SceneBus writes (contact + player speech + NPC speech)
 - SessionHistory recording
@@ -89,24 +89,23 @@ def _make_mock_session():
 
 
 def _make_pipeline_with_instance_manager():
-    from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
+    from app.services.admin.npc_interaction_coordinator import NPCInteractionCoordinator
 
-    flash_cpu = MagicMock()
-    flash_cpu.llm_service = MagicMock()
-    flash_cpu.llm_service.agentic_generate = AsyncMock(
+    llm_service = MagicMock()
+    llm_service.agentic_generate = AsyncMock(
         return_value=_make_llm_response()
     )
-    flash_cpu.llm_service.generate_simple = AsyncMock(
+    llm_service.generate_simple = AsyncMock(
         return_value='[{"text":"继续询问","intent":"continue","tone":"curious"}]'
     )
-    flash_cpu.llm_service._strip_code_block = lambda x: x
+    llm_service._strip_code_block = lambda x: x
 
     instance_manager = AsyncMock()
     instance_manager.get_or_create = AsyncMock(return_value=_make_instance())
     instance_manager.maybe_graphize_instance = AsyncMock()
 
-    pipeline = PipelineOrchestrator(
-        flash_cpu=flash_cpu,
+    pipeline = NPCInteractionCoordinator(
+        llm_service=llm_service,
         party_service=MagicMock(),
         narrative_service=MagicMock(),
         teammate_response_service=MagicMock(),
@@ -117,18 +116,18 @@ def _make_pipeline_with_instance_manager():
         recall_orchestrator=MagicMock(),
         instance_manager=instance_manager,
     )
-    return pipeline, flash_cpu, instance_manager
+    return pipeline, llm_service, instance_manager
 
 
 class TestPrivateChatUsesSessionRuntime:
     """验证私聊使用 SessionRuntime restore/persist。"""
 
     def test_session_restore_and_persist_called(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -142,28 +141,28 @@ class TestPrivateChatUsesAgenticExecutor:
     """验证私聊使用 AgenticExecutor 而非 generate_simple_stream。"""
 
     def test_agentic_generate_called(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
             events = _collect(pipeline.process_private_chat_stream("w1", "s1", "priestess", "你好"))
 
-            flash_cpu.llm_service.agentic_generate.assert_called_once()
+            llm_service.agentic_generate.assert_called_once()
 
 
 class TestPrivateChatRecordsHistory:
     """验证私聊记录到 SessionHistory。"""
 
     def test_history_record_round_called(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -180,11 +179,11 @@ class TestPrivateChatSkipsGmAndTeammate:
     """验证私聊跳过 GM 观察和队友旁观。"""
 
     def test_no_gm_observation_event(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -198,29 +197,29 @@ class TestPrivateChatSkipsGmAndTeammate:
 
     def test_agentic_generate_called_only_once(self):
         """只调用一次 agentic_generate (NPC), 不调用 GM/队友。"""
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
             events = _collect(pipeline.process_private_chat_stream("w1", "s1", "priestess", "你好"))
 
             # Only NPC uses agentic_generate, no GM or teammate
-            assert flash_cpu.llm_service.agentic_generate.call_count == 1
+            assert llm_service.agentic_generate.call_count == 1
 
 
 class TestPrivateChatGeneratesDialogueOptions:
     """验证私聊生成对话选项。"""
 
     def test_dialogue_options_in_events(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -235,13 +234,13 @@ class TestPrivateChatWritesInstanceContext:
     """验证私聊写回 InstanceManager 上下文。"""
 
     def test_context_window_receives_messages(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
         instance = _make_instance()
         im.get_or_create = AsyncMock(return_value=instance)
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -257,11 +256,11 @@ class TestPrivateChatPublishesToSceneBus:
     """验证私聊写入 SceneBus。"""
 
     def test_scene_bus_contact_and_publish(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -276,11 +275,11 @@ class TestSseEventsMatchInteractFormat:
     """验证 SSE 事件格式与 /interact/stream 统一。"""
 
     def test_event_types(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -298,11 +297,11 @@ class TestSseEventsMatchInteractFormat:
             assert "chat_end" not in event_types
 
     def test_complete_event_has_required_fields(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -319,11 +318,11 @@ class TestPrivateChatInstanceManagerGraphize:
     """验证 InstanceManager 图谱化检查被调用。"""
 
     def test_maybe_graphize_called(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 
@@ -341,12 +340,12 @@ class TestPrivateChatNarrativeCounting:
     """验证私聊更新叙事交互计数。"""
 
     def test_npc_interaction_count_incremented(self):
-        pipeline, flash_cpu, im = _make_pipeline_with_instance_manager()
+        pipeline, llm_service, im = _make_pipeline_with_instance_manager()
         mock_session = _make_mock_session()
         mock_session.narrative.npc_interactions = {"priestess": 5}
 
-        with patch("app.services.admin.pipeline_orchestrator.SessionRuntime", return_value=mock_session), \
-             patch("app.services.admin.pipeline_orchestrator.GameRuntime") as mock_rt:
+        with patch("app.services.admin.npc_interaction_coordinator.SessionRuntime", return_value=mock_session), \
+             patch("app.services.admin.npc_interaction_coordinator.GameRuntime") as mock_rt:
             mock_rt.get_instance = AsyncMock(return_value=MagicMock())
             mock_rt.get_instance.return_value.get_world = AsyncMock(return_value=MagicMock())
 

@@ -128,7 +128,7 @@ class IntentExecutor:
 
         # 2. 连接验证
         edge_props: Optional[Dict[str, Any]] = None
-        if wg and not getattr(self.session, "_world_graph_failed", False):
+        if wg:
             for neighbor_id, edata in wg.get_neighbors(current_area_id, WorldEdgeType.CONNECTS.value):
                 if neighbor_id == destination_id:
                     edge_props = edata
@@ -171,7 +171,7 @@ class IntentExecutor:
         # 5. 区域切换（先切图，成功后才推时间，避免切图失败但时间已污染）
         try:
             result = await self.session.enter_area(destination_id)
-        except Exception as exc:
+        except (KeyError, ValueError) as exc:
             logger.error("[IntentExecutor] enter_area failed: %s", exc, exc_info=True)
             return EngineResult(error=f"enter_area error: {exc}")
 
@@ -183,7 +183,7 @@ class IntentExecutor:
 
         # 7. WorldGraph 状态更新
         hints: List[str] = []
-        if wg and not getattr(self.session, "_world_graph_failed", False) and wg.has_node(destination_id):
+        if wg and wg.has_node(destination_id):
             try:
                 wg.merge_state(destination_id, {"visited": True})
                 old_count = wg.get_node(destination_id).state.get("visit_count", 0)
@@ -209,7 +209,7 @@ class IntentExecutor:
                                     hints.extend(exit_result.narrative_hints)
                                     self.session._sync_tick_to_narrative(exit_result)
                                     self.session._apply_tick_side_effects(exit_result)
-                    except Exception as exc:
+                    except (KeyError, ValueError) as exc:
                         logger.warning("[IntentExecutor] exit handling failed: %s", exc)
 
                 # 6b. HOSTS edge sync (player + party)
@@ -230,7 +230,7 @@ class IntentExecutor:
                                     hints.extend(enter_result.narrative_hints)
                                     self.session._sync_tick_to_narrative(enter_result)
                                     self.session._apply_tick_side_effects(enter_result)
-                    except Exception as exc:
+                    except (KeyError, ValueError) as exc:
                         logger.warning("[IntentExecutor] enter handling failed: %s", exc)
 
         # 7. 构建总线条目
@@ -292,7 +292,7 @@ class IntentExecutor:
 
         # area_lock 检查（通过 WorldGraph）
         wg = getattr(self.session, "world_graph", None)
-        if wg and not getattr(self.session, "_world_graph_failed", False):
+        if wg:
             node = wg.get_node(graph_location_id)
             if node is None and graph_location_id != sub_id:
                 node = wg.get_node(sub_id)
@@ -327,7 +327,7 @@ class IntentExecutor:
 
         try:
             result = await self.session.enter_sublocation(runtime_sub_id)
-        except Exception as exc:
+        except (KeyError, ValueError) as exc:
             logger.error("[IntentExecutor] enter_sublocation failed: %s", exc, exc_info=True)
             return EngineResult(error=f"enter_sublocation error: {exc}")
 
@@ -388,7 +388,7 @@ class IntentExecutor:
                 intent_type="enter_sublocation",
                 limit=5,
             )
-        except Exception as exc:
+        except (KeyError, ValueError, RuntimeError) as exc:
             logger.warning(
                 "[IntentExecutor] enter_sublocation recall failed: sub=%s error=%s",
                 sub_id,
@@ -431,7 +431,7 @@ class IntentExecutor:
         wg = getattr(self.session, "world_graph", None)
 
         # NPC 存在性验证
-        if wg and not getattr(self.session, "_world_graph_failed", False):
+        if wg:
             node = wg.get_node(npc_id)
             if not node:
                 return EngineResult(error=f"NPC '{npc_id}' not found in world graph")
@@ -475,7 +475,7 @@ class IntentExecutor:
 
         try:
             result = await self.session.leave_sublocation()
-        except Exception as exc:
+        except (KeyError, ValueError) as exc:
             logger.error("[IntentExecutor] leave_sublocation failed: %s", exc, exc_info=True)
             return EngineResult(error=f"leave_sublocation error: {exc}")
 
@@ -591,7 +591,7 @@ class IntentExecutor:
         """执行检查/查看意图的引擎前置部分。
 
         不改变游戏状态；
-        聚合目标的结构化详情（WorldGraph + AreaRuntime），写入总线并提供可叙述提示。
+        聚合目标的结构化详情（WorldGraph），写入总线并提供可叙述提示。
         """
         display = target_name or target_id
         details: Dict[str, Any] = {
@@ -602,7 +602,7 @@ class IntentExecutor:
 
         # 1) 从 WorldGraph 获取目标详情
         wg = getattr(self.session, "world_graph", None)
-        if wg and not getattr(self.session, "_world_graph_failed", False):
+        if wg:
             try:
                 node = wg.get_node(target_id)
             except (KeyError, AttributeError) as exc:
@@ -628,25 +628,6 @@ class IntentExecutor:
                 if desc:
                     details["description"] = str(desc)[:280]
                 display = node_name
-
-        # 2) 对子地点目标，尝试补充 location_context
-        area_runtime = getattr(self.session, "current_area", None)
-        if area_runtime and hasattr(area_runtime, "get_location_context"):
-            try:
-                loc_ctx = area_runtime.get_location_context(target_id)
-                if isinstance(loc_ctx, dict) and not loc_ctx.get("error"):
-                    details.update({
-                        "target_type": "location",
-                        "location_name": loc_ctx.get("name", details["target_name"]),
-                        "interaction_type": loc_ctx.get("interaction_type", ""),
-                        "resident_npcs": loc_ctx.get("resident_npcs", []),
-                        "requirements": loc_ctx.get("requirements", []),
-                    })
-                    if loc_ctx.get("description"):
-                        details["description"] = str(loc_ctx["description"])[:280]
-                    display = details.get("location_name") or display
-            except (KeyError, AttributeError) as exc:
-                logger.warning("[IntentExecutor] EXAMINE get_location_context(%s) failed: %s", target_id, exc)
 
         bus_entries = [
             BusEntry(

@@ -50,7 +50,7 @@ from app.models.party import (
     TeammateResponseResult,
     TeammateRole,
 )
-from app.services.teammate_response_service import TeammateResponseService
+from app.agentic.teammate.response_service import TeammateResponseService
 
 
 def _build_party() -> Party:

@@ -38,11 +38,9 @@ from app.world.graph.world_graph import WorldGraph
 
 from app.world.graph.builder import GraphBuilder
 
-from app.world.events.behavior_engine import (
-    ConditionEvaluator,
-    ActionExecutor,
-    BehaviorEngine,
-)
+from app.world.events.condition_evaluator import ConditionEvaluator
+from app.world.events.action_executor import ActionExecutor
+from app.world.events.behavior_engine import BehaviorEngine
 
 from app.world.events.propagation import EventPropagator
 

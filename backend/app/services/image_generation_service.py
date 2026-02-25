@@ -3,6 +3,7 @@ Image generation service backed by Gemini image model.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 from typing import Any, Dict, Optional
@@ -62,7 +63,7 @@ class ImageGenerationService:
                         ),
                     ),
                 )
-            except Exception as exc:
+            except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
                 logger.error(
                     "image generation API failed (attempt=%s): %s",
                     attempt["name"],
@@ -121,7 +122,7 @@ class ImageGenerationService:
                     "style": style,
                     "prompt": scene_description,
                 }
-        except Exception as exc:
+        except (AttributeError, TypeError, ValueError) as exc:
             logger.error("image parsing failed: %s", exc, exc_info=True)
             return None
         return None

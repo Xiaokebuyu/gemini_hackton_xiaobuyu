@@ -1,16 +1,15 @@
 """
-队伍管理服务。
+队伍管理服务（纯内存）。
 
 负责：
 - 队伍创建/解散
 - 成员加入/离开
 - 位置同步
-- 事件分发到队友图谱
 """
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, List, Optional
 
 from app.models.party import (
@@ -18,17 +17,10 @@ from app.models.party import (
     PartyMember,
     TeammateRole,
 )
-from app.services.party_store import PartyStore
-
-
 class PartyService:
-    """队伍管理服务"""
+    """队伍管理服务（纯内存缓存，持久化由 WorldGraph 快照统一处理）"""
 
-    def __init__(
-        self,
-        party_store: Optional[PartyStore] = None,
-    ) -> None:
-        self.party_store = party_store
+    def __init__(self) -> None:
         # 内存缓存：world_id:session_id -> Party
         self._parties: Dict[str, Party] = {}
 
@@ -52,11 +44,9 @@ class PartyService:
             world_id=world_id,
             session_id=session_id,
             leader_id=leader_id,
-            formed_at=datetime.utcnow(),
+            formed_at=datetime.now(UTC),
         )
         self._parties[self._key(world_id, session_id)] = party
-        if self.party_store:
-            await self.party_store.create_party(world_id, session_id, party_id, leader_id)
         return party
 
     async def get_party(
@@ -65,16 +55,7 @@ class PartyService:
         session_id: str,
     ) -> Optional[Party]:
         """获取队伍"""
-        key = self._key(world_id, session_id)
-        cached = self._parties.get(key)
-        if cached:
-            return cached
-        if self.party_store:
-            party = await self.party_store.get_party(world_id, session_id)
-            if party:
-                self._parties[key] = party
-            return party
-        return None
+        return self._parties.get(self._key(world_id, session_id))
 
     async def get_or_create_party(
         self,
@@ -98,8 +79,6 @@ class PartyService:
         existed = key in self._parties
         if existed:
             del self._parties[key]
-        if self.party_store:
-            await self.party_store.delete_party(world_id, session_id)
         return existed
 
     # =========================================================================
@@ -140,8 +119,6 @@ class PartyService:
             graph_ref=f"worlds/{world_id}/characters/{character_id}/",
         )
         party.members.append(member)
-        if self.party_store:
-            await self.party_store.add_member(world_id, session_id, member)
         return member
 
     async def remove_member(
@@ -158,8 +135,6 @@ class PartyService:
         for i, member in enumerate(party.members):
             if member.character_id == character_id:
                 party.members.pop(i)
-                if self.party_store:
-                    await self.party_store.remove_member(world_id, session_id, character_id)
                 return True
         return False
 
@@ -178,10 +153,6 @@ class PartyService:
         member = party.get_member(character_id)
         if member:
             member.is_active = is_active
-            if self.party_store:
-                await self.party_store.update_member_status(
-                    world_id, session_id, character_id, is_active
-                )
             return True
         return False
 
@@ -196,7 +167,7 @@ class PartyService:
         new_location: str,
         new_sub_location: Optional[str] = None,
     ) -> None:
-        """同步队伍位置（玩家移动时调用）"""
+        """同步队伍位置（纯内存更新）"""
         party = await self.get_party(world_id, session_id)
         if not party:
             return
@@ -206,10 +177,6 @@ class PartyService:
 
         party.current_location = new_location
         party.current_sub_location = new_sub_location
-        if self.party_store:
-            await self.party_store.update_party_location(
-                world_id, session_id, new_location, new_sub_location
-            )
 
     # =========================================================================
     # 预定义角色加载

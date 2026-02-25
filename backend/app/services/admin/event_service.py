@@ -41,7 +41,7 @@ class AdminEventService:
     def llm_service(self) -> "EventLLMService":
         """懒加载事件LLM服务"""
         if self._llm_service is None:
-            from app.services.event_llm_service import EventLLMService
+            from app.agentic.event_llm_service import EventLLMService
             self._llm_service = EventLLMService()
         return self._llm_service
 

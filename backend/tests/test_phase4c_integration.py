@@ -37,16 +37,15 @@ def _make_pipeline():
     """Create a PipelineOrchestrator with mocked dependencies."""
     from app.services.admin.pipeline_orchestrator import PipelineOrchestrator
 
-    flash_cpu = MagicMock()
-    flash_cpu.llm_service = MagicMock()
-    flash_cpu.llm_service.agentic_generate = AsyncMock(
+    llm_service = MagicMock()
+    llm_service.agentic_generate = AsyncMock(
         return_value=_make_llm_response()
     )
-    flash_cpu._load_agentic_prompt.return_value = "You are a GM."
-    flash_cpu.image_service = MagicMock()
+    image_service = MagicMock()
 
     pipeline = PipelineOrchestrator(
-        flash_cpu=flash_cpu,
+        llm_service=llm_service,
+        image_service=image_service,
         party_service=MagicMock(),
         narrative_service=MagicMock(),
         teammate_response_service=MagicMock(),
@@ -56,14 +55,14 @@ def _make_pipeline():
         session_store=MagicMock(),
         recall_orchestrator=MagicMock(),
     )
-    return pipeline, flash_cpu
+    return pipeline, llm_service
 
 
 class TestBStageUsesAgenticExecutor:
     """验证 B-stage 不再调用 flash_cpu.agentic_process_v4。"""
 
     def test_agentic_process_v4_not_called(self):
-        pipeline, flash_cpu = _make_pipeline()
+        pipeline, llm_service = _make_pipeline()
 
         # Mock session restoration
         mock_session = MagicMock()
@@ -98,16 +97,15 @@ class TestBStageUsesAgenticExecutor:
             result = _run(pipeline.process("w1", "s1", "你好"))
 
             # agentic_process_v4 should NOT be called
-            flash_cpu.agentic_process_v4.assert_not_called()
-            # llm_service.agentic_generate should be called (via AgenticExecutor)
-            flash_cpu.llm_service.agentic_generate.assert_called_once()
+                        # llm_service.agentic_generate should be called (via AgenticExecutor)
+            llm_service.agentic_generate.assert_called_once()
             assert result.narration == "GM 叙述"
 
 
 class TestEmptyNarrationFallback:
     def test_empty_narration_gets_fallback(self):
-        pipeline, flash_cpu = _make_pipeline()
-        flash_cpu.llm_service.agentic_generate = AsyncMock(
+        pipeline, llm_service = _make_pipeline()
+        llm_service.agentic_generate = AsyncMock(
             return_value=_make_llm_response(text="")
         )
 
@@ -142,29 +140,6 @@ class TestEmptyNarrationFallback:
 
             result = _run(pipeline.process("w1", "s1", "..."))
             assert "沉默" in result.narration
-
-
-class TestExcludeToolsPassthrough:
-    """验证引擎排除正确传递到 AgenticExecutor。"""
-
-    def test_engine_talk_excludes_npc_dialogue(self):
-        """当 engine_executed.type='talk' 时，exclude_tools 包含 npc_dialogue。"""
-        from app.agentic.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
-
-        assert "npc_dialogue" in ENGINE_TOOL_EXCLUSIONS["talk"]
-
-    def test_engine_use_item_excludes_inventory_tools(self):
-        from app.agentic.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
-
-        assert "add_item" in ENGINE_TOOL_EXCLUSIONS["use_item"]
-        assert "remove_item" in ENGINE_TOOL_EXCLUSIONS["use_item"]
-
-    def test_move_area_and_rest_not_in_exclusions(self):
-        """move_area/rest 不再有排除项（update_time 已删除）。"""
-        from app.agentic.gm_extra_tools import ENGINE_TOOL_EXCLUSIONS
-
-        assert "move_area" not in ENGINE_TOOL_EXCLUSIONS
-        assert "rest" not in ENGINE_TOOL_EXCLUSIONS
 
 
 class TestCStageDispositions:
@@ -271,7 +246,7 @@ class TestAutoTimeAdvance:
 
     def test_auto_advance_when_no_engine(self):
         """无引擎执行时，session.advance_time(10) 被调用。"""
-        pipeline, flash_cpu = _make_pipeline()
+        pipeline, llm_service = _make_pipeline()
         mock_session = MagicMock()
         mock_session.player = MagicMock()
         mock_session.party = None
@@ -306,7 +281,7 @@ class TestAutoTimeAdvance:
 
     def test_skip_advance_when_move_area(self):
         """engine_executed.type='move_area' 时跳过自动推进。"""
-        pipeline, flash_cpu = _make_pipeline()
+        pipeline, llm_service = _make_pipeline()
         mock_session = MagicMock()
         mock_session.player = MagicMock()
         mock_session.party = None
@@ -343,7 +318,7 @@ class TestAutoTimeAdvance:
 
     def test_skip_advance_when_rest(self):
         """engine_executed.type='rest' 时跳过自动推进。"""
-        pipeline, flash_cpu = _make_pipeline()
+        pipeline, llm_service = _make_pipeline()
         mock_session = MagicMock()
         mock_session.player = MagicMock()
         mock_session.party = None

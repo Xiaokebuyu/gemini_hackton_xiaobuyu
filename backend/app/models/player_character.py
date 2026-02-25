@@ -1,11 +1,14 @@
 """Player character model for BG3-style character system."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class CharacterRace(str, Enum):
@@ -151,8 +154,8 @@ class PlayerCharacter(BaseModel):
             item = get_item(weapon_id)
             if item and item.get("type") == "weapon":
                 return item
-        except Exception:
-            pass
+        except (KeyError, FileNotFoundError) as exc:
+            logger.debug("[PlayerCharacter] weapon lookup failed: %s", exc)
         return None
 
     def to_combat_player_state(self) -> Dict[str, Any]:

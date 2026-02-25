@@ -36,82 +36,19 @@ def _install_mcp_stubs() -> None:
     sys.modules["mcp.client.sse"] = sse_mod
     sys.modules["mcp.client.stdio"] = stdio_mod
     sys.modules["mcp.client.streamable_http"] = streamable_http_mod
+    # Stub deleted service modules so admin_coordinator can import
+    for _mod_name, _attrs in [
+        ("app.services.game_session_store", {"GameSessionStore": object}),
+        ("app.services.party_store", {"PartyStore": object}),
+        ("app.services.character_store", {"CharacterStore": object}),
+    ]:
+        if _mod_name not in sys.modules:
+            _m = types.ModuleType(_mod_name)
+            for _k, _v in _attrs.items():
+                setattr(_m, _k, _v)
+            sys.modules[_mod_name] = _m
 
 _install_mcp_stubs()
-
-from app.services.teammate_response_service import (
-    _is_combat_active,
-    _make_combat_action_tool,
-)
-
-
-# =========================================================================
-# _is_combat_active
-# =========================================================================
-
-
-class TestIsCombatActive:
-    def test_active_when_combat_id_set(self):
-        session = MagicMock()
-        session.game_state.combat_id = "combat_123"
-        assert _is_combat_active(session) is True
-
-    def test_inactive_when_no_combat_id(self):
-        session = MagicMock()
-        session.game_state.combat_id = None
-        assert _is_combat_active(session) is False
-
-    def test_inactive_when_no_game_state(self):
-        session = MagicMock(spec=[])  # no game_state attribute
-        assert _is_combat_active(session) is False
-
-
-# =========================================================================
-# _make_combat_action_tool
-# =========================================================================
-
-
-class TestMakeCombatActionTool:
-    def test_tool_has_correct_name(self):
-        tool = _make_combat_action_tool(MagicMock(), MagicMock(), "tm_01")
-        assert tool.__name__ == "choose_battle_action"
-
-    def test_tool_has_annotations(self):
-        tool = _make_combat_action_tool(MagicMock(), MagicMock(), "tm_01")
-        assert "action_id" in tool.__annotations__
-
-    def test_missing_action_id_returns_error(self):
-        tool = _make_combat_action_tool(MagicMock(), MagicMock(), "tm_01")
-        result = asyncio.run(tool(action_id=""))
-        assert result["success"] is False
-        assert "missing" in result["error"]
-
-    def test_no_active_combat_returns_error(self):
-        session = MagicMock()
-        session.game_state.combat_id = None
-        tool = _make_combat_action_tool(MagicMock(), session, "tm_01")
-        result = asyncio.run(tool(action_id="attack"))
-        assert result["success"] is False
-        assert "no active combat" in result["error"]
-
-    def test_calls_flash_cpu_combat_tool(self):
-        flash_cpu = MagicMock()
-        flash_cpu.call_combat_tool = AsyncMock(return_value={
-            "success": True, "damage": 10,
-        })
-        session = MagicMock()
-        session.game_state.combat_id = "c1"
-        tool = _make_combat_action_tool(flash_cpu, session, "tm_01")
-
-        result = asyncio.run(tool(action_id="slash"))
-        flash_cpu.call_combat_tool.assert_called_once_with(
-            "execute_action_for_actor",
-            {"combat_id": "c1", "actor_id": "tm_01", "action_id": "slash"},
-        )
-        assert result["success"] is True
-        assert result["actor_id"] == "tm_01"
-        assert result["combat_id"] == "c1"
-
 
 # =========================================================================
 # _run_agentic_generation_payload (via AgenticExecutor)
@@ -122,16 +59,15 @@ class TestRunAgenticGenerationPayload:
     """测试 TeammateResponseService._run_agentic_generation_payload() 迁移后的行为。"""
 
     def _make_service(self, **overrides):
-        from app.services.teammate_response_service import TeammateResponseService
+        from app.agentic.teammate.response_service import TeammateResponseService
 
         kwargs = dict(
             llm_service=MagicMock(),
             instance_manager=None,
-            flash_cpu=MagicMock(),
         )
         kwargs.update(overrides)
         svc = TeammateResponseService(**kwargs)
-        svc._get_agentic_system_prompt = MagicMock(return_value="You are a teammate.")
+        svc._ctx.get_agentic_system_prompt = MagicMock(return_value="You are a teammate.")
         return svc
 
     def _make_member(self, character_id: str = "warrior_01"):
@@ -194,7 +130,7 @@ class TestRunAgenticGenerationPayload:
 
     @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_no_combat_extra_tools(self, MockExecutor):
-        """非战斗时 extra_tools=None。"""
+        """extra_tools 不再传递（战斗工具已删除）。"""
         from app.models.admin_protocol import AgenticResult
 
         mock_run = AsyncMock(return_value=AgenticResult(narration="{}"))
@@ -212,11 +148,11 @@ class TestRunAgenticGenerationPayload:
         )
 
         call_kwargs = mock_run.call_args.kwargs
-        assert call_kwargs["extra_tools"] is None
+        assert "extra_tools" not in call_kwargs
 
     @patch("app.agentic.agentic_executor.AgenticExecutor")
-    def test_combat_extra_tool_injected(self, MockExecutor):
-        """战斗时 extra_tools 包含 choose_battle_action。"""
+    def test_combat_no_extra_tool_injected(self, MockExecutor):
+        """战斗时也不再注入 extra_tools（战斗工具已删除）。"""
         from app.models.admin_protocol import AgenticResult
 
         mock_run = AsyncMock(return_value=AgenticResult(narration="{}"))
@@ -234,10 +170,7 @@ class TestRunAgenticGenerationPayload:
         )
 
         call_kwargs = mock_run.call_args.kwargs
-        extra = call_kwargs["extra_tools"]
-        assert extra is not None
-        assert len(extra) == 1
-        assert extra[0].__name__ == "choose_battle_action"
+        assert "extra_tools" not in call_kwargs
 
     @patch("app.agentic.agentic_executor.AgenticExecutor")
     def test_tool_events_tagged(self, MockExecutor):

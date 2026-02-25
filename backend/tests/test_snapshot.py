@@ -624,11 +624,17 @@ class TestSerialization:
         assert len(snap2.modified_edges) == 1
 
     def test_dict_to_snapshot_invalid(self):
-        """无效数据返回 None。"""
-        assert dict_to_snapshot(None) is None
-        assert dict_to_snapshot({}) is None
-        assert dict_to_snapshot({"invalid": True}) is None
-        assert dict_to_snapshot("not a dict") is None
+        """严格模式：无效数据 raise SessionRestoreError。"""
+        from app.exceptions import SessionRestoreError
+        import pytest
+        with pytest.raises(SessionRestoreError):
+            dict_to_snapshot(None)
+        with pytest.raises(SessionRestoreError):
+            dict_to_snapshot({})
+        with pytest.raises(SessionRestoreError):
+            dict_to_snapshot({"invalid": True})
+        with pytest.raises(SessionRestoreError):
+            dict_to_snapshot("not a dict")
 
 
 # =============================================================================

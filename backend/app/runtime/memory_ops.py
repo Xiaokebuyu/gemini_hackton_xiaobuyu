@@ -28,7 +28,7 @@ class MemoryOps:
         """统一记忆读取门面。"""
         start = time.perf_counter()
 
-        if not self._s.world_graph or self._s._world_graph_failed:
+        if not self._s.world_graph:
             return []
 
         from app.world.memory.recall import WorldGraphRecallOrchestrator
@@ -86,7 +86,7 @@ class MemoryOps:
         **props: Any,
     ) -> str:
         """统一记忆写入门面 — 委托到 memory/recorder。"""
-        if not self._s.world_graph or self._s._world_graph_failed:
+        if not self._s.world_graph:
             raise RuntimeError("WorldGraph unavailable for record_memory")
         from app.world.memory.recorder import record_memory as _record
         return _record(
@@ -102,11 +102,11 @@ class MemoryOps:
         game_day: int = 1,
     ) -> Dict[str, Any]:
         """统一图谱化入口（WorldGraph-only）。"""
-        if not self._s.world_graph or self._s._world_graph_failed:
+        if not self._s.world_graph:
             return {"success": False, "error": "WorldGraph unavailable"}
 
         from app.models.context_window import GraphizeRequest, WindowMessage
-        from app.services.memory_graphizer import MemoryGraphizer
+        from app.agentic.memory_graphizer import MemoryGraphizer
 
         normalized_messages: List[WindowMessage] = []
         for idx, raw in enumerate(messages):

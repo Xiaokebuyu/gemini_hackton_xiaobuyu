@@ -46,7 +46,7 @@ def count_tokens(text: str) -> int:
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text))
-        except Exception as e:
+        except (ImportError, RuntimeError) as e:
             logger.debug("tiktoken encode failed, falling back: %s", e)
 
     # 降级：按字符估算

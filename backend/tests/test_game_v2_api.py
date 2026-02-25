@@ -1,15 +1,12 @@
 import pytest
 
-from app.models.admin_protocol import CoordinatorResponse
 from app.routers.game_v2 import (
     AddTeammateRequest,
     CreatePartyRequest,
-    PlayerInputRequest,
     add_teammate,
     create_party,
     get_agentic_trace_viewer,
     get_party_info,
-    process_input_v2,
     remove_teammate,
 )
 
@@ -17,25 +14,6 @@ from app.routers.game_v2 import (
 class FakeCoordinator:
     def __init__(self) -> None:
         self.party_members = []
-        self.v3_called = False
-
-    async def process_player_input_v3(
-        self,
-        world_id: str,
-        session_id: str,
-        player_input: str,
-        is_private: bool = False,
-        private_target: str | None = None,
-    ):
-        self.v3_called = True
-        return CoordinatorResponse(
-            narration=f"v3:{player_input}",
-            speaker="GM",
-            teammate_responses=[],
-            available_actions=[],
-            state_delta=None,
-            metadata={"world_id": world_id, "session_id": session_id},
-        )
 
     async def create_party(self, world_id: str, session_id: str, leader_id: str = "player"):
         return {
@@ -74,20 +52,6 @@ class FakeCoordinator:
     async def remove_teammate(self, world_id: str, session_id: str, character_id: str):
         self.party_members = [m for m in self.party_members if m["character_id"] != character_id]
         return {"success": True, "character_id": character_id}
-
-
-@pytest.mark.asyncio
-async def test_game_v2_input_route():
-    fake = FakeCoordinator()
-    response = await process_input_v2(
-        world_id="test_world",
-        session_id="test_session",
-        payload=PlayerInputRequest(input="观察周围"),
-        coordinator=fake,
-    )
-    assert response.narration == "v3:观察周围"
-    assert response.speaker == "GM"
-    assert fake.v3_called is True
 
 
 @pytest.mark.asyncio

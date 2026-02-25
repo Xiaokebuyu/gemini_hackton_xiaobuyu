@@ -3,7 +3,6 @@ import random
 from typing import Any, Dict, Optional
 
 from app.models.player_character import PlayerCharacter
-from app.services.character_store import CharacterStore
 
 # Skill -> ability mapping (D&D 5e)
 SKILL_ABILITY_MAP = {
@@ -67,13 +66,9 @@ _roll_tracker = RollTracker()
 class AbilityCheckService:
     """Performs D&D-style ability checks."""
 
-    def __init__(self, store: Optional[CharacterStore] = None) -> None:
-        self.store = store or CharacterStore()
-
-    async def perform_check(
+    def perform_check(
         self,
-        world_id: str,
-        session_id: str,
+        player: Any,
         ability: Optional[str] = None,
         skill: Optional[str] = None,
         dc: int = 10,
@@ -127,7 +122,7 @@ class AbilityCheckService:
             if block_msg:
                 return {"error": block_msg, "success": False}
 
-        character = await self.store.get_character(world_id, session_id)
+        character = player
         if not character:
             return {"error": "no player character", "success": False}
 
