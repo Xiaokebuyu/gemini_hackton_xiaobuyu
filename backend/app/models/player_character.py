@@ -150,7 +150,7 @@ class PlayerCharacter(BaseModel):
         if not weapon_id:
             return None
         try:
-            from app.world.player.item_registry import get_item
+            from app.world.item.registry import get_item
             item = get_item(weapon_id)
             if item and item.get("type") == "weapon":
                 return item

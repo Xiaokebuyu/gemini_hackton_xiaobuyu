@@ -11,7 +11,7 @@ from app.world.player.constants import (
     HIT_DIE_BY_CLASS, CASTER_TYPE_BY_CLASS, EXHAUSTION_EFFECTS,
     default_character_state, default_npc_state, default_player_state,
 )
-from app.world.player.item_registry import get_item, list_items, search_items
+from app.world.item.registry import get_item, list_items, search_items
 from app.world.player.operations import (
     create_player_node, level_up, equip_item, unequip_item,
     validate_point_buy, recalculate_ac,

@@ -310,7 +310,7 @@ def validate_point_buy(scores: Dict[str, int], config: Dict[str, Any]) -> bool:
 
 def recalculate_ac(player: "PlayerNodeView") -> None:
     """根据当前装备重算 AC。"""
-    from app.world.player.item_registry import get_item
+    from app.world.item.registry import get_item
 
     dex_mod = player.ability_modifier("dex")
     armor_id = player.equipment.get("armor")
