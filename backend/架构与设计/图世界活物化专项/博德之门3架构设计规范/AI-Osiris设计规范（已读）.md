@@ -247,7 +247,7 @@ AI Osiris 的输出是一个 `consequences` 数组，每个元素是一条结构
 
 ## 五、与 TickCoordinator 的集成
 
-> **与 NarrativePlanner 的协作**：AI Osiris（P30）负责反应式因果推理，NarrativePlanner（P35）负责主动叙事引导。两者在格结算链中紧邻执行，NarrativePlanner 能看到 Osiris 本格的输出。详见 `NarrativePlanner设计规范.md` §一（定位）和 §九（P35 集成）。
+> **与 NarrativePlanner 的协作**：AI Osiris（P30）负责反应式因果推理，NarrativePlanner（P35）负责主动叙事引导。两者在格结算链中紧邻执行，NarrativePlanner 能看到 Osiris 本格的输出。详见 `叙事规划子系统设计规范.md` §一（定位）和 §九（P35 集成）。
 
 ### 5.1 调用时序
 

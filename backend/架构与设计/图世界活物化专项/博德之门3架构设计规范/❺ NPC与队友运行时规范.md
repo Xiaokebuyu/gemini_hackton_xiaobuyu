@@ -3,7 +3,7 @@
 创建时间：2026-02-26
 状态：设计中
 **隶属于 ❺ AI 叙事层**。本文档是 `叙事层设计规范.md` 的子文档，定义 Agent 的运行时基础设施；叙事行为（语气、风格、对话表达）见主文档。
-前置文档：`叙事层设计规范.md`（主文档：Agent 架构 + 叙事行为），`编排层设计规范.md`（interact/private-chat 管线 + P60 日程 Hook + §9.5 DynamicSubAreaManager），`内容层设计规范.md`（CharacterRegistry 模板），`状态层设计规范.md`（RelationSlice/PartySlice），`AI-Osiris设计规范.md`（add_knowledge 指令），`NarrativePlanner设计规范.md`（direct_npc/spawn_quest_npc 指令来源）
+前置文档：`叙事层设计规范.md`（主文档：Agent 架构 + 叙事行为），`编排层设计规范.md`（interact/private-chat 管线 + P60 日程 Hook），`叙事规划子系统设计规范.md`（NarrativePlanner direct_npc/spawn_quest_npc 指令来源 + §十一 DynamicSubAreaManager），`内容层设计规范.md`（CharacterRegistry 模板），`状态层设计规范.md`（RelationSlice/PartySlice），`AI-Osiris设计规范.md`（add_knowledge 指令）
 
 > NPC 是人，不是功能菜单。队友是伙伴，不是跟班。
 > 本规范定义 NPC/队友的**运行时基础设施**——实例池、认知架构、好感机制、日程、路人、记忆图谱。
@@ -412,7 +412,7 @@ class RelationStageChecker:
 
 ### 7.2 私聊场景生成
 
-私聊不是抽象的"切换到私聊模式"——它发生在一个**具体的私密场所**。系统通过 DynamicSubAreaManager（`编排层设计规范.md` §9.5）生成临时子地点。
+私聊不是抽象的"切换到私聊模式"——它发生在一个**具体的私密场所**。系统通过 DynamicSubAreaManager（`叙事规划子系统设计规范.md` §十一）生成临时子地点。
 
 **流程**：
 
