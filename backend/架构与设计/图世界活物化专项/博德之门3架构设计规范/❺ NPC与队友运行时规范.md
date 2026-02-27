@@ -227,8 +227,13 @@ graphs/{world_id}/characters/{character_id}/
 |---------|------|------|
 | `event` | "玩家在第 3 天帮我找回了失窃的货物" | 对话图谱化 |
 | `impression` | "玩家是个值得信赖的人" | 多次交互积累后 LLM 提炼 |
-| `knowledge` | "西部牧场最近不安全" | AI Osiris `add_knowledge` |
+| `knowledge` | "西部牧场最近不安全" | NPC `remember` 工具 / 对话图谱化 |
 | `emotion` | "我对玩家很感激" | 情感标签累积 |
+
+> **与 RelationSlice.npc_impressions 的分工**：
+> - `npc_impressions`（❸ RelationSlice）：NPC 对玩家的**简短印象摘要**，由 AI Osiris `add_knowledge` 写入。消费者：关系系统（阶段判定）、UI（印象展示）、ContextAssembler。
+> - `MemoryGraph`（Firestore 图谱）：NPC 的**完整语义记忆**，由对话图谱化（MemoryGraphizer）和 NPC `remember` 工具写入。消费者：NPC Agent（扩散激活检索注入 prompt）。
+> - 两者面向不同消费者，写入路径不同，**不需要同步**。
 | `secret` | "我知道地下室有暗门" | ❶ 模板中的 secrets（trust 阈值后解锁） |
 
 ### 4.3 记忆注入流程
@@ -429,7 +434,7 @@ class RelationStageChecker:
     │     → SSE: scene_change（新背景 + 氛围）
     │
     ├─ 3. 进入私聊管线
-    │     PlayerSlice.current_location = sub_area_id（临时移入）
+    │     PlayerSlice.current_location = sub_area_id  # 受控例外 B: 临时位置调度（进出成对）
     │     → PrivateChatCoordinator.process()（编排层 §六）
     │     → NPC Agent 使用私聊上下文（§7.4）
     │
@@ -609,21 +614,22 @@ class NpcScheduleHook(SettlementHook):
     priority = 60
     name = "npc_schedule"
 
-    async def execute(self, change_log, state, world, rules_engine, scene_bus) -> HookResult:
-        current_period = state.time.period
-        next_period = self._predict_next_period(state.time)
+    async def execute(self, context: SettlementContext) -> HookResult:
+        current_period = context.state.time.period
+        next_period = self._predict_next_period(context.state.time)
 
         # 时段即将变化时，更新 NPC 位置
         if current_period != next_period:
-            for char_id, template in world.characters.list_all():
-                if char_id in state.party.members:
+            for char_id, template in context.world.characters.list_all():
+                if char_id in context.state.party.members:
                     continue  # 队友不走日程，跟随玩家
                 new_location = template.schedule.get(next_period)
                 if new_location:
-                    state.areas.update_npc_location(char_id, new_location)
+                    # 受控例外 B: 编排层内部调度（NpcScheduleHook P60）
+                    context.state.areas.update_npc_location(char_id, new_location)
 
             # 写入 SceneBus 供 GM 叙述
-            scene_bus.add_entry(SceneEntry(
+            context.scene_bus.add_entry(SceneEntry(
                 source="ENGINE",
                 content=f"时段从 {current_period} 转为 {next_period}，NPC 开始移动",
                 visibility="system",
@@ -813,7 +819,7 @@ class CompanionManager:
         - NPC 同意（approval > 0 且无敌对关系）
 
         效果：
-        - PartySlice.add_member(npc_id)
+        - PartySlice.add_member(npc_id)  # 受控例外 C: 队伍管理（建议未来升级为 Command）
         - NPC 位置锁定为跟随玩家
         - NPC 日程暂停（在队期间不走日程）
         - NPC 实例标记为队友（不参与 LRU）
@@ -1109,3 +1115,4 @@ graphs/{world_id}/
 |------|------|
 | 2026-02-26 | 创建。InstanceManager 实例池（LRU 淘汰 + 资源动态分配）+ 双层认知（ContextWindow + MemoryGraph）+ 四维好感度模型 + 关系阶段系统（正面 5 阶 + 负面 4 阶）+ NPC 日程（P60 Hook）+ NPC Directive 机制 + 路人系统（PasserbyPool + NarrativePlanner 投递）+ 队友系统（招募/离队/发言决策/共同经历/危机选择/营火回忆/个人线/记忆驱动战斗行为）+ 视角感知 + 三层记忆图谱 |
 | 2026-02-26 | 文档更名为"❺ NPC与队友运行时规范"，明确隶属于 ❺ AI 叙事层子文档。新增 §七 私聊机械层：进入条件 + PrivateChatSceneBuilder 场景模板（复用 DynamicSubAreaManager 生成临时私密子地点）+ 上下文注入结构 + 记忆召回权重调整 + 秘密吐露机制（CharacterTemplate.secrets + trust_threshold）+ romance_eligible 字段 + 外部事件打断机制。后续章节编号 +1 |
+| 2026-02-27 | 文档统一修订：§4.2 新增 npc_impressions 与 MemoryGraph 分工说明（两者面向不同消费者，不需同步）。knowledge 节点来源改为 NPC remember 工具/对话图谱化。NpcScheduleHook/私聊/CompanionManager 标注受控例外类别。NpcScheduleHook.execute() 签名同步 SettlementContext |

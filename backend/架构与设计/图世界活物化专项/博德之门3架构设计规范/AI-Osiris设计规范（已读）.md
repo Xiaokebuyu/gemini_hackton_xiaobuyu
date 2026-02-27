@@ -205,7 +205,7 @@ AI Osiris 的输出是一个 `consequences` 数组，每个元素是一条结构
 > **关键约束**：AI Osiris **不能直接修改玩家的 HP、金币、背包、位置**。这些是 ❷ 规则引擎的专属领域（详见 `规则引擎层设计规范.md` §四 权限矩阵）。AI Osiris 只能修改"世界对玩家的看法"（好感、标记、事件、认知），不能修改"玩家自身的硬状态"。
 >
 > 指令写入目标：`状态层设计规范.md` §四（AI Osiris 指令→切片映射表）。
-> `add_knowledge` 影响 NPC 记忆图谱：`NPC与队友子系统设计规范.md` §四.2。
+> `add_knowledge` 写入 RelationSlice.npc_impressions（关系印象摘要）。NPC 的完整语义记忆（MemoryGraph）由 ❺ NPC 运行时的对话图谱化路径独立维护，两者不需要同步。
 
 ---
 
@@ -249,54 +249,48 @@ AI Osiris 的输出是一个 `consequences` 数组，每个元素是一条结构
 
 > **与 NarrativePlanner 的协作**：AI Osiris（P30）负责反应式因果推理，NarrativePlanner（P35）负责主动叙事引导。两者在格结算链中紧邻执行，NarrativePlanner 能看到 Osiris 本格的输出。详见 `叙事规划子系统设计规范.md` §一（定位）和 §九（P35 集成）。
 
-### 5.1 调用时序
+### 5.1 AIOsirisHook 内部流程
+
+AI Osiris 作为 `AIOsirisHook`（P30）在 SettlementHook 链中执行。
+**不负责**时间推进（TimeAdvanceHook P70）或 SceneBus 重置（SceneBusResetHook P90）——这些由各自的 Hook 处理。
 
 ```
-TickCoordinator.tick_settlement()
+AIOsirisHook.execute(context: SettlementContext):
     │
-    ├─ 1. self.collect_state_changes()
-    │     → 构造 §2.1 格式的摘要
+    ├─ 1. 从 context.change_log 构造格摘要（§2.1 格式）
     │
-    ├─ 2. self.build_world_snapshot()
-    │     → 构造 §2.2 格式的快照
+    ├─ 2. 从 context.state + context.world 构造世界快照（§2.2 格式）
     │
     ├─ 3. self.ai_osiris.evaluate(summary, snapshot, rules_context)
     │     → LLM 调用，返回 §3.2 格式的结果
     │     → 解析 JSON，验证格式
     │
-    ├─ 4. self.engine.execute_validated(consequences)
-    │     → 逐条验证（§3.3）
-    │     → 执行合法指令 → 写入 ❸
-    │     → 返回执行报告（哪些成功、哪些被拒绝）
+    ├─ 4. 逐条验证 + 执行
+    │     for consequence in results.consequences:
+    │         context.execute_command(consequence.to_command())
+    │     → 成功的写入 ❸，失败的记录警告
     │
-    ├─ 5. self.gm_narrate_settlement(executed_consequences)
-    │     → 如有玩家可感知的变化，GM 生成一段过渡叙述
-    │     → SSE 推送
-    │
-    ├─ 6. self.time_manager.advance(1)
-    │
-    ├─ 7. self.check_period_transition()
-    │
-    └─ 8. self.scene_bus.reset()
+    └─ 5. 如有玩家可感知的变化 → 写入 context.scene_bus
+          （GM 叙述由 GmNarrationHook P80 读取 SceneBus 后处理）
 ```
 
 ### 5.2 空结算优化
 
-如果本格没有有意义的状态变化（例如玩家只是查看了背包），可以跳过 AI Osiris 调用：
+如果本格没有有意义的状态变化，AIOsirisHook 通过 `should_skip()` 跳过 LLM 调用：
 
 ```python
-def tick_settlement(self):
-    changes = self.collect_state_changes()
+class AIOsirisHook(SettlementHook):
+    priority = 30
+    name = "ai_osiris"
 
-    if changes.is_trivial():
-        # 没有有意义的变化，跳过 AI Osiris
-        self.time_manager.advance(1)
-        self.check_period_transition()
-        self.scene_bus.reset()
-        return
+    def should_skip(self, change_log):
+        """无有意义变化时跳过（不调用 LLM）。
+        时间推进和 SceneBus 重置由后续 Hook 负责，此处跳过无副作用。"""
+        return all(c.is_trivial() for c in change_log)
 
-    # 有变化，走完整结算流程
-    ...
+    async def execute(self, context: SettlementContext) -> HookResult:
+        # 构造摘要 + 快照 → LLM 调用 → 执行结果
+        ...
 ```
 
 > **Q5 已决定**：只有纯 0 成本动作（查看背包、装备切换、查看地图）才算 trivial。任何涉及 NPC 交互或状态变更的都不跳过。
@@ -388,3 +382,4 @@ def tick_settlement(self):
 |------|------|
 | 2026-02-26 | 创建。输入三部分设计（摘要+快照+规则）+ 输出指令类型全集（10 类）+ 引擎验证规则 + prompt 模板 + TickCoordinator 集成 + 延迟事件机制 |
 | 2026-02-26 | 关闭全部 6 个开放问题：Q1 中等详细度、Q2 管线统一提供、Q3 固定枚举、Q4 medium thinking、Q5 仅 0 成本算 trivial、Q6 统一 prompt。补充对话时间成本说明 |
+| 2026-02-27 | 文档统一修订：§5 重写为 AIOsirisHook 内部视角（去除独立 time_advance / scene_bus.reset 步骤，明确 P30 在 SettlementHook 链内执行）。§5.2 空结算优化改为 should_skip() 机制。add_knowledge 目标澄清为 RelationSlice.npc_impressions（不写 MemoryGraph，两者不需同步） |
