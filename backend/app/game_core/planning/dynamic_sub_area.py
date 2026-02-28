@@ -4,30 +4,23 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.game_core.state.slices import AreaSlice
+
 
 class DynamicSubAreaManager:
     """Manage runtime-generated temporary sub-areas."""
 
-    def __init__(self) -> None:
-        self._active: dict[str, list[dict[str, Any]]] = {}
+    def __init__(self, areas: AreaSlice) -> None:
+        self._areas = areas
 
     def create(self, area_id: str, spec: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(spec)
-        self._active.setdefault(area_id, []).append(payload)
-        return dict(payload)
+        return self._areas.add_temporary_sub_area(area_id, spec)
 
     def expire(self, area_id: str, sub_area_id: str) -> bool:
-        items = self._active.get(area_id, [])
-        original_size = len(items)
-        self._active[area_id] = [
-            item for item in items
-            if str(item.get("id", "")) != sub_area_id
-        ]
-        return len(self._active[area_id]) != original_size
+        return self._areas.remove_temporary_sub_area(area_id, sub_area_id)
 
     def list_active(self, area_id: str) -> list[dict[str, Any]]:
-        return [dict(item) for item in self._active.get(area_id, [])]
+        return self._areas.list_temporary_sub_areas(area_id)
 
     def get_cluster_status(self, area_id: str) -> dict[str, int]:
-        active = self._active.get(area_id, [])
-        return {"active": len(active)}
+        return self._areas.count_dynamic_sub_areas(area_id)

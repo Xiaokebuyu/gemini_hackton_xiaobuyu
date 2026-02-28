@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Mapping, cast
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, cast
 
 from app.game_core.state.delta import StateChange, StateDelta
 from app.game_core.state.internal import SupportsStateChange
+
+if TYPE_CHECKING:
+    from app.game_core.content.world import WorldInstance
+    from app.game_core.state.slices.area import AreaSlice
+    from app.game_core.state.slices.events import EventSlice
+    from app.game_core.state.slices.flags import FlagSlice
+    from app.game_core.state.slices.narrative_plan import NarrativePlanSlice
+    from app.game_core.state.slices.party import PartySlice
+    from app.game_core.state.slices.player import PlayerSlice
+    from app.game_core.state.slices.quests import QuestSlice
+    from app.game_core.state.slices.relations import RelationSlice
+    from app.game_core.state.slices.scene import SceneSlice
+    from app.game_core.state.slices.time import TimeSlice
 
 
 class StateSlice(ABC):
@@ -55,6 +68,86 @@ class StateContainer:
     def __init__(self) -> None:
         self._slices: dict[str, StateSlice] = {}
 
+    @classmethod
+    def create_new(cls, world: WorldInstance) -> StateContainer:
+        """Create a world-seeded state container for a new session."""
+        from app.game_core.state.slices import (
+            AreaSlice,
+            EventSlice,
+            FlagSlice,
+            NarrativePlanSlice,
+            PartySlice,
+            PlayerSlice,
+            QuestSlice,
+            RelationSlice,
+            SceneSlice,
+            TimeSlice,
+        )
+
+        container = cls()
+
+        time_slice = TimeSlice()
+        time_slice.restore(cls._initial_time_payload())
+        container.register(time_slice)
+
+        player_slice = PlayerSlice()
+        player_slice.restore(player_slice.snapshot())
+        container.register(player_slice)
+
+        relation_slice = RelationSlice()
+        relation_slice.restore(cls._initial_relation_payload(world))
+        container.register(relation_slice)
+
+        quest_slice = QuestSlice()
+        quest_slice.restore(cls._initial_quest_payload(world))
+        container.register(quest_slice)
+
+        flag_slice = FlagSlice()
+        flag_slice.restore(cls._initial_flag_payload())
+        container.register(flag_slice)
+
+        area_slice = AreaSlice()
+        area_slice.restore(cls._initial_area_payload(world))
+        container.register(area_slice)
+
+        event_slice = EventSlice()
+        event_slice.restore(cls._initial_event_payload(world))
+        container.register(event_slice)
+
+        party_slice = PartySlice()
+        party_slice.restore(cls._initial_party_payload())
+        container.register(party_slice)
+
+        narrative_plan_slice = NarrativePlanSlice()
+        narrative_plan_slice.restore(narrative_plan_slice.snapshot())
+        container.register(narrative_plan_slice)
+
+        scene_slice = SceneSlice()
+        scene_slice.restore(cls._initial_scene_payload())
+        container.register(scene_slice)
+
+        return container
+
+    @classmethod
+    def create_restored(
+        cls,
+        world: WorldInstance,
+        session_data: Mapping[str, Mapping[str, Any]],
+    ) -> StateContainer:
+        """Create a restored state container from serialized session payload."""
+        container = cls.create_new(world)
+        restorable_payload: dict[str, Mapping[str, Any]] = {}
+        for name, slice_payload in session_data.items():
+            if name == "scene":
+                continue
+            if not isinstance(slice_payload, Mapping):
+                continue
+            restorable_payload[str(name)] = slice_payload
+        container.restore(restorable_payload)
+        # SceneSlice is a per-tick buffer and never survives across sessions.
+        container.scene.restore(cls._initial_scene_payload())
+        return container
+
     def register(self, slice_obj: StateSlice) -> None:
         """Register a state slice by its canonical name."""
         name = slice_obj.name
@@ -77,45 +170,47 @@ class StateContainer:
         """Return all registered slices in insertion order."""
         return list(self._slices.items())
 
-    @property
-    def time(self) -> StateSlice:
-        return self.get_slice("time")
+    # -- Typed convenience accessors (cast at access time) --
 
     @property
-    def player(self) -> StateSlice:
-        return self.get_slice("player")
+    def time(self) -> TimeSlice:
+        return cast("TimeSlice", self.get_slice("time"))
 
     @property
-    def areas(self) -> StateSlice:
-        return self.get_slice("areas")
+    def player(self) -> PlayerSlice:
+        return cast("PlayerSlice", self.get_slice("player"))
 
     @property
-    def relations(self) -> StateSlice:
-        return self.get_slice("relations")
+    def areas(self) -> AreaSlice:
+        return cast("AreaSlice", self.get_slice("areas"))
 
     @property
-    def quests(self) -> StateSlice:
-        return self.get_slice("quests")
+    def relations(self) -> RelationSlice:
+        return cast("RelationSlice", self.get_slice("relations"))
 
     @property
-    def flags(self) -> StateSlice:
-        return self.get_slice("flags")
+    def quests(self) -> QuestSlice:
+        return cast("QuestSlice", self.get_slice("quests"))
 
     @property
-    def events(self) -> StateSlice:
-        return self.get_slice("events")
+    def flags(self) -> FlagSlice:
+        return cast("FlagSlice", self.get_slice("flags"))
 
     @property
-    def party(self) -> StateSlice:
-        return self.get_slice("party")
+    def events(self) -> EventSlice:
+        return cast("EventSlice", self.get_slice("events"))
 
     @property
-    def narrative_plan(self) -> StateSlice:
-        return self.get_slice("narrative_plan")
+    def party(self) -> PartySlice:
+        return cast("PartySlice", self.get_slice("party"))
 
     @property
-    def scene(self) -> StateSlice:
-        return self.get_slice("scene")
+    def narrative_plan(self) -> NarrativePlanSlice:
+        return cast("NarrativePlanSlice", self.get_slice("narrative_plan"))
+
+    @property
+    def scene(self) -> SceneSlice:
+        return cast("SceneSlice", self.get_slice("scene"))
 
     def snapshot(self) -> dict[str, dict[str, Any]]:
         """Return a complete state snapshot."""
@@ -138,6 +233,11 @@ class StateContainer:
             for name, slice_obj in self._slices.items()
             if slice_obj.dirty
         }
+
+    def mark_clean(self, slice_names: Iterable[str]) -> None:
+        """Clear dirty tracking for slices already handled by an outer boundary."""
+        for name in slice_names:
+            self.get_slice(name).clear_dirty()
 
     def apply(self, delta: StateDelta) -> None:
         """Dispatch each StateChange to its target slice.
@@ -165,3 +265,198 @@ class StateContainer:
             for name, slice_obj in self._slices.items()
             if (issues := slice_obj.validate())
         }
+
+    @staticmethod
+    def _initial_time_payload() -> dict[str, Any]:
+        return {
+            "day": 1,
+            "slot": 8,
+            "period": "day",
+            "action_count": 0,
+            "accumulated": 0.0,
+        }
+
+    @classmethod
+    def _initial_relation_payload(cls, world: WorldInstance) -> dict[str, Any]:
+        npc_dispositions: dict[str, dict[str, int]] = {}
+        faction_standings: dict[str, int] = {}
+
+        if world.has_registry("characters"):
+            for item in world.characters.list_all():
+                if not isinstance(item, Mapping):
+                    continue
+                character_id = cls._normalize_identifier(item.get("id"))
+                if character_id is None:
+                    continue
+                raw_disposition = item.get("base_disposition")
+                if not isinstance(raw_disposition, Mapping):
+                    raw_disposition = item.get("initial_disposition")
+                disposition = raw_disposition if isinstance(raw_disposition, Mapping) else {}
+                npc_dispositions[character_id] = {
+                    "approval": cls._as_int(disposition.get("approval"), 0),
+                    "trust": cls._as_int(disposition.get("trust"), 0),
+                    "fear": cls._as_int(disposition.get("fear"), 0),
+                    "romance": cls._as_int(disposition.get("romance"), 0),
+                }
+
+        if world.has_registry("factions"):
+            for item in world.factions.list_all():
+                if not isinstance(item, Mapping):
+                    continue
+                faction_id = cls._normalize_identifier(item.get("id"))
+                if faction_id is None:
+                    continue
+                raw_value = item.get("initial_standing", item.get("base_standing", 0))
+                faction_standings[faction_id] = cls._as_int(raw_value, 0)
+
+        return {
+            "npc_dispositions": npc_dispositions,
+            "relationship_stages": {},
+            "faction_standings": faction_standings,
+            "npc_impressions": {},
+            "shop_states": {},
+        }
+
+    @classmethod
+    def _initial_quest_payload(cls, world: WorldInstance) -> dict[str, Any]:
+        milestone_states: dict[str, dict[str, Any]] = {}
+        chapter_completion: dict[str, float] = {}
+
+        if world.has_registry("quests"):
+            for item in world.quests.list_all():
+                if not isinstance(item, Mapping):
+                    continue
+                milestone_id = cls._normalize_identifier(item.get("id"))
+                if milestone_id is None:
+                    continue
+                prerequisites = item.get("prerequisites")
+                has_prerequisites = isinstance(prerequisites, list) and len(prerequisites) > 0
+                milestone_states[milestone_id] = {
+                    "state": "LOCKED" if has_prerequisites else "AVAILABLE",
+                    "activated_tick": None,
+                    "completed_tick": None,
+                }
+
+            for chapter in world.quests.chapters():
+                if not isinstance(chapter, Mapping):
+                    continue
+                chapter_id = cls._normalize_identifier(
+                    chapter.get("id", chapter.get("chapter_id"))
+                )
+                if chapter_id is None:
+                    continue
+                chapter_completion[chapter_id] = 0.0
+
+        return {
+            "milestone_states": milestone_states,
+            "dynamic_quests": {},
+            "chapter_completion": chapter_completion,
+        }
+
+    @staticmethod
+    def _initial_flag_payload() -> dict[str, Any]:
+        return {"flags": {}}
+
+    @classmethod
+    def _initial_area_payload(cls, world: WorldInstance) -> dict[str, Any]:
+        areas: dict[str, dict[str, Any]] = {}
+        if world.has_registry("maps"):
+            for item in world.maps.list_all():
+                if not isinstance(item, Mapping):
+                    continue
+                area_id = cls._normalize_identifier(item.get("id"))
+                if area_id is None:
+                    continue
+                raw_danger = item.get("base_danger", item.get("danger_level", 1.0))
+                raw_tags = item.get("tags", [])
+                tags = [
+                    str(tag)
+                    for tag in raw_tags
+                ] if isinstance(raw_tags, list) else []
+                areas[area_id] = {
+                    "exploration": "undiscovered",
+                    "danger_level": cls._as_float(raw_danger, 1.0),
+                    "properties": {},
+                    "tags": tags,
+                    "temporary_sub_areas": [],
+                    "discovered_items": [],
+                    "npc_locations": {},
+                    "container_states": {},
+                    "hostile_tracking": {},
+                    "permanent_hostile_slots": {},
+                }
+        return {"areas": areas}
+
+    @classmethod
+    def _initial_event_payload(cls, world: WorldInstance) -> dict[str, Any]:
+        active_events: dict[str, dict[str, Any]] = {}
+        if world.has_registry("quests"):
+            for item in world.quests.initial_events():
+                if not isinstance(item, Mapping):
+                    continue
+                event_id = cls._normalize_identifier(
+                    item.get("id", item.get("event_id"))
+                )
+                if event_id is None:
+                    continue
+                raw_conditions = item.get("preconditions", item.get("conditions", []))
+                if not isinstance(raw_conditions, (list, dict)):
+                    raw_conditions = []
+                raw_payload = item.get("payload", {})
+                payload = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
+                raw_metadata = item.get("metadata", {})
+                metadata = (
+                    dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+                )
+                active_events[event_id] = {
+                    "id": event_id,
+                    "event_id": event_id,
+                    "state": "locked",
+                    "status": "locked",
+                    "event_type": str(item.get("event_type", "generic")),
+                    "conditions": raw_conditions,
+                    "payload": payload,
+                    "metadata": metadata,
+                    "source": "quest",
+                }
+        return {
+            "active_events": active_events,
+            "pending_events": [],
+            "rumors": [],
+        }
+
+    @staticmethod
+    def _initial_party_payload() -> dict[str, Any]:
+        return {
+            "members": {},
+            "companion_approval": {},
+            "shared_experiences": [],
+        }
+
+    @staticmethod
+    def _initial_scene_payload() -> dict[str, Any]:
+        return {
+            "entries": [],
+            "state_changes": [],
+        }
+
+    @staticmethod
+    def _normalize_identifier(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    @staticmethod
+    def _as_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _as_float(value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default

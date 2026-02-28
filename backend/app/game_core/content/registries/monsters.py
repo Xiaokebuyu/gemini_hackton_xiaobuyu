@@ -15,7 +15,7 @@ class MonsterRegistry(ContentRegistry):
         self._items: dict[str, dict[str, Any]] = {}
 
     def load(self, data: dict[str, Any]) -> None:
-        self._items = self._coerce_mapping(data)
+        self._items = self._coerce_dict_mapping(data)
 
     def get(self, content_id: str) -> Any | None:
         item = self._items.get(content_id)
@@ -25,26 +25,54 @@ class MonsterRegistry(ContentRegistry):
         return [dict(value) for value in self._items.values()]
 
     def validate(self) -> list[str]:
-        return [
-            f"monster '{item_id}' missing id"
-            for item_id, item in self._items.items()
-            if not item.get("id")
-        ]
+        issues: list[str] = []
+        for item_id, item in self._items.items():
+            if not item.get("id"):
+                issues.append(f"monster '{item_id}' missing id")
 
-    @staticmethod
-    def _coerce_mapping(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        result: dict[str, dict[str, Any]] = {}
-        if isinstance(data, list):
-            for raw in data:
-                if isinstance(raw, Mapping):
-                    item_id = str(raw.get("id", "")).strip()
-                    if item_id:
-                        result[item_id] = dict(raw)
-            return result
-        if isinstance(data, Mapping):
-            for key, raw in data.items():
-                if isinstance(raw, Mapping):
-                    payload = dict(raw)
-                    payload.setdefault("id", str(key))
-                    result[str(key)] = payload
-        return result
+            for field_name in ("hp", "max_hp", "ac"):
+                if field_name not in item:
+                    continue
+                value = self._coerce_positive_int(item.get(field_name))
+                if value is None:
+                    issues.append(f"monster '{item_id}' has invalid {field_name}")
+
+            for field_name in ("gold_drop", "gold", "gold_reward"):
+                if field_name not in item:
+                    continue
+                if self._coerce_non_negative_int(item.get(field_name)) is None:
+                    issues.append(f"monster '{item_id}' has invalid {field_name}")
+
+            loot_table = item.get("loot_table")
+            if loot_table is None:
+                continue
+            if not isinstance(loot_table, list):
+                issues.append(f"monster '{item_id}' has invalid loot_table")
+                continue
+
+            for index, entry in enumerate(loot_table):
+                if not isinstance(entry, Mapping):
+                    issues.append(
+                        f"monster '{item_id}' loot_table[{index}] must be a mapping"
+                    )
+                    continue
+                if "item_id" in entry and (
+                    self._coerce_non_empty_string(entry.get("item_id")) is None
+                ):
+                    issues.append(
+                        f"monster '{item_id}' loot_table[{index}] has invalid item_id"
+                    )
+                if (
+                    "count" in entry
+                    and self._coerce_non_negative_int(entry.get("count")) is None
+                ):
+                    issues.append(
+                        f"monster '{item_id}' loot_table[{index}] has invalid count"
+                    )
+                if "chance" in entry:
+                    chance = self._coerce_float(entry.get("chance"))
+                    if chance is None or chance < 0.0 or chance > 1.0:
+                        issues.append(
+                            f"monster '{item_id}' loot_table[{index}] has invalid chance"
+                        )
+        return issues

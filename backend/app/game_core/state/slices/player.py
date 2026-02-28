@@ -489,6 +489,60 @@ class PlayerSlice(StateSlice):
             if resource.get("recovery") == recovery_type:
                 self.restore_resource(key)
 
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.level, int) or self.level < 1:
+            issues.append("level must be >= 1")
+        if not isinstance(self.max_hp, int) or self.max_hp < 1:
+            issues.append("max_hp must be >= 1")
+        if not isinstance(self.hp, int) or self.hp < 0 or self.hp > self.max_hp:
+            issues.append("hp must be between 0 and max_hp")
+        if not isinstance(self.gold, int) or self.gold < 0:
+            issues.append("gold must be >= 0")
+
+        if not isinstance(self.equipment, dict):
+            issues.append("equipment must be a dict")
+            return issues
+        equipment_keys = set(self.equipment)
+        expected_keys = set(EQUIPMENT_SLOTS)
+        if equipment_keys != expected_keys:
+            issues.append("equipment slots do not match EQUIPMENT_SLOTS")
+
+        if not isinstance(self.spell_slots, dict):
+            issues.append("spell_slots must be a dict")
+        else:
+            for level, slot_state in self.spell_slots.items():
+                if not isinstance(slot_state, Mapping):
+                    issues.append(f"spell_slots[{level}] must be a mapping")
+                    continue
+                current = int(slot_state.get("current", 0))
+                max_value = int(slot_state.get("max", 0))
+                if current < 0:
+                    issues.append(f"spell_slots[{level}].current must be >= 0")
+                if max_value < 0:
+                    issues.append(f"spell_slots[{level}].max must be >= 0")
+                if current > max_value:
+                    issues.append(f"spell_slots[{level}].current must be <= max")
+
+        if not isinstance(self.class_resources, dict):
+            issues.append("class_resources must be a dict")
+            return issues
+
+        for key, resource in self.class_resources.items():
+            if not isinstance(resource, Mapping):
+                issues.append(f"class_resources[{key}] must be a mapping")
+                continue
+            current = int(resource.get("current", 0))
+            max_value = int(resource.get("max", 0))
+            if current < 0:
+                issues.append(f"class_resources[{key}].current must be >= 0")
+            if max_value < 0:
+                issues.append(f"class_resources[{key}].max must be >= 0")
+            if current > max_value:
+                issues.append(f"class_resources[{key}].current must be <= max")
+
+        return issues
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.path == "gold":
             if change.operation == "add":

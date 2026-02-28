@@ -88,10 +88,25 @@ class PipelineOrchestrator:
                 shared.state,
                 shared.world,
             )
-            if ctx.execute_result.success and ctx.execute_result.delta is not None:
-                shared.state.apply(ctx.execute_result.delta)
-                for change in ctx.execute_result.delta.changes:
-                    shared.scene_bus.record_state_change(change)
+
+        # Fill L7 with engine result summary
+        if ctx.execute_result is not None:
+            ctx.assembled_context["l7_engine_result"] = {
+                "success": ctx.execute_result.success,
+                "narrative_hints": list(ctx.execute_result.narrative_hints),
+                "rolls": [
+                    {
+                        "purpose": roll.purpose,
+                        "dice": roll.dice,
+                        "result": roll.result,
+                        "modifiers": list(roll.modifiers),
+                        "total": roll.total,
+                        "critical": roll.critical,
+                    }
+                    for roll in ctx.execute_result.rolls
+                ],
+                "time_cost": ctx.execute_result.time_cost,
+            }
 
         for hook in self._hooks_for("after_engine"):
             await hook.execute(ctx)
@@ -108,8 +123,10 @@ class PipelineOrchestrator:
         return PipelineResult(
             success=ctx.execute_result.success,
             commands=[ctx.command] if ctx.command is not None else [],
+            delta=ctx.execute_result.delta,
             time_cost=ctx.execute_result.time_cost,
             action_type=ctx.command.type if ctx.command is not None else "noop",
+            errors=list(ctx.execute_result.errors),
             narrative_hints=list(ctx.execute_result.narrative_hints),
             metadata={"assembled_context": ctx.assembled_context},
         )

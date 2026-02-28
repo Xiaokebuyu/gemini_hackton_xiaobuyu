@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.game_core.rules.models import Command
+from app.game_core.state import StateDelta
 
 
 @dataclass(slots=True)
@@ -43,8 +44,10 @@ class PipelineResult:
     success: bool
     response_text: str = ""
     commands: list[Command] = field(default_factory=list)
+    delta: StateDelta | None = None
     time_cost: float = 0.0
     action_type: str = "noop"
+    errors: list[str] = field(default_factory=list)
     narrative_hints: list[str] = field(default_factory=list)
     sse_events: list[SSEEvent] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)

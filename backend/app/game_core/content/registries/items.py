@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
 
 from app.game_core.content.base import ContentRegistry
 
@@ -15,7 +15,7 @@ class ItemRegistry(ContentRegistry):
         self._items: dict[str, dict[str, Any]] = {}
 
     def load(self, data: dict[str, Any]) -> None:
-        self._items = self._coerce_mapping(data)
+        self._items = self._coerce_dict_mapping(data)
 
     def get(self, content_id: str) -> Any | None:
         item = self._items.get(content_id)
@@ -25,26 +25,23 @@ class ItemRegistry(ContentRegistry):
         return [dict(value) for value in self._items.values()]
 
     def validate(self) -> list[str]:
-        return [
-            f"item '{item_id}' missing id"
-            for item_id, item in self._items.items()
-            if not item.get("id")
-        ]
+        issues: list[str] = []
+        for item_id, item in self._items.items():
+            if not item.get("id"):
+                issues.append(f"item '{item_id}' missing id")
 
-    @staticmethod
-    def _coerce_mapping(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        result: dict[str, dict[str, Any]] = {}
-        if isinstance(data, list):
-            for raw in data:
-                if isinstance(raw, Mapping):
-                    item_id = str(raw.get("id", "")).strip()
-                    if item_id:
-                        result[item_id] = dict(raw)
-            return result
-        if isinstance(data, Mapping):
-            for key, raw in data.items():
-                if isinstance(raw, Mapping):
-                    payload = dict(raw)
-                    payload.setdefault("id", str(key))
-                    result[str(key)] = payload
-        return result
+            if "price" in item and self._coerce_non_negative_int(item.get("price")) is None:
+                issues.append(f"item '{item_id}' has invalid price")
+
+            for field_name in ("heal_amount", "heal", "restore_hp"):
+                if field_name not in item:
+                    continue
+                if self._coerce_non_negative_int(item.get(field_name)) is None:
+                    issues.append(f"item '{item_id}' has invalid {field_name}")
+
+            if "slot" in item and self._coerce_non_empty_string(item.get("slot")) is None:
+                issues.append(f"item '{item_id}' has invalid slot")
+
+            if "tags" in item and not isinstance(item.get("tags"), list):
+                issues.append(f"item '{item_id}' has invalid tags")
+        return issues

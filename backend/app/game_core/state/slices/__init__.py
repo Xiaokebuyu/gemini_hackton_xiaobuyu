@@ -6,7 +6,7 @@ from app.game_core.state.slices.flags import FlagSlice
 from app.game_core.state.slices.narrative_plan import NarrativePlanSlice
 from app.game_core.state.slices.party import PartySlice
 from app.game_core.state.slices.player import ItemStack, PlayerSlice
-from app.game_core.state.slices.quests import QuestSlice
+from app.game_core.state.slices.quests import MilestoneState, QuestSlice
 from app.game_core.state.slices.relations import RelationSlice
 from app.game_core.state.slices.scene import SceneEntry, SceneSlice
 from app.game_core.state.slices.time import TimeSlice
@@ -17,6 +17,7 @@ __all__ = [
     "EventSlice",
     "FlagSlice",
     "ItemStack",
+    "MilestoneState",
     "NarrativePlanSlice",
     "PartySlice",
     "PlayerSlice",

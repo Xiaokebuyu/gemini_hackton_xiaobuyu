@@ -36,6 +36,17 @@ class TagRegistry(ContentRegistry):
         for key, value in self._dimensions.items():
             if not value.get("id"):
                 issues.append(f"tag dimension '{key}' missing id")
+            tags = value.get("tags")
+            if tags is not None and not isinstance(tags, list):
+                issues.append(f"tag dimension '{key}' has invalid tags")
+                continue
+            if not isinstance(tags, list):
+                continue
+            for index, tag in enumerate(tags):
+                if self._coerce_non_empty_string(tag) is None:
+                    issues.append(
+                        f"tag dimension '{key}' tags[{index}] must be a non-empty string"
+                    )
         return issues
 
     def has_tag(self, tag: str) -> bool:

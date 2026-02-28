@@ -26,6 +26,33 @@ class ActionDispatcher:
         if command_type is not None:
             self._registry[action_type] = command_type
 
+    def has_action(self, action_type: str) -> bool:
+        """Whether an action type is already registered."""
+        return (
+            action_type in self._registry
+            or action_type in self._transforms
+        )
+
+    def register_if_missing(
+        self,
+        action_type: str,
+        command_type: str | None = None,
+        transform: Callable[[StructuredAction], Command] | None = None,
+    ) -> bool:
+        """Register one action mapping without overriding an existing one."""
+        if self.has_action(action_type):
+            return False
+        if command_type is None and transform is None:
+            raise ValueError(
+                "register_if_missing requires command_type or transform"
+            )
+        self.register(
+            action_type,
+            command_type=command_type,
+            transform=transform,
+        )
+        return True
+
     def dispatch(self, action: StructuredAction) -> Command | None:
         transform = self._transforms.get(action.action_type)
         if transform is not None:

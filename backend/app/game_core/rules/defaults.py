@@ -1,0 +1,51 @@
+"""Default rules assembly helpers."""
+
+from __future__ import annotations
+
+from app.game_core.rules.base import CommandHandler
+from app.game_core.rules.engine import RulesEngine
+from app.game_core.rules.handlers import (
+    CombatHandler,
+    ContainerHandler,
+    CrimeHandler,
+    EconomyHandler,
+    EncounterHandler,
+    GrowthHandler,
+    InventoryHandler,
+    NavigationHandler,
+    RestHandler,
+    SkillCheckHandler,
+    SpellHandler,
+    StatusEffectHandler,
+    WorldStateHandler,
+)
+
+
+DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
+    CombatHandler,
+    SkillCheckHandler,
+    NavigationHandler,
+    InventoryHandler,
+    EconomyHandler,
+    GrowthHandler,
+    RestHandler,
+    CrimeHandler,
+    EncounterHandler,
+    ContainerHandler,
+    WorldStateHandler,
+    StatusEffectHandler,
+    SpellHandler,
+)
+
+
+def build_default_rules_handlers() -> list[CommandHandler]:
+    """Build a fresh default rule-handler chain."""
+    return [handler_type() for handler_type in DEFAULT_RULE_HANDLER_TYPES]
+
+
+def register_default_rules_handlers(engine: RulesEngine) -> list[str]:
+    """Register default handlers without overriding existing command routes."""
+    added: list[str] = []
+    for handler in build_default_rules_handlers():
+        added.extend(engine.register_if_missing(handler))
+    return added

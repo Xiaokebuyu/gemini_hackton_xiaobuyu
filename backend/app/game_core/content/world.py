@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, Mapping, cast
 
 from app.game_core.content.base import ContentRegistry
+
+if TYPE_CHECKING:
+    from app.game_core.content.registries.characters import CharacterRegistry
+    from app.game_core.content.registries.classes import ClassRegistry
+    from app.game_core.content.registries.factions import FactionRegistry
+    from app.game_core.content.registries.items import ItemRegistry
+    from app.game_core.content.registries.lore import LoreRegistry
+    from app.game_core.content.registries.maps import MapRegistry
+    from app.game_core.content.registries.monsters import MonsterRegistry
+    from app.game_core.content.registries.quests import QuestRegistry
+    from app.game_core.content.registries.skills import SkillRegistry
+    from app.game_core.content.registries.tag import TagRegistry
 
 
 class WorldInstance:
@@ -77,45 +89,47 @@ class WorldInstance:
             results.extend(registry.query_by_tags(tags, match_all=match_all))
         return results
 
-    @property
-    def tags(self) -> ContentRegistry:
-        return self.get_registry("tags")
+    # -- Typed convenience accessors (cast at access time) --
 
     @property
-    def maps(self) -> ContentRegistry:
-        return self.get_registry("maps")
+    def tags(self) -> TagRegistry:
+        return cast("TagRegistry", self.get_registry("tags"))
 
     @property
-    def characters(self) -> ContentRegistry:
-        return self.get_registry("characters")
+    def maps(self) -> MapRegistry:
+        return cast("MapRegistry", self.get_registry("maps"))
 
     @property
-    def items(self) -> ContentRegistry:
-        return self.get_registry("items")
+    def characters(self) -> CharacterRegistry:
+        return cast("CharacterRegistry", self.get_registry("characters"))
 
     @property
-    def skills(self) -> ContentRegistry:
-        return self.get_registry("skills")
+    def items(self) -> ItemRegistry:
+        return cast("ItemRegistry", self.get_registry("items"))
 
     @property
-    def classes(self) -> ContentRegistry:
-        return self.get_registry("classes")
+    def skills(self) -> SkillRegistry:
+        return cast("SkillRegistry", self.get_registry("skills"))
 
     @property
-    def monsters(self) -> ContentRegistry:
-        return self.get_registry("monsters")
+    def classes(self) -> ClassRegistry:
+        return cast("ClassRegistry", self.get_registry("classes"))
 
     @property
-    def factions(self) -> ContentRegistry:
-        return self.get_registry("factions")
+    def monsters(self) -> MonsterRegistry:
+        return cast("MonsterRegistry", self.get_registry("monsters"))
 
     @property
-    def lore(self) -> ContentRegistry:
-        return self.get_registry("lore")
+    def factions(self) -> FactionRegistry:
+        return cast("FactionRegistry", self.get_registry("factions"))
 
     @property
-    def quests(self) -> ContentRegistry:
-        return self.get_registry("quests")
+    def lore(self) -> LoreRegistry:
+        return cast("LoreRegistry", self.get_registry("lore"))
+
+    @property
+    def quests(self) -> QuestRegistry:
+        return cast("QuestRegistry", self.get_registry("quests"))
 
     def snapshot(self) -> dict[str, Any]:
         """Return a world-level registry summary."""
@@ -129,8 +143,138 @@ class WorldInstance:
 
     def validate(self) -> dict[str, list[str]]:
         """Collect validation issues from all registries."""
-        return {
+        issues_by_registry = {
             name: issues
             for name, registry in self._registries.items()
             if (issues := registry.validate())
         }
+        world_issues = self._validate_cross_registry_refs()
+        if world_issues:
+            issues_by_registry["_world"] = world_issues
+        return issues_by_registry
+
+    def _validate_cross_registry_refs(self) -> list[str]:
+        issues: list[str] = []
+        if self.has_registry("characters") and self.has_registry("maps"):
+            issues.extend(self._validate_character_map_refs())
+        if self.has_registry("characters") and self.has_registry("items"):
+            issues.extend(self._validate_character_item_refs())
+        if self.has_registry("monsters") and self.has_registry("items"):
+            issues.extend(self._validate_monster_loot_refs())
+        return issues
+
+    def _validate_character_map_refs(self) -> list[str]:
+        issues: list[str] = []
+        map_ids = {
+            str(item.get("id"))
+            for item in self.maps.list_all()
+            if isinstance(item, Mapping) and item.get("id")
+        }
+        for character in self.characters.list_all():
+            if not isinstance(character, Mapping):
+                continue
+            character_id = self._entry_id(character)
+            for field_name in ("area_id", "current_area"):
+                area_id = self._coerce_non_empty_string(character.get(field_name))
+                if area_id is None:
+                    continue
+                if area_id not in map_ids:
+                    issues.append(
+                        f"character '{character_id}' references unknown map '{area_id}' via {field_name}"
+                    )
+        return issues
+
+    def _validate_character_item_refs(self) -> list[str]:
+        issues: list[str] = []
+        item_ids = {
+            str(item.get("id"))
+            for item in self.items.list_all()
+            if isinstance(item, Mapping) and item.get("id")
+        }
+        for character in self.characters.list_all():
+            if not isinstance(character, Mapping):
+                continue
+            character_id = self._entry_id(character)
+            inventory = character.get("inventory")
+            if isinstance(inventory, list):
+                issues.extend(
+                    self._validate_item_refs(
+                        owner_id=character_id,
+                        owner_label="character",
+                        container=inventory,
+                        item_ids=item_ids,
+                        prefix="inventory",
+                    )
+                )
+            shop = character.get("shop")
+            if not isinstance(shop, Mapping):
+                continue
+            shop_inventory = shop.get("inventory")
+            if isinstance(shop_inventory, list):
+                issues.extend(
+                    self._validate_item_refs(
+                        owner_id=character_id,
+                        owner_label="character",
+                        container=shop_inventory,
+                        item_ids=item_ids,
+                        prefix="shop.inventory",
+                    )
+                )
+        return issues
+
+    def _validate_monster_loot_refs(self) -> list[str]:
+        issues: list[str] = []
+        item_ids = {
+            str(item.get("id"))
+            for item in self.items.list_all()
+            if isinstance(item, Mapping) and item.get("id")
+        }
+        for monster in self.monsters.list_all():
+            if not isinstance(monster, Mapping):
+                continue
+            monster_id = self._entry_id(monster)
+            loot_table = monster.get("loot_table")
+            if not isinstance(loot_table, list):
+                continue
+            issues.extend(
+                self._validate_item_refs(
+                    owner_id=monster_id,
+                    owner_label="monster",
+                    container=loot_table,
+                    item_ids=item_ids,
+                    prefix="loot_table",
+                )
+            )
+        return issues
+
+    def _validate_item_refs(
+        self,
+        *,
+        owner_id: str,
+        owner_label: str,
+        container: list[Any],
+        item_ids: set[str],
+        prefix: str,
+    ) -> list[str]:
+        issues: list[str] = []
+        for index, entry in enumerate(container):
+            if not isinstance(entry, Mapping):
+                continue
+            item_id = self._coerce_non_empty_string(entry.get("item_id"))
+            if item_id is None or item_id in item_ids:
+                continue
+            issues.append(
+                f"{owner_label} '{owner_id}' references unknown item '{item_id}' via {prefix}[{index}]"
+            )
+        return issues
+
+    @staticmethod
+    def _entry_id(entry: Mapping[str, Any]) -> str:
+        normalized = WorldInstance._coerce_non_empty_string(entry.get("id"))
+        if normalized is None:
+            return "<unknown>"
+        return normalized
+
+    @staticmethod
+    def _coerce_non_empty_string(value: Any) -> str | None:
+        return ContentRegistry._coerce_non_empty_string(value)

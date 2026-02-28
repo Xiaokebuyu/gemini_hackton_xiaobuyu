@@ -13,5 +13,6 @@ class SceneBusResetHook(NoOpSettlementHook):
 
     async def execute(self, context: SettlementContext) -> HookResult:
         context.scene_bus.reset()
+        # 格末同步清 change_log（与 SceneBus 同生命周期，下格从空开始）
         context.change_log.clear()
         return HookResult(metadata={"status": "reset"})

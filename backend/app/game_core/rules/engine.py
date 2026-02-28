@@ -18,6 +18,15 @@ class RulesEngine:
         for command_type in handler.command_types:
             self._handlers[command_type] = handler
 
+    def register_if_missing(self, handler: CommandHandler) -> list[str]:
+        added: list[str] = []
+        for command_type in handler.command_types:
+            if command_type in self._handlers:
+                continue
+            self._handlers[command_type] = handler
+            added.append(command_type)
+        return added
+
     def execute(
         self,
         command: Command,
@@ -65,6 +74,4 @@ class RulesEngine:
         for command in commands:
             result = self.execute(command, state, world)
             results.append(result)
-            if result.success and result.delta is not None:
-                state.apply(result.delta)
         return results

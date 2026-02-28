@@ -62,6 +62,9 @@ class TimeSlice(StateSlice):
             "period": self.period,
         }
 
+    def absolute_tick(self) -> int:
+        return ((self.day - 1) * 24) + self.slot
+
     def get_period_info(self) -> dict[str, Any]:
         info = self.PERIODS[self.period]
         return {
@@ -94,6 +97,15 @@ class TimeSlice(StateSlice):
         self.accumulated = 0.0
         self._dirty = True
 
+    def consume_tick(self, tick_cost: float = 1.0) -> None:
+        if tick_cost <= 0:
+            raise ValueError("tick_cost must be > 0")
+        if self.accumulated < tick_cost:
+            raise ValueError("insufficient accumulated time for settlement")
+        self.accumulated -= tick_cost
+        self.action_count = 0
+        self._dirty = True
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.operation in {"set", "modify"}:
             if not hasattr(self, change.path):
@@ -107,6 +119,25 @@ class TimeSlice(StateSlice):
         if change.path in {"slot", "day"}:
             self.period = self._period_for_slot(self.slot)
         self._dirty = True
+
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.day, int) or self.day < 1:
+            issues.append("day must be >= 1")
+        if not isinstance(self.slot, int) or not 1 <= self.slot <= 24:
+            issues.append("slot must be between 1 and 24")
+        expected_period = (
+            self._period_for_slot(self.slot) if isinstance(self.slot, int) else None
+        )
+        if expected_period is not None and self.period != expected_period:
+            issues.append(
+                f"period mismatch: expected '{expected_period}', got '{self.period}'"
+            )
+        if not isinstance(self.action_count, int) or self.action_count < 0:
+            issues.append("action_count must be >= 0")
+        if not isinstance(self.accumulated, (int, float)) or self.accumulated < 0:
+            issues.append("accumulated must be >= 0")
+        return issues
 
     @classmethod
     def _period_for_slot(cls, slot: int) -> str:
