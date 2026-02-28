@@ -43,8 +43,39 @@ class MapRegistry(ContentRegistry):
                 lowest_item = item
         return dict(lowest_item) if isinstance(lowest_item, dict) else None
 
+    # ------------------------------------------------------------------
+    # Query methods
+    # ------------------------------------------------------------------
+
+    def get_adjacent(self, area_id: str) -> list[str]:
+        """Return adjacent area IDs for the given area."""
+        item = self._items.get(area_id)
+        if item is None:
+            return []
+        connections = item.get("connections", item.get("adjacent_areas"))
+        if not isinstance(connections, list):
+            return []
+        return [
+            str(c) for c in connections
+            if self._coerce_non_empty_string(c) is not None
+        ]
+
+    def get_by_region(self, region: str) -> list[dict[str, Any]]:
+        """Return areas matching the given region."""
+        normalized = region.strip().lower()
+        return [
+            dict(item)
+            for item in self._items.values()
+            if str(item.get("region", "")).strip().lower() == normalized
+        ]
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
     def validate(self) -> list[str]:
         issues: list[str] = []
+        starting_areas: list[str] = []
         for item_id, item in self._items.items():
             if not item.get("id"):
                 issues.append(f"map '{item_id}' missing id")
@@ -78,6 +109,23 @@ class MapRegistry(ContentRegistry):
                     continue
                 if not self._is_bool_like(item.get(field_name)):
                     issues.append(f"map '{item_id}' has invalid {field_name}")
+                elif bool(item.get(field_name)):
+                    starting_areas.append(item_id)
+
+            # -- Game mechanic fields --
+            for conn_field in ("connections", "adjacent_areas"):
+                conn = item.get(conn_field)
+                if conn is None:
+                    continue
+                if not isinstance(conn, list):
+                    issues.append(f"map '{item_id}' has invalid {conn_field}")
+                else:
+                    for idx, entry in enumerate(conn):
+                        if self._coerce_non_empty_string(entry) is None:
+                            issues.append(f"map '{item_id}' {conn_field}[{idx}] must be a non-empty string")
+
+            if "region" in item and self._coerce_non_empty_string(item.get("region")) is None:
+                issues.append(f"map '{item_id}' has invalid region")
 
             encounter_profile = item.get("encounter_profile")
             if encounter_profile is None:
@@ -131,4 +179,14 @@ class MapRegistry(ContentRegistry):
                     issues.append(
                         f"map '{item_id}' encounter_profile template {index} has invalid source"
                     )
+                if "weight" in template:
+                    w = self._coerce_float(template.get("weight"))
+                    if w is None or w <= 0:
+                        issues.append(
+                            f"map '{item_id}' encounter_profile template {index} has invalid weight"
+                        )
+
+        if len(starting_areas) > 1:
+            ids = ", ".join(starting_areas)
+            issues.append(f"multiple starting areas detected: {ids}")
         return issues

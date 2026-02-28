@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.hooks.gm_narration import (
@@ -223,12 +224,21 @@ class TestGmNarrationHook:
         assert [entry["content"] for entry in entries] == ["One", "Two", "Three"]
         assert entries[1]["visibility"] == "public"
 
-    def test_narrator_error_returns_sse_without_writing_entries(self) -> None:
+    def test_narrator_error_returns_sse_without_writing_entries(self, caplog) -> None:
         context = _make_context()
 
-        result = asyncio.run(GmNarrationHook(narrator=ExplodingNarrator()).execute(context))
+        with caplog.at_level(logging.ERROR):
+            result = asyncio.run(
+                GmNarrationHook(narrator=ExplodingNarrator()).execute(context)
+            )
 
         assert result.metadata["status"] == "narrator_error"
         assert result.metadata["evaluated"] is False
         assert result.sse_events[0].event_type == "gm_narration_error"
         assert context.scene_bus.snapshot()["entries"] == []
+        assert any(
+            record.message == "hook failed: gm_narration"
+            and getattr(record, "hook_name", "") == "gm_narration"
+            and record.exc_info is not None
+            for record in caplog.records
+        )

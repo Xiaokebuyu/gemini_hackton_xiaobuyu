@@ -249,8 +249,10 @@ class TestL3LocationDetails:
         assert l3 == {
             "location_id": None,
             "template": None,
+            "is_dynamic": False,
             "area_exploration": None,
             "discovered_items": [],
+            "dynamic_sub_areas": [],
         }
 
 

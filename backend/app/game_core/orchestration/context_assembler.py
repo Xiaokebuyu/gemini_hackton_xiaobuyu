@@ -204,6 +204,7 @@ class ContextAssembler:
     ) -> dict[str, Any]:
         """L3: sub-location details + current exploration hints."""
         template: dict[str, Any] | None = None
+        is_dynamic = False
         if current_area and current_location and world.has_registry("maps"):
             area_template = world.maps.get(current_area)
             if isinstance(area_template, dict):
@@ -212,6 +213,16 @@ class ContextAssembler:
                     location_data = sub_locations.get(current_location)
                     if isinstance(location_data, dict):
                         template = dict(location_data)
+
+        # Fallback: check dynamic sub-areas in area state
+        if template is None and current_location and isinstance(current_area_state, dict):
+            raw_sub_areas = current_area_state.get("temporary_sub_areas", [])
+            if isinstance(raw_sub_areas, list):
+                for item in raw_sub_areas:
+                    if isinstance(item, dict) and str(item.get("id", "")) == current_location:
+                        template = dict(item)
+                        is_dynamic = True
+                        break
 
         area_exploration = None
         discovered_items: list[str] = []
@@ -224,11 +235,22 @@ class ContextAssembler:
             if isinstance(raw_discoveries, list):
                 discovered_items = sorted(str(item) for item in raw_discoveries)
 
+        # Collect all dynamic sub-areas for AI context
+        dynamic_sub_areas: list[dict[str, Any]] = []
+        if isinstance(current_area_state, dict):
+            raw_sub_areas = current_area_state.get("temporary_sub_areas", [])
+            if isinstance(raw_sub_areas, list):
+                dynamic_sub_areas = [
+                    dict(item) for item in raw_sub_areas if isinstance(item, dict)
+                ]
+
         return {
             "location_id": current_location,
             "template": template,
+            "is_dynamic": is_dynamic,
             "area_exploration": area_exploration,
             "discovered_items": discovered_items,
+            "dynamic_sub_areas": dynamic_sub_areas,
         }
 
     @staticmethod

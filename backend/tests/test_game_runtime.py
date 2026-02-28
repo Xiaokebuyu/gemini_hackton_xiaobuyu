@@ -39,3 +39,19 @@ def test_game_runtime_can_create_list_and_delete_sessions_with_in_memory_store()
     assert asyncio.run(runtime.delete_session("other_world", "sess_alpha")) is False
     assert asyncio.run(runtime.delete_session("goblin_slayer", "sess_alpha")) is True
     assert asyncio.run(runtime.list_sessions("goblin_slayer")) == []
+
+
+def test_game_runtime_does_not_delete_legacy_session_without_world_id() -> None:
+    port = NullPersistencePort()
+    runtime = GameRuntime(save_store=SaveStore(port))
+    asyncio.run(
+        port.save(
+            "sess_legacy",
+            {
+                "state": {},
+                "meta": {"session_id": "sess_legacy", "saved_at": 1.0},
+            },
+        )
+    )
+
+    assert asyncio.run(runtime.delete_session("goblin_slayer", "sess_legacy")) is False

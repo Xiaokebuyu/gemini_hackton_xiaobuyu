@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from app.game_core.content import WorldInstance
 from app.game_core.content.registries import CharacterRegistry
@@ -485,7 +486,7 @@ class TestAIOsirisHook:
             "ai_osiris cannot modify player location directly"
         ]
 
-    def test_evaluator_exception_returns_error_sse(self) -> None:
+    def test_evaluator_exception_returns_error_sse(self, caplog) -> None:
         context = _make_context(
             change_log=[
                 StateChange(
@@ -497,7 +498,8 @@ class TestAIOsirisHook:
             ]
         )
 
-        result = asyncio.run(AIOsirisHook(evaluator=ExplodingEvaluator()).execute(context))
+        with caplog.at_level(logging.ERROR):
+            result = asyncio.run(AIOsirisHook(evaluator=ExplodingEvaluator()).execute(context))
 
         assert result.metadata["status"] == "evaluator_error"
         assert result.metadata["evaluated"] is False
@@ -505,3 +507,9 @@ class TestAIOsirisHook:
         assert result.metadata["allowed_command_enforced"] is True
         assert result.sse_events[0].event_type == "ai_osiris_error"
         assert result.sse_events[0].payload["error"] == "llm unavailable"
+        assert any(
+            record.message == "hook failed: ai_osiris"
+            and getattr(record, "hook_name", "") == "ai_osiris"
+            and record.exc_info is not None
+            for record in caplog.records
+        )

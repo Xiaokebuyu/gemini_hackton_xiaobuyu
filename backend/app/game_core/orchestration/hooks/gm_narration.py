@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.state.slices import SceneEntry
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -144,6 +148,13 @@ class GmNarrationHook(NoOpSettlementHook):
         try:
             raw_decision = self._narrator.compose(summary, scene_snapshot)
         except Exception as exc:
+            logger.exception(
+                "hook failed: gm_narration",
+                extra={
+                    "hook_name": self.HOOK_NAME,
+                    "input_change_count": len(state_changes),
+                },
+            )
             return HookResult(
                 sse_events=[
                     SSEEvent(

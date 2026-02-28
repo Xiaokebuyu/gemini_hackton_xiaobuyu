@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.game_core.orchestration.action_dispatcher import ActionDispatcher
 from app.game_core.orchestration.hooks import (
     AIOsirisHook,
+    DynamicSubAreaExpiryHook,
     EncounterHook,
     EventConditionHook,
     GmNarrationHook,
@@ -22,6 +23,7 @@ from app.game_core.orchestration.tick_coordinator import TickCoordinator
 DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("skill_check", "skill_check"),
     ("saving_throw", "saving_throw"),
+    ("search_area", "investigate"),
     ("contest", "contest"),
     ("move_area", "move_area"),
     ("enter_sub_location", "enter_sub_location"),
@@ -31,6 +33,7 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("equip", "equip"),
     ("unequip", "unequip"),
     ("use_item", "use_item"),
+    ("use_resource", "consume_resource"),
     ("add_xp", "add_xp"),
     ("level_up", "level_up"),
     ("apply_asi", "apply_asi"),
@@ -57,6 +60,7 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("disarm_trap", "disarm_trap"),
     ("take_from_container", "take_from_container"),
     ("take_all", "take_all"),
+    ("interact_object", "interact_object"),
     ("cast_spell", "cast_spell"),
     ("prepare_spells", "prepare_spells"),
     ("break_concentration", "break_concentration"),
@@ -68,6 +72,9 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("flee", "flee"),
     ("use_combat_item", "use_combat_item"),
     ("offhand_attack", "offhand_attack"),
+    ("stand_up", "stand_up"),
+    ("refresh_shop", "refresh_shop"),
+    ("night_watch", "night_watch"),
 )
 
 DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
@@ -79,6 +86,7 @@ DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     EventConditionHook,
     NpcScheduleHook,
     TimeAdvanceHook,
+    DynamicSubAreaExpiryHook,
     GmNarrationHook,
     SceneBusResetHook,
 )

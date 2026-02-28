@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 from uuid import uuid4
 
 from app.game_core.state.base import StateSlice
@@ -107,6 +107,7 @@ class PlayerSlice(StateSlice):
         self.concentration: dict[str, Any] | None = None
         self.active_effects: list[dict[str, Any]] = []
         self.class_resources: dict[str, dict[str, Any]] = {}
+        self.save_proficiencies: list[str] = []
 
     def restore(self, payload: Mapping[str, Any]) -> None:
         self.character_id = str(payload.get("character_id", ""))
@@ -170,6 +171,11 @@ class PlayerSlice(StateSlice):
                         "max": int(value.get("max", 0)),
                         "recovery": str(value.get("recovery", "long_rest")),
                     }
+        self.save_proficiencies = [
+            str(s).strip()
+            for s in payload.get("save_proficiencies", [])
+            if str(s).strip()
+        ]
         self.clear_dirty()
 
     def serialize(self) -> dict[str, Any]:
@@ -193,21 +199,16 @@ class PlayerSlice(StateSlice):
             "current_area": self.current_area,
             "current_location": self.current_location,
             "inventory": [item.snapshot() for item in self.inventory],
-            "equipment": dict(self.equipment),
+            "equipment": deepcopy(self.equipment),
             "guild_rank": self.guild_rank,
             "guild_reputation": self.guild_reputation,
-            "spell_slots": {
-                level: dict(slot_state)
-                for level, slot_state in self.spell_slots.items()
-            },
+            "spell_slots": deepcopy(self.spell_slots),
             "known_spells": list(self.known_spells),
             "prepared_spells": list(self.prepared_spells),
             "concentration": deepcopy(self.concentration),
-            "active_effects": [dict(effect) for effect in self.active_effects],
-            "class_resources": {
-                key: dict(value)
-                for key, value in self.class_resources.items()
-            },
+            "active_effects": deepcopy(self.active_effects),
+            "class_resources": deepcopy(self.class_resources),
+            "save_proficiencies": list(self.save_proficiencies),
         }
 
     def get_modifier(self, stat: str) -> int:
@@ -610,14 +611,77 @@ class PlayerSlice(StateSlice):
                 self._dirty = True
                 return
 
-        if change.operation in {"set", "modify"} and hasattr(self, change.path):
-            setattr(self, change.path, change.value)
+        if change.path == "stats" and isinstance(change.value, Mapping):
+            self.stats = {str(k): int(v) for k, v in change.value.items()}
+            self._dirty = True
+            return
+
+        if change.path == "class_features" and isinstance(change.value, list):
+            self.class_features = [str(f) for f in change.value]
+            self._dirty = True
+            return
+
+        if change.path == "equipment" and isinstance(change.value, Mapping):
+            self.equipment = {str(k): v for k, v in change.value.items()}
+            self._dirty = True
+            return
+
+        if change.path == "active_effects" and isinstance(change.value, list):
+            self.active_effects = [
+                dict(e) if isinstance(e, Mapping) else e for e in change.value
+            ]
+            self._dirty = True
+            return
+
+        if change.path == "concentration":
+            self.concentration = (
+                dict(change.value) if isinstance(change.value, Mapping) else change.value
+            )
+            self._dirty = True
+            return
+
+        if change.path == "known_spells" and isinstance(change.value, list):
+            self.known_spells = [str(s) for s in change.value]
+            self._dirty = True
+            return
+
+        if change.path == "prepared_spells" and isinstance(change.value, list):
+            self.prepared_spells = [str(s) for s in change.value]
+            self._dirty = True
+            return
+
+        if change.path == "save_proficiencies" and isinstance(change.value, list):
+            self.save_proficiencies = [str(s) for s in change.value]
+            self._dirty = True
+            return
+
+        if change.operation in {"set", "modify"} and change.path in self._SIMPLE_FIELDS:
+            coerce = self._SIMPLE_FIELDS[change.path]
+            setattr(self, change.path, coerce(change.value))
             self._dirty = True
             return
 
         raise ValueError(
             f"unsupported player state change: {change.operation} {change.path}"
         )
+
+    _SIMPLE_FIELDS: ClassVar[dict[str, type]] = {
+        "hp": int,
+        "max_hp": int,
+        "ac": int,
+        "gold": int,
+        "level": int,
+        "xp": int,
+        "proficiency_bonus": int,
+        "character_class": str,
+        "subclass": str,
+        "current_area": str,
+        "current_location": str,
+        "guild_rank": str,
+        "guild_reputation": int,
+        "character_id": str,
+        "character_name": str,
+    }
 
     @staticmethod
     def _coerce_stack(item: Any) -> ItemStack:

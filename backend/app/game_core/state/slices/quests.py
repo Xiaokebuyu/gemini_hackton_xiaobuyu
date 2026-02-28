@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -81,10 +82,7 @@ class QuestSlice(StateSlice):
                 key: ms.snapshot()
                 for key, ms in self.milestone_states.items()
             },
-            "dynamic_quests": {
-                key: dict(value)
-                for key, value in self.dynamic_quests.items()
-            },
+            "dynamic_quests": deepcopy(self.dynamic_quests),
             "chapter_completion": dict(self.chapter_completion),
         }
 

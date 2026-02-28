@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import app.main as api_main
 from app.game_core import GameRuntime
+from app.world_seed import _shell_world_seed
 from app.game_core.adapters.persistence import NullPersistencePort
 from app.game_core.adapters.session_store import SaveStore
 from app.game_core.state import StateChange
@@ -19,7 +19,7 @@ def _interaction_session(*, location_id: str | None = "counter"):
     runtime = _runtime()
     runtime.get_world(
         "goblin_slayer",
-        world_data=api_main._shell_world_seed("goblin_slayer"),
+        world_data=_shell_world_seed("goblin_slayer"),
         force_reload=True,
     )
     session = asyncio.run(runtime.create_session("goblin_slayer"))
@@ -401,3 +401,232 @@ def test_interaction_service_rejects_unknown_execution_kind() -> None:
         "interaction_resolved",
         "interaction_rejected",
     ]
+
+
+# ------------------------------------------------------------------
+# Shop snapshot enrichment
+# ------------------------------------------------------------------
+
+
+def test_shop_snapshot_includes_player_gold() -> None:
+    runtime, session = _interaction_session()
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "browse",
+                "item_id": None,
+                "quest_id": None,
+                "count": 1,
+                "execution": {"kind": "shop_refresh"},
+            },
+        )
+    )
+
+    assert result.success is True
+    shop_payload = result.events[1].payload
+    assert "player_gold" in shop_payload
+    assert isinstance(shop_payload["player_gold"], int)
+
+
+def test_shop_snapshot_stock_enriched_with_item_details() -> None:
+    runtime, session = _interaction_session()
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "browse",
+                "item_id": None,
+                "quest_id": None,
+                "count": 1,
+                "execution": {"kind": "shop_refresh"},
+            },
+        )
+    )
+
+    assert result.success is True
+    shop_payload = result.events[1].payload
+    stock = shop_payload["stock"]
+    assert len(stock) > 0
+    for item in stock:
+        assert "name" in item
+        assert "type" in item
+        assert "rarity" in item
+
+
+def test_shop_snapshot_includes_player_sellable_items() -> None:
+    runtime, session = _interaction_session()
+    session.runtime.state.player.add_item("training_sword", count=1)
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "browse",
+                "item_id": None,
+                "quest_id": None,
+                "count": 1,
+                "execution": {"kind": "shop_refresh"},
+            },
+        )
+    )
+
+    assert result.success is True
+    shop_payload = result.events[1].payload
+    sellable = shop_payload["player_sellable_items"]
+    assert any(item["item_id"] == "training_sword" for item in sellable)
+    sword = next(item for item in sellable if item["item_id"] == "training_sword")
+    assert sword["name"] == "Training Sword"
+    assert isinstance(sword["base_price"], int)
+
+
+# ------------------------------------------------------------------
+# Talk snapshot enrichment
+# ------------------------------------------------------------------
+
+
+def test_talk_snapshot_includes_available_intents() -> None:
+    runtime, session = _interaction_session()
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "talk",
+                "item_id": None,
+                "quest_id": None,
+                "count": 1,
+                "execution": {"kind": "snapshot", "snapshot_type": "talk"},
+            },
+        )
+    )
+
+    assert result.success is True
+    talk_payload = result.events[1].payload
+    intents = talk_payload["available_intents"]
+    assert "talk" in intents
+    assert "greet" in intents
+
+
+def test_talk_snapshot_merchant_has_shop_intents() -> None:
+    runtime, session = _interaction_session()
+    # Refresh shop first to populate shop_states
+    service = _service(runtime)
+    asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "browse",
+                "item_id": None,
+                "quest_id": None,
+                "count": 1,
+                "execution": {"kind": "shop_refresh"},
+            },
+        )
+    )
+    # Now get talk snapshot
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "talk",
+                "item_id": None,
+                "quest_id": None,
+                "count": 1,
+                "execution": {"kind": "snapshot", "snapshot_type": "talk"},
+            },
+        )
+    )
+
+    assert result.success is True
+    intents = result.events[1].payload["available_intents"]
+    assert "browse" in intents
+    assert "buy" in intents
+    assert "sell" in intents
+
+
+# ------------------------------------------------------------------
+# inspect_item
+# ------------------------------------------------------------------
+
+
+def test_inspect_item_returns_item_details() -> None:
+    runtime, session = _interaction_session()
+    session.runtime.state.player.add_item("bandage", count=3)
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "inspect_item",
+                "item_id": "bandage",
+                "quest_id": None,
+                "count": 1,
+                "execution": {
+                    "kind": "snapshot",
+                    "snapshot_type": "inspect_item",
+                    "item_id": "bandage",
+                },
+            },
+        )
+    )
+
+    assert result.success is True
+    assert [e.event_type for e in result.events] == [
+        "interaction_resolved",
+        "inspect_item",
+    ]
+    item_data = result.events[1].payload["item"]
+    assert item_data["item_id"] == "bandage"
+    assert item_data["name"] == "Bandage"
+    assert item_data["base_price"] == 5
+    assert item_data["player_owned_count"] == 3
+
+
+def test_inspect_item_rejected_without_item_id() -> None:
+    from app.game_core.adapters.inbound import FastAPIInputPort
+
+    port = FastAPIInputPort()
+    result = asyncio.run(
+        port.process_action(
+            {
+                "channel": "interaction",
+                "payload": {
+                    "target_kind": "npc",
+                    "target_id": "merchant",
+                    "intent": "inspect_item",
+                },
+            }
+        )
+    )
+
+    assert result["status"] == "rejected"
+    assert result["code"] == "missing_item"

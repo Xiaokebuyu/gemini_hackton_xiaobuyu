@@ -47,12 +47,40 @@ class StatusEffectHook(NoOpSettlementHook):
                 )
             )
 
+        # Tick combat participant effects
+        if context.state.has_slice("areas"):
+            combat_result = context.execute_command(
+                Command(type="tick_combat_effects", source="system")
+            )
+            if combat_result.success:
+                combat_meta = dict(combat_result.metadata)
+                if self._has_combat_changes(combat_meta):
+                    changed = True
+                    sse_events.append(
+                        SSEEvent(
+                            event_type="combat_effects_ticked",
+                            payload={
+                                "combats_processed": int(combat_meta.get("combats_processed", 0)),
+                                "participants_ticked": int(combat_meta.get("participants_ticked", 0)),
+                                "effects_expired": int(combat_meta.get("effects_expired", 0)),
+                                "total_hp_delta": int(combat_meta.get("total_hp_delta", 0)),
+                            },
+                        )
+                    )
+
         return HookResult(
             sse_events=sse_events,
             metadata={
                 "status": "ticked" if changed else "noop",
                 "effect_result": effect_result,
             },
+        )
+
+    @staticmethod
+    def _has_combat_changes(meta: dict[str, object]) -> bool:
+        return (
+            int(meta.get("participants_ticked", 0)) > 0
+            or int(meta.get("effects_expired", 0)) > 0
         )
 
     @staticmethod

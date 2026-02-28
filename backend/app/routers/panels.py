@@ -1,0 +1,149 @@
+"""Read-only state panel routes (inventory, map, quests)."""
+
+from __future__ import annotations
+
+from typing import Mapping
+
+from fastapi import APIRouter
+
+from app.api_models import (
+    InventoryPanelResponse,
+    MapAreaSummary,
+    MapPanelResponse,
+    QuestPanelResponse,
+)
+from app.deps import _load_session_or_404
+from app.game_core import ManagedSession
+
+router = APIRouter()
+
+
+def _inventory_response(session: ManagedSession) -> InventoryPanelResponse:
+    """Build the inventory panel payload from the player slice."""
+
+    player_payload = session.runtime.state.player.snapshot()
+    inventory = player_payload.get("inventory", [])
+    equipment = player_payload.get("equipment", {})
+    return InventoryPanelResponse(
+        gold=int(player_payload.get("gold", 0)),
+        inventory=list(inventory) if isinstance(inventory, list) else [],
+        equipment=dict(equipment) if isinstance(equipment, Mapping) else {},
+    )
+
+
+def _map_response(session: ManagedSession) -> MapPanelResponse:
+    """Build the map panel payload from world templates and runtime state."""
+
+    player = session.runtime.state.player
+    area_snapshot = session.runtime.state.areas.snapshot()
+    raw_areas = area_snapshot.get("areas", {})
+    state_areas = raw_areas if isinstance(raw_areas, Mapping) else {}
+    summaries: list[MapAreaSummary] = []
+    discovered_area_ids: list[str] = []
+    world_areas = (
+        session.runtime.world.maps.list_all()
+        if session.runtime.world.has_registry("maps")
+        else []
+    )
+    for template in world_areas:
+        if not isinstance(template, Mapping):
+            continue
+        area_id = str(template.get("id", "")).strip()
+        if not area_id:
+            continue
+        state_area = state_areas.get(area_id, {})
+        if not isinstance(state_area, Mapping):
+            state_area = {}
+        exploration = str(state_area.get("exploration", "undiscovered"))
+        if exploration != "undiscovered":
+            discovered_area_ids.append(area_id)
+        raw_sub_locations = template.get("sub_locations", {})
+        sub_locations: list[dict[str, str]] = []
+        if isinstance(raw_sub_locations, Mapping):
+            for key, raw_location in raw_sub_locations.items():
+                location_id = str(key).strip()
+                if not location_id:
+                    continue
+                location_name = location_id
+                if isinstance(raw_location, Mapping):
+                    raw_name = str(raw_location.get("name", "")).strip()
+                    if raw_name:
+                        location_name = raw_name
+                sub_locations.append({"id": location_id, "name": location_name})
+        raw_tags = template.get("tags", [])
+        tags = (
+            [str(tag) for tag in raw_tags if str(tag).strip()]
+            if isinstance(raw_tags, list)
+            else []
+        )
+        raw_danger = state_area.get(
+            "danger_level",
+            template.get("base_danger", template.get("danger_level")),
+        )
+        try:
+            danger_level = float(raw_danger) if raw_danger is not None else None
+        except (TypeError, ValueError):
+            danger_level = None
+        summaries.append(
+            MapAreaSummary(
+                id=area_id,
+                name=str(template.get("name", area_id)),
+                danger_level=danger_level,
+                exploration=exploration,
+                tags=tags,
+                sub_locations=sub_locations,
+            )
+        )
+    return MapPanelResponse(
+        current_area=player.current_area,
+        current_location=player.current_location,
+        discovered_area_ids=discovered_area_ids,
+        areas=summaries,
+    )
+
+
+def _quest_response(session: ManagedSession) -> QuestPanelResponse:
+    """Build the quest panel payload from the quest slice."""
+
+    quest_payload = session.runtime.state.quests.snapshot()
+    return QuestPanelResponse(
+        milestone_states=dict(quest_payload.get("milestone_states", {})),
+        dynamic_quests=dict(quest_payload.get("dynamic_quests", {})),
+        chapter_completion=dict(quest_payload.get("chapter_completion", {})),
+    )
+
+
+@router.get(
+    "/api/game/{world_id}/sessions/{session_id}/inventory",
+    response_model=InventoryPanelResponse,
+)
+async def get_inventory_panel(
+    world_id: str,
+    session_id: str,
+) -> InventoryPanelResponse:
+    """Return the current inventory and equipment panel."""
+
+    session = await _load_session_or_404(world_id, session_id)
+    return _inventory_response(session)
+
+
+@router.get(
+    "/api/game/{world_id}/sessions/{session_id}/map",
+    response_model=MapPanelResponse,
+)
+async def get_map_panel(world_id: str, session_id: str) -> MapPanelResponse:
+    """Return the current map panel."""
+
+    session = await _load_session_or_404(world_id, session_id)
+    return _map_response(session)
+
+
+@router.get(
+    "/api/game/{world_id}/sessions/{session_id}/quests",
+    response_model=QuestPanelResponse,
+)
+async def get_quest_panel(world_id: str, session_id: str) -> QuestPanelResponse:
+    """Return the current quest panel."""
+
+    session = await _load_session_or_404(world_id, session_id)
+    return _quest_response(session)

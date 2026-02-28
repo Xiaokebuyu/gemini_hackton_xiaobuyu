@@ -95,6 +95,13 @@ class QuestRegistry(ContentRegistry):
                 continue
             chapter_ids.add(chapter_id)
 
+        for index, chapter in enumerate(self._chapter_meta):
+            # -- Chapter display fields --
+            if "title" in chapter and self._coerce_non_empty_string(chapter.get("title")) is None:
+                issues.append(f"chapter entry {index} has invalid title")
+            if "description" in chapter and self._coerce_non_empty_string(chapter.get("description")) is None:
+                issues.append(f"chapter entry {index} has invalid description")
+
         for item_id, item in self._milestones.items():
             if not item.get("id"):
                 issues.append(f"milestone '{item_id}' missing id")
@@ -107,6 +114,25 @@ class QuestRegistry(ContentRegistry):
                     issues.append(
                         f"milestone '{item_id}' references unknown chapter '{normalized_chapter_id}'"
                     )
+
+            # -- Milestone display / consumer fields --
+            if "title" in item and self._coerce_non_empty_string(item.get("title")) is None:
+                issues.append(f"milestone '{item_id}' has invalid title")
+            if "description" in item and self._coerce_non_empty_string(item.get("description")) is None:
+                issues.append(f"milestone '{item_id}' has invalid description")
+            if "tags" in item and not isinstance(item.get("tags"), list):
+                issues.append(f"milestone '{item_id}' has invalid tags")
+
+            prerequisites = item.get("prerequisites")
+            if prerequisites is not None:
+                if not isinstance(prerequisites, list):
+                    issues.append(f"milestone '{item_id}' has invalid prerequisites")
+                else:
+                    for p_index, prereq in enumerate(prerequisites):
+                        if self._coerce_non_empty_string(prereq) is None:
+                            issues.append(
+                                f"milestone '{item_id}' prerequisites[{p_index}] must be a non-empty string"
+                            )
 
             next_milestones = item.get("next_milestones")
             if next_milestones is None:
@@ -134,6 +160,18 @@ class QuestRegistry(ContentRegistry):
             )
             if event_id is None:
                 issues.append(f"initial_events[{index}] has invalid event id")
+
+            # -- Initial event consumer fields --
+            if "event_type" in event and self._coerce_non_empty_string(event.get("event_type")) is None:
+                issues.append(f"initial_events[{index}] has invalid event_type")
+            for cond_field in ("conditions", "preconditions"):
+                cond = event.get(cond_field)
+                if cond is not None and not isinstance(cond, (list, Mapping)):
+                    issues.append(f"initial_events[{index}] has invalid {cond_field}")
+            if "payload" in event and not isinstance(event.get("payload"), Mapping):
+                issues.append(f"initial_events[{index}] has invalid payload")
+            if "metadata" in event and not isinstance(event.get("metadata"), Mapping):
+                issues.append(f"initial_events[{index}] has invalid metadata")
         return issues
 
     def get_milestone(self, milestone_id: str) -> dict[str, Any] | None:
@@ -174,6 +212,26 @@ class QuestRegistry(ContentRegistry):
             for item in self.query_by_tags(tags, match_all=match_all)
             if isinstance(item, dict)
         ]
+
+    def get_chapter(self, chapter_id: str) -> dict[str, Any] | None:
+        """Return a single chapter by id."""
+        for chapter in self._chapter_meta:
+            cid = self._coerce_non_empty_string(
+                chapter.get("id", chapter.get("chapter_id"))
+            )
+            if cid == chapter_id:
+                return dict(chapter)
+        return None
+
+    def get_initial_event(self, event_id: str) -> dict[str, Any] | None:
+        """Return a single initial event by id."""
+        for event in self._initial_events:
+            eid = self._coerce_non_empty_string(
+                event.get("id", event.get("event_id"))
+            )
+            if eid == event_id:
+                return dict(event)
+        return None
 
     def chapters(self) -> list[dict[str, Any]]:
         return [dict(item) for item in self._chapter_meta]

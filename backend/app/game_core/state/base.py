@@ -226,8 +226,8 @@ class StateContainer:
                 continue
             self._slices[name].restore(slice_payload)
 
-    def persist(self) -> dict[str, dict[str, Any]]:
-        """Persist only dirty slices, per the design spec."""
+    def export_dirty(self) -> dict[str, dict[str, Any]]:
+        """Return serialized data for dirty slices (does NOT write to storage)."""
         return {
             name: slice_obj.serialize()
             for name, slice_obj in self._slices.items()

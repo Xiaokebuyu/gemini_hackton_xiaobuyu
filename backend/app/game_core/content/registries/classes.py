@@ -111,6 +111,31 @@ class ClassRegistry(ContentRegistry):
             ):
                 issues.append(f"class entry '{item_id}' has invalid prepared_formula")
 
+            # -- Game mechanic fields (growth.py consumer) --
+            if "hit_die" in item:
+                hd = item.get("hit_die")
+                hd_valid = (
+                    (isinstance(hd, str) and self._coerce_non_empty_string(hd) is not None)
+                    or (not isinstance(hd, (str, bool)) and self._coerce_positive_int(hd) is not None)
+                )
+                if not hd_valid:
+                    issues.append(f"class entry '{item_id}' has invalid hit_die")
+
+            for field_name in ("base_hp", "hp_per_level"):
+                if field_name in item and self._coerce_positive_int(item.get(field_name)) is None:
+                    issues.append(f"class entry '{item_id}' has invalid {field_name}")
+
+            if "base_ac" in item and self._coerce_non_negative_int(item.get("base_ac")) is None:
+                issues.append(f"class entry '{item_id}' has invalid base_ac")
+
+            if "subclass_level" in item and self._coerce_positive_int(item.get("subclass_level")) is None:
+                issues.append(f"class entry '{item_id}' has invalid subclass_level")
+
+            if "starting_gold" in item and self._coerce_non_negative_int(item.get("starting_gold")) is None:
+                issues.append(f"class entry '{item_id}' has invalid starting_gold")
+
+            self._validate_level_features(item_id, "class", item, issues)
+
         for item_id, item in self._subclasses.items():
             if not item.get("id"):
                 issues.append(f"subclass entry '{item_id}' missing id")
@@ -125,18 +150,69 @@ class ClassRegistry(ContentRegistry):
                     f"subclass entry '{item_id}' references unknown class '{class_id}'"
                 )
 
-        for group_name, payload in (
-            ("race", self._races),
-            ("background", self._backgrounds),
-        ):
-            for item_id, item in payload.items():
-                if not item.get("id"):
-                    issues.append(f"{group_name} entry '{item_id}' missing id")
+            # -- Subclass game mechanic fields --
+            self._validate_string_list(item_id, "subclass", item, "features", issues)
+            self._validate_level_features(item_id, "subclass", item, issues)
 
+        for item_id, item in self._races.items():
+            if not item.get("id"):
+                issues.append(f"race entry '{item_id}' missing id")
+            if "stat_bonuses" in item and not isinstance(item.get("stat_bonuses"), Mapping):
+                issues.append(f"race entry '{item_id}' has invalid stat_bonuses")
+            self._validate_string_list(item_id, "race", item, "racial_traits", issues)
+
+        for item_id, item in self._backgrounds.items():
+            if not item.get("id"):
+                issues.append(f"background entry '{item_id}' missing id")
+            if "feature" in item and self._coerce_non_empty_string(item.get("feature")) is None:
+                issues.append(f"background entry '{item_id}' has invalid feature")
+            if "gold_bonus" in item and self._coerce_non_negative_int(item.get("gold_bonus")) is None:
+                issues.append(f"background entry '{item_id}' has invalid gold_bonus")
+
+        self._validate_xp_curve(issues)
+        return issues
+
+    def _validate_level_features(
+        self, item_id: str, group: str, item: dict[str, Any], issues: list[str],
+    ) -> None:
+        lf = item.get("level_features")
+        if lf is None:
+            return
+        if not isinstance(lf, Mapping):
+            issues.append(f"{group} entry '{item_id}' has invalid level_features")
+            return
+        for key, value in lf.items():
+            if self._coerce_non_negative_int(key) is None:
+                issues.append(f"{group} entry '{item_id}' level_features key '{key}' must be numeric")
+            if not isinstance(value, list):
+                issues.append(f"{group} entry '{item_id}' level_features[{key}] must be a list")
+
+    def _validate_string_list(
+        self, item_id: str, group: str, item: dict[str, Any], field: str, issues: list[str],
+    ) -> None:
+        value = item.get(field)
+        if value is None:
+            return
+        if not isinstance(value, list):
+            issues.append(f"{group} entry '{item_id}' has invalid {field}")
+            return
+        for index, entry in enumerate(value):
+            if self._coerce_non_empty_string(entry) is None:
+                issues.append(f"{group} entry '{item_id}' {field}[{index}] must be a non-empty string")
+
+    def _validate_xp_curve(self, issues: list[str]) -> None:
         if isinstance(self._xp_curve, list):
+            prev = 0
             for index, value in enumerate(self._xp_curve):
-                if self._coerce_non_negative_int(value) is None:
+                threshold = self._coerce_non_negative_int(value)
+                if threshold is None:
                     issues.append(f"xp_curve[{index}] must be a non-negative int")
+                else:
+                    if threshold < prev:
+                        issues.append(
+                            f"xp_curve[{index}] breaks monotonic increase ({threshold} < {prev})"
+                        )
+                    prev = threshold
         elif isinstance(self._xp_curve, Mapping):
             for level, threshold in self._xp_curve.items():
                 if self._coerce_non_negative_int(level) is None:
@@ -145,7 +221,22 @@ class ClassRegistry(ContentRegistry):
                     issues.append(
                         f"xp_curve entry '{level}' must be a non-negative int"
                     )
-        return issues
+            sorted_entries = sorted(
+                (
+                    (self._coerce_non_negative_int(k), self._coerce_non_negative_int(v))
+                    for k, v in self._xp_curve.items()
+                ),
+                key=lambda pair: pair[0] if pair[0] is not None else -1,
+            )
+            prev = 0
+            for level_num, threshold in sorted_entries:
+                if level_num is None or threshold is None:
+                    continue
+                if threshold < prev:
+                    issues.append(
+                        f"xp_curve level {level_num} breaks monotonic increase ({threshold} < {prev})"
+                    )
+                prev = threshold
 
     @staticmethod
     def _coerce_threshold(value: Any) -> int | None:

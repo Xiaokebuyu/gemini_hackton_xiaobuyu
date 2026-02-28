@@ -6,12 +6,19 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_int,
+    get_non_empty_string,
+    handler_failure,
+    handler_success,
+    handler_success_no_delta,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class InventoryHandler(StaticCommandHandler):
-    COMMAND_TYPES = ("pick_up", "drop", "equip", "unequip", "use_item")
+    COMMAND_TYPES = ("pick_up", "drop", "equip", "unequip", "use_item", "consume_resource")
 
     def validate(
         self,
@@ -29,6 +36,8 @@ class InventoryHandler(StaticCommandHandler):
             return self._validate_unequip(cmd, state)
         if cmd.type == "use_item":
             return self._validate_use_item(cmd, state, world)
+        if cmd.type == "consume_resource":
+            return self._validate_consume_resource(cmd, state)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -51,6 +60,8 @@ class InventoryHandler(StaticCommandHandler):
             return self._compute_unequip(cmd, state)
         if cmd.type == "use_item":
             return self._compute_use_item(cmd, state, world)
+        if cmd.type == "consume_resource":
+            return self._compute_consume_resource(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_pick_up(
@@ -63,10 +74,10 @@ class InventoryHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="player slice is required")
         if not world.has_registry("items"):
             return ValidationResult(ok=False, reason="items registry is required")
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        count = self._coerce_int(cmd.params.get("count", 1))
+        count = coerce_int(cmd.params.get("count", 1))
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         if world.items.get(item_id) is None:
@@ -83,10 +94,10 @@ class InventoryHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        count = self._coerce_int(cmd.params.get("count", 1))
+        count = coerce_int(cmd.params.get("count", 1))
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         if state.player.get_item_count(item_id) < count:
@@ -105,10 +116,10 @@ class InventoryHandler(StaticCommandHandler):
         del world
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        slot = self._get_non_empty_string(cmd.params, "slot")
+        slot = get_non_empty_string(cmd.params, "slot")
         if slot is None:
             return ValidationResult(ok=False, reason="slot must be a non-empty string")
         if slot not in state.player.equipment:
@@ -127,7 +138,7 @@ class InventoryHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
-        slot = self._get_non_empty_string(cmd.params, "slot")
+        slot = get_non_empty_string(cmd.params, "slot")
         if slot is None:
             return ValidationResult(ok=False, reason="slot must be a non-empty string")
         if slot not in state.player.equipment:
@@ -144,7 +155,7 @@ class InventoryHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="player slice is required")
         if not world.has_registry("items"):
             return ValidationResult(ok=False, reason="items registry is required")
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
         if state.player.get_item_count(item_id) < 1:
@@ -187,7 +198,8 @@ class InventoryHandler(StaticCommandHandler):
                 }
             )
 
-        return self._success(
+        return handler_success(
+            "inventory",
             "pick_up",
             changes=[
                 StateChange("player", "set", "inventory", inventory),
@@ -197,6 +209,7 @@ class InventoryHandler(StaticCommandHandler):
                 "count": count,
                 "status": "picked_up",
             },
+            omit_empty_delta=False,
         )
 
     def _compute_drop(
@@ -208,7 +221,8 @@ class InventoryHandler(StaticCommandHandler):
         count = int(cmd.params.get("count", 1))
         inventory = self._player_inventory_snapshot(state)
         next_inventory = self._remove_from_inventory(inventory, item_id, count)
-        return self._success(
+        return handler_success(
+            "inventory",
             "drop",
             changes=[
                 StateChange("player", "set", "inventory", next_inventory),
@@ -218,6 +232,7 @@ class InventoryHandler(StaticCommandHandler):
                 "count": count,
                 "status": "dropped",
             },
+            omit_empty_delta=False,
         )
 
     def _compute_equip(
@@ -230,7 +245,8 @@ class InventoryHandler(StaticCommandHandler):
         equipment = self._player_equipment_snapshot(state)
         previous_item_id = self._equipped_item_id(equipment.get(slot))
         equipment[slot] = {"item_id": item_id}
-        return self._success(
+        return handler_success(
+            "inventory",
             "equip",
             changes=[
                 StateChange("player", "set", "equipment", equipment),
@@ -241,6 +257,7 @@ class InventoryHandler(StaticCommandHandler):
                 "previous_item_id": previous_item_id,
                 "status": "equipped",
             },
+            omit_empty_delta=False,
         )
 
     def _compute_unequip(
@@ -264,7 +281,8 @@ class InventoryHandler(StaticCommandHandler):
                 },
             )
         equipment[slot] = None
-        return self._success(
+        return handler_success(
+            "inventory",
             "unequip",
             changes=[
                 StateChange("player", "set", "equipment", equipment),
@@ -274,6 +292,7 @@ class InventoryHandler(StaticCommandHandler):
                 "removed_item_id": removed_item_id,
                 "status": "unequipped",
             },
+            omit_empty_delta=False,
         )
 
     def _compute_use_item(
@@ -308,7 +327,8 @@ class InventoryHandler(StaticCommandHandler):
             changes.append(
                 StateChange("player", "add", "hp", actual_heal),
             )
-        return self._success(
+        return handler_success(
+            "inventory",
             "use_item",
             changes=changes,
             time_cost=1.0 / 6.0,
@@ -316,6 +336,60 @@ class InventoryHandler(StaticCommandHandler):
                 "item_id": item_id,
                 "status": "consumed",
                 "hp_delta": actual_heal,
+            },
+            omit_empty_delta=False,
+        )
+
+    def _validate_consume_resource(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if not state.has_slice("player"):
+            return ValidationResult(ok=False, reason="player slice is required")
+        resource_key = get_non_empty_string(cmd.params, "resource_key")
+        if resource_key is None:
+            return ValidationResult(ok=False, reason="resource_key must be a non-empty string")
+        amount = coerce_int(cmd.params.get("amount", 1))
+        if amount is None or amount < 1:
+            return ValidationResult(ok=False, reason="amount must be an integer >= 1")
+        return ValidationResult(ok=True)
+
+    def _compute_consume_resource(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        resource_key = str(cmd.params["resource_key"]).strip()
+        amount = int(cmd.params.get("amount", 1))
+        resource = state.player.get_resource(resource_key)
+        if resource is None:
+            return handler_failure(
+                "inventory",
+                "consume_resource",
+                errors=[f"unknown resource: {resource_key}"],
+            )
+        current = int(resource.get("current", 0))
+        if current < amount:
+            return handler_failure(
+                "inventory",
+                "consume_resource",
+                errors=[f"insufficient resource: {resource_key}"],
+            )
+        new_current = current - amount
+        updated = {**resource, "current": new_current}
+        return handler_success(
+            "inventory",
+            "consume_resource",
+            changes=[
+                StateChange("player", "modify", f"class_resources.{resource_key}", updated),
+            ],
+            metadata={
+                "status": "consumed",
+                "resource_key": resource_key,
+                "amount": amount,
+                "remaining": new_current,
+                "max": int(resource.get("max", 0)),
             },
         )
 
@@ -357,36 +431,12 @@ class InventoryHandler(StaticCommandHandler):
             remaining_to_remove = max(0, -remaining)
         return next_inventory
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        payload = {
-            "handler": "inventory",
-            "command": command_type,
-            **metadata,
-        }
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(
-                changes=changes,
-                reason=command_type,
-                metadata=payload,
-            ),
-            time_cost=time_cost,
-            metadata=payload,
-        )
-
     @staticmethod
     def _resolve_heal_amount(item_template: Any) -> int | None:
         if not isinstance(item_template, Mapping):
             return None
         for key in ("heal_amount", "heal", "restore_hp"):
-            value = InventoryHandler._coerce_int(item_template.get(key))
+            value = coerce_int(item_template.get(key))
             if value is not None and value > 0:
                 return value
         return None
@@ -400,37 +450,6 @@ class InventoryHandler(StaticCommandHandler):
             return None
         normalized = value.strip()
         return normalized or None
-
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
 
     @staticmethod
     def _normalize_tags(value: Any) -> list[str]:

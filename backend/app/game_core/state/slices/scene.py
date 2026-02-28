@@ -32,6 +32,8 @@ class SceneEntry:
 class SceneSlice(StateSlice):
     """Per-tick scene buffer."""
 
+    _VALID_VISIBILITY = frozenset({"public", "private", "system"})
+
     def __init__(self) -> None:
         super().__init__("scene")
         self.entries: list[SceneEntry] = []
@@ -91,6 +93,27 @@ class SceneSlice(StateSlice):
         self.entries = []
         self.state_changes = []
         self._dirty = True
+
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.entries, list):
+            issues.append("entries must be a list")
+        else:
+            for i, entry in enumerate(self.entries):
+                if not isinstance(entry, SceneEntry):
+                    issues.append(f"entries[{i}] must be a SceneEntry")
+                    continue
+                if not entry.source:
+                    issues.append(f"entries[{i}] source must not be empty")
+                if entry.visibility not in self._VALID_VISIBILITY:
+                    issues.append(f"entries[{i}] visibility must be public/private/system")
+        if not isinstance(self.state_changes, list):
+            issues.append("state_changes must be a list")
+        else:
+            for i, change in enumerate(self.state_changes):
+                if not isinstance(change, dict):
+                    issues.append(f"state_changes[{i}] must be a dict")
+        return issues
 
     def apply_state_change(self, change: StateChange) -> None:
         if change.path == "entries" and change.operation == "add":

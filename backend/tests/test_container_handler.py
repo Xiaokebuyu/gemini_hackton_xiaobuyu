@@ -275,3 +275,87 @@ class TestContainerHandler:
         assert container_state["remaining_items"] == []
         assert container_state["remaining_gold"] == 0
         assert container_state["looted"] is True
+
+
+class TestInteractObject:
+    @staticmethod
+    def _make_interact_state(
+        *,
+        interactables: dict | None = None,
+    ) -> StateContainer:
+        state = StateContainer()
+        player = PlayerSlice()
+        player.restore({
+            "character_id": "pc_1",
+            "current_area": "forest",
+            "hp": 12,
+            "max_hp": 12,
+        })
+        state.register(player)
+
+        areas = AreaSlice()
+        props: dict = {}
+        if interactables is not None:
+            props["interactables"] = interactables
+        areas.restore({
+            "areas": {
+                "forest": {
+                    "properties": props,
+                }
+            }
+        })
+        state.register(areas)
+        return state
+
+    def test_interact_object_examine(self) -> None:
+        state = self._make_interact_state(
+            interactables={
+                "bulletin_board": {
+                    "type": "notice_board",
+                    "description": "A weathered wooden board covered in notices.",
+                },
+            },
+        )
+        result = _make_engine().execute(
+            Command(type="interact_object", params={"object_id": "bulletin_board"}),
+            state,
+            _make_world(),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "examined"
+        assert result.metadata["object_id"] == "bulletin_board"
+        assert result.metadata["description"] == "A weathered wooden board covered in notices."
+        assert result.delta is None
+
+    def test_interact_object_not_found(self) -> None:
+        state = self._make_interact_state(interactables={})
+        result = _make_engine().execute(
+            Command(type="interact_object", params={"object_id": "nonexistent"}),
+            state,
+            _make_world(),
+        )
+        assert result.success is False
+        assert "object not found" in result.errors[0]
+
+    def test_interact_object_requires_check(self) -> None:
+        state = self._make_interact_state(
+            interactables={
+                "locked_gate": {
+                    "type": "mechanism",
+                    "description": "A rusty gate mechanism.",
+                    "requires_check": True,
+                    "check_skill": "athletics",
+                    "check_dc": 15,
+                },
+            },
+        )
+        result = _make_engine().execute(
+            Command(type="interact_object", params={"object_id": "locked_gate"}),
+            state,
+            _make_world(),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "examined"
+        assert result.metadata["requires_check"] is True
+        assert result.metadata["check_skill"] == "athletics"
+        assert result.metadata["check_dc"] == 15

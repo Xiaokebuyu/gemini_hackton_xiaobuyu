@@ -161,6 +161,18 @@ class WorldInstance:
             issues.extend(self._validate_character_item_refs())
         if self.has_registry("monsters") and self.has_registry("items"):
             issues.extend(self._validate_monster_loot_refs())
+        if self.has_registry("maps") and self.has_registry("monsters"):
+            issues.extend(self._validate_encounter_monster_refs())
+        if self.has_registry("characters") and self.has_registry("classes"):
+            issues.extend(self._validate_character_class_refs())
+        if self.has_registry("characters") and self.has_registry("factions"):
+            issues.extend(self._validate_character_faction_refs())
+        if self.has_registry("monsters") and self.has_registry("skills"):
+            issues.extend(self._validate_monster_skill_refs())
+        if self.has_registry("quests"):
+            issues.extend(self._validate_milestone_prerequisites())
+        if self.has_registry("tags"):
+            issues.extend(self._validate_tag_value_refs())
         return issues
 
     def _validate_character_map_refs(self) -> list[str]:
@@ -207,19 +219,32 @@ class WorldInstance:
                     )
                 )
             shop = character.get("shop")
-            if not isinstance(shop, Mapping):
-                continue
-            shop_inventory = shop.get("inventory")
-            if isinstance(shop_inventory, list):
-                issues.extend(
-                    self._validate_item_refs(
-                        owner_id=character_id,
-                        owner_label="character",
-                        container=shop_inventory,
-                        item_ids=item_ids,
-                        prefix="shop.inventory",
+            if isinstance(shop, Mapping):
+                shop_inv_list = shop.get("inventory")
+                if isinstance(shop_inv_list, list):
+                    issues.extend(
+                        self._validate_item_refs(
+                            owner_id=character_id,
+                            owner_label="character",
+                            container=shop_inv_list,
+                            item_ids=item_ids,
+                            prefix="shop.inventory",
+                        )
                     )
-                )
+            shop_inventory = character.get("shop_inventory")
+            if isinstance(shop_inventory, Mapping):
+                for pool_name in ("base_pool", "rotating_pool"):
+                    pool = shop_inventory.get(pool_name)
+                    if isinstance(pool, list):
+                        issues.extend(
+                            self._validate_item_refs(
+                                owner_id=character_id,
+                                owner_label="character",
+                                container=pool,
+                                item_ids=item_ids,
+                                prefix=f"shop_inventory.{pool_name}",
+                            )
+                        )
         return issues
 
     def _validate_monster_loot_refs(self) -> list[str]:
@@ -245,6 +270,147 @@ class WorldInstance:
                     prefix="loot_table",
                 )
             )
+        return issues
+
+    def _validate_encounter_monster_refs(self) -> list[str]:
+        """Check that encounter profile template IDs reference real monsters."""
+        issues: list[str] = []
+        monster_ids = {
+            str(m.get("id"))
+            for m in self.monsters.list_all()
+            if isinstance(m, Mapping) and m.get("id")
+        }
+        for area in self.maps.list_all():
+            if not isinstance(area, Mapping):
+                continue
+            area_id = self._entry_id(area)
+            profile = area.get("encounter_profile")
+            if not isinstance(profile, Mapping):
+                continue
+            templates = profile.get("templates")
+            if not isinstance(templates, list):
+                continue
+            for index, template in enumerate(templates):
+                if not isinstance(template, Mapping):
+                    continue
+                tid = self._coerce_non_empty_string(template.get("id"))
+                if tid is not None and tid not in monster_ids:
+                    issues.append(
+                        f"map '{area_id}' encounter template[{index}] references unknown monster '{tid}'"
+                    )
+        return issues
+
+    def _validate_character_class_refs(self) -> list[str]:
+        """Check that character class references exist in ClassRegistry."""
+        issues: list[str] = []
+        class_ids = {
+            str(c.get("id"))
+            for c in self.classes.list_all()
+            if isinstance(c, Mapping) and c.get("id")
+        }
+        for character in self.characters.list_all():
+            if not isinstance(character, Mapping):
+                continue
+            character_id = self._entry_id(character)
+            for field_name in ("character_class", "class_id"):
+                cid = self._coerce_non_empty_string(character.get(field_name))
+                if cid is not None and cid not in class_ids:
+                    issues.append(
+                        f"character '{character_id}' references unknown class '{cid}' via {field_name}"
+                    )
+        return issues
+
+    def _validate_character_faction_refs(self) -> list[str]:
+        """Check that character faction references exist in FactionRegistry."""
+        issues: list[str] = []
+        faction_ids = {
+            str(f.get("id"))
+            for f in self.factions.list_all()
+            if isinstance(f, Mapping) and f.get("id")
+        }
+        for character in self.characters.list_all():
+            if not isinstance(character, Mapping):
+                continue
+            character_id = self._entry_id(character)
+            for field_name in ("faction", "faction_id"):
+                fid = self._coerce_non_empty_string(character.get(field_name))
+                if fid is not None and fid not in faction_ids:
+                    issues.append(
+                        f"character '{character_id}' references unknown faction '{fid}' via {field_name}"
+                    )
+        return issues
+
+    def _validate_monster_skill_refs(self) -> list[str]:
+        """Check that monster spell/ability references exist in SkillRegistry."""
+        issues: list[str] = []
+        skill_ids = {
+            str(s.get("id"))
+            for s in self.skills.list_all()
+            if isinstance(s, Mapping) and s.get("id")
+        }
+        for monster in self.monsters.list_all():
+            if not isinstance(monster, Mapping):
+                continue
+            monster_id = self._entry_id(monster)
+            for field_name in ("spells", "abilities"):
+                refs = monster.get(field_name)
+                if not isinstance(refs, list):
+                    continue
+                for index, entry in enumerate(refs):
+                    sid: str | None = None
+                    if isinstance(entry, str):
+                        sid = self._coerce_non_empty_string(entry)
+                    elif isinstance(entry, Mapping):
+                        sid = self._coerce_non_empty_string(entry.get("id"))
+                    if sid is not None and sid not in skill_ids:
+                        issues.append(
+                            f"monster '{monster_id}' references unknown skill '{sid}' via {field_name}[{index}]"
+                        )
+        return issues
+
+    def _validate_milestone_prerequisites(self) -> list[str]:
+        """Check that milestone prerequisites reference existing milestones."""
+        issues: list[str] = []
+        all_milestone_ids = {
+            str(m.get("id"))
+            for m in self.quests.list_all()
+            if isinstance(m, Mapping) and m.get("id")
+        }
+        for milestone in self.quests.list_all():
+            if not isinstance(milestone, Mapping):
+                continue
+            milestone_id = self._entry_id(milestone)
+            prerequisites = milestone.get("prerequisites")
+            if not isinstance(prerequisites, list):
+                continue
+            for index, prereq in enumerate(prerequisites):
+                prereq_id = self._coerce_non_empty_string(prereq)
+                if prereq_id is not None and prereq_id not in all_milestone_ids:
+                    issues.append(
+                        f"milestone '{milestone_id}' prerequisite[{index}] references unknown milestone '{prereq_id}'"
+                    )
+        return issues
+
+    def _validate_tag_value_refs(self) -> list[str]:
+        """Check that tag values in all registries exist in TagRegistry."""
+        issues: list[str] = []
+        valid_tags = self.tags.all_tags()
+        for reg_name, registry in self._registries.items():
+            if reg_name == "tags":
+                continue
+            for entry in registry.list_all():
+                if not isinstance(entry, Mapping):
+                    continue
+                entry_tags = entry.get("tags")
+                if not isinstance(entry_tags, list):
+                    continue
+                entry_id = self._entry_id(entry)
+                for index, tag in enumerate(entry_tags):
+                    tag_str = self._coerce_non_empty_string(tag)
+                    if tag_str is not None and tag_str not in valid_tags:
+                        issues.append(
+                            f"{reg_name} entry '{entry_id}' references unknown tag '{tag_str}' via tags[{index}]"
+                        )
         return issues
 
     def _validate_item_refs(

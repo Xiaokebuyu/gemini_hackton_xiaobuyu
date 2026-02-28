@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import time as time_module
 from typing import TYPE_CHECKING, Any, Mapping, cast
@@ -34,6 +35,8 @@ class SaveStore:
 
     def __init__(self, persistence: PersistencePort) -> None:
         self._persistence = persistence
+        self._locks_guard = asyncio.Lock()
+        self._session_locks: dict[str, asyncio.Lock] = {}
 
     async def save_runtime(
         self,
@@ -41,53 +44,55 @@ class SaveStore:
         runtime: DefaultRuntime,
     ) -> SaveResult:
         """Persist one runtime into the configured port."""
-        raw_dirty = runtime.tick_coordinator.persist()
-        dirty_payload = raw_dirty if isinstance(raw_dirty, Mapping) else {}
-        persistable_dirty, skipped_slices = self._split_persistable_slices(dirty_payload)
+        lock = await self._lock_for(session_id)
+        async with lock:
+            raw_dirty = runtime.tick_coordinator.export_dirty()
+            dirty_payload = raw_dirty if isinstance(raw_dirty, Mapping) else {}
+            persistable_dirty, skipped_slices = self._split_persistable_slices(dirty_payload)
 
-        existing_raw = await self._persistence.load(session_id)
-        existing_state, existing_meta = (
-            self._normalize_loaded_payload(existing_raw)
-            if isinstance(existing_raw, Mapping)
-            else ({}, {})
-        )
-
-        wrote_full_snapshot = not existing_state and not persistable_dirty
-        write_state: dict[str, dict[str, Any]]
-        if wrote_full_snapshot:
-            write_state = self._full_persistable_snapshot(runtime)
-        else:
-            write_state = dict(existing_state)
-            write_state.update(persistable_dirty)
-
-        meta = self._build_meta(session_id, runtime, existing_meta=existing_meta)
-        wrote_to_port = wrote_full_snapshot or bool(persistable_dirty)
-        if wrote_to_port:
-            await self._persistence.save(
-                session_id,
-                {
-                    "state": write_state,
-                    "meta": meta,
-                },
+            existing_raw = await self._persistence.load(session_id)
+            existing_state, existing_meta = (
+                self._normalize_loaded_payload(existing_raw)
+                if isinstance(existing_raw, Mapping)
+                else ({}, {})
             )
 
-        if wrote_full_snapshot:
-            persisted_slices = list(write_state.keys())
-        else:
-            persisted_slices = list(persistable_dirty.keys())
+            wrote_full_snapshot = not existing_state and not persistable_dirty
+            write_state: dict[str, dict[str, Any]]
+            if wrote_full_snapshot:
+                write_state = self._full_persistable_snapshot(runtime)
+            else:
+                write_state = dict(existing_state)
+                write_state.update(persistable_dirty)
 
-        mark_clean_names = persisted_slices + skipped_slices
-        if mark_clean_names:
-            runtime.state.mark_clean(mark_clean_names)
+            meta = self._build_meta(session_id, runtime, existing_meta=existing_meta)
+            wrote_to_port = wrote_full_snapshot or bool(persistable_dirty)
+            if wrote_to_port:
+                await self._persistence.save(
+                    session_id,
+                    {
+                        "state": write_state,
+                        "meta": meta,
+                    },
+                )
 
-        return SaveResult(
-            session_id=session_id,
-            persisted_slices=persisted_slices,
-            skipped_slices=skipped_slices,
-            wrote_full_snapshot=wrote_full_snapshot,
-            wrote_to_port=wrote_to_port,
-            meta=meta,
-        )
+            if wrote_full_snapshot:
+                persisted_slices = list(write_state.keys())
+            else:
+                persisted_slices = list(persistable_dirty.keys())
+
+            mark_clean_names = persisted_slices + skipped_slices
+            if mark_clean_names:
+                runtime.state.mark_clean(mark_clean_names)
+
+            return SaveResult(
+                session_id=session_id,
+                persisted_slices=persisted_slices,
+                skipped_slices=skipped_slices,
+                wrote_full_snapshot=wrote_full_snapshot,
+                wrote_to_port=wrote_to_port,
+                meta=meta,
+            )
 
     async def load_runtime(
         self,
@@ -127,10 +132,8 @@ class SaveStore:
             record = self._build_listing_meta(session_id, state_payload, meta_payload)
             record_world_id = str(record.get("world_id", "")).strip()
             if world_id is not None:
-                if record_world_id and record_world_id != world_id:
+                if not record_world_id or record_world_id != world_id:
                     continue
-                if not record_world_id:
-                    record["world_id"] = world_id
             records.append(record)
         records.sort(key=lambda item: float(item.get("last_played", 0.0)), reverse=True)
         return records
@@ -139,6 +142,14 @@ class SaveStore:
         """Delete one stored session if the configured port supports it."""
         port = self._catalog_port()
         return await port.delete(session_id)
+
+    async def _lock_for(self, session_id: str) -> asyncio.Lock:
+        async with self._locks_guard:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._session_locks[session_id] = lock
+            return lock
 
     def _normalize_loaded_payload(
         self,

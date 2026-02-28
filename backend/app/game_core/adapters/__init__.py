@@ -6,6 +6,7 @@ from app.game_core.adapters.inbound import (
     InputPort,
     NullInputPort,
 )
+from app.game_core.adapters.firestore_persistence import FirestorePersistencePort
 from app.game_core.adapters.local_persistence import LocalFilePersistencePort
 from app.game_core.adapters.outbound import NullOutputPort, OutputPort
 from app.game_core.adapters.persistence import (
@@ -16,14 +17,20 @@ from app.game_core.adapters.persistence import (
 from app.game_core.adapters.presentation import (
     NullPresentationPort,
     PresentationPort,
+    SSEPresentationPort,
 )
+from app.game_core.adapters.llm import LlmPort, LlmResponse, NullLlmProvider
 from app.game_core.adapters.session_store import SaveResult, SaveStore
 
 __all__ = [
     "CommandAliasInputPort",
     "FastAPIInputPort",
     "InputPort",
+    "LlmPort",
+    "LlmResponse",
     "NullInputPort",
+    "NullLlmProvider",
+    "FirestorePersistencePort",
     "LocalFilePersistencePort",
     "NullOutputPort",
     "NullPersistencePort",
@@ -31,6 +38,7 @@ __all__ = [
     "OutputPort",
     "PersistencePort",
     "PresentationPort",
+    "SSEPresentationPort",
     "SessionCatalogPort",
     "SaveResult",
     "SaveStore",

@@ -20,18 +20,18 @@
 
 | # | Handler | command_types | 状态 | 复杂度 |
 |---|---------|---------------|------|--------|
-| 1 | `CombatHandler` | attack, defend, disengage, dash, shove, flee, use_combat_item, offhand_attack, start_combat | [完成] | 高 |
-| 2 | `SkillCheckHandler` | skill_check, saving_throw, contest | [完成] | 低 |
+| 1 | `CombatHandler` | attack, defend, disengage, dash, shove, flee, use_combat_item, offhand_attack, start_combat, stand_up | [完成] | 高 |
+| 2 | `SkillCheckHandler` | skill_check, saving_throw, contest, investigate | [完成] | 低 |
 | 3 | `NavigationHandler` | move_area, enter_sub_location, leave_sub_location | [完成] | 中 |
-| 4 | `InventoryHandler` | pick_up, drop, equip, unequip, use_item | [完成] | 中 |
+| 4 | `InventoryHandler` | pick_up, drop, equip, unequip, use_item, consume_resource | [完成] | 中 |
 | 5 | `EconomyHandler` | trade_buy, trade_sell, refresh_shop | [完成] | 低 |
 | 6 | `GrowthHandler` | add_xp, level_up, apply_asi, choose_subclass, create_character | [完成] | 中 |
 | 7 | `RestHandler` | rest_short, rest_long, night_watch, set_camp | [完成] | 中 |
 | 8 | `CrimeHandler` | steal, lockpick | [完成] | 低 |
 | 9 | `EncounterHandler` | encounter_check, generate_loot, clear_hostile | [完成] | 中 |
-| 10 | `ContainerHandler` | open_container, disarm_trap, take_from_container, take_all | [完成] | 中 |
+| 10 | `ContainerHandler` | open_container, disarm_trap, take_from_container, take_all, interact_object | [完成] | 中 |
 | 11 | `WorldStateHandler` | set_flag, modify_disposition, modify_approval, advance_quest, schedule_event, create_rumor, modify_location, add_knowledge, modify_completion, adjust_danger | [完成] | 高 |
-| 12 | `StatusEffectHandler` | apply_effect, remove_effect, remove_effect_by_type, tick_effects | [完成] | 中 |
+| 12 | `StatusEffectHandler` | apply_effect, remove_effect, remove_effect_by_type, tick_effects, tick_combat_effects | [完成] | 中 |
 | 13 | `SpellHandler` | cast_spell, prepare_spells, break_concentration | [完成] | 高 |
 
 ## 决策记录
@@ -63,14 +63,16 @@
 
 这样保持规则层可用，同时避免在 NPC 运行时模型未定稿前引入错误耦合。
 
-### [D-R05] saving_throw 暂按统一熟练实现
+### [D-R05] saving_throw 已从统一熟练升级为条件化熟练
 
-当前仓内没有独立的“各豁免熟练项”状态结构。
-MVP 阶段 `saving_throw` 统一按：
+~~MVP 阶段统一按 `ability modifier + player.proficiency_bonus`。~~
 
-`ability modifier + player.proficiency_bonus`
+已深化：`PlayerSlice` 新增 `save_proficiencies: list[str]`（如 `[“dex”, “cha”]`）。
+`SkillCheckHandler._compute_saving_throw` 现在只在 `ability in save_proficiencies` 时加熟练加值。
 
-后续如引入精细化职业/专长熟练表，再替换为真实豁免熟练判定。
+- 支持 restore/serialize/snapshot 全链路
+- 空列表时所有豁免不加熟练（兼容既有无 save_proficiencies 的存档数据）
+- 创建角色时应由 `GrowthHandler.create_character` 根据职业设置初始豁免熟练
 
 ### [D-R06] WorldStateHandler 采用来源敏感的兼容收权
 
@@ -150,19 +152,21 @@ MVP 阶段 `saving_throw` 统一按：
 
 ### [D-R13] EncounterHandler 先落为确定性遭遇/掉落边界
 
-本轮 `EncounterHandler` 补齐了三个命令，但仍有意保持为“稳定扩展点”：
+本轮 `EncounterHandler` 补齐了三个命令，但仍有意保持为”稳定扩展点”：
 
 - `encounter_check` 使用确定性阈值：
   - `danger * period_multiplier >= 1.0` 视为触发
   - 不引入随机数，也不接 `DynamicSubAreaManager`
 - 触发时只往 `AreaSlice.hostile_tracking` 写入最小 hostile runtime 状态
-- `generate_loot` 只处理确定性金币与确定性掉落：
+- `generate_loot` ~~只处理确定性金币与确定性掉落~~ 已深化为概率掉落：
   - 金币自动入账
+  - 物品掉落现使用 `random.random() < chance` 概率判定
+  - `chance=1.0`（或缺省）的物品仍保证掉落
   - 物品只出现在 metadata 中，不自动入包
 - `clear_hostile` 采用幂等语义：
-  - 未找到目标 hostile 时返回 `success=True + status="noop"`
+  - 未找到目标 hostile 时返回 `success=True + status=”noop”`
 
-这样默认规则链已可依赖这三个命令，后续再在这个边界上深化真实遭遇和完整掉落系统。
+`encounter_check` 仍保持确定性阈值，仅 `generate_loot` 引入了概率。
 
 ### [D-R14] EconomyHandler 先做最小真实交易，刷新库存使用确定性轮转
 
@@ -194,6 +198,7 @@ MVP 阶段 `saving_throw` 统一按：
 
 - `rest_short` 只恢复 `recovery="short_rest"` 的职业资源，不恢复法术位
 - `rest_long` 会恢复 HP/法术位/职业资源，并清除可被长休移除的效果
+- `rest_long` 时间消耗固定为 8.0（D&D 5e 标准长休时长），不依赖当前时段计算
 - `rest_long` 本轮不自动串联 `night_watch` 或 `refresh_shop`
 - `set_camp` 本轮只往 `areas.<area_id>.properties.active_camp` 写运行时营地信息，不生成真实营地子地点
 - `night_watch` 只返回结构化结果，不直接改状态
@@ -287,11 +292,11 @@ MVP 阶段 `saving_throw` 统一按：
 - `shove`
 - `offhand_attack`
 
-其中当前明确采用“稳定扩展点”边界：
+其中当前明确采用”稳定扩展点”边界：
 
 - 不新增 `combat` slice
 - 最小战斗运行时挂在 `AreaSlice.hostile_tracking`
-- `start_combat` 只允许 `engine/system`
+- `start_combat` 只允许 `engine/system`（不注册到 `DEFAULT_ACTION_COMMAND_TYPES`）
 - `start_combat` 会写入：
   - `combat_active`
   - `combat_round`
@@ -299,15 +304,35 @@ MVP 阶段 `saving_throw` 统一按：
   - `participants`
   - `player_flags`
 - `defend / disengage / dash` 只更新玩家战斗旗标
-- `flee` 使用确定性的被动值，不掷骰
+- ~~`flee` 使用确定性的被动值，不掷骰~~
+- ~~`attack` 做最小确定性命中与伤害结算~~
+- 已深化：`attack`、`shove`、`flee` 现在使用 d20 骰子（`random.randint(1, 20)`），
+  与 `SkillCheckHandler` 对齐。每次攻击/推搡/逃跑均产出 `DiceRoll` 追踪记录，
+  包含暴击（nat 20）/大失败（nat 1）判定。
 - `use_combat_item` 本轮只支持战斗中的自身治疗消耗品
-- `attack` 现在会做最小确定性命中与伤害结算，并直接回写 `participants`
-- `offhand_attack` 现在会做最小确定性命中与固定弱伤害结算
-- `shove` 现在会做最小确定性对抗，并在成功时把当前遭遇的 `blocking` 置为 `False`
-- 三者仍保持 MVP 边界：
+- `offhand_attack` 使用 d20 攻击检定，命中时固定 1 点伤害
+- 仍保持 MVP 边界：
   - 不引入完整战斗引擎
   - 不引入先攻/怪物回合
   - 不新增 `combat` slice
+  - 伤害公式仍为 `max(1, proficiency + str_mod)`，不解析武器模板
+
+### [D-R20] DEFAULT_ACTION_COMMAND_TYPES 补注册
+
+本轮补注册了两个已有 handler 但此前遗漏的 action→command 映射：
+
+- `refresh_shop`：EconomyHandler 已实现，但此前未注册到默认 dispatcher
+- `night_watch`：RestHandler 已实现，但此前未注册到默认 dispatcher
+
+`start_combat` **不注册**：该命令仅允许 `engine/system` 来源，不是玩家可触发的动作。
+
+### [D-R21] InteractionService.shop_refresh 改走 TickCoordinator
+
+此前 `InteractionService._execute_shop_refresh` 直接调用 `rules_engine.execute()` + `state.apply()`，
+绕过了 `TickCoordinator` 的 tick 生命周期（时间累积、settlement hooks、持久化）。
+
+已修复：改为通过 `_execute_structured_action()` 走完整 pipeline，
+与 `_execute_pipeline_action()` 保持一致的执行路径。
 
 ## 填充 TODO（推荐实施顺序）
 
@@ -324,3 +349,108 @@ MVP 阶段 `saving_throw` 统一按：
 - [x] `GrowthHandler`：经验/升级/ASI/子职业/角色创建
 - [x] 其余 Handler 按需实施
 - [x] `CombatHandler` 依赖 `SpellHandler`（当前先完成稳定扩展点；完整法术攻击委托延后）
+
+## D-R22: 共享工具模块提取（P1 结构性清理）
+
+**日期**：2026-02-28
+**新文件**：`rules/handler_utils.py`（~190 行）
+
+**提取内容**：
+- 类型强转：`coerce_int`（8 handler）、`coerce_float`（3）、`coerce_non_empty_string`（3）、`get_non_empty_string`（13）、`normalize_tags`（4）
+- 骰子工具：`roll_d20`、`resolve_roll`、`build_dice_roll`（combat + skill_check 共用）
+- 结果构建：`handler_success`（10 handler）、`handler_success_no_delta`（8）、`handler_failure`
+
+**保留本地的变体**：
+- `encounter.py._coerce_int`（bool→int 语义不同）
+- `encounter.py._coerce_float`（同上）
+- `world_state.py._success`（variadic 签名）
+- `inventory.py._normalize_tags`（去重变体）
+
+**`omit_empty_delta` 参数**：
+- `True`（默认）：container, crime, rest, encounter
+- `False`：economy, growth, inventory, navigation, spell, status_effect, combat
+
+**测试影响**：combat/skill_check 的 `_patch_rolls` 改为 monkeypatch `handler_utils.roll_d20`
+
+## D-R23: spell.py _compute_cast_spell 方法拆分
+
+**日期**：2026-02-28
+**文件**：`rules/handlers/spell.py`
+
+**原方法**：379 行 → 拆分为 5 个方法：
+- `_compute_cast_spell`（主入口，~80 行）
+- `_apply_self_target`（自身目标分支）
+- `_apply_combat_target`（战斗目标分支 → 委托 _apply_combat_damage / _apply_combat_control）
+- `_build_cast_result`（状态变更 + metadata 组装）
+
+**共享状态**：通过 `ctx: dict[str, Any]` 传递可变上下文，避免引入新 dataclass。
+
+## D-R24: stand_up — CombatHandler 扩展
+
+**日期**：2026-02-28
+
+从 `player.active_effects` 移除所有 `effect_id == "prone"` 的效果。
+
+- `time_cost=0`（设计文档：消耗半移动力，非时间成本）
+- 无 prone 时返回 `status="not_prone"` + no delta
+- 有 prone 时通过 `StateChange("player", "set", "active_effects", ...)` 整体替换
+- 注册：`("stand_up", "stand_up")`
+
+## D-R25: consume_resource — InventoryHandler 扩展
+
+**日期**：2026-02-28
+
+消耗职业资源（愤怒充能、神术引导等）。
+
+- `time_cost=0`（设计文档：自由动作）
+- params: `{resource_key: str, amount?: int}`，amount 默认 1
+- 通过 `StateChange("player", "modify", f"class_resources.{key}", updated)` 更新
+- 资源不存在 → `handler_failure(errors=["unknown resource"])`
+- 余量不足 → `handler_failure(errors=["insufficient resource"])`
+- 注册：`("use_resource", "consume_resource")`
+
+## D-R26: investigate — SkillCheckHandler 扩展
+
+**日期**：2026-02-28
+
+主动搜索。掷感知/调查检定，发现隐藏内容。
+
+- `time_cost=1/6`
+- params: `{skill?: str, target_id?: str}`，skill 默认 "perception"
+- 区域搜索目标从 `area.properties.search_targets` 读取
+- 已发现目标记录在 `area.properties.discoveries`
+- 无搜索目标 → `status="nothing_to_find"`
+- 全部已发现 → `status="already_discovered"`
+- 掷骰成功 → `status="discovered"` + StateChange 更新 discoveries
+- 掷骰失败 → `status="found_nothing"`
+- 注册：`("search_area", "investigate")`
+
+## D-R27: interact_object — ContainerHandler 扩展
+
+**日期**：2026-02-28
+
+与可交互物件交互（公告板、机关、门等）。
+
+- `time_cost=1/6`
+- params: `{object_id: str, action?: str}`，action 默认 "examine"
+- 物件数据从 `area.properties.interactables` 读取
+- 物件不存在 → `ExecuteResult.error("object not found")`
+- 存在 → 返回 `status="examined"` + 描述/类型信息
+- 如需检定（`requires_check=True`）→ metadata 附带 `check_skill` / `check_dc`
+- MVP 不执行实际检定，由玩家后续 `skill_check` 完成
+- 注册：`("interact_object", "interact_object")`
+
+## D-R28: tick_combat_effects — NPC 战斗效果 ticking
+
+**日期**：2026-02-28
+
+战斗参与者（NPC/怪物）的 `active_effects` 此前只能被 SpellHandler 施加，但永远不会被 tick。
+
+- 新增 `tick_combat_effects` 命令到 StatusEffectHandler
+- 提取 `_tick_effect_list()` 共享方法，player tick 和 combat tick 复用同一逻辑
+- 遍历所有 `area.hostile_tracking`，只处理 `combat_active == True` 的战斗
+- 对每个存活参与者：periodic damage/heal、duration 递减、到期移除
+- HP ≤ 0 因 periodic damage → 标记 `alive = False`
+- StatusEffectHook (P20) 扩展：player tick 之后追加 `tick_combat_effects`
+- 有变化时发射 `combat_effects_ticked` SSE
+- 10 新测试 in `tests/test_npc_effect_ticking.py`。基线 429→439

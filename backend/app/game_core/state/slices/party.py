@@ -63,6 +63,28 @@ class PartySlice(StateSlice):
         self.shared_experiences.append(dict(experience))
         self._dirty = True
 
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.members, dict):
+            issues.append("members must be a dict")
+        else:
+            for cid, member in self.members.items():
+                if not isinstance(member, dict):
+                    issues.append(f"members[{cid}] must be a dict")
+        if not isinstance(self.companion_approval, dict):
+            issues.append("companion_approval must be a dict")
+        else:
+            for cid, value in self.companion_approval.items():
+                if not isinstance(value, int):
+                    issues.append(f"companion_approval[{cid}] must be an integer")
+        if not isinstance(self.shared_experiences, list):
+            issues.append("shared_experiences must be a list")
+        else:
+            for i, exp in enumerate(self.shared_experiences):
+                if not isinstance(exp, dict):
+                    issues.append(f"shared_experiences[{i}] must be a dict")
+        return issues
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.path.startswith("members.") and isinstance(change.value, Mapping):
             _, character_id = change.path.split(".", 1)

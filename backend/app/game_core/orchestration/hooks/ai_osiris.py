@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
@@ -10,6 +11,9 @@ from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
 from app.game_core.state import StateChange
+
+
+logger = logging.getLogger(__name__)
 
 
 _ALLOWED_COMMAND_TYPES: tuple[str, ...] = (
@@ -185,6 +189,13 @@ class AIOsirisHook(NoOpSettlementHook):
         try:
             raw_decision = self._evaluator.evaluate(summary, snapshot, rules_context)
         except Exception as exc:
+            logger.exception(
+                "hook failed: ai_osiris",
+                extra={
+                    "hook_name": self.HOOK_NAME,
+                    "change_count": len(context.change_log),
+                },
+            )
             return HookResult(
                 sse_events=[
                     SSEEvent(

@@ -155,28 +155,30 @@ def test_default_narrative_planner_skips_existing_seeded_quest_and_returns_noop(
     }
 
 
-def test_default_narrative_planner_generates_stall_response() -> None:
+def test_default_narrative_planner_generates_escalation_l1() -> None:
     result = NarrativePlanner().plan(
         {
             "current_tick": 9,
             "quests": {
                 "available_milestones": [],
-                "dynamic_quests": {},
+                "active_milestones": ["ms_a"],
+                "dynamic_quests": {
+                    "dq_ms_a": {"status": "active"},
+                },
             },
             "narrative_plan": {
-                "escalation_level": 1,
+                "escalation_level": 0,
                 "ticks_since_milestone_progress": 6,
                 "pacing_frozen": False,
             },
         }
     )
 
-    assert result["metadata"]["status"] == "stall_response"
+    assert result["metadata"]["status"] == "escalation_l1"
     assert result["next_scheduled_tick"] == 12
-    assert result["directives"] == [
-        {"kind": "escalate", "payload": {"delta": 1}},
-        {"kind": "adjust_pacing", "payload": {"frozen": True}},
-    ]
+    assert len(result["directives"]) == 2
+    assert result["directives"][0]["kind"] == "publish_bulletin"
+    assert result["directives"][1]["kind"] == "escalate"
 
 
 def test_default_narrative_planner_thaws_when_progress_resumes() -> None:

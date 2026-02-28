@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -251,6 +255,14 @@ class EncounterHook(NoOpSettlementHook):
         try:
             raw_probe = self._detector.plan(detector_context)
         except Exception as exc:
+            logger.exception(
+                "hook failed: encounter",
+                extra={
+                    "hook_name": self.HOOK_NAME,
+                    "area_id": area_id,
+                    "period": period,
+                },
+            )
             return HookResult(
                 sse_events=[
                     SSEEvent(

@@ -20,3 +20,13 @@ class ToolResult:
     @classmethod
     def noop(cls, message: str = "no-op") -> "ToolResult":
         return cls(success=True, message=message, metadata={"status": "stub"})
+
+
+@dataclass(slots=True)
+class AgentResult:
+    """Result of a multi-turn agentic loop."""
+
+    text: str = ""
+    tool_results: list[ToolResult] = field(default_factory=list)
+    turns_used: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)

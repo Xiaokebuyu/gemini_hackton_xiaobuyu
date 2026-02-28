@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
@@ -121,6 +121,41 @@ class NarrativePlanSlice(StateSlice):
         self.pacing_frozen = frozen
         self._dirty = True
 
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.chapter_completion, (int, float)):
+            issues.append("chapter_completion must be numeric")
+        elif not 0.0 <= self.chapter_completion <= 1.0:
+            issues.append("chapter_completion must be between 0.0 and 1.0")
+        if not isinstance(self.escalation_level, int) or self.escalation_level < 0:
+            issues.append("escalation_level must be an integer >= 0")
+        if not isinstance(self.ticks_since_milestone_progress, int) or self.ticks_since_milestone_progress < 0:
+            issues.append("ticks_since_milestone_progress must be an integer >= 0")
+        if not isinstance(self.last_run_tick, int) or self.last_run_tick < 0:
+            issues.append("last_run_tick must be an integer >= 0")
+        if self.next_scheduled_tick is not None:
+            if not isinstance(self.next_scheduled_tick, int) or self.next_scheduled_tick < 0:
+                issues.append("next_scheduled_tick must be None or an integer >= 0")
+        if not isinstance(self.behavior_window, list):
+            issues.append("behavior_window must be a list")
+        else:
+            if len(self.behavior_window) > 24:
+                issues.append("behavior_window must not exceed 24 entries")
+            for i, entry in enumerate(self.behavior_window):
+                if not isinstance(entry, dict):
+                    issues.append(f"behavior_window[{i}] must be a dict")
+        for field_name in ("npc_directives", "active_bulletins", "quest_history"):
+            field_value = getattr(self, field_name)
+            if not isinstance(field_value, list):
+                issues.append(f"{field_name} must be a list")
+            else:
+                for i, item in enumerate(field_value):
+                    if not isinstance(item, dict):
+                        issues.append(f"{field_name}[{i}] must be a dict")
+        if not isinstance(self.play_style_tags, list):
+            issues.append("play_style_tags must be a list")
+        return issues
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.path == "npc_directives" and isinstance(change.value, Mapping):
             self.add_directive(dict(change.value))
@@ -141,10 +176,34 @@ class NarrativePlanSlice(StateSlice):
                 self.escalation_level = max(0, int(change.value))
                 self._dirty = True
             return
-        if change.operation in {"set", "modify"} and hasattr(self, change.path):
-            setattr(self, change.path, change.value)
+        if change.path == "current_target_milestone":
+            self.set_target_milestone(
+                str(change.value) if change.value is not None else None
+            )
+            return
+        if change.path == "next_scheduled_tick":
+            self.schedule_next(
+                int(change.value) if change.value is not None else None
+            )
+            return
+        if change.path == "play_style_tags" and isinstance(change.value, list):
+            self.play_style_tags = [str(item) for item in change.value]
+            self._dirty = True
+            return
+        if change.operation in {"set", "modify"} and change.path in self._SIMPLE_FIELDS:
+            coerce = self._SIMPLE_FIELDS[change.path]
+            setattr(self, change.path, coerce(change.value))
             self._dirty = True
             return
         raise ValueError(
             f"unsupported narrative plan change: {change.operation} {change.path}"
         )
+
+    _SIMPLE_FIELDS: ClassVar[dict[str, type]] = {
+        "current_chapter": str,
+        "chapter_completion": float,
+        "ticks_since_milestone_progress": int,
+        "strategy_notes": str,
+        "last_run_tick": int,
+        "pacing_frozen": bool,
+    }

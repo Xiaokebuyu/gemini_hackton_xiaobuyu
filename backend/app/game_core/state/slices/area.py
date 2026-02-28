@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -26,14 +27,12 @@ class AreaState:
         return {
             "exploration": self.exploration,
             "danger_level": self.danger_level,
-            "properties": dict(self.properties),
+            "properties": deepcopy(self.properties),
             "tags": list(self.tags),
             "temporary_sub_areas": [dict(item) for item in self.temporary_sub_areas],
             "discovered_items": sorted(self.discovered_items),
             "npc_locations": dict(self.npc_locations),
-            "container_states": {
-                key: dict(value) for key, value in self.container_states.items()
-            },
+            "container_states": deepcopy(self.container_states),
             "hostile_tracking": {
                 key: AreaSlice._copy_hostile_payload(value)
                 for key, value in self.hostile_tracking.items()
@@ -474,6 +473,36 @@ class AreaSlice(StateSlice):
         if tier == "temporary":
             return counts["temporary"] < 3
         return counts["total"] < 6
+
+    def tick_expiry(self, area_id: str, elapsed: int = 1) -> list[str]:
+        """Decrement positive expiry values and remove expired sub-areas.
+
+        Returns list of removed sub-area IDs.
+        Permanent sub-areas (expiry == -1) are never touched.
+        """
+        area = self.areas.get(area_id)
+        if not isinstance(area, AreaState):
+            return []
+        surviving: list[dict[str, Any]] = []
+        removed_ids: list[str] = []
+        for item in area.temporary_sub_areas:
+            expiry = item.get("expiry", 0)
+            if not isinstance(expiry, (int, float)):
+                expiry = 0
+            expiry = int(expiry)
+            if expiry == -1:
+                surviving.append(item)
+                continue
+            expiry = max(0, expiry - elapsed)
+            if expiry <= 0:
+                removed_ids.append(str(item.get("id", "")))
+                continue
+            item["expiry"] = expiry
+            surviving.append(item)
+        if removed_ids:
+            area.temporary_sub_areas = surviving
+            self._dirty = True
+        return removed_ids
 
     def validate(self) -> list[str]:
         issues: list[str] = []

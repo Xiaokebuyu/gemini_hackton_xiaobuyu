@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+import pytest
+
 from app.game_core.content import WorldInstance
 from app.game_core.content.registries import ItemRegistry, MapRegistry, MonsterRegistry
 from app.game_core.orchestration.defaults import build_default_action_dispatcher
@@ -101,6 +105,17 @@ def _make_engine() -> RulesEngine:
 def _apply(result, state: StateContainer) -> None:
     assert result.delta is not None
     state.apply(result.delta)
+
+
+def _patch_rolls(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: CombatHandler,
+    values: Iterable[int],
+) -> None:
+    iterator = iter(values)
+    monkeypatch.setattr(
+        "app.game_core.rules.handler_utils.roll_d20", lambda: next(iterator)
+    )
 
 
 def _active_combat_state(
@@ -280,9 +295,15 @@ class TestCombatHandler:
         _apply(dash, state)
         assert state.areas.get_hostile_state("combat_1")["player_flags"]["dashed"] is True
 
-    def test_flee_can_fail_and_then_succeed_with_mobility_flags(self) -> None:
+    def test_flee_can_fail_and_then_succeed_with_mobility_flags(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [5, 10])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(blocking=True, proficiency_bonus=1)
-        engine = _make_engine()
 
         failed = engine.execute(Command(type="flee"), state, _make_world())
         assert failed.success is True
@@ -338,8 +359,14 @@ class TestCombatHandler:
         assert result.delta is None
         assert result.metadata["status"] == "no_effect"
 
-    def test_attack_hits_and_consumes_player_flags(self) -> None:
-        engine = _make_engine()
+    def test_attack_hits_and_consumes_player_flags(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [10])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(
             strength=12,
             flags={"defending": True, "disengaged": True, "dashed": True},
@@ -368,13 +395,20 @@ class TestCombatHandler:
             "dashed": False,
         }
 
-    def test_attack_can_clear_the_last_enemy(self) -> None:
+    def test_attack_can_clear_the_last_enemy(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [15])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(
             strength=12,
             participant_hp=3,
         )
 
-        result = _make_engine().execute(
+        result = engine.execute(
             Command(type="attack", params={"target": "goblin"}),
             state,
             _make_world(),
@@ -396,12 +430,19 @@ class TestCombatHandler:
         assert hostile["status"] == "cleared"
         assert hostile["cleared_at_tick"] == 9
 
-    def test_attack_miss_still_returns_delta_and_keeps_target_hp(self) -> None:
+    def test_attack_miss_still_returns_delta_and_keeps_target_hp(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [5])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(
             flags={"defending": True, "disengaged": False, "dashed": False},
         )
 
-        result = _make_engine().execute(
+        result = engine.execute(
             Command(type="attack", params={"target": "goblin"}),
             state,
             _make_world(),
@@ -421,10 +462,17 @@ class TestCombatHandler:
             "dashed": False,
         }
 
-    def test_offhand_attack_deals_one_damage_on_hit(self) -> None:
+    def test_offhand_attack_deals_one_damage_on_hit(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [15])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(strength=12)
 
-        result = _make_engine().execute(
+        result = engine.execute(
             Command(type="offhand_attack", params={"target": "goblin"}),
             state,
             _make_world(),
@@ -438,13 +486,20 @@ class TestCombatHandler:
         assert hostile is not None
         assert hostile["participants"][0]["hp"] == 6
 
-    def test_shove_can_open_escape_window(self) -> None:
+    def test_shove_can_open_escape_window(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [10])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(
             strength=14,
             flags={"defending": False, "disengaged": True, "dashed": True},
         )
 
-        result = _make_engine().execute(
+        result = engine.execute(
             Command(type="shove", params={"target": "goblin"}),
             state,
             _make_world(),
@@ -464,12 +519,19 @@ class TestCombatHandler:
             "dashed": False,
         }
 
-    def test_shove_can_fail_and_keep_blocking(self) -> None:
+    def test_shove_can_fail_and_keep_blocking(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        handler = CombatHandler()
+        _patch_rolls(monkeypatch, handler, [5])
+        engine = RulesEngine()
+        engine.register(handler)
         state = _active_combat_state(
             flags={"defending": False, "disengaged": False, "dashed": True},
         )
 
-        result = _make_engine().execute(
+        result = engine.execute(
             Command(type="shove", params={"target": "goblin"}),
             state,
             _make_world(),
@@ -516,3 +578,36 @@ class TestCombatHandler:
         )
         assert no_combat.success is False
         assert no_combat.errors == ["active combat sub_area_id is required"]
+
+    def test_stand_up_removes_prone(self) -> None:
+        state = _make_state()
+        state.player.active_effects = [
+            {"effect_id": "prone", "instance_id": "p1"},
+            {"effect_id": "bless", "instance_id": "b1"},
+        ]
+        result = _make_engine().execute(
+            Command(type="stand_up"),
+            state,
+            _make_world(),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "stood_up"
+        assert result.metadata["removed_count"] == 1
+        assert result.delta is not None
+        state.apply(result.delta)
+        assert not state.player.has_effect("prone")
+        assert state.player.has_effect("bless")
+
+    def test_stand_up_not_prone(self) -> None:
+        state = _make_state()
+        state.player.active_effects = [
+            {"effect_id": "bless", "instance_id": "b1"},
+        ]
+        result = _make_engine().execute(
+            Command(type="stand_up"),
+            state,
+            _make_world(),
+        )
+        assert result.success is True
+        assert result.delta is None
+        assert result.metadata["status"] == "not_prone"

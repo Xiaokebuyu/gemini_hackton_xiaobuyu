@@ -6,8 +6,14 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_int,
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class RestHandler(StaticCommandHandler):
@@ -84,13 +90,13 @@ class RestHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="player slice is required")
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
-        area_id = self._get_non_empty_string(cmd.params, "area_id")
+        area_id = get_non_empty_string(cmd.params, "area_id")
         if area_id is None:
             return ValidationResult(ok=False, reason="area_id must be a non-empty string")
         if not self._area_exists(area_id, state, world):
             return ValidationResult(ok=False, reason=f"unknown area: {area_id}")
         if "camp_type" in cmd.params:
-            camp_type = self._get_non_empty_string(cmd.params, "camp_type")
+            camp_type = get_non_empty_string(cmd.params, "camp_type")
             if camp_type is None or camp_type not in self._CAMP_TYPES:
                 return ValidationResult(
                     ok=False,
@@ -106,7 +112,7 @@ class RestHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
-        area_id = self._get_non_empty_string(cmd.params, "area_id")
+        area_id = get_non_empty_string(cmd.params, "area_id")
         if area_id is None:
             return ValidationResult(ok=False, reason="area_id must be a non-empty string")
         if not self._area_exists(area_id, state, world):
@@ -118,14 +124,14 @@ class RestHandler(StaticCommandHandler):
                     reason="camp can only be set in the current player area",
                 )
         if "location_id" in cmd.params:
-            location_id = self._get_non_empty_string(cmd.params, "location_id")
+            location_id = get_non_empty_string(cmd.params, "location_id")
             if location_id is None:
                 return ValidationResult(
                     ok=False,
                     reason="location_id must be a non-empty string",
                 )
         if "camp_type" in cmd.params:
-            camp_type = self._get_non_empty_string(cmd.params, "camp_type")
+            camp_type = get_non_empty_string(cmd.params, "camp_type")
             if camp_type is None or camp_type not in self._CAMP_TYPES:
                 return ValidationResult(
                     ok=False,
@@ -162,7 +168,8 @@ class RestHandler(StaticCommandHandler):
         if removed_effect_count > 0:
             changes.append(StateChange("player", "set", "active_effects", filtered_effects))
 
-        return self._success(
+        return handler_success(
+            "rest",
             "rest_short",
             changes=changes,
             time_cost=1.0,
@@ -221,7 +228,8 @@ class RestHandler(StaticCommandHandler):
         camp_type = self._resolve_camp_type(state)
         time_cost = self._long_rest_time_cost(state)
 
-        return self._success(
+        return handler_success(
+            "rest",
             "rest_long",
             changes=changes,
             time_cost=time_cost,
@@ -248,7 +256,8 @@ class RestHandler(StaticCommandHandler):
             area_id=area_id,
         )
         if camp_type == "safe":
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "rest",
                 "night_watch",
                 metadata={
                     "status": "skipped_safe_camp",
@@ -266,7 +275,8 @@ class RestHandler(StaticCommandHandler):
         dc = self._night_watch_dc(danger)
         passive_total = 10 + state.player.get_skill_bonus("perception")
         passed = passive_total >= dc
-        return self._success_no_delta(
+        return handler_success_no_delta(
+            "rest",
             "night_watch",
             metadata={
                 "status": "checked",
@@ -286,7 +296,7 @@ class RestHandler(StaticCommandHandler):
         state: StateContainer,
     ) -> ExecuteResult:
         area_id = str(cmd.params["area_id"]).strip()
-        resolved_location_id = self._get_non_empty_string(cmd.params, "location_id")
+        resolved_location_id = get_non_empty_string(cmd.params, "location_id")
         if resolved_location_id is None and state.has_slice("player"):
             resolved_location_id = state.player.current_location
         camp_type = self._resolve_explicit_camp_type(cmd.params) or "wilderness"
@@ -296,7 +306,8 @@ class RestHandler(StaticCommandHandler):
             "created_at_tick": int(state.time.absolute_tick()) if state.has_slice("time") else None,
             "source": "rest",
         }
-        return self._success(
+        return handler_success(
+            "rest",
             "set_camp",
             changes=[
                 StateChange(
@@ -355,7 +366,7 @@ class RestHandler(StaticCommandHandler):
         for key, value in raw.items():
             if not isinstance(value, Mapping):
                 continue
-            level = self._coerce_int(key)
+            level = coerce_int(key)
             if level is None:
                 continue
             slots[level] = dict(value)
@@ -379,16 +390,13 @@ class RestHandler(StaticCommandHandler):
             return "wilderness"
         active_camp = area.properties.get("active_camp")
         if isinstance(active_camp, Mapping):
-            camp_type = self._get_non_empty_string(active_camp, "camp_type")
+            camp_type = get_non_empty_string(active_camp, "camp_type")
             if camp_type in self._CAMP_TYPES:
                 return camp_type
         return "wilderness"
 
     def _long_rest_time_cost(self, state: StateContainer) -> float:
-        if not state.has_slice("time"):
-            return 8.0
-        current_slot = int(state.time.slot)
-        return float((24 - current_slot) + 5)
+        return 8.0
 
     @staticmethod
     def _night_watch_dc(danger: float) -> int:
@@ -417,7 +425,7 @@ class RestHandler(StaticCommandHandler):
     ) -> ValidationResult | None:
         if "character" not in params:
             return None
-        character = self._get_non_empty_string(params, "character")
+        character = get_non_empty_string(params, "character")
         if character is None:
             return ValidationResult(
                 ok=False,
@@ -432,74 +440,8 @@ class RestHandler(StaticCommandHandler):
             reason="character must reference the current player",
         )
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        payload = {"handler": "rest", "command": command_type, **metadata}
-        delta = (
-            StateDelta(changes=changes, reason=command_type, metadata=payload)
-            if changes
-            else None
-        )
-        return ExecuteResult(
-            success=True,
-            delta=delta,
-            time_cost=time_cost,
-            metadata=payload,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            time_cost=time_cost,
-            metadata={"handler": "rest", "command": command_type, **metadata},
-        )
-
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
     def _resolve_explicit_camp_type(self, params: Mapping[str, Any]) -> str | None:
-        camp_type = self._get_non_empty_string(params, "camp_type")
+        camp_type = get_non_empty_string(params, "camp_type")
         if camp_type in self._CAMP_TYPES:
             return camp_type
         return None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
@@ -106,14 +106,22 @@ class TimeSlice(StateSlice):
         self.action_count = 0
         self._dirty = True
 
+    _MUTABLE_FIELDS: ClassVar[dict[str, type]] = {
+        "day": int,
+        "slot": int,
+        "accumulated": float,
+        "action_count": int,
+    }
+
     def apply_state_change(self, change: StateChange) -> None:
+        if change.path not in self._MUTABLE_FIELDS:
+            raise KeyError(f"unknown time field: {change.path}")
+        coerce = self._MUTABLE_FIELDS[change.path]
         if change.operation in {"set", "modify"}:
-            if not hasattr(self, change.path):
-                raise KeyError(f"unknown time field: {change.path}")
-            setattr(self, change.path, change.value)
+            setattr(self, change.path, coerce(change.value))
         elif change.operation == "add":
             current = getattr(self, change.path)
-            setattr(self, change.path, current + change.value)
+            setattr(self, change.path, coerce(current + change.value))
         else:
             raise ValueError(f"unsupported time operation: {change.operation}")
         if change.path in {"slot", "day"}:

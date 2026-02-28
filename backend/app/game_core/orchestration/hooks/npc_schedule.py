@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -282,6 +286,15 @@ class NpcScheduleHook(NoOpSettlementHook):
         try:
             raw_decision = self._provider.plan(provider_context)
         except Exception as exc:
+            logger.exception(
+                "hook failed: npc_schedule",
+                extra={
+                    "hook_name": self.HOOK_NAME,
+                    "current_period": current_period,
+                    "next_period": next_period,
+                    "candidate_count": len(candidate_templates),
+                },
+            )
             return HookResult(
                 sse_events=[
                     SSEEvent(

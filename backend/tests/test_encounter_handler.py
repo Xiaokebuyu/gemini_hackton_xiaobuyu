@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.game_core.content import WorldInstance
 from app.game_core.content.registries import ItemRegistry, MapRegistry, MonsterRegistry
 from app.game_core.rules import Command, RulesEngine
@@ -287,7 +289,12 @@ class TestEncounterHandler:
             }
         ]
 
-    def test_generate_loot_returns_gold_delta_and_deterministic_items(self) -> None:
+    def test_generate_loot_returns_gold_delta_and_deterministic_items(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import random as _random_mod
+        monkeypatch.setattr(_random_mod, "random", lambda: 0.9)
         state = _make_state()
         result = _execute(
             Command(

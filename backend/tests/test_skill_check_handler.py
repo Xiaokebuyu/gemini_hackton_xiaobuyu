@@ -12,7 +12,7 @@ from app.game_core.orchestration.models import StructuredAction
 from app.game_core.rules import Command, RulesEngine
 from app.game_core.rules.handlers import SkillCheckHandler
 from app.game_core.state import StateContainer
-from app.game_core.state.slices import PlayerSlice
+from app.game_core.state.slices import AreaSlice, PlayerSlice
 
 
 def _make_state() -> StateContainer:
@@ -29,6 +29,7 @@ def _make_state() -> StateContainer:
                 "cha": 10,
             },
             "proficiency_bonus": 2,
+            "save_proficiencies": ["con", "wis"],
         }
     )
     state.register(player)
@@ -43,11 +44,12 @@ def _make_engine(handler: SkillCheckHandler) -> RulesEngine:
 
 def _patch_rolls(
     monkeypatch: pytest.MonkeyPatch,
-    handler: SkillCheckHandler,
     values: Iterable[int],
 ) -> None:
     iterator = iter(values)
-    monkeypatch.setattr(handler, "_roll_d20", lambda: next(iterator))
+    monkeypatch.setattr(
+        "app.game_core.rules.handler_utils.roll_d20", lambda: next(iterator)
+    )
 
 
 class TestSkillCheckHandler:
@@ -66,7 +68,7 @@ class TestSkillCheckHandler:
 
     def test_skill_check_passes_and_costs_time(self, monkeypatch: pytest.MonkeyPatch) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [10])
+        _patch_rolls(monkeypatch, [10])
 
         result = _make_engine(handler).execute(
             Command(type="skill_check", params={"skill": "athletics", "dc": 13}),
@@ -85,7 +87,7 @@ class TestSkillCheckHandler:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [5])
+        _patch_rolls(monkeypatch, [5])
 
         result = _make_engine(handler).execute(
             Command(type="skill_check", params={"skill": "athletics", "dc": 12}),
@@ -100,7 +102,7 @@ class TestSkillCheckHandler:
 
     def test_advantage_uses_higher_roll(self, monkeypatch: pytest.MonkeyPatch) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [3, 17])
+        _patch_rolls(monkeypatch, [3, 17])
 
         result = _make_engine(handler).execute(
             Command(
@@ -117,7 +119,7 @@ class TestSkillCheckHandler:
 
     def test_disadvantage_uses_lower_roll(self, monkeypatch: pytest.MonkeyPatch) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [18, 4])
+        _patch_rolls(monkeypatch, [18, 4])
 
         result = _make_engine(handler).execute(
             Command(
@@ -137,7 +139,7 @@ class TestSkillCheckHandler:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [11])
+        _patch_rolls(monkeypatch, [11])
 
         result = _make_engine(handler).execute(
             Command(
@@ -161,7 +163,7 @@ class TestSkillCheckHandler:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [9])
+        _patch_rolls(monkeypatch, [9])
 
         result = _make_engine(handler).execute(
             Command(type="saving_throw", params={"ability": "con", "dc": 13}),
@@ -180,7 +182,7 @@ class TestSkillCheckHandler:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [10, 8])
+        _patch_rolls(monkeypatch, [10, 8])
 
         result = _make_engine(handler).execute(
             Command(
@@ -235,7 +237,7 @@ class TestSkillCheckHandler:
         expected_hint: str,
     ) -> None:
         handler = SkillCheckHandler()
-        _patch_rolls(monkeypatch, handler, [roll])
+        _patch_rolls(monkeypatch, [roll])
 
         result = _make_engine(handler).execute(
             Command(type="skill_check", params={"skill": "athletics", "dc": 10}),
@@ -244,3 +246,92 @@ class TestSkillCheckHandler:
         )
 
         assert result.narrative_hints == [expected_hint]
+
+
+class TestInvestigate:
+    @staticmethod
+    def _make_investigate_state(
+        *,
+        search_targets: dict | None = None,
+        search_dc: int | None = None,
+        discoveries: dict | None = None,
+    ) -> StateContainer:
+        state = _make_state()
+        areas = AreaSlice()
+        props: dict = {}
+        if search_targets is not None:
+            props["search_targets"] = search_targets
+        if search_dc is not None:
+            props["search_dc"] = search_dc
+        if discoveries is not None:
+            props["discoveries"] = discoveries
+        state.player.current_area = "forest"
+        areas.restore({
+            "areas": {
+                "forest": {
+                    "properties": props,
+                }
+            }
+        })
+        state.register(areas)
+        return state
+
+    def test_investigate_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [15])
+        state = self._make_investigate_state(
+            search_targets={"hidden_chest": {"dc": 12, "description": "A hidden chest"}},
+        )
+        result = _make_engine(handler).execute(
+            Command(type="investigate"),
+            state,
+            WorldInstance("test_world"),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "discovered"
+        assert "hidden_chest" in result.metadata["found"]
+        assert result.delta is not None
+        state.apply(result.delta)
+        area = state.areas.areas["forest"]
+        assert area.properties.get("discoveries", {}).get("hidden_chest") is True
+
+    def test_investigate_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [3])
+        state = self._make_investigate_state(
+            search_targets={"hidden_chest": {"dc": 15}},
+        )
+        result = _make_engine(handler).execute(
+            Command(type="investigate"),
+            state,
+            WorldInstance("test_world"),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "found_nothing"
+        assert result.delta is None
+
+    def test_investigate_no_targets(self) -> None:
+        handler = SkillCheckHandler()
+        state = self._make_investigate_state()
+        result = _make_engine(handler).execute(
+            Command(type="investigate"),
+            state,
+            WorldInstance("test_world"),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "nothing_to_find"
+        assert result.delta is None
+
+    def test_investigate_default_skill(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [10])
+        state = self._make_investigate_state(
+            search_targets={"note": {"dc": 10}},
+        )
+        result = _make_engine(handler).execute(
+            Command(type="investigate"),
+            state,
+            WorldInstance("test_world"),
+        )
+        assert result.success is True
+        assert result.metadata["skill"] == "perception"

@@ -93,6 +93,44 @@ class RelationSlice(StateSlice):
         self.shop_states[npc_id] = dict(state)
         self._dirty = True
 
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.npc_dispositions, dict):
+            issues.append("npc_dispositions must be a dict")
+        else:
+            for npc_id, dims in self.npc_dispositions.items():
+                if not isinstance(dims, dict):
+                    issues.append(f"npc_dispositions[{npc_id}] must be a dict")
+                    continue
+                for dim, val in dims.items():
+                    if not isinstance(val, int):
+                        issues.append(f"npc_dispositions[{npc_id}].{dim} must be an integer")
+        if not isinstance(self.relationship_stages, dict):
+            issues.append("relationship_stages must be a dict")
+        else:
+            for npc_id, stage in self.relationship_stages.items():
+                if not isinstance(stage, str):
+                    issues.append(f"relationship_stages[{npc_id}] must be a string")
+        if not isinstance(self.faction_standings, dict):
+            issues.append("faction_standings must be a dict")
+        else:
+            for fid, val in self.faction_standings.items():
+                if not isinstance(val, int):
+                    issues.append(f"faction_standings[{fid}] must be an integer")
+        if not isinstance(self.npc_impressions, dict):
+            issues.append("npc_impressions must be a dict")
+        else:
+            for npc_id, imps in self.npc_impressions.items():
+                if not isinstance(imps, list):
+                    issues.append(f"npc_impressions[{npc_id}] must be a list")
+        if not isinstance(self.shop_states, dict):
+            issues.append("shop_states must be a dict")
+        else:
+            for npc_id, state in self.shop_states.items():
+                if not isinstance(state, dict):
+                    issues.append(f"shop_states[{npc_id}] must be a dict")
+        return issues
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.path.startswith("npc_dispositions."):
             _, npc_id, dimension = change.path.split(".", 2)

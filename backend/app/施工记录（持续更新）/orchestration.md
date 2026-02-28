@@ -16,6 +16,11 @@
 | `ActionDispatcher` | [完成] | action_type → command_type 映射 + transform |
 | `ContextAssembler` | [完成] | L0-L7 八层 context 组装，覆盖全部 10 Slice + WorldInstance |
 | `SharedContext` | [完成] | world/state/rules_engine/scene_bus 打包 |
+| `AdminCoordinator` | [有意不做] | 规范 §2.1。当前仅 TickCoordinator+InteractionService 两条路径，flat routing 足够。等 3+ coordinator 类型再抽象 |
+| `PrivateChatCoordinator` | [延后] | 规范 §2.5。依赖叙事层 Agent 集成（LLM），无 LLM 只是空壳。随 Agent 主线同步实现 |
+| `EventEngine` 独立模块 | [延后] | 规范 §8。核心逻辑已在 BasicEventConditionEvaluator（Protocol 注入），独立化主要是命名清理。当前无 A6/C1 调用需求 |
+| B 阶段 Agent 管线 | [延后] | 规范 §4.2。PipelineOrchestrator 只做 A 阶段，Agent 会话推到应用层。依赖 LLM 接入 |
+| A6/C1 条件检查 | [延后] | 规范 §4 A6+C1。条件检查仅在 P50 settlement 运行，回合制下同 tick 内无感延迟，够用 |
 
 ### Hook 实施状态
 
@@ -29,6 +34,7 @@
 | P50 | `EventConditionHook` | [完成] | EventSlice |
 | P60 | `NpcScheduleHook` | [完成] | AreaSlice |
 | P70 | `TimeAdvanceHook` | [完成] | TimeSlice |
+| P75 | `DynamicSubAreaExpiryHook` | [完成] | AreaSlice.tick_expiry |
 | P80 | `GmNarrationHook` | [完成] | AgenticExecutor |
 | P90 | `SceneBusResetHook` | [完成] | — |
 
@@ -282,6 +288,32 @@ PipelineOrchestrator 在 engine 执行后将 ExecuteResult 摘要写入 L7（nar
 
 这样默认叙事链不再只是空壳，但仍不依赖 `AgenticExecutor` 或 LLM。
 
+### [D-O18] DynamicSubAreaExpiryHook 动态子区域生命周期闭合
+
+本轮完成动态子区域"只能造不能用"的三个缺口修复：
+
+**AreaSlice.tick_expiry()**：
+- 递减正 expiry 值，移除到期子区域，返回被移除的 ID 列表
+- permanent (expiry==-1) 永不过期
+- 有移除时标记 dirty
+
+**NavigationHandler 动态子区域 fallback**：
+- `_validate_enter_sub_location` 先查静态 `sub_locations`（MapRegistry），未命中则 fallback 到 `state.areas.list_temporary_sub_areas(area_id)`
+- 无静态子区域的地图（sub_locations 非 Mapping）归一化为 `{}`，仍可有动态子区域
+
+**DynamicSubAreaExpiryHook (P75)**：
+- 在 TimeAdvanceHook (P70) 之后运行，确保时钟已推进
+- 只 tick 玩家当前区域（非全局），expiry 代表"玩家在此区域时的 tick 数"
+- 玩家在过期子区域中 → 执行 `leave_sub_location` 弹出
+- 发射 `dynamic_sub_areas_expired` SSE（removed_ids, player_ejected）
+
+**ContextAssembler L3 扩展**：
+- 静态 template 未命中 → fallback 到 `temporary_sub_areas` 查找
+- 新增 `is_dynamic` 布尔字段
+- 新增 `dynamic_sub_areas` 列表（当前区域所有动态子区域供 AI 上下文）
+
+**测试**：12 新 in `tests/test_dynamic_sub_area_lifecycle.py` + 1 现有测试更新。基线 414→429。
+
 ## 填充 TODO
 
 - [x] `ContextAssembler`：从 stub 升级为完整实现 ✅（16 tests passed）
@@ -294,3 +326,78 @@ PipelineOrchestrator 在 engine 执行后将 ExecuteResult 摘要写入 L7（nar
 - [x] `EncounterHook`：稳定 detector 边界 + 最小遭遇触发
 - [x] `EventConditionHook`：P50 最小条件检查 + 状态推进
 - [x] `GmNarrationHook`：稳定 narrator 边界 + 受控 SceneBus 写入
+
+## D-O19 TickCoordinator Hook 统一容错（2026-02-28）
+
+**问题**：`_tick_settlement()` 无 try/except，纯逻辑 hook 异常会炸掉整个 tick。
+**修复**：
+- hook.execute() 和 result.commands 的 execute_command() 统一 try/except
+- 异常时 logger.exception + 发 `hook_error` SSE 事件 + continue
+- 不移除已有 hook 内部的 provider try/except（纵深防御）
+- 4 新测试 in `tests/test_hook_resilience.py`
+
+## D-O20 交互策略验证下沉（2026-02-28）
+
+**问题**：`InteractionService`（应用层）承担了游戏规则验证（NPC 空间判定、任务状态转换），违反编排层设计规范的职责划分。
+
+**设计规范偏离**：规范要求 `NpcInteractionCoordinator` 在编排层。实际实现不建完整 Coordinator，而是提取最小验证模块 — 因为交互的快照/视图构建是应用层关注点，不宜整体下沉。
+
+**方案**：Policy / View 双上下文拆分。
+
+**新增**：`app/game_core/orchestration/interaction.py`（~280 行）
+- `InteractionPolicyContext`：验证最小集（位置、NPC、任务、告示牌 — 不含展示字段）
+- `build_interaction_policy_context(state, world)`：从 StateContainer + WorldInstance 构建
+- `validate_presence(ctx, target_kind, target_id, intent)`：NPC/Board 空间可达性
+- `validate_preconditions(ctx, target_kind, target_id, intent, quest_id)`：任务状态转换合法性
+- `board_has_quest(ctx, board_id, quest_id)`：最小告示牌查询（替代下沉整个 `build_board_entries`）
+
+**应用层改动**：`app/interaction_service.py`
+- `InteractionContext` → `InteractionViewContext`（明确视图定位）
+- `build_interaction_context(session)` → `build_interaction_view_context(state, world)`（去掉 ManagedSession 依赖）
+- `execute()` 流程改为：先 policy_ctx 验证 → 按需构建 view_ctx
+- 删除 7 个验证方法（~165 行），改为 import game_core 验证函数
+
+**不动部分**：
+- 10 个 snapshot builder 留应用层（纯视图格式化）
+- `build_board_entries()` 留 `interaction_views.py`（返回展示条目）
+- 不加到 `orchestration/__init__.py`（避免导入面膨胀）
+
+**依赖方向**：`app/interaction_service.py` → `game_core/orchestration/interaction.py`（正确：应用层→内核）
+
+**测试**：467 passed（含 interaction_service 17 个测试，行为不变）
+
+## D-O21 SSE 事件两类来源定性（2026-02-28）
+
+**问题**：设计文档将 `action_result` 等事件列为 SSE 协议事件，暗示它们与 `dice_roll`/`scene_change` 同源于编排层。
+
+**定性**：这些事件实际由应用层（`gameplay.py`）构造，是 PipelineResult 的摘要投影和流协议信号，不属于游戏世界状态事件。
+
+**判定标准**：事件内容代表游戏世界发生了什么 → 编排层产出（`PipelineResult.sse_events`）；事件内容代表 SSE 会话怎么和客户端交互 → 应用层构造。
+
+**改动**：
+- `gameplay.py`：提取 4 个 helper（`_build_action_result_event`、`_build_stream_end_event`、`_build_stream_error_event`、`_emit_terminal_error`），消除重复，加块注释标明两类事件边界
+- 编排层设计规范 §A4：加 D-O21 偏差注记
+- 表现层设计规范 §三：加 D-O21 偏差注记
+
+## D-O22 持久化时序偏差与命名修正（2026-02-28）
+
+**问题**：设计规范 P5 要求 TickCoordinator.process() 末尾 `await self.persist()` 统一持久化。实际实现中 TickCoordinator 不持有 SaveStore 和 session_id，`persist()` 只导出脏数据字典，实际写存储由调用方（`deps._execute_structured_action` → `save_session`）负责。
+
+**偏差原因**：若 TickCoordinator 注入 SaveStore，game_core 耦合应用层持久化适配器。同时 create_session / complete_character_creation 等非管线路径也需要持久化，不经过 TickCoordinator。P5"管线内部不做持久化"仍然遵守。
+
+**改动**：
+- `TickCoordinator.persist()` → `export_dirty()` — 方法名反映真实语义（导出，非写入）
+- `StateContainer.persist()` → `export_dirty()` — 同上
+- `SaveStore.save_runtime()` 调用点同步更新
+- `InteractionService.__init__` 移除 `save_session` 参数 — 注入但从未使用的死代码，其持久化需求已被 `_execute_structured_action` 内置的 `save_session` 覆盖
+- `deps.py` 构造 InteractionService 时移除 `save_session=...`
+- 编排层设计规范 §2.2 + §10.3：加 D-O22 偏差注记
+
+**文件清单**：
+| 文件 | 改动 |
+|------|------|
+| `game_core/orchestration/tick_coordinator.py` | `persist()` → `export_dirty()` + docstring |
+| `game_core/state/base.py` | `persist()` → `export_dirty()` + docstring |
+| `game_core/adapters/session_store.py` | 调用点更新 |
+| `app/interaction_service.py` | 移除 `save_session` 参数和 `self._save_session` |
+| `app/deps.py` | 构造 InteractionService 移除 `save_session=...` |

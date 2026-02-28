@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import coerce_float, coerce_int, get_non_empty_string
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer, StateDelta
 
@@ -113,7 +114,7 @@ class WorldStateHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if not state.has_slice("flags"):
             return ValidationResult(ok=False, reason="flags slice is required")
-        key = self._get_non_empty_string(cmd.params, "key")
+        key = get_non_empty_string(cmd.params, "key")
         if key is None:
             return ValidationResult(ok=False, reason="key must be a non-empty string")
         if "value" not in cmd.params:
@@ -135,7 +136,7 @@ class WorldStateHandler(StaticCommandHandler):
         if not self._world_has_character(world, state, npc_id):
             return ValidationResult(ok=False, reason=f"unknown character: {npc_id}")
 
-        dimension = self._get_non_empty_string(cmd.params, "dimension")
+        dimension = get_non_empty_string(cmd.params, "dimension")
         if dimension is None:
             return ValidationResult(
                 ok=False,
@@ -147,7 +148,7 @@ class WorldStateHandler(StaticCommandHandler):
                 reason=f"unsupported disposition dimension: {dimension}",
             )
 
-        delta = self._coerce_int(cmd.params.get("delta"))
+        delta = coerce_int(cmd.params.get("delta"))
         if delta is None:
             return ValidationResult(ok=False, reason="delta must be an integer")
         if not -50 <= delta <= 50:
@@ -170,7 +171,7 @@ class WorldStateHandler(StaticCommandHandler):
                 reason="character_id/character must be a non-empty string",
             )
 
-        delta = self._coerce_int(cmd.params.get("delta"))
+        delta = coerce_int(cmd.params.get("delta"))
         if delta is None:
             return ValidationResult(ok=False, reason="delta must be an integer")
         if not -50 <= delta <= 50:
@@ -222,11 +223,11 @@ class WorldStateHandler(StaticCommandHandler):
         if not state.has_slice("quests"):
             return ValidationResult(ok=False, reason="quests slice is required")
 
-        quest_id = self._get_non_empty_string(cmd.params, "quest_id")
+        quest_id = get_non_empty_string(cmd.params, "quest_id")
         if quest_id is None:
             return ValidationResult(ok=False, reason="quest_id must be a non-empty string")
 
-        to_state_raw = self._get_non_empty_string(cmd.params, "to_state")
+        to_state_raw = get_non_empty_string(cmd.params, "to_state")
         if to_state_raw is None:
             return ValidationResult(ok=False, reason="to_state must be a non-empty string")
 
@@ -247,7 +248,7 @@ class WorldStateHandler(StaticCommandHandler):
                     ok=False,
                     reason=f"invalid milestone transition: {milestone.state} -> {to_state}",
                 )
-            if "tick" in cmd.params and self._coerce_int(cmd.params.get("tick")) is None:
+            if "tick" in cmd.params and coerce_int(cmd.params.get("tick")) is None:
                 return ValidationResult(ok=False, reason="tick must be an integer")
             return ValidationResult(ok=True)
 
@@ -276,7 +277,7 @@ class WorldStateHandler(StaticCommandHandler):
         if not state.has_slice("events"):
             return ValidationResult(ok=False, reason="events slice is required")
 
-        event_id = self._get_non_empty_string(cmd.params, "event_id")
+        event_id = get_non_empty_string(cmd.params, "event_id")
         if event_id is None:
             return ValidationResult(ok=False, reason="event_id must be a non-empty string")
 
@@ -285,7 +286,7 @@ class WorldStateHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason=reason or "invalid trigger condition")
 
         if "event_type" in cmd.params:
-            event_type = self._get_non_empty_string(cmd.params, "event_type")
+            event_type = get_non_empty_string(cmd.params, "event_type")
             if event_type is None:
                 return ValidationResult(
                     ok=False,
@@ -373,14 +374,14 @@ class WorldStateHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        area_id = self._get_non_empty_string(cmd.params, "area_id")
+        area_id = get_non_empty_string(cmd.params, "area_id")
         if area_id is None:
             return ValidationResult(ok=False, reason="area_id must be a non-empty string")
 
         if "key" in cmd.params:
             if not state.has_slice("areas"):
                 return ValidationResult(ok=False, reason="areas slice is required")
-            key = self._get_non_empty_string(cmd.params, "key")
+            key = get_non_empty_string(cmd.params, "key")
             if key is None:
                 return ValidationResult(ok=False, reason="key must be a non-empty string")
             if not self._world_or_state_has_area(world, state, area_id):
@@ -426,14 +427,14 @@ class WorldStateHandler(StaticCommandHandler):
         if not state.has_slice("quests"):
             return ValidationResult(ok=False, reason="quests slice is required")
 
-        chapter_id = self._get_non_empty_string(cmd.params, "chapter_id")
+        chapter_id = get_non_empty_string(cmd.params, "chapter_id")
         if chapter_id is None:
             return ValidationResult(
                 ok=False,
                 reason="chapter_id must be a non-empty string",
             )
 
-        delta = self._coerce_float(cmd.params.get("delta"))
+        delta = coerce_float(cmd.params.get("delta"))
         if delta is None:
             return ValidationResult(ok=False, reason="delta must be a float")
         if not -0.20 <= delta <= 0.50:
@@ -453,11 +454,11 @@ class WorldStateHandler(StaticCommandHandler):
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
 
-        area_id = self._get_non_empty_string(cmd.params, "area_id")
+        area_id = get_non_empty_string(cmd.params, "area_id")
         if area_id is None:
             return ValidationResult(ok=False, reason="area_id must be a non-empty string")
 
-        delta = self._coerce_float(cmd.params.get("delta"))
+        delta = coerce_float(cmd.params.get("delta"))
         if delta is None:
             return ValidationResult(ok=False, reason="delta must be a float")
         if not -0.5 <= delta <= 0.5:
@@ -484,7 +485,7 @@ class WorldStateHandler(StaticCommandHandler):
     def _compute_modify_disposition(self, cmd: Command) -> ExecuteResult:
         npc_id = self._normalize_modify_disposition_target(cmd.params) or ""
         dimension = str(cmd.params["dimension"]).strip()
-        delta = self._coerce_int(cmd.params["delta"])
+        delta = coerce_int(cmd.params["delta"])
         return self._success(
             cmd,
             StateChange(
@@ -497,7 +498,7 @@ class WorldStateHandler(StaticCommandHandler):
 
     def _compute_modify_approval(self, cmd: Command) -> ExecuteResult:
         character_id = self._normalize_modify_approval_target(cmd.params) or ""
-        delta = self._coerce_int(cmd.params["delta"])
+        delta = coerce_int(cmd.params["delta"])
         return self._success(
             cmd,
             StateChange(
@@ -728,7 +729,7 @@ class WorldStateHandler(StaticCommandHandler):
         params: Mapping[str, Any],
         state: StateContainer,
     ) -> tuple[int | None, str | None]:
-        direct_tick = cls._coerce_int(params.get("trigger_tick"))
+        direct_tick = coerce_int(params.get("trigger_tick"))
         if direct_tick is not None:
             if direct_tick < 0:
                 return None, "trigger_tick must be a non-negative integer"
@@ -743,12 +744,12 @@ class WorldStateHandler(StaticCommandHandler):
         if condition_type is None:
             return None, "trigger_condition.type must be a non-empty string"
         if condition_type == "absolute_tick":
-            tick = cls._coerce_int(raw_condition.get("tick"))
+            tick = coerce_int(raw_condition.get("tick"))
             if tick is None or tick < 0:
                 return None, "trigger_condition.tick must be a non-negative integer"
             return tick, None
         if condition_type == "time_slots_elapsed":
-            count = cls._coerce_int(raw_condition.get("count"))
+            count = coerce_int(raw_condition.get("count"))
             if count is None or count < 0:
                 return None, "trigger_condition.count must be a non-negative integer"
             if not state.has_slice("time"):
@@ -758,38 +759,38 @@ class WorldStateHandler(StaticCommandHandler):
 
     @staticmethod
     def _normalize_modify_disposition_target(params: Mapping[str, Any]) -> str | None:
-        value = WorldStateHandler._get_non_empty_string(params, "npc_id")
+        value = get_non_empty_string(params, "npc_id")
         if value is not None:
             return value
-        return WorldStateHandler._get_non_empty_string(params, "target")
+        return get_non_empty_string(params, "target")
 
     @staticmethod
     def _normalize_modify_approval_target(params: Mapping[str, Any]) -> str | None:
-        value = WorldStateHandler._get_non_empty_string(params, "character_id")
+        value = get_non_empty_string(params, "character_id")
         if value is not None:
             return value
-        return WorldStateHandler._get_non_empty_string(params, "character")
+        return get_non_empty_string(params, "character")
 
     @staticmethod
     def _normalize_add_knowledge_target(params: Mapping[str, Any]) -> str | None:
-        value = WorldStateHandler._get_non_empty_string(params, "npc_id")
+        value = get_non_empty_string(params, "npc_id")
         if value is not None:
             return value
-        return WorldStateHandler._get_non_empty_string(params, "character_id")
+        return get_non_empty_string(params, "character_id")
 
     @staticmethod
     def _normalize_add_knowledge_text(params: Mapping[str, Any]) -> str | None:
-        value = WorldStateHandler._get_non_empty_string(params, "impression")
+        value = get_non_empty_string(params, "impression")
         if value is not None:
             return value
-        return WorldStateHandler._get_non_empty_string(params, "knowledge")
+        return get_non_empty_string(params, "knowledge")
 
     @staticmethod
     def _normalize_create_rumor_text(params: Mapping[str, Any]) -> str | None:
-        value = WorldStateHandler._get_non_empty_string(params, "text")
+        value = get_non_empty_string(params, "text")
         if value is not None:
             return value
-        return WorldStateHandler._get_non_empty_string(params, "content")
+        return get_non_empty_string(params, "content")
 
     @staticmethod
     def _world_has_character(
@@ -880,14 +881,6 @@ class WorldStateHandler(StaticCommandHandler):
         return False
 
     @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @staticmethod
     def _get_optional_non_empty_string(value: Any) -> str | None:
         if value is None:
             return None
@@ -895,38 +888,6 @@ class WorldStateHandler(StaticCommandHandler):
             return None
         normalized = value.strip()
         return normalized or None
-
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _coerce_float(value: Any) -> float | None:
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
 
     @staticmethod
     def _coerce_mapping(value: Any) -> dict[str, Any]:

@@ -6,8 +6,15 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_float,
+    coerce_int,
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class EconomyHandler(StaticCommandHandler):
@@ -58,16 +65,16 @@ class EconomyHandler(StaticCommandHandler):
         if not world.has_registry("characters"):
             return ValidationResult(ok=False, reason="characters registry is required")
 
-        seller_npc = self._get_non_empty_string(cmd.params, "seller_npc")
+        seller_npc = get_non_empty_string(cmd.params, "seller_npc")
         if seller_npc is None:
             return ValidationResult(
                 ok=False,
                 reason="seller_npc must be a non-empty string",
             )
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        count = self._coerce_int(cmd.params.get("count", 1))
+        count = coerce_int(cmd.params.get("count", 1))
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         buyer_check = self._validate_player_actor(cmd.params, state, "buyer")
@@ -113,13 +120,13 @@ class EconomyHandler(StaticCommandHandler):
         if not world.has_registry("characters"):
             return ValidationResult(ok=False, reason="characters registry is required")
 
-        buyer_npc = self._get_non_empty_string(cmd.params, "buyer_npc")
+        buyer_npc = get_non_empty_string(cmd.params, "buyer_npc")
         if buyer_npc is None:
             return ValidationResult(ok=False, reason="buyer_npc must be a non-empty string")
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        count = self._coerce_int(cmd.params.get("count", 1))
+        count = coerce_int(cmd.params.get("count", 1))
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         seller_check = self._validate_player_actor(cmd.params, state, "seller")
@@ -141,7 +148,7 @@ class EconomyHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="relations slice is required")
         if not world.has_registry("characters"):
             return ValidationResult(ok=False, reason="characters registry is required")
-        npc_id = self._get_non_empty_string(cmd.params, "npc_id")
+        npc_id = get_non_empty_string(cmd.params, "npc_id")
         if npc_id is None:
             return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
         if world.characters.get(npc_id) is None:
@@ -186,7 +193,8 @@ class EconomyHandler(StaticCommandHandler):
             StateChange("player", "set", "inventory", inventory),
             StateChange("relations", "modify", f"shop_states.{seller_npc}", shop_state),
         ]
-        return self._success(
+        return handler_success(
+            "economy",
             "trade_buy",
             changes=changes,
             time_cost=1.0 / 6.0,
@@ -199,6 +207,7 @@ class EconomyHandler(StaticCommandHandler):
                 "total_price": total_price,
                 "shop_initialized": initialized,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_trade_sell(
@@ -247,7 +256,8 @@ class EconomyHandler(StaticCommandHandler):
                 )
             )
 
-        return self._success(
+        return handler_success(
+            "economy",
             "trade_sell",
             changes=changes,
             time_cost=1.0 / 6.0,
@@ -261,6 +271,7 @@ class EconomyHandler(StaticCommandHandler):
                 "shop_initialized": initialized,
                 "shop_updated": shop_updated,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_refresh_shop(
@@ -279,7 +290,8 @@ class EconomyHandler(StaticCommandHandler):
             self._shop_state_snapshot(state.relations.shop_states.get(npc_id), npc_id),
         )
         if shop_state is None:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "economy",
                 "refresh_shop",
                 metadata={
                     "status": "noop",
@@ -296,7 +308,8 @@ class EconomyHandler(StaticCommandHandler):
             for row in shop_state.get("current_stock", [])
             if isinstance(row, Mapping) and row.get("source") == "rotating"
         )
-        return self._success(
+        return handler_success(
+            "economy",
             "refresh_shop",
             changes=[
                 StateChange("relations", "modify", f"shop_states.{npc_id}", shop_state),
@@ -308,6 +321,7 @@ class EconomyHandler(StaticCommandHandler):
                 "rotating_count": rotating_count,
                 "last_refresh_tick": shop_state["last_refresh_tick"],
             },
+            omit_empty_delta=False,
         )
 
     def _resolve_or_initialize_shop_state(
@@ -345,7 +359,7 @@ class EconomyHandler(StaticCommandHandler):
                     continue
                 if row.get("source") != "base":
                     continue
-                item_id = self._get_non_empty_string(row, "item_id")
+                item_id = get_non_empty_string(row, "item_id")
                 if item_id is not None:
                     previous_base_rows[item_id] = dict(row)
 
@@ -358,14 +372,14 @@ class EconomyHandler(StaticCommandHandler):
                     "base",
                     world,
                     previous_row=previous_base_rows.get(
-                        self._get_non_empty_string(entry, "item_id") or ""
+                        get_non_empty_string(entry, "item_id") or ""
                     ),
                 )
                 if normalized is not None:
                     current_stock.append(normalized)
 
         rotating_pool = shop_inventory.get("rotating_pool", [])
-        rotating_slots = self._coerce_int(shop_inventory.get("rotating_slots")) or 0
+        rotating_slots = coerce_int(shop_inventory.get("rotating_slots")) or 0
         current_stock.extend(
             self._select_rotating_entries(
                 rotating_pool,
@@ -402,11 +416,11 @@ class EconomyHandler(StaticCommandHandler):
     ) -> dict[str, Any] | None:
         if not isinstance(entry, Mapping):
             return None
-        item_id = self._get_non_empty_string(entry, "item_id")
+        item_id = get_non_empty_string(entry, "item_id")
         if item_id is None:
             return None
 
-        count = self._coerce_int(entry.get("count", 1))
+        count = coerce_int(entry.get("count", 1))
         if count is None or count < 1:
             return None
         unlimited = bool(entry.get("unlimited", False))
@@ -426,7 +440,7 @@ class EconomyHandler(StaticCommandHandler):
             if previous_remaining is None:
                 remaining = None
             else:
-                previous_value = self._coerce_int(previous_remaining)
+                previous_value = coerce_int(previous_remaining)
                 remaining = previous_value if previous_value is not None else count
         else:
             remaining = count
@@ -455,7 +469,7 @@ class EconomyHandler(StaticCommandHandler):
         for entry in rotating_pool:
             if not isinstance(entry, Mapping):
                 continue
-            min_player_level = self._coerce_int(entry.get("min_player_level"))
+            min_player_level = coerce_int(entry.get("min_player_level"))
             if min_player_level is not None and player_level < min_player_level:
                 continue
             normalized = self._normalize_shop_entry(entry, "rotating", world)
@@ -485,9 +499,9 @@ class EconomyHandler(StaticCommandHandler):
 
         base_price = self._coerce_non_negative_int(stock_item.get("base_price")) or 0
         shop_inventory = self._merchant_shop_inventory(merchant) or {}
-        sell_markup = self._coerce_float(merchant.get("sell_markup"))
+        sell_markup = coerce_float(merchant.get("sell_markup"))
         if sell_markup is None:
-            sell_markup = self._coerce_float(shop_inventory.get("sell_markup"))
+            sell_markup = coerce_float(shop_inventory.get("sell_markup"))
         if sell_markup is None or sell_markup < 0:
             sell_markup = 1.0
 
@@ -505,9 +519,9 @@ class EconomyHandler(StaticCommandHandler):
     ) -> int:
         base_price = self._base_price_for_item(item_id, None, world)
         shop_inventory = self._merchant_shop_inventory(merchant) or {}
-        buy_rate = self._coerce_float(merchant.get("buy_rate"))
+        buy_rate = coerce_float(merchant.get("buy_rate"))
         if buy_rate is None:
-            buy_rate = self._coerce_float(shop_inventory.get("buy_rate"))
+            buy_rate = coerce_float(shop_inventory.get("buy_rate"))
         if buy_rate is None:
             buy_rate = 0.5
         return max(1, int(round(base_price * buy_rate)))
@@ -558,10 +572,10 @@ class EconomyHandler(StaticCommandHandler):
         else:
             refresh_payload = None
         return {
-            "npc_id": self._get_non_empty_string(raw_state, "npc_id") or npc_id,
+            "npc_id": get_non_empty_string(raw_state, "npc_id") or npc_id,
             "current_stock": self._normalize_current_stock(raw_state.get("current_stock")),
             "refresh_on": refresh_payload,
-            "last_refresh_tick": self._coerce_int(raw_state.get("last_refresh_tick")) or 0,
+            "last_refresh_tick": coerce_int(raw_state.get("last_refresh_tick")) or 0,
         }
 
     def _normalize_current_stock(self, raw_stock: Any) -> list[dict[str, Any]]:
@@ -580,7 +594,7 @@ class EconomyHandler(StaticCommandHandler):
         for index, entry in enumerate(raw_stock):
             if not isinstance(entry, Mapping):
                 continue
-            if self._get_non_empty_string(entry, "item_id") == item_id:
+            if get_non_empty_string(entry, "item_id") == item_id:
                 return index
         return None
 
@@ -685,10 +699,10 @@ class EconomyHandler(StaticCommandHandler):
     ) -> ValidationResult | None:
         if key not in params:
             return None
-        actor = self._get_non_empty_string(params, key)
+        actor = get_non_empty_string(params, key)
         if actor is None:
             return ValidationResult(ok=False, reason=f"{key} must be a non-empty string")
-        player_character_id = self._get_non_empty_string({"character_id": state.player.character_id}, "character_id")
+        player_character_id = get_non_empty_string({"character_id": state.player.character_id}, "character_id")
         if actor == "player":
             return None
         if player_character_id is not None and actor == player_character_id:
@@ -696,44 +710,6 @@ class EconomyHandler(StaticCommandHandler):
         return ValidationResult(
             ok=False,
             reason=f"{key} must reference the current player",
-        )
-
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        payload = {
-            "handler": "economy",
-            "command": command_type,
-            **metadata,
-        }
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(changes=changes, reason=command_type, metadata=payload),
-            time_cost=time_cost,
-            metadata=payload,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            time_cost=time_cost,
-            metadata={
-                "handler": "economy",
-                "command": command_type,
-                **metadata,
-            },
         )
 
     @staticmethod
@@ -753,58 +729,8 @@ class EconomyHandler(StaticCommandHandler):
         return 0
 
     @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
     def _coerce_non_negative_int(value: Any) -> int | None:
-        coerced = EconomyHandler._coerce_int(value)
+        coerced = coerce_int(value)
         if coerced is None or coerced < 0:
             return None
         return coerced
-
-    @staticmethod
-    def _coerce_float(value: Any) -> float | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return float(normalized)
-            except ValueError:
-                return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None

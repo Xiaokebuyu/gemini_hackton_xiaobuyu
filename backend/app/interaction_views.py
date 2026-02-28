@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.interaction_service import InteractionContext
+    from app.interaction_service import InteractionViewContext
 
 
 def find_linked_bulletin(
-    context: InteractionContext,
+    context: InteractionViewContext,
     quest_id: str,
 ) -> dict[str, Any] | None:
     """Return the first active bulletin linked to one quest id."""
@@ -25,7 +25,7 @@ def find_linked_bulletin(
 
 
 def build_board_entries(
-    context: InteractionContext,
+    context: InteractionViewContext,
     board_id: str,
 ) -> list[dict[str, Any]]:
     """Build normalized board entries for one board id."""
@@ -66,7 +66,7 @@ def build_board_entries(
 
 
 def build_board_snapshot_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     board_id: str,
 ) -> dict[str, Any]:
     """Return the current quest-board view from bulletin and quest state."""
@@ -79,28 +79,62 @@ def build_board_snapshot_payload(
 
 
 def build_shop_snapshot_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
 ) -> dict[str, Any]:
     """Return the current shop-state snapshot for one merchant NPC."""
 
     raw_state = context.shop_states.get(npc_id, {})
     shop_state = raw_state if isinstance(raw_state, dict) else {}
-    stock = shop_state.get("current_stock", [])
+    raw_stock = shop_state.get("current_stock", [])
+    stock_list = list(raw_stock) if isinstance(raw_stock, list) else []
     last_refresh_tick = shop_state.get("last_refresh_tick")
     try:
         normalized_tick = int(last_refresh_tick) if last_refresh_tick is not None else None
     except (TypeError, ValueError):
         normalized_tick = None
+
+    enriched_stock: list[dict[str, Any]] = []
+    for raw_item in stock_list:
+        if not isinstance(raw_item, dict):
+            continue
+        item_id = str(raw_item.get("item_id", "")).strip()
+        entry = dict(raw_item)
+        catalog = context.item_catalog.get(item_id, {})
+        entry["name"] = str(catalog.get("name", item_id))
+        entry["type"] = str(catalog.get("type", ""))
+        entry["rarity"] = str(catalog.get("rarity", ""))
+        enriched_stock.append(entry)
+
+    player_sellable: list[dict[str, Any]] = []
+    for inv_item in context.player_inventory:
+        inv_item_id = str(inv_item.get("item_id", "")).strip()
+        if not inv_item_id:
+            continue
+        catalog = context.item_catalog.get(inv_item_id, {})
+        try:
+            base_price = int(catalog.get("base_price", 0) or 0)
+        except (TypeError, ValueError):
+            base_price = 0
+        player_sellable.append({
+            "item_id": inv_item_id,
+            "count": int(inv_item.get("count", 1)),
+            "name": str(catalog.get("name", inv_item_id)),
+            "type": str(catalog.get("type", "")),
+            "base_price": base_price,
+        })
+
     return {
         "npc_id": npc_id,
-        "stock": list(stock) if isinstance(stock, list) else [],
+        "player_gold": context.player_gold,
+        "stock": enriched_stock,
+        "player_sellable_items": player_sellable,
         "last_refresh_tick": normalized_tick,
     }
 
 
 def build_talk_snapshot_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
 ) -> dict[str, Any]:
     """Return the current read-only NPC profile view for talk interactions."""
@@ -115,6 +149,15 @@ def build_talk_snapshot_payload(
             disposition[key] = 0
     impressions = context.npc_impressions.get(npc_id, [])
     recent_impressions = impressions[-3:] if isinstance(impressions, list) else []
+    available_intents = ["talk", "greet"]
+    if npc_id in context.shop_states:
+        available_intents.extend(["browse", "buy", "sell", "inspect_item"])
+    if context.dynamic_quests:
+        available_intents.extend([
+            "ask_quest", "ask_progress", "ask_location",
+            "ask_requirements", "ask_reward",
+        ])
+
     return {
         "target_kind": "npc",
         "target_id": npc_id,
@@ -127,11 +170,12 @@ def build_talk_snapshot_payload(
             "disposition": disposition,
             "recent_impressions": recent_impressions,
         },
+        "available_intents": available_intents,
     }
 
 
 def build_quest_brief_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
     quest_id: str,
 ) -> dict[str, Any]:
@@ -170,7 +214,7 @@ def build_quest_brief_payload(
 
 
 def build_quest_progress_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
     quest_id: str,
 ) -> dict[str, Any]:
@@ -216,7 +260,7 @@ def build_quest_progress_payload(
 
 
 def build_quest_location_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
     quest_id: str,
 ) -> dict[str, Any]:
@@ -253,7 +297,7 @@ def build_quest_location_payload(
 
 
 def build_quest_requirements_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
     quest_id: str,
 ) -> dict[str, Any]:
@@ -298,7 +342,7 @@ def build_quest_requirements_payload(
 
 
 def build_quest_reward_payload(
-    context: InteractionContext,
+    context: InteractionViewContext,
     npc_id: str,
     quest_id: str,
 ) -> dict[str, Any]:
@@ -339,5 +383,44 @@ def build_quest_reward_payload(
             "gold": gold,
             "items": items,
             "reward_summary": reward_summary,
+        },
+    }
+
+
+def build_inspect_item_payload(
+    context: InteractionViewContext,
+    npc_id: str,
+    item_id: str,
+) -> dict[str, Any]:
+    """Return detailed item information from the item catalog."""
+
+    catalog_entry = context.item_catalog.get(item_id, {})
+    player_count = 0
+    for inv_item in context.player_inventory:
+        if inv_item.get("item_id") == item_id:
+            player_count = int(inv_item.get("count", 0))
+            break
+    try:
+        base_price = int(catalog_entry.get("base_price", 0) or 0)
+    except (TypeError, ValueError):
+        base_price = 0
+    try:
+        ac_bonus = int(catalog_entry.get("ac_bonus", 0) or 0)
+    except (TypeError, ValueError):
+        ac_bonus = 0
+    return {
+        "target_kind": "npc",
+        "target_id": npc_id,
+        "item": {
+            "item_id": item_id,
+            "name": str(catalog_entry.get("name", item_id)),
+            "type": str(catalog_entry.get("type", "")),
+            "rarity": str(catalog_entry.get("rarity", "")),
+            "base_price": base_price,
+            "slot": str(catalog_entry.get("slot", "")),
+            "damage_dice": str(catalog_entry.get("damage_dice", "")),
+            "damage_type": str(catalog_entry.get("damage_type", "")),
+            "ac_bonus": ac_bonus,
+            "player_owned_count": player_count,
         },
     }

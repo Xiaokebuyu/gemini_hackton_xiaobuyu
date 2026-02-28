@@ -6,8 +6,15 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_int,
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+    normalize_tags,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class ContainerHandler(StaticCommandHandler):
@@ -16,6 +23,7 @@ class ContainerHandler(StaticCommandHandler):
         "disarm_trap",
         "take_from_container",
         "take_all",
+        "interact_object",
     )
 
     def validate(
@@ -33,6 +41,8 @@ class ContainerHandler(StaticCommandHandler):
             return self._validate_take_from_container(cmd, state)
         if cmd.type == "take_all":
             return self._validate_take_all(cmd, state)
+        if cmd.type == "interact_object":
+            return self._validate_interact_object(cmd, state)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -53,6 +63,8 @@ class ContainerHandler(StaticCommandHandler):
             return self._compute_take_from_container(cmd, state)
         if cmd.type == "take_all":
             return self._compute_take_all(cmd, state)
+        if cmd.type == "interact_object":
+            return self._compute_interact_object(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_open_container(
@@ -92,10 +104,10 @@ class ContainerHandler(StaticCommandHandler):
         resolved = self._validate_container_presence(cmd, state)
         if resolved is not None:
             return resolved
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        count = self._coerce_int(cmd.params.get("count", 1))
+        count = coerce_int(cmd.params.get("count", 1))
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         container_id = str(cmd.params["container_id"]).strip()
@@ -149,8 +161,8 @@ class ContainerHandler(StaticCommandHandler):
         trap_status = str(container_state.get("trap_status", "disarmed"))
 
         if bool(container_state.get("opened", False)):
-            return self._success_no_delta(
-                "open_container",
+            return handler_success_no_delta(
+                "container", "open_container",
                 time_cost=1.0 / 6.0,
                 metadata={
                     "status": "opened",
@@ -165,8 +177,8 @@ class ContainerHandler(StaticCommandHandler):
             )
 
         if trap_status == "armed" and bool(container_state.get("trap_detected", False)):
-            return self._success_no_delta(
-                "open_container",
+            return handler_success_no_delta(
+                "container", "open_container",
                 time_cost=1.0 / 6.0,
                 metadata={
                     "status": "trap_detected",
@@ -202,8 +214,8 @@ class ContainerHandler(StaticCommandHandler):
                         updated_container,
                     )
                 )
-            return self._success(
-                "open_container",
+            return handler_success(
+                "container", "open_container",
                 changes=changes,
                 time_cost=1.0 / 6.0,
                 metadata={
@@ -227,8 +239,8 @@ class ContainerHandler(StaticCommandHandler):
                 updated_container,
             )
         )
-        return self._success(
-            "open_container",
+        return handler_success(
+            "container", "open_container",
             changes=changes,
             time_cost=1.0 / 6.0,
             metadata={
@@ -280,8 +292,8 @@ class ContainerHandler(StaticCommandHandler):
                 updated_container,
             )
         )
-        return self._success(
-            "disarm_trap",
+        return handler_success(
+            "container", "disarm_trap",
             changes=changes,
             time_cost=1.0 / 6.0,
             metadata={
@@ -313,7 +325,7 @@ class ContainerHandler(StaticCommandHandler):
             updated_inventory,
             item_id,
             count,
-            self._normalize_tags(item_entry.get("tags", []) if item_entry is not None else []),
+            normalize_tags(item_entry.get("tags", []) if item_entry is not None else []),
         )
 
         updated_container = self._remove_from_container_snapshot(container_state, item_id, count)
@@ -325,8 +337,8 @@ class ContainerHandler(StaticCommandHandler):
         if looted:
             updated_container["looted"] = True
 
-        return self._success(
-            "take_from_container",
+        return handler_success(
+            "container", "take_from_container",
             changes=[
                 StateChange("player", "set", "inventory", updated_inventory),
                 StateChange(
@@ -359,15 +371,15 @@ class ContainerHandler(StaticCommandHandler):
         updated_inventory = self._player_inventory_snapshot(state)
         items = self._container_items(container_state)
         for item in items:
-            item_id = self._get_non_empty_string(item, "item_id")
-            count = self._coerce_int(item.get("count"))
+            item_id = get_non_empty_string(item, "item_id")
+            count = coerce_int(item.get("count"))
             if item_id is None or count is None or count <= 0:
                 continue
             self._add_to_inventory_snapshot(
                 updated_inventory,
                 item_id,
                 count,
-                self._normalize_tags(item.get("tags", [])),
+                normalize_tags(item.get("tags", [])),
             )
 
         gold = max(0, int(container_state.get("remaining_gold", 0)))
@@ -390,8 +402,8 @@ class ContainerHandler(StaticCommandHandler):
         if gold > 0:
             changes.insert(1, StateChange("player", "add", "gold", gold))
 
-        return self._success(
-            "take_all",
+        return handler_success(
+            "container", "take_all",
             changes=changes,
             metadata={
                 "status": "looted",
@@ -406,6 +418,71 @@ class ContainerHandler(StaticCommandHandler):
             },
         )
 
+    def _validate_interact_object(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if not state.has_slice("player"):
+            return ValidationResult(ok=False, reason="player slice is required")
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
+        object_id = get_non_empty_string(cmd.params, "object_id")
+        if object_id is None:
+            return ValidationResult(ok=False, reason="object_id must be a non-empty string")
+        return ValidationResult(ok=True)
+
+    def _compute_interact_object(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        object_id = str(cmd.params["object_id"]).strip()
+        action = str(cmd.params.get("action", "examine")).strip() or "examine"
+        area_id = state.player.current_area
+        if not area_id:
+            return ExecuteResult.error("player has no current area")
+
+        area_state = state.areas.areas.get(area_id)
+        if area_state is None:
+            return ExecuteResult.error(f"unknown area: {area_id}")
+
+        interactables = area_state.properties.get("interactables", {})
+        if not isinstance(interactables, dict):
+            interactables = {}
+        obj_data = interactables.get(object_id)
+        if obj_data is None:
+            return ExecuteResult.error(f"object not found: {object_id}")
+        if not isinstance(obj_data, dict):
+            obj_data = {}
+
+        obj_type = str(obj_data.get("type", "generic"))
+        description = str(obj_data.get("description", ""))
+        requires_check = bool(obj_data.get("requires_check", False))
+
+        metadata: dict[str, Any] = {
+            "status": "examined",
+            "object_id": object_id,
+            "action": action,
+            "object_type": obj_type,
+            "description": description,
+        }
+        if requires_check:
+            metadata["requires_check"] = True
+            check_skill = str(obj_data.get("check_skill", ""))
+            check_dc = coerce_int(obj_data.get("check_dc"))
+            if check_skill:
+                metadata["check_skill"] = check_skill
+            if check_dc is not None:
+                metadata["check_dc"] = check_dc
+
+        return handler_success_no_delta(
+            "container",
+            "interact_object",
+            time_cost=1.0 / 6.0,
+            metadata=metadata,
+        )
+
     def _validate_container_presence(
         self,
         cmd: Command,
@@ -415,7 +492,7 @@ class ContainerHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="player slice is required")
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
-        container_id = self._get_non_empty_string(cmd.params, "container_id")
+        container_id = get_non_empty_string(cmd.params, "container_id")
         if container_id is None:
             return ValidationResult(
                 ok=False,
@@ -461,7 +538,7 @@ class ContainerHandler(StaticCommandHandler):
         item_id: str,
     ) -> dict[str, Any] | None:
         for item in self._container_items(container_state):
-            if self._get_non_empty_string(item, "item_id") == item_id:
+            if get_non_empty_string(item, "item_id") == item_id:
                 return item
         return None
 
@@ -488,7 +565,7 @@ class ContainerHandler(StaticCommandHandler):
         remaining_to_remove = count
         updated_items: list[dict[str, Any]] = []
         for item in self._container_items(container_state):
-            if self._get_non_empty_string(item, "item_id") != item_id or remaining_to_remove <= 0:
+            if get_non_empty_string(item, "item_id") != item_id or remaining_to_remove <= 0:
                 updated_items.append(item)
                 continue
             current = int(item.get("count", 0))
@@ -532,95 +609,24 @@ class ContainerHandler(StaticCommandHandler):
         inventory.append({"item_id": item_id, "count": count, "tags": list(tags or [])})
 
     def _trap_damage(self, container_state: Mapping[str, Any]) -> int:
-        direct = self._coerce_int(container_state.get("trap_damage"))
+        direct = coerce_int(container_state.get("trap_damage"))
         if direct is not None and direct >= 0:
             return direct
         trap_payload = container_state.get("trap")
         if isinstance(trap_payload, Mapping):
-            nested = self._coerce_int(trap_payload.get("damage"))
+            nested = coerce_int(trap_payload.get("damage"))
             if nested is not None and nested >= 0:
                 return nested
         return 0
 
     def _trap_disarm_dc(self, container_state: Mapping[str, Any]) -> int:
-        direct = self._coerce_int(container_state.get("trap_disarm_dc"))
+        direct = coerce_int(container_state.get("trap_disarm_dc"))
         if direct is not None and direct >= 0:
             return direct
         trap_payload = container_state.get("trap")
         if isinstance(trap_payload, Mapping):
-            nested = self._coerce_int(trap_payload.get("disarm_dc"))
+            nested = coerce_int(trap_payload.get("disarm_dc"))
             if nested is not None and nested >= 0:
                 return nested
         return 12
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        payload = {"handler": "container", "command": command_type, **metadata}
-        delta = (
-            StateDelta(changes=changes, reason=command_type, metadata=payload)
-            if changes
-            else None
-        )
-        return ExecuteResult(
-            success=True,
-            delta=delta,
-            time_cost=time_cost,
-            metadata=payload,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            time_cost=time_cost,
-            metadata={"handler": "container", "command": command_type, **metadata},
-        )
-
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _normalize_tags(raw: Any) -> list[str]:
-        if not isinstance(raw, list):
-            return []
-        return [str(tag) for tag in raw]

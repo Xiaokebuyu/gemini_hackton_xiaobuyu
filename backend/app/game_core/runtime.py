@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import os
 import uuid
 from typing import Any, Mapping
 
@@ -83,8 +85,27 @@ class GameRuntime:
     """Own world caching and top-level session lifecycle orchestration."""
 
     def __init__(self, save_store: SaveStore | None = None) -> None:
-        self._save_store = save_store or SaveStore(LocalFilePersistencePort())
+        self._save_store = save_store or SaveStore(self._default_persistence_port())
         self._world_cache: dict[str, WorldInstance] = {}
+        self._execution_locks_guard = asyncio.Lock()
+        self._execution_locks: dict[str, asyncio.Lock] = {}
+
+    async def session_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the per-session execution lock (create if missing)."""
+        async with self._execution_locks_guard:
+            lock = self._execution_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._execution_locks[session_id] = lock
+            return lock
+
+    @staticmethod
+    def _default_persistence_port() -> Any:
+        backend = os.environ.get("PERSISTENCE_BACKEND", "local")
+        if backend == "firestore":
+            from app.game_core.adapters.firestore_persistence import FirestorePersistencePort
+            return FirestorePersistencePort()
+        return LocalFilePersistencePort()
 
     def get_world(
         self,

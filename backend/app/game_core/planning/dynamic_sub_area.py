@@ -24,3 +24,7 @@ class DynamicSubAreaManager:
 
     def get_cluster_status(self, area_id: str) -> dict[str, int]:
         return self._areas.count_dynamic_sub_areas(area_id)
+
+    def tick_expiry(self, area_id: str, elapsed: int = 1) -> list[str]:
+        """Tick down expiry counters. Returns removed sub-area IDs."""
+        return self._areas.tick_expiry(area_id, elapsed)

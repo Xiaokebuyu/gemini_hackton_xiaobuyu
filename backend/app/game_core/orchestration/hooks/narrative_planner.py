@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
@@ -22,6 +23,9 @@ from app.game_core.planning.models import (
     SpawnQuestNpcPlan,
 )
 from app.game_core.state import StateChange
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -58,12 +62,11 @@ class NarrativePlannerHook(NoOpSettlementHook):
         "escalate",
         "adjust_pacing",
         "retire_quest",
-    }
-    _UNSUPPORTED_DIRECTIVES = {
         "spawn_quest_npc",
         "plant_environmental",
         "fill_area",
     }
+    _UNSUPPORTED_DIRECTIVES: set[str] = set()
 
     def __init__(self, planner: NarrativePlannerProvider | None = None) -> None:
         self.planner = planner or NarrativePlanner()
@@ -97,6 +100,15 @@ class NarrativePlannerHook(NoOpSettlementHook):
         try:
             raw_decision = self.planner.plan(planner_context)
         except Exception as exc:
+            logger.exception(
+                "hook failed: narrative_planner",
+                extra={
+                    "hook_name": self.HOOK_NAME,
+                    "current_tick": current_tick,
+                    "reason": reason,
+                    "ticks_since_last_run": ticks_since_last_run,
+                },
+            )
             return HookResult(
                 sse_events=[
                     SSEEvent(
@@ -256,6 +268,19 @@ class NarrativePlannerHook(NoOpSettlementHook):
             for quest_id, quest in context.state.quests.dynamic_quests.items()
         }
 
+        area_cluster = None
+        if context.state.has_slice("areas") and context.state.has_slice("player"):
+            area_id = context.state.player.current_area
+            if area_id and area_id in context.state.areas.areas:
+                counts = context.state.areas.count_dynamic_sub_areas(area_id)
+                area_cluster = {
+                    "area_id": area_id,
+                    "has_capacity": context.state.areas.has_cluster_capacity(
+                        area_id
+                    ),
+                    "total_dynamic": counts.get("total", 0),
+                }
+
         scene_snapshot = context.scene_bus.snapshot()
         return {
             "current_tick": current_tick,
@@ -289,6 +314,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "pacing_frozen": context.state.narrative_plan.pacing_frozen,
                 "behavior_window_size": len(context.state.narrative_plan.behavior_window),
             },
+            "area_cluster": area_cluster,
             "scene": {
                 "entry_count": len(scene_snapshot.get("entries", [])),
                 "state_change_count": len(scene_snapshot.get("state_changes", [])),
@@ -452,6 +478,84 @@ class NarrativePlannerHook(NoOpSettlementHook):
             context.state.narrative_plan.add_history(
                 {"kind": "retire_quest", "quest_id": quest_id, "tick": current_tick}
             )
+            return True
+
+        if kind == "spawn_quest_npc":
+            npc_id = self._coerce_non_empty_string(payload.get("npc_id"))
+            if npc_id is None:
+                return False
+            if not context.state.has_slice("areas"):
+                return False
+            area_id = self._coerce_non_empty_string(payload.get("area_id"))
+            if area_id is None and context.state.has_slice("player"):
+                area_id = context.state.player.current_area
+            if not area_id or area_id not in context.state.areas.areas:
+                return False
+            if context.state.areas.find_npc_area(npc_id) is not None:
+                return False
+            location_id = self._coerce_non_empty_string(payload.get("location_id"))
+            context.state.areas.move_npc(npc_id, area_id, location_id)
+            context.state.narrative_plan.add_directive({
+                "npc_id": npc_id,
+                "directive": {
+                    "kind": "spawn_quest_npc",
+                    "role": self._string_or_empty(payload.get("role")),
+                    "description": self._string_or_empty(payload.get("description")),
+                    "area_id": area_id,
+                },
+                "issued_at_tick": current_tick,
+                "source": "narrative_planner",
+            })
+            return True
+
+        if kind == "plant_environmental":
+            area_id = self._coerce_non_empty_string(payload.get("area_id"))
+            if area_id is None:
+                return False
+            if not context.state.has_slice("areas"):
+                return False
+            if area_id not in context.state.areas.areas:
+                return False
+            clue_id = self._coerce_non_empty_string(payload.get("clue_id"))
+            if clue_id is None:
+                clue_id = f"clue_{current_tick}"
+            area = context.state.areas.areas[area_id]
+            search_targets = dict(area.properties.get("search_targets", {}))
+            if clue_id in search_targets:
+                return False
+            raw_dc = payload.get("dc", 12)
+            try:
+                dc = int(raw_dc)
+            except (TypeError, ValueError):
+                dc = 12
+            search_targets[clue_id] = {
+                "dc": dc,
+                "description": self._string_or_empty(payload.get("description")),
+            }
+            context.state.areas.modify_property(area_id, "search_targets", search_targets)
+            return True
+
+        if kind == "fill_area":
+            area_id = self._coerce_non_empty_string(payload.get("area_id"))
+            if area_id is None:
+                return False
+            if not context.state.has_slice("areas"):
+                return False
+            if area_id not in context.state.areas.areas:
+                return False
+            if not context.state.areas.has_cluster_capacity(area_id):
+                return False
+            sub_area_id = self._coerce_non_empty_string(payload.get("id"))
+            if sub_area_id is None:
+                sub_area_id = f"fill_{current_tick}"
+            context.state.areas.add_temporary_sub_area(area_id, {
+                "id": sub_area_id,
+                "label": self._string_or_empty(payload.get("label")),
+                "description": self._string_or_empty(payload.get("description")),
+                "expiry": -1,
+                "source": "narrative_planner",
+                "created_at_tick": current_tick,
+            })
             return True
 
         return False

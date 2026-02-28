@@ -6,8 +6,17 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    build_dice_roll,
+    coerce_int,
+    coerce_non_empty_string,
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+    resolve_roll,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class CombatHandler(StaticCommandHandler):
@@ -21,6 +30,7 @@ class CombatHandler(StaticCommandHandler):
         "use_combat_item",
         "offhand_attack",
         "start_combat",
+        "stand_up",
     )
 
     _FLAG_COMMANDS = {
@@ -47,6 +57,8 @@ class CombatHandler(StaticCommandHandler):
             return self._validate_use_combat_item(cmd, state, world)
         if cmd.type in self._DIRECT_RESOLUTION_COMMANDS:
             return self._validate_direct_resolution_command(cmd, state, world)
+        if cmd.type == "stand_up":
+            return self._validate_stand_up(cmd, state)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -69,6 +81,8 @@ class CombatHandler(StaticCommandHandler):
             return self._compute_use_combat_item(cmd, state, world)
         if cmd.type in self._DIRECT_RESOLUTION_COMMANDS:
             return self._compute_direct_resolution_command(cmd, state)
+        if cmd.type == "stand_up":
+            return self._compute_stand_up(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_start_combat(
@@ -92,11 +106,11 @@ class CombatHandler(StaticCommandHandler):
         if not self._area_exists(area_id, state, world):
             return ValidationResult(ok=False, reason=f"unknown area: {area_id}")
 
-        surprise_state = self._coerce_non_empty_string(cmd.params.get("surprise_state")) or "none"
+        surprise_state = coerce_non_empty_string(cmd.params.get("surprise_state")) or "none"
         if surprise_state not in self._SURPRISE_STATES:
             return ValidationResult(ok=False, reason=f"unsupported surprise_state: {surprise_state}")
 
-        explicit_sub_area = self._coerce_non_empty_string(cmd.params.get("sub_area_id"))
+        explicit_sub_area = coerce_non_empty_string(cmd.params.get("sub_area_id"))
         if "sub_area_id" in cmd.params and explicit_sub_area is None:
             return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
 
@@ -159,7 +173,7 @@ class CombatHandler(StaticCommandHandler):
             return common
         if not world.has_registry("items"):
             return ValidationResult(ok=False, reason="items registry is required")
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
         if world.items.get(item_id) is None:
@@ -167,7 +181,7 @@ class CombatHandler(StaticCommandHandler):
         if state.player.get_item_count(item_id) < 1:
             return ValidationResult(ok=False, reason=f"item not in inventory: {item_id}")
         if "target" in cmd.params:
-            target = self._coerce_non_empty_string(cmd.params.get("target"))
+            target = coerce_non_empty_string(cmd.params.get("target"))
             if target is None:
                 return ValidationResult(ok=False, reason="target must be player/self")
             if target not in {"player", "self"}:
@@ -180,10 +194,10 @@ class CombatHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        target = self._get_non_empty_string(cmd.params, "target")
+        target = get_non_empty_string(cmd.params, "target")
         if target is None:
             return ValidationResult(ok=False, reason="target must be a non-empty string")
-        if "sub_area_id" in cmd.params and self._coerce_non_empty_string(cmd.params.get("sub_area_id")) is None:
+        if "sub_area_id" in cmd.params and coerce_non_empty_string(cmd.params.get("sub_area_id")) is None:
             return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
         common = self._validate_flag_command(cmd, state, world)
         if not common.ok:
@@ -209,8 +223,8 @@ class CombatHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> ExecuteResult:
         area_id = self._resolve_area_id(cmd.params, state) or ""
-        explicit_sub_area = self._coerce_non_empty_string(cmd.params.get("sub_area_id"))
-        surprise_state = self._coerce_non_empty_string(cmd.params.get("surprise_state")) or "none"
+        explicit_sub_area = coerce_non_empty_string(cmd.params.get("sub_area_id"))
+        surprise_state = coerce_non_empty_string(cmd.params.get("surprise_state")) or "none"
 
         existing_sub_area = explicit_sub_area
         if existing_sub_area is None:
@@ -226,7 +240,8 @@ class CombatHandler(StaticCommandHandler):
 
         existing_payload = self._hostile_payload_for(existing_sub_area, area_id, state)
         if existing_payload and bool(existing_payload.get("combat_active")):
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "combat",
                 "start_combat",
                 metadata={
                     "status": "already_active",
@@ -235,7 +250,7 @@ class CombatHandler(StaticCommandHandler):
                     "monster_count": len(existing_payload.get("monster_ids", []))
                     if isinstance(existing_payload.get("monster_ids"), list)
                     else 0,
-                    "surprise_state": self._coerce_non_empty_string(existing_payload.get("surprise_state")) or surprise_state,
+                    "surprise_state": coerce_non_empty_string(existing_payload.get("surprise_state")) or surprise_state,
                     "combat_round": int(existing_payload.get("combat_round", 0)),
                 },
             )
@@ -263,7 +278,8 @@ class CombatHandler(StaticCommandHandler):
             current_tick=self._current_tick(state),
         )
 
-        return self._success(
+        return handler_success(
+            "combat",
             "start_combat",
             changes=[
                 StateChange(
@@ -281,6 +297,7 @@ class CombatHandler(StaticCommandHandler):
                 "surprise_state": surprise_state,
                 "combat_round": combat_round,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_flag_command(
@@ -296,7 +313,8 @@ class CombatHandler(StaticCommandHandler):
         flag_key = self._FLAG_COMMANDS[cmd.type]
         flags[flag_key] = True
         updated_payload["player_flags"] = flags
-        return self._success(
+        return handler_success(
+            "combat",
             cmd.type,
             changes=[
                 StateChange(
@@ -310,6 +328,7 @@ class CombatHandler(StaticCommandHandler):
                 "status": flag_key,
                 "sub_area_id": sub_area_id,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_flee(
@@ -330,21 +349,36 @@ class CombatHandler(StaticCommandHandler):
         if flags["dashed"]:
             escape_dc -= 2
 
-        passive_total = 10 + max(
+        roll_result, all_rolls, dice = resolve_roll()
+        flee_bonus = max(
             state.player.get_skill_bonus("athletics"),
             state.player.get_skill_bonus("acrobatics"),
         )
-        passed = passive_total >= escape_dc
+        flee_total = roll_result + flee_bonus
+
+        flee_roll = build_dice_roll(
+            purpose="flee",
+            dice=dice,
+            result=roll_result,
+            modifiers=[{"name": "athletics_or_acrobatics", "value": flee_bonus}],
+            total=flee_total,
+        )
+
+        passed = flee_total >= escape_dc
         if not passed:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "combat",
                 "flee",
                 metadata={
                     "status": "failed",
                     "sub_area_id": sub_area_id,
                     "escape_dc": escape_dc,
-                    "passive_total": passive_total,
+                    "raw_roll": roll_result,
+                    "all_rolls": list(all_rolls),
+                    "flee_total": flee_total,
                     "passed": False,
                 },
+                rolls=[flee_roll],
             )
 
         updated_payload = state.areas.copy_hostile_state(payload)
@@ -352,7 +386,8 @@ class CombatHandler(StaticCommandHandler):
         updated_payload["combat_active"] = False
         updated_payload["player_flags"] = self._default_player_flags()
         updated_payload.pop("cleared_at_tick", None)
-        return self._success(
+        return handler_success(
+            "combat",
             "flee",
             changes=[
                 StateChange(
@@ -366,9 +401,13 @@ class CombatHandler(StaticCommandHandler):
                 "status": "fled",
                 "sub_area_id": sub_area_id,
                 "escape_dc": escape_dc,
-                "passive_total": passive_total,
+                "raw_roll": roll_result,
+                "all_rolls": list(all_rolls),
+                "flee_total": flee_total,
                 "passed": True,
             },
+            rolls=[flee_roll],
+            omit_empty_delta=False,
         )
 
     def _compute_use_combat_item(
@@ -384,7 +423,8 @@ class CombatHandler(StaticCommandHandler):
         item_template = world.items.get(item_id) or {}
         heal_amount = self._resolve_heal_amount(item_template)
         if heal_amount is None:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "combat",
                 "use_combat_item",
                 metadata={
                     "status": "no_effect",
@@ -405,7 +445,8 @@ class CombatHandler(StaticCommandHandler):
         if hp_delta != 0:
             changes.append(StateChange("player", "add", "hp", hp_delta))
 
-        return self._success(
+        return handler_success(
+            "combat",
             "use_combat_item",
             changes=changes,
             metadata={
@@ -414,6 +455,7 @@ class CombatHandler(StaticCommandHandler):
                 "item_id": item_id,
                 "hp_delta": hp_delta,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_direct_resolution_command(
@@ -421,7 +463,7 @@ class CombatHandler(StaticCommandHandler):
         cmd: Command,
         state: StateContainer,
     ) -> ExecuteResult:
-        target = self._coerce_non_empty_string(cmd.params.get("target")) or ""
+        target = coerce_non_empty_string(cmd.params.get("target")) or ""
         resolved = self._resolve_active_combat(cmd.params, state, None)
         assert resolved is not None
         sub_area_id, payload, _ = resolved
@@ -463,17 +505,30 @@ class CombatHandler(StaticCommandHandler):
         target_index: int,
         participant: Mapping[str, Any],
     ) -> ExecuteResult:
+        roll_result, all_rolls, dice = resolve_roll()
         strength_mod = state.player.get_modifier("str")
-        attack_total = 10 + strength_mod + state.player.proficiency_bonus
+        prof = state.player.proficiency_bonus
+        attack_total = roll_result + strength_mod + prof
         target_ac = state.areas.participant_ac(participant)
         hit = attack_total >= target_ac
+
+        attack_roll = build_dice_roll(
+            purpose="attack",
+            dice=dice,
+            result=roll_result,
+            modifiers=[
+                {"name": "str", "value": strength_mod},
+                {"name": "proficiency", "value": prof},
+            ],
+            total=attack_total,
+        )
 
         updated_target = dict(participant)
         damage = 0
         if hit:
             damage = 1 if command_type == "offhand_attack" else max(
                 1,
-                state.player.proficiency_bonus + strength_mod,
+                prof + strength_mod,
             )
             remaining_hp = max(0, state.areas.participant_hp(participant) - damage)
             updated_target["hp"] = remaining_hp
@@ -491,7 +546,8 @@ class CombatHandler(StaticCommandHandler):
         target_monster_id = state.areas.participant_monster_id(updated_target)
         target_alive = bool(updated_target.get("alive", False))
 
-        return self._success(
+        return handler_success(
+            "combat",
             command_type,
             changes=[
                 StateChange(
@@ -507,6 +563,8 @@ class CombatHandler(StaticCommandHandler):
                 "target": target,
                 "target_monster_id": target_monster_id,
                 "target_name": target_name,
+                "raw_roll": roll_result,
+                "all_rolls": list(all_rolls),
                 "attack_total": attack_total,
                 "target_ac": target_ac,
                 "damage": damage,
@@ -517,6 +575,8 @@ class CombatHandler(StaticCommandHandler):
                 "combat_active": combat_active,
                 "combat_cleared": combat_cleared,
             },
+            rolls=[attack_roll],
+            omit_empty_delta=False,
         )
 
     def _compute_shove_resolution(
@@ -529,10 +589,21 @@ class CombatHandler(StaticCommandHandler):
         participants: list[dict[str, Any]],
         participant: Mapping[str, Any],
     ) -> ExecuteResult:
+        roll_result, all_rolls, dice = resolve_roll()
+        athletics_bonus = state.player.get_skill_bonus("athletics")
+        shove_total = roll_result + athletics_bonus
         target_ac = state.areas.participant_ac(participant)
-        shove_total = 10 + state.player.get_skill_bonus("athletics")
         resist_dc = 10 + max(0, target_ac - 10)
         passed = shove_total >= resist_dc
+
+        shove_roll = build_dice_roll(
+            purpose="shove",
+            dice=dice,
+            result=roll_result,
+            modifiers=[{"name": "athletics", "value": athletics_bonus}],
+            total=shove_total,
+        )
+
         blocking = False if passed else bool(payload.get("blocking", False))
         updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
             payload,
@@ -542,7 +613,8 @@ class CombatHandler(StaticCommandHandler):
             current_tick=self._current_tick(state),
         )
 
-        return self._success(
+        return handler_success(
+            "combat",
             "shove",
             changes=[
                 StateChange(
@@ -558,6 +630,8 @@ class CombatHandler(StaticCommandHandler):
                 "target": target,
                 "target_monster_id": state.areas.participant_monster_id(participant),
                 "target_name": state.areas.participant_name(participant),
+                "raw_roll": roll_result,
+                "all_rolls": list(all_rolls),
                 "shove_total": shove_total,
                 "resist_dc": resist_dc,
                 "passed": passed,
@@ -565,6 +639,43 @@ class CombatHandler(StaticCommandHandler):
                 "combat_active": combat_active,
                 "combat_cleared": combat_cleared,
             },
+            rolls=[shove_roll],
+            omit_empty_delta=False,
+        )
+
+    def _validate_stand_up(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if not state.has_slice("player"):
+            return ValidationResult(ok=False, reason="player slice is required")
+        return ValidationResult(ok=True)
+
+    def _compute_stand_up(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        effects = state.player.active_effects
+        prone_effects = [e for e in effects if e.get("effect_id") == "prone"]
+        if not prone_effects:
+            return handler_success_no_delta(
+                "combat",
+                "stand_up",
+                metadata={"status": "not_prone"},
+            )
+        updated = [e for e in effects if e.get("effect_id") != "prone"]
+        changes = [StateChange("player", "set", "active_effects", updated)]
+        return handler_success(
+            "combat",
+            "stand_up",
+            changes=changes,
+            metadata={
+                "status": "stood_up",
+                "removed_count": len(prone_effects),
+            },
+            narrative_hints=["你从地面起身，重新站稳脚跟。"],
         )
 
     def _resolve_active_combat(
@@ -574,7 +685,7 @@ class CombatHandler(StaticCommandHandler):
         world: WorldInstance | None,
     ) -> tuple[str, dict[str, Any], str] | None:
         area_id = self._resolve_area_id(params, state)
-        explicit_area = self._coerce_non_empty_string(params.get("area_id"))
+        explicit_area = coerce_non_empty_string(params.get("area_id"))
         if explicit_area is not None and state.player.current_area and explicit_area != state.player.current_area:
             return None
         if area_id is None:
@@ -582,7 +693,7 @@ class CombatHandler(StaticCommandHandler):
         if world is not None and not self._area_exists(area_id, state, world):
             return None
 
-        sub_area_id = self._coerce_non_empty_string(params.get("sub_area_id"))
+        sub_area_id = coerce_non_empty_string(params.get("sub_area_id"))
         if sub_area_id is not None:
             payload = self._hostile_payload_for(sub_area_id, area_id, state)
             if payload is None or not bool(payload.get("combat_active")):
@@ -603,8 +714,8 @@ class CombatHandler(StaticCommandHandler):
         params: Mapping[str, Any],
         state: StateContainer,
     ) -> str | None:
-        explicit = self._coerce_non_empty_string(params.get("area_id"))
-        current = self._coerce_non_empty_string(state.player.current_area)
+        explicit = coerce_non_empty_string(params.get("area_id"))
+        current = coerce_non_empty_string(state.player.current_area)
         if explicit is not None:
             if current is not None and explicit != current:
                 return None
@@ -635,18 +746,18 @@ class CombatHandler(StaticCommandHandler):
         participants: list[dict[str, Any]] = []
         for monster_id in monster_ids:
             template = world.monsters.get(monster_id) or {}
-            max_hp = self._coerce_int(template.get("hp"))
+            max_hp = coerce_int(template.get("hp"))
             if max_hp is None:
-                max_hp = self._coerce_int(template.get("max_hp"))
+                max_hp = coerce_int(template.get("max_hp"))
             if max_hp is None or max_hp < 1:
                 max_hp = 10
-            ac = self._coerce_int(template.get("ac"))
+            ac = coerce_int(template.get("ac"))
             if ac is None or ac < 1:
                 ac = 10
             participants.append(
                 {
                     "monster_id": monster_id,
-                    "name": self._coerce_non_empty_string(template.get("name")) or monster_id,
+                    "name": coerce_non_empty_string(template.get("name")) or monster_id,
                     "hp": max_hp,
                     "max_hp": max_hp,
                     "ac": ac,
@@ -710,7 +821,7 @@ class CombatHandler(StaticCommandHandler):
         payload = state.areas.get_hostile_state(sub_area_id)
         if not isinstance(payload, Mapping):
             return None
-        resolved_area = self._coerce_non_empty_string(payload.get("area_id"))
+        resolved_area = coerce_non_empty_string(payload.get("area_id"))
         if resolved_area is not None and resolved_area != area_id:
             return None
         normalized = state.areas.copy_hostile_state(payload)
@@ -745,7 +856,7 @@ class CombatHandler(StaticCommandHandler):
     @staticmethod
     def _resolve_heal_amount(item_template: Mapping[str, Any]) -> int | None:
         for key in ("heal_amount", "heal", "restore_hp"):
-            value = CombatHandler._coerce_int(item_template.get(key))
+            value = coerce_int(item_template.get(key))
             if value is not None and value > 0:
                 return value
         return None
@@ -766,7 +877,7 @@ class CombatHandler(StaticCommandHandler):
             if removed or str(item.get("item_id")) != item_id:
                 updated.append(dict(item))
                 continue
-            current_count = CombatHandler._coerce_int(item.get("count")) or 0
+            current_count = coerce_int(item.get("count")) or 0
             remaining = current_count - count
             if remaining < 0:
                 raise ValueError(f"not enough items: {item_id}")
@@ -779,36 +890,6 @@ class CombatHandler(StaticCommandHandler):
             raise ValueError(f"item not found: {item_id}")
         return updated
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        payload = {"handler": "combat", "command": command_type, **metadata}
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(changes=changes, reason=command_type, metadata=payload),
-            time_cost=time_cost,
-            metadata=payload,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            time_cost=time_cost,
-            metadata={"handler": "combat", "command": command_type, **metadata},
-        )
-
     @staticmethod
     def _validate_character_identity(
         params: Mapping[str, Any],
@@ -819,12 +900,12 @@ class CombatHandler(StaticCommandHandler):
         raw_value = params.get(key)
         if raw_value is None:
             return None
-        value = CombatHandler._coerce_non_empty_string(raw_value)
+        value = coerce_non_empty_string(raw_value)
         if value is None:
             return ValidationResult(ok=False, reason=f"{key} must be a non-empty string")
         if value == "player":
             return None
-        player_character_id = CombatHandler._coerce_non_empty_string(state.player.character_id)
+        player_character_id = coerce_non_empty_string(state.player.character_id)
         if player_character_id is not None and value == player_character_id:
             return None
         return ValidationResult(ok=False, reason=f"{key} must refer to the current player")
@@ -835,29 +916,8 @@ class CombatHandler(StaticCommandHandler):
             return []
         monster_ids: list[str] = []
         for item in raw_value:
-            monster_id = CombatHandler._coerce_non_empty_string(item)
+            monster_id = coerce_non_empty_string(item)
             if monster_id is not None:
                 monster_ids.append(monster_id)
         return monster_ids
 
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        return CombatHandler._coerce_non_empty_string(params.get(key))
-
-    @staticmethod
-    def _coerce_non_empty_string(raw_value: Any) -> str | None:
-        if raw_value is None:
-            return None
-        value = str(raw_value).strip()
-        if not value:
-            return None
-        return value
-
-    @staticmethod
-    def _coerce_int(raw_value: Any) -> int | None:
-        if raw_value is None or isinstance(raw_value, bool):
-            return None
-        try:
-            return int(raw_value)
-        except (TypeError, ValueError):
-            return None

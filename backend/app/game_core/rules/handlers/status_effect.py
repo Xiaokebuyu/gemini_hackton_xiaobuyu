@@ -6,8 +6,13 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_non_empty_string,
+    handler_success,
+    normalize_tags,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class StatusEffectHandler(StaticCommandHandler):
@@ -16,6 +21,7 @@ class StatusEffectHandler(StaticCommandHandler):
         "remove_effect",
         "remove_effect_by_type",
         "tick_effects",
+        "tick_combat_effects",
     )
 
     def validate(
@@ -25,6 +31,11 @@ class StatusEffectHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> ValidationResult:
         del world
+        if cmd.type == "tick_combat_effects":
+            if not state.has_slice("areas"):
+                return ValidationResult(ok=False, reason="areas slice is required")
+            return ValidationResult(ok=True)
+
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
 
@@ -56,14 +67,16 @@ class StatusEffectHandler(StaticCommandHandler):
             return self._compute_remove_effect_by_type(cmd, state)
         if cmd.type == "tick_effects":
             return self._compute_tick_effects(state)
+        if cmd.type == "tick_combat_effects":
+            return self._compute_tick_combat_effects(state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_apply_effect(self, cmd: Command) -> ValidationResult:
-        effect_id = self._coerce_non_empty_string(cmd.params.get("effect_id"))
+        effect_id = coerce_non_empty_string(cmd.params.get("effect_id"))
         if effect_id is None:
             return ValidationResult(ok=False, reason="effect_id must be a non-empty string")
 
-        effect_type = self._coerce_non_empty_string(cmd.params.get("effect_type"))
+        effect_type = coerce_non_empty_string(cmd.params.get("effect_type"))
         if effect_type is None:
             return ValidationResult(
                 ok=False,
@@ -86,7 +99,7 @@ class StatusEffectHandler(StaticCommandHandler):
         return ValidationResult(ok=True)
 
     def _validate_remove_effect(self, cmd: Command) -> ValidationResult:
-        effect_id = self._coerce_non_empty_string(cmd.params.get("effect_id"))
+        effect_id = coerce_non_empty_string(cmd.params.get("effect_id"))
         if effect_id is None:
             return ValidationResult(ok=False, reason="effect_id must be a non-empty string")
         return ValidationResult(ok=True)
@@ -115,7 +128,8 @@ class StatusEffectHandler(StaticCommandHandler):
                 continue
             next_effects.append(existing)
         next_effects.append(effect)
-        return self._success(
+        return handler_success(
+            "status_effect",
             cmd.type,
             changes=[
                 StateChange(
@@ -133,6 +147,7 @@ class StatusEffectHandler(StaticCommandHandler):
                 "effect_id": effect["effect_id"],
                 "effect_type": effect["effect_type"],
             },
+            omit_empty_delta=False,
         )
 
     def _compute_remove_effect(
@@ -148,7 +163,8 @@ class StatusEffectHandler(StaticCommandHandler):
             if effect.get("effect_id") != effect_id
         ]
         removed_count = len(current_effects) - len(next_effects)
-        return self._success(
+        return handler_success(
+            "status_effect",
             cmd.type,
             changes=[
                 StateChange(
@@ -165,6 +181,7 @@ class StatusEffectHandler(StaticCommandHandler):
                 "hp_delta": 0,
                 "effect_id": effect_id,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_remove_effect_by_type(
@@ -180,7 +197,8 @@ class StatusEffectHandler(StaticCommandHandler):
             if effect.get("effect_type") != effect_type
         ]
         removed_count = len(current_effects) - len(next_effects)
-        return self._success(
+        return handler_success(
+            "status_effect",
             cmd.type,
             changes=[
                 StateChange(
@@ -197,18 +215,22 @@ class StatusEffectHandler(StaticCommandHandler):
                 "hp_delta": 0,
                 "effect_type": effect_type,
             },
+            omit_empty_delta=False,
         )
 
-    def _compute_tick_effects(self, state: StateContainer) -> ExecuteResult:
-        current_effects = self._copy_effects(state)
-        current_hp = int(state.player.hp)
-        next_hp = current_hp
-        max_hp = int(state.player.max_hp)
+    def _tick_effect_list(
+        self,
+        effects: list[dict[str, Any]],
+        hp: int,
+        max_hp: int,
+    ) -> tuple[list[dict[str, Any]], int, int, int]:
+        """Tick a list of effects. Returns (next_effects, next_hp, expired_count, processed_count)."""
         next_effects: list[dict[str, Any]] = []
+        next_hp = hp
         expired_count = 0
         processed_count = 0
 
-        for raw_effect in current_effects:
+        for raw_effect in effects:
             effect = dict(raw_effect)
             periodic = effect.get("periodic", {})
             if isinstance(periodic, Mapping):
@@ -234,6 +256,17 @@ class StatusEffectHandler(StaticCommandHandler):
                 continue
             next_effects.append(effect)
 
+        return next_effects, next_hp, expired_count, processed_count
+
+    def _compute_tick_effects(self, state: StateContainer) -> ExecuteResult:
+        current_effects = self._copy_effects(state)
+        current_hp = int(state.player.hp)
+        max_hp = int(state.player.max_hp)
+
+        next_effects, next_hp, expired_count, processed_count = self._tick_effect_list(
+            current_effects, current_hp, max_hp
+        )
+
         hp_delta = next_hp - current_hp
         changes: list[StateChange] = [
             StateChange(
@@ -253,7 +286,8 @@ class StatusEffectHandler(StaticCommandHandler):
                 )
             )
 
-        return self._success(
+        return handler_success(
+            "status_effect",
             "tick_effects",
             changes=changes,
             metadata={
@@ -262,6 +296,87 @@ class StatusEffectHandler(StaticCommandHandler):
                 "expired_count": expired_count,
                 "hp_delta": hp_delta,
             },
+            omit_empty_delta=False,
+        )
+
+    def _compute_tick_combat_effects(self, state: StateContainer) -> ExecuteResult:
+        changes: list[StateChange] = []
+        combats_processed = 0
+        participants_ticked = 0
+        effects_expired = 0
+        total_hp_delta = 0
+
+        for area_id, area in state.areas.areas.items():
+            for sub_area_id, hostile in area.hostile_tracking.items():
+                if not isinstance(hostile, Mapping):
+                    continue
+                if not hostile.get("combat_active"):
+                    continue
+                raw_participants = hostile.get("participants", [])
+                if not isinstance(raw_participants, list):
+                    continue
+
+                combats_processed += 1
+                updated_participants: list[dict[str, Any]] = []
+                combat_changed = False
+
+                for participant in raw_participants:
+                    if not isinstance(participant, Mapping):
+                        updated_participants.append(dict(participant) if isinstance(participant, dict) else {})
+                        continue
+                    p = dict(participant)
+                    if not p.get("alive", True):
+                        updated_participants.append(p)
+                        continue
+
+                    raw_effects = p.get("active_effects", [])
+                    if not isinstance(raw_effects, list) or not raw_effects:
+                        updated_participants.append(p)
+                        continue
+
+                    p_hp = self._coerce_non_negative_int(p.get("hp"), default=0)
+                    p_max_hp = self._coerce_non_negative_int(p.get("max_hp"), default=p_hp)
+                    effect_list = [dict(e) for e in raw_effects if isinstance(e, Mapping)]
+
+                    next_effects, next_hp, expired, _ = self._tick_effect_list(
+                        effect_list, p_hp, p_max_hp
+                    )
+
+                    if next_effects != effect_list or next_hp != p_hp:
+                        combat_changed = True
+                        participants_ticked += 1
+                        effects_expired += expired
+                        total_hp_delta += next_hp - p_hp
+                        p["active_effects"] = next_effects
+                        p["hp"] = next_hp
+                        if next_hp <= 0:
+                            p["alive"] = False
+                    updated_participants.append(p)
+
+                if combat_changed:
+                    updated_hostile = dict(hostile)
+                    updated_hostile["participants"] = updated_participants
+                    updated_hostile["area_id"] = area_id
+                    changes.append(
+                        StateChange(
+                            slice="areas",
+                            operation="set",
+                            path=f"hostile_tracking.{sub_area_id}",
+                            value=updated_hostile,
+                        )
+                    )
+
+        return handler_success(
+            "status_effect",
+            "tick_combat_effects",
+            changes=changes,
+            metadata={
+                "combats_processed": combats_processed,
+                "participants_ticked": participants_ticked,
+                "effects_expired": effects_expired,
+                "total_hp_delta": total_hp_delta,
+            },
+            omit_empty_delta=False,
         )
 
     def _build_effect_payload(self, cmd: Command) -> dict[str, Any]:
@@ -278,39 +393,14 @@ class StatusEffectHandler(StaticCommandHandler):
         return {
             "effect_id": str(cmd.params["effect_id"]).strip(),
             "effect_type": str(cmd.params["effect_type"]).strip(),
-            "source": self._coerce_non_empty_string(cmd.params.get("source")) or cmd.source,
+            "source": coerce_non_empty_string(cmd.params.get("source")) or cmd.source,
             "remaining_ticks": duration_ticks,
             "duration_ticks": duration_ticks,
             "remaining_duration": duration_ticks,
             "modifiers": modifiers,
             "periodic": periodic,
-            "tags": self._normalize_tags(cmd.params.get("tags")),
+            "tags": normalize_tags(cmd.params.get("tags")),
         }
-
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(
-                changes=changes,
-                reason=command_type,
-                metadata={
-                    "handler": "status_effect",
-                    "command": command_type,
-                    **metadata,
-                },
-            ),
-            metadata={
-                "handler": "status_effect",
-                "command": command_type,
-                **metadata,
-            },
-        )
 
     @staticmethod
     def _copy_effects(state: StateContainer) -> list[dict[str, Any]]:
@@ -323,21 +413,8 @@ class StatusEffectHandler(StaticCommandHandler):
         return {str(key): value for key, value in raw_value.items()}
 
     @staticmethod
-    def _normalize_tags(raw_value: Any) -> list[str]:
-        if not isinstance(raw_value, list):
-            return []
-        return [str(tag) for tag in raw_value]
-
-    @staticmethod
-    def _coerce_non_empty_string(raw_value: Any) -> str | None:
-        if not isinstance(raw_value, str):
-            return None
-        normalized = raw_value.strip()
-        return normalized or None
-
-    @classmethod
-    def _coerce_effect_type_for_removal(cls, params: Mapping[str, Any]) -> str | None:
-        return cls._coerce_non_empty_string(
+    def _coerce_effect_type_for_removal(params: Mapping[str, Any]) -> str | None:
+        return coerce_non_empty_string(
             params.get("effect_type", params.get("effect_id"))
         )
 

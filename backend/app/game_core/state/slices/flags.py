@@ -40,6 +40,17 @@ class FlagSlice(StateSlice):
             del self.flags[key]
             self._dirty = True
 
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.flags, dict):
+            issues.append("flags must be a dict")
+        else:
+            for key in self.flags:
+                if not isinstance(key, str) or not key:
+                    issues.append("flag keys must be non-empty strings")
+                    break
+        return issues
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.path.startswith("flags."):
             _, key = change.path.split(".", 1)

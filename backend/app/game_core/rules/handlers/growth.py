@@ -6,8 +6,9 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import coerce_int, get_non_empty_string, handler_success
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class GrowthHandler(StaticCommandHandler):
@@ -73,7 +74,7 @@ class GrowthHandler(StaticCommandHandler):
         identity_check = self._validate_character_identity(cmd.params, state)
         if identity_check is not None:
             return identity_check
-        amount = self._coerce_int(cmd.params.get("amount"))
+        amount = coerce_int(cmd.params.get("amount"))
         if amount is None or amount < 1:
             return ValidationResult(ok=False, reason="amount must be an integer >= 1")
         return ValidationResult(ok=True)
@@ -114,13 +115,13 @@ class GrowthHandler(StaticCommandHandler):
         identity_check = self._validate_character_identity(cmd.params, state)
         if identity_check is not None:
             return identity_check
-        stat = self._get_non_empty_string(cmd.params, "stat")
+        stat = get_non_empty_string(cmd.params, "stat")
         if stat is None or stat not in self._REQUIRED_STATS:
             return ValidationResult(
                 ok=False,
                 reason="stat must be one of str/dex/con/int/wis/cha",
             )
-        bonus = self._coerce_int(cmd.params.get("bonus"))
+        bonus = coerce_int(cmd.params.get("bonus"))
         if bonus not in {1, 2}:
             return ValidationResult(ok=False, reason="bonus must be 1 or 2")
         if int(state.player.level) not in self._ASI_LEVELS:
@@ -128,7 +129,7 @@ class GrowthHandler(StaticCommandHandler):
                 ok=False,
                 reason="ASI can only be applied at levels 4/8/12/16/19",
             )
-        current_value = self._coerce_int(state.player.stats.get(stat))
+        current_value = coerce_int(state.player.stats.get(stat))
         if current_value is None:
             return ValidationResult(ok=False, reason=f"unknown stat: {stat}")
         if current_value + bonus > 20:
@@ -149,7 +150,7 @@ class GrowthHandler(StaticCommandHandler):
         identity_check = self._validate_character_identity(cmd.params, state)
         if identity_check is not None:
             return identity_check
-        subclass_id = self._get_non_empty_string(cmd.params, "subclass_id")
+        subclass_id = get_non_empty_string(cmd.params, "subclass_id")
         if subclass_id is None:
             return ValidationResult(
                 ok=False,
@@ -162,14 +163,14 @@ class GrowthHandler(StaticCommandHandler):
         subclass_template = world.classes.get_subclass(subclass_id)
         if subclass_template is None:
             return ValidationResult(ok=False, reason=f"unknown subclass: {subclass_id}")
-        bound_class = self._get_non_empty_string(subclass_template, "class_id")
+        bound_class = get_non_empty_string(subclass_template, "class_id")
         if bound_class is not None and bound_class != state.player.character_class:
             return ValidationResult(
                 ok=False,
                 reason=f"subclass '{subclass_id}' does not belong to class '{state.player.character_class}'",
             )
         class_template = world.classes.get_class(state.player.character_class) or {}
-        required_level = self._coerce_int(class_template.get("subclass_level")) or 6
+        required_level = coerce_int(class_template.get("subclass_level")) or 6
         if int(state.player.level) < required_level:
             return ValidationResult(
                 ok=False,
@@ -184,22 +185,22 @@ class GrowthHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if not world.has_registry("classes"):
             return ValidationResult(ok=False, reason="classes registry is required")
-        character_id = self._get_non_empty_string(cmd.params, "character_id")
+        character_id = get_non_empty_string(cmd.params, "character_id")
         if character_id is None:
             return ValidationResult(
                 ok=False,
                 reason="character_id must be a non-empty string",
             )
-        name = self._get_non_empty_string(cmd.params, "name")
+        name = get_non_empty_string(cmd.params, "name")
         if name is None:
             return ValidationResult(ok=False, reason="name must be a non-empty string")
-        race_id = self._get_non_empty_string(cmd.params, "race_id")
+        race_id = get_non_empty_string(cmd.params, "race_id")
         if race_id is None:
             return ValidationResult(ok=False, reason="race_id must be a non-empty string")
-        class_id = self._get_non_empty_string(cmd.params, "class_id")
+        class_id = get_non_empty_string(cmd.params, "class_id")
         if class_id is None:
             return ValidationResult(ok=False, reason="class_id must be a non-empty string")
-        background_id = self._get_non_empty_string(cmd.params, "background_id")
+        background_id = get_non_empty_string(cmd.params, "background_id")
         if background_id is None:
             return ValidationResult(
                 ok=False,
@@ -239,7 +240,8 @@ class GrowthHandler(StaticCommandHandler):
         new_xp = previous_xp + amount
         current_level = max(1, int(state.player.level))
         available_level = self._resolve_available_level(world, current_level, new_xp)
-        return self._success(
+        return handler_success(
+            "growth",
             "add_xp",
             changes=[
                 StateChange("player", "set", "xp", new_xp),
@@ -252,6 +254,7 @@ class GrowthHandler(StaticCommandHandler):
                 "available_level": available_level,
                 "level_up_available": available_level > current_level,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_level_up(
@@ -278,7 +281,8 @@ class GrowthHandler(StaticCommandHandler):
         new_max_hp = int(state.player.max_hp) + hp_gain_total
         new_hp = min(new_max_hp, int(state.player.hp) + hp_gain_total)
 
-        return self._success(
+        return handler_success(
+            "growth",
             "level_up",
             changes=[
                 StateChange("player", "set", "level", target_level),
@@ -294,6 +298,7 @@ class GrowthHandler(StaticCommandHandler):
                 "added_features": added_features,
                 "new_proficiency_bonus": new_proficiency_bonus,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_apply_asi(
@@ -305,7 +310,8 @@ class GrowthHandler(StaticCommandHandler):
         bonus = int(cmd.params["bonus"])
         from_value = int(state.player.stats.get(stat, 0))
         to_value = from_value + bonus
-        return self._success(
+        return handler_success(
+            "growth",
             "apply_asi",
             changes=[
                 StateChange("player", "add", f"stats.{stat}", bonus),
@@ -316,6 +322,7 @@ class GrowthHandler(StaticCommandHandler):
                 "from_value": from_value,
                 "to_value": to_value,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_choose_subclass(
@@ -333,7 +340,8 @@ class GrowthHandler(StaticCommandHandler):
         )
         new_features = self._merge_features(existing_features, added_features)
 
-        return self._success(
+        return handler_success(
+            "growth",
             "choose_subclass",
             changes=[
                 StateChange("player", "set", "subclass", subclass_id),
@@ -344,6 +352,7 @@ class GrowthHandler(StaticCommandHandler):
                 "added_features": added_features,
                 "status": "chosen",
             },
+            omit_empty_delta=False,
         )
 
     def _compute_create_character(
@@ -368,7 +377,7 @@ class GrowthHandler(StaticCommandHandler):
                 stat = str(key)
                 if stat not in final_stats:
                     continue
-                bonus = self._coerce_int(value)
+                bonus = coerce_int(value)
                 if bonus is None:
                     continue
                 final_stats[stat] += bonus
@@ -384,7 +393,8 @@ class GrowthHandler(StaticCommandHandler):
             background_template,
         )
 
-        return self._success(
+        return handler_success(
+            "growth",
             "create_character",
             changes=[
                 StateChange("player", "set", "character_id", str(cmd.params["character_id"]).strip()),
@@ -402,6 +412,7 @@ class GrowthHandler(StaticCommandHandler):
                 StateChange("player", "set", "subclass", None),
             ],
             metadata={"status": "created"},
+            omit_empty_delta=False,
         )
 
     def _get_player_class_template(
@@ -445,15 +456,15 @@ class GrowthHandler(StaticCommandHandler):
         raw_target = params.get("target_level")
         if raw_target is None:
             return current_level + 1
-        target_level = self._coerce_int(raw_target)
+        target_level = coerce_int(raw_target)
         if target_level is None or target_level <= current_level:
             return None
         return target_level
 
     def _resolve_max_hp(self, class_template: Mapping[str, Any], con_mod: int) -> int:
-        base_value = self._coerce_int(class_template.get("hit_die"))
+        base_value = coerce_int(class_template.get("hit_die"))
         if base_value is None:
-            base_value = self._coerce_int(class_template.get("base_hp"))
+            base_value = coerce_int(class_template.get("base_hp"))
         if base_value is None:
             base_value = 10
         return max(1, base_value + con_mod)
@@ -463,7 +474,7 @@ class GrowthHandler(StaticCommandHandler):
         class_template: Mapping[str, Any],
         stats: Mapping[str, int],
     ) -> int:
-        base_ac = self._coerce_int(class_template.get("base_ac"))
+        base_ac = coerce_int(class_template.get("base_ac"))
         if base_ac is not None:
             return base_ac
         dex_mod = (int(stats.get("dex", 10)) - 10) // 2
@@ -475,10 +486,10 @@ class GrowthHandler(StaticCommandHandler):
         background_template: Mapping[str, Any],
     ) -> int:
         for key in ("starting_gold", "gold_bonus"):
-            value = self._coerce_int(background_template.get(key))
+            value = coerce_int(background_template.get(key))
             if value is not None:
                 return max(0, value)
-        class_gold = self._coerce_int(class_template.get("starting_gold"))
+        class_gold = coerce_int(class_template.get("starting_gold"))
         return max(0, class_gold or 0)
 
     def _resolve_class_features(
@@ -555,9 +566,9 @@ class GrowthHandler(StaticCommandHandler):
         class_template: Mapping[str, Any],
         con_mod: int,
     ) -> int:
-        base_value = self._coerce_int(class_template.get("hp_per_level"))
+        base_value = coerce_int(class_template.get("hp_per_level"))
         if base_value is None:
-            hit_die = self._coerce_int(class_template.get("hit_die"))
+            hit_die = coerce_int(class_template.get("hit_die"))
             if hit_die is not None:
                 base_value = max(1, hit_die // 2)
             else:
@@ -576,36 +587,14 @@ class GrowthHandler(StaticCommandHandler):
                 merged.append(feature)
         return merged
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-    ) -> ExecuteResult:
-        payload = {
-            "handler": "growth",
-            "command": command_type,
-            **metadata,
-        }
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(
-                changes=changes,
-                reason=command_type,
-                metadata=payload,
-            ),
-            metadata=payload,
-        )
-
     def _validate_character_identity(
         self,
         params: Mapping[str, Any],
         state: StateContainer,
     ) -> ValidationResult | None:
-        candidate = self._get_non_empty_string(params, "character_id")
+        candidate = get_non_empty_string(params, "character_id")
         if candidate is None:
-            candidate = self._get_non_empty_string(params, "character")
+            candidate = get_non_empty_string(params, "character")
         current_id = state.player.character_id
         if candidate is not None and current_id and candidate != current_id:
             return ValidationResult(
@@ -622,19 +611,11 @@ class GrowthHandler(StaticCommandHandler):
             return None
         normalized: dict[str, int] = {}
         for stat in self._REQUIRED_STATS:
-            value = self._coerce_int(raw.get(stat))
+            value = coerce_int(raw.get(stat))
             if value is None:
                 return None
             normalized[stat] = value
         return normalized
-
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
 
     @staticmethod
     def _non_empty_string(value: Any) -> str | None:
@@ -643,25 +624,3 @@ class GrowthHandler(StaticCommandHandler):
         normalized = value.strip()
         return normalized or None
 
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None

@@ -189,6 +189,7 @@ class FastAPIInputPort:
             "sell",
             "talk",
             "greet",
+            "inspect_item",
             "ask_quest",
             "ask_progress",
             "ask_location",
@@ -200,7 +201,7 @@ class FastAPIInputPort:
                 code="invalid_intent",
                 message=(
                     "npc intent must be browse, buy, sell, talk, greet, "
-                    "ask_quest, ask_progress, ask_location, "
+                    "inspect_item, ask_quest, ask_progress, ask_location, "
                     "ask_requirements, or ask_reward"
                 ),
             )
@@ -245,6 +246,26 @@ class FastAPIInputPort:
                     "action_type": action_type,
                     "params": params,
                     "post_snapshot": "shop",
+                },
+            )
+        if intent == "inspect_item":
+            if item_id is None:
+                return self._rejected_action(
+                    **base,
+                    code="missing_item",
+                    message="item_id is required for inspect_item",
+                )
+            return self._resolved_action(
+                target_kind="npc",
+                target_id=target_id,
+                intent="inspect_item",
+                item_id=str(item_id),
+                quest_id=None,
+                count=1,
+                execution={
+                    "kind": "snapshot",
+                    "snapshot_type": "inspect_item",
+                    "item_id": str(item_id),
                 },
             )
         if intent == "talk":

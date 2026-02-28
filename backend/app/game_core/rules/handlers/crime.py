@@ -6,8 +6,15 @@ from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_int,
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+    normalize_tags,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class CrimeHandler(StaticCommandHandler):
@@ -52,20 +59,20 @@ class CrimeHandler(StaticCommandHandler):
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
 
-        item_id = self._get_non_empty_string(cmd.params, "item_id")
+        item_id = get_non_empty_string(cmd.params, "item_id")
         if item_id is None:
             return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        count = self._coerce_int(cmd.params.get("count", 1))
+        count = coerce_int(cmd.params.get("count", 1))
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         if "dc" in cmd.params:
-            dc = self._coerce_int(cmd.params.get("dc"))
+            dc = coerce_int(cmd.params.get("dc"))
             if dc is None or dc < 0:
                 return ValidationResult(ok=False, reason="dc must be an integer >= 0")
 
         container_id = self._resolve_container_id(cmd.params)
         if container_id is None:
-            if self._get_non_empty_string(cmd.params, "target_npc") is not None:
+            if get_non_empty_string(cmd.params, "target_npc") is not None:
                 return ValidationResult(
                     ok=False,
                     reason="NPC theft unsupported in MVP",
@@ -112,7 +119,7 @@ class CrimeHandler(StaticCommandHandler):
                 reason="container_id/target must be a non-empty string",
             )
         if "dc" in cmd.params:
-            dc = self._coerce_int(cmd.params.get("dc"))
+            dc = coerce_int(cmd.params.get("dc"))
             if dc is None or dc < 0:
                 return ValidationResult(ok=False, reason="dc must be an integer >= 0")
 
@@ -137,11 +144,12 @@ class CrimeHandler(StaticCommandHandler):
             return ExecuteResult.error(f"unknown container: {container_id}")
         area_id, container_state = resolved
 
-        dc = self._coerce_int(cmd.params.get("dc", 12)) or 12
+        dc = coerce_int(cmd.params.get("dc", 12)) or 12
         passive_total = self._stealth_total(state)
         passed = passive_total >= dc
         if not passed:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "crime",
                 "steal",
                 time_cost=1.0 / 6.0,
                 metadata={
@@ -158,7 +166,7 @@ class CrimeHandler(StaticCommandHandler):
 
         updated_inventory = self._player_inventory_snapshot(state)
         item_entry = self._find_container_item(container_state, item_id)
-        tags = self._normalize_tags(item_entry.get("tags", []) if item_entry is not None else [])
+        tags = normalize_tags(item_entry.get("tags", []) if item_entry is not None else [])
         self._add_to_inventory_snapshot(updated_inventory, item_id, count, tags)
 
         updated_container = self._remove_from_container_snapshot(container_state, item_id, count)
@@ -166,7 +174,8 @@ class CrimeHandler(StaticCommandHandler):
         if not self._container_items(updated_container) and int(updated_container.get("remaining_gold", 0)) == 0:
             updated_container["looted"] = True
 
-        return self._success(
+        return handler_success(
+            "crime",
             "steal",
             changes=[
                 StateChange("player", "set", "inventory", updated_inventory),
@@ -201,13 +210,14 @@ class CrimeHandler(StaticCommandHandler):
             return ExecuteResult.error(f"unknown container: {container_id}")
         area_id, container_state = resolved
 
-        dc = self._coerce_int(cmd.params.get("dc"))
+        dc = coerce_int(cmd.params.get("dc"))
         if dc is None:
-            dc = self._coerce_int(container_state.get("lock_dc")) or 12
+            dc = coerce_int(container_state.get("lock_dc")) or 12
         passive_total = self._thieves_tools_total(state)
         passed = passive_total >= dc
         if not passed:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "crime",
                 "lockpick",
                 time_cost=1.0 / 6.0,
                 metadata={
@@ -222,7 +232,8 @@ class CrimeHandler(StaticCommandHandler):
         updated_container = dict(container_state)
         updated_container["area_id"] = area_id
         updated_container["lock_status"] = "unlocked"
-        return self._success(
+        return handler_success(
+            "crime",
             "lockpick",
             changes=[
                 StateChange(
@@ -268,7 +279,7 @@ class CrimeHandler(StaticCommandHandler):
         item_id: str,
     ) -> dict[str, Any] | None:
         for item in self._container_items(container_state):
-            if self._get_non_empty_string(item, "item_id") == item_id:
+            if get_non_empty_string(item, "item_id") == item_id:
                 return item
         return None
 
@@ -295,7 +306,7 @@ class CrimeHandler(StaticCommandHandler):
         remaining_to_remove = count
         updated_items: list[dict[str, Any]] = []
         for item in self._container_items(container_state):
-            if self._get_non_empty_string(item, "item_id") != item_id or remaining_to_remove <= 0:
+            if get_non_empty_string(item, "item_id") != item_id or remaining_to_remove <= 0:
                 updated_items.append(item)
                 continue
             current = int(item.get("count", 0))
@@ -338,41 +349,6 @@ class CrimeHandler(StaticCommandHandler):
             return
         inventory.append({"item_id": item_id, "count": count, "tags": list(tags or [])})
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        payload = {"handler": "crime", "command": command_type, **metadata}
-        delta = (
-            StateDelta(changes=changes, reason=command_type, metadata=payload)
-            if changes
-            else None
-        )
-        return ExecuteResult(
-            success=True,
-            delta=delta,
-            time_cost=time_cost,
-            metadata=payload,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            time_cost=time_cost,
-            metadata={"handler": "crime", "command": command_type, **metadata},
-        )
-
     @staticmethod
     def _stealth_total(state: StateContainer) -> int:
         return 10 + state.player.get_skill_bonus("stealth")
@@ -383,47 +359,10 @@ class CrimeHandler(StaticCommandHandler):
 
     @staticmethod
     def _resolve_container_id(params: Mapping[str, Any]) -> str | None:
-        container_id = CrimeHandler._get_non_empty_string(params, "container_id")
+        container_id = get_non_empty_string(params, "container_id")
         if container_id is not None:
             return container_id
-        container_id = CrimeHandler._get_non_empty_string(params, "container")
+        container_id = get_non_empty_string(params, "container")
         if container_id is not None:
             return container_id
-        return CrimeHandler._get_non_empty_string(params, "target")
-
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
-
-    @staticmethod
-    def _coerce_int(value: Any) -> int | None:
-        if value is None or isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            if not value.is_integer():
-                return None
-            return int(value)
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized:
-                return None
-            try:
-                return int(normalized)
-            except ValueError:
-                return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _normalize_tags(raw: Any) -> list[str]:
-        if not isinstance(raw, list):
-            return []
-        return [str(tag) for tag in raw]
+        return get_non_empty_string(params, "target")

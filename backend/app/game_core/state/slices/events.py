@@ -97,6 +97,39 @@ class EventSlice(StateSlice):
             self._dirty = True
         return due
 
+    def validate(self) -> list[str]:
+        issues: list[str] = []
+        if not isinstance(self.active_events, dict):
+            issues.append("active_events must be a dict")
+        else:
+            for key, event in self.active_events.items():
+                if not isinstance(event, dict):
+                    issues.append(f"active_events[{key}] must be a dict")
+                    continue
+                if event.get("id") != key or event.get("event_id") != key:
+                    issues.append(f"active_events[{key}] id/event_id must match the key")
+                state = event.get("state")
+                status = event.get("status")
+                if state != status:
+                    issues.append(f"active_events[{key}] state and status must match")
+        if not isinstance(self.pending_events, list):
+            issues.append("pending_events must be a list")
+        else:
+            for i, event in enumerate(self.pending_events):
+                if not isinstance(event, dict):
+                    issues.append(f"pending_events[{i}] must be a dict")
+                    continue
+                tt = event.get("trigger_tick")
+                if tt is not None and not isinstance(tt, int):
+                    issues.append(f"pending_events[{i}] trigger_tick must be an integer")
+        if not isinstance(self.rumors, list):
+            issues.append("rumors must be a list")
+        else:
+            for i, rumor in enumerate(self.rumors):
+                if not isinstance(rumor, dict):
+                    issues.append(f"rumors[{i}] must be a dict")
+        return issues
+
     def apply_state_change(self, change: StateChange) -> None:
         if change.path == "pending_events" and isinstance(change.value, Mapping):
             if change.operation == "add":

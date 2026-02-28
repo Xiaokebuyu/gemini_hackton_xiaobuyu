@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 
 import app.game_core.adapters.session_store as session_store_module
 from app.game_core.adapters import NullPersistencePort, SaveStore
@@ -11,6 +12,28 @@ from app.game_core.state.slices import SceneEntry
 
 def _runtime():
     return build_default_runtime("test_world", world_data={})
+
+
+class SlowStalePersistencePort:
+    def __init__(self) -> None:
+        self._storage: dict[str, dict[str, object]] = {}
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    async def load(self, key: str) -> dict[str, object]:
+        self._in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        snapshot = copy.deepcopy(self._storage.get(key, {}))
+        await asyncio.sleep(0)
+        self._in_flight -= 1
+        return snapshot
+
+    async def save(self, key: str, payload: dict[str, object]) -> None:
+        self._in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        await asyncio.sleep(0)
+        self._storage[key] = copy.deepcopy(payload)
+        self._in_flight -= 1
 
 
 def test_null_persistence_port_supports_full_session_catalog() -> None:
@@ -69,3 +92,67 @@ def test_save_store_lists_session_meta_in_descending_last_played_order(monkeypat
     assert [item["session_id"] for item in listed] == ["sess_new", "sess_old"]
     assert asyncio.run(store.delete_session("sess_new")) is True
     assert asyncio.run(store.delete_session("missing")) is False
+
+
+def test_save_store_serializes_concurrent_writes_per_session() -> None:
+    port = SlowStalePersistencePort()
+    store = SaveStore(port)
+    session_id = "sess_alpha"
+
+    base_runtime = _runtime()
+    asyncio.run(store.save_runtime(session_id, base_runtime))
+
+    left_runtime = _runtime()
+    left_runtime.state.apply(
+        StateDelta(
+            changes=[StateChange("player", "set", "current_area", "forest")],
+            reason="left",
+        )
+    )
+
+    right_runtime = _runtime()
+    right_runtime.state.apply(
+        StateDelta(
+            changes=[StateChange("flags", "set", "flags.quest_started", True)],
+            reason="right",
+        )
+    )
+
+    async def _run() -> None:
+        await asyncio.gather(
+            store.save_runtime(session_id, left_runtime),
+            store.save_runtime(session_id, right_runtime),
+        )
+
+    asyncio.run(_run())
+    persisted = asyncio.run(port.load(session_id))
+
+    assert port.max_in_flight == 1
+    assert persisted["state"]["player"]["current_area"] == "forest"
+    assert persisted["state"]["flags"]["flags"]["quest_started"] is True
+
+
+def test_save_store_strictly_filters_sessions_without_matching_world_id() -> None:
+    port = NullPersistencePort()
+    store = SaveStore(port)
+
+    asyncio.run(store.save_runtime("sess_current", _runtime()))
+    asyncio.run(
+        port.save(
+            "sess_legacy",
+            {
+                "state": {},
+                "meta": {"session_id": "sess_legacy", "saved_at": 5.0},
+            },
+        )
+    )
+    asyncio.run(
+        store.save_runtime(
+            "sess_other",
+            build_default_runtime("other_world", world_data={}),
+        )
+    )
+
+    listed = asyncio.run(store.list_session_meta(world_id="test_world"))
+
+    assert [item["session_id"] for item in listed] == ["sess_current"]

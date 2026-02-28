@@ -181,3 +181,56 @@ class TestInventoryHandler:
         assert result.metadata["status"] == "no_effect"
         assert result.metadata["hp_delta"] == 0
         assert state.player.get_item_count("trinket") == 1
+
+    def test_consume_resource_success(self) -> None:
+        state = _make_state()
+        state.player.class_resources = {
+            "rage": {"current": 3, "max": 3, "recovery": "long_rest"},
+        }
+        result = _make_engine().execute(
+            Command(type="consume_resource", params={"resource_key": "rage", "amount": 2}),
+            state,
+            _make_world(),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "consumed"
+        assert result.metadata["remaining"] == 1
+        _apply(result, state)
+        assert state.player.class_resources["rage"]["current"] == 1
+
+    def test_consume_resource_insufficient(self) -> None:
+        state = _make_state()
+        state.player.class_resources = {
+            "rage": {"current": 1, "max": 3, "recovery": "long_rest"},
+        }
+        result = _make_engine().execute(
+            Command(type="consume_resource", params={"resource_key": "rage", "amount": 2}),
+            state,
+            _make_world(),
+        )
+        assert result.success is False
+        assert "insufficient resource" in result.errors[0]
+
+    def test_consume_resource_missing_key(self) -> None:
+        state = _make_state()
+        result = _make_engine().execute(
+            Command(type="consume_resource", params={"resource_key": "nonexistent"}),
+            state,
+            _make_world(),
+        )
+        assert result.success is False
+        assert "unknown resource" in result.errors[0]
+
+    def test_consume_resource_default_amount(self) -> None:
+        state = _make_state()
+        state.player.class_resources = {
+            "channel_divinity": {"current": 2, "max": 2, "recovery": "short_rest"},
+        }
+        result = _make_engine().execute(
+            Command(type="consume_resource", params={"resource_key": "channel_divinity"}),
+            state,
+            _make_world(),
+        )
+        assert result.success is True
+        assert result.metadata["amount"] == 1
+        assert result.metadata["remaining"] == 1

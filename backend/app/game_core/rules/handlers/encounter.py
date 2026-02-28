@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import random
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+)
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class EncounterHandler(StaticCommandHandler):
@@ -61,13 +67,13 @@ class EncounterHandler(StaticCommandHandler):
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
 
-        area_id = self._get_non_empty_string(cmd.params, "area_id")
+        area_id = get_non_empty_string(cmd.params, "area_id")
         if area_id is None:
             return ValidationResult(ok=False, reason="area_id must be a non-empty string")
         if not self._area_exists(state, world, area_id):
             return ValidationResult(ok=False, reason=f"unknown area: {area_id}")
 
-        period = self._get_non_empty_string(cmd.params, "period")
+        period = get_non_empty_string(cmd.params, "period")
         if period is None:
             return ValidationResult(ok=False, reason="period must be a non-empty string")
         if period not in self._PERIOD_MULTIPLIERS:
@@ -138,7 +144,7 @@ class EncounterHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
-        sub_area_id = self._get_non_empty_string(cmd.params, "sub_area_id")
+        sub_area_id = get_non_empty_string(cmd.params, "sub_area_id")
         if sub_area_id is None:
             return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
         return ValidationResult(ok=True)
@@ -168,7 +174,8 @@ class EncounterHandler(StaticCommandHandler):
             "triggered": triggered,
         }
         if not triggered:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "encounter",
                 "encounter_check",
                 metadata={
                     **base_metadata,
@@ -194,7 +201,8 @@ class EncounterHandler(StaticCommandHandler):
         }
         if template_id is not None:
             hostile_state["template_id"] = template_id
-        return self._success(
+        return handler_success(
+            "encounter",
             "encounter_check",
             changes=[
                 StateChange(
@@ -222,7 +230,8 @@ class EncounterHandler(StaticCommandHandler):
         sub_area_id = str(cmd.params["sub_area_id"]).strip()
         existing = state.areas.get_hostile_state(sub_area_id)
         if existing is None:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "encounter",
                 "clear_hostile",
                 metadata={
                     "status": "noop",
@@ -246,7 +255,8 @@ class EncounterHandler(StaticCommandHandler):
             ),
         )
 
-        return self._success(
+        return handler_success(
+            "encounter",
             "clear_hostile",
             changes=[
                 StateChange(
@@ -304,9 +314,10 @@ class EncounterHandler(StaticCommandHandler):
         }
 
         if gold <= 0:
-            return self._success_no_delta("generate_loot", metadata=metadata)
+            return handler_success_no_delta("encounter", "generate_loot", metadata=metadata)
 
-        return self._success(
+        return handler_success(
+            "encounter",
             "generate_loot",
             changes=[
                 StateChange("player", "add", "gold", gold),
@@ -338,9 +349,10 @@ class EncounterHandler(StaticCommandHandler):
             if item_id is None:
                 continue
 
-            chance = self._coerce_float(raw_entry.get("chance", 1))
-            if chance is not None and chance < 1:
-                continue
+            chance = self._coerce_float(raw_entry.get("chance", 1.0))
+            if chance is not None and chance < 1.0:
+                if random.random() >= chance:
+                    continue
 
             count = self._coerce_int(raw_entry.get("count", 1))
             if count is None or count <= 0:
@@ -394,52 +406,6 @@ class EncounterHandler(StaticCommandHandler):
         if state.has_slice("time"):
             return f"_encounter_{area_id}_{state.time.absolute_tick()}"
         return f"_encounter_{area_id}_static"
-
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-    ) -> ExecuteResult:
-        full_metadata = {
-            "handler": "encounter",
-            "command": command_type,
-            **metadata,
-        }
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(
-                changes=list(changes),
-                reason=command_type,
-                metadata=full_metadata,
-            ),
-            metadata=full_metadata,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            metadata={
-                "handler": "encounter",
-                "command": command_type,
-                **metadata,
-            },
-        )
-
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        value = params.get(key)
-        if not isinstance(value, str):
-            return None
-        normalized = value.strip()
-        return normalized or None
 
     @staticmethod
     def _get_optional_non_empty_string(value: Any) -> str | None:

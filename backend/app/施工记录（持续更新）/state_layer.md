@@ -65,9 +65,47 @@ private → 按 audience 列表精确控制
 - **After**：`dict[str, MilestoneState]`（milestone_id → 结构化状态）
 - **序列化兼容**：snapshot 输出 dict，restore 接受 str 或 dict
 
+## D-S01: setattr 后门修复（P1 结构性清理）
+
+**日期**：2026-02-28
+
+3 个 Slice 的 `apply_state_change()` 使用 `setattr(self, change.path, change.value)` 作为 fallback，允许未经类型校验的任意属性写入。
+
+**修复方式**：白名单 + 类型强转
+- **TimeSlice**：`_MUTABLE_FIELDS: ClassVar` → `{day: int, slot: int, accumulated: float, action_count: int}`
+- **PlayerSlice**：`_SIMPLE_FIELDS: ClassVar` → 15 个标量字段 + 显式分支处理 stats/class_features/equipment/active_effects/concentration/known_spells/prepared_spells/save_proficiencies
+- **NarrativePlanSlice**：`_SIMPLE_FIELDS: ClassVar` → 6 个标量字段 + 显式分支处理 current_target_milestone/next_scheduled_tick/play_style_tags
+
+## D-S02: snapshot() 浅拷贝修复
+
+**日期**：2026-02-28
+
+多个 Slice 的 `snapshot()` 对嵌套 dict/list 仅做 `dict()` 浅拷贝，改为 `deepcopy`：
+- **PlayerSlice**：`spell_slots`、`class_resources`、`active_effects`、`equipment`
+- **QuestSlice**：`dynamic_quests`
+- **AreaSlice**：`container_states`、`properties`
+
+与 PlayerSlice.concentration 已有的 `deepcopy` 先例对齐。
+
+## D-S03: 6 个 StateSlice validate() 补齐
+
+**日期**：2026-02-28
+
+此前 10 个 Slice 中 4 个（Player/Time/Quest/Area）已有 validate() 实现，剩余 6 个返回空列表。
+
+**补齐清单**：
+- **FlagSlice**（~10 行）：容器类型 + key 非空字符串
+- **PartySlice**（~25 行）：members/approval/experiences 类型检查
+- **SceneSlice**（~20 行）：SceneEntry 实例 + visibility 枚举 + source 非空
+- **RelationSlice**（~35 行）：5 字段各自容器+值类型校验
+- **EventSlice**（~35 行）：canonicalize 不变量（id==event_id==key, state==status）+ trigger_tick 类型
+- **NarrativePlanSlice**（~40 行）：标量边界 + behavior_window 上限 24 + list[dict] 批量检查
+
+**测试**：`tests/test_slice_validation.py`，6 个测试类 × 2 方法 = 12 新测试
+
 ## 填充 TODO
 
-- [ ] 各 Slice 的 `validate()` 实现（当前全返空列表）
+- [x] 各 Slice 的 `validate()` 实现 — D-S03 完成
 - [ ] PlayerSlice：等级提升阈值表（当前简化为 `level * 1000`）
 - [ ] AreaSlice：临时子区域过期清理逻辑
 - [ ] EventSlice：6 状态事件状态机完整转换校验

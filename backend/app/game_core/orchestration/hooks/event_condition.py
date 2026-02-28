@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.content import WorldInstance
@@ -11,6 +12,8 @@ from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
 from app.game_core.state import StateContainer
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_COMMAND_TYPES: tuple[str, ...] = (
     "set_flag",
@@ -338,6 +341,13 @@ class EventConditionHook(NoOpSettlementHook):
         try:
             raw_decision = self._evaluator.evaluate(context.state, context.world)
         except Exception as exc:
+            logger.exception(
+                "hook failed: event_conditions",
+                extra={
+                    "hook_name": self.HOOK_NAME,
+                    "checked_event_count": checked_event_count,
+                },
+            )
             return HookResult(
                 sse_events=[
                     SSEEvent(

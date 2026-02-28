@@ -9,8 +9,14 @@ from uuid import uuid4
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import (
+    coerce_non_empty_string,
+    get_non_empty_string,
+    handler_success,
+    handler_success_no_delta,
+)
 from app.game_core.rules.models import Command, DiceRoll, ExecuteResult, ValidationResult
-from app.game_core.state import StateChange, StateContainer, StateDelta
+from app.game_core.state import StateChange, StateContainer
 
 
 class SpellHandler(StaticCommandHandler):
@@ -83,7 +89,7 @@ class SpellHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="spell_ids must be a list")
         normalized_spell_ids: list[str] = []
         for raw_spell_id in raw_spell_ids:
-            spell_id = self._coerce_non_empty_string(raw_spell_id)
+            spell_id = coerce_non_empty_string(raw_spell_id)
             if spell_id is None:
                 return ValidationResult(
                     ok=False,
@@ -133,7 +139,7 @@ class SpellHandler(StaticCommandHandler):
         if identity_check is not None:
             return identity_check
 
-        spell_id = self._get_non_empty_string(cmd.params, "spell_id")
+        spell_id = get_non_empty_string(cmd.params, "spell_id")
         if spell_id is None:
             return ValidationResult(ok=False, reason="spell_id must be a non-empty string")
         template = self._resolve_spell_template(world, spell_id)
@@ -180,7 +186,8 @@ class SpellHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         concentration = self._normalize_mapping(state.player.concentration)
         if not concentration:
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "spell",
                 "break_concentration",
                 metadata={
                     "status": "noop",
@@ -200,7 +207,8 @@ class SpellHandler(StaticCommandHandler):
             changes.append(StateChange("player", "set", "active_effects", updated_effects))
         changes.extend(self._hostile_changes(target_payloads))
 
-        return self._success(
+        return handler_success(
+            "spell",
             "break_concentration",
             changes=changes,
             metadata={
@@ -208,6 +216,7 @@ class SpellHandler(StaticCommandHandler):
                 "spell_id": spell_id,
                 "removed_effect_count": removed_count,
             },
+            omit_empty_delta=False,
         )
 
     def _compute_prepare_spells(
@@ -219,7 +228,8 @@ class SpellHandler(StaticCommandHandler):
         spell_ids = [str(spell_id).strip() for spell_id in cmd.params.get("spell_ids", [])]
         mode = self._prepare_mode(state, world)
         if mode == "not_applicable":
-            return self._success_no_delta(
+            return handler_success_no_delta(
+                "spell",
                 "prepare_spells",
                 metadata={
                     "status": "not_applicable",
@@ -233,7 +243,8 @@ class SpellHandler(StaticCommandHandler):
         if max_prepared is None:
             return ExecuteResult.error("invalid prepared_formula")
 
-        return self._success(
+        return handler_success(
+            "spell",
             "prepare_spells",
             changes=[
                 StateChange("player", "set", "prepared_spells", spell_ids),
@@ -244,6 +255,7 @@ class SpellHandler(StaticCommandHandler):
                 "max_prepared": max_prepared,
                 "used_fallback_limit": mode == "fallback",
             },
+            omit_empty_delta=False,
         )
 
     def _compute_cast_spell(
@@ -273,24 +285,18 @@ class SpellHandler(StaticCommandHandler):
 
         effect = self._resolve_effect_payload(template)
         effect_type = self._resolve_effect_type(template, effect)
-        if target_mode == "self":
-            if effect_type not in self._SUPPORTED_SELF_EFFECTS:
-                return self._unsupported_cast_spell(
-                    status="unsupported_effect",
-                    spell_id=spell_id,
-                    slot_level=resolved_slot_level,
-                    target_mode=target_mode,
-                    targets=resolved_targets,
-                )
-        else:
-            if effect_type not in self._SUPPORTED_COMBAT_EFFECTS:
-                return self._unsupported_cast_spell(
-                    status="unsupported_effect",
-                    spell_id=spell_id,
-                    slot_level=resolved_slot_level,
-                    target_mode=target_mode,
-                    targets=resolved_targets,
-                )
+        supported = (
+            self._SUPPORTED_SELF_EFFECTS if target_mode == "self"
+            else self._SUPPORTED_COMBAT_EFFECTS
+        )
+        if effect_type not in supported:
+            return self._unsupported_cast_spell(
+                status="unsupported_effect",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode=target_mode,
+                targets=resolved_targets,
+            )
 
         resource_key, resource_amount = self._resolve_resource_cost(template)
         action_type = self._resolve_action_type(template)
@@ -299,239 +305,346 @@ class SpellHandler(StaticCommandHandler):
             self._resolve_spellcasting_ability(state, world)
         )
 
-        rolls: list[DiceRoll] = []
-        changes: list[StateChange] = []
-        pending_hostile_payloads: dict[str, dict[str, Any]] = {}
-        hp_delta = 0
-        applied_effect_ids: list[str] = []
-        broke_previous_concentration = False
-        new_concentration_payload: dict[str, Any] | None = None
-        player_effects_update: list[dict[str, Any]] | None = None
-
-        target_hp: int | None = None
-        target_alive: bool | None = None
-        target_defeated = False
-        damage_total = 0
-        target_effect_count = 0
-        combat_active = False
-        combat_cleared = False
+        ctx: dict[str, Any] = {
+            "rolls": [],
+            "changes": [],
+            "pending_hostile_payloads": {},
+            "hp_delta": 0,
+            "applied_effect_ids": [],
+            "broke_previous_concentration": False,
+            "new_concentration_payload": None,
+            "player_effects_update": None,
+            "target_hp": None,
+            "target_alive": None,
+            "target_defeated": False,
+            "damage_total": 0,
+            "target_effect_count": 0,
+            "combat_active": False,
+            "combat_cleared": False,
+        }
 
         if target_mode == "self":
-            if effect_type == "heal":
-                heal_total, heal_rolls = self._resolve_heal_amount(
-                    template,
-                    effect,
-                    spellcasting_mod,
-                    spell_level,
-                    resolved_slot_level,
-                )
-                if heal_total is None:
-                    return self._unsupported_cast_spell(
-                        status="unsupported_effect",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
-                rolls.extend(heal_rolls)
-                target_hp = min(int(state.player.max_hp), int(state.player.hp) + heal_total)
-                hp_delta = target_hp - int(state.player.hp)
-            else:
-                effect_instance, concentration_requested = self._build_spell_effect_instance(
-                    spell_id,
-                    effect_type,
-                    template,
-                    effect,
-                )
-                if effect_instance is None:
-                    return self._unsupported_cast_spell(
-                        status="unsupported_effect",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
-
-                updated_effects = state.player.get_active_effects()
-                if concentration_requested:
-                    (
-                        updated_effects,
-                        _player_changed,
-                        cleared_target_payloads,
-                        removed_count,
-                        _,
-                    ) = self._clear_concentration_effects(
-                        state,
-                        self._normalize_mapping(state.player.concentration),
-                    )
-                    pending_hostile_payloads.update(cleared_target_payloads)
-                    broke_previous_concentration = (
-                        removed_count > 0 or state.player.concentration is not None
-                    )
-                else:
-                    updated_effects = [dict(item) for item in updated_effects]
-
-                updated_effects.append(effect_instance)
-                player_effects_update = updated_effects
-                applied_effect_ids.append(str(effect_instance["instance_id"]))
-
-                if concentration_requested:
-                    new_concentration_payload = {
-                        "spell_id": spell_id,
-                        "slot_level": resolved_slot_level,
-                        "remaining_duration": int(effect_instance.get("remaining_ticks", -1)),
-                        "applied_effects": [str(effect_instance["instance_id"])],
-                        "targets": list(resolved_targets),
-                        "target_refs": [],
-                    }
+            early = self._apply_self_target(
+                state, template, effect, effect_type,
+                spell_id, spell_level, resolved_slot_level,
+                spellcasting_mod, resolved_targets, ctx,
+            )
         else:
-            combat_target = self._resolve_combat_target(state, resolved_targets[0])
-            if combat_target is None:
+            early = self._apply_combat_target(
+                state, template, effect, effect_type,
+                spell_id, spell_level, resolved_slot_level,
+                resolved_targets, ctx,
+            )
+        if early is not None:
+            return early
+
+        return self._build_cast_result(
+            state, ctx,
+            spell_id=spell_id,
+            spell_level=spell_level,
+            resolved_slot_level=resolved_slot_level,
+            resource_key=resource_key,
+            resource_amount=resource_amount,
+            time_cost=time_cost,
+            target_mode=target_mode,
+            effect_type=effect_type,
+            resolved_targets=resolved_targets,
+        )
+
+    # ------------------------------------------------------------------
+    # _compute_cast_spell sub-methods
+    # ------------------------------------------------------------------
+
+    def _apply_self_target(
+        self,
+        state: StateContainer,
+        template: Mapping[str, Any],
+        effect: dict[str, Any],
+        effect_type: str,
+        spell_id: str,
+        spell_level: int,
+        resolved_slot_level: int,
+        spellcasting_mod: int,
+        resolved_targets: list[str],
+        ctx: dict[str, Any],
+    ) -> ExecuteResult | None:
+        """Apply self-targeted spell effects. Returns ExecuteResult on early exit."""
+        if effect_type == "heal":
+            heal_total, heal_rolls = self._resolve_heal_amount(
+                template, effect, spellcasting_mod, spell_level, resolved_slot_level,
+            )
+            if heal_total is None:
                 return self._unsupported_cast_spell(
-                    status="unsupported_target",
+                    status="unsupported_effect",
                     spell_id=spell_id,
                     slot_level=resolved_slot_level,
-                    target_mode=target_mode,
+                    target_mode="self",
                     targets=resolved_targets,
                 )
+            ctx["rolls"].extend(heal_rolls)
+            target_hp = min(int(state.player.max_hp), int(state.player.hp) + heal_total)
+            ctx["hp_delta"] = target_hp - int(state.player.hp)
+            ctx["target_hp"] = target_hp
+            return None
 
-            sub_area_id, hostile_payload, target_monster_id, _target_name = combat_target
-            if effect_type == "damage":
-                damage_total, damage_rolls = self._resolve_damage_amount(
-                    template,
-                    effect,
-                    spell_level,
-                    resolved_slot_level,
-                )
-                if damage_total is None:
-                    return self._unsupported_cast_spell(
-                        status="unsupported_effect",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
-                rolls.extend(damage_rolls)
+        effect_instance, concentration_requested = self._build_spell_effect_instance(
+            spell_id, effect_type, template, effect,
+        )
+        if effect_instance is None:
+            return self._unsupported_cast_spell(
+                status="unsupported_effect",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="self",
+                targets=resolved_targets,
+            )
 
-                participants = state.areas.participant_snapshots(hostile_payload)
-                target_resolution = state.areas.resolve_participant(
-                    target_monster_id,
-                    participants,
-                    by_monster_id_only=True,
-                )
-                if target_resolution is None:
-                    return self._unsupported_cast_spell(
-                        status="unsupported_target",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
-                target_index, participant = target_resolution
-                updated_target = dict(participant)
-                remaining_hp = max(0, state.areas.participant_hp(participant) - damage_total)
-                updated_target["hp"] = remaining_hp
-                updated_target["alive"] = remaining_hp > 0
-                participants[target_index] = updated_target
-                updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
-                    hostile_payload,
-                    participants,
-                    blocking=bool(hostile_payload.get("blocking", False)),
-                    current_tick=self._current_tick(state),
-                )
-                pending_hostile_payloads[sub_area_id] = updated_payload
-                target_hp = remaining_hp
-                target_alive = remaining_hp > 0
-                target_defeated = not target_alive
-            else:
-                effect_instance, concentration_requested = self._build_spell_effect_instance(
-                    spell_id,
-                    effect_type,
-                    template,
-                    effect,
-                )
-                if effect_instance is None:
-                    return self._unsupported_cast_spell(
-                        status="unsupported_effect",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
+        updated_effects = state.player.get_active_effects()
+        if concentration_requested:
+            (
+                updated_effects,
+                _player_changed,
+                cleared_target_payloads,
+                removed_count,
+                _,
+            ) = self._clear_concentration_effects(
+                state, self._normalize_mapping(state.player.concentration),
+            )
+            ctx["pending_hostile_payloads"].update(cleared_target_payloads)
+            ctx["broke_previous_concentration"] = (
+                removed_count > 0 or state.player.concentration is not None
+            )
+        else:
+            updated_effects = [dict(item) for item in updated_effects]
 
-                if concentration_requested:
-                    (
-                        updated_effects,
-                        player_changed,
-                        cleared_target_payloads,
-                        removed_count,
-                        _,
-                    ) = self._clear_concentration_effects(
-                        state,
-                        self._normalize_mapping(state.player.concentration),
-                    )
-                    pending_hostile_payloads.update(cleared_target_payloads)
-                    if player_changed:
-                        player_effects_update = updated_effects
-                    broke_previous_concentration = (
-                        removed_count > 0 or state.player.concentration is not None
-                    )
+        updated_effects.append(effect_instance)
+        ctx["player_effects_update"] = updated_effects
+        ctx["applied_effect_ids"].append(str(effect_instance["instance_id"]))
 
-                payload_for_target = pending_hostile_payloads.get(sub_area_id, hostile_payload)
-                participants = state.areas.participant_snapshots(payload_for_target)
-                target_resolution = state.areas.resolve_participant(
-                    target_monster_id,
-                    participants,
-                    by_monster_id_only=True,
-                )
-                if target_resolution is None:
-                    return self._unsupported_cast_spell(
-                        status="unsupported_target",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
-                target_index, participant = target_resolution
-                if not bool(participant.get("alive", False)):
-                    return self._unsupported_cast_spell(
-                        status="unsupported_target",
-                        spell_id=spell_id,
-                        slot_level=resolved_slot_level,
-                        target_mode=target_mode,
-                        targets=resolved_targets,
-                    )
-                updated_target = dict(participant)
-                target_effects = state.areas.participant_effects(updated_target)
-                target_effects.append(effect_instance)
-                updated_target["active_effects"] = target_effects
-                participants[target_index] = updated_target
-                updated_payload = state.areas.update_hostile_participants(
-                    payload_for_target,
-                    participants,
-                )
-                pending_hostile_payloads[sub_area_id] = updated_payload
-                applied_effect_ids.append(str(effect_instance["instance_id"]))
-                target_effect_count = len(target_effects)
-                combat_active = bool(updated_payload.get("combat_active", False))
-                combat_cleared = bool(updated_payload.get("cleared", False))
+        if concentration_requested:
+            ctx["new_concentration_payload"] = {
+                "spell_id": spell_id,
+                "slot_level": resolved_slot_level,
+                "remaining_duration": int(effect_instance.get("remaining_ticks", -1)),
+                "applied_effects": [str(effect_instance["instance_id"])],
+                "targets": list(resolved_targets),
+                "target_refs": [],
+            }
+        return None
 
-                if concentration_requested:
-                    new_concentration_payload = {
-                        "spell_id": spell_id,
-                        "slot_level": resolved_slot_level,
-                        "remaining_duration": int(effect_instance.get("remaining_ticks", -1)),
-                        "applied_effects": [],
-                        "targets": list(resolved_targets),
-                        "target_refs": [
-                            {
-                                "kind": self._COMBAT_TARGET_KIND,
-                                "sub_area_id": sub_area_id,
-                                "participant_monster_id": target_monster_id,
-                                "effect_ids": [str(effect_instance["instance_id"])],
-                            }
-                        ],
+    def _apply_combat_target(
+        self,
+        state: StateContainer,
+        template: Mapping[str, Any],
+        effect: dict[str, Any],
+        effect_type: str,
+        spell_id: str,
+        spell_level: int,
+        resolved_slot_level: int,
+        resolved_targets: list[str],
+        ctx: dict[str, Any],
+    ) -> ExecuteResult | None:
+        """Apply combat-targeted spell effects. Returns ExecuteResult on early exit."""
+        combat_target = self._resolve_combat_target(state, resolved_targets[0])
+        if combat_target is None:
+            return self._unsupported_cast_spell(
+                status="unsupported_target",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="combat",
+                targets=resolved_targets,
+            )
+
+        sub_area_id, hostile_payload, target_monster_id, _target_name = combat_target
+
+        if effect_type == "damage":
+            return self._apply_combat_damage(
+                state, template, effect, spell_id, spell_level,
+                resolved_slot_level, resolved_targets,
+                sub_area_id, hostile_payload, target_monster_id, ctx,
+            )
+
+        return self._apply_combat_control(
+            state, template, effect, spell_id,
+            resolved_slot_level, resolved_targets,
+            sub_area_id, hostile_payload, target_monster_id, ctx,
+        )
+
+    def _apply_combat_damage(
+        self,
+        state: StateContainer,
+        template: Mapping[str, Any],
+        effect: dict[str, Any],
+        spell_id: str,
+        spell_level: int,
+        resolved_slot_level: int,
+        resolved_targets: list[str],
+        sub_area_id: str,
+        hostile_payload: dict[str, Any],
+        target_monster_id: str,
+        ctx: dict[str, Any],
+    ) -> ExecuteResult | None:
+        """Apply damage to a combat target."""
+        damage_total, damage_rolls = self._resolve_damage_amount(
+            template, effect, spell_level, resolved_slot_level,
+        )
+        if damage_total is None:
+            return self._unsupported_cast_spell(
+                status="unsupported_effect",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="combat",
+                targets=resolved_targets,
+            )
+        ctx["rolls"].extend(damage_rolls)
+
+        participants = state.areas.participant_snapshots(hostile_payload)
+        target_resolution = state.areas.resolve_participant(
+            target_monster_id, participants, by_monster_id_only=True,
+        )
+        if target_resolution is None:
+            return self._unsupported_cast_spell(
+                status="unsupported_target",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="combat",
+                targets=resolved_targets,
+            )
+        target_index, participant = target_resolution
+        updated_target = dict(participant)
+        remaining_hp = max(0, state.areas.participant_hp(participant) - damage_total)
+        updated_target["hp"] = remaining_hp
+        updated_target["alive"] = remaining_hp > 0
+        participants[target_index] = updated_target
+        updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
+            hostile_payload,
+            participants,
+            blocking=bool(hostile_payload.get("blocking", False)),
+            current_tick=self._current_tick(state),
+        )
+        ctx["pending_hostile_payloads"][sub_area_id] = updated_payload
+        ctx["damage_total"] = damage_total
+        ctx["target_hp"] = remaining_hp
+        ctx["target_alive"] = remaining_hp > 0
+        ctx["target_defeated"] = remaining_hp <= 0
+        ctx["combat_active"] = combat_active
+        ctx["combat_cleared"] = combat_cleared
+        return None
+
+    def _apply_combat_control(
+        self,
+        state: StateContainer,
+        template: Mapping[str, Any],
+        effect: dict[str, Any],
+        spell_id: str,
+        resolved_slot_level: int,
+        resolved_targets: list[str],
+        sub_area_id: str,
+        hostile_payload: dict[str, Any],
+        target_monster_id: str,
+        ctx: dict[str, Any],
+    ) -> ExecuteResult | None:
+        """Apply control effect to a combat target."""
+        effect_instance, concentration_requested = self._build_spell_effect_instance(
+            spell_id, "control", template, effect,
+        )
+        if effect_instance is None:
+            return self._unsupported_cast_spell(
+                status="unsupported_effect",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="combat",
+                targets=resolved_targets,
+            )
+
+        if concentration_requested:
+            (
+                updated_effects,
+                player_changed,
+                cleared_target_payloads,
+                removed_count,
+                _,
+            ) = self._clear_concentration_effects(
+                state, self._normalize_mapping(state.player.concentration),
+            )
+            ctx["pending_hostile_payloads"].update(cleared_target_payloads)
+            if player_changed:
+                ctx["player_effects_update"] = updated_effects
+            ctx["broke_previous_concentration"] = (
+                removed_count > 0 or state.player.concentration is not None
+            )
+
+        payload_for_target = ctx["pending_hostile_payloads"].get(sub_area_id, hostile_payload)
+        participants = state.areas.participant_snapshots(payload_for_target)
+        target_resolution = state.areas.resolve_participant(
+            target_monster_id, participants, by_monster_id_only=True,
+        )
+        if target_resolution is None:
+            return self._unsupported_cast_spell(
+                status="unsupported_target",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="combat",
+                targets=resolved_targets,
+            )
+        target_index, participant = target_resolution
+        if not bool(participant.get("alive", False)):
+            return self._unsupported_cast_spell(
+                status="unsupported_target",
+                spell_id=spell_id,
+                slot_level=resolved_slot_level,
+                target_mode="combat",
+                targets=resolved_targets,
+            )
+        updated_target = dict(participant)
+        target_effects = state.areas.participant_effects(updated_target)
+        target_effects.append(effect_instance)
+        updated_target["active_effects"] = target_effects
+        participants[target_index] = updated_target
+        updated_payload = state.areas.update_hostile_participants(
+            payload_for_target, participants,
+        )
+        ctx["pending_hostile_payloads"][sub_area_id] = updated_payload
+        ctx["applied_effect_ids"].append(str(effect_instance["instance_id"]))
+        ctx["target_effect_count"] = len(target_effects)
+        ctx["combat_active"] = bool(updated_payload.get("combat_active", False))
+        ctx["combat_cleared"] = bool(updated_payload.get("cleared", False))
+
+        if concentration_requested:
+            ctx["new_concentration_payload"] = {
+                "spell_id": spell_id,
+                "slot_level": resolved_slot_level,
+                "remaining_duration": int(effect_instance.get("remaining_ticks", -1)),
+                "applied_effects": [],
+                "targets": list(resolved_targets),
+                "target_refs": [
+                    {
+                        "kind": self._COMBAT_TARGET_KIND,
+                        "sub_area_id": sub_area_id,
+                        "participant_monster_id": target_monster_id,
+                        "effect_ids": [str(effect_instance["instance_id"])],
                     }
+                ],
+            }
+        return None
+
+    def _build_cast_result(
+        self,
+        state: StateContainer,
+        ctx: dict[str, Any],
+        *,
+        spell_id: str,
+        spell_level: int,
+        resolved_slot_level: int,
+        resource_key: str | None,
+        resource_amount: int,
+        time_cost: float,
+        target_mode: str,
+        effect_type: str,
+        resolved_targets: list[str],
+    ) -> ExecuteResult:
+        """Build state changes, metadata, and final result for cast_spell."""
+        changes: list[StateChange] = list(ctx["changes"])
 
         if spell_level > 0:
             slot_state = state.player.get_spell_slots(resolved_slot_level) or {"current": 0, "max": 0}
@@ -541,18 +654,14 @@ class SpellHandler(StaticCommandHandler):
             }
             changes.append(
                 StateChange(
-                    "player",
-                    "modify",
-                    f"spell_slots.{resolved_slot_level}",
-                    updated_slot_state,
+                    "player", "modify",
+                    f"spell_slots.{resolved_slot_level}", updated_slot_state,
                 )
             )
 
         if resource_key is not None:
             resource = state.player.get_resource(resource_key) or {
-                "current": 0,
-                "max": 0,
-                "recovery": "long_rest",
+                "current": 0, "max": 0, "recovery": "long_rest",
             }
             updated_resource = {
                 **resource,
@@ -560,29 +669,23 @@ class SpellHandler(StaticCommandHandler):
             }
             changes.append(
                 StateChange(
-                    "player",
-                    "modify",
-                    f"class_resources.{resource_key}",
-                    updated_resource,
+                    "player", "modify",
+                    f"class_resources.{resource_key}", updated_resource,
                 )
             )
 
+        hp_delta = ctx["hp_delta"]
         if hp_delta != 0:
             changes.append(StateChange("player", "add", "hp", hp_delta))
-        if player_effects_update is not None:
-            changes.append(StateChange("player", "set", "active_effects", player_effects_update))
-        if new_concentration_payload is not None:
+        if ctx["player_effects_update"] is not None:
+            changes.append(StateChange("player", "set", "active_effects", ctx["player_effects_update"]))
+        if ctx["new_concentration_payload"] is not None:
             changes.append(
-                StateChange(
-                    "player",
-                    "set",
-                    "concentration",
-                    new_concentration_payload,
-                )
+                StateChange("player", "set", "concentration", ctx["new_concentration_payload"])
             )
-        changes.extend(self._hostile_changes(pending_hostile_payloads))
+        changes.extend(self._hostile_changes(ctx["pending_hostile_payloads"]))
 
-        metadata = {
+        metadata: dict[str, Any] = {
             "status": "cast",
             "spell_id": spell_id,
             "slot_level": resolved_slot_level,
@@ -590,38 +693,33 @@ class SpellHandler(StaticCommandHandler):
             "resource_key": resource_key,
             "resource_amount": resource_amount if resource_key is not None else 0,
             "hp_delta": hp_delta,
-            "applied_effect_ids": applied_effect_ids,
-            "broke_previous_concentration": broke_previous_concentration,
-            "concentration": new_concentration_payload is not None,
+            "applied_effect_ids": ctx["applied_effect_ids"],
+            "broke_previous_concentration": ctx["broke_previous_concentration"],
+            "concentration": ctx["new_concentration_payload"] is not None,
             "target_mode": target_mode,
             "targets": list(resolved_targets),
         }
         if target_mode == "combat" and effect_type == "damage":
-            metadata.update(
-                {
-                    "damage_total": damage_total,
-                    "target_hp": target_hp,
-                    "target_alive": target_alive,
-                    "target_defeated": target_defeated,
-                    "combat_active": combat_active,
-                    "combat_cleared": combat_cleared,
-                }
-            )
+            metadata.update({
+                "damage_total": ctx["damage_total"],
+                "target_hp": ctx["target_hp"],
+                "target_alive": ctx["target_alive"],
+                "target_defeated": ctx["target_defeated"],
+                "combat_active": ctx["combat_active"],
+                "combat_cleared": ctx["combat_cleared"],
+            })
         if target_mode == "combat" and effect_type == "control":
-            metadata.update(
-                {
-                    "target_effect_applied": True,
-                    "target_effect_count": target_effect_count,
-                    "combat_active": combat_active,
-                    "combat_cleared": combat_cleared,
-                }
-            )
-        return self._success(
-            "cast_spell",
-            changes=changes,
-            time_cost=time_cost,
-            rolls=rolls,
-            metadata=metadata,
+            metadata.update({
+                "target_effect_applied": True,
+                "target_effect_count": ctx["target_effect_count"],
+                "combat_active": ctx["combat_active"],
+                "combat_cleared": ctx["combat_cleared"],
+            })
+        return handler_success(
+            "spell", "cast_spell",
+            changes=changes, time_cost=time_cost,
+            rolls=ctx["rolls"], metadata=metadata,
+            omit_empty_delta=False,
         )
 
     def _resolve_spell_template(
@@ -641,7 +739,7 @@ class SpellHandler(StaticCommandHandler):
 
     def _is_spell_template(self, template: Mapping[str, Any]) -> bool:
         for key in ("category", "type", "kind"):
-            value = self._coerce_non_empty_string(template.get(key))
+            value = coerce_non_empty_string(template.get(key))
             if value == "spell":
                 return True
         if "spell_level" in template:
@@ -669,14 +767,14 @@ class SpellHandler(StaticCommandHandler):
         effect: Mapping[str, Any],
     ) -> str:
         for source, key in ((effect, "type"), (template, "effect_type")):
-            value = self._coerce_non_empty_string(source.get(key))
+            value = coerce_non_empty_string(source.get(key))
             if value is not None:
                 return value
         if self._read_positive_int(effect, template, "heal_amount", "heal") is not None:
             return "heal"
-        if self._coerce_non_empty_string(effect.get("applies_status")) is not None:
+        if coerce_non_empty_string(effect.get("applies_status")) is not None:
             return "buff"
-        if self._coerce_non_empty_string(template.get("applies_status")) is not None:
+        if coerce_non_empty_string(template.get("applies_status")) is not None:
             return "buff"
         return ""
 
@@ -686,7 +784,7 @@ class SpellHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> str:
         class_template = self._get_class_template(state, world)
-        ability = self._coerce_non_empty_string(class_template.get("spellcasting_ability"))
+        ability = coerce_non_empty_string(class_template.get("spellcasting_ability"))
         if ability is not None:
             ability = ability.lower()
         if ability is None or ability not in state.player.stats:
@@ -696,10 +794,10 @@ class SpellHandler(StaticCommandHandler):
     def _resolve_action_type(self, template: Mapping[str, Any]) -> str:
         raw_cost = template.get("cost")
         if isinstance(raw_cost, Mapping):
-            action_type = self._coerce_non_empty_string(raw_cost.get("action_type"))
+            action_type = coerce_non_empty_string(raw_cost.get("action_type"))
             if action_type is not None:
                 return action_type
-        return self._coerce_non_empty_string(template.get("action_type")) or "action"
+        return coerce_non_empty_string(template.get("action_type")) or "action"
 
     def _resolve_resource_cost(
         self,
@@ -708,7 +806,7 @@ class SpellHandler(StaticCommandHandler):
         raw_cost = template.get("cost")
         if not isinstance(raw_cost, Mapping):
             return (None, 0)
-        resource_key = self._coerce_non_empty_string(raw_cost.get("resource"))
+        resource_key = coerce_non_empty_string(raw_cost.get("resource"))
         if resource_key is None:
             return (None, 0)
         amount = self._coerce_int(
@@ -722,14 +820,14 @@ class SpellHandler(StaticCommandHandler):
         if raw_targets is None:
             return {"mode": "self", "targets": ["player"]}
         if isinstance(raw_targets, str):
-            target = self._coerce_non_empty_string(raw_targets)
+            target = coerce_non_empty_string(raw_targets)
             if target is None:
                 return None
             if target.lower() in self._SUPPORTED_SELF_TARGETS:
                 return {"mode": "self", "targets": ["player"]}
             return {"mode": "combat", "targets": [target]}
         if isinstance(raw_targets, list) and len(raw_targets) == 1:
-            target = self._coerce_non_empty_string(raw_targets[0])
+            target = coerce_non_empty_string(raw_targets[0])
             if target is None:
                 return None
             if target.lower() in self._SUPPORTED_SELF_TARGETS:
@@ -747,7 +845,7 @@ class SpellHandler(StaticCommandHandler):
         class_template = self._get_class_template(state, world)
         if not class_template:
             return "fallback"
-        has_formula = self._coerce_non_empty_string(class_template.get("prepared_formula")) is not None
+        has_formula = coerce_non_empty_string(class_template.get("prepared_formula")) is not None
         has_limit = self._coerce_int(class_template.get("prepared_limit")) is not None
         if has_formula or has_limit:
             return "prepared"
@@ -765,7 +863,7 @@ class SpellHandler(StaticCommandHandler):
         explicit_limit = self._coerce_int(class_template.get("prepared_limit"))
         if explicit_limit is not None:
             return max(0, explicit_limit)
-        formula = self._coerce_non_empty_string(class_template.get("prepared_formula"))
+        formula = coerce_non_empty_string(class_template.get("prepared_formula"))
         if formula is None:
             return len(state.player.known_spells)
         return self._evaluate_prepared_formula(formula, state)
@@ -944,7 +1042,7 @@ class SpellHandler(StaticCommandHandler):
         current_effects: list[dict[str, Any]],
         concentration: Mapping[str, Any],
     ) -> tuple[list[dict[str, Any]], int, str | None]:
-        spell_id = self._coerce_non_empty_string(concentration.get("spell_id"))
+        spell_id = coerce_non_empty_string(concentration.get("spell_id"))
         raw_applied = concentration.get("applied_effects")
         applied_effects: set[str] = set()
         if isinstance(raw_applied, list):
@@ -957,12 +1055,12 @@ class SpellHandler(StaticCommandHandler):
         updated_effects: list[dict[str, Any]] = []
         removed_count = 0
         for effect in current_effects:
-            instance_id = self._coerce_non_empty_string(effect.get("instance_id"))
+            instance_id = coerce_non_empty_string(effect.get("instance_id"))
             if instance_id is not None and instance_id in applied_effects:
                 removed_count += 1
                 continue
             if not applied_effects and bool(effect.get("from_concentration")):
-                if spell_id and self._coerce_non_empty_string(effect.get("source_spell_id")) == spell_id:
+                if spell_id and coerce_non_empty_string(effect.get("source_spell_id")) == spell_id:
                     removed_count += 1
                     continue
             updated_effects.append(dict(effect))
@@ -998,17 +1096,17 @@ class SpellHandler(StaticCommandHandler):
         if not isinstance(raw_target_refs, list):
             return ({}, 0)
 
-        spell_id = self._coerce_non_empty_string(concentration.get("spell_id"))
+        spell_id = coerce_non_empty_string(concentration.get("spell_id"))
         updates: dict[str, dict[str, Any]] = {}
         removed_count = 0
         for raw_ref in raw_target_refs:
             if not isinstance(raw_ref, Mapping):
                 continue
-            kind = self._coerce_non_empty_string(raw_ref.get("kind"))
+            kind = coerce_non_empty_string(raw_ref.get("kind"))
             if kind != self._COMBAT_TARGET_KIND:
                 continue
-            sub_area_id = self._coerce_non_empty_string(raw_ref.get("sub_area_id"))
-            participant_monster_id = self._coerce_non_empty_string(
+            sub_area_id = coerce_non_empty_string(raw_ref.get("sub_area_id"))
+            participant_monster_id = coerce_non_empty_string(
                 raw_ref.get("participant_monster_id")
             )
             if sub_area_id is None or participant_monster_id is None:
@@ -1059,12 +1157,12 @@ class SpellHandler(StaticCommandHandler):
         updated_effects: list[dict[str, Any]] = []
         removed_count = 0
         for effect in current_effects:
-            instance_id = self._coerce_non_empty_string(effect.get("instance_id"))
+            instance_id = coerce_non_empty_string(effect.get("instance_id"))
             remove = False
             if instance_id is not None and instance_id in effect_ids:
                 remove = True
             elif not effect_ids and spell_id and bool(effect.get("from_concentration")):
-                if self._coerce_non_empty_string(effect.get("source_spell_id")) == spell_id:
+                if coerce_non_empty_string(effect.get("source_spell_id")) == spell_id:
                     remove = True
             if remove:
                 removed_count += 1
@@ -1079,7 +1177,7 @@ class SpellHandler(StaticCommandHandler):
     ) -> tuple[str, dict[str, Any], str, str] | None:
         if not state.has_slice("areas"):
             return None
-        area_id = self._coerce_non_empty_string(state.player.current_area)
+        area_id = coerce_non_empty_string(state.player.current_area)
         if area_id is None:
             return None
         area = state.areas.areas.get(area_id)
@@ -1150,7 +1248,7 @@ class SpellHandler(StaticCommandHandler):
             metadata["target_mode"] = target_mode
         if targets is not None:
             metadata["targets"] = list(targets)
-        return self._success_no_delta("cast_spell", metadata=metadata)
+        return handler_success_no_delta("spell", "cast_spell", metadata=metadata)
 
     def _get_hostile_payload(
         self,
@@ -1186,39 +1284,6 @@ class SpellHandler(StaticCommandHandler):
             return None
         return state.time.absolute_tick()
 
-    def _success(
-        self,
-        command_type: str,
-        *,
-        changes: list[StateChange],
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-        rolls: list[DiceRoll] | None = None,
-    ) -> ExecuteResult:
-        payload = {"handler": "spell", "command": command_type, **metadata}
-        return ExecuteResult(
-            success=True,
-            delta=StateDelta(changes=changes, reason=command_type, metadata=payload),
-            time_cost=time_cost,
-            rolls=list(rolls or []),
-            metadata=payload,
-        )
-
-    def _success_no_delta(
-        self,
-        command_type: str,
-        *,
-        metadata: dict[str, Any],
-        time_cost: float = 0.0,
-        rolls: list[DiceRoll] | None = None,
-    ) -> ExecuteResult:
-        return ExecuteResult(
-            success=True,
-            delta=None,
-            time_cost=time_cost,
-            rolls=list(rolls or []),
-            metadata={"handler": "spell", "command": command_type, **metadata},
-        )
 
     def _get_class_template(
         self,
@@ -1227,7 +1292,7 @@ class SpellHandler(StaticCommandHandler):
     ) -> dict[str, Any]:
         if not world.has_registry("classes"):
             return {}
-        class_id = self._coerce_non_empty_string(state.player.character_class)
+        class_id = coerce_non_empty_string(state.player.character_class)
         if class_id is None:
             return {}
         template = world.classes.get_class(class_id)
@@ -1258,7 +1323,7 @@ class SpellHandler(StaticCommandHandler):
     ) -> str | None:
         for key in keys:
             for source in (primary, fallback):
-                value = cls._coerce_non_empty_string(source.get(key))
+                value = coerce_non_empty_string(source.get(key))
                 if value is not None:
                     return value
         return None
@@ -1321,12 +1386,12 @@ class SpellHandler(StaticCommandHandler):
         raw_value = params.get(key)
         if raw_value is None:
             return None
-        identity = SpellHandler._coerce_non_empty_string(raw_value)
+        identity = coerce_non_empty_string(raw_value)
         if identity is None:
             return ValidationResult(ok=False, reason=f"{key} must be a non-empty string")
         if identity == "player":
             return None
-        player_character_id = SpellHandler._coerce_non_empty_string(state.player.character_id)
+        player_character_id = coerce_non_empty_string(state.player.character_id)
         if player_character_id is not None and identity == player_character_id:
             return None
         return ValidationResult(ok=False, reason=f"{key} must refer to the current player")
@@ -1337,18 +1402,6 @@ class SpellHandler(StaticCommandHandler):
             return dict(raw_value)
         return {}
 
-    @staticmethod
-    def _get_non_empty_string(params: Mapping[str, Any], key: str) -> str | None:
-        return SpellHandler._coerce_non_empty_string(params.get(key))
-
-    @staticmethod
-    def _coerce_non_empty_string(raw_value: Any) -> str | None:
-        if raw_value is None:
-            return None
-        value = str(raw_value).strip()
-        if not value:
-            return None
-        return value
 
     @staticmethod
     def _coerce_int(raw_value: Any) -> int | None:
