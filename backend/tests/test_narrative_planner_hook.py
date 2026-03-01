@@ -35,13 +35,13 @@ class RecordingPlanner:
         self.decision = decision
         self.calls: list[dict[str, object]] = []
 
-    def plan(self, context):
+    async def plan(self, context):
         self.calls.append(dict(context))
         return self.decision
 
 
 class ExplodingPlanner:
-    def plan(self, context):
+    async def plan(self, context):
         del context
         raise RuntimeError("planner unavailable")
 

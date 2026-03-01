@@ -6,8 +6,14 @@ import asyncio
 from dataclasses import dataclass
 import os
 import uuid
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
+if TYPE_CHECKING:
+    from app.game_core.adapters.firestore_persistence import FirestorePersistencePort
+    from app.game_core.orchestration.hooks.ai_osiris import AIOsirisEvaluator
+    from app.game_core.orchestration.hooks.gm_narration import GmNarrator
+    from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerProvider
+    from app.game_core.state import StateContainer
 from app.game_core.adapters.local_persistence import LocalFilePersistencePort
 from app.game_core.adapters.session_store import SaveResult, SaveStore
 from app.game_core.bootstrap import (
@@ -84,8 +90,19 @@ class SavedSessionInfo:
 class GameRuntime:
     """Own world caching and top-level session lifecycle orchestration."""
 
-    def __init__(self, save_store: SaveStore | None = None) -> None:
+    def __init__(
+        self,
+        save_store: SaveStore | None = None,
+        agent_orchestration: Any = None,
+        gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
+        osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
+        narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+    ) -> None:
         self._save_store = save_store or SaveStore(self._default_persistence_port())
+        self._agent_orchestration = agent_orchestration
+        self._gm_narrator_factory = gm_narrator_factory
+        self._osiris_evaluator_factory = osiris_evaluator_factory
+        self._narrative_planner_factory = narrative_planner_factory
         self._world_cache: dict[str, WorldInstance] = {}
         self._execution_locks_guard = asyncio.Lock()
         self._execution_locks: dict[str, asyncio.Lock] = {}
@@ -100,7 +117,7 @@ class GameRuntime:
             return lock
 
     @staticmethod
-    def _default_persistence_port() -> Any:
+    def _default_persistence_port() -> LocalFilePersistencePort | FirestorePersistencePort:
         backend = os.environ.get("PERSISTENCE_BACKEND", "local")
         if backend == "firestore":
             from app.game_core.adapters.firestore_persistence import FirestorePersistencePort
@@ -151,6 +168,11 @@ class GameRuntime:
             ],
         )
 
+    @property
+    def agent_orchestration(self) -> Any:
+        """Return the injected AgentOrchestrationService (None if LLM unavailable)."""
+        return self._agent_orchestration
+
     async def create_session(
         self,
         world_id: str,
@@ -160,7 +182,12 @@ class GameRuntime:
     ) -> ManagedSession:
         """Create a new session and persist its initial snapshot."""
         world = self.get_world(world_id, world_data=world_data)
-        runtime = build_runtime_for_world(world)
+        runtime = build_runtime_for_world(
+            world,
+            gm_narrator_factory=self._gm_narrator_factory,
+            osiris_evaluator_factory=self._osiris_evaluator_factory,
+            narrative_planner_factory=self._narrative_planner_factory,
+        )
         resolved_session_id = session_id or self._new_session_id()
         await self._save_store.save_runtime(resolved_session_id, runtime)
         return ManagedSession(
@@ -200,7 +227,7 @@ class GameRuntime:
         starting_area = world.maps.starting_area()
         if starting_area is None:
             raise ValueError("world has no starting area")
-        starting_area_id = self._normalized_string(starting_area.get("id"))
+        starting_area_id = self._normalized_string(starting_area.id)
         if starting_area_id is None:
             raise ValueError("starting area is missing an id")
         starting_location_id = self._resolve_starting_location_id(starting_area)
@@ -286,7 +313,12 @@ class GameRuntime:
     ) -> ManagedSession | None:
         """Restore an existing session, or return None if no save exists."""
         world = self.get_world(world_id, world_data=world_data)
-        runtime = await self._save_store.load_runtime_for_world(world, session_id)
+        runtime = await self._save_store.load_runtime_for_world(
+            world, session_id,
+            gm_narrator_factory=self._gm_narrator_factory,
+            osiris_evaluator_factory=self._osiris_evaluator_factory,
+            narrative_planner_factory=self._narrative_planner_factory,
+        )
         if runtime is None:
             return None
         return ManagedSession(
@@ -368,21 +400,22 @@ class GameRuntime:
 
     def _resolve_starting_location_id(
         self,
-        area_template: Mapping[str, Any],
+        area_template: Any,
     ) -> str | None:
-        default_location = self._normalized_string(area_template.get("default_location"))
+        default_location = self._normalized_string(
+            getattr(area_template, "default_location", None)
+        )
         if default_location is not None:
             return default_location
-        raw_sub_locations = area_template.get("sub_locations", {})
-        if isinstance(raw_sub_locations, Mapping):
-            for key in raw_sub_locations:
-                normalized = self._normalized_string(key)
-                if normalized is not None:
-                    return normalized
+        sub_locations = area_template.sub_locations
+        for key in sub_locations:
+            normalized = self._normalized_string(key)
+            if normalized is not None:
+                return normalized
         return None
 
-    def _collect_starting_item_ids(self, class_template: Mapping[str, Any]) -> list[str]:
-        raw_equipment = class_template.get("starting_equipment", [])
+    def _collect_starting_item_ids(self, class_template: Any) -> list[str]:
+        raw_equipment = class_template.starting_equipment
         if not isinstance(raw_equipment, list):
             return []
         item_ids: list[str] = []
@@ -394,9 +427,9 @@ class GameRuntime:
 
     def _collect_default_equipped(
         self,
-        class_template: Mapping[str, Any],
+        class_template: Any,
     ) -> dict[str, str]:
-        raw_default_equipped = class_template.get("default_equipped", {})
+        raw_default_equipped = class_template.default_equipped
         if not isinstance(raw_default_equipped, Mapping):
             return {}
         normalized_mapping: dict[str, str] = {}
@@ -408,17 +441,14 @@ class GameRuntime:
             normalized_mapping[normalized_slot] = normalized_item_id
         return normalized_mapping
 
-    def _normalize_race_option(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        raw_traits = payload.get("racial_traits", [])
+    def _normalize_race_option(self, payload: Any) -> dict[str, Any]:
+        raw_traits = getattr(payload, "racial_traits", [])
+        stat_bonuses = getattr(payload, "stat_bonuses", {})
         return {
-            "id": self._string_or_default(payload.get("id"), ""),
-            "name": self._string_or_default(payload.get("name"), ""),
-            "description": self._string_or_default(payload.get("description"), ""),
-            "stat_bonuses": (
-                dict(payload.get("stat_bonuses"))
-                if isinstance(payload.get("stat_bonuses"), Mapping)
-                else {}
-            ),
+            "id": self._string_or_default(getattr(payload, "id", None), ""),
+            "name": self._string_or_default(getattr(payload, "name", None), ""),
+            "description": self._string_or_default(getattr(payload, "description", None), ""),
+            "stat_bonuses": dict(stat_bonuses) if isinstance(stat_bonuses, Mapping) else {},
             "racial_traits": [
                 str(item)
                 for item in raw_traits
@@ -426,14 +456,17 @@ class GameRuntime:
             ] if isinstance(raw_traits, list) else [],
         }
 
-    def _normalize_class_option(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        raw_starting_equipment = payload.get("starting_equipment", [])
-        raw_default_equipped = payload.get("default_equipped", {})
+    def _normalize_class_option(self, payload: Any) -> dict[str, Any]:
+        raw_starting_equipment = getattr(payload, "starting_equipment", [])
+        raw_default_equipped = getattr(payload, "default_equipped", {})
+        hit_die = getattr(payload, "hit_die", None)
+        if hit_die is None:
+            hit_die = getattr(payload, "base_hp", None)
         return {
-            "id": self._string_or_default(payload.get("id"), ""),
-            "name": self._string_or_default(payload.get("name"), ""),
-            "description": self._string_or_default(payload.get("description"), ""),
-            "hit_die": payload.get("hit_die", payload.get("base_hp")),
+            "id": self._string_or_default(getattr(payload, "id", None), ""),
+            "name": self._string_or_default(getattr(payload, "name", None), ""),
+            "description": self._string_or_default(getattr(payload, "description", None), ""),
+            "hit_die": hit_die,
             "starting_equipment": [
                 str(item)
                 for item in raw_starting_equipment
@@ -451,20 +484,20 @@ class GameRuntime:
             ),
         }
 
-    def _normalize_background_option(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        raw_skills = payload.get("skill_proficiency", [])
+    def _normalize_background_option(self, payload: Any) -> dict[str, Any]:
+        raw_skills = getattr(payload, "skill_proficiency", [])
         return {
-            "id": self._string_or_default(payload.get("id"), ""),
-            "name": self._string_or_default(payload.get("name"), ""),
-            "description": self._string_or_default(payload.get("description"), ""),
+            "id": self._string_or_default(getattr(payload, "id", None), ""),
+            "name": self._string_or_default(getattr(payload, "name", None), ""),
+            "description": self._string_or_default(getattr(payload, "description", None), ""),
             "skill_proficiency": [
                 str(item)
                 for item in raw_skills
                 if self._normalized_string(item) is not None
             ] if isinstance(raw_skills, list) else [],
-            "gold_bonus": self._coerce_optional_int(payload.get("gold_bonus"), None),
-            "starting_gold": self._coerce_optional_int(payload.get("starting_gold"), None),
-            "feature": self._string_or_default(payload.get("feature"), ""),
+            "gold_bonus": self._coerce_optional_int(getattr(payload, "gold_bonus", None), None),
+            "starting_gold": self._coerce_optional_int(getattr(payload, "starting_gold", None), None),
+            "feature": self._string_or_default(getattr(payload, "feature", None), ""),
         }
 
     @staticmethod

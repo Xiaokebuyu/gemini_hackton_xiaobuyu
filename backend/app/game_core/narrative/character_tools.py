@@ -413,7 +413,9 @@ class OfferQuestTool(_CharacterTool):
 
 
 class OfferTradeTool(_CharacterTool):
-    """Display merchandise for trade (read-only)."""
+    """Display merchandise for trade (read-only). Merchant NPCs only."""
+
+    applicable_traits = ["merchant"]
 
     @property
     def name(self) -> str:

@@ -121,6 +121,15 @@ class CommandAliasInputPort:
             "message": message,
         }
 
+# Quest snapshot intents share identical normalization logic — only snapshot_type differs.
+_QUEST_SNAPSHOT_INTENTS: dict[str, str] = {
+    "ask_quest": "quest_brief",
+    "ask_progress": "quest_progress",
+    "ask_location": "quest_location",
+    "ask_requirements": "quest_requirements",
+    "ask_reward": "quest_reward",
+}
+
 
 class FastAPIInputPort:
     """Route-facing inbound adapter for text and structured interaction payloads."""
@@ -278,103 +287,23 @@ class FastAPIInputPort:
                 count=1,
                 execution={"kind": "snapshot", "snapshot_type": "talk"},
             )
-        if intent == "ask_quest":
+        if intent in _QUEST_SNAPSHOT_INTENTS:
             if quest_id is None:
                 return self._rejected_action(
                     **base,
                     code="missing_quest",
-                    message="quest_id is required for npc ask_quest",
+                    message=f"quest_id is required for npc {intent}",
                 )
             return self._resolved_action(
                 target_kind="npc",
                 target_id=target_id,
-                intent="ask_quest",
+                intent=intent,
                 item_id=None,
                 quest_id=str(quest_id),
                 count=1,
                 execution={
                     "kind": "snapshot",
-                    "snapshot_type": "quest_brief",
-                    "quest_id": str(quest_id),
-                },
-            )
-        if intent == "ask_progress":
-            if quest_id is None:
-                return self._rejected_action(
-                    **base,
-                    code="missing_quest",
-                    message="quest_id is required for npc ask_progress",
-                )
-            return self._resolved_action(
-                target_kind="npc",
-                target_id=target_id,
-                intent="ask_progress",
-                item_id=None,
-                quest_id=str(quest_id),
-                count=1,
-                execution={
-                    "kind": "snapshot",
-                    "snapshot_type": "quest_progress",
-                    "quest_id": str(quest_id),
-                },
-            )
-        if intent == "ask_location":
-            if quest_id is None:
-                return self._rejected_action(
-                    **base,
-                    code="missing_quest",
-                    message="quest_id is required for npc ask_location",
-                )
-            return self._resolved_action(
-                target_kind="npc",
-                target_id=target_id,
-                intent="ask_location",
-                item_id=None,
-                quest_id=str(quest_id),
-                count=1,
-                execution={
-                    "kind": "snapshot",
-                    "snapshot_type": "quest_location",
-                    "quest_id": str(quest_id),
-                },
-            )
-        if intent == "ask_requirements":
-            if quest_id is None:
-                return self._rejected_action(
-                    **base,
-                    code="missing_quest",
-                    message="quest_id is required for npc ask_requirements",
-                )
-            return self._resolved_action(
-                target_kind="npc",
-                target_id=target_id,
-                intent="ask_requirements",
-                item_id=None,
-                quest_id=str(quest_id),
-                count=1,
-                execution={
-                    "kind": "snapshot",
-                    "snapshot_type": "quest_requirements",
-                    "quest_id": str(quest_id),
-                },
-            )
-        if intent == "ask_reward":
-            if quest_id is None:
-                return self._rejected_action(
-                    **base,
-                    code="missing_quest",
-                    message="quest_id is required for npc ask_reward",
-                )
-            return self._resolved_action(
-                target_kind="npc",
-                target_id=target_id,
-                intent="ask_reward",
-                item_id=None,
-                quest_id=str(quest_id),
-                count=1,
-                execution={
-                    "kind": "snapshot",
-                    "snapshot_type": "quest_reward",
+                    "snapshot_type": _QUEST_SNAPSHOT_INTENTS[intent],
                     "quest_id": str(quest_id),
                 },
             )

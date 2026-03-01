@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 import logging
 from typing import Any, Mapping, Protocol
@@ -60,10 +61,12 @@ class BasicNpcScheduleProvider:
         characters = raw_characters if isinstance(raw_characters, list) else []
         placements = self._placements(areas)
 
+        valid_areas: set[str] = set(areas.keys())
+
         if next_period in {"dusk", "night"}:
             if "town" not in areas:
                 return self._noop(reason="stable")
-            moves, truncated = self._moves_to_town(characters, placements)
+            moves, truncated = self._moves_to_town(characters, placements, next_period, valid_areas)
             if not moves:
                 return self._noop(reason="stable")
             return NpcScheduleDecision(
@@ -78,7 +81,7 @@ class BasicNpcScheduleProvider:
             )
 
         if next_period in {"dawn", "day"}:
-            moves, truncated = self._moves_to_home(characters, areas, placements)
+            moves, truncated = self._moves_to_home(characters, areas, placements, next_period, valid_areas)
             if not moves:
                 return self._noop(reason="stable")
             return NpcScheduleDecision(
@@ -98,6 +101,8 @@ class BasicNpcScheduleProvider:
         self,
         characters: list[Any],
         placements: dict[str, tuple[str, str | None]],
+        next_period: str,
+        valid_areas: set[str],
     ) -> tuple[list[dict[str, Any]], bool]:
         moves: list[dict[str, Any]] = []
         truncated = False
@@ -105,14 +110,15 @@ class BasicNpcScheduleProvider:
             character_id = self._normalize_string(character.get("id"))
             if character_id is None:
                 continue
+            destination = self._scheduled_destination(character, next_period, valid_areas) or "town"
             existing = placements.get(character_id)
             placed_in_state = existing is not None
             current_area = existing[0] if existing is not None else None
             current_location = existing[1] if existing is not None else None
             if (
                 not placed_in_state
-                or current_area != "town"
-                or (current_area == "town" and current_location is not None)
+                or current_area != destination
+                or (current_area == destination and current_location is not None)
             ):
                 if len(moves) >= self._MOVE_LIMIT:
                     truncated = True
@@ -120,7 +126,7 @@ class BasicNpcScheduleProvider:
                 moves.append(
                     {
                         "character_id": character_id,
-                        "area_id": "town",
+                        "area_id": destination,
                         "location_id": None,
                     }
                 )
@@ -131,6 +137,8 @@ class BasicNpcScheduleProvider:
         characters: list[Any],
         areas: Mapping[str, Any],
         placements: dict[str, tuple[str, str | None]],
+        next_period: str,
+        valid_areas: set[str],
     ) -> tuple[list[dict[str, Any]], bool]:
         moves: list[dict[str, Any]] = []
         truncated = False
@@ -138,7 +146,9 @@ class BasicNpcScheduleProvider:
             character_id = self._normalize_string(character.get("id"))
             if character_id is None:
                 continue
-            home_area = self._normalize_string(character.get("area_id"))
+            home_area = self._scheduled_destination(character, next_period, valid_areas)
+            if home_area is None:
+                home_area = self._normalize_string(character.get("area_id"))
             if home_area is None:
                 home_area = self._normalize_string(character.get("current_area"))
             if home_area is None or home_area not in areas:
@@ -163,6 +173,21 @@ class BasicNpcScheduleProvider:
                     }
                 )
         return moves, truncated
+
+    @staticmethod
+    def _scheduled_destination(
+        char_data: Any,
+        next_period: str,
+        valid_area_ids: set[str],
+    ) -> str | None:
+        """Return the per-character schedule override for next_period, or None."""
+        sched = char_data.get("schedule") if isinstance(char_data, dict) else None
+        if not isinstance(sched, dict):
+            return None
+        dest = sched.get(next_period)
+        if isinstance(dest, str) and dest.strip() and dest.strip() in valid_area_ids:
+            return dest.strip()
+        return None
 
     @classmethod
     def _placements(
@@ -455,14 +480,10 @@ class NpcScheduleHook(NoOpSettlementHook):
 
         candidates: dict[str, dict[str, Any]] = {}
         for item in context.world.characters.list_all():
-            if not isinstance(item, Mapping):
-                continue
-            character_id = cls._coerce_non_empty_string(item.get("id"))
+            character_id = cls._coerce_non_empty_string(item.id)
             if character_id is None or character_id in party_members:
                 continue
-            candidates[character_id] = {
-                str(key): value for key, value in item.items()
-            }
+            candidates[character_id] = dataclasses.asdict(item)
         return candidates
 
     @classmethod
@@ -581,10 +602,10 @@ class NpcScheduleHook(NoOpSettlementHook):
             return True
 
         area_template = context.world.maps.get(area_id)
-        if not isinstance(area_template, Mapping):
+        if area_template is None:
             return False
 
-        recognized_ids = cls._recognized_location_ids(area_template.get("sub_locations"))
+        recognized_ids = cls._recognized_location_ids(area_template.sub_locations)
         if recognized_ids is None:
             return True
         return location_id in recognized_ids

@@ -269,3 +269,192 @@ def test_tool_response_fed_back_to_history() -> None:
     assert fr_part["function_response"]["name"] == "echo"
     assert fr_part["function_response"]["response"]["success"] is True
     assert fr_part["function_response"]["response"]["echoed"] == "ping"
+
+
+# ------------------------------------------------------------------
+# TestSerializeContextLayers — unit tests for _serialize_context_layers
+# ------------------------------------------------------------------
+
+
+class TestSerializeContextLayers:
+    """Unit tests for AgenticExecutor._serialize_context_layers() (N-7)."""
+
+    def _full_layers(self) -> dict[str, Any]:
+        return {
+            "l0_world_constants": {"world_id": "test_world", "lore": [], "factions": []},
+            "l1_chapter_state": None,
+            "l2_area_environment": {
+                "area_id": "town",
+                "template": {"name": "Town Square", "description": "A busy square."},
+                "state": {"danger_level": 2},
+            },
+            "l3_location_details": {
+                "location_id": "market",
+                "template": {"name": "Market Stall", "description": "A merchant's stall."},
+                "is_dynamic": False,
+                "discovered_items": ["sword", "potion"],
+            },
+            "l4_dynamic_state": {},
+            "l5_scene_bus": {
+                "entries": [
+                    {"source": "player", "content": "Hello there!", "visibility": "public"},
+                ],
+            },
+            "l6_memory_recall": None,
+            "l7_engine_result": {"narrative_hints": ["Player is in danger."]},
+        }
+
+    def test_npc_contains_l2_and_l3(self) -> None:
+        """NPC serialization includes area and location names."""
+        text = AgenticExecutor._serialize_context_layers("npc", self._full_layers())
+        assert "Town Square" in text
+        assert "Market Stall" in text
+
+    def test_npc_contains_l5_scene(self) -> None:
+        """NPC serialization includes L5 scene entries."""
+        text = AgenticExecutor._serialize_context_layers("npc", self._full_layers())
+        assert "Hello there!" in text
+
+    def test_npc_excludes_l7_hints(self) -> None:
+        """NPC serialization must NOT include L7 narrative hints (GM-only)."""
+        text = AgenticExecutor._serialize_context_layers("npc", self._full_layers())
+        assert "Player is in danger." not in text
+        assert "Narrative Hints" not in text
+
+    def test_gm_includes_l7_hints(self) -> None:
+        """GM serialization includes L7 narrative hints."""
+        text = AgenticExecutor._serialize_context_layers("gm", self._full_layers())
+        assert "Player is in danger." in text
+        assert "Narrative Hints" in text
+
+    def test_empty_layers_returns_empty_string(self) -> None:
+        """All-None layers produces empty string (no blocks to render)."""
+        layers: dict[str, Any] = {k: None for k in (
+            "l0_world_constants", "l1_chapter_state", "l2_area_environment",
+            "l3_location_details", "l4_dynamic_state", "l5_scene_bus",
+            "l6_memory_recall", "l7_engine_result",
+        )}
+        text = AgenticExecutor._serialize_context_layers("npc", layers)
+        assert text == ""
+
+
+# ------------------------------------------------------------------
+# TestContextLayersInjection — integration tests for N-7 injection
+# ------------------------------------------------------------------
+
+
+class TestContextLayersInjection:
+    """Tests that context_layers are correctly injected into initial history (N-7)."""
+
+    def _make_executor(self) -> tuple[AgenticExecutor, RecordingLlmProvider]:
+        llm = RecordingLlmProvider([LlmResponse(text="ok", finish_reason="stop")])
+        executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+        return executor, llm
+
+    def _layers_with_l2_l5(self) -> dict[str, Any]:
+        return {
+            "l0_world_constants": {"world_id": "w", "lore": [], "factions": []},
+            "l1_chapter_state": None,
+            "l2_area_environment": {
+                "area_id": "town",
+                "template": {"name": "Town Square", "description": "A busy square."},
+                "state": None,
+            },
+            "l3_location_details": {
+                "location_id": "market",
+                "template": {"name": "Market Stall", "description": "Merchant's stall."},
+                "is_dynamic": False,
+                "discovered_items": [],
+            },
+            "l4_dynamic_state": {},
+            "l5_scene_bus": {
+                "entries": [
+                    {"source": "player", "content": "Hello NPC!", "visibility": "public"},
+                ],
+            },
+            "l6_memory_recall": None,
+            "l7_engine_result": None,
+        }
+
+    def test_context_layers_injected_into_initial_history(self) -> None:
+        """context_layers content appears in history parts when conversation_history=None."""
+        executor, llm = self._make_executor()
+        asyncio.run(executor.run_agentic(
+            "npc", _ctx(), user_message="Hi", context_layers=self._layers_with_l2_l5(),
+        ))
+
+        history = llm.calls[0]["history"]
+        assert len(history) == 1
+        parts = history[0]["parts"]
+        all_text = " ".join(p.get("text", "") for p in parts)
+        assert "Town Square" in all_text
+        assert "Market Stall" in all_text
+
+    def test_context_layers_skipped_when_conversation_history_provided(self) -> None:
+        """When conversation_history is given, context_layers injection is skipped."""
+        executor, llm = self._make_executor()
+        prior = [{"role": "user", "parts": [{"text": "previous"}]}]
+        asyncio.run(executor.run_agentic(
+            "npc", _ctx(), user_message="Hi",
+            conversation_history=prior,
+            context_layers=self._layers_with_l2_l5(),
+        ))
+
+        history = llm.calls[0]["history"]
+        all_text = " ".join(
+            p.get("text", "") for msg in history for p in msg.get("parts", [])
+        )
+        assert "Town Square" not in all_text   # layers not injected
+        assert "Hi" in all_text                # user_message still appended
+
+    def test_l5_suppresses_raw_scene_when_layers_provided(self) -> None:
+        """When context_layers has L5 entries, context.scene_entries are NOT re-injected."""
+        executor, llm = self._make_executor()
+        ctx = _ctx()
+        ctx.scene_entries.append({
+            "source": "player", "content": "Old scene entry", "visibility": "public",
+        })
+
+        asyncio.run(executor.run_agentic(
+            "npc", ctx, user_message="Hi", context_layers=self._layers_with_l2_l5(),
+        ))
+
+        history = llm.calls[0]["history"]
+        all_text = " ".join(
+            p.get("text", "") for msg in history for p in msg.get("parts", [])
+        )
+        assert "Hello NPC!" in all_text       # L5 from layers present
+        assert "Old scene entry" not in all_text  # raw scene_entries suppressed
+
+    def test_context_layers_none_backward_compatible(self) -> None:
+        """context_layers=None (default) still injects scene_entries as before."""
+        executor, llm = self._make_executor()
+        ctx = _ctx()
+        ctx.scene_entries.append({
+            "source": "player", "content": "A scene.", "visibility": "public",
+        })
+
+        asyncio.run(executor.run_agentic("npc", ctx, user_message="Hello"))
+
+        history = llm.calls[0]["history"]
+        all_text = " ".join(
+            p.get("text", "") for msg in history for p in msg.get("parts", [])
+        )
+        assert "A scene." in all_text    # scene_entries injected via old path
+
+    def test_gm_role_receives_l7_hints_in_layers_text(self) -> None:
+        """GM role gets L7 narrative hints in serialized context_layers."""
+        executor, llm = self._make_executor()
+        layers = self._layers_with_l2_l5()
+        layers["l7_engine_result"] = {"narrative_hints": ["Enemy nearby!"]}
+
+        asyncio.run(executor.run_agentic(
+            "gm", _ctx(), user_message="React.", context_layers=layers,
+        ))
+
+        history = llm.calls[0]["history"]
+        all_text = " ".join(
+            p.get("text", "") for msg in history for p in msg.get("parts", [])
+        )
+        assert "Enemy nearby!" in all_text
+        assert "Narrative Hints" in all_text

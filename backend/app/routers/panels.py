@@ -46,9 +46,7 @@ def _map_response(session: ManagedSession) -> MapPanelResponse:
         else []
     )
     for template in world_areas:
-        if not isinstance(template, Mapping):
-            continue
-        area_id = str(template.get("id", "")).strip()
+        area_id = template.id.strip() if template.id else ""
         if not area_id:
             continue
         state_area = state_areas.get(area_id, {})
@@ -57,28 +55,21 @@ def _map_response(session: ManagedSession) -> MapPanelResponse:
         exploration = str(state_area.get("exploration", "undiscovered"))
         if exploration != "undiscovered":
             discovered_area_ids.append(area_id)
-        raw_sub_locations = template.get("sub_locations", {})
         sub_locations: list[dict[str, str]] = []
-        if isinstance(raw_sub_locations, Mapping):
-            for key, raw_location in raw_sub_locations.items():
-                location_id = str(key).strip()
-                if not location_id:
-                    continue
-                location_name = location_id
-                if isinstance(raw_location, Mapping):
-                    raw_name = str(raw_location.get("name", "")).strip()
-                    if raw_name:
-                        location_name = raw_name
-                sub_locations.append({"id": location_id, "name": location_name})
-        raw_tags = template.get("tags", [])
-        tags = (
-            [str(tag) for tag in raw_tags if str(tag).strip()]
-            if isinstance(raw_tags, list)
-            else []
-        )
+        for key, raw_location in template.sub_locations.items():
+            location_id = str(key).strip()
+            if not location_id:
+                continue
+            location_name = location_id
+            if isinstance(raw_location, Mapping):
+                raw_name = str(raw_location.get("name", "")).strip()
+                if raw_name:
+                    location_name = raw_name
+            sub_locations.append({"id": location_id, "name": location_name})
+        tags = [str(tag) for tag in template.tags if str(tag).strip()]
         raw_danger = state_area.get(
             "danger_level",
-            template.get("base_danger", template.get("danger_level")),
+            template.base_danger,
         )
         try:
             danger_level = float(raw_danger) if raw_danger is not None else None
@@ -87,7 +78,7 @@ def _map_response(session: ManagedSession) -> MapPanelResponse:
         summaries.append(
             MapAreaSummary(
                 id=area_id,
-                name=str(template.get("name", area_id)),
+                name=template.name or area_id,
                 danger_level=danger_level,
                 exploration=exploration,
                 tags=tags,

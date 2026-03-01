@@ -18,7 +18,7 @@ class NarrativePlanner:
 
     _LEVEL_THRESHOLDS = [4, 7, 10, 13, 16]
 
-    def plan(self, context: Any) -> dict[str, Any]:
+    async def plan(self, context: Any) -> dict[str, Any]:
         normalized = self._normalize_context(context)
         if normalized is None:
             return self._noop(current_tick=0, reason="invalid_context")

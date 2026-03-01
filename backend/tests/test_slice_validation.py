@@ -91,7 +91,7 @@ class TestEventSliceValidation:
             "active_events": {
                 "evt_1": {"state": "active", "status": "active"},
             },
-            "pending_events": [{"trigger_tick": 5}],
+            "pending_events": [{"trigger_condition": {"type": "absolute_tick", "tick": 5}}],
             "rumors": [{"text": "rumor"}],
         })
         assert s.validate() == []
@@ -101,10 +101,10 @@ class TestEventSliceValidation:
         s.active_events = {
             "evt_1": {"id": "evt_1", "event_id": "evt_1", "state": "active", "status": "dormant"},
         }
-        s.pending_events = [{"trigger_tick": "not_int"}]  # type: ignore[list-item]
+        s.pending_events = [{"trigger_condition": "not_a_dict"}]  # type: ignore[list-item]
         issues = s.validate()
         assert any("state and status must match" in msg for msg in issues)
-        assert any("trigger_tick must be an integer" in msg for msg in issues)
+        assert any("trigger_condition must be a dict" in msg for msg in issues)
 
 
 class TestNarrativePlanSliceValidation:

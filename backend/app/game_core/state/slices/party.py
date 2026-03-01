@@ -63,6 +63,18 @@ class PartySlice(StateSlice):
         self.shared_experiences.append(dict(experience))
         self._dirty = True
 
+    def get_members(self) -> dict[str, dict[str, Any]]:
+        """Return defensive copy of all party members."""
+        return {k: dict(v) for k, v in self.members.items()}
+
+    def get_approval(self, character_id: str) -> int:
+        """Return companion approval score, 0 if not tracked."""
+        return self.companion_approval.get(character_id, 0)
+
+    def get_shared_experiences(self) -> list[dict[str, Any]]:
+        """Return defensive copy of shared experience log."""
+        return [dict(exp) for exp in self.shared_experiences]
+
     def validate(self) -> list[str]:
         issues: list[str] = []
         if not isinstance(self.members, dict):

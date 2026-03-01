@@ -22,7 +22,7 @@ class GmNarrationDecision:
 
 
 class GmNarrator(Protocol):
-    def compose(
+    async def compose(
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
@@ -31,7 +31,7 @@ class GmNarrator(Protocol):
 
 
 class NullGmNarrator:
-    def compose(
+    async def compose(
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
@@ -51,7 +51,7 @@ class TemplateGmNarrator:
         "generic": "The situation around you settles into a new shape.",
     }
 
-    def compose(
+    async def compose(
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
@@ -146,7 +146,7 @@ class GmNarrationHook(NoOpSettlementHook):
 
         summary = self._build_summary(context, scene_snapshot)
         try:
-            raw_decision = self._narrator.compose(summary, scene_snapshot)
+            raw_decision = await self._narrator.compose(summary, scene_snapshot)
         except Exception as exc:
             logger.exception(
                 "hook failed: gm_narration",

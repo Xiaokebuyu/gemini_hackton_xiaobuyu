@@ -108,13 +108,22 @@ class SaveStore:
         self,
         world: WorldInstance,
         session_id: str,
+        *,
+        gm_narrator_factory: Any = None,
+        osiris_evaluator_factory: Any = None,
+        narrative_planner_factory: Any = None,
     ) -> DefaultRuntime | None:
         """Load and restore one runtime using an already loaded world."""
         raw = await self._persistence.load(session_id)
         if not isinstance(raw, Mapping) or not raw:
             return None
         state_payload, _ = self._normalize_loaded_payload(raw)
-        return build_restored_runtime_for_world(world, state_payload)
+        return build_restored_runtime_for_world(
+            world, state_payload,
+            gm_narrator_factory=gm_narrator_factory,
+            osiris_evaluator_factory=osiris_evaluator_factory,
+            narrative_planner_factory=narrative_planner_factory,
+        )
 
     async def list_session_meta(
         self,
@@ -328,8 +337,8 @@ class SaveStore:
         if not class_id:
             return ""
         template = runtime.world.classes.get_class(class_id)
-        if isinstance(template, Mapping):
-            name = template.get("name")
+        if template is not None:
+            name = template.name
             if isinstance(name, str) and name.strip():
                 return name.strip()
         return class_id
@@ -343,19 +352,16 @@ class SaveStore:
         if not current_area:
             return ""
         area_template = runtime.world.maps.get(current_area)
-        if isinstance(area_template, Mapping):
+        if area_template is not None:
             if current_location:
-                raw_sub_locations = area_template.get("sub_locations", {})
-                if isinstance(raw_sub_locations, Mapping):
-                    location_template = raw_sub_locations.get(current_location)
-                    if isinstance(location_template, Mapping):
-                        name = location_template.get("name")
-                        if isinstance(name, str) and name.strip():
-                            return name.strip()
+                location_template = area_template.sub_locations.get(current_location)
+                if isinstance(location_template, Mapping):
+                    name = location_template.get("name")
+                    if isinstance(name, str) and name.strip():
+                        return name.strip()
                 return current_location
-            area_name = area_template.get("name")
-            if isinstance(area_name, str) and area_name.strip():
-                return area_name.strip()
+            if area_template.name.strip():
+                return area_template.name.strip()
         return current_location or current_area
 
     def _summary_from_state_payload(

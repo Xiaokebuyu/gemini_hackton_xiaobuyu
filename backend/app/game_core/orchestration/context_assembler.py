@@ -8,6 +8,7 @@ by PipelineOrchestrator after A4 runs the rules engine.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 from app.game_core.orchestration.shared_context import SharedContext
@@ -180,8 +181,13 @@ class ContextAssembler:
         template: dict[str, Any] | None = None
         if current_area and world.has_registry("maps"):
             raw_template = world.maps.get(current_area)
-            if isinstance(raw_template, dict):
-                template = dict(raw_template)
+            if raw_template is not None:
+                if dataclasses.is_dataclass(raw_template):
+                    template = dataclasses.asdict(raw_template)
+                elif isinstance(raw_template, dict):
+                    template = dict(raw_template)
+                else:
+                    template = None
 
         state_snapshot = (
             dict(current_area_state) if isinstance(current_area_state, dict) else None
@@ -207,8 +213,10 @@ class ContextAssembler:
         is_dynamic = False
         if current_area and current_location and world.has_registry("maps"):
             area_template = world.maps.get(current_area)
-            if isinstance(area_template, dict):
-                sub_locations = area_template.get("sub_locations", {})
+            if area_template is not None:
+                sub_locations = getattr(area_template, "sub_locations", None)
+                if sub_locations is None and isinstance(area_template, dict):
+                    sub_locations = area_template.get("sub_locations", {})
                 if isinstance(sub_locations, dict):
                     location_data = sub_locations.get(current_location)
                     if isinstance(location_data, dict):

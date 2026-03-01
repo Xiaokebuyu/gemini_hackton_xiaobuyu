@@ -46,7 +46,7 @@ backend/
 │   │   ├── sessions.py            #   会话生命周期（6 路由）
 │   │   ├── character.py           #   角色创建（3 路由）
 │   │   ├── panels.py              #   面板查询（3 路由）
-│   │   └── gameplay.py            #   导航 + 流式动作执行（4 路由）
+│   │   └── gameplay.py            #   导航 + 流式动作执行（5 路由）
 │   └── game_core/                 # ⬡ 五层六边形纯 Python 内核
 │       ├── content/               #   ❶ 内容层：10 个 ContentRegistry
 │       ├── state/                 #   ❸ 状态层：10 个 StateSlice
@@ -56,7 +56,7 @@ backend/
 │       ├── adapters/              #   适配器：4 端口 Protocol + 实现
 │       ├── bootstrap.py           #   运行时组装（DefaultRuntime）
 │       └── runtime.py             #   会话生命周期管理（GameRuntime）
-├── tests/                         # 44 个测试文件，449+ passed
+├── tests/                         # 57 个测试文件，744+ passed
 └── pyproject.toml
 ```
 

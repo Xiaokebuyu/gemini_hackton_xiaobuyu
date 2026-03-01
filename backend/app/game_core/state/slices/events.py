@@ -8,6 +8,11 @@ from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
 
 
+def _absolute_tick(time_dict: Mapping[str, Any]) -> int:
+    """Compute monotonic absolute tick from a time snapshot {day, slot}."""
+    return (int(time_dict.get("day", 1)) - 1) * 24 + int(time_dict.get("slot", 0))
+
+
 class EventSlice(StateSlice):
     """Event queues and event state machine storage."""
 
@@ -83,12 +88,21 @@ class EventSlice(StateSlice):
         self.rumors.append(dict(rumor))
         self._dirty = True
 
-    def pop_due_pending(self, current_tick: int) -> list[dict[str, Any]]:
+    def check_triggers(
+        self,
+        current_time: Mapping[str, Any],
+        current_flags: dict[str, Any] | None = None,
+        current_location: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Evaluate pending events and return those whose trigger conditions are met.
+
+        Removes due events from pending_events and returns them as copies.
+        """
+        current_abs = _absolute_tick(current_time)
         due: list[dict[str, Any]] = []
         remaining: list[dict[str, Any]] = []
         for event in self.pending_events:
-            trigger_tick = int(event.get("trigger_tick", current_tick))
-            if trigger_tick <= current_tick:
+            if self._is_condition_met(event, current_abs, current_flags, current_location):
                 due.append(dict(event))
             else:
                 remaining.append(event)
@@ -96,6 +110,37 @@ class EventSlice(StateSlice):
         if due:
             self._dirty = True
         return due
+
+    @staticmethod
+    def _is_condition_met(
+        event: Mapping[str, Any],
+        current_abs: int,
+        current_flags: dict[str, Any] | None,
+        current_location: str | None,
+    ) -> bool:
+        condition = event.get("trigger_condition")
+        if not isinstance(condition, Mapping):
+            # Legacy fallback: honour trigger_tick if present
+            tt = event.get("trigger_tick")
+            return isinstance(tt, int) and tt <= current_abs
+        condition_type = condition.get("type", "")
+        if condition_type == "absolute_tick":
+            tick = condition.get("tick")
+            return isinstance(tick, int) and tick <= current_abs
+        if condition_type == "time_slots_elapsed":
+            count = condition.get("count")
+            if not isinstance(count, int):
+                return False
+            created_at = event.get("created_at", {})
+            if not isinstance(created_at, Mapping):
+                return False
+            created_abs = _absolute_tick(created_at)
+            return created_abs + count <= current_abs
+        return False
+
+    def resolve(self, event_id: str) -> None:
+        """Transition an active event to the resolved state."""
+        self.set_state(event_id, "resolved")
 
     def validate(self) -> list[str]:
         issues: list[str] = []
@@ -119,6 +164,10 @@ class EventSlice(StateSlice):
                 if not isinstance(event, dict):
                     issues.append(f"pending_events[{i}] must be a dict")
                     continue
+                tc = event.get("trigger_condition")
+                if tc is not None and not isinstance(tc, dict):
+                    issues.append(f"pending_events[{i}] trigger_condition must be a dict")
+                # Legacy field — kept for forward-compatibility with old saves
                 tt = event.get("trigger_tick")
                 if tt is not None and not isinstance(tt, int):
                     issues.append(f"pending_events[{i}] trigger_tick must be an integer")

@@ -496,9 +496,9 @@ class EncounterHook(NoOpSettlementHook):
             return fallback
 
         raw_map = context.world.maps.get(area_id)
-        if not isinstance(raw_map, Mapping):
+        if raw_map is None:
             return fallback
-        raw_profile = raw_map.get("encounter_profile")
+        raw_profile = raw_map.encounter_profile
         if not isinstance(raw_profile, Mapping):
             return fallback
 

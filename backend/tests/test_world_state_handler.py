@@ -283,11 +283,12 @@ class TestWorldStateHandler:
 
         assert result.success is True
         assert result.delta is not None
-        assert result.delta.changes[0].value["trigger_tick"] == 42
+        pending = result.delta.changes[0].value
+        assert pending["trigger_condition"] == {"type": "absolute_tick", "tick": 42}
+        assert isinstance(pending.get("created_at"), dict)
 
     def test_schedule_event_accepts_time_slots_elapsed_condition(self) -> None:
         state = _make_state()
-        base_tick = state.time.absolute_tick()
         result = _execute(
             Command(
                 type="schedule_event",
@@ -302,7 +303,10 @@ class TestWorldStateHandler:
 
         assert result.success is True
         assert result.delta is not None
-        assert result.delta.changes[0].value["trigger_tick"] == base_tick + 3
+        pending = result.delta.changes[0].value
+        # Condition is preserved as-is (not pre-computed to tick)
+        assert pending["trigger_condition"] == {"type": "time_slots_elapsed", "count": 3}
+        assert isinstance(pending.get("created_at"), dict)
 
     def test_schedule_event_rejects_unsupported_trigger_condition_type(self) -> None:
         result = _execute(

@@ -283,15 +283,10 @@ class StateContainer:
 
         if world.has_registry("characters"):
             for item in world.characters.list_all():
-                if not isinstance(item, Mapping):
-                    continue
-                character_id = cls._normalize_identifier(item.get("id"))
+                character_id = cls._normalize_identifier(item.id)
                 if character_id is None:
                     continue
-                raw_disposition = item.get("base_disposition")
-                if not isinstance(raw_disposition, Mapping):
-                    raw_disposition = item.get("initial_disposition")
-                disposition = raw_disposition if isinstance(raw_disposition, Mapping) else {}
+                disposition = item.base_disposition if item.base_disposition is not None else {}
                 npc_dispositions[character_id] = {
                     "approval": cls._as_int(disposition.get("approval"), 0),
                     "trust": cls._as_int(disposition.get("trust"), 0),
@@ -300,13 +295,15 @@ class StateContainer:
                 }
 
         if world.has_registry("factions"):
-            for item in world.factions.list_all():
-                if not isinstance(item, Mapping):
-                    continue
-                faction_id = cls._normalize_identifier(item.get("id"))
+            for faction in world.factions.list_all():
+                faction_id = cls._normalize_identifier(faction.id)
                 if faction_id is None:
                     continue
-                raw_value = item.get("initial_standing", item.get("base_standing", 0))
+                raw_value = (
+                    faction.initial_standing
+                    if faction.initial_standing is not None
+                    else (faction.base_standing if faction.base_standing is not None else 0)
+                )
                 faction_standings[faction_id] = cls._as_int(raw_value, 0)
 
         return {
@@ -324,13 +321,10 @@ class StateContainer:
 
         if world.has_registry("quests"):
             for item in world.quests.list_all():
-                if not isinstance(item, Mapping):
-                    continue
-                milestone_id = cls._normalize_identifier(item.get("id"))
+                milestone_id = cls._normalize_identifier(item.id)
                 if milestone_id is None:
                     continue
-                prerequisites = item.get("prerequisites")
-                has_prerequisites = isinstance(prerequisites, list) and len(prerequisites) > 0
+                has_prerequisites = len(item.prerequisites) > 0
                 milestone_states[milestone_id] = {
                     "state": "LOCKED" if has_prerequisites else "AVAILABLE",
                     "activated_tick": None,
@@ -338,11 +332,7 @@ class StateContainer:
                 }
 
             for chapter in world.quests.chapters():
-                if not isinstance(chapter, Mapping):
-                    continue
-                chapter_id = cls._normalize_identifier(
-                    chapter.get("id", chapter.get("chapter_id"))
-                )
+                chapter_id = cls._normalize_identifier(chapter.id)
                 if chapter_id is None:
                     continue
                 chapter_completion[chapter_id] = 0.0
@@ -362,17 +352,11 @@ class StateContainer:
         areas: dict[str, dict[str, Any]] = {}
         if world.has_registry("maps"):
             for item in world.maps.list_all():
-                if not isinstance(item, Mapping):
-                    continue
-                area_id = cls._normalize_identifier(item.get("id"))
+                area_id = cls._normalize_identifier(item.id)
                 if area_id is None:
                     continue
-                raw_danger = item.get("base_danger", item.get("danger_level", 1.0))
-                raw_tags = item.get("tags", [])
-                tags = [
-                    str(tag)
-                    for tag in raw_tags
-                ] if isinstance(raw_tags, list) else []
+                raw_danger = item.base_danger if item.base_danger is not None else 1.0
+                tags = [str(tag) for tag in item.tags]
                 areas[area_id] = {
                     "exploration": "undiscovered",
                     "danger_level": cls._as_float(raw_danger, 1.0),
@@ -392,31 +376,21 @@ class StateContainer:
         active_events: dict[str, dict[str, Any]] = {}
         if world.has_registry("quests"):
             for item in world.quests.initial_events():
-                if not isinstance(item, Mapping):
-                    continue
-                event_id = cls._normalize_identifier(
-                    item.get("id", item.get("event_id"))
-                )
+                event_id = cls._normalize_identifier(item.id)
                 if event_id is None:
                     continue
-                raw_conditions = item.get("preconditions", item.get("conditions", []))
-                if not isinstance(raw_conditions, (list, dict)):
-                    raw_conditions = []
-                raw_payload = item.get("payload", {})
-                payload = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
-                raw_metadata = item.get("metadata", {})
-                metadata = (
-                    dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
-                )
+                conditions = item.conditions
+                if not isinstance(conditions, (list, dict)):
+                    conditions = []
                 active_events[event_id] = {
                     "id": event_id,
                     "event_id": event_id,
                     "state": "locked",
                     "status": "locked",
-                    "event_type": str(item.get("event_type", "generic")),
-                    "conditions": raw_conditions,
-                    "payload": payload,
-                    "metadata": metadata,
+                    "event_type": item.event_type or "generic",
+                    "conditions": conditions,
+                    "payload": dict(item.payload),
+                    "metadata": dict(item.metadata),
                     "source": "quest",
                 }
         return {

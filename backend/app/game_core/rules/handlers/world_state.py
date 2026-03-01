@@ -576,14 +576,20 @@ class WorldStateHandler(StaticCommandHandler):
         state: StateContainer,
     ) -> ExecuteResult:
         event_id = str(cmd.params["event_id"]).strip()
-        trigger_tick, _ = self._resolve_trigger_tick(cmd.params, state)
+        event_type = str(cmd.params.get("event_type", "generic")).strip() or "generic"
         payload = self._coerce_mapping(cmd.params.get("payload", {}))
         metadata = self._coerce_mapping(cmd.params.get("metadata", {}))
-        event_type = str(cmd.params.get("event_type", "generic")).strip() or "generic"
+        trigger_condition = self._normalize_trigger_condition(cmd.params)
+        created_at = (
+            dict(state.time.get_current_time())
+            if state.has_slice("time")
+            else {"day": 1, "slot": 0}
+        )
         pending_event = {
             "event_id": event_id,
             "event_type": event_type,
-            "trigger_tick": trigger_tick,
+            "trigger_condition": trigger_condition,
+            "created_at": created_at,
             "payload": payload,
             "metadata": metadata,
             "source": cmd.source,
@@ -597,6 +603,17 @@ class WorldStateHandler(StaticCommandHandler):
                 value=pending_event,
             ),
         )
+
+    @classmethod
+    def _normalize_trigger_condition(cls, params: Mapping[str, Any]) -> dict[str, Any]:
+        """Convert schedule_event params to a canonical trigger_condition dict."""
+        direct_tick = coerce_int(params.get("trigger_tick"))
+        if direct_tick is not None and direct_tick >= 0:
+            return {"type": "absolute_tick", "tick": direct_tick}
+        raw = params.get("trigger_condition")
+        if isinstance(raw, Mapping):
+            return {str(k): v for k, v in raw.items()}
+        return {"type": "absolute_tick", "tick": 0}
 
     def _compute_create_rumor(
         self,
@@ -827,10 +844,7 @@ class WorldStateHandler(StaticCommandHandler):
     ) -> bool:
         if world.has_registry("quests"):
             for chapter in world.quests.chapters():
-                if not isinstance(chapter, Mapping):
-                    continue
-                current = str(chapter.get("id", chapter.get("chapter_id", ""))).strip()
-                if current == chapter_id:
+                if chapter.id == chapter_id:
                     return True
             return False
         if state.has_slice("quests"):
@@ -846,12 +860,11 @@ class WorldStateHandler(StaticCommandHandler):
         if not world.has_registry("maps"):
             return True, None
         area_template = world.maps.get(area_id)
-        if not isinstance(area_template, Mapping):
+        if area_template is None:
             return False, f"unknown area: {area_id}"
-        sub_locations = area_template.get("sub_locations", {})
-        if not isinstance(sub_locations, Mapping):
+        if not area_template.sub_locations:
             return False, f"area has no sub_locations: {area_id}"
-        if location_id not in sub_locations:
+        if location_id not in area_template.sub_locations:
             return False, f"unknown location '{location_id}' in area '{area_id}'"
         return True, None
 

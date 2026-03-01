@@ -47,6 +47,8 @@ class AreaState:
 class AreaSlice(StateSlice):
     """World area runtime state."""
 
+    # ── 1. Core lifecycle (restore / serialize / snapshot / basic getters) ────
+
     def __init__(self) -> None:
         super().__init__("areas")
         self.areas: dict[str, AreaState] = {}
@@ -133,6 +135,8 @@ class AreaSlice(StateSlice):
         self.get_area(area_id).discovered_items.add(discovery_id)
         self._dirty = True
 
+    # ── 2. Container state ───────────────────────────────────────────────────
+
     def init_container(
         self,
         area_id: str,
@@ -198,6 +202,8 @@ class AreaSlice(StateSlice):
                 return
         raise KeyError(f"unknown hostile sub area: {sub_area_id}")
 
+    # ── 3. Hostile tracking ──────────────────────────────────────────────────
+
     def register_hostile(self, sub_area_id: str, state: dict[str, Any]) -> None:
         self.upsert_hostile(sub_area_id, state)
         self._dirty = True
@@ -241,6 +247,8 @@ class AreaSlice(StateSlice):
         )
         area.permanent_hostile_slots[area_id] = self._copy_permanent_slot_bucket(bucket)
         self._dirty = True
+
+    # ── 4. Permanent slots & respawn queue ───────────────────────────────────
 
     def update_permanent_slots(self, area_id: str, max_slots: int) -> None:
         area = self.get_area(area_id)
@@ -385,6 +393,8 @@ class AreaSlice(StateSlice):
             self._dirty = True
         return self._copy_permanent_slot_bucket(area.permanent_hostile_slots[area_id])
 
+    # ── 5. NPC locations ─────────────────────────────────────────────────────
+
     def update_npc_location(self, character_id: str, location_id: str | None) -> None:
         for area in self.areas.values():
             if character_id in area.npc_locations:
@@ -415,6 +425,8 @@ class AreaSlice(StateSlice):
         target_area = self.get_area(area_id)
         target_area.npc_locations[character_id] = location_id
         self._dirty = True
+
+    # ── 6. Temporary sub-areas ───────────────────────────────────────────────
 
     def add_temporary_sub_area(
         self,
@@ -503,6 +515,8 @@ class AreaSlice(StateSlice):
             area.temporary_sub_areas = surviving
             self._dirty = True
         return removed_ids
+
+    # ── 7. Validation & state-change delta ───────────────────────────────────
 
     def validate(self) -> list[str]:
         issues: list[str] = []
@@ -661,6 +675,8 @@ class AreaSlice(StateSlice):
         raise ValueError(
             f"unsupported area state change: {change.operation} {change.path}"
         )
+
+    # ── 8. Normalization & coercion helpers ──────────────────────────────────
 
     @staticmethod
     def _coerce_area_state(raw: Any) -> AreaState:

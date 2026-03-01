@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from app.game_core.content import ContentRegistry, WorldInstance
 from app.game_core.content.registries import (
@@ -26,6 +26,9 @@ from app.game_core.orchestration import (
     build_default_action_dispatcher,
     register_default_settlement_hooks,
 )
+from app.game_core.orchestration.hooks.ai_osiris import AIOsirisEvaluator, AIOsirisHook
+from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook, GmNarrator
+from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook, NarrativePlannerProvider
 from app.game_core.rules import RulesEngine, register_default_rules_handlers
 from app.game_core.state import StateContainer, StateSlice
 from app.game_core.state.slices import (
@@ -122,8 +125,22 @@ def build_restored_runtime(
     return build_restored_runtime_for_world(world, session_data)
 
 
-def build_runtime_for_world(world: WorldInstance) -> DefaultRuntime:
-    """Build a fully wired default runtime for an already loaded world."""
+def build_runtime_for_world(
+    world: WorldInstance,
+    *,
+    gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
+    osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
+    narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+) -> DefaultRuntime:
+    """Build a fully wired default runtime for an already loaded world.
+
+    If *osiris_evaluator_factory* is provided, it is called to create an
+    LLM-driven AIOsirisEvaluator.  If *gm_narrator_factory* is provided,
+    it is called with (world, state) to create an LLM-driven GmNarrator.
+    If *narrative_planner_factory* is provided, it is called to create an
+    LLM-driven NarrativePlanner. All resulting hooks are registered before
+    the defaults so the deterministic fallbacks are skipped.
+    """
     state = StateContainer.create_new(world)
     rules_engine = RulesEngine()
     register_default_rules_handlers(rules_engine)
@@ -137,6 +154,21 @@ def build_runtime_for_world(world: WorldInstance) -> DefaultRuntime:
         scene_bus=scene_bus,
         pipeline=pipeline,
     )
+    if osiris_evaluator_factory is not None:
+        evaluator = osiris_evaluator_factory()
+        tick_coordinator.register_settlement_hook(
+            AIOsirisHook(evaluator=evaluator)
+        )
+    if gm_narrator_factory is not None:
+        narrator = gm_narrator_factory(world, state)
+        tick_coordinator.register_settlement_hook(
+            GmNarrationHook(narrator=narrator)
+        )
+    if narrative_planner_factory is not None:
+        planner = narrative_planner_factory()
+        tick_coordinator.register_settlement_hook(
+            NarrativePlannerHook(planner=planner)
+        )
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
         world=world,
@@ -152,6 +184,10 @@ def build_runtime_for_world(world: WorldInstance) -> DefaultRuntime:
 def build_restored_runtime_for_world(
     world: WorldInstance,
     session_data: Mapping[str, Mapping[str, Any]],
+    *,
+    gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
+    osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
+    narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
 ) -> DefaultRuntime:
     """Build a fully wired default runtime from restored session payload."""
     state = StateContainer.create_restored(world, session_data)
@@ -167,6 +203,21 @@ def build_restored_runtime_for_world(
         scene_bus=scene_bus,
         pipeline=pipeline,
     )
+    if osiris_evaluator_factory is not None:
+        evaluator = osiris_evaluator_factory()
+        tick_coordinator.register_settlement_hook(
+            AIOsirisHook(evaluator=evaluator)
+        )
+    if gm_narrator_factory is not None:
+        narrator = gm_narrator_factory(world, state)
+        tick_coordinator.register_settlement_hook(
+            GmNarrationHook(narrator=narrator)
+        )
+    if narrative_planner_factory is not None:
+        planner = narrative_planner_factory()
+        tick_coordinator.register_settlement_hook(
+            NarrativePlannerHook(planner=planner)
+        )
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
         world=world,

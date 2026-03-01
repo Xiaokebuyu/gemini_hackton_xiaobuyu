@@ -164,7 +164,9 @@ class EconomyHandler(StaticCommandHandler):
         seller_npc = str(cmd.params["seller_npc"]).strip()
         item_id = str(cmd.params["item_id"]).strip()
         count = int(cmd.params.get("count", 1))
-        merchant = world.characters.get(seller_npc) or {}
+        merchant = world.characters.get(seller_npc)
+        if merchant is None:
+            return ExecuteResult.error(f"unknown seller: {seller_npc}")
         shop_state, initialized = self._resolve_or_initialize_shop_state(
             seller_npc,
             merchant,
@@ -219,7 +221,9 @@ class EconomyHandler(StaticCommandHandler):
         buyer_npc = str(cmd.params["buyer_npc"]).strip()
         item_id = str(cmd.params["item_id"]).strip()
         count = int(cmd.params.get("count", 1))
-        merchant = world.characters.get(buyer_npc) or {}
+        merchant = world.characters.get(buyer_npc)
+        if merchant is None:
+            return ExecuteResult.error(f"unknown buyer: {buyer_npc}")
 
         inventory = self._player_inventory_snapshot(state)
         updated_inventory = self._remove_from_inventory_snapshot(inventory, item_id, count)
@@ -281,7 +285,19 @@ class EconomyHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> ExecuteResult:
         npc_id = str(cmd.params["npc_id"]).strip()
-        merchant = world.characters.get(npc_id) or {}
+        merchant = world.characters.get(npc_id)
+        if merchant is None:
+            return handler_success_no_delta(
+                "economy",
+                "refresh_shop",
+                metadata={
+                    "status": "noop",
+                    "npc_id": npc_id,
+                    "stock_count": 0,
+                    "rotating_count": 0,
+                    "last_refresh_tick": self._current_tick(state),
+                },
+            )
         shop_state = self._refresh_shop_state(
             npc_id,
             merchant,
@@ -327,7 +343,7 @@ class EconomyHandler(StaticCommandHandler):
     def _resolve_or_initialize_shop_state(
         self,
         npc_id: str,
-        merchant: Mapping[str, Any],
+        merchant: Any,
         state: StateContainer,
         world: WorldInstance,
     ) -> tuple[dict[str, Any] | None, bool]:
@@ -342,7 +358,7 @@ class EconomyHandler(StaticCommandHandler):
     def _refresh_shop_state(
         self,
         npc_id: str,
-        merchant: Mapping[str, Any],
+        merchant: Any,
         state: StateContainer,
         world: WorldInstance,
         existing_state: dict[str, Any] | None,
@@ -364,22 +380,21 @@ class EconomyHandler(StaticCommandHandler):
                     previous_base_rows[item_id] = dict(row)
 
         current_stock: list[dict[str, Any]] = []
-        base_pool = shop_inventory.get("base_pool", [])
-        if isinstance(base_pool, list):
-            for entry in base_pool:
-                normalized = self._normalize_shop_entry(
-                    entry,
-                    "base",
-                    world,
-                    previous_row=previous_base_rows.get(
-                        get_non_empty_string(entry, "item_id") or ""
-                    ),
-                )
-                if normalized is not None:
-                    current_stock.append(normalized)
+        base_pool = shop_inventory.base_pool
+        for entry in base_pool:
+            normalized = self._normalize_shop_entry(
+                entry,
+                "base",
+                world,
+                previous_row=previous_base_rows.get(
+                    get_non_empty_string(entry, "item_id") or ""
+                ),
+            )
+            if normalized is not None:
+                current_stock.append(normalized)
 
-        rotating_pool = shop_inventory.get("rotating_pool", [])
-        rotating_slots = coerce_int(shop_inventory.get("rotating_slots")) or 0
+        rotating_pool = shop_inventory.rotating_pool
+        rotating_slots = shop_inventory.rotating_slots
         current_stock.extend(
             self._select_rotating_entries(
                 rotating_pool,
@@ -389,9 +404,9 @@ class EconomyHandler(StaticCommandHandler):
             )
         )
 
-        refresh_on: Any = merchant.get("refresh_on")
+        refresh_on: Any = getattr(merchant, "refresh_on", None)
         if refresh_on is None:
-            refresh_on = shop_inventory.get("refresh_on")
+            refresh_on = shop_inventory.refresh_on
         if isinstance(refresh_on, list):
             refresh_payload: Any = [str(item) for item in refresh_on]
         elif isinstance(refresh_on, str):
@@ -489,7 +504,7 @@ class EconomyHandler(StaticCommandHandler):
     def _resolve_buy_unit_price(
         self,
         stock_item: Mapping[str, Any],
-        merchant: Mapping[str, Any],
+        merchant: Any,
         state: StateContainer,
         seller_npc: str,
     ) -> int:
@@ -498,10 +513,10 @@ class EconomyHandler(StaticCommandHandler):
             return price_override
 
         base_price = self._coerce_non_negative_int(stock_item.get("base_price")) or 0
-        shop_inventory = self._merchant_shop_inventory(merchant) or {}
-        sell_markup = coerce_float(merchant.get("sell_markup"))
-        if sell_markup is None:
-            sell_markup = coerce_float(shop_inventory.get("sell_markup"))
+        shop_inventory = self._merchant_shop_inventory(merchant)
+        sell_markup = coerce_float(getattr(merchant, "sell_markup", None))
+        if sell_markup is None and shop_inventory is not None:
+            sell_markup = coerce_float(shop_inventory.sell_markup)
         if sell_markup is None or sell_markup < 0:
             sell_markup = 1.0
 
@@ -514,14 +529,14 @@ class EconomyHandler(StaticCommandHandler):
     def _resolve_sell_unit_price(
         self,
         item_id: str,
-        merchant: Mapping[str, Any],
+        merchant: Any,
         world: WorldInstance,
     ) -> int:
         base_price = self._base_price_for_item(item_id, None, world)
-        shop_inventory = self._merchant_shop_inventory(merchant) or {}
-        buy_rate = coerce_float(merchant.get("buy_rate"))
-        if buy_rate is None:
-            buy_rate = coerce_float(shop_inventory.get("buy_rate"))
+        shop_inventory = self._merchant_shop_inventory(merchant)
+        buy_rate = coerce_float(getattr(merchant, "buy_rate", None))
+        if buy_rate is None and shop_inventory is not None:
+            buy_rate = coerce_float(shop_inventory.buy_rate)
         if buy_rate is None:
             buy_rate = 0.5
         return max(1, int(round(base_price * buy_rate)))
@@ -600,10 +615,9 @@ class EconomyHandler(StaticCommandHandler):
 
     def _merchant_shop_inventory(
         self,
-        merchant: Mapping[str, Any],
-    ) -> Mapping[str, Any] | None:
-        raw = merchant.get("shop_inventory")
-        return raw if isinstance(raw, Mapping) else None
+        merchant: Any,
+    ) -> Any:
+        return getattr(merchant, "shop_inventory", None)
 
     def _base_price_for_item(
         self,
@@ -616,17 +630,14 @@ class EconomyHandler(StaticCommandHandler):
             if entry_price is not None:
                 return entry_price
 
-        item_template: Mapping[str, Any] | None = None
+        item_template = None
         if world.has_registry("items"):
-            raw_item = world.items.get(item_id)
-            item_template = raw_item if isinstance(raw_item, Mapping) else None
+            item_template = world.items.get(item_id)
         if item_template is not None:
-            template_price = self._coerce_non_negative_int(item_template.get("base_price"))
-            if template_price is not None:
-                return template_price
-            template_price = self._coerce_non_negative_int(item_template.get("price"))
-            if template_price is not None:
-                return template_price
+            if item_template.base_price is not None:
+                return item_template.base_price
+            if item_template.price is not None:
+                return item_template.price
 
         if entry is not None:
             entry_fallback = self._coerce_non_negative_int(entry.get("price"))

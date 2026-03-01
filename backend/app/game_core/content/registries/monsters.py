@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
@@ -19,43 +20,152 @@ _CR_HP_RANGES = [(1, 1, 50), (5, 20, 150), (10, 50, 250), (999, 100, 500)]
 _CR_AC_RANGES = [(5, 10, 18), (10, 13, 20), (999, 15, 22)]
 
 
+@dataclass(slots=True)
+class MonsterAttack:
+    """A single attack entry."""
+
+    name: str = ""
+
+
+@dataclass(slots=True)
+class LootEntry:
+    """A single loot table entry."""
+
+    item_id: str = ""
+    chance: float = 1.0
+    count: int = 1
+
+
+@dataclass(slots=True)
+class MonsterTemplate:
+    """Typed monster definition."""
+
+    id: str
+    name: str = ""
+    hp: int | None = None
+    max_hp: int | None = None
+    ac: int | None = None
+    cr: float | None = None
+    creature_type: str = ""
+    abilities: dict[str, int] = field(default_factory=dict)
+    resistances: list[str] = field(default_factory=list)
+    immunities: list[str] = field(default_factory=list)
+    attacks: list[MonsterAttack] = field(default_factory=list)
+    gold_drop: int | None = None
+    gold: int | None = None
+    gold_reward: int | None = None
+    loot_table: list[LootEntry] = field(default_factory=list)
+    spells: list[Any] = field(default_factory=list)
+    ability_refs: list[Any] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+
+
 class MonsterRegistry(ContentRegistry):
     """Registry for monster templates."""
 
     def __init__(self) -> None:
         super().__init__("monsters")
-        self._items: dict[str, dict[str, Any]] = {}
+        self._items: dict[str, MonsterTemplate] = {}
+        self._load_issues: list[str] = []
 
     def load(self, data: dict[str, Any]) -> None:
-        self._items = self._coerce_dict_mapping(data)
+        self._items = {}
+        self._load_issues = []
+        coerced = self._coerce_dict_mapping(data)
+        for mid, raw in coerced.items():
+            # -- Format validation → _load_issues --
+            if not raw.get("id"):
+                self._load_issues.append(f"monster '{mid}' missing id")
 
-    def get(self, content_id: str) -> Any | None:
-        item = self._items.get(content_id)
-        return dict(item) if isinstance(item, dict) else item
+            raw_name = raw.get("name")
+            if raw_name is not None and self._coerce_non_empty_string(raw_name) is None:
+                self._load_issues.append(f"monster '{mid}' has invalid name")
 
-    def list_all(self) -> list[Any]:
-        return [dict(value) for value in self._items.values()]
+            for fn in ("hp", "max_hp", "ac"):
+                if fn in raw and self._coerce_positive_int(raw.get(fn)) is None:
+                    self._load_issues.append(f"monster '{mid}' has invalid {fn}")
+
+            for fn in ("gold_drop", "gold", "gold_reward"):
+                if fn in raw and self._coerce_non_negative_int(raw.get(fn)) is None:
+                    self._load_issues.append(f"monster '{mid}' has invalid {fn}")
+
+            raw_cr = raw.get("cr")
+            cr_val: float | None = None
+            if raw_cr is not None:
+                cr_val = self._coerce_float(raw_cr)
+                if cr_val is None or cr_val < 0:
+                    self._load_issues.append(f"monster '{mid}' has invalid cr")
+                    cr_val = None
+
+            if "creature_type" in raw:
+                ct = self._coerce_non_empty_string(raw.get("creature_type"))
+                if ct is None or ct.lower() not in _CREATURE_TYPES:
+                    self._load_issues.append(f"monster '{mid}' has invalid creature_type")
+
+            abilities = self._load_abilities(mid, raw)
+            resistances = self._load_list_of_strings(mid, raw, "resistances")
+            immunities = self._load_list_of_strings(mid, raw, "immunities")
+            attacks = self._load_attacks(mid, raw)
+            loot_table = self._load_loot_table(mid, raw)
+
+            raw_tags = raw.get("tags")
+            tags: list[str] = []
+            if isinstance(raw_tags, list):
+                tags = [str(t) for t in raw_tags if isinstance(t, str) and str(t).strip()]
+
+            raw_spells = raw.get("spells")
+            spells: list[Any] = list(raw_spells) if isinstance(raw_spells, list) else []
+
+            # abilities can be a stat block (Mapping) or a list of skill refs
+            raw_abilities = raw.get("abilities")
+            ability_refs: list[Any] = (
+                list(raw_abilities) if isinstance(raw_abilities, list) else []
+            )
+
+            self._items[mid] = MonsterTemplate(
+                id=str(raw.get("id", mid)),
+                name=str(raw.get("name") or ""),
+                hp=self._coerce_positive_int(raw.get("hp")),
+                max_hp=self._coerce_positive_int(raw.get("max_hp")),
+                ac=self._coerce_positive_int(raw.get("ac")),
+                cr=cr_val,
+                creature_type=str(raw.get("creature_type") or "").strip().lower(),
+                abilities=abilities,
+                resistances=resistances,
+                immunities=immunities,
+                attacks=attacks,
+                gold_drop=self._coerce_non_negative_int(raw.get("gold_drop")),
+                gold=self._coerce_non_negative_int(raw.get("gold")),
+                gold_reward=self._coerce_non_negative_int(raw.get("gold_reward")),
+                loot_table=loot_table,
+                spells=spells,
+                ability_refs=ability_refs,
+                tags=tags,
+            )
+
+    def get(self, content_id: str) -> MonsterTemplate | None:
+        return self._items.get(content_id)
+
+    def list_all(self) -> list[MonsterTemplate]:
+        return list(self._items.values())
 
     # ------------------------------------------------------------------
     # Query methods
     # ------------------------------------------------------------------
 
-    def get_by_cr(self, min_cr: float = 0, max_cr: float = 999) -> list[dict[str, Any]]:
+    def get_by_cr(self, min_cr: float = 0, max_cr: float = 999) -> list[MonsterTemplate]:
         """Return monsters whose CR falls within [min_cr, max_cr]."""
-        results: list[dict[str, Any]] = []
-        for item in self._items.values():
-            cr = self._coerce_float(item.get("cr"))
-            if cr is not None and min_cr <= cr <= max_cr:
-                results.append(dict(item))
-        return results
+        return [
+            m for m in self._items.values()
+            if m.cr is not None and min_cr <= m.cr <= max_cr
+        ]
 
-    def get_by_type(self, creature_type: str) -> list[dict[str, Any]]:
+    def get_by_type(self, creature_type: str) -> list[MonsterTemplate]:
         """Return monsters matching the given creature_type."""
         normalized = creature_type.strip().lower()
         return [
-            dict(item)
-            for item in self._items.values()
-            if str(item.get("creature_type", "")).strip().lower() == normalized
+            m for m in self._items.values()
+            if m.creature_type == normalized
         ]
 
     # ------------------------------------------------------------------
@@ -63,137 +173,152 @@ class MonsterRegistry(ContentRegistry):
     # ------------------------------------------------------------------
 
     def validate(self) -> list[str]:
-        issues: list[str] = []
-        for item_id, item in self._items.items():
-            if not item.get("id"):
-                issues.append(f"monster '{item_id}' missing id")
-
-            # -- Consumer fields (combat.py, encounter.py) --
-            if "name" in item and self._coerce_non_empty_string(item.get("name")) is None:
-                issues.append(f"monster '{item_id}' has invalid name")
-
-            for field_name in ("hp", "max_hp", "ac"):
-                if field_name not in item:
-                    continue
-                if self._coerce_positive_int(item.get(field_name)) is None:
-                    issues.append(f"monster '{item_id}' has invalid {field_name}")
-
-            for field_name in ("gold_drop", "gold", "gold_reward"):
-                if field_name not in item:
-                    continue
-                if self._coerce_non_negative_int(item.get(field_name)) is None:
-                    issues.append(f"monster '{item_id}' has invalid {field_name}")
-
-            # -- Game mechanic fields --
-            if "cr" in item:
-                cr = self._coerce_float(item.get("cr"))
-                if cr is None or cr < 0:
-                    issues.append(f"monster '{item_id}' has invalid cr")
-
-            if "creature_type" in item:
-                ct = self._coerce_non_empty_string(item.get("creature_type"))
-                if ct is None or ct.lower() not in _CREATURE_TYPES:
-                    issues.append(f"monster '{item_id}' has invalid creature_type")
-
-            self._validate_abilities(item_id, item, issues)
-            self._validate_list_of_strings(item_id, item, "resistances", issues)
-            self._validate_list_of_strings(item_id, item, "immunities", issues)
-            self._validate_attacks(item_id, item, issues)
-
-            # -- Loot table --
-            self._validate_loot_table(item_id, item, issues)
-
-            # -- Balance warnings --
-            self._check_balance(item_id, item, issues)
+        issues = list(self._load_issues)
+        for mid, monster in self._items.items():
+            self._check_balance(mid, monster, issues)
         return issues
 
-    def _validate_abilities(
-        self, item_id: str, item: dict[str, Any], issues: list[str],
-    ) -> None:
-        abilities = item.get("abilities")
-        if abilities is None:
-            return
-        if not isinstance(abilities, Mapping):
-            issues.append(f"monster '{item_id}' has invalid abilities")
-            return
+    # ------------------------------------------------------------------
+    # Load helpers (format validation + dataclass construction)
+    # ------------------------------------------------------------------
+
+    def _load_abilities(
+        self, mid: str, raw: dict[str, Any],
+    ) -> dict[str, int]:
+        raw_abilities = raw.get("abilities")
+        if raw_abilities is None:
+            return {}
+        if not isinstance(raw_abilities, Mapping):
+            self._load_issues.append(f"monster '{mid}' has invalid abilities")
+            return {}
+        result: dict[str, int] = {}
         for attr in _ABILITY_NAMES:
-            if attr not in abilities:
+            if attr not in raw_abilities:
                 continue
-            if self._coerce_positive_int(abilities.get(attr)) is None:
-                issues.append(f"monster '{item_id}' abilities has invalid {attr}")
+            val = self._coerce_positive_int(raw_abilities.get(attr))
+            if val is None:
+                self._load_issues.append(f"monster '{mid}' abilities has invalid {attr}")
+            else:
+                result[attr] = val
+        return result
 
-    def _validate_list_of_strings(
-        self, item_id: str, item: dict[str, Any], field: str, issues: list[str],
-    ) -> None:
-        value = item.get(field)
+    def _load_list_of_strings(
+        self, mid: str, raw: dict[str, Any], field_name: str,
+    ) -> list[str]:
+        value = raw.get(field_name)
         if value is None:
-            return
+            return []
         if not isinstance(value, list):
-            issues.append(f"monster '{item_id}' has invalid {field}")
-            return
+            self._load_issues.append(f"monster '{mid}' has invalid {field_name}")
+            return []
+        result: list[str] = []
         for index, entry in enumerate(value):
-            if self._coerce_non_empty_string(entry) is None:
-                issues.append(f"monster '{item_id}' {field}[{index}] must be a non-empty string")
+            s = self._coerce_non_empty_string(entry)
+            if s is None:
+                self._load_issues.append(
+                    f"monster '{mid}' {field_name}[{index}] must be a non-empty string"
+                )
+            else:
+                result.append(s)
+        return result
 
-    def _validate_attacks(
-        self, item_id: str, item: dict[str, Any], issues: list[str],
-    ) -> None:
-        attacks = item.get("attacks")
-        if attacks is None:
-            return
-        if not isinstance(attacks, list):
-            issues.append(f"monster '{item_id}' has invalid attacks")
-            return
-        for index, entry in enumerate(attacks):
+    def _load_attacks(
+        self, mid: str, raw: dict[str, Any],
+    ) -> list[MonsterAttack]:
+        raw_attacks = raw.get("attacks")
+        if raw_attacks is None:
+            return []
+        if not isinstance(raw_attacks, list):
+            self._load_issues.append(f"monster '{mid}' has invalid attacks")
+            return []
+        result: list[MonsterAttack] = []
+        for index, entry in enumerate(raw_attacks):
             if not isinstance(entry, Mapping):
-                issues.append(f"monster '{item_id}' attacks[{index}] must be a mapping")
+                self._load_issues.append(
+                    f"monster '{mid}' attacks[{index}] must be a mapping"
+                )
                 continue
-            if self._coerce_non_empty_string(entry.get("name")) is None:
-                issues.append(f"monster '{item_id}' attacks[{index}] has invalid name")
+            name = self._coerce_non_empty_string(entry.get("name"))
+            if name is None:
+                self._load_issues.append(
+                    f"monster '{mid}' attacks[{index}] has invalid name"
+                )
+                continue
+            result.append(MonsterAttack(name=name))
+        return result
 
-    def _validate_loot_table(
-        self, item_id: str, item: dict[str, Any], issues: list[str],
-    ) -> None:
-        loot_table = item.get("loot_table")
-        if loot_table is None:
-            return
-        if not isinstance(loot_table, list):
-            issues.append(f"monster '{item_id}' has invalid loot_table")
-            return
-        for index, entry in enumerate(loot_table):
+    def _load_loot_table(
+        self, mid: str, raw: dict[str, Any],
+    ) -> list[LootEntry]:
+        raw_loot = raw.get("loot_table")
+        if raw_loot is None:
+            return []
+        if not isinstance(raw_loot, list):
+            self._load_issues.append(f"monster '{mid}' has invalid loot_table")
+            return []
+        result: list[LootEntry] = []
+        for index, entry in enumerate(raw_loot):
             if not isinstance(entry, Mapping):
-                issues.append(f"monster '{item_id}' loot_table[{index}] must be a mapping")
+                self._load_issues.append(
+                    f"monster '{mid}' loot_table[{index}] must be a mapping"
+                )
                 continue
-            if "item_id" in entry and self._coerce_non_empty_string(entry.get("item_id")) is None:
-                issues.append(f"monster '{item_id}' loot_table[{index}] has invalid item_id")
-            if "count" in entry and self._coerce_non_negative_int(entry.get("count")) is None:
-                issues.append(f"monster '{item_id}' loot_table[{index}] has invalid count")
+            # item_id
+            item_id_val = ""
+            if "item_id" in entry:
+                s = self._coerce_non_empty_string(entry.get("item_id"))
+                if s is None:
+                    self._load_issues.append(
+                        f"monster '{mid}' loot_table[{index}] has invalid item_id"
+                    )
+                else:
+                    item_id_val = s
+            # count
+            count_val = 1
+            if "count" in entry:
+                c = self._coerce_non_negative_int(entry.get("count"))
+                if c is None:
+                    self._load_issues.append(
+                        f"monster '{mid}' loot_table[{index}] has invalid count"
+                    )
+                else:
+                    count_val = c
+            # chance
+            chance_val = 1.0
             if "chance" in entry:
-                chance = self._coerce_float(entry.get("chance"))
-                if chance is None or chance < 0.0 or chance > 1.0:
-                    issues.append(f"monster '{item_id}' loot_table[{index}] has invalid chance")
+                ch = self._coerce_float(entry.get("chance"))
+                if ch is None or ch < 0.0 or ch > 1.0:
+                    self._load_issues.append(
+                        f"monster '{mid}' loot_table[{index}] has invalid chance"
+                    )
+                else:
+                    chance_val = ch
+            result.append(LootEntry(
+                item_id=item_id_val,
+                chance=chance_val,
+                count=count_val,
+            ))
+        return result
 
     def _check_balance(
-        self, item_id: str, item: dict[str, Any], issues: list[str],
+        self, mid: str, monster: MonsterTemplate, issues: list[str],
     ) -> None:
-        cr = self._coerce_float(item.get("cr"))
-        if cr is None or cr < 0:
+        if monster.cr is None or monster.cr < 0:
             return
-        hp = self._coerce_positive_int(item.get("hp", item.get("max_hp")))
-        if hp is not None:
+        hp = monster.hp or monster.max_hp
+        if hp is not None and hp > 0:
             for max_cr, low, high in _CR_HP_RANGES:
-                if cr <= max_cr:
+                if monster.cr <= max_cr:
                     if hp < low or hp > high:
                         issues.append(
-                            f"monster '{item_id}' balance warning: CR {cr} with HP {hp} outside expected range {low}-{high}"
+                            f"monster '{mid}' balance warning: CR {monster.cr} with HP {hp} outside expected range {low}-{high}"
                         )
                     break
-        ac = self._coerce_positive_int(item.get("ac"))
-        if ac is not None:
+        if monster.ac is not None and monster.ac > 0:
             for max_cr, low, high in _CR_AC_RANGES:
-                if cr <= max_cr:
-                    if ac < low or ac > high:
+                if monster.cr <= max_cr:
+                    if monster.ac < low or monster.ac > high:
                         issues.append(
-                            f"monster '{item_id}' balance warning: CR {cr} with AC {ac} outside expected range {low}-{high}"
+                            f"monster '{mid}' balance warning: CR {monster.cr} with AC {monster.ac} outside expected range {low}-{high}"
                         )
                     break

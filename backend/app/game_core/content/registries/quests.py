@@ -2,9 +2,37 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+
+
+@dataclass(slots=True)
+class MilestoneTemplate:
+    id: str
+    title: str = ""
+    description: str = ""
+    chapter_id: str = ""
+    tags: list[str] = field(default_factory=list)
+    prerequisites: list[str] = field(default_factory=list)
+    next_milestones: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ChapterMeta:
+    id: str
+    title: str = ""
+    description: str = ""
+
+
+@dataclass(slots=True)
+class InitialEvent:
+    id: str
+    event_type: str = ""
+    conditions: list[Any] | dict[str, Any] = field(default_factory=list)
+    payload: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class QuestRegistry(ContentRegistry):
@@ -12,9 +40,9 @@ class QuestRegistry(ContentRegistry):
 
     def __init__(self) -> None:
         super().__init__("quests")
-        self._milestones: dict[str, dict[str, Any]] = {}
-        self._chapter_meta: list[dict[str, Any]] = []
-        self._initial_events: list[dict[str, Any]] = []
+        self._milestones: dict[str, MilestoneTemplate] = {}
+        self._chapter_meta: list[ChapterMeta] = []
+        self._initial_events: list[InitialEvent] = []
         self._load_issues: list[str] = []
 
     def load(self, data: dict[str, Any]) -> None:
@@ -22,219 +50,366 @@ class QuestRegistry(ContentRegistry):
         self._chapter_meta = []
         self._initial_events = []
         self._load_issues = []
-        if isinstance(data, Mapping):
-            raw_milestones = data.get("milestones", data)
-            if isinstance(raw_milestones, Mapping):
-                for key, raw in raw_milestones.items():
-                    if isinstance(raw, Mapping):
-                        payload = dict(raw)
-                        payload.setdefault("id", str(key))
-                        self._milestones[str(key)] = payload
-                    else:
-                        self._load_issues.append(
-                            f"milestone '{key}' must be a mapping"
-                        )
-            elif isinstance(raw_milestones, list):
-                for index, raw in enumerate(raw_milestones):
-                    if isinstance(raw, Mapping):
-                        milestone_id = str(raw.get("id", "")).strip()
-                        if milestone_id:
-                            self._milestones[milestone_id] = dict(raw)
-                        else:
-                            self._load_issues.append(
-                                f"milestone list entry {index} missing id"
-                            )
-                    else:
-                        self._load_issues.append(
-                            f"milestone list entry {index} must be a mapping"
-                        )
-            else:
-                self._load_issues.append("milestones must be a mapping or list")
-            chapters = data.get("chapters", [])
-            if isinstance(chapters, list):
-                for index, item in enumerate(chapters):
-                    if isinstance(item, Mapping):
-                        self._chapter_meta.append(dict(item))
-                    else:
-                        self._load_issues.append(
-                            f"chapter entry {index} must be a mapping"
-                        )
-            elif "chapters" in data:
-                self._load_issues.append("chapters must be a list")
-            initial_events = data.get("initial_events", [])
-            if isinstance(initial_events, list):
-                for index, item in enumerate(initial_events):
-                    if isinstance(item, Mapping):
-                        self._initial_events.append(dict(item))
-                    else:
-                        self._load_issues.append(
-                            f"initial_events[{index}] must be a mapping"
-                        )
-            elif "initial_events" in data:
-                self._load_issues.append("initial_events must be a list")
+        if not isinstance(data, Mapping):
+            return
 
-    def get(self, content_id: str) -> Any | None:
-        item = self._milestones.get(content_id)
-        return dict(item) if isinstance(item, dict) else item
+        # Milestones
+        raw_milestones = data.get("milestones", data)
+        if isinstance(raw_milestones, Mapping):
+            for key, raw in raw_milestones.items():
+                if not isinstance(raw, Mapping):
+                    self._load_issues.append(
+                        f"milestone '{key}' must be a mapping"
+                    )
+                    continue
+                self._milestones[str(key)] = self._build_milestone(
+                    str(key), dict(raw),
+                )
+        elif isinstance(raw_milestones, list):
+            for index, raw in enumerate(raw_milestones):
+                if not isinstance(raw, Mapping):
+                    self._load_issues.append(
+                        f"milestone list entry {index} must be a mapping"
+                    )
+                    continue
+                milestone_id = self._coerce_non_empty_string(raw.get("id"))
+                if not milestone_id:
+                    self._load_issues.append(
+                        f"milestone list entry {index} missing id"
+                    )
+                    continue
+                self._milestones[milestone_id] = self._build_milestone(
+                    milestone_id, dict(raw),
+                )
+        else:
+            self._load_issues.append("milestones must be a mapping or list")
 
-    def list_all(self) -> list[Any]:
-        return [dict(value) for value in self._milestones.values()]
+        # Chapters
+        chapters = data.get("chapters", [])
+        if isinstance(chapters, list):
+            for index, item in enumerate(chapters):
+                if not isinstance(item, Mapping):
+                    self._load_issues.append(
+                        f"chapter entry {index} must be a mapping"
+                    )
+                    continue
+                chapter = self._build_chapter(index, dict(item))
+                if chapter is not None:
+                    self._chapter_meta.append(chapter)
+        elif "chapters" in data:
+            self._load_issues.append("chapters must be a list")
+
+        # Initial events
+        initial_events = data.get("initial_events", [])
+        if isinstance(initial_events, list):
+            for index, item in enumerate(initial_events):
+                if not isinstance(item, Mapping):
+                    self._load_issues.append(
+                        f"initial_events[{index}] must be a mapping"
+                    )
+                    continue
+                event = self._build_initial_event(index, dict(item))
+                if event is not None:
+                    self._initial_events.append(event)
+        elif "initial_events" in data:
+            self._load_issues.append("initial_events must be a list")
+
+    def get(self, content_id: str) -> MilestoneTemplate | None:
+        return self._milestones.get(content_id)
+
+    def list_all(self) -> list[MilestoneTemplate]:
+        return list(self._milestones.values())
 
     def validate(self) -> list[str]:
         issues: list[str] = list(self._load_issues)
+
+        # Duplicate chapter ids
         chapter_ids: set[str] = set()
-        for index, chapter in enumerate(self._chapter_meta):
-            chapter_id = self._coerce_non_empty_string(
-                chapter.get("id", chapter.get("chapter_id"))
-            )
-            if chapter_id is None:
-                issues.append(f"chapter entry {index} missing id")
+        for chapter in self._chapter_meta:
+            if chapter.id in chapter_ids:
+                issues.append(f"duplicate chapter id '{chapter.id}'")
                 continue
-            if chapter_id in chapter_ids:
-                issues.append(f"duplicate chapter id '{chapter_id}'")
-                continue
-            chapter_ids.add(chapter_id)
+            chapter_ids.add(chapter.id)
 
-        for index, chapter in enumerate(self._chapter_meta):
-            # -- Chapter display fields --
-            if "title" in chapter and self._coerce_non_empty_string(chapter.get("title")) is None:
-                issues.append(f"chapter entry {index} has invalid title")
-            if "description" in chapter and self._coerce_non_empty_string(chapter.get("description")) is None:
-                issues.append(f"chapter entry {index} has invalid description")
-
-        for item_id, item in self._milestones.items():
-            if not item.get("id"):
-                issues.append(f"milestone '{item_id}' missing id")
-            chapter_id = item.get("chapter_id")
-            if chapter_id is not None:
-                normalized_chapter_id = self._coerce_non_empty_string(chapter_id)
-                if normalized_chapter_id is None:
-                    issues.append(f"milestone '{item_id}' has invalid chapter_id")
-                elif normalized_chapter_id not in chapter_ids:
+        # Milestone cross-references
+        for item_id, milestone in self._milestones.items():
+            if milestone.chapter_id:
+                if milestone.chapter_id not in chapter_ids:
                     issues.append(
-                        f"milestone '{item_id}' references unknown chapter '{normalized_chapter_id}'"
+                        f"milestone '{item_id}' references unknown chapter '{milestone.chapter_id}'"
                     )
 
-            # -- Milestone display / consumer fields --
-            if "title" in item and self._coerce_non_empty_string(item.get("title")) is None:
-                issues.append(f"milestone '{item_id}' has invalid title")
-            if "description" in item and self._coerce_non_empty_string(item.get("description")) is None:
-                issues.append(f"milestone '{item_id}' has invalid description")
-            if "tags" in item and not isinstance(item.get("tags"), list):
-                issues.append(f"milestone '{item_id}' has invalid tags")
-
-            prerequisites = item.get("prerequisites")
-            if prerequisites is not None:
-                if not isinstance(prerequisites, list):
-                    issues.append(f"milestone '{item_id}' has invalid prerequisites")
-                else:
-                    for p_index, prereq in enumerate(prerequisites):
-                        if self._coerce_non_empty_string(prereq) is None:
-                            issues.append(
-                                f"milestone '{item_id}' prerequisites[{p_index}] must be a non-empty string"
-                            )
-
-            next_milestones = item.get("next_milestones")
-            if next_milestones is None:
-                continue
-            if not isinstance(next_milestones, list):
-                issues.append(f"milestone '{item_id}' has invalid next_milestones")
-                continue
-            for index, next_id in enumerate(next_milestones):
-                normalized_next_id = self._coerce_non_empty_string(next_id)
-                if normalized_next_id is None:
+            for index, next_id in enumerate(milestone.next_milestones):
+                if next_id not in self._milestones:
                     issues.append(
-                        f"milestone '{item_id}' next_milestones[{index}] must be a non-empty string"
-                    )
-                    continue
-                if normalized_next_id not in self._milestones:
-                    issues.append(
-                        f"milestone '{item_id}' references unknown next milestone '{normalized_next_id}'"
+                        f"milestone '{item_id}' references unknown next milestone '{next_id}'"
                     )
 
-        for index, event in enumerate(self._initial_events):
-            if "event_id" not in event and "id" not in event:
-                continue
-            event_id = self._coerce_non_empty_string(
-                event.get("event_id", event.get("id"))
-            )
-            if event_id is None:
-                issues.append(f"initial_events[{index}] has invalid event id")
-
-            # -- Initial event consumer fields --
-            if "event_type" in event and self._coerce_non_empty_string(event.get("event_type")) is None:
-                issues.append(f"initial_events[{index}] has invalid event_type")
-            for cond_field in ("conditions", "preconditions"):
-                cond = event.get(cond_field)
-                if cond is not None and not isinstance(cond, (list, Mapping)):
-                    issues.append(f"initial_events[{index}] has invalid {cond_field}")
-            if "payload" in event and not isinstance(event.get("payload"), Mapping):
-                issues.append(f"initial_events[{index}] has invalid payload")
-            if "metadata" in event and not isinstance(event.get("metadata"), Mapping):
-                issues.append(f"initial_events[{index}] has invalid metadata")
         return issues
 
-    def get_milestone(self, milestone_id: str) -> dict[str, Any] | None:
-        item = self._milestones.get(milestone_id)
-        return dict(item) if isinstance(item, dict) else item
+    def get_milestone(self, milestone_id: str) -> MilestoneTemplate | None:
+        return self._milestones.get(milestone_id)
 
-    def get_chapter_milestones(self, chapter_id: str) -> list[dict[str, Any]]:
+    def get_chapter_milestones(self, chapter_id: str) -> list[MilestoneTemplate]:
         return [
-            dict(item)
-            for item in self._milestones.values()
-            if item.get("chapter_id") == chapter_id
+            milestone
+            for milestone in self._milestones.values()
+            if milestone.chapter_id == chapter_id
         ]
 
-    def get_next_milestones(self, milestone_id: str) -> list[dict[str, Any]]:
-        milestone = self._milestones.get(milestone_id, {})
-        next_ids = milestone.get("next_milestones", [])
-        if not isinstance(next_ids, list):
+    def get_next_milestones(self, milestone_id: str) -> list[MilestoneTemplate]:
+        milestone = self._milestones.get(milestone_id)
+        if milestone is None:
             return []
         return [
-            dict(self._milestones[next_id])
-            for next_id in next_ids
+            self._milestones[next_id]
+            for next_id in milestone.next_milestones
             if next_id in self._milestones
         ]
 
     def get_milestone_graph(self) -> dict[str, list[str]]:
-        graph: dict[str, list[str]] = {}
-        for milestone_id, item in self._milestones.items():
-            next_ids = item.get("next_milestones", [])
-            if isinstance(next_ids, list):
-                graph[milestone_id] = [str(next_id) for next_id in next_ids]
-            else:
-                graph[milestone_id] = []
-        return graph
+        return {
+            milestone_id: list(milestone.next_milestones)
+            for milestone_id, milestone in self._milestones.items()
+        }
 
-    def get_by_tags(self, tags: list[str], match_all: bool = True) -> list[dict[str, Any]]:
-        return [
-            dict(item)
-            for item in self.query_by_tags(tags, match_all=match_all)
-            if isinstance(item, dict)
-        ]
+    def get_by_tags(
+        self, tags: list[str], match_all: bool = True,
+    ) -> list[MilestoneTemplate]:
+        return list(self.query_by_tags(tags, match_all=match_all))
 
-    def get_chapter(self, chapter_id: str) -> dict[str, Any] | None:
+    def get_chapter(self, chapter_id: str) -> ChapterMeta | None:
         """Return a single chapter by id."""
         for chapter in self._chapter_meta:
-            cid = self._coerce_non_empty_string(
-                chapter.get("id", chapter.get("chapter_id"))
-            )
-            if cid == chapter_id:
-                return dict(chapter)
+            if chapter.id == chapter_id:
+                return chapter
         return None
 
-    def get_initial_event(self, event_id: str) -> dict[str, Any] | None:
+    def get_initial_event(self, event_id: str) -> InitialEvent | None:
         """Return a single initial event by id."""
         for event in self._initial_events:
-            eid = self._coerce_non_empty_string(
-                event.get("id", event.get("event_id"))
-            )
-            if eid == event_id:
-                return dict(event)
+            if event.id == event_id:
+                return event
         return None
 
-    def chapters(self) -> list[dict[str, Any]]:
-        return [dict(item) for item in self._chapter_meta]
+    def chapters(self) -> list[ChapterMeta]:
+        return list(self._chapter_meta)
 
-    def initial_events(self) -> list[dict[str, Any]]:
-        return [dict(item) for item in self._initial_events]
+    def initial_events(self) -> list[InitialEvent]:
+        return list(self._initial_events)
+
+    # ------------------------------------------------------------------
+    # Build helpers
+    # ------------------------------------------------------------------
+
+    def _build_milestone(
+        self, item_id: str, raw: dict[str, Any],
+    ) -> MilestoneTemplate:
+        # Validate explicit id field if present
+        raw_id = raw.get("id")
+        if raw_id is not None and not self._coerce_non_empty_string(raw_id):
+            self._load_issues.append(f"milestone '{item_id}' missing id")
+
+        # title
+        title = ""
+        raw_title = raw.get("title")
+        if raw_title is not None:
+            s = str(raw_title).strip()
+            if not s:
+                self._load_issues.append(
+                    f"milestone '{item_id}' has invalid title"
+                )
+            else:
+                title = s
+
+        # description
+        description = ""
+        raw_desc = raw.get("description")
+        if raw_desc is not None:
+            s = str(raw_desc).strip()
+            if not s:
+                self._load_issues.append(
+                    f"milestone '{item_id}' has invalid description"
+                )
+            else:
+                description = s
+
+        # chapter_id
+        chapter_id = ""
+        raw_chapter = raw.get("chapter_id")
+        if raw_chapter is not None:
+            s = self._coerce_non_empty_string(raw_chapter)
+            if s is None:
+                self._load_issues.append(
+                    f"milestone '{item_id}' has invalid chapter_id"
+                )
+            else:
+                chapter_id = s
+
+        # tags
+        tags: list[str] = []
+        raw_tags = raw.get("tags")
+        if raw_tags is not None:
+            if isinstance(raw_tags, list):
+                tags = [str(t) for t in raw_tags if str(t).strip()]
+            else:
+                self._load_issues.append(
+                    f"milestone '{item_id}' has invalid tags"
+                )
+
+        # prerequisites
+        prerequisites = self._load_validated_string_list(
+            raw, "prerequisites", item_id,
+        )
+
+        # next_milestones
+        next_milestones = self._load_validated_string_list(
+            raw, "next_milestones", item_id,
+        )
+
+        return MilestoneTemplate(
+            id=item_id,
+            title=title,
+            description=description,
+            chapter_id=chapter_id,
+            tags=tags,
+            prerequisites=prerequisites,
+            next_milestones=next_milestones,
+        )
+
+    def _build_chapter(
+        self, index: int, raw: dict[str, Any],
+    ) -> ChapterMeta | None:
+        # Merge id / chapter_id alias
+        chapter_id = self._coerce_non_empty_string(
+            raw.get("id", raw.get("chapter_id"))
+        )
+        if chapter_id is None:
+            self._load_issues.append(f"chapter entry {index} missing id")
+            return None
+
+        title = ""
+        raw_title = raw.get("title")
+        if raw_title is not None:
+            s = str(raw_title).strip()
+            if not s:
+                self._load_issues.append(
+                    f"chapter entry {index} has invalid title"
+                )
+            else:
+                title = s
+
+        description = ""
+        raw_desc = raw.get("description")
+        if raw_desc is not None:
+            s = str(raw_desc).strip()
+            if not s:
+                self._load_issues.append(
+                    f"chapter entry {index} has invalid description"
+                )
+            else:
+                description = s
+
+        return ChapterMeta(id=chapter_id, title=title, description=description)
+
+    def _build_initial_event(
+        self, index: int, raw: dict[str, Any],
+    ) -> InitialEvent | None:
+        # Merge id / event_id alias
+        event_id = self._coerce_non_empty_string(
+            raw.get("id", raw.get("event_id"))
+        )
+        if event_id is None:
+            if "event_id" in raw or "id" in raw:
+                self._load_issues.append(
+                    f"initial_events[{index}] has invalid event id"
+                )
+            return None
+
+        # event_type
+        event_type = ""
+        raw_type = raw.get("event_type")
+        if raw_type is not None:
+            s = str(raw_type).strip()
+            if not s:
+                self._load_issues.append(
+                    f"initial_events[{index}] has invalid event_type"
+                )
+            else:
+                event_type = s
+
+        # conditions — validate both fields, use first valid one
+        conditions: list[Any] | dict[str, Any] = []
+        found_valid = False
+        for cond_field in ("preconditions", "conditions"):
+            raw_cond = raw.get(cond_field)
+            if raw_cond is None:
+                continue
+            if isinstance(raw_cond, list):
+                if not found_valid:
+                    conditions = list(raw_cond)
+                    found_valid = True
+            elif isinstance(raw_cond, Mapping):
+                if not found_valid:
+                    conditions = dict(raw_cond)
+                    found_valid = True
+            else:
+                self._load_issues.append(
+                    f"initial_events[{index}] has invalid {cond_field}"
+                )
+
+        # payload
+        payload: dict[str, Any] = {}
+        raw_payload = raw.get("payload")
+        if raw_payload is not None:
+            if isinstance(raw_payload, Mapping):
+                payload = dict(raw_payload)
+            else:
+                self._load_issues.append(
+                    f"initial_events[{index}] has invalid payload"
+                )
+
+        # metadata
+        metadata: dict[str, Any] = {}
+        raw_meta = raw.get("metadata")
+        if raw_meta is not None:
+            if isinstance(raw_meta, Mapping):
+                metadata = dict(raw_meta)
+            else:
+                self._load_issues.append(
+                    f"initial_events[{index}] has invalid metadata"
+                )
+
+        return InitialEvent(
+            id=event_id,
+            event_type=event_type,
+            conditions=conditions,
+            payload=payload,
+            metadata=metadata,
+        )
+
+    def _load_validated_string_list(
+        self,
+        raw: dict[str, Any],
+        field_name: str,
+        item_id: str,
+    ) -> list[str]:
+        """Load and validate a list of non-empty strings."""
+        raw_list = raw.get(field_name)
+        if raw_list is None:
+            return []
+        if not isinstance(raw_list, list):
+            self._load_issues.append(
+                f"milestone '{item_id}' has invalid {field_name}"
+            )
+            return []
+        result: list[str] = []
+        for index, entry in enumerate(raw_list):
+            s = self._coerce_non_empty_string(entry)
+            if s is None:
+                self._load_issues.append(
+                    f"milestone '{item_id}' {field_name}[{index}] must be a non-empty string"
+                )
+            else:
+                result.append(s)
+        return result

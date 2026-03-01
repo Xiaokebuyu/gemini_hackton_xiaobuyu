@@ -12,6 +12,7 @@
 |------|------|------|
 | `AgentTool` ABC | [完成] | name/description/parameters/allowed_roles/execute |
 | `AgentContext` | [完成] | role + world + state + scene_entries + execute_command |
+| `AgentContextBuilder` | [完成] | 7 层上下文 + 角色可见性矩阵 + 系统提示构建（D-N13） |
 | `AgenticExecutor` | [完成] | 单轮 `run()` + 多轮 `run_agentic()` + LlmPort 注入（D-N10） |
 | `RoleToolRegistry` | [完成] | gm/npc/teammate 分桶 + 同名工具按序覆盖 |
 | `ToolResult` | [完成] | success/message/commands/metadata |
@@ -243,6 +244,79 @@ app/game_core/narrative/executor.py (AgenticExecutor.run_agentic)
 
 **测试**：8 个新测试 in `tests/test_agentic_loop.py`（使用 RecordingLlmProvider mock）
 
+### [D-N11] Settlement GM 叙述接通 LLM（Phase 1）
+
+**日期**：2026-03-01
+
+**目标**：格结算时 GM Agent 用 LLM（gemini-3-flash-preview）生成叙述，替代模板文本。
+
+**改动清单**：
+
+1. **GmNarrator Protocol 改 async**（`hooks/gm_narration.py`）
+   - `GmNarrator.compose()` / `NullGmNarrator.compose()` / `TemplateGmNarrator.compose()` → `async def`
+   - `GmNarrationHook.execute()` 中 `await self._narrator.compose(...)`
+
+2. **AgenticGmNarrator**（**新建** `app/narrators.py`）
+   - 实现 `GmNarrator` Protocol，包装 `AgenticExecutor.run_agentic(role="gm")`
+   - 持有 session 级 world/state 引用（和 TickCoordinator 同生命周期）
+   - `_agent_result_to_decision()` 提取 narrate/comment 工具输出 → `GmNarrationDecision.entries`
+   - 含 `GM_SETTLEMENT_PROMPT` 系统指令（毒舌旁白人格 §2.3 + 格结算场景）
+
+3. **注入连线**
+   - `bootstrap.py`：`build_runtime_for_world()` / `build_restored_runtime_for_world()` 新增 `gm_narrator_factory` 参数（`Callable[[WorldInstance, StateContainer], GmNarrator]`）。factory 在 state 创建后调用，解决 narrator 需要 state 引用的时序问题。利用 `register_default_settlement_hooks` 的 name 去重机制跳过默认 TemplateGmNarrator
+   - `runtime.py`：`GameRuntime.__init__` 新增 `llm_provider: LlmPort | None`。`_gm_narrator_factory()` 方法构建闭包，内部延迟导入 `app.narrators.AgenticGmNarrator` + 工具注册
+   - `session_store.py`：`load_runtime_for_world()` 透传 `gm_narrator_factory` 到 bootstrap
+
+**测试**：450 passed（基线不变 +0），已有测试中 mock narrator 改 async 兼容
+
+### [D-N12] NPC 对话 + GM/Teammate 即时反应接通 LLM（Phase 2+3）
+
+**日期**：2026-03-01
+
+**目标**：NPC 被对话时用 LLM 生成回应；玩家每次动作后 GM 可选即时叙述/点评、队友可选发言。
+
+**架构决策**：
+- Agent 编排在应用层（`app/agent_orchestration.py`），不下沉到 game_core
+- 单一 `AgentOrchestrationService` 复用一个 `AgenticExecutor`（19 工具全注册，按 role 自动筛选）
+- NPC 工具的 Command 执行通过 `AgentContext.execute_command` 回调 → `rules_engine.execute()` → `state.apply(delta)`
+- 玩家消息写入 SceneSlice（`source="player"`），NPC 工具已有 SceneSlice 写入逻辑
+- `deps.py` 检测 `GOOGLE_API_KEY` / `GEMINI_API_KEY` 环境变量自动启用 LLM
+
+**改动清单**：
+
+1. **AgentOrchestrationService**（**新建** `app/agent_orchestration.py`）
+   - `generate_npc_response(session, npc_id, player_message)` → NPC 对话 SSE 事件
+   - `generate_post_action_reactions(session, result)` → GM + Teammate 反应 SSE 事件
+   - 3 套 System Prompt：NPC（动态，含个性/好感/记忆）、GM 即时反应、Teammate（动态，含个性/审批值）
+   - `_make_command_executor(session)` 回调：NPC 工具 Command → rules_engine → state.apply
+   - SSE 转换器：`_npc_result_to_sse` / `_gm_result_to_sse` / `_teammate_result_to_sse`
+
+2. **GameRuntime 暴露编排服务**（`runtime.py`）
+   - `agent_orchestration` property（lazy，有 LLM 时创建 singleton）
+   - `_build_agent_orchestration()` 注册全部 19 工具 + 创建 AgenticExecutor
+
+3. **deps.py LLM 自动启用**
+   - `_build_game_runtime()` 检测环境变量 → 创建 `GeminiLlmAdapter` → 注入 `GameRuntime`
+   - `get_agent_orchestration()` helper
+
+4. **InteractRequest 增 message 字段**（`api_models.py`）
+   - `message: str | None = None` — 玩家对话文本
+
+5. **Router 集成**（`routers/gameplay.py`）
+   - `interact_stream`：InteractionService 之后，若有 NPC + message → 调 `generate_npc_response()`
+   - `action_stream` / `input_stream`：PipelineResult 之后 → 调 `generate_post_action_reactions()`
+   - 无 LLM 时优雅降级（`get_agent_orchestration()` 返回 None，跳过）
+
+**SSE 事件映射**：
+- NPC speak → `npc_response`（含 npc_id + content）
+- NPC emote → `npc_emote`（含 npc_id + action）
+- NPC refuse → `npc_response`（type="refuse"）
+- GM narrate → `gm_narration`（含 content）
+- GM comment → `gm_comment`（含 content）
+- Teammate speak/emote → `teammate_response`（含 character_id + content/action）
+
+**测试**：468 passed（+18），18 个新测试覆盖 prompt 构建、SSE 转换、Command 执行、集成流程、优雅降级
+
 ## 填充 TODO
 
 - [x] `AgenticExecutor`：接入 LLM agentic 循环 — D-N10 完成
@@ -251,3 +325,529 @@ app/game_core/narrative/executor.py (AgenticExecutor.run_agentic)
 - [x] NPC 工具 8 个 — D-N09 完成
 - [x] Teammate 工具 6 个 — D-N09 完成
 - [x] `NarrativePlanner`：更丰富的规划策略 — D-N07 完成
+- [x] Settlement GM 叙述接通 LLM — D-N11 完成
+- [x] NPC 交互对话接通 LLM（Phase 2）— D-N12 完成
+- [x] 格内动作 GM + Teammate 反应接通 LLM（Phase 3）— D-N12 完成
+- [x] AgentContextBuilder 集中化（7 层上下文 + 角色可见性矩阵）— D-N13 完成
+- [ ] D-N13 收尾：将 7 层上下文真正注入 `AgenticExecutor` 的初始输入（当前主要用于测试与 prompt 局部取值）
+- [ ] D-N13 收尾：为工具执行补角色级只读隔离（当前 `AgentContext` 仍携带完整 `world + state`）
+- [ ] D-N13 收尾：补齐与 `ContextAssembler` 的 L2/L3 字段对齐（如动态子区域统计/列表）
+- [ ] PrivateChatCoordinator（私聊管线）
+- [ ] 对话选项生成（Agent 意图 + ❷ 填充 DC）
+- [ ] MemoryGraph / ContextWindow 记忆系统接入
+- [ ] InstanceManager NPC 实例池
+- [x] 完整 7 层 AgentContextBuilder — D-N13 完成
+
+---
+
+### [D-N13] AgentContextBuilder 集中化（N-3，对齐叙事层设计规范 §3.1-3.3）
+
+**问题**：LLM Agent 上下文组装散落在 `agent_orchestration.py` 的 10 个模块级函数中，无层级结构，无角色可见性过滤。`ContextAssembler`（编排层）已有 8 层 pipeline 上下文，但绑定 `SharedContext`，Agent 编排在 pipeline 外调用无法复用。
+
+**决策**：
+1. 新建 `app/game_core/narrative/context_builder.py`，实现设计文档 §3.1-3.3 的完整 `AgentContextBuilder`
+2. 7 层 dict 输出（L0-L7）+ 角色可见性矩阵（GM/NPC/Teammate 各自过滤范围）
+3. `agent_orchestration.py` 删除 10 个散落函数 + 2 个 prompt 常量（557→~200 行），改用 builder
+4. 顺手修复 `_generate_teammate_reactions` 中 `isinstance(members, list)` 的 bug（members 实际是 dict）
+
+**L4 角色差异化**：
+- GM：全量 state snapshots（time/player/relations/flags/party）
+- NPC：仅自身 disposition + stage + impressions（3 字段）
+- Teammate：自身 disposition + party_members + companion_approval + time
+
+**L5 可见性过滤**：
+- GM：排除 `visibility="system"` 的条目
+- NPC/Teammate：排除 system + 过滤 private 条目（按 `audience_token = f"{role}:{char_id}"`）
+
+**L6/L7**：L6 stub（预留 MemoryGraph 参数），L7 仅 GM 接收 hints 参数。
+
+**不重构 ContextAssembler**：两者服务不同消费场景（pipeline vs agent），避免跨层强耦合。
+
+**文件变更**：
+- `app/game_core/narrative/context_builder.py`（新建，~410 行）
+- `app/agent_orchestration.py`（重构，~557→~200 行）
+- `app/game_core/narrative/__init__.py`（添加 AgentContextBuilder 导出）
+- `tests/test_context_builder.py`（新建，~190 行，26 个新测试）
+- `tests/test_agent_orchestration.py`（更新 import）
+
+**测试基线**：541 passed（+26 新测试，零回归）
+
+---
+
+### [D-N14] N-1 Phase 1：MemoryRetriever Protocol + ContextWindow + L6 改造（2026-03-01）
+
+**问题**：`AgentContextBuilder._build_l6()` 硬编码返回 `{"hits": [], "source": "stub"}`，没有注入边界，不可替换。
+
+**改动**：
+
+#### 新建 `app/game_core/narrative/memory_retriever.py`
+- `MemoryRetriever` Protocol（`@runtime_checkable`）：`async def retrieve(actor_id, keywords, context) -> {"hits", "source"}`
+- `NullMemoryRetriever`：安全默认，无 IO，返回 `{"hits": [], "source": "null"}`
+
+#### 新建 `app/game_core/narrative/context_window.py`
+- `WindowMessage(slots=True)`：role / content / token_count / metadata / is_graphized
+- `ContextWindow(slots=True)`：actor_id + max_tokens(200K) + overflow_threshold(0.9)
+  - `add_message()` → 返回 `should_graphize`
+  - `pop_oldest_for_graphize(fraction=1/3)` → 弹出并标记 is_graphized=True，供 Phase 2-3 MemoryGraphizer
+  - `snapshot()` → JSON-serializable 快照（Phase 2 持久化钩子）
+
+#### 修改 `app/game_core/narrative/context_builder.py`
+- 新增 import：`MemoryRetriever`
+- `_build_l6(memory)` → `async def _build_l6(self, actor_id, retriever)` — 去掉 @staticmethod
+- 5 个公开方法改为 async，参数 `memory: Any = None` → `memory_retriever: MemoryRetriever | None = None`：
+  - `build_npc_context`, `build_teammate_context`
+  - `build_npc_system_prompt`, `build_teammate_system_prompt`
+  - `build_teammate_interaction_prompt`
+
+#### 修改调用方（加 await）
+- `app/game_core/orchestration/npc_interaction.py`：2 处（build_npc_system_prompt + build_teammate_interaction_prompt）
+- `app/agent_orchestration.py`：2 处（build_npc_system_prompt + build_teammate_system_prompt）
+
+#### 更新 `app/game_core/narrative/__init__.py`
+- 新增导出：`ContextWindow`, `MemoryRetriever`, `NullMemoryRetriever`, `WindowMessage`
+
+**设计偏离**：无。Phase 1 严格对齐设计规范 L6 注入边界定义。
+
+**测试**：
+- `tests/test_context_window.py`（新建，15 个测试）
+- `tests/test_memory_retriever.py`（新建，5 个测试）
+- `tests/test_context_builder.py`（更新 13 个方法：asyncio.run + L6 source "stub"→"null"）
+
+**测试基线**：595 passed（+24，零回归）
+
+---
+
+### [D-N15] N-1 Phase 2：WorldKnowledgeGraph + 扩散激活检索（2026-03-01）
+
+**问题**：Phase 1 的 `_build_l6` 传入空 keywords/context，`KnowledgeGraphMemoryRetriever` 尚未实现，
+L6 实际上仍为空命中。Phase 2 目标：实现静态世界知识图谱 + BFS 扩散激活检索，接通完整 L6 数据流。
+
+**改动**：
+
+#### 新建 `app/game_core/adapters/memory_graph_port.py`
+- `MemoryGraphPort` Protocol（`@runtime_checkable`）：`async def query_spread(actor_id, keywords, context, *, max_depth, decay, top_k) -> list[dict]`
+- `NullMemoryGraphPort`：安全默认，无 IO，返回 `[]`
+- 导出到 `app/game_core/adapters/__init__.py`
+
+#### 新建 `app/world_knowledge_graph.py`
+- `WorldKnowledgeGraph`（实现 `MemoryGraphPort`）：NetworkX DiGraph
+- 节点类型：character / faction / area / location / item / monster / skill / milestone
+- 边类型（`EdgeType`）：located_in / belongs_to / has_class / carries / sells / faction_relation / drops / adjacent_to / contains / requires / leads_to
+- `ensure_seeded(world)`：按 world_id 懒惰初始化，幂等
+- `_seed_*` 7 个子方法：从各 Registry 提取节点和边
+- `_find_seed_nodes(keywords)`：大小写不敏感匹配 label/tags/node_id
+- `_spread_activation(seeds, max_depth, decay)`：BFS on undirected view，边权重参与衰减
+- `query_spread`：seed → spread → top_k hits（排除 seed 节点自身）
+
+#### 新建 `app/memory_retriever_impl.py`
+- `KnowledgeGraphMemoryRetriever`：`__init__(graph: MemoryGraphPort)`
+- `retrieve(actor_id, keywords, context)` → 透传到 `graph.query_spread` → 包装为 `{"hits", "source": "knowledge_graph"}`
+
+#### 修改 `app/game_core/narrative/context_builder.py`
+- `_build_l6`：补充 `_extract_scene_keywords(actor_id)` 调用 + `context={"world": self._world, "current_area": ...}`
+- 新增 `_extract_scene_keywords(actor_id)`：从最近 5 条可见 scene 条目分词，去重，上限 20 个关键词
+
+#### 修改注入链路
+- `npc_interaction.py`：`NpcInteractionCoordinator` 添加 `memory_retriever: MemoryRetriever | None = None` 构造参数，传入 `build_npc_system_prompt`
+- `runtime.py`：`GameRuntime.__init__` 添加 `memory_retriever` 参数；`_build_agent_orchestration` 传递给 `AgentOrchestrationService`
+- `agent_orchestration.py`：`AgentOrchestrationService.__init__` 添加 `memory_retriever` 参数；两处调用（`build_npc_system_prompt` + `build_teammate_system_prompt`）补参；`run_npc_interaction` 传递给 `NpcInteractionCoordinator`
+- `deps.py`：`_build_game_runtime` 实例化 `WorldKnowledgeGraph + KnowledgeGraphMemoryRetriever`，注入到 `GameRuntime`
+
+**设计偏离**：无。Phase 2 严格对齐计划：静态图 + 扩散激活，动态边（disposition/事件）留 Phase 3。
+
+**架构决策**：
+- BFS 在无向视图（`to_undirected()`）上传播，激活双向流动（找 merchant_tom → 也能激活其所在区域）
+- `context["world"]` 传入 retriever 用于懒惰 seeding，无需引入全局 WorldInstance 引用
+- `write_episode`（ContextWindow 溢出图谱化）有意推迟至 Phase 3
+- `NullMemoryGraphPort` + `NullMemoryRetriever` 保持分层安全默认
+
+**测试**：
+- `tests/test_world_knowledge_graph.py`（新建，28 个测试）：节点/边构建、BFS 激活、decay 数值、top_k、幂等性
+- `tests/test_memory_retriever_impl.py`（新建，11 个测试）：Protocol 满足、空关键词短路、hit 格式透传
+
+**测试基线**：634 passed（+39，零回归）
+
+**验收备注（2026-03-01）**：
+
+---
+
+## [D-N16] N-1 Phase 3a：InstanceManager + LRU 实例池（2026-03-01）
+
+**问题**：NPC 完全无实例——每次交互创建临时 context，调用完即销毁，对话历史不跨轮次保留。
+ContextWindow 数据结构（Phase 1）从未被任何调用方使用。
+
+**目标**：
+1. InstanceManager — per-NPC ContextWindow 的 LRU 实例池（最多 200 个 NPC）
+2. 对话历史注入 run_agentic() — NPC 能"记得"与同一玩家的历史对话
+3. 溢出检测并打通 write_episode 接口 — 溢出时弹出旧消息，调用图谱化方法（stub）
+
+#### 新建 `app/game_core/narrative/instance_manager.py`
+- `InstanceManager`：`OrderedDict` + LRU 淘汰策略
+- `get_or_create(actor_id)` → 返回/创建 ContextWindow，访问即促进到 MRU
+- `get(actor_id)` → 返回现有实例或 None（不创建）
+- `contains(actor_id)` / `instance_count()` 查询方法
+- 构造参数：`max_instances=200`、`max_tokens_per_instance=200_000`、`overflow_threshold=0.9`
+
+#### 修改 `app/game_core/narrative/executor.py`
+- `run_agentic()` 新增 `conversation_history: list[dict] | None = None` 参数
+- 若提供，用已有历史 + 追加 user_message；否则行为与原完全一致（零回归）
+
+#### 修改 `app/game_core/adapters/memory_graph_port.py`
+- `MemoryGraphPort` Protocol 新增 `write_episode(actor_id, messages, context)` 方法
+- `NullMemoryGraphPort` 同步添加 stub（返回 None）
+
+#### 修改 `app/world_knowledge_graph.py`
+- `WorldKnowledgeGraph.write_episode()` stub：Phase 3a no-op，Phase 3b 填充 LLM 三元组提取
+
+#### 修改 `app/game_core/orchestration/npc_interaction.py`
+- `NpcInteractionResult` 新增 `graphize_candidates: list[WindowMessage]` 字段
+- `execute_interaction()` 新增 `context_window: ContextWindow | None = None` 参数
+- Step 2 前调用 `_window_to_history(context_window)` 构建历史
+- Step 2 后更新 ContextWindow，检测溢出 → 填入 `graphize_candidates`
+- 新增纯函数：`_window_to_history()`、`_approx_tokens()`
+
+#### 修改注入链路
+- `agent_orchestration.py`：`AgentOrchestrationService` 添加 `instance_manager` 参数；
+  `run_npc_interaction()` 和 `generate_npc_response()` 均接入 InstanceManager；
+  溢出时调用 `graph.write_episode()`（通过 getattr 访问 _graph，Phase 3b 改为正式接口）
+- `runtime.py`：`GameRuntime.__init__` 添加 `instance_manager: Any = None` 参数，传递给 `_build_agent_orchestration`
+- `deps.py`：`_build_game_runtime` 实例化 `InstanceManager()`，注入 `GameRuntime`
+
+**设计偏离**：无。Phase 3a 严格对齐计划：InstanceManager + LRU + write_episode stub。
+write_episode 实现（LLM 三元组提取）留 Phase 3b。
+
+**架构决策**：
+- InstanceManager 在 game_core/narrative/ 层，零外部依赖（只依赖 ContextWindow）
+- 历史转换（WindowMessage → Gemini format）分别在 npc_interaction.py 和 agent_orchestration.py 各维护一份，不跨层 import
+- token 估算 `len(content)//4`，Phase 3b 接真实 token counter
+- LRU 不持久化（Phase 3c 接 save_store）
+
+**测试**：
+- `tests/test_instance_manager.py`（新建，21 个测试）：init/create/get、LRU 淘汰逻辑、MRU 晋升、独立窗口、重建清空
+
+**测试基线**：655 passed（+21，零回归）
+
+**验收备注（2026-03-01）**：
+
+- 本条验收备注由 Codex（GPT-5 编码代理）根据当前仓库实现与测试结果补记。
+- D-N13 可按“主体完成”验收：`AgentContextBuilder` 已落地，`agent_orchestration.py` 已切换到 builder 路径，相关测试通过。
+- 当前 7 层 context 仍未成为 LLM 的主输入源：`AgenticExecutor` 初始 history 仍主要使用 `scene_entries + user_message`，未直接注入 `build_gm_context()` / `build_npc_context()` / `build_teammate_context()` 的完整结果。
+- 当前角色可见性属于“软约束”：L5 和 prompt 构建已做过滤，但 `build_agent_context()` 交给工具的仍是完整 `world + state`，尚未做角色级只读快照或硬隔离。
+- 当前 `L2/L3` 与 `ContextAssembler` 不是完全同构：Agent 侧尚未补齐部分动态子区域相关字段（如 `dynamic_sub_area_counts`、`dynamic_sub_areas`）。
+- 因此 D-N13 的状态应理解为”集中化完成、设计闭环未完全收口”；剩余差距已转入上方 TODO。
+
+---
+
+## [D-N17] N-1 Phase 3b：write_episode LLM 图谱化（2026-03-01）
+
+**问题**：Phase 3a 完成的 `write_episode` 是 no-op stub；`ensure_lore_enriched` 缺失；
+知识图谱只有静态边，对话内容无法沉淀为图谱关系。
+
+**目标**：
+1. `write_episode` — NPC 对话溢出 → LLM 提取三元组 → 动态边插入图谱
+2. `ensure_lore_enriched` — 世界书 lore/角色描述 → LLM 提取语义关系 → 丰富静态图谱
+3. 两条链路共享同一套 function calling 基础设施（`RECORD_TRIPLE_TOOL`）
+
+#### 修改 `app/world_knowledge_graph.py`
+- `__init__` 新增 `llm: LlmPort | None = None` 参数；新增 `_lore_graphized: set[str]`
+- 5 个新 `EdgeType` 常量：`knows_about / interacted_with / made_promise / related_to / has_opinion_of`
+- 模块级常量：`RECORD_TRIPLE_TOOL` function calling 声明 + `_DIALOGUE_EXTRACTION_PROMPT` + `_LORE_ENRICHMENT_PROMPT`
+- `write_episode` 替换 stub → 完整实现：`_extract_triples_via_llm` + `_apply_triple`
+- 新方法 `ensure_lore_enriched(world)` — 懒惰触发，先标记后调用，幂等
+- `query_spread` 追加 `await self.ensure_lore_enriched(world)` 调用
+- 新私有方法：`_extract_triples_via_llm` / `_apply_triple` / `_collect_lore_texts`
+- 模块级纯函数 `_format_dialogue(messages)` — WindowMessage list → 可读对话串
+
+#### 修改 `app/deps.py`
+- `WorldKnowledgeGraph(llm=llm_provider)` — 传入 LLM，无 API key 时 llm=None 静默降级
+
+**设计决策**：
+- **Function calling 而非文本解析**：`RECORD_TRIPLE_TOOL` 声明，LLM 通过 `record_triple` 调用返回三元组，避免正则脆弱性
+- **名称→ID 映射用 `_find_seed_nodes`**：LLM 返回自然语言名称，大小写不敏感匹配，找不到则静默跳过
+- **ensure_lore_enriched 先标记后执行**：`_lore_graphized.add()` 在 LLM 调用前，防止并发重入；失败不重试
+- **批量单次 LLM 调用**：lore 文本拼接后一次调用（cap=10），避免延迟爆炸
+- **零回归保证**：`WorldKnowledgeGraph()` 无参构造保持兼容（llm=None 时两条链路均 no-op）
+
+**测试**：
+- `tests/test_write_episode.py`（新建，15 个测试）：
+  - `TestWriteEpisode`（8）：no_llm、empty_messages、inserts_edge、skips_unknown_subject/object、llm_exception、multiple_triples、weight_propagated
+  - `TestEnsureLoreEnriched`（4）：no_llm、idempotent、inserts_lore_edges、no_lore_registry
+  - `TestApplyTriple`（3）：creates_edge、skips_unknown_subject、skips_self_loop
+
+**测试基线**：670 passed（+15，零回归）
+
+---
+
+## [D-N18] N-1 Phase 4：L6 Memory Hits 注入 NPC/Teammate System Prompt（2026-03-01）
+
+**问题**：整条记忆图谱管线（Phase 1-3b）打通后，`build_npc_system_prompt()` 和 `build_teammate_system_prompt()`
+只读 L4 数据，L6 hits 被计算后丢弃，NPC/Teammate 看不到知识图谱查出的相关世界信息。
+
+**目标**：将 L6 memory hits 注入 NPC/Teammate system prompt，打通记忆管线最后一公里。
+
+#### 修改 `app/game_core/narrative/context_builder.py`（4 处）
+
+**`_build_npc_prompt_text()`**：
+- 新增 `knowledge_hits: list[dict[str, Any]] | None = None` 参数（默认 None，向后兼容）
+- 从 hits[:5] 构建 `knowledge_block`：格式 `- label (node_type)` 或 `- label (node_type): description`
+- f-string 中追加到 `{memories_block}` 之后，新增 `## Relevant world knowledge` 段落
+
+**`build_npc_system_prompt()`**：
+- `l6 = layers["l6_memory_recall"] or {}`
+- `knowledge_hits=l6.get("hits", [])` 传入 `_build_npc_prompt_text()`
+
+**`_build_teammate_prompt_text()`**：
+- 新增 `knowledge_hits` 参数（默认 None）
+- `base = TEAMMATE_PROMPT_TEMPLATE.format(...)` 后追加 knowledge block
+
+**`build_teammate_system_prompt()`**：
+- 同 NPC 提取 L6 并传入 `_build_teammate_prompt_text()`
+
+**设计决策**：
+- cap=5 hits（query_spread 限 top_k=10，进 prompt 再减半避免 token 膨胀）
+- `## Relevant world knowledge` 区别于 `## Your memories of the player`（后者是 L4 impressions，主观记忆；前者是客观世界事实）
+- GM 的 L6 设计为 None，不需改动
+- 不动 executor.py：L6 是背景知识，属于 system prompt 而非对话 history
+
+**测试**：
+- `tests/test_context_builder.py` 扩展：新增 `TestL6Injection`（8 个测试）：
+  - NPC prompt contains block / empty hits / capped at 5 / with description / without description
+  - Teammate prompt contains block / empty hits
+  - `_build_npc_prompt_text` 向后兼容（不传 knowledge_hits 不报错）
+
+**测试基线**：678 passed（+8，零回归）
+
+---
+
+## [D-N19] N-2 Phase A：PrivateChatCoordinator MVP（2026-03-01）
+
+**问题**：设计规范 §7.4 私聊机制（romance/深层信任场景）完全缺失。NpcInteractionCoordinator 是 6 步管线，私聊需要去掉 Step 3（GM 旁观）和 Step 4（队友反应），SceneEntry 改为 `visibility="private"`。
+
+**目标**：实现玩家主动发起的 4 步私聊 MVP（Phase A），无触发条件限制。Phase B（romance/trust 阈值 + NPC 主动发起）留后续。
+
+#### 新建 `app/game_core/orchestration/private_chat.py`（~175 行）
+
+- `PrivateChatResult` dataclass（slots=True）：success/npc_id/npc_result/dialogue_options/time_cost/error/graphize_candidates
+  - 有意不含 `gm_result` 和 `teammate_results`（私聊不可被第三方观察）
+- `PrivateChatCoordinator` class：
+  - Step 1 Setup：`build_npc_system_prompt()` + SceneEntry(`visibility="private"`, `audience=["player", f"npc:{npc_id}"]`)
+  - Step 2 NPC Agent：`executor.run_agentic()` + ContextWindow overflow 检测
+  - Step 3 Dialogue Options：`_build_static_dialogue_options()`（import from npc_interaction）
+  - Step 4 Return：time_cost=1/6
+- 模块级辅助函数：`_window_to_history()`、`_approx_tokens()`（各模块自持，不共用）
+- 直接 import `_build_static_dialogue_options`、`_extract_speech_text` from npc_interaction（纯函数，无副作用）
+
+#### 修改 `app/agent_orchestration.py`（~65 行）
+
+- 新增 import：`PrivateChatCoordinator, PrivateChatResult` from `private_chat`
+- 新增 `run_private_chat()` 方法：InstanceManager.get_or_create() + coordinator.execute() + write_episode overflow 回写 + 错误降级
+- 新增 `_private_chat_result_to_sse()` 模块级函数：复用 `_npc_result_to_sse()` + dialogue_options 事件，无 GM/Teammate 事件
+
+#### 修改 `app/api_models.py`（+5 行）
+
+- 新增 `PrivateChatRequest(BaseModel)`：`npc_id: str`, `message: str`
+
+#### 修改 `app/routers/gameplay.py`（~45 行）
+
+- import `PrivateChatRequest` from `api_models`
+- 新增 `POST /api/game/{world_id}/sessions/{session_id}/private_chat/stream` 端点
+  - 与 `interact_stream` 同模式（简单 `_generate()` 协程，无 asyncio.Queue）
+  - `agent_svc is None` → 优雅降级返回 `no_llm` 错误
+
+**设计决策**：
+- `_window_to_history` 和 `_approx_tokens` 各模块自持（与现有 npc_interaction.py 的模式一致，不共享）
+- `_private_chat_result_to_sse` 复用 `_npc_result_to_sse()`（已在 agent_orchestration.py 定义）
+- Phase B（触发条件 + NPC 主动）留后续，不在本次范围
+- `PrivateChatRequest` 放入 `api_models.py` 遵循现有所有 Request 模型的组织模式
+
+**测试**：新建 `tests/test_private_chat.py`（17 个测试）：
+- `TestPrivateChatCoordinator`（9）：npc_not_found / no_llm / scene_is_private / audience / no_gm_teammate_fields / dialogue_options / window_updated / overflow_graphize / time_cost
+- `TestPrivateChatResultToSSE`（5）：npc_speech_event / options_event / no_gm_teammate / empty_options / none_npc_result
+- `TestWindowHelpers`（3）：excludes_graphized / min_one_token / proportional
+
+**测试基线**：695 passed（+17，零回归）
+
+---
+
+## [D-N20] N-2 Phase B：PrivateChatTriggerHook（NPC 主动发起私聊）（2026-03-01）
+
+**问题**：Phase A 完成了玩家主动发起的 4 步私聊管线，但 §7.4 的另一侧（NPC 根据 disposition 主动发起信号）缺失。
+
+**目标**：在格结算时检测 NPC 的 romance/trust/stage 阈值，满足条件时推送 `npc_wants_to_chat` SSE 事件。冷静期（FlagSlice）防止同一 NPC 短时间内重复触发。
+
+**触发条件**：romance ≥ 60 OR trust ≥ 50 OR stage == "intimate"（任一满足）
+**冷静期**：`absolute_tick + COOLDOWN_TICKS(=6)` 写入 FlagSlice，下次检查时比较
+
+#### 新建 `app/game_core/orchestration/hooks/private_chat_trigger.py`（~170 行）
+
+- `PrivateChatTriggerEvaluator` Protocol + `BasicPrivateChatTriggerEvaluator` + `NullPrivateChatTriggerEvaluator`
+- `PrivateChatTriggerHook(NoOpSettlementHook)`：HOOK_PRIORITY=75（NpcScheduleHook=60 之后）
+  - `execute()` 遍历 `relations.npc_dispositions`，逐 NPC 检查冷静期 + 阈值
+  - 触发时：set `private_chat_cooldown_{npc_id}` flag = current_tick + COOLDOWN_TICKS，emit SSEEvent
+  - 冷静期到期时：remove 旧 flag，允许重新触发
+  - FlagSlice/TimeSlice 不存在时各有 guard，安全降级
+- `_get_npc_name()` lazy import `_profile_get`（避免模块加载时循环依赖）
+
+#### 修改 `app/game_core/orchestration/hooks/__init__.py`（+2 行）
+- 新增 import + `__all__` export `PrivateChatTriggerHook`
+
+#### 修改 `app/game_core/orchestration/defaults.py`（+2 行）
+- `DEFAULT_SETTLEMENT_HOOK_TYPES` tuple 在 `NpcScheduleHook` 之后插入 `PrivateChatTriggerHook`
+
+**设计决策**：
+- 冷静期用 `TimeSlice.absolute_tick()` = `(day-1)*24+slot` 作为单调计数器，无需额外状态
+- Hook 直接 mutation FlagSlice（与 NpcScheduleHook 直接修改 AreaSlice 的模式一致）
+- Phase C（阈值参数化、LLM 生成开场白、NPC 主动发起完整对话流）留后续
+
+**测试**：新建 `tests/test_private_chat_trigger.py`（19 个测试）：
+- `TestBasicPrivateChatTriggerEvaluator`（5）：romance/trust/intimate 各触发 + 无触发 + 优先级
+- `TestNullEvaluator`（1）：从不触发
+- `TestPrivateChatTriggerHook`（13）：no_relations / 各阈值触发 / 冷静期活跃/过期 / 冷静期写入值 / 多 NPC / name 从 registry / name 回退 id / null evaluator / metadata / 无 FlagSlice 降级
+
+**测试基线**：714 passed（+19，零回归）
+
+---
+
+## [D-O21] AIOsirisHook LLM 链路接通（2026-03-01）
+
+见 `orchestration.md` [D-O21]。
+
+---
+
+## [D-A02] A-2：LLM 叙事文本真流式 + thought_signature 修复（2026-03-01）
+
+**问题**：
+
+1. `AgenticExecutor.run_agentic()` 最终轮（无工具调用）通过 `generate()` 非流式返回，客户端无法收到逐字文本，体验不连贯。
+2. `_parse_response()` 丢弃 Gemini 3 的 `thought_signature`，多轮 function-calling history 重构时部分 context 损坏。
+
+**目标**：最终轮真流式推送 + thought_signature 保留。
+
+**决策**：双调用模式（double-call）：先 `generate()` 检测最终轮（无 tool_calls），再 `generate_stream()` 流式出文本。注 TODO：未来优化为单次流式检测。`generate_stream()` 使用 `tool_config=NONE` 强制禁用 function calling，确保纯文本输出。
+
+#### 修改 `app/game_core/adapters/llm.py`
+
+- `LlmResponse` 新增 `raw_model_parts: list[dict[str, Any]] | None = None`
+- `LlmPort` Protocol 新增 `generate_stream()` → `AsyncIterator[str]`
+- `NullLlmProvider` 新增空 stub（`return; yield` 模式）
+
+#### 修改 `app/llm_gemini.py`
+
+- 新增 `generate_stream()` 使用 `generate_content_stream()` + `tool_config=NONE`
+- 修复 `_to_content()`：新增 `thought_signature` part 分支
+- 修复 `_parse_response()`：填充 `raw_model_parts`（含 thought_signature/text/function_call）
+
+#### 修改 `app/game_core/narrative/executor.py`
+
+- `run_agentic()` 新增 `text_chunk_sink: Callable[[str], Awaitable[None]] | None = None`
+- 最终轮：若 sink 且 LLM 有 `generate_stream`，重打流式调用逐 chunk 推送
+- `_model_turn()` 优先使用 `response.raw_model_parts` 构建 history（保留 thought_signature）
+
+#### 修改 `app/game_core/orchestration/npc_interaction.py` + `private_chat.py`
+
+- `execute_interaction()` / `execute()` 新增 `text_chunk_sink` 参数，透传给 Step 2 NPC `run_agentic()`
+
+#### 修改 `app/agent_orchestration.py`
+
+- 5 个方法新增 `text_chunk_sink` 参数并透传：
+  - `generate_npc_response()`, `_generate_gm_reaction()`, `generate_post_action_reactions()`, `run_npc_interaction()`, `run_private_chat()`
+
+#### 修改 `app/routers/gameplay.py`
+
+- `action_stream` + `input_stream`：在 `generate_post_action_reactions()` 调用前创建 `text_chunk_sink = async def(chunk) → queue.put(SSEEvent("text_chunk", {...}))`
+- `interact_stream` + `private_chat_stream`：重构为 task+queue 模式（与 action_stream 对齐），创建 `text_chunk_sink` 并透传
+
+**SSE 事件**：`{"event_type": "text_chunk", "payload": {"text": "<chunk>"}}`
+
+**隔离约束**：`text_chunk_sink: Callable[[str], Awaitable[None]]` 在 game_core 层纯抽象，SSEEvent 构造在应用层。
+
+**测试基线**：719 passed（零回归，A-2 为架构改动，现有测试覆盖接口契约）
+
+---
+
+## [D-N21] N-7：7 层上下文接入 AgenticExecutor 初始 History（2026-03-01）
+
+**问题**：`AgenticExecutor._build_initial_history()` 只消费裸 `context.scene_entries`，`AgentContextBuilder` 构建的 L0/L2/L3 完全丢弃，L5 可见性过滤也被绕过（见待办 N-7）。NPC 无空间感知，GM 叙述缺乏环境锚点，设计规范 §3.2 可见性规则在 executor 层失效。
+
+**解决方案**：新增 `NpcFullContext` dataclass + `build_npc_full_context()` 单次 retrieve，`run_agentic()` 新增 `context_layers` 参数，首轮注入序列化后的 L0/L2/L3/L5（GM 追加 L7）。
+
+#### 改动清单
+
+**`app/game_core/narrative/context_builder.py`**
+
+- 新增 `NpcFullContext` dataclass（`system_prompt: str` + `layers: dict[str, Any]`）
+- 新增 `build_npc_full_context()` async 方法：内部调用 `build_npc_context()` 一次，同时构建 system_prompt，避免 double-retrieve
+- `build_npc_system_prompt()` 原样保留（向后兼容）
+
+**`app/game_core/narrative/executor.py`**
+
+- `run_agentic()` 新增 `context_layers: dict[str, Any] | None = None` 参数
+- `_build_initial_history()` 新增 `include_scene: bool = True` 参数；当 L5 由 context_layers 提供时，抑制原始 `scene_entries` 重复注入
+- `run_agentic()` 中：仅在 `conversation_history is None`（首轮）时注入 layers 文本，避免多轮上下文膨胀
+- 新增 `_serialize_context_layers(role, layers)` 静态方法：L0 世界常量 + L2 区域 + L3 地点 + L5 场景（cap 10）；GM 额外追加 L7 hints
+
+**`app/game_core/orchestration/npc_interaction.py`**
+
+- Step 1：`build_npc_system_prompt()` → `build_npc_full_context()`（避免 double-retrieve）
+- Step 2 NPC `run_agentic()`：追加 `context_layers=npc_layers`
+- Step 3 GM `run_agentic()`：追加 `gm_layers = builder.build_gm_context()` + `context_layers=gm_layers`
+
+**`app/game_core/orchestration/private_chat.py`**
+
+- Step 1 同上改用 `build_npc_full_context()`
+- Step 2 NPC `run_agentic()`：追加 `context_layers=npc_layers`
+
+**`app/agent_orchestration.py`**
+
+- `generate_npc_response()`：`build_npc_system_prompt()` → `build_npc_full_context()`；`run_agentic()` 追加 `context_layers=npc_full.layers`
+- `_generate_gm_reaction()`：追加 `gm_layers = builder.build_gm_context(hints=...)` + `context_layers=gm_layers`
+- `_generate_teammate_reactions()`：暂不改（Teammate double-retrieve 问题 defer 到 N-7 Phase 2）
+
+**`app/game_core/narrative/__init__.py`**：导出 `NpcFullContext`
+
+#### 设计决策
+
+- **L4/L6 不序列化**：L4（关系数据）和 L6（记忆召回）已通过 `system_prompt` 体现，不重复注入
+- **L1 不序列化**：GM 通过 L7 hints 获得足够上下文；L1 章节数据若需注入，由 Phase 2 补充
+- **Teammate 推迟**：`build_teammate_system_prompt()` 同样有 double-retrieve 问题，但 Teammate 不是当前核心路径，defer 到 N-7 Phase 2
+
+#### 新增测试
+
+- `tests/test_context_builder.py::TestNpcFullContext`（4 个测试）：七层 keys 完整、未知 NPC→None、call_count==1 验证、system_prompt 内容正确
+- `tests/test_agentic_loop.py::TestSerializeContextLayers`（5 个测试）：L2/L3 序列化、L5 场景注入、NPC 不含 L7、GM 含 L7、空 layers→空串
+- `tests/test_agentic_loop.py::TestContextLayersInjection`（5 个测试）：首轮注入验证、有历史时跳过、L5 抑制原始 scene_entries、context_layers=None 向后兼容、GM L7 hints 进 history
+
+**测试基线**：741 passed（新增 14 个测试，零回归）
+
+---
+
+## [D-N22] N-7 Phase 2：Teammate double-retrieve 修复 + context_layers 注入（2026-03-01）
+
+**问题**：`_generate_teammate_reactions()` 调用 `build_teammate_system_prompt()`，内部调用 `build_teammate_context()`（含 retriever.retrieve()）。若再单独获取 layers，会 double-retrieve。`npc_interaction.py` Step 4 的队友路径也缺少 `context_layers`。
+
+**解决方案**：与 NpcFullContext 完全对称，新增 `TeammateFull` + `build_teammate_full_context()`。`npc_interaction.py` Step 4 无 retriever，直接调 `build_teammate_context()` 无 IO 成本。
+
+#### 改动清单
+
+**`app/game_core/narrative/context_builder.py`**
+
+- 新增 `TeammateFull` dataclass（`system_prompt: str` + `layers: dict[str, Any]`）
+- 新增 `build_teammate_full_context()` async 方法（紧跟 `build_npc_full_context()` 之后）
+
+**`app/game_core/narrative/__init__.py`**：导出 `TeammateFull`
+
+**`app/agent_orchestration.py` `_generate_teammate_reactions()`**
+
+- `build_teammate_system_prompt()` → `build_teammate_full_context()`（避免 double-retrieve）
+- `run_agentic()` 追加 `context_layers=tm_full.layers`
+
+**`app/game_core/orchestration/npc_interaction.py` Step 4**
+
+- 追加 `tm_layers = await builder.build_teammate_context(member_id)`（无 retriever，无 IO）
+- `run_agentic()` 追加 `context_layers=tm_layers`
+
+#### 新增测试
+
+- `tests/test_context_builder.py::TestTeammateFull`（4 个测试）：七层 keys、未知角色→None、call_count==1、system_prompt 内容正确
+
+**测试基线**：745 passed（新增 4 个测试，零回归）

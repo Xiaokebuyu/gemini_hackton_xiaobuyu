@@ -20,6 +20,7 @@ from app.game_core.adapters.presentation import (
     SSEPresentationPort,
 )
 from app.game_core.adapters.llm import LlmPort, LlmResponse, NullLlmProvider
+from app.game_core.adapters.memory_graph_port import MemoryGraphPort, NullMemoryGraphPort
 from app.game_core.adapters.session_store import SaveResult, SaveStore
 
 __all__ = [
@@ -28,8 +29,10 @@ __all__ = [
     "InputPort",
     "LlmPort",
     "LlmResponse",
+    "MemoryGraphPort",
     "NullInputPort",
     "NullLlmProvider",
+    "NullMemoryGraphPort",
     "FirestorePersistencePort",
     "LocalFilePersistencePort",
     "NullOutputPort",

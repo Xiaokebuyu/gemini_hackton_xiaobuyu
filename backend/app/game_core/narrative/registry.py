@@ -20,5 +20,12 @@ class RoleToolRegistry:
             self._tools.setdefault(role, {})[tool.name] = tool
 
     def get_tools_for(self, role: str, traits: list[str] | None = None) -> list[AgentTool]:
-        del traits
-        return list(self._tools.get(role, {}).values())
+        tools = list(self._tools.get(role, {}).values())
+        if not traits:
+            return tools
+        trait_set = set(traits)
+        return [
+            t for t in tools
+            if not t.applicable_traits
+            or all(r in trait_set for r in t.applicable_traits)
+        ]

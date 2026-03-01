@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.scene_bus import SceneBus
@@ -22,6 +22,7 @@ class SettlementContext:
     scene_bus: SceneBus
     _rules_engine: RulesEngine = field(repr=False)
     _apply_delta: Callable[[StateDelta | None], None] = field(repr=False)
+    action_log: list[dict[str, Any]] = field(default_factory=list)
 
     def execute_command(self, cmd: Command) -> ExecuteResult:
         result = self._rules_engine.execute(cmd, self.state, self.world)

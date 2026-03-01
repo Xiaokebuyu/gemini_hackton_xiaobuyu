@@ -55,7 +55,6 @@ def _pipeline_executor(runtime: GameRuntime):
 def _service(runtime: GameRuntime, *, execute_structured_action=None) -> InteractionService:
     return InteractionService(
         execute_structured_action=execute_structured_action or _pipeline_executor(runtime),
-        save_session=runtime.save_session,
     )
 
 

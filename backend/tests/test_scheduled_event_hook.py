@@ -48,7 +48,8 @@ class TestScheduledEventHook:
                     {
                         "event_id": "evt_1",
                         "event_type": "quest",
-                        "trigger_tick": current_tick,
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick},
+                        "created_at": {"day": 1, "slot": 0},
                         "payload": {"quest_id": "q1"},
                         "metadata": {"priority": "high"},
                         "source": "engine",
@@ -75,7 +76,8 @@ class TestScheduledEventHook:
                 "pending_events": [
                     {
                         "event_id": "evt_1",
-                        "trigger_tick": current_tick + 1,
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick + 1},
+                        "created_at": {"day": 1, "slot": 0},
                     }
                 ]
             }
@@ -93,8 +95,16 @@ class TestScheduledEventHook:
         context.state.events.restore(
             {
                 "pending_events": [
-                    {"event_id": "evt_1", "trigger_tick": current_tick},
-                    {"event_id": "evt_2", "trigger_tick": current_tick - 1},
+                    {
+                        "event_id": "evt_1",
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick},
+                        "created_at": {"day": 1, "slot": 0},
+                    },
+                    {
+                        "event_id": "evt_2",
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick - 1},
+                        "created_at": {"day": 1, "slot": 0},
+                    },
                 ]
             }
         )
@@ -111,8 +121,15 @@ class TestScheduledEventHook:
         context.state.events.restore(
             {
                 "pending_events": [
-                    {"trigger_tick": current_tick},
-                    {"event_id": "evt_ok", "trigger_tick": current_tick},
+                    {
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick},
+                        "created_at": {"day": 1, "slot": 0},
+                    },
+                    {
+                        "event_id": "evt_ok",
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick},
+                        "created_at": {"day": 1, "slot": 0},
+                    },
                 ]
             }
         )
@@ -132,7 +149,8 @@ class TestScheduledEventHook:
                 "pending_events": [
                     {
                         "event_id": "evt_defaulted",
-                        "trigger_tick": current_tick,
+                        "trigger_condition": {"type": "absolute_tick", "tick": current_tick},
+                        "created_at": {"day": 1, "slot": 0},
                         "payload": ["bad"],
                         "metadata": "bad",
                     }
@@ -146,6 +164,6 @@ class TestScheduledEventHook:
         assert active_event["event_type"] == "generic"
         assert active_event["payload"] == {}
         assert active_event["metadata"] == {}
-        assert active_event["trigger_tick"] == current_tick
+        assert active_event["trigger_condition"] == {"type": "absolute_tick", "tick": current_tick}
         assert active_event["triggered_at"] == {"day": 2, "slot": 3, "period": "night"}
         assert result.sse_events[0].payload["event_type"] == "generic"

@@ -32,7 +32,7 @@ def test_map_registry_prefers_explicit_starting_area_and_validates_runtime_field
         }
     )
 
-    assert registry.starting_area()["id"] == "town"
+    assert registry.starting_area().id == "town"
 
     issues = registry.validate()
 
@@ -371,11 +371,11 @@ def test_monster_query_by_cr_and_type():
     })
 
     low_cr = registry.get_by_cr(0, 1)
-    assert {m["id"] for m in low_cr} == {"goblin", "wolf"}
+    assert {m.id for m in low_cr} == {"goblin", "wolf"}
 
     dragons = registry.get_by_type("dragon")
     assert len(dragons) == 1
-    assert dragons[0]["id"] == "dragon"
+    assert dragons[0].id == "dragon"
 
 
 # ------------------------------------------------------------------
@@ -429,13 +429,13 @@ def test_item_query_methods():
     })
 
     equippable = registry.get_equippable()
-    assert {i["id"] for i in equippable} == {"sword", "ring"}
+    assert {i.id for i in equippable} == {"sword", "ring"}
 
     weapons = registry.get_by_type("weapon")
-    assert len(weapons) == 1 and weapons[0]["id"] == "sword"
+    assert len(weapons) == 1 and weapons[0].id == "sword"
 
     rares = registry.get_by_rarity("rare")
-    assert {i["id"] for i in rares} == {"sword", "ring"}
+    assert {i.id for i in rares} == {"sword", "ring"}
 
 
 # ------------------------------------------------------------------
@@ -497,13 +497,13 @@ def test_skill_query_spells():
     })
 
     all_spells = registry.get_spells()
-    assert {s["id"] for s in all_spells} == {"fireball", "heal"}
+    assert {s.id for s in all_spells} == {"fireball", "heal"}
 
     level_3 = registry.get_spells_by_level(3)
-    assert len(level_3) == 1 and level_3[0]["id"] == "fireball"
+    assert len(level_3) == 1 and level_3[0].id == "fireball"
 
     evocation = registry.get_spells_by_school("evocation")
-    assert {s["id"] for s in evocation} == {"fireball", "heal"}
+    assert {s.id for s in evocation} == {"fireball", "heal"}
 
 
 # ------------------------------------------------------------------
@@ -558,7 +558,46 @@ def test_map_query_adjacent_and_region():
     assert registry.get_adjacent("unknown") == []
 
     central = registry.get_by_region("central")
-    assert {a["id"] for a in central} == {"town", "forest"}
+    assert {a.id for a in central} == {"town", "forest"}
+
+
+def test_map_get_returns_typed_template():
+    from app.game_core.content.registries.maps import AreaTemplate
+
+    registry = MapRegistry()
+    registry.load({
+        "town": {
+            "id": "town",
+            "name": "Town Square",
+            "region": "central",
+            "base_danger": 0.5,
+            "connections": ["forest"],
+            "sub_locations": {
+                "inn": {"id": "inn", "name": "Rusty Dragon"},
+            },
+            "encounter_profile": {"slot_capacity": 1, "templates": []},
+            "is_starting_area": True,
+            "tags": ["safe", "urban"],
+        },
+    })
+
+    template = registry.get("town")
+    assert isinstance(template, AreaTemplate)
+    assert template.id == "town"
+    assert template.name == "Town Square"
+    assert template.region == "central"
+    assert template.base_danger == 0.5
+    assert template.connections == ["forest"]
+    assert "inn" in template.sub_locations
+    assert template.sub_locations["inn"]["name"] == "Rusty Dragon"
+    assert template.encounter_profile is not None
+    assert template.encounter_profile["slot_capacity"] == 1
+    assert template.is_starting_area is True
+    assert template.tags == ["safe", "urban"]
+
+    all_templates = registry.list_all()
+    assert len(all_templates) == 1
+    assert all(isinstance(t, AreaTemplate) for t in all_templates)
 
 
 def test_tag_registry_validates_tags_shape_and_empty_values():
@@ -687,13 +726,73 @@ def test_character_query_by_area_merchants_faction():
     })
 
     town = registry.get_by_area("town")
-    assert {c["id"] for c in town} == {"guard", "merchant", "shopkeeper"}
+    assert {c.id for c in town} == {"guard", "merchant", "shopkeeper"}
 
     merchants = registry.get_merchants()
-    assert {c["id"] for c in merchants} == {"merchant", "shopkeeper"}
+    assert {c.id for c in merchants} == {"merchant", "shopkeeper"}
 
     watch = registry.get_by_faction("watch")
-    assert len(watch) == 1 and watch[0]["id"] == "guard"
+    assert len(watch) == 1 and watch[0].id == "guard"
+
+
+def test_character_get_returns_typed_template():
+    from app.game_core.content.registries.characters import CharacterTemplate
+
+    registry = CharacterRegistry()
+    registry.load({
+        "guard": {
+            "id": "guard",
+            "name": "Town Guard",
+            "area_id": "town_square",
+            "tags": ["military", "lawful"],
+            "faction": "city_watch",
+            "character_class": "fighter",
+            "personality": "Stoic and dutiful.",
+        },
+    })
+
+    char = registry.get("guard")
+    assert isinstance(char, CharacterTemplate)
+    assert char.id == "guard"
+    assert char.name == "Town Guard"
+    assert char.area_id == "town_square"
+    assert char.tags == ["military", "lawful"]
+    assert char.faction == "city_watch"
+    assert char.character_class == "fighter"
+    assert char.personality == "Stoic and dutiful."
+
+    assert registry.get("nonexistent") is None
+
+
+def test_character_shop_inventory_typed():
+    from app.game_core.content.registries.characters import CharacterTemplate, ShopInventory
+
+    registry = CharacterRegistry()
+    registry.load({
+        "merchant": {
+            "id": "merchant",
+            "name": "Shopkeeper",
+            "shop_inventory": {
+                "sell_markup": 1.5,
+                "buy_rate": 0.4,
+                "base_pool": [{"item_id": "rope"}, {"item_id": "torch"}],
+                "rotating_pool": [{"item_id": "potion"}],
+                "rotating_slots": 2,
+                "refresh_on": "rest",
+            },
+        },
+    })
+
+    char = registry.get("merchant")
+    assert isinstance(char, CharacterTemplate)
+    assert isinstance(char.shop_inventory, ShopInventory)
+    assert char.shop_inventory.sell_markup == 1.5
+    assert char.shop_inventory.buy_rate == 0.4
+    assert len(char.shop_inventory.base_pool) == 2
+    assert char.shop_inventory.base_pool[0]["item_id"] == "rope"
+    assert len(char.shop_inventory.rotating_pool) == 1
+    assert char.shop_inventory.rotating_slots == 2
+    assert char.shop_inventory.refresh_on == "rest"
 
 
 # ------------------------------------------------------------------
@@ -782,12 +881,51 @@ def test_quest_query_chapter_and_event():
     })
 
     ch = registry.get_chapter("ch1")
-    assert ch is not None and ch["title"] == "Chapter 1"
+    assert ch is not None and ch.title == "Chapter 1"
     assert registry.get_chapter("missing") is None
 
     ev = registry.get_initial_event("ev2")
-    assert ev is not None and ev["event_type"] == "encounter"
+    assert ev is not None and ev.event_type == "encounter"
     assert registry.get_initial_event("missing") is None
+
+
+def test_quest_get_returns_typed_templates():
+    from app.game_core.content.registries.quests import (
+        ChapterMeta,
+        InitialEvent,
+        MilestoneTemplate,
+    )
+
+    registry = QuestRegistry()
+    registry.load({
+        "milestones": {
+            "ms1": {"id": "ms1", "title": "First", "chapter_id": "ch1",
+                     "prerequisites": ["ms0"], "next_milestones": []},
+        },
+        "chapters": [{"id": "ch1", "title": "Chapter One"}],
+        "initial_events": [{"id": "ev1", "event_type": "quest"}],
+    })
+
+    m = registry.get("ms1")
+    assert isinstance(m, MilestoneTemplate)
+    assert m.id == "ms1"
+    assert m.title == "First"
+    assert m.chapter_id == "ch1"
+    assert m.prerequisites == ["ms0"]
+
+    all_milestones = registry.list_all()
+    assert len(all_milestones) == 1
+    assert isinstance(all_milestones[0], MilestoneTemplate)
+
+    chapters = registry.chapters()
+    assert len(chapters) == 1
+    assert isinstance(chapters[0], ChapterMeta)
+    assert chapters[0].title == "Chapter One"
+
+    events = registry.initial_events()
+    assert len(events) == 1
+    assert isinstance(events[0], InitialEvent)
+    assert events[0].event_type == "quest"
 
 
 # ------------------------------------------------------------------
@@ -926,6 +1064,112 @@ def test_class_xp_curve_monotonic_increase():
     assert any("xp_curve level 3 breaks monotonic increase" in i for i in issues2)
 
 
+def test_class_get_returns_typed_templates():
+    from app.game_core.content.registries.classes import (
+        BackgroundTemplate,
+        ClassTemplate,
+        RaceTemplate,
+        SubclassTemplate,
+    )
+
+    registry = ClassRegistry()
+    registry.load({
+        "classes": {
+            "fighter": {
+                "id": "fighter",
+                "name": "Fighter",
+                "hit_die": 10,
+                "base_ac": 12,
+                "starting_equipment": ["longsword", "shield"],
+                "default_equipped": {"main_hand": "longsword", "off_hand": "shield"},
+            },
+        },
+        "subclasses": {
+            "champion": {
+                "id": "champion",
+                "class_id": "fighter",
+                "features": ["improved_critical"],
+                "level_features": {"3": ["remarkable_athlete"]},
+            },
+        },
+        "races": {
+            "human": {
+                "id": "human",
+                "name": "Human",
+                "stat_bonuses": {"str": 1, "dex": 1},
+                "racial_traits": ["versatile"],
+            },
+        },
+        "backgrounds": {
+            "soldier": {
+                "id": "soldier",
+                "name": "Soldier",
+                "feature": "military_rank",
+                "gold_bonus": 10,
+                "skill_proficiency": ["athletics", "intimidation"],
+            },
+        },
+    })
+
+    cls = registry.get_class("fighter")
+    assert isinstance(cls, ClassTemplate)
+    assert cls.id == "fighter"
+    assert cls.hit_die == 10
+    assert cls.starting_equipment == ["longsword", "shield"]
+    assert cls.default_equipped == {"main_hand": "longsword", "off_hand": "shield"}
+
+    sub = registry.get_subclass("champion")
+    assert isinstance(sub, SubclassTemplate)
+    assert sub.class_id == "fighter"
+    assert sub.features == ["improved_critical"]
+    assert sub.level_features == {"3": ["remarkable_athlete"]}
+
+    race = registry.get_race("human")
+    assert isinstance(race, RaceTemplate)
+    assert race.stat_bonuses == {"str": 1, "dex": 1}
+    assert race.racial_traits == ["versatile"]
+
+    bg = registry.get_background("soldier")
+    assert isinstance(bg, BackgroundTemplate)
+    assert bg.feature == "military_rank"
+    assert bg.gold_bonus == 10
+    assert bg.skill_proficiency == ["athletics", "intimidation"]
+
+
+def test_class_list_returns_typed_templates():
+    from app.game_core.content.registries.classes import (
+        BackgroundTemplate,
+        ClassTemplate,
+        RaceTemplate,
+    )
+
+    registry = ClassRegistry()
+    registry.load({
+        "classes": {
+            "fighter": {"id": "fighter", "name": "Fighter"},
+            "wizard": {"id": "wizard", "name": "Wizard"},
+        },
+        "races": {
+            "elf": {"id": "elf", "name": "Elf"},
+        },
+        "backgrounds": {
+            "sage": {"id": "sage", "name": "Sage"},
+        },
+    })
+
+    classes = registry.list_classes()
+    assert len(classes) == 2
+    assert all(isinstance(c, ClassTemplate) for c in classes)
+
+    races = registry.list_races()
+    assert len(races) == 1
+    assert isinstance(races[0], RaceTemplate)
+
+    backgrounds = registry.list_backgrounds()
+    assert len(backgrounds) == 1
+    assert isinstance(backgrounds[0], BackgroundTemplate)
+
+
 # ------------------------------------------------------------------
 # Faction: consumer fields + query (Phase 3)
 # ------------------------------------------------------------------
@@ -971,10 +1215,10 @@ def test_faction_query_by_tag():
     })
 
     military = registry.get_by_tag("military")
-    assert {f["id"] for f in military} == {"watch", "knights"}
+    assert {f.id for f in military} == {"watch", "knights"}
 
     trade = registry.get_by_tag("trade")
-    assert len(trade) == 1 and trade[0]["id"] == "guild"
+    assert len(trade) == 1 and trade[0].id == "guild"
 
 
 # ------------------------------------------------------------------
@@ -1055,7 +1299,256 @@ def test_lore_query_by_tag():
     })
 
     mythology = registry.get_by_tag("mythology")
-    assert {l["id"] for l in mythology} == {"myth", "legend"}
+    assert {entry.id for entry in mythology} == {"myth", "legend"}
 
     timeline = registry.get_by_tag("timeline")
-    assert len(timeline) == 1 and timeline[0]["id"] == "history"
+    assert len(timeline) == 1 and timeline[0].id == "history"
+
+
+# ------------------------------------------------------------------
+# Dataclass typed access (Batch 1 migration)
+# ------------------------------------------------------------------
+
+
+def test_faction_get_returns_typed_template():
+    from app.game_core.content.registries.factions import FactionTemplate
+
+    registry = FactionRegistry()
+    registry.load({
+        "watch": {
+            "id": "watch",
+            "name": "City Watch",
+            "alignment": "lawful",
+            "tags": ["law", "military"],
+            "behavioral_rules": "Patrol the streets.",
+            "initial_standing": 5,
+        },
+    })
+
+    faction = registry.get("watch")
+    assert isinstance(faction, FactionTemplate)
+    assert faction.id == "watch"
+    assert faction.name == "City Watch"
+    assert faction.alignment == "lawful"
+    assert faction.tags == ["law", "military"]
+    assert faction.behavioral_rules == "Patrol the streets."
+    assert faction.initial_standing == 5
+    assert faction.base_standing is None
+    assert faction.relations == {}
+
+    assert registry.get("nonexistent") is None
+
+
+def test_lore_get_returns_typed_entry():
+    from app.game_core.content.registries.lore import LoreEntry
+
+    registry = LoreRegistry()
+    registry.load({
+        "myth": {
+            "id": "myth",
+            "name": "Creation Myth",
+            "text": "In the beginning...",
+            "tags": ["mythology"],
+        },
+    })
+
+    entry = registry.get("myth")
+    assert isinstance(entry, LoreEntry)
+    assert entry.id == "myth"
+    assert entry.title == "Creation Myth"
+    assert entry.content == "In the beginning..."
+    assert entry.tags == ["mythology"]
+
+    assert registry.get("nonexistent") is None
+
+
+def test_tag_get_returns_typed_dimension():
+    from app.game_core.content.registries.tag import TagDimension
+
+    registry = TagRegistry()
+    registry.load({
+        "terrain": {
+            "id": "terrain",
+            "description": "Terrain types",
+            "tags": ["forest", "mountain"],
+        },
+    })
+
+    dim = registry.get("terrain")
+    assert isinstance(dim, TagDimension)
+    assert dim.id == "terrain"
+    assert dim.description == "Terrain types"
+    assert dim.tags == ["forest", "mountain"]
+
+    assert registry.get("nonexistent") is None
+
+
+# ------------------------------------------------------------------
+# Dataclass typed access (Batch 2 migration)
+# ------------------------------------------------------------------
+
+
+def test_monster_get_returns_typed_template():
+    from app.game_core.content.registries.monsters import MonsterTemplate
+
+    registry = MonsterRegistry()
+    registry.load({
+        "goblin": {
+            "id": "goblin",
+            "name": "Goblin",
+            "hp": 7,
+            "ac": 15,
+            "cr": 0.25,
+            "creature_type": "humanoid",
+            "gold_drop": 5,
+        },
+    })
+
+    monster = registry.get("goblin")
+    assert isinstance(monster, MonsterTemplate)
+    assert monster.id == "goblin"
+    assert monster.name == "Goblin"
+    assert monster.hp == 7
+    assert monster.ac == 15
+    assert monster.cr == 0.25
+    assert monster.creature_type == "humanoid"
+    assert monster.gold_drop == 5
+
+    assert registry.get("nonexistent") is None
+
+
+def test_monster_loot_entry_typed():
+    from app.game_core.content.registries.monsters import LootEntry, MonsterTemplate
+
+    registry = MonsterRegistry()
+    registry.load({
+        "dragon": {
+            "id": "dragon",
+            "loot_table": [
+                {"item_id": "gold_pile", "chance": 0.8, "count": 3},
+                {"item_id": "gem"},
+            ],
+        },
+    })
+
+    monster = registry.get("dragon")
+    assert isinstance(monster, MonsterTemplate)
+    assert len(monster.loot_table) == 2
+
+    first = monster.loot_table[0]
+    assert isinstance(first, LootEntry)
+    assert first.item_id == "gold_pile"
+    assert first.chance == 0.8
+    assert first.count == 3
+
+    second = monster.loot_table[1]
+    assert second.item_id == "gem"
+    assert second.chance == 1.0
+    assert second.count == 1
+
+
+def test_item_get_returns_typed_template():
+    from app.game_core.content.registries.items import ItemTemplate
+
+    registry = ItemRegistry()
+    registry.load({
+        "sword": {
+            "id": "sword",
+            "name": "Iron Sword",
+            "type": "weapon",
+            "rarity": "common",
+            "base_price": 100,
+            "slot": "main_hand",
+            "damage_dice": "1d8",
+            "damage_type": "slashing",
+        },
+    })
+
+    item = registry.get("sword")
+    assert isinstance(item, ItemTemplate)
+    assert item.id == "sword"
+    assert item.name == "Iron Sword"
+    assert item.type == "weapon"
+    assert item.rarity == "common"
+    assert item.base_price == 100
+    assert item.slot == "main_hand"
+    assert item.damage_dice == "1d8"
+    assert item.damage_type == "slashing"
+
+    assert registry.get("nonexistent") is None
+
+
+def test_item_heal_amount_aliases():
+    from app.game_core.content.registries.items import ItemTemplate
+
+    registry = ItemRegistry()
+    registry.load({
+        "potion1": {"id": "potion1", "heal_amount": 10},
+        "potion2": {"id": "potion2", "heal": 15},
+        "potion3": {"id": "potion3", "restore_hp": 20},
+    })
+
+    p1 = registry.get("potion1")
+    assert isinstance(p1, ItemTemplate)
+    assert p1.heal_amount == 10
+    assert p1.heal is None
+    assert p1.restore_hp is None
+
+    p2 = registry.get("potion2")
+    assert p2.heal == 15
+
+    p3 = registry.get("potion3")
+    assert p3.restore_hp == 20
+
+
+# ------------------------------------------------------------------
+# Dataclass typed access (Batch 3 migration)
+# ------------------------------------------------------------------
+
+
+def test_skill_get_returns_typed_template():
+    from app.game_core.content.registries.skills import SkillTemplate
+
+    registry = SkillRegistry()
+    registry.load({
+        "fireball": {
+            "id": "fireball",
+            "category": "spell",
+            "spell_level": 3,
+            "school": "evocation",
+            "concentration": False,
+            "effect": {"type": "damage", "dice": "8d6"},
+            "cost": {"resource": "spell_slot", "amount": 1},
+        },
+    })
+
+    spell = registry.get("fireball")
+    assert isinstance(spell, SkillTemplate)
+    assert spell.id == "fireball"
+    assert spell.category == "spell"
+    assert spell.spell_level == 3
+    assert spell.school == "evocation"
+    assert spell.concentration is False
+    assert isinstance(spell.effect, dict)
+    assert spell.effect["type"] == "damage"
+    assert isinstance(spell.cost, dict)
+    assert spell.cost["resource"] == "spell_slot"
+
+    assert registry.get("nonexistent") is None
+
+
+def test_skill_template_category_normalization():
+    from app.game_core.content.registries.skills import SkillTemplate
+
+    registry = SkillRegistry()
+    registry.load({
+        "via_category": {"id": "a", "category": "spell", "spell_level": 1, "effect": {"type": "heal", "dice": "1d8"}},
+        "via_type": {"id": "b", "type": "spell", "spell_level": 2, "effect": {"type": "damage", "dice": "2d6"}},
+        "via_level": {"id": "c", "spell_level": 0, "effect": {"type": "buff"}},
+        "non_spell": {"id": "d", "name": "Stealth"},
+    })
+
+    assert registry.get("via_category").category == "spell"
+    assert registry.get("via_type").category == "spell"
+    assert registry.get("via_level").category == "spell"
+    assert registry.get("non_spell").category == ""

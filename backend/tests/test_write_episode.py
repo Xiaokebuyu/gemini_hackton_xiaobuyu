@@ -1,0 +1,321 @@
+"""Tests for WorldKnowledgeGraph Phase 3b:
+write_episode (LLM triple extraction from dialogue) and ensure_lore_enriched.
+
+All async calls wrapped with asyncio.run() — no pytest-asyncio installed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from app.game_core.adapters.llm import LlmResponse
+from app.game_core.narrative.context_window import WindowMessage
+from app.world_knowledge_graph import EdgeType, WorldKnowledgeGraph
+
+
+# ------------------------------------------------------------------
+# Stubs
+# ------------------------------------------------------------------
+
+
+class _StubLlm:
+    """Controllable LLM stub that returns preset tool_calls."""
+
+    def __init__(
+        self,
+        tool_calls: list[dict[str, Any]] | None = None,
+        raise_on_call: bool = False,
+    ) -> None:
+        self.preset_tool_calls = tool_calls or []
+        self.raise_on_call = raise_on_call
+        self.call_count = 0
+
+    async def generate(
+        self,
+        system_prompt: str,
+        history: list[dict[str, Any]],
+        declarations: list[dict[str, Any]],
+    ) -> LlmResponse:
+        self.call_count += 1
+        if self.raise_on_call:
+            raise RuntimeError("LLM unavailable")
+        return LlmResponse(tool_calls=list(self.preset_tool_calls))
+
+
+class _StubLoreEntry:
+    def __init__(self, id: str, name: str, description: str = "") -> None:
+        self.id = id
+        self.name = name
+        self.description = description
+
+
+class _StubRegistry:
+    def __init__(self, entries: list[Any]) -> None:
+        self._entries = entries
+
+    def list_all(self) -> list[Any]:
+        return list(self._entries)
+
+
+class _StubWorld:
+    """Minimal WorldInstance stub for testing ensure_lore_enriched."""
+
+    def __init__(
+        self,
+        world_id: str = "test_world",
+        lore_entries: list[Any] | None = None,
+        char_entries: list[Any] | None = None,
+    ) -> None:
+        self.world_id = world_id
+        self._lore = _StubRegistry(lore_entries or [])
+        self._chars = _StubRegistry(char_entries or [])
+        self._registered: dict[str, bool] = {
+            "lore": lore_entries is not None,
+            "characters": char_entries is not None,
+        }
+
+    def has_registry(self, name: str) -> bool:
+        return self._registered.get(name, False)
+
+    @property
+    def lore(self) -> _StubRegistry:
+        return self._lore
+
+    @property
+    def characters(self) -> _StubRegistry:
+        return self._chars
+
+
+def _make_msg(role: str, content: str) -> WindowMessage:
+    return WindowMessage(role=role, content=content, token_count=1, metadata={})
+
+
+def _make_graph_with_nodes(llm: _StubLlm | None = None) -> WorldKnowledgeGraph:
+    """Small fixture graph with two nodes: merchant_tom (character) + iron_sword (item)."""
+    g = WorldKnowledgeGraph(llm=llm)
+    g._graph.add_node(
+        "merchant_tom",
+        node_type="character",
+        label="Merchant Tom",
+        tags=["merchant"],
+        description="",
+        metadata={},
+    )
+    g._graph.add_node(
+        "iron_sword",
+        node_type="item",
+        label="Iron Sword",
+        tags=["weapon"],
+        description="",
+        metadata={},
+    )
+    return g
+
+
+# ------------------------------------------------------------------
+# TestWriteEpisode
+# ------------------------------------------------------------------
+
+
+class TestWriteEpisode:
+    def test_no_llm_returns_immediately(self) -> None:
+        """No LLM → write_episode is a no-op without raising."""
+        g = WorldKnowledgeGraph()  # llm=None
+        msgs = [_make_msg("user", "Hello")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))
+        assert g.edge_count() == 0
+
+    def test_empty_messages_returns_immediately(self) -> None:
+        """Empty messages → LLM should not be called."""
+        llm = _StubLlm()
+        g = WorldKnowledgeGraph(llm=llm)
+        asyncio.run(g.write_episode("npc_01", [], {}))
+        assert llm.call_count == 0
+
+    def test_inserts_edge_from_triple(self) -> None:
+        """LLM returns a valid triple → one new graph edge inserted."""
+        llm = _StubLlm(tool_calls=[{
+            "name": "record_triple",
+            "args": {
+                "subject": "Merchant Tom",
+                "relation": "interacted_with",
+                "object": "Iron Sword",
+            },
+        }])
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "Tom sold the sword.")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))
+        assert g.has_edge("merchant_tom", "iron_sword")
+
+    def test_skips_unknown_subject(self) -> None:
+        """Triple with unresolvable subject → silently skipped, no crash."""
+        llm = _StubLlm(tool_calls=[{
+            "name": "record_triple",
+            "args": {
+                "subject": "UnknownNPC",
+                "relation": "knows_about",
+                "object": "Iron Sword",
+            },
+        }])
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "some dialogue")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))
+        assert g.edge_count() == 0
+
+    def test_skips_unknown_object(self) -> None:
+        """Triple with unresolvable object → silently skipped."""
+        llm = _StubLlm(tool_calls=[{
+            "name": "record_triple",
+            "args": {
+                "subject": "Merchant Tom",
+                "relation": "knows_about",
+                "object": "UnknownItem",
+            },
+        }])
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "dialogue")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))
+        assert g.edge_count() == 0
+
+    def test_llm_exception_returns_gracefully(self) -> None:
+        """LLM raises exception → error is swallowed, no propagation."""
+        llm = _StubLlm(raise_on_call=True)
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "dialogue")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))  # must not raise
+        assert g.edge_count() == 0
+
+    def test_multiple_triples_inserted(self) -> None:
+        """Multiple valid tool_calls → multiple edges inserted."""
+        llm = _StubLlm(tool_calls=[
+            {
+                "name": "record_triple",
+                "args": {
+                    "subject": "Merchant Tom",
+                    "relation": "interacted_with",
+                    "object": "Iron Sword",
+                },
+            },
+            {
+                "name": "record_triple",
+                "args": {
+                    "subject": "Iron Sword",
+                    "relation": "related_to",
+                    "object": "Merchant Tom",
+                },
+            },
+        ])
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "two facts")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))
+        assert g.has_edge("merchant_tom", "iron_sword")
+        assert g.has_edge("iron_sword", "merchant_tom")
+
+    def test_weight_propagated_to_edge(self) -> None:
+        """weight field in triple is correctly written to the graph edge."""
+        llm = _StubLlm(tool_calls=[{
+            "name": "record_triple",
+            "args": {
+                "subject": "Merchant Tom",
+                "relation": "has_opinion_of",
+                "object": "Iron Sword",
+                "weight": 0.42,
+            },
+        }])
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "opinion")]
+        asyncio.run(g.write_episode("npc_01", msgs, {}))
+        assert g.has_edge("merchant_tom", "iron_sword")
+        edge_data = g._graph["merchant_tom"]["iron_sword"]
+        assert abs(edge_data["weight"] - 0.42) < 1e-9
+
+
+# ------------------------------------------------------------------
+# TestEnsureLoreEnriched
+# ------------------------------------------------------------------
+
+
+class TestEnsureLoreEnriched:
+    def test_no_llm_no_op(self) -> None:
+        """No LLM → ensure_lore_enriched completes without error."""
+        g = WorldKnowledgeGraph()  # llm=None
+        world = _StubWorld(lore_entries=[
+            _StubLoreEntry("lore_1", "The Prophecy", "A great evil stirs.")
+        ])
+        asyncio.run(g.ensure_lore_enriched(world))
+        assert g.edge_count() == 0
+
+    def test_idempotent(self) -> None:
+        """Two calls for the same world → LLM invoked only once."""
+        llm = _StubLlm()  # returns no triples
+        g = WorldKnowledgeGraph(llm=llm)
+        world = _StubWorld(lore_entries=[
+            _StubLoreEntry("lore_1", "Lore", "Some lore text.")
+        ])
+        asyncio.run(g.ensure_lore_enriched(world))
+        asyncio.run(g.ensure_lore_enriched(world))
+        assert llm.call_count == 1
+
+    def test_inserts_lore_edges(self) -> None:
+        """LLM returns a lore triple → graph edge inserted."""
+        llm = _StubLlm(tool_calls=[{
+            "name": "record_triple",
+            "args": {
+                "subject": "Merchant Tom",
+                "relation": "related_to",
+                "object": "Iron Sword",
+            },
+        }])
+        g = _make_graph_with_nodes(llm=llm)
+        world = _StubWorld(lore_entries=[
+            _StubLoreEntry("lore_1", "Sword History", "Tom forged the Iron Sword.")
+        ])
+        asyncio.run(g.ensure_lore_enriched(world))
+        assert g.has_edge("merchant_tom", "iron_sword")
+
+    def test_no_lore_registry_no_llm_call(self) -> None:
+        """World has no lore or character registry → LLM not called."""
+        llm = _StubLlm()
+        g = WorldKnowledgeGraph(llm=llm)
+        # No lore_entries or char_entries → has_registry returns False for both
+        world = _StubWorld()
+        asyncio.run(g.ensure_lore_enriched(world))
+        assert llm.call_count == 0
+
+
+# ------------------------------------------------------------------
+# TestApplyTriple
+# ------------------------------------------------------------------
+
+
+class TestApplyTriple:
+    def test_apply_creates_edge_when_both_nodes_exist(self) -> None:
+        """_apply_triple inserts an edge when both endpoints are in the graph."""
+        g = _make_graph_with_nodes()
+        g._apply_triple({
+            "subject": "Merchant Tom",
+            "relation": "knows_about",
+            "object": "Iron Sword",
+        })
+        assert g.has_edge("merchant_tom", "iron_sword")
+
+    def test_apply_skips_when_subject_not_in_graph(self) -> None:
+        """_apply_triple silently skips if subject is unresolvable."""
+        g = _make_graph_with_nodes()
+        g._apply_triple({
+            "subject": "Ghost NPC",
+            "relation": "knows_about",
+            "object": "Iron Sword",
+        })
+        assert g.edge_count() == 0
+
+    def test_apply_skips_self_loop(self) -> None:
+        """_apply_triple does not create a self-loop when subject == object."""
+        g = _make_graph_with_nodes()
+        g._apply_triple({
+            "subject": "Merchant Tom",
+            "relation": "related_to",
+            "object": "Merchant Tom",
+        })
+        assert not g.has_edge("merchant_tom", "merchant_tom")

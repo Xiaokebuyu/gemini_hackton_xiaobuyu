@@ -67,9 +67,10 @@ class ContentRegistry(ABC):
 
     @staticmethod
     def _extract_tags(item: Any) -> set[str]:
-        if not isinstance(item, dict):
-            return set()
-        raw_tags = item.get("tags", [])
+        if isinstance(item, dict):
+            raw_tags = item.get("tags", [])
+        else:
+            raw_tags = getattr(item, "tags", [])
         if not isinstance(raw_tags, list):
             return set()
         return {str(tag) for tag in raw_tags}

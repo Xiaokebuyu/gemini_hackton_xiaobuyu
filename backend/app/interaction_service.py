@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses as _dataclasses
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
 
@@ -92,18 +93,14 @@ def build_interaction_view_context(
     area_sub_locations: dict[str, list[str]] = {}
     if world.has_registry("maps"):
         for raw_area in world.maps.list_all():
-            if not isinstance(raw_area, Mapping):
-                continue
-            area_id = str(raw_area.get("id", "")).strip()
+            area_id = raw_area.id.strip() if raw_area.id else ""
             if not area_id:
                 continue
-            raw_sub_locations = raw_area.get("sub_locations", {})
             sub_location_ids: list[str] = []
-            if isinstance(raw_sub_locations, Mapping):
-                for raw_key in raw_sub_locations.keys():
-                    sub_location_id = str(raw_key).strip()
-                    if sub_location_id:
-                        sub_location_ids.append(sub_location_id)
+            for raw_key in raw_area.sub_locations.keys():
+                sub_location_id = str(raw_key).strip()
+                if sub_location_id:
+                    sub_location_ids.append(sub_location_id)
             area_sub_locations[area_id] = sub_location_ids
 
     npc_positions: dict[str, tuple[str | None, str | None]] = {}
@@ -123,24 +120,22 @@ def build_interaction_view_context(
     npc_names: dict[str, str] = {}
     if world.has_registry("characters"):
         for raw_character in world.characters.list_all():
-            if not isinstance(raw_character, Mapping):
-                continue
-            npc_id = str(raw_character.get("id", "")).strip()
+            npc_id = raw_character.id.strip()
             if not npc_id:
                 continue
-            npc_name = str(raw_character.get("name", "")).strip() or npc_id
+            npc_name = raw_character.name.strip() or npc_id
             npc_names[npc_id] = npc_name
             if npc_id in npc_positions:
                 continue
             area_id: str | None = None
             for field_name in ("area_id", "current_area"):
-                raw_area_id = str(raw_character.get(field_name, "")).strip()
+                raw_area_id = str(getattr(raw_character, field_name, "") or "").strip()
                 if raw_area_id:
                     area_id = raw_area_id
                     break
             location_id: str | None = None
             for field_name in ("location_id", "current_location"):
-                raw_location_id = str(raw_character.get(field_name, "")).strip()
+                raw_location_id = str(getattr(raw_character, field_name, "") or "").strip()
                 if raw_location_id:
                     location_id = raw_location_id
                     break
@@ -208,12 +203,16 @@ def build_interaction_view_context(
     item_catalog: dict[str, dict[str, Any]] = {}
     if world.has_registry("items"):
         for raw_item in world.items.list_all():
-            if not isinstance(raw_item, Mapping):
-                continue
-            item_id = str(raw_item.get("id", "")).strip()
-            if not item_id:
-                continue
-            item_catalog[item_id] = dict(raw_item)
+            if isinstance(raw_item, Mapping):
+                item_id = str(raw_item.get("id", "")).strip()
+                if not item_id:
+                    continue
+                item_catalog[item_id] = dict(raw_item)
+            elif _dataclasses.is_dataclass(raw_item) and not isinstance(raw_item, type):
+                item_id = str(getattr(raw_item, "id", "")).strip()
+                if not item_id:
+                    continue
+                item_catalog[item_id] = _dataclasses.asdict(raw_item)
 
     return InteractionViewContext(
         current_area=current_area,
@@ -246,22 +245,22 @@ class InteractionService:
     ) -> None:
         self._execute_structured_action = execute_structured_action
         self._snapshot_builders = {
-            "talk": ("talk_snapshot", self._build_talk_snapshot),
-            "board": ("board_snapshot", self._build_board_snapshot),
-            "inspect_item": ("inspect_item", self._build_inspect_item_snapshot),
-            "quest_brief": ("quest_brief", self._build_quest_brief_snapshot),
-            "quest_progress": ("quest_progress", self._build_quest_progress_snapshot),
-            "quest_location": ("quest_location", self._build_quest_location_snapshot),
+            "talk": ("talk_snapshot", _build_talk_snapshot),
+            "board": ("board_snapshot", _build_board_snapshot),
+            "inspect_item": ("inspect_item", _build_inspect_item_snapshot),
+            "quest_brief": ("quest_brief", _build_quest_brief_snapshot),
+            "quest_progress": ("quest_progress", _build_quest_progress_snapshot),
+            "quest_location": ("quest_location", _build_quest_location_snapshot),
             "quest_requirements": (
                 "quest_requirements",
-                self._build_quest_requirements_snapshot,
+                _build_quest_requirements_snapshot,
             ),
-            "quest_reward": ("quest_reward", self._build_quest_reward_snapshot),
+            "quest_reward": ("quest_reward", _build_quest_reward_snapshot),
         }
         self._post_snapshot_builders = {
-            "shop": ("shop_snapshot", self._build_shop_snapshot),
-            "board": ("board_snapshot", self._build_board_snapshot),
-            "talk": ("talk_snapshot", self._build_talk_snapshot),
+            "shop": ("shop_snapshot", _build_shop_snapshot),
+            "board": ("board_snapshot", _build_board_snapshot),
+            "talk": ("talk_snapshot", _build_talk_snapshot),
         }
 
     async def execute(
@@ -272,19 +271,19 @@ class InteractionService:
         """Execute one normalized interaction into an ordered event list."""
 
         normalized_map = normalized if isinstance(normalized, Mapping) else {}
-        status = self._normalized_text(normalized_map.get("status"))
+        status = _normalized_text(normalized_map.get("status"))
         if status != "resolved":
             return InteractionExecutionResult(
                 success=False,
                 reason="interaction_rejected",
-                events=[self._interaction_rejected_event(normalized_map)],
+                events=[_interaction_rejected_event(normalized_map)],
             )
 
         # Parse interaction fields once
-        target_kind = self._normalized_text(normalized_map.get("target_kind"))
-        target_id = self._normalized_id(normalized_map.get("target_id")) or ""
-        intent = self._normalized_text(normalized_map.get("intent"))
-        quest_id = self._normalized_id(normalized_map.get("quest_id"))
+        target_kind = _normalized_text(normalized_map.get("target_kind"))
+        target_id = _normalized_id(normalized_map.get("target_id")) or ""
+        intent = _normalized_text(normalized_map.get("intent"))
+        quest_id = _normalized_id(normalized_map.get("quest_id"))
 
         # Policy validation (game_core)
         state = session.runtime.state
@@ -295,7 +294,7 @@ class InteractionService:
             return InteractionExecutionResult(
                 success=False,
                 reason="interaction_rejected",
-                events=[self._interaction_rejected_event(normalized_map, issue=presence_issue)],
+                events=[_interaction_rejected_event(normalized_map, issue=presence_issue)],
             )
         precheck_issue = validate_preconditions(
             policy_ctx, target_kind, target_id, intent, quest_id,
@@ -304,13 +303,13 @@ class InteractionService:
             return InteractionExecutionResult(
                 success=False,
                 reason="interaction_rejected",
-                events=[self._interaction_rejected_event(normalized_map, issue=precheck_issue)],
+                events=[_interaction_rejected_event(normalized_map, issue=precheck_issue)],
             )
 
-        resolved_event = self._interaction_resolved_event(normalized_map)
+        resolved_event = _interaction_resolved_event(normalized_map)
         execution = normalized_map.get("execution", {})
         execution_map = execution if isinstance(execution, Mapping) else {}
-        execution_kind = self._normalized_text(execution_map.get("kind"))
+        execution_kind = _normalized_text(execution_map.get("kind"))
 
         if execution_kind == "snapshot":
             view_ctx = build_interaction_view_context(state, world)
@@ -333,7 +332,7 @@ class InteractionService:
             reason="interaction_rejected",
             events=[
                 resolved_event,
-                self._interaction_failed_event(normalized_map, message="interaction failed"),
+                _interaction_failed_event(normalized_map, message="interaction failed"),
             ],
         )
 
@@ -344,7 +343,7 @@ class InteractionService:
         execution: Mapping[str, Any],
         resolved_event: InteractionOutputEvent,
     ) -> InteractionExecutionResult:
-        snapshot_type = self._normalized_text(execution.get("snapshot_type"))
+        snapshot_type = _normalized_text(execution.get("snapshot_type"))
         builder_entry = self._snapshot_builders.get(snapshot_type)
         if builder_entry is None:
             return InteractionExecutionResult(
@@ -352,19 +351,19 @@ class InteractionService:
                 reason="interaction_rejected",
                 events=[
                     resolved_event,
-                    self._interaction_failed_event(normalized, message="interaction failed"),
+                    _interaction_failed_event(normalized, message="interaction failed"),
                 ],
             )
         event_type, builder = builder_entry
-        target_id = self._normalized_id(normalized.get("target_id")) or ""
+        target_id = _normalized_id(normalized.get("target_id")) or ""
         quest_id = (
-            self._normalized_id(execution.get("quest_id"))
-            or self._normalized_id(normalized.get("quest_id"))
+            _normalized_id(execution.get("quest_id"))
+            or _normalized_id(normalized.get("quest_id"))
             or ""
         )
         item_id = (
-            self._normalized_id(execution.get("item_id"))
-            or self._normalized_id(normalized.get("item_id"))
+            _normalized_id(execution.get("item_id"))
+            or _normalized_id(normalized.get("item_id"))
             or ""
         )
         payload = builder(context, target_id, quest_id, item_id)
@@ -380,7 +379,7 @@ class InteractionService:
         normalized: Mapping[str, Any],
         resolved_event: InteractionOutputEvent,
     ) -> InteractionExecutionResult:
-        target_id = self._normalized_id(normalized.get("target_id")) or ""
+        target_id = _normalized_id(normalized.get("target_id")) or ""
         request = _PipelineActionRequest(
             action_type="refresh_shop",
             params={"npc_id": target_id},
@@ -393,9 +392,9 @@ class InteractionService:
                 reason="interaction_rejected",
                 events=[
                     resolved_event,
-                    self._interaction_failed_event(
+                    _interaction_failed_event(
                         normalized,
-                        message=self._first_error(result, default="interaction failed"),
+                        message=_first_error(result, default="interaction failed"),
                     ),
                 ],
             )
@@ -407,7 +406,7 @@ class InteractionService:
                 resolved_event,
                 InteractionOutputEvent(
                     "shop_snapshot",
-                    self._build_shop_snapshot(refreshed_context, target_id, "", ""),
+                    _build_shop_snapshot(refreshed_context, target_id, "", ""),
                 ),
             ],
         )
@@ -419,7 +418,7 @@ class InteractionService:
         execution: Mapping[str, Any],
         resolved_event: InteractionOutputEvent,
     ) -> InteractionExecutionResult:
-        action_type = self._normalized_text(execution.get("action_type"))
+        action_type = _normalized_text(execution.get("action_type"))
         params = execution.get("params", {})
         params_map = dict(params) if isinstance(params, Mapping) else {}
         request = _PipelineActionRequest(action_type=action_type, params=params_map)
@@ -430,29 +429,29 @@ class InteractionService:
                 reason="interaction_rejected",
                 events=[
                     resolved_event,
-                    self._interaction_failed_event(
+                    _interaction_failed_event(
                         normalized,
-                        message=self._first_error(result, default="interaction failed"),
+                        message=_first_error(result, default="interaction failed"),
                     ),
                 ],
             )
 
         events = [
             resolved_event,
-            self._action_result_event(action_type=action_type, result=result),
+            _action_result_event(action_type=action_type, result=result),
         ]
         for event in result.sse_events:
-            event_type = self._normalized_text(event.event_type)
+            event_type = _normalized_text(event.event_type)
             if not event_type:
                 continue
             events.append(InteractionOutputEvent(event_type, dict(event.payload)))
 
-        post_snapshot = self._normalized_text(execution.get("post_snapshot"))
+        post_snapshot = _normalized_text(execution.get("post_snapshot"))
         builder_entry = self._post_snapshot_builders.get(post_snapshot)
         if builder_entry is not None:
             refreshed_context = build_interaction_view_context(session.runtime.state, session.runtime.world)
             event_type, builder = builder_entry
-            target_id = self._normalized_id(normalized.get("target_id")) or ""
+            target_id = _normalized_id(normalized.get("target_id")) or ""
             events.append(
                 InteractionOutputEvent(
                     event_type,
@@ -466,188 +465,164 @@ class InteractionService:
             events=events,
         )
 
-    def _interaction_resolved_event(
-        self,
-        normalized: Mapping[str, Any],
-    ) -> InteractionOutputEvent:
-        return InteractionOutputEvent(
-            "interaction_resolved",
-            {
-                "target_kind": self._normalized_id(normalized.get("target_kind")) or "",
-                "target_id": self._normalized_id(normalized.get("target_id")) or "",
-                "intent": self._normalized_text(normalized.get("intent")),
-                "item_id": self._normalized_id(normalized.get("item_id")),
-                "quest_id": self._normalized_id(normalized.get("quest_id")),
-                "count": self._coerce_int(normalized.get("count"), 1),
-            },
-        )
 
-    def _interaction_rejected_event(
-        self,
-        normalized: Mapping[str, Any],
-        *,
-        issue: Mapping[str, Any] | None = None,
-    ) -> InteractionOutputEvent:
-        source = issue if isinstance(issue, Mapping) else normalized
-        return InteractionOutputEvent(
-            "interaction_rejected",
-            {
-                "target_kind": self._normalized_id(normalized.get("target_kind")),
-                "target_id": self._normalized_id(normalized.get("target_id")),
-                "intent": self._normalized_text(normalized.get("intent")),
-                "item_id": self._normalized_id(normalized.get("item_id")),
-                "quest_id": self._normalized_id(normalized.get("quest_id")),
-                "count": self._coerce_int(normalized.get("count"), 1),
-                "code": self._normalized_text(source.get("code")) or "interaction_failed",
-                "message": self._normalized_text(source.get("message")) or "interaction failed",
-            },
-        )
+# ── Event builders ────────────────────────────────────────────────────────────────
 
-    def _interaction_failed_event(
-        self,
-        normalized: Mapping[str, Any],
-        *,
-        message: str,
-    ) -> InteractionOutputEvent:
-        payload = dict(self._interaction_rejected_event(normalized).payload)
-        payload["code"] = "interaction_failed"
-        payload["message"] = message
-        return InteractionOutputEvent("interaction_rejected", payload)
 
-    def _action_result_event(
-        self,
-        *,
-        action_type: str,
-        result: PipelineResult,
-    ) -> InteractionOutputEvent:
-        return InteractionOutputEvent(
-            "action_result",
-            {
-                "success": result.success,
-                "action_type": action_type,
-                "time_cost": result.time_cost,
-                "errors": list(result.errors),
-                "metadata": dict(result.metadata),
-                "narrative_hints": list(result.narrative_hints),
-            },
-        )
+def _interaction_resolved_event(normalized: Mapping[str, Any]) -> InteractionOutputEvent:
+    return InteractionOutputEvent(
+        "interaction_resolved",
+        {
+            "target_kind": _normalized_id(normalized.get("target_kind")) or "",
+            "target_id": _normalized_id(normalized.get("target_id")) or "",
+            "intent": _normalized_text(normalized.get("intent")),
+            "item_id": _normalized_id(normalized.get("item_id")),
+            "quest_id": _normalized_id(normalized.get("quest_id")),
+            "count": _coerce_int(normalized.get("count"), 1),
+        },
+    )
 
-    @staticmethod
-    def _build_talk_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del quest_id, item_id
-        return build_talk_snapshot_payload(context, target_id)
 
-    @staticmethod
-    def _build_shop_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del quest_id, item_id
-        return build_shop_snapshot_payload(context, target_id)
+def _interaction_rejected_event(
+    normalized: Mapping[str, Any],
+    *,
+    issue: Mapping[str, Any] | None = None,
+) -> InteractionOutputEvent:
+    source = issue if isinstance(issue, Mapping) else normalized
+    return InteractionOutputEvent(
+        "interaction_rejected",
+        {
+            "target_kind": _normalized_id(normalized.get("target_kind")),
+            "target_id": _normalized_id(normalized.get("target_id")),
+            "intent": _normalized_text(normalized.get("intent")),
+            "item_id": _normalized_id(normalized.get("item_id")),
+            "quest_id": _normalized_id(normalized.get("quest_id")),
+            "count": _coerce_int(normalized.get("count"), 1),
+            "code": _normalized_text(source.get("code")) or "interaction_failed",
+            "message": _normalized_text(source.get("message")) or "interaction failed",
+        },
+    )
 
-    @staticmethod
-    def _build_board_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del quest_id, item_id
-        return build_board_snapshot_payload(context, target_id)
 
-    @staticmethod
-    def _build_quest_brief_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del item_id
-        return build_quest_brief_payload(context, target_id, quest_id)
+def _interaction_failed_event(
+    normalized: Mapping[str, Any],
+    *,
+    message: str,
+) -> InteractionOutputEvent:
+    payload = dict(_interaction_rejected_event(normalized).payload)
+    payload["code"] = "interaction_failed"
+    payload["message"] = message
+    return InteractionOutputEvent("interaction_rejected", payload)
 
-    @staticmethod
-    def _build_quest_progress_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del item_id
-        return build_quest_progress_payload(context, target_id, quest_id)
 
-    @staticmethod
-    def _build_quest_location_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del item_id
-        return build_quest_location_payload(context, target_id, quest_id)
+def _action_result_event(
+    *,
+    action_type: str,
+    result: PipelineResult,
+) -> InteractionOutputEvent:
+    return InteractionOutputEvent(
+        "action_result",
+        {
+            "success": result.success,
+            "action_type": action_type,
+            "time_cost": result.time_cost,
+            "errors": list(result.errors),
+            "metadata": dict(result.metadata),
+            "narrative_hints": list(result.narrative_hints),
+        },
+    )
 
-    @staticmethod
-    def _build_quest_requirements_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del item_id
-        return build_quest_requirements_payload(context, target_id, quest_id)
 
-    @staticmethod
-    def _build_quest_reward_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del item_id
-        return build_quest_reward_payload(context, target_id, quest_id)
+# ── Snapshot adapters (uniform 4-arg signature for registry dispatch) ─────────────
 
-    @staticmethod
-    def _build_inspect_item_snapshot(
-        context: InteractionViewContext,
-        target_id: str,
-        quest_id: str,
-        item_id: str,
-    ) -> dict[str, Any]:
-        del quest_id
-        return build_inspect_item_payload(context, target_id, item_id)
 
-    @staticmethod
-    def _first_error(
-        result: PipelineResult,
-        *,
-        default: str,
-    ) -> str:
-        if result.errors:
-            text = str(result.errors[0]).strip()
-            if text:
-                return text
+def _build_talk_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del quest_id, item_id
+    return build_talk_snapshot_payload(context, target_id)
+
+
+def _build_shop_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del quest_id, item_id
+    return build_shop_snapshot_payload(context, target_id)
+
+
+def _build_board_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del quest_id, item_id
+    return build_board_snapshot_payload(context, target_id)
+
+
+def _build_quest_brief_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del item_id
+    return build_quest_brief_payload(context, target_id, quest_id)
+
+
+def _build_quest_progress_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del item_id
+    return build_quest_progress_payload(context, target_id, quest_id)
+
+
+def _build_quest_location_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del item_id
+    return build_quest_location_payload(context, target_id, quest_id)
+
+
+def _build_quest_requirements_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del item_id
+    return build_quest_requirements_payload(context, target_id, quest_id)
+
+
+def _build_quest_reward_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del item_id
+    return build_quest_reward_payload(context, target_id, quest_id)
+
+
+def _build_inspect_item_snapshot(
+    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
+) -> dict[str, Any]:
+    del quest_id
+    return build_inspect_item_payload(context, target_id, item_id)
+
+
+# ── Utility helpers ───────────────────────────────────────────────────────────────
+
+
+def _first_error(result: PipelineResult, *, default: str) -> str:
+    if result.errors:
+        text = str(result.errors[0]).strip()
+        if text:
+            return text
+    return default
+
+
+def _normalized_text(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _normalized_id(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _coerce_int(value: Any, default: int) -> int:
+    if value is None or isinstance(value, bool):
         return default
-
-    @staticmethod
-    def _normalized_text(value: Any) -> str:
-        return str(value or "").strip()
-
-    @staticmethod
-    def _normalized_id(value: Any) -> str | None:
-        text = str(value or "").strip()
-        return text or None
-
-    @staticmethod
-    def _coerce_int(value: Any, default: int) -> int:
-        if value is None or isinstance(value, bool):
-            return default
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

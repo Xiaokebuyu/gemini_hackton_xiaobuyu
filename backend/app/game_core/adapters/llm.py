@@ -7,7 +7,7 @@ game_core 不得 import 任何具体 LLM SDK（如 google.genai）。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
 
 @dataclass(slots=True)
@@ -19,6 +19,9 @@ class LlmResponse:
     # [{"name": "tool_name", "args": {"key": "val"}}]
     finish_reason: str = "stop"  # "stop" | "tool_calls" | "error"
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Serialized model-turn parts (including thought_signature) for history preservation.
+    # None when not populated (e.g. NullLlmProvider).
+    raw_model_parts: list[dict[str, Any]] | None = None
 
 
 @runtime_checkable
@@ -32,6 +35,13 @@ class LlmPort(Protocol):
         tool_declarations: list[dict[str, Any]],
     ) -> LlmResponse: ...
 
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        history: list[dict[str, Any]],
+        tool_declarations: list[dict[str, Any]],
+    ) -> AsyncIterator[str]: ...
+
 
 class NullLlmProvider:
     """Safe default — returns empty response, no external calls."""
@@ -43,3 +53,12 @@ class NullLlmProvider:
         tool_declarations: list[dict[str, Any]],
     ) -> LlmResponse:
         return LlmResponse()
+
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        history: list[dict[str, Any]],
+        tool_declarations: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        return
+        yield  # noqa: unreachable — makes this an async generator yielding nothing

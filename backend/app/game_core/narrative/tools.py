@@ -32,6 +32,11 @@ class AgentTool(ABC):
     def allowed_roles(self) -> list[str]:
         """Roles allowed to invoke this tool."""
 
+    @property
+    def applicable_traits(self) -> list[str]:
+        """NPC profile tags required for this tool. Empty = available to all roles."""
+        return []
+
     @abstractmethod
     async def execute(self, params: dict[str, Any], context: AgentContext) -> ToolResult:
         """Execute the tool."""

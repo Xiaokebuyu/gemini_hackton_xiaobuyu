@@ -37,7 +37,7 @@ class NarrativePlannerDecision:
 
 
 class NarrativePlannerProvider(Protocol):
-    def plan(self, context: dict[str, Any]) -> Any:
+    async def plan(self, context: dict[str, Any]) -> Any:
         ...
 
 
@@ -98,7 +98,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         reason = "trigger" if triggered else "fallback"
         planner_context = self._build_planner_context(context, current_tick=current_tick)
         try:
-            raw_decision = self.planner.plan(planner_context)
+            raw_decision = await self.planner.plan(planner_context)
         except Exception as exc:
             logger.exception(
                 "hook failed: narrative_planner",

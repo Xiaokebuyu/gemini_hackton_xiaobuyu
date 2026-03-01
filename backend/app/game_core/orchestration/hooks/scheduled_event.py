@@ -19,8 +19,8 @@ class ScheduledEventHook(NoOpSettlementHook):
         if not context.state.has_slice("time"):
             return HookResult()
 
-        current_tick = context.state.time.absolute_tick()
-        due_events = context.state.events.pop_due_pending(current_tick)
+        current_time = context.state.time.get_current_time()
+        due_events = context.state.events.check_triggers(current_time)
         if not due_events:
             return HookResult(
                 metadata={"status": "noop", "triggered_count": 0},
@@ -29,7 +29,6 @@ class ScheduledEventHook(NoOpSettlementHook):
         triggered_ids: list[str] = []
         sse_events: list[SSEEvent] = []
         skipped_invalid_count = 0
-        triggered_at = context.state.time.get_current_time()
         for pending_event in due_events:
             event_id = self._get_event_id(pending_event)
             if event_id is None:
@@ -46,6 +45,17 @@ class ScheduledEventHook(NoOpSettlementHook):
                 pending_event.get("source"),
                 default="system",
             )
+            raw_tc = pending_event.get("trigger_condition")
+            if isinstance(raw_tc, dict):
+                trigger_condition = raw_tc
+            else:
+                # Legacy fallback: reconstruct from trigger_tick if present
+                tt = pending_event.get("trigger_tick")
+                trigger_condition = (
+                    {"type": "absolute_tick", "tick": int(tt)}
+                    if isinstance(tt, int)
+                    else {}
+                )
 
             active_event = {
                 "id": event_id,
@@ -56,8 +66,8 @@ class ScheduledEventHook(NoOpSettlementHook):
                 "payload": payload,
                 "metadata": metadata,
                 "source": source,
-                "trigger_tick": current_tick,
-                "triggered_at": dict(triggered_at),
+                "trigger_condition": trigger_condition,
+                "triggered_at": dict(current_time),
             }
             context.state.events.activate(event_id, active_event)
             triggered_ids.append(event_id)
@@ -67,8 +77,8 @@ class ScheduledEventHook(NoOpSettlementHook):
                     payload={
                         "event_id": event_id,
                         "event_type": event_type,
-                        "trigger_tick": current_tick,
-                        "triggered_at": dict(triggered_at),
+                        "trigger_condition": trigger_condition,
+                        "triggered_at": dict(current_time),
                     },
                 )
             )

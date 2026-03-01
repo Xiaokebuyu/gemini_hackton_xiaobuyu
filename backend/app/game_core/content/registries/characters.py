@@ -2,9 +2,62 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+
+
+# ------------------------------------------------------------------
+# Typed data structures
+# ------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class ShopInventory:
+    """Typed economy shop inventory attached to a merchant character."""
+
+    sell_markup: float | None = None
+    buy_rate: float | None = None
+    base_pool: list[dict[str, Any]] = field(default_factory=list)
+    rotating_pool: list[dict[str, Any]] = field(default_factory=list)
+    rotating_slots: int = 0
+    refresh_on: str | list[str] | None = None
+
+
+@dataclass(slots=True)
+class CharacterTemplate:
+    """Typed NPC / character template."""
+
+    id: str
+    name: str = ""
+    area_id: str = ""
+    current_area: str = ""
+    location_id: str = ""
+    current_location: str = ""
+    tags: list[str] = field(default_factory=list)
+    schedule: dict[str, str] | None = None
+    character_class: str = ""
+    class_id: str = ""
+    faction: str = ""
+    faction_id: str = ""
+    personality: str = ""
+    dialogue_style: str = ""
+    speech_pattern: str = ""
+    appearance: str = ""
+    backstory: str = ""
+    inventory: list[dict[str, Any]] = field(default_factory=list)
+    shop: dict[str, Any] | None = None
+    shop_inventory: ShopInventory | None = None
+    base_disposition: dict[str, int] | None = None
+    sell_markup: float | None = None
+    buy_rate: float | None = None
+    refresh_on: str | list[str] | None = None
+
+
+# ------------------------------------------------------------------
+# Registry
+# ------------------------------------------------------------------
 
 
 class CharacterRegistry(ContentRegistry):
@@ -12,48 +65,53 @@ class CharacterRegistry(ContentRegistry):
 
     def __init__(self) -> None:
         super().__init__("characters")
-        self._items: dict[str, dict[str, Any]] = {}
+        self._items: dict[str, CharacterTemplate] = {}
+        self._load_issues: list[str] = []
+
+    # ------------------------------------------------------------------
+    # Core API
+    # ------------------------------------------------------------------
 
     def load(self, data: dict[str, Any]) -> None:
-        self._items = self._coerce_dict_mapping(data)
+        self._items = {}
+        self._load_issues = []
+        coerced = self._coerce_dict_mapping(data)
+        for char_id, raw in coerced.items():
+            self._items[char_id] = self._build_template(char_id, raw)
 
-    def get(self, content_id: str) -> Any | None:
-        item = self._items.get(content_id)
-        return dict(item) if isinstance(item, dict) else item
+    def get(self, content_id: str) -> CharacterTemplate | None:
+        return self._items.get(content_id)
 
-    def list_all(self) -> list[Any]:
-        return [dict(value) for value in self._items.values()]
+    def list_all(self) -> list[CharacterTemplate]:
+        return list(self._items.values())
 
     # ------------------------------------------------------------------
     # Query methods
     # ------------------------------------------------------------------
 
-    def get_by_area(self, area_id: str) -> list[dict[str, Any]]:
+    def get_by_area(self, area_id: str) -> list[CharacterTemplate]:
         """Return characters whose area_id or current_area matches."""
         normalized = area_id.strip()
-        results: list[dict[str, Any]] = []
+        results: list[CharacterTemplate] = []
         for item in self._items.values():
-            for field_name in ("area_id", "current_area"):
-                if str(item.get(field_name, "")).strip() == normalized:
-                    results.append(dict(item))
-                    break
+            if item.area_id.strip() == normalized or item.current_area.strip() == normalized:
+                results.append(item)
         return results
 
-    def get_merchants(self) -> list[dict[str, Any]]:
+    def get_merchants(self) -> list[CharacterTemplate]:
         """Return characters that have shop or shop_inventory."""
         return [
-            dict(item) for item in self._items.values()
-            if isinstance(item.get("shop"), Mapping)
-            or isinstance(item.get("shop_inventory"), Mapping)
+            item for item in self._items.values()
+            if isinstance(item.shop, dict) or item.shop_inventory is not None
         ]
 
-    def get_by_faction(self, faction_id: str) -> list[dict[str, Any]]:
+    def get_by_faction(self, faction_id: str) -> list[CharacterTemplate]:
         """Return characters matching the given faction/faction_id."""
         normalized = faction_id.strip()
         return [
-            dict(item) for item in self._items.values()
-            if str(item.get("faction", "")).strip() == normalized
-            or str(item.get("faction_id", "")).strip() == normalized
+            item for item in self._items.values()
+            if item.faction.strip() == normalized
+            or item.faction_id.strip() == normalized
         ]
 
     # ------------------------------------------------------------------
@@ -61,143 +119,274 @@ class CharacterRegistry(ContentRegistry):
     # ------------------------------------------------------------------
 
     def validate(self) -> list[str]:
-        issues: list[str] = []
-        for item_id, item in self._items.items():
-            if not item.get("id"):
-                issues.append(f"character '{item_id}' missing id")
-
-            # -- Consumer fields --
-            if "name" in item and self._coerce_non_empty_string(item.get("name")) is None:
-                issues.append(f"character '{item_id}' has invalid name")
-
-            for field_name in ("area_id", "current_area"):
-                if field_name in item and self._coerce_non_empty_string(item.get(field_name)) is None:
-                    issues.append(f"character '{item_id}' has invalid {field_name}")
-
-            if "tags" in item and not isinstance(item.get("tags"), list):
-                issues.append(f"character '{item_id}' has invalid tags")
-
-            for field_name in ("character_class", "class_id"):
-                if field_name in item and self._coerce_non_empty_string(item.get(field_name)) is None:
-                    issues.append(f"character '{item_id}' has invalid {field_name}")
-
-            for field_name in ("faction", "faction_id"):
-                if field_name in item and self._coerce_non_empty_string(item.get(field_name)) is None:
-                    issues.append(f"character '{item_id}' has invalid {field_name}")
-
-            # -- Inventory --
-            inventory = item.get("inventory")
-            if inventory is not None:
-                if not isinstance(inventory, list):
-                    issues.append(f"character '{item_id}' has invalid inventory")
-                else:
-                    for index, entry in enumerate(inventory):
-                        if not isinstance(entry, Mapping):
-                            issues.append(
-                                f"character '{item_id}' inventory[{index}] must be a mapping"
-                            )
-                            continue
-                        if self._coerce_non_empty_string(entry.get("item_id")) is None:
-                            issues.append(
-                                f"character '{item_id}' inventory[{index}] missing item_id"
-                            )
-                        if (
-                            "count" in entry
-                            and self._coerce_non_negative_int(entry.get("count")) is None
-                        ):
-                            issues.append(
-                                f"character '{item_id}' inventory[{index}] has invalid count"
-                            )
-
-            # -- Simple shop format --
-            shop = item.get("shop")
-            if shop is not None:
-                if not isinstance(shop, Mapping):
-                    issues.append(f"character '{item_id}' has invalid shop")
-                else:
-                    shop_inv_list = shop.get("inventory")
-                    if shop_inv_list is not None:
-                        if not isinstance(shop_inv_list, list):
-                            issues.append(
-                                f"character '{item_id}' has invalid shop inventory"
-                            )
-                        else:
-                            for index, entry in enumerate(shop_inv_list):
-                                if not isinstance(entry, Mapping):
-                                    issues.append(
-                                        f"character '{item_id}' shop.inventory[{index}] must be a mapping"
-                                    )
-                                    continue
-                                if self._coerce_non_empty_string(entry.get("item_id")) is None:
-                                    issues.append(
-                                        f"character '{item_id}' shop.inventory[{index}] missing item_id"
-                                    )
-                                if (
-                                    "price" in entry
-                                    and self._coerce_non_negative_int(entry.get("price")) is None
-                                ):
-                                    issues.append(
-                                        f"character '{item_id}' shop.inventory[{index}] has invalid price"
-                                    )
-
-            # -- Economy shop_inventory format --
-            shop_inventory = item.get("shop_inventory")
-            if shop_inventory is not None:
-                if not isinstance(shop_inventory, Mapping):
-                    issues.append(f"character '{item_id}' has invalid shop_inventory")
-                else:
-                    self._validate_shop_inventory(item_id, shop_inventory, issues)
+        issues = list(self._load_issues)
+        for char_id, item in self._items.items():
+            if item.shop_inventory is not None and item.shop_inventory.sell_markup is not None:
+                if item.shop_inventory.sell_markup > 2.0:
+                    issues.append(
+                        f"character '{char_id}' balance warning: "
+                        f"sell_markup {item.shop_inventory.sell_markup} exceeds 2.0"
+                    )
         return issues
 
-    def _validate_shop_inventory(
-        self, item_id: str, shop_inv: Mapping[str, Any], issues: list[str],
-    ) -> None:
-        if "sell_markup" in shop_inv:
-            markup = self._coerce_float(shop_inv.get("sell_markup"))
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_template(self, char_id: str, raw: dict[str, Any]) -> CharacterTemplate:
+        """Construct a CharacterTemplate from raw dict, collecting format issues."""
+        raw_id = raw.get("id")
+        if not raw_id:
+            self._load_issues.append(f"character '{char_id}' missing id")
+
+        # -- Scalar fields with format validation --
+        name = self._extract_optional_string(char_id, raw, "name")
+        area_id = self._extract_optional_string(char_id, raw, "area_id")
+        current_area = self._extract_optional_string(char_id, raw, "current_area")
+        location_id = str(raw.get("location_id", "")).strip() if "location_id" in raw else ""
+        current_location = str(raw.get("current_location", "")).strip() if "current_location" in raw else ""
+        character_class = self._extract_optional_string(char_id, raw, "character_class")
+        class_id = self._extract_optional_string(char_id, raw, "class_id")
+        faction = self._extract_optional_string(char_id, raw, "faction")
+        faction_id = self._extract_optional_string(char_id, raw, "faction_id")
+        personality = str(raw.get("personality", "")).strip() if "personality" in raw else ""
+        dialogue_style = str(raw.get("dialogue_style", "")).strip() if "dialogue_style" in raw else ""
+        speech_pattern = str(raw.get("speech_pattern", "")).strip() if "speech_pattern" in raw else ""
+        appearance = str(raw.get("appearance", "")).strip() if "appearance" in raw else ""
+        backstory = str(raw.get("backstory", "")).strip() if "backstory" in raw else ""
+
+        # -- Tags --
+        tags: list[str] = []
+        raw_tags = raw.get("tags")
+        if raw_tags is not None:
+            if isinstance(raw_tags, list):
+                tags = [str(t) for t in raw_tags]
+            else:
+                self._load_issues.append(f"character '{char_id}' has invalid tags")
+
+        # -- Inventory --
+        inventory = self._load_inventory(char_id, raw)
+
+        # -- Simple shop --
+        shop = self._load_shop(char_id, raw)
+
+        # -- Economy shop_inventory --
+        shop_inventory = self._load_shop_inventory(char_id, raw)
+
+        # -- Base disposition (fallback initial_disposition) --
+        base_disposition = self._load_disposition(raw)
+
+        # -- Top-level economy fallbacks --
+        sell_markup = self._coerce_float(raw.get("sell_markup")) if "sell_markup" in raw else None
+        buy_rate = self._coerce_float(raw.get("buy_rate")) if "buy_rate" in raw else None
+        raw_refresh = raw.get("refresh_on")
+        refresh_on: str | list[str] | None = None
+        if isinstance(raw_refresh, str):
+            refresh_on = raw_refresh
+        elif isinstance(raw_refresh, list):
+            refresh_on = [str(r) for r in raw_refresh]
+
+        return CharacterTemplate(
+            id=str(raw_id or char_id),
+            name=name,
+            area_id=area_id,
+            current_area=current_area,
+            location_id=location_id,
+            current_location=current_location,
+            tags=tags,
+            character_class=character_class,
+            class_id=class_id,
+            faction=faction,
+            faction_id=faction_id,
+            personality=personality,
+            dialogue_style=dialogue_style,
+            speech_pattern=speech_pattern,
+            appearance=appearance,
+            backstory=backstory,
+            inventory=inventory,
+            shop=shop,
+            shop_inventory=shop_inventory,
+            base_disposition=base_disposition,
+            sell_markup=sell_markup,
+            buy_rate=buy_rate,
+            refresh_on=refresh_on,
+        )
+
+    def _extract_optional_string(
+        self, char_id: str, raw: dict[str, Any], field_name: str,
+    ) -> str:
+        """Extract a string field, validating non-empty when present."""
+        if field_name not in raw:
+            return ""
+        value = self._coerce_non_empty_string(raw.get(field_name))
+        if value is None:
+            self._load_issues.append(f"character '{char_id}' has invalid {field_name}")
+            return ""
+        return value
+
+    def _load_inventory(self, char_id: str, raw: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_inv = raw.get("inventory")
+        if raw_inv is None:
+            return []
+        if not isinstance(raw_inv, list):
+            self._load_issues.append(f"character '{char_id}' has invalid inventory")
+            return []
+        result: list[dict[str, Any]] = []
+        for index, entry in enumerate(raw_inv):
+            if not isinstance(entry, Mapping):
+                self._load_issues.append(
+                    f"character '{char_id}' inventory[{index}] must be a mapping"
+                )
+                continue
+            if self._coerce_non_empty_string(entry.get("item_id")) is None:
+                self._load_issues.append(
+                    f"character '{char_id}' inventory[{index}] missing item_id"
+                )
+            if "count" in entry and self._coerce_non_negative_int(entry.get("count")) is None:
+                self._load_issues.append(
+                    f"character '{char_id}' inventory[{index}] has invalid count"
+                )
+            result.append(dict(entry))
+        return result
+
+    def _load_shop(self, char_id: str, raw: dict[str, Any]) -> dict[str, Any] | None:
+        shop = raw.get("shop")
+        if shop is None:
+            return None
+        if not isinstance(shop, Mapping):
+            self._load_issues.append(f"character '{char_id}' has invalid shop")
+            return None
+        shop_dict = dict(shop)
+        shop_inv_list = shop.get("inventory")
+        if shop_inv_list is not None:
+            if not isinstance(shop_inv_list, list):
+                self._load_issues.append(f"character '{char_id}' has invalid shop inventory")
+            else:
+                for index, entry in enumerate(shop_inv_list):
+                    if not isinstance(entry, Mapping):
+                        self._load_issues.append(
+                            f"character '{char_id}' shop.inventory[{index}] must be a mapping"
+                        )
+                        continue
+                    if self._coerce_non_empty_string(entry.get("item_id")) is None:
+                        self._load_issues.append(
+                            f"character '{char_id}' shop.inventory[{index}] missing item_id"
+                        )
+                    if "price" in entry and self._coerce_non_negative_int(entry.get("price")) is None:
+                        self._load_issues.append(
+                            f"character '{char_id}' shop.inventory[{index}] has invalid price"
+                        )
+        return shop_dict
+
+    def _load_shop_inventory(self, char_id: str, raw: dict[str, Any]) -> ShopInventory | None:
+        raw_si = raw.get("shop_inventory")
+        if raw_si is None:
+            return None
+        if not isinstance(raw_si, Mapping):
+            self._load_issues.append(f"character '{char_id}' has invalid shop_inventory")
+            return None
+
+        # sell_markup
+        sell_markup: float | None = None
+        if "sell_markup" in raw_si:
+            markup = self._coerce_float(raw_si.get("sell_markup"))
             if markup is None or markup < 0:
-                issues.append(f"character '{item_id}' shop_inventory has invalid sell_markup")
-            elif markup > 2.0:
-                issues.append(
-                    f"character '{item_id}' balance warning: sell_markup {markup} exceeds 2.0"
+                self._load_issues.append(
+                    f"character '{char_id}' shop_inventory has invalid sell_markup"
+                )
+            else:
+                sell_markup = markup
+
+        # buy_rate
+        buy_rate: float | None = None
+        if "buy_rate" in raw_si:
+            rate = self._coerce_float(raw_si.get("buy_rate"))
+            if rate is None or rate < 0.0 or rate > 1.0:
+                self._load_issues.append(
+                    f"character '{char_id}' shop_inventory has invalid buy_rate"
+                )
+            else:
+                buy_rate = rate
+
+        # rotating_slots
+        rotating_slots = 0
+        if "rotating_slots" in raw_si:
+            rs = self._coerce_non_negative_int(raw_si.get("rotating_slots"))
+            if rs is None:
+                self._load_issues.append(
+                    f"character '{char_id}' shop_inventory has invalid rotating_slots"
+                )
+            else:
+                rotating_slots = rs
+
+        # pools
+        base_pool = self._load_pool(char_id, raw_si, "base_pool")
+        rotating_pool = self._load_pool(char_id, raw_si, "rotating_pool")
+
+        # refresh_on
+        refresh_on: str | list[str] | None = None
+        raw_refresh = raw_si.get("refresh_on")
+        if raw_refresh is not None:
+            if isinstance(raw_refresh, str):
+                if self._coerce_non_empty_string(raw_refresh) is None:
+                    self._load_issues.append(
+                        f"character '{char_id}' shop_inventory has invalid refresh_on"
+                    )
+                else:
+                    refresh_on = raw_refresh
+            elif isinstance(raw_refresh, list):
+                refresh_on = []
+                for index, entry in enumerate(raw_refresh):
+                    if self._coerce_non_empty_string(entry) is None:
+                        self._load_issues.append(
+                            f"character '{char_id}' shop_inventory.refresh_on[{index}] "
+                            f"must be a non-empty string"
+                        )
+                    else:
+                        refresh_on.append(str(entry))
+            else:
+                self._load_issues.append(
+                    f"character '{char_id}' shop_inventory has invalid refresh_on"
                 )
 
-        if "buy_rate" in shop_inv:
-            rate = self._coerce_float(shop_inv.get("buy_rate"))
-            if rate is None or rate < 0.0 or rate > 1.0:
-                issues.append(f"character '{item_id}' shop_inventory has invalid buy_rate")
+        return ShopInventory(
+            sell_markup=sell_markup,
+            buy_rate=buy_rate,
+            base_pool=base_pool,
+            rotating_pool=rotating_pool,
+            rotating_slots=rotating_slots,
+            refresh_on=refresh_on,
+        )
 
-        if "rotating_slots" in shop_inv:
-            if self._coerce_non_negative_int(shop_inv.get("rotating_slots")) is None:
-                issues.append(f"character '{item_id}' shop_inventory has invalid rotating_slots")
-
-        for pool_name in ("base_pool", "rotating_pool"):
-            pool = shop_inv.get(pool_name)
-            if pool is None:
+    def _load_pool(
+        self, char_id: str, raw_si: Mapping[str, Any], pool_name: str,
+    ) -> list[dict[str, Any]]:
+        pool = raw_si.get(pool_name)
+        if pool is None:
+            return []
+        if not isinstance(pool, list):
+            self._load_issues.append(
+                f"character '{char_id}' shop_inventory has invalid {pool_name}"
+            )
+            return []
+        result: list[dict[str, Any]] = []
+        for index, entry in enumerate(pool):
+            if not isinstance(entry, Mapping):
+                self._load_issues.append(
+                    f"character '{char_id}' shop_inventory.{pool_name}[{index}] must be a mapping"
+                )
                 continue
-            if not isinstance(pool, list):
-                issues.append(f"character '{item_id}' shop_inventory has invalid {pool_name}")
-                continue
-            for index, entry in enumerate(pool):
-                if not isinstance(entry, Mapping):
-                    issues.append(
-                        f"character '{item_id}' shop_inventory.{pool_name}[{index}] must be a mapping"
-                    )
-                    continue
-                if self._coerce_non_empty_string(entry.get("item_id")) is None:
-                    issues.append(
-                        f"character '{item_id}' shop_inventory.{pool_name}[{index}] missing item_id"
-                    )
+            if self._coerce_non_empty_string(entry.get("item_id")) is None:
+                self._load_issues.append(
+                    f"character '{char_id}' shop_inventory.{pool_name}[{index}] missing item_id"
+                )
+            result.append(dict(entry))
+        return result
 
-        refresh_on = shop_inv.get("refresh_on")
-        if refresh_on is not None:
-            if isinstance(refresh_on, str):
-                if self._coerce_non_empty_string(refresh_on) is None:
-                    issues.append(f"character '{item_id}' shop_inventory has invalid refresh_on")
-            elif isinstance(refresh_on, list):
-                for index, entry in enumerate(refresh_on):
-                    if self._coerce_non_empty_string(entry) is None:
-                        issues.append(
-                            f"character '{item_id}' shop_inventory.refresh_on[{index}] must be a non-empty string"
-                        )
-            else:
-                issues.append(f"character '{item_id}' shop_inventory has invalid refresh_on")
+    @staticmethod
+    def _load_disposition(raw: dict[str, Any]) -> dict[str, int] | None:
+        for field_name in ("base_disposition", "initial_disposition"):
+            disp = raw.get(field_name)
+            if isinstance(disp, Mapping):
+                return dict(disp)
+        return None

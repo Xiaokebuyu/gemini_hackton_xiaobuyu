@@ -163,14 +163,14 @@ class GrowthHandler(StaticCommandHandler):
         subclass_template = world.classes.get_subclass(subclass_id)
         if subclass_template is None:
             return ValidationResult(ok=False, reason=f"unknown subclass: {subclass_id}")
-        bound_class = get_non_empty_string(subclass_template, "class_id")
+        bound_class = subclass_template.class_id or None
         if bound_class is not None and bound_class != state.player.character_class:
             return ValidationResult(
                 ok=False,
                 reason=f"subclass '{subclass_id}' does not belong to class '{state.player.character_class}'",
             )
-        class_template = world.classes.get_class(state.player.character_class) or {}
-        required_level = coerce_int(class_template.get("subclass_level")) or 6
+        class_template = world.classes.get_class(state.player.character_class)
+        required_level = coerce_int(getattr(class_template, "subclass_level", None)) or 6
         if int(state.player.level) < required_level:
             return ValidationResult(
                 ok=False,
@@ -332,7 +332,9 @@ class GrowthHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> ExecuteResult:
         subclass_id = str(cmd.params["subclass_id"]).strip()
-        subclass_template = world.classes.get_subclass(subclass_id) or {}
+        subclass_template = world.classes.get_subclass(subclass_id)
+        if subclass_template is None:
+            return ExecuteResult.error(f"unknown subclass: {subclass_id}")
         existing_features = list(state.player.class_features)
         added_features = self._resolve_subclass_features(
             subclass_template,
@@ -361,26 +363,24 @@ class GrowthHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ExecuteResult:
-        race_template = world.classes.get_race(str(cmd.params["race_id"]).strip()) or {}
-        class_template = world.classes.get_class(str(cmd.params["class_id"]).strip()) or {}
-        background_template = (
-            world.classes.get_background(str(cmd.params["background_id"]).strip()) or {}
-        )
+        race_template = world.classes.get_race(str(cmd.params["race_id"]).strip())
+        class_template = world.classes.get_class(str(cmd.params["class_id"]).strip())
+        background_template = world.classes.get_background(str(cmd.params["background_id"]).strip())
+        if race_template is None or class_template is None or background_template is None:
+            return ExecuteResult.error("missing class data for character creation")
         ability_scores = self._normalize_ability_scores(cmd.params.get("ability_scores")) or {
             key: 10 for key in self._REQUIRED_STATS
         }
 
         final_stats = dict(ability_scores)
-        raw_bonuses = race_template.get("stat_bonuses", {})
-        if isinstance(raw_bonuses, Mapping):
-            for key, value in raw_bonuses.items():
-                stat = str(key)
-                if stat not in final_stats:
-                    continue
-                bonus = coerce_int(value)
-                if bonus is None:
-                    continue
-                final_stats[stat] += bonus
+        for key, value in race_template.stat_bonuses.items():
+            stat = str(key)
+            if stat not in final_stats:
+                continue
+            bonus = coerce_int(value)
+            if bonus is None:
+                continue
+            final_stats[stat] += bonus
 
         con_mod = (final_stats["con"] - 10) // 2
         max_hp = self._resolve_max_hp(class_template, con_mod)
@@ -419,10 +419,10 @@ class GrowthHandler(StaticCommandHandler):
         self,
         state: StateContainer,
         world: WorldInstance,
-    ) -> Mapping[str, Any]:
+    ) -> Any:
         if not state.player.character_class or not world.has_registry("classes"):
-            return {}
-        return world.classes.get_class(state.player.character_class) or {}
+            return None
+        return world.classes.get_class(state.player.character_class)
 
     def _resolve_available_level(
         self,
@@ -461,72 +461,76 @@ class GrowthHandler(StaticCommandHandler):
             return None
         return target_level
 
-    def _resolve_max_hp(self, class_template: Mapping[str, Any], con_mod: int) -> int:
-        base_value = coerce_int(class_template.get("hit_die"))
+    def _resolve_max_hp(self, class_template: Any, con_mod: int) -> int:
+        if class_template is None:
+            return max(1, 10 + con_mod)
+        base_value = coerce_int(class_template.hit_die)
         if base_value is None:
-            base_value = coerce_int(class_template.get("base_hp"))
+            base_value = coerce_int(class_template.base_hp)
         if base_value is None:
             base_value = 10
         return max(1, base_value + con_mod)
 
     def _resolve_ac(
         self,
-        class_template: Mapping[str, Any],
+        class_template: Any,
         stats: Mapping[str, int],
     ) -> int:
-        base_ac = coerce_int(class_template.get("base_ac"))
-        if base_ac is not None:
-            return base_ac
+        if class_template is not None:
+            base_ac = coerce_int(class_template.base_ac)
+            if base_ac is not None:
+                return base_ac
         dex_mod = (int(stats.get("dex", 10)) - 10) // 2
         return 10 + dex_mod
 
     def _resolve_starting_gold(
         self,
-        class_template: Mapping[str, Any],
-        background_template: Mapping[str, Any],
+        class_template: Any,
+        background_template: Any,
     ) -> int:
-        for key in ("starting_gold", "gold_bonus"):
-            value = coerce_int(background_template.get(key))
-            if value is not None:
-                return max(0, value)
-        class_gold = coerce_int(class_template.get("starting_gold"))
+        if background_template is not None:
+            for key in ("starting_gold", "gold_bonus"):
+                value = coerce_int(getattr(background_template, key, None))
+                if value is not None:
+                    return max(0, value)
+        class_gold = coerce_int(getattr(class_template, "starting_gold", None)) if class_template is not None else None
         return max(0, class_gold or 0)
 
     def _resolve_class_features(
         self,
-        race_template: Mapping[str, Any],
-        class_template: Mapping[str, Any],
-        background_template: Mapping[str, Any],
+        race_template: Any,
+        class_template: Any,
+        background_template: Any,
     ) -> list[str]:
         features: list[str] = []
-        raw_racial_traits = race_template.get("racial_traits", [])
-        if isinstance(raw_racial_traits, list):
-            for trait in raw_racial_traits:
+        if race_template is not None:
+            for trait in race_template.racial_traits:
                 normalized = self._non_empty_string(trait)
                 if normalized is not None:
                     features.append(normalized)
 
         features = self._merge_features(features, self._resolve_level_features(class_template, 1, 1))
 
-        background_feature = self._non_empty_string(background_template.get("feature"))
-        if background_feature is not None:
-            features = self._merge_features(features, [background_feature])
+        if background_template is not None:
+            background_feature = self._non_empty_string(background_template.feature)
+            if background_feature is not None:
+                features = self._merge_features(features, [background_feature])
         return features
 
     def _resolve_level_features(
         self,
-        class_template: Mapping[str, Any],
+        class_template: Any,
         start_level: int,
         end_level: int,
     ) -> list[str]:
-        if start_level > end_level:
+        if start_level > end_level or class_template is None:
             return []
-        raw_level_features = class_template.get("level_features", {})
-        if not isinstance(raw_level_features, Mapping):
+        level_features = class_template.level_features
+        if not isinstance(level_features, Mapping):
             return []
         features: list[str] = []
         for level in range(start_level, end_level + 1):
-            raw_features = raw_level_features.get(level, raw_level_features.get(str(level), []))
+            raw_features = level_features.get(level, level_features.get(str(level), []))
             if not isinstance(raw_features, list):
                 continue
             for feature in raw_features:
@@ -537,22 +541,22 @@ class GrowthHandler(StaticCommandHandler):
 
     def _resolve_subclass_features(
         self,
-        subclass_template: Mapping[str, Any],
+        subclass_template: Any,
         current_level: int,
     ) -> list[str]:
+        if subclass_template is None:
+            return []
         features: list[str] = []
-        raw_features = subclass_template.get("features", [])
-        if isinstance(raw_features, list):
-            for feature in raw_features:
-                normalized = self._non_empty_string(feature)
-                if normalized is not None and normalized not in features:
-                    features.append(normalized)
+        for feature in subclass_template.features:
+            normalized = self._non_empty_string(feature)
+            if normalized is not None and normalized not in features:
+                features.append(normalized)
 
-        raw_level_features = subclass_template.get("level_features", {})
-        if isinstance(raw_level_features, Mapping):
-            level_features = raw_level_features.get(
+        level_features_map = subclass_template.level_features
+        if isinstance(level_features_map, Mapping):
+            level_features = level_features_map.get(
                 current_level,
-                raw_level_features.get(str(current_level), []),
+                level_features_map.get(str(current_level), []),
             )
             if isinstance(level_features, list):
                 for feature in level_features:
@@ -563,12 +567,14 @@ class GrowthHandler(StaticCommandHandler):
 
     def _resolve_hp_gain(
         self,
-        class_template: Mapping[str, Any],
+        class_template: Any,
         con_mod: int,
     ) -> int:
-        base_value = coerce_int(class_template.get("hp_per_level"))
+        if class_template is None:
+            return max(1, 5 + con_mod)
+        base_value = coerce_int(class_template.hp_per_level)
         if base_value is None:
-            hit_die = coerce_int(class_template.get("hit_die"))
+            hit_die = coerce_int(class_template.hit_die)
             if hit_die is not None:
                 base_value = max(1, hit_die // 2)
             else:

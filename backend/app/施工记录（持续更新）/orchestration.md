@@ -366,6 +366,37 @@ PipelineOrchestrator 在 engine 执行后将 ExecuteResult 摘要写入 L7（nar
 
 **测试**：467 passed（含 interaction_service 17 个测试，行为不变）
 
+## D-O21 AIOsirisHook LLM 链路接通（2026-03-01）
+
+**目标**：将 AIOsirisHook（P30）的 evaluator 从确定性 MVP 升级到 LLM 驱动版本。
+
+**架构决策**：
+- `AIOsirisEvaluator` Protocol async 化（`def evaluate` → `async def evaluate`），与 `GmNarrator.compose` 一致
+- LLM evaluator 直接调用 `LlmPort.generate()`，不经 `AgenticExecutor`（单次推理，非多轮 agentic）
+- 用单个工具声明 `submit_consequences` 确保结构化输出
+- 同 GmNarration 的 factory 注入模式（`bootstrap.py` + `runtime.py`）
+
+**改动清单**：
+
+1. **Protocol async 化**（`orchestration/hooks/ai_osiris.py`）
+   - `AIOsirisEvaluator.evaluate` → `async def evaluate`
+   - `NullAIOsirisEvaluator` / `BasicAIOsirisEvaluator` 同步改 async
+   - `AIOsirisHook.execute()` 中加 `await`
+
+2. **AgenticAIOsirisEvaluator**（**新建** `app/evaluators.py`）
+   - System prompt 按设计规范 §四（因果判定引擎角色 + 10 种指令类型 + 约束）
+   - `submit_consequences` 工具声明（reasoning + consequences 数组）
+   - Response 解析：优先 tool_call args → 降级 text JSON → 解析失败 noop
+
+3. **注入链路**（`bootstrap.py` + `runtime.py` + `session_store.py`）
+   - `build_runtime_for_world` / `build_restored_runtime_for_world` 新增 `osiris_evaluator_factory` 参数
+   - `GameRuntime._osiris_evaluator_factory()` 回调
+   - `SaveStore.load_runtime_for_world` 透传 factory
+
+**优雅降级**：无 API key → `_osiris_evaluator_factory()` 返回 None → 不注册 LLM hook → 使用 BasicAIOsirisEvaluator
+
+**测试**：477 passed（468 + 9 新增），14 个现有 ai_osiris 测试无回归
+
 ## D-O21 SSE 事件两类来源定性（2026-02-28）
 
 **问题**：设计文档将 `action_result` 等事件列为 SSE 协议事件，暗示它们与 `dice_roll`/`scene_change` 同源于编排层。
@@ -401,3 +432,99 @@ PipelineOrchestrator 在 engine 执行后将 ExecuteResult 摘要写入 L7（nar
 | `game_core/adapters/session_store.py` | 调用点更新 |
 | `app/interaction_service.py` | 移除 `save_session` 参数和 `self._save_session` |
 | `app/deps.py` | 构造 InteractionService 移除 `save_session=...` |
+
+## D-O23 AIOsirisHook 数据富化 Phase 1A（2026-03-01）
+
+**目标**：将 AIOsirisHook 喂给 evaluator 的输入数据从 MVP 骨架向设计规范 §2 对齐。Phase 1A 只做纯增量改动（新增字段，不修改现有字段格式）。
+
+**依赖分析**（决定分阶段的关键发现）：
+- `_build_rules_context` → BasicAIOsirisEvaluator `del rules_context`，完全不读 → 可自由加字段
+- `_build_snapshot.current_chapter` → BasicAIOsirisEvaluator 做 `str(snapshot.get("current_chapter"))` → 不能改成 dict，加兄弟字段代替
+
+**改动**：
+
+1. **`_build_rules_context`**：`@staticmethod` → `@classmethod`，接收 `context` 参数
+   - 新增 `world_lore`：从 LoreRegistry 提取（id/content/tags）
+   - 新增 `faction_rules`：从 FactionRegistry 提取（id/name/alignment/behavioral_rules）
+   - 新增 `tag_dimensions`：从 TagRegistry 提取（dimension_id → tag 列表）
+   - 原有 `allowed_commands` / `command_source` / `constraints` 不变
+
+2. **`_build_snapshot`**：新增 `chapter_completion` 兄弟字段（float|None）
+   - 从 NarrativePlanSlice.chapter_completion 读取
+   - `current_chapter` 保持 string 不变（保护 BasicAIOsirisEvaluator）
+
+**测试**：481 passed（477 + 4 新增），14 个现有 ai_osiris 测试零回归
+
+**Phase 1B**（nearby_npcs 动态化）：
+
+3. **`_build_nearby_npcs`**：算法替换
+   - 双源查找：AreaSlice 动态主源（npc_locations）+ CharacterRegistry 静态补源（area_id 兜底）
+   - 去重：`seen_ids` 集合，动态源优先
+   - 输出形状：从完整模板 dump 改为精选字段（id/name/tags/faction/disposition/location_id）
+   - 新增 `_build_npc_entry` 辅助方法：从模板提取 name/tags/faction + 从 RelationSlice 提取 disposition
+
+**测试**：484 passed（481 + 3 新增），18 个现有 ai_osiris 测试零回归
+
+**Phase 2A**（duration_minutes 填充）：
+
+4. **`_build_summary.duration_minutes`**：`0` → `60`
+   - 每次 settlement tick = TimeAdvance(P70) 消费 1.0 accumulated = 1 slot
+   - 24 slots/day = 24h → 1 slot = 60 game minutes
+   - AIOsiris(P30) 在 TimeAdvance(P70) 之前执行，数据一致性无问题
+
+**测试**：484 passed（断言更新 0→60），21 个 ai_osiris 测试零回归
+
+**Phase 2B**（actions 管线建立）：
+
+5. **SettlementContext**：新增 `action_log: list[dict[str, Any]]` 字段（`default_factory=list`，9 个现有构造点零破坏）
+6. **TickCoordinator**：
+   - 新增 `action_log` 缓冲 + `_record_action(result)` 方法
+   - 从 PipelineResult 提取：type（action_type）、actor（command.source）、params（command.params）、success、time_cost、narrative_hints
+   - 跳过 noop 动作，传递防御性拷贝到 SettlementContext
+7. **`_build_summary.actions`**：`[]` → `list(context.action_log)`
+   - MVP 格式：机械数据（type/actor/params/success/time_cost），LLM 可从中推理
+   - 设计规范 §2.1 的 detail/tags 是后续语义深化工作
+
+**测试**：486 passed（484 + 2 新增），21 个现有 ai_osiris 测试零回归
+
+**Phase 3A**（snapshot 补全）：
+
+8. **`_build_player`**：新增方法，player 从 24 字段全量 dump 裁剪为 13 字段
+   - 保留核心：character_id, character_name, level, hp, max_hp, gold, character_class, current_area, current_location, guild_rank, ac
+   - 裁掉噪声：xp, stats, proficiency_bonus, subclass, class_features, inventory, equipment, spell_slots, known_spells, prepared_spells, concentration, active_effects, save_proficiencies, guild_reputation, class_resources
+   - 富化 `active_quests`：从 QuestSlice 提取（AVAILABLE/ACTIVE milestone + 非终态 dynamic quest）
+   - 富化 `tags`：从 CharacterRegistry 按 player.character_id 查模板取 tags
+9. **`_build_party`**：新增方法，party 从 raw snapshot dict 重塑为 enriched list
+   - 每个成员：id + approval（PartySlice） + disposition/relationship_stage（RelationSlice） + name/tags/faction（CharacterRegistry）
+   - 与 `_build_npc_entry` 富化模式一致（同源 tags/disposition/faction），增加 party 特有的 approval/relationship_stage
+10. **`_build_snapshot` 更新**：`player` 和 `party` 字段改用新方法
+
+**测试**：490 passed（486 + 4 新增），23 个现有 ai_osiris 测试零回归
+
+**Phase 3B**（action enrichment：target + tags）：
+
+11. **`_enrich_actions`**：新增方法，在 `_build_summary` 消费端富化 action_log
+    - target 提取：按优先级尝试 params 中的 NPC/实体 key（target, seller_npc, buyer_npc, npc_id, target_npc, character_id, character, container_id, object_id）
+    - 类别标签：`_ACTION_CATEGORY_TAGS` 覆盖全部 55 个 command type → 13 个语义类别
+    - 内容标签：从 ItemRegistry（tags + type）和 SkillRegistry（school + effect.type）提取，全部大写
+    - 无标签时不输出空 tags 字段
+12. **`_build_summary` 更新**：`list(context.action_log)` → `cls._enrich_actions(context)`
+13. **新增模块常量**：`_TARGET_PARAM_KEYS`（9 个 key 优先级列表）+ `_ACTION_CATEGORY_TAGS`（55 entries）
+
+**测试**：495 passed（490 + 5 新增），27 个现有 ai_osiris 测试零回归
+
+**Phase 3C**（action 语义富化：detail + witnessed_by）：
+
+14. **`_build_action_detail`**：构造自然语言动作描述
+    - verb 映射：`_ACTION_VERBS` 覆盖全部 55 个 command type → 过去式动词
+    - 拼接逻辑：verb + primary entity（item/spell/skill name）+ preposition + target + modifiers（DC）
+    - 名称解析：通过 `_resolve_entity_name` 从 WorldInstance registry 查找人类可读名称
+    - narrative_hints 拼接 + 失败标记（`— failed`）
+    - 未知 action type 降级为下划线转空格
+15. **`_resolve_entity_name`**：通用 registry name 查找，无匹配时返回原始 ID
+16. **`_collect_witness_ids`**：预计算 party members + 同区域 NPC（AreaSlice 动态源 + CharacterRegistry 静态源）
+    - 一次计算，所有 action 共享；排除每个 action 的 target（直接参与者不算目击者）
+17. **`_enrich_actions` 更新**：每个 action 追加 detail（总是）+ witnessed_by（非空时）
+18. **新增模块常量**：`_ACTION_VERBS`（55 entries）+ `_TARGET_PREPOSITIONS`（8 entries，非默认介词）
+
+**测试**：500 passed（495 + 5 新增），32 个现有 ai_osiris 测试零回归

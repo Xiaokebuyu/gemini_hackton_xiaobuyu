@@ -433,10 +433,10 @@ class InventoryHandler(StaticCommandHandler):
 
     @staticmethod
     def _resolve_heal_amount(item_template: Any) -> int | None:
-        if not isinstance(item_template, Mapping):
+        if item_template is None:
             return None
         for key in ("heal_amount", "heal", "restore_hp"):
-            value = coerce_int(item_template.get(key))
+            value = coerce_int(getattr(item_template, key, None))
             if value is not None and value > 0:
                 return value
         return None

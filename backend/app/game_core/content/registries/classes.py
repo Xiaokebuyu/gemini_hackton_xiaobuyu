@@ -2,9 +2,57 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+
+
+@dataclass(slots=True)
+class ClassTemplate:
+    id: str
+    name: str = ""
+    description: str = ""
+    hit_die: str | int | None = None
+    base_hp: int | None = None
+    hp_per_level: int | None = None
+    base_ac: int | None = None
+    starting_gold: int | None = None
+    subclass_level: int | None = None
+    spellcasting_ability: str = ""
+    prepared_limit: int | None = None
+    prepared_formula: str = ""
+    level_features: dict[str, Any] = field(default_factory=dict)
+    starting_equipment: list[str] = field(default_factory=list)
+    default_equipped: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SubclassTemplate:
+    id: str
+    class_id: str = ""
+    features: list[str] = field(default_factory=list)
+    level_features: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RaceTemplate:
+    id: str
+    name: str = ""
+    description: str = ""
+    stat_bonuses: dict[str, int] = field(default_factory=dict)
+    racial_traits: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class BackgroundTemplate:
+    id: str
+    name: str = ""
+    description: str = ""
+    feature: str = ""
+    gold_bonus: int | None = None
+    starting_gold: int | None = None
+    skill_proficiency: list[str] = field(default_factory=list)
 
 
 class ClassRegistry(ContentRegistry):
@@ -12,22 +60,30 @@ class ClassRegistry(ContentRegistry):
 
     def __init__(self) -> None:
         super().__init__("classes")
-        self._classes: dict[str, dict[str, Any]] = {}
-        self._subclasses: dict[str, dict[str, Any]] = {}
-        self._races: dict[str, dict[str, Any]] = {}
-        self._backgrounds: dict[str, dict[str, Any]] = {}
+        self._classes: dict[str, ClassTemplate] = {}
+        self._subclasses: dict[str, SubclassTemplate] = {}
+        self._races: dict[str, RaceTemplate] = {}
+        self._backgrounds: dict[str, BackgroundTemplate] = {}
         self._xp_curve: list[Any] | dict[str, Any] = {}
+        self._load_issues: list[str] = []
 
     def load(self, data: dict[str, Any]) -> None:
+        self._classes = {}
+        self._subclasses = {}
+        self._races = {}
+        self._backgrounds = {}
+        self._xp_curve = {}
+        self._load_issues = []
+
         structured_keys = {"classes", "subclasses", "races", "backgrounds", "xp_curve"}
         is_structured = (
             isinstance(data, Mapping) and any(key in data for key in structured_keys)
         )
         if is_structured:
-            self._classes = self._coerce_dict_mapping(data.get("classes", {}))
-            self._subclasses = self._coerce_dict_mapping(data.get("subclasses", {}))
-            self._races = self._coerce_dict_mapping(data.get("races", {}))
-            self._backgrounds = self._coerce_dict_mapping(data.get("backgrounds", {}))
+            raw_classes = self._coerce_dict_mapping(data.get("classes", {}))
+            raw_subclasses = self._coerce_dict_mapping(data.get("subclasses", {}))
+            raw_races = self._coerce_dict_mapping(data.get("races", {}))
+            raw_backgrounds = self._coerce_dict_mapping(data.get("backgrounds", {}))
             raw_xp_curve = data.get("xp_curve", {})
             if isinstance(raw_xp_curve, list):
                 self._xp_curve = list(raw_xp_curve)
@@ -35,44 +91,227 @@ class ClassRegistry(ContentRegistry):
                 self._xp_curve = dict(raw_xp_curve)
             else:
                 self._xp_curve = {}
-            return
-        self._classes = self._coerce_dict_mapping(data)
-        self._subclasses = {}
-        self._races = {}
-        self._backgrounds = {}
-        self._xp_curve = {}
+        else:
+            raw_classes = self._coerce_dict_mapping(data)
+            raw_subclasses = {}
+            raw_races = {}
+            raw_backgrounds = {}
 
-    def get(self, content_id: str) -> Any | None:
-        item = self._classes.get(content_id)
-        return dict(item) if isinstance(item, dict) else item
+        for item_id, raw in raw_classes.items():
+            template = self._build_class_template(item_id, raw)
+            if template is not None:
+                self._classes[item_id] = template
 
-    def list_all(self) -> list[Any]:
-        return [dict(value) for value in self._classes.values()]
+        for item_id, raw in raw_subclasses.items():
+            template = self._build_subclass_template(item_id, raw)
+            if template is not None:
+                self._subclasses[item_id] = template
 
-    def get_class(self, class_id: str) -> dict[str, Any] | None:
-        item = self._classes.get(class_id)
-        return dict(item) if isinstance(item, dict) else None
+        for item_id, raw in raw_races.items():
+            template = self._build_race_template(item_id, raw)
+            if template is not None:
+                self._races[item_id] = template
 
-    def get_subclass(self, subclass_id: str) -> dict[str, Any] | None:
-        item = self._subclasses.get(subclass_id)
-        return dict(item) if isinstance(item, dict) else None
+        for item_id, raw in raw_backgrounds.items():
+            template = self._build_background_template(item_id, raw)
+            if template is not None:
+                self._backgrounds[item_id] = template
 
-    def get_race(self, race_id: str) -> dict[str, Any] | None:
-        item = self._races.get(race_id)
-        return dict(item) if isinstance(item, dict) else None
+    def _build_class_template(
+        self, item_id: str, raw: dict[str, Any],
+    ) -> ClassTemplate | None:
+        entry_id = self._coerce_non_empty_string(raw.get("id"))
+        if not entry_id:
+            self._load_issues.append(f"class entry '{item_id}' missing id")
+            return None
 
-    def get_background(self, background_id: str) -> dict[str, Any] | None:
-        item = self._backgrounds.get(background_id)
-        return dict(item) if isinstance(item, dict) else None
+        raw_hit_die = raw.get("hit_die")
+        if raw_hit_die is not None:
+            if isinstance(raw_hit_die, str):
+                stripped = raw_hit_die.strip()
+                if stripped:
+                    hit_die: str | int | None = stripped
+                else:
+                    hit_die = None
+                    self._load_issues.append(f"class entry '{item_id}' has invalid hit_die")
+            elif isinstance(raw_hit_die, bool):
+                hit_die = None
+                self._load_issues.append(f"class entry '{item_id}' has invalid hit_die")
+            else:
+                hit_die = self._coerce_positive_int(raw_hit_die)
+                if hit_die is None:
+                    self._load_issues.append(f"class entry '{item_id}' has invalid hit_die")
+        else:
+            hit_die = None
 
-    def list_classes(self) -> list[dict[str, Any]]:
-        return [dict(value) for value in self._classes.values()]
+        base_hp = self._safe_positive_int(raw, "base_hp", item_id, "class")
+        hp_per_level = self._safe_positive_int(raw, "hp_per_level", item_id, "class")
+        base_ac = self._safe_non_negative_int(raw, "base_ac", item_id, "class")
+        starting_gold = self._safe_non_negative_int(raw, "starting_gold", item_id, "class")
+        subclass_level = self._safe_positive_int(raw, "subclass_level", item_id, "class")
+        prepared_limit = self._safe_non_negative_int(raw, "prepared_limit", item_id, "class")
 
-    def list_races(self) -> list[dict[str, Any]]:
-        return [dict(value) for value in self._races.values()]
+        spellcasting_raw = raw.get("spellcasting_ability")
+        spellcasting_ability = ""
+        if spellcasting_raw is not None:
+            s = self._coerce_non_empty_string(spellcasting_raw)
+            if s is None:
+                self._load_issues.append(
+                    f"class entry '{item_id}' has invalid spellcasting_ability"
+                )
+            else:
+                spellcasting_ability = s
 
-    def list_backgrounds(self) -> list[dict[str, Any]]:
-        return [dict(value) for value in self._backgrounds.values()]
+        prepared_formula_raw = raw.get("prepared_formula")
+        prepared_formula = ""
+        if prepared_formula_raw is not None:
+            s = self._coerce_non_empty_string(prepared_formula_raw)
+            if s is None:
+                self._load_issues.append(
+                    f"class entry '{item_id}' has invalid prepared_formula"
+                )
+            else:
+                prepared_formula = s
+
+        level_features = self._load_level_features(raw, item_id, "class")
+
+        starting_equipment = self._load_string_list(raw, "starting_equipment")
+        default_equipped = self._load_string_dict(raw, "default_equipped")
+
+        return ClassTemplate(
+            id=entry_id,
+            name=self._extract_string(raw, "name"),
+            description=self._extract_string(raw, "description"),
+            hit_die=hit_die,
+            base_hp=base_hp,
+            hp_per_level=hp_per_level,
+            base_ac=base_ac,
+            starting_gold=starting_gold,
+            subclass_level=subclass_level,
+            spellcasting_ability=spellcasting_ability,
+            prepared_limit=prepared_limit,
+            prepared_formula=prepared_formula,
+            level_features=level_features,
+            starting_equipment=starting_equipment,
+            default_equipped=default_equipped,
+        )
+
+    def _build_subclass_template(
+        self, item_id: str, raw: dict[str, Any],
+    ) -> SubclassTemplate | None:
+        entry_id = self._coerce_non_empty_string(raw.get("id"))
+        if not entry_id:
+            self._load_issues.append(f"subclass entry '{item_id}' missing id")
+            return None
+
+        class_id = self._extract_string(raw, "class_id")
+        features = self._load_validated_string_list(raw, "features", item_id, "subclass")
+        level_features = self._load_level_features(raw, item_id, "subclass")
+
+        return SubclassTemplate(
+            id=entry_id,
+            class_id=class_id,
+            features=features,
+            level_features=level_features,
+        )
+
+    def _build_race_template(
+        self, item_id: str, raw: dict[str, Any],
+    ) -> RaceTemplate | None:
+        entry_id = self._coerce_non_empty_string(raw.get("id"))
+        if not entry_id:
+            self._load_issues.append(f"race entry '{item_id}' missing id")
+            return None
+
+        raw_bonuses = raw.get("stat_bonuses")
+        stat_bonuses: dict[str, int] = {}
+        if raw_bonuses is not None:
+            if isinstance(raw_bonuses, Mapping):
+                for k, v in raw_bonuses.items():
+                    parsed = self._coerce_non_negative_int(v)
+                    if parsed is None:
+                        try:
+                            parsed = int(v)
+                        except (TypeError, ValueError):
+                            parsed = None
+                    if parsed is not None:
+                        stat_bonuses[str(k)] = parsed
+            else:
+                self._load_issues.append(
+                    f"race entry '{item_id}' has invalid stat_bonuses"
+                )
+
+        racial_traits = self._load_validated_string_list(raw, "racial_traits", item_id, "race")
+
+        return RaceTemplate(
+            id=entry_id,
+            name=self._extract_string(raw, "name"),
+            description=self._extract_string(raw, "description"),
+            stat_bonuses=stat_bonuses,
+            racial_traits=racial_traits,
+        )
+
+    def _build_background_template(
+        self, item_id: str, raw: dict[str, Any],
+    ) -> BackgroundTemplate | None:
+        entry_id = self._coerce_non_empty_string(raw.get("id"))
+        if not entry_id:
+            self._load_issues.append(f"background entry '{item_id}' missing id")
+            return None
+
+        feature_raw = raw.get("feature")
+        feature = ""
+        if feature_raw is not None:
+            s = self._coerce_non_empty_string(feature_raw)
+            if s is None:
+                self._load_issues.append(
+                    f"background entry '{item_id}' has invalid feature"
+                )
+            else:
+                feature = s
+
+        gold_bonus = self._safe_non_negative_int(raw, "gold_bonus", item_id, "background")
+        starting_gold = self._safe_non_negative_int(raw, "starting_gold", item_id, "background")
+        skill_proficiency = self._load_string_list(raw, "skill_proficiency")
+
+        return BackgroundTemplate(
+            id=entry_id,
+            name=self._extract_string(raw, "name"),
+            description=self._extract_string(raw, "description"),
+            feature=feature,
+            gold_bonus=gold_bonus,
+            starting_gold=starting_gold,
+            skill_proficiency=skill_proficiency,
+        )
+
+    # -- Getters --
+
+    def get(self, content_id: str) -> ClassTemplate | None:
+        return self._classes.get(content_id)
+
+    def list_all(self) -> list[ClassTemplate]:
+        return list(self._classes.values())
+
+    def get_class(self, class_id: str) -> ClassTemplate | None:
+        return self._classes.get(class_id)
+
+    def get_subclass(self, subclass_id: str) -> SubclassTemplate | None:
+        return self._subclasses.get(subclass_id)
+
+    def get_race(self, race_id: str) -> RaceTemplate | None:
+        return self._races.get(race_id)
+
+    def get_background(self, background_id: str) -> BackgroundTemplate | None:
+        return self._backgrounds.get(background_id)
+
+    def list_classes(self) -> list[ClassTemplate]:
+        return list(self._classes.values())
+
+    def list_races(self) -> list[RaceTemplate]:
+        return list(self._races.values())
+
+    def list_backgrounds(self) -> list[BackgroundTemplate]:
+        return list(self._backgrounds.values())
 
     def xp_threshold_for_level(self, level: int) -> int | None:
         if level < 1:
@@ -89,116 +328,116 @@ class ClassRegistry(ContentRegistry):
         return None
 
     def validate(self) -> list[str]:
-        issues: list[str] = []
-        for item_id, item in self._classes.items():
-            if not item.get("id"):
-                issues.append(f"class entry '{item_id}' missing id")
-            if (
-                "spellcasting_ability" in item
-                and self._coerce_non_empty_string(item.get("spellcasting_ability")) is None
-            ):
-                issues.append(
-                    f"class entry '{item_id}' has invalid spellcasting_ability"
-                )
-            if (
-                "prepared_limit" in item
-                and self._coerce_non_negative_int(item.get("prepared_limit")) is None
-            ):
-                issues.append(f"class entry '{item_id}' has invalid prepared_limit")
-            if (
-                "prepared_formula" in item
-                and self._coerce_non_empty_string(item.get("prepared_formula")) is None
-            ):
-                issues.append(f"class entry '{item_id}' has invalid prepared_formula")
+        issues = list(self._load_issues)
 
-            # -- Game mechanic fields (growth.py consumer) --
-            if "hit_die" in item:
-                hd = item.get("hit_die")
-                hd_valid = (
-                    (isinstance(hd, str) and self._coerce_non_empty_string(hd) is not None)
-                    or (not isinstance(hd, (str, bool)) and self._coerce_positive_int(hd) is not None)
-                )
-                if not hd_valid:
-                    issues.append(f"class entry '{item_id}' has invalid hit_die")
-
-            for field_name in ("base_hp", "hp_per_level"):
-                if field_name in item and self._coerce_positive_int(item.get(field_name)) is None:
-                    issues.append(f"class entry '{item_id}' has invalid {field_name}")
-
-            if "base_ac" in item and self._coerce_non_negative_int(item.get("base_ac")) is None:
-                issues.append(f"class entry '{item_id}' has invalid base_ac")
-
-            if "subclass_level" in item and self._coerce_positive_int(item.get("subclass_level")) is None:
-                issues.append(f"class entry '{item_id}' has invalid subclass_level")
-
-            if "starting_gold" in item and self._coerce_non_negative_int(item.get("starting_gold")) is None:
-                issues.append(f"class entry '{item_id}' has invalid starting_gold")
-
-            self._validate_level_features(item_id, "class", item, issues)
-
-        for item_id, item in self._subclasses.items():
-            if not item.get("id"):
-                issues.append(f"subclass entry '{item_id}' missing id")
-            if "class_id" not in item:
+        # subclass → class cross-reference
+        for item_id, sub in self._subclasses.items():
+            if not sub.class_id:
                 continue
-            class_id = self._coerce_non_empty_string(item.get("class_id"))
-            if class_id is None:
-                issues.append(f"subclass entry '{item_id}' has invalid class_id")
-                continue
-            if class_id not in self._classes:
+            if sub.class_id not in self._classes:
                 issues.append(
-                    f"subclass entry '{item_id}' references unknown class '{class_id}'"
+                    f"subclass entry '{item_id}' references unknown class '{sub.class_id}'"
                 )
-
-            # -- Subclass game mechanic fields --
-            self._validate_string_list(item_id, "subclass", item, "features", issues)
-            self._validate_level_features(item_id, "subclass", item, issues)
-
-        for item_id, item in self._races.items():
-            if not item.get("id"):
-                issues.append(f"race entry '{item_id}' missing id")
-            if "stat_bonuses" in item and not isinstance(item.get("stat_bonuses"), Mapping):
-                issues.append(f"race entry '{item_id}' has invalid stat_bonuses")
-            self._validate_string_list(item_id, "race", item, "racial_traits", issues)
-
-        for item_id, item in self._backgrounds.items():
-            if not item.get("id"):
-                issues.append(f"background entry '{item_id}' missing id")
-            if "feature" in item and self._coerce_non_empty_string(item.get("feature")) is None:
-                issues.append(f"background entry '{item_id}' has invalid feature")
-            if "gold_bonus" in item and self._coerce_non_negative_int(item.get("gold_bonus")) is None:
-                issues.append(f"background entry '{item_id}' has invalid gold_bonus")
 
         self._validate_xp_curve(issues)
         return issues
 
-    def _validate_level_features(
-        self, item_id: str, group: str, item: dict[str, Any], issues: list[str],
-    ) -> None:
-        lf = item.get("level_features")
+    # -- Load helpers --
+
+    @staticmethod
+    def _extract_string(raw: dict[str, Any], field_name: str) -> str:
+        value = raw.get(field_name)
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    def _safe_positive_int(
+        self, raw: dict[str, Any], field_name: str, item_id: str, group: str,
+    ) -> int | None:
+        value = raw.get(field_name)
+        if value is None:
+            return None
+        result = self._coerce_positive_int(value)
+        if result is None:
+            self._load_issues.append(f"{group} entry '{item_id}' has invalid {field_name}")
+        return result
+
+    def _safe_non_negative_int(
+        self, raw: dict[str, Any], field_name: str, item_id: str, group: str,
+    ) -> int | None:
+        value = raw.get(field_name)
+        if value is None:
+            return None
+        result = self._coerce_non_negative_int(value)
+        if result is None:
+            self._load_issues.append(f"{group} entry '{item_id}' has invalid {field_name}")
+        return result
+
+    def _load_level_features(
+        self, raw: dict[str, Any], item_id: str, group: str,
+    ) -> dict[str, Any]:
+        lf = raw.get("level_features")
         if lf is None:
-            return
+            return {}
         if not isinstance(lf, Mapping):
-            issues.append(f"{group} entry '{item_id}' has invalid level_features")
-            return
+            self._load_issues.append(
+                f"{group} entry '{item_id}' has invalid level_features"
+            )
+            return {}
+        result: dict[str, Any] = {}
         for key, value in lf.items():
             if self._coerce_non_negative_int(key) is None:
-                issues.append(f"{group} entry '{item_id}' level_features key '{key}' must be numeric")
+                self._load_issues.append(
+                    f"{group} entry '{item_id}' level_features key '{key}' must be numeric"
+                )
             if not isinstance(value, list):
-                issues.append(f"{group} entry '{item_id}' level_features[{key}] must be a list")
+                self._load_issues.append(
+                    f"{group} entry '{item_id}' level_features[{key}] must be a list"
+                )
+            result[str(key) if not isinstance(key, str) else key] = value
+        return result
 
-    def _validate_string_list(
-        self, item_id: str, group: str, item: dict[str, Any], field: str, issues: list[str],
-    ) -> None:
-        value = item.get(field)
-        if value is None:
-            return
+    @staticmethod
+    def _load_string_list(raw: dict[str, Any], field_name: str) -> list[str]:
+        value = raw.get(field_name)
         if not isinstance(value, list):
-            issues.append(f"{group} entry '{item_id}' has invalid {field}")
-            return
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    def _load_validated_string_list(
+        self, raw: dict[str, Any], field_name: str, item_id: str, group: str,
+    ) -> list[str]:
+        value = raw.get(field_name)
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            self._load_issues.append(f"{group} entry '{item_id}' has invalid {field_name}")
+            return []
+        result: list[str] = []
         for index, entry in enumerate(value):
-            if self._coerce_non_empty_string(entry) is None:
-                issues.append(f"{group} entry '{item_id}' {field}[{index}] must be a non-empty string")
+            s = self._coerce_non_empty_string(entry)
+            if s is None:
+                self._load_issues.append(
+                    f"{group} entry '{item_id}' {field_name}[{index}] must be a non-empty string"
+                )
+            else:
+                result.append(s)
+        return result
+
+    @staticmethod
+    def _load_string_dict(raw: dict[str, Any], field_name: str) -> dict[str, str]:
+        value = raw.get(field_name)
+        if not isinstance(value, Mapping):
+            return {}
+        result: dict[str, str] = {}
+        for k, v in value.items():
+            ks = str(k).strip()
+            vs = str(v).strip()
+            if ks and vs:
+                result[ks] = vs
+        return result
+
+    # -- Validation helpers (unchanged) --
 
     def _validate_xp_curve(self, issues: list[str]) -> None:
         if isinstance(self._xp_curve, list):

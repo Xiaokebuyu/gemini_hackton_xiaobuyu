@@ -49,3 +49,58 @@
 | `app/game_core/adapters/inbound.py` | NPC intent 白名单 +inspect_item, +分支 |
 | `tests/test_interaction_service.py` | +7 测试 |
 | `tests/test_input_port.py` | error message 同步 |
+
+---
+
+## D-I02 NpcInteractionCoordinator — 6 步交互管线（2026-03-01）
+
+**问题**：interact_stream 只有 3 步（验证 → snapshot → NPC LLM），缺少 GM 观察、Teammate 旁观和对话选项。设计文档（编排层设计规范 §5）要求完整 6 步流程。
+
+**改动**：
+
+### 新建 `app/game_core/orchestration/npc_interaction.py`
+- `NpcInteractionResult` — 原始结果模型（AgentResult 集合 + dialogue_options + time_cost）
+- `NpcInteractionCoordinator` — 6 步协调器，纯 game_core（不依赖 ManagedSession）
+  - Step 1: 验证 NPC + 写 SceneBus + 构建上下文
+  - Step 2: NPC Agent（AgenticExecutor，max_turns=3）
+  - Step 3: GM 观察（新提示模板，默认 pass_turn）
+  - Step 4: Teammate 旁观（response_tendency 概率过滤）
+  - Step 5: 静态对话选项（talk/farewell/browse/ask_quest，DC 预留 N-6）
+  - Step 6: 聚合返回，time_cost=1/6
+- `_should_teammate_respond(world, char_id)` — 读 response_tendency（默认 0.3），clamp [0.05, 0.95]
+- `_extract_speech_text(result)` — 提取 NPC 发言文本供上下文使用
+- `_build_static_dialogue_options(world, state, npc_id)` — 上下文感知静态选项
+
+### 修改 `app/game_core/narrative/context_builder.py`
+- 新增 `GM_INTERACTION_OBSERVATION_PROMPT` — GM 观察 NPC 对话专用提示（默认 pass_turn）
+- 新增 `TEAMMATE_INTERACTION_PROMPT_TEMPLATE` — 队友旁观对话专用提示
+- 新增 `build_gm_interaction_prompt()` — 返回 GM 交互提示
+- 新增 `build_teammate_interaction_prompt(char_id)` — 格式化队友交互提示
+
+### 修改 `app/agent_orchestration.py`
+- 新增 `run_npc_interaction()` — 实例化 coordinator → execute_interaction → SSE 转换
+- 新增 `_interaction_result_to_sse()` — NpcInteractionResult → 有序 SSE 事件列表（NPC → GM → Teammate → Options）
+
+### 修改 `app/routers/gameplay.py`
+- `interact_stream()` 中 `generate_npc_response` → `run_npc_interaction`（+intent 参数）
+
+**设计偏离**：
+1. Step 5 对话选项静态实现（DC 计算推迟至 N-6）
+2. NPCInstance/InstanceManager 用 AgentContextBuilder 替代（MemoryGraph 推迟至 N-1）
+
+**测试**：
+- `tests/test_npc_interaction.py`：22 新测试（Coordinator + Teammate + Options + Helpers）
+- `tests/test_agent_orchestration.py`：+8 测试（InteractionResultToSSE + RunNpcInteraction）
+
+**文件清单**：
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/orchestration/npc_interaction.py` | 新建 ~300 行 |
+| `app/game_core/narrative/context_builder.py` | +2 提示模板 + 2 builder 方法 |
+| `app/game_core/orchestration/__init__.py` | +2 导出 |
+| `app/agent_orchestration.py` | +run_npc_interaction + _interaction_result_to_sse |
+| `app/routers/gameplay.py` | generate_npc_response → run_npc_interaction |
+| `tests/test_npc_interaction.py` | 新建 22 测试 |
+| `tests/test_agent_orchestration.py` | +8 测试 |
+
+测试基线：541 → 571 passed（+30）

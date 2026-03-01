@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from app.agent_orchestration import AgentOrchestrationService
 
 from fastapi import FastAPI, HTTPException
 
@@ -12,9 +17,101 @@ from app.game_core import GameRuntime, ManagedSession
 from app.game_core.adapters import FastAPIInputPort, InputPort
 from app.game_core.orchestration.models import PipelineResult
 from app.world_seed import WORLD_CATALOG, _shell_world_seed
+from app.world_data_loader import load_goblin_slayer_world_data
+
+_GOBLIN_SLAYER_DATA_DIR = Path(__file__).parent.parent / "data" / "goblin_slayer" / "structured_new"
 
 
-GAME_RUNTIME = GameRuntime()
+def _build_game_runtime() -> GameRuntime:
+    """Build the singleton GameRuntime, constructing all app-layer services here."""
+    llm_provider = None
+    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        from app.llm_gemini import GeminiLlmAdapter
+
+        llm_provider = GeminiLlmAdapter()
+
+    # WorldKnowledgeGraph is always enabled (no API key needed).
+    # Graph is seeded lazily on first query for each WorldInstance.
+    from app.world_knowledge_graph import WorldKnowledgeGraph
+    from app.memory_retriever_impl import KnowledgeGraphMemoryRetriever
+    from app.game_core.narrative.instance_manager import InstanceManager
+
+    # WorldKnowledgeGraph accepts llm_provider for write_episode + lore enrichment.
+    # llm_provider may be None (no API key) — graph degrades gracefully to static mode.
+    memory_retriever = KnowledgeGraphMemoryRetriever(WorldKnowledgeGraph(llm=llm_provider))
+    instance_manager = InstanceManager()
+
+    # ── app-layer service construction (composition root) ─────────────────────
+    agent_orchestration = None
+    if llm_provider is not None:
+        from app.game_core.narrative.executor import AgenticExecutor
+        from app.game_core.narrative.gm_tools import register_gm_tools
+        from app.game_core.narrative.character_tools import (
+            register_npc_tools,
+            register_teammate_tools,
+        )
+        from app.game_core.narrative.registry import RoleToolRegistry
+        from app.agent_orchestration import AgentOrchestrationService
+
+        registry = RoleToolRegistry()
+        register_gm_tools(registry)
+        register_npc_tools(registry)
+        register_teammate_tools(registry)
+        executor = AgenticExecutor(tool_registry=registry, llm=llm_provider)
+        agent_orchestration = AgentOrchestrationService(
+            executor,
+            memory_retriever=memory_retriever,
+            instance_manager=instance_manager,
+        )
+
+    osiris_evaluator_factory = None
+    if llm_provider is not None:
+        llm = llm_provider
+
+        def _build_osiris() -> Any:
+            from app.evaluators import AgenticAIOsirisEvaluator
+            return AgenticAIOsirisEvaluator(llm=llm)
+
+        osiris_evaluator_factory = _build_osiris
+
+    gm_narrator_factory = None
+    if llm_provider is not None:
+        llm = llm_provider
+
+        def _build_gm_narrator(world: Any, state: Any) -> Any:
+            from app.game_core.narrative.executor import AgenticExecutor
+            from app.game_core.narrative.gm_tools import register_gm_tools
+            from app.game_core.narrative.registry import RoleToolRegistry
+            from app.narrators import AgenticGmNarrator
+
+            registry = RoleToolRegistry()
+            register_gm_tools(registry)
+            executor = AgenticExecutor(tool_registry=registry, llm=llm)
+            return AgenticGmNarrator(executor=executor, world=world, state=state)
+
+        gm_narrator_factory = _build_gm_narrator
+
+    narrative_planner_factory = None
+    if llm_provider is not None:
+        llm = llm_provider
+
+        def _build_narrative_planner() -> Any:
+            from app.narrators import AgenticNarrativePlanner
+            return AgenticNarrativePlanner(llm=llm)
+
+        narrative_planner_factory = _build_narrative_planner
+    # ── end app-layer construction ─────────────────────────────────────────────
+
+    return GameRuntime(
+        agent_orchestration=agent_orchestration,
+        gm_narrator_factory=gm_narrator_factory,
+        osiris_evaluator_factory=osiris_evaluator_factory,
+        narrative_planner_factory=narrative_planner_factory,
+    )
+
+
+GAME_RUNTIME = _build_game_runtime()
 app = FastAPI(title="Game Core API", version="0.1.0")
 app.state.game_runtime = GAME_RUNTIME
 app.state.input_port = FastAPIInputPort()
@@ -31,6 +128,11 @@ def get_input_port() -> InputPort:
     """Return the active inbound adapter for request handlers and tests."""
 
     return app.state.input_port
+
+
+def get_agent_orchestration() -> AgentOrchestrationService | None:
+    """Return the AgentOrchestrationService, or None if LLM is unavailable."""
+    return get_game_runtime().agent_orchestration
 
 
 def get_interaction_service() -> InteractionService:
@@ -96,13 +198,18 @@ def _require_world(world_id: str) -> None:
 
 
 def _ensure_shell_world(runtime: GameRuntime, world_id: str) -> None:
-    """Refresh the runtime cache with the canonical synthetic world."""
+    """Load the canonical world into cache if not already present.
 
-    runtime.get_world(
-        world_id,
-        world_data=_shell_world_seed(world_id),
-        force_reload=True,
-    )
+    For goblin_slayer: uses structured JSON files when available, otherwise falls
+    back to the synthetic shell seed.
+    """
+    if runtime.has_world(world_id):
+        return
+    if world_id == "goblin_slayer" and _GOBLIN_SLAYER_DATA_DIR.exists():
+        world_data = load_goblin_slayer_world_data()
+    else:
+        world_data = _shell_world_seed(world_id)
+    runtime.get_world(world_id, world_data=world_data)
 
 
 async def _load_session_or_404(world_id: str, session_id: str) -> ManagedSession:

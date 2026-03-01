@@ -290,7 +290,7 @@ class EncounterHandler(StaticCommandHandler):
         else:
             for monster_id in monster_ids:
                 monster = world.monsters.get(monster_id)
-                if not isinstance(monster, Mapping):
+                if monster is None:
                     unknown_monster_count += 1
                     continue
                 processed_monster_count += 1
@@ -325,56 +325,42 @@ class EncounterHandler(StaticCommandHandler):
             metadata=metadata,
         )
 
-    def _resolve_gold(self, monster: Mapping[str, Any]) -> int:
-        for key in ("gold_drop", "gold", "gold_reward"):
-            value = self._coerce_int(monster.get(key))
+    def _resolve_gold(self, monster: Any) -> int:
+        for value in (monster.gold_drop, monster.gold, monster.gold_reward):
             if value is not None and value >= 0:
                 return value
         return 0
 
     def _resolve_loot_items(
         self,
-        monster: Mapping[str, Any],
+        monster: Any,
         world: WorldInstance,
     ) -> list[dict[str, Any]]:
-        raw_loot_table = monster.get("loot_table", [])
-        if not isinstance(raw_loot_table, list):
-            return []
-
         items: list[dict[str, Any]] = []
-        for raw_entry in raw_loot_table:
-            if not isinstance(raw_entry, Mapping):
-                continue
-            item_id = self._get_optional_non_empty_string(raw_entry.get("item_id"))
-            if item_id is None:
+        for loot_entry in monster.loot_table:
+            if not loot_entry.item_id:
                 continue
 
-            chance = self._coerce_float(raw_entry.get("chance", 1.0))
-            if chance is not None and chance < 1.0:
-                if random.random() >= chance:
+            if loot_entry.chance < 1.0:
+                if random.random() >= loot_entry.chance:
                     continue
 
-            count = self._coerce_int(raw_entry.get("count", 1))
-            if count is None or count <= 0:
+            if loot_entry.count <= 0:
                 continue
 
-            item_name = item_id
+            item_name = loot_entry.item_id
             rarity = "common"
             if world.has_registry("items"):
-                item_template = world.items.get(item_id)
-                if isinstance(item_template, Mapping):
-                    item_name = self._get_optional_non_empty_string(
-                        item_template.get("name")
-                    ) or item_id
-                    rarity = self._get_optional_non_empty_string(
-                        item_template.get("rarity")
-                    ) or "common"
+                item_template = world.items.get(loot_entry.item_id)
+                if item_template is not None:
+                    item_name = item_template.name or loot_entry.item_id
+                    rarity = item_template.rarity or "common"
 
             items.append(
                 {
-                    "item_id": item_id,
+                    "item_id": loot_entry.item_id,
                     "name": item_name,
-                    "count": count,
+                    "count": loot_entry.count,
                     "rarity": rarity,
                 }
             )

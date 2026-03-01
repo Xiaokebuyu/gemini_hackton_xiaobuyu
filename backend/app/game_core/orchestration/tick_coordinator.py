@@ -35,6 +35,7 @@ class TickCoordinator:
         self.scene_bus = scene_bus
         self.pipeline = pipeline or PipelineOrchestrator()
         self.change_log: list[StateChange] = []
+        self.action_log: list[dict[str, Any]] = []
         self.settlement_hooks: list[SettlementHook] = []
 
     def register_settlement_hook(self, hook: SettlementHook) -> None:
@@ -58,6 +59,7 @@ class TickCoordinator:
                 await event_sink(event)
         if result.success and result.delta is not None:
             self._apply_delta(result.delta)
+        self._record_action(result)
         self.accumulate(result.time_cost)
         while self.check_settlement():
             before_accumulated = self.state.time.accumulated
@@ -96,6 +98,7 @@ class TickCoordinator:
             scene_bus=self.scene_bus,
             _rules_engine=self.rules_engine,
             _apply_delta=self._apply_delta,
+            action_log=list(self.action_log),
         )
         for hook in self.settlement_hooks:
             if hook.should_skip(self.change_log):
@@ -146,6 +149,21 @@ class TickCoordinator:
         responsible for actual persistence — see D-O22 in orchestration.md.
         """
         return self.state.export_dirty()
+
+    def _record_action(self, result: PipelineResult) -> None:
+        if result.action_type == "noop":
+            return
+        command = result.commands[0] if result.commands else None
+        record: dict[str, Any] = {
+            "type": result.action_type,
+            "actor": command.source if command else "system",
+            "params": dict(command.params) if command else {},
+            "success": result.success,
+            "time_cost": result.time_cost,
+        }
+        if result.narrative_hints:
+            record["narrative_hints"] = list(result.narrative_hints)
+        self.action_log.append(record)
 
     def _apply_delta(self, delta: StateDelta | None) -> None:
         if delta is None:

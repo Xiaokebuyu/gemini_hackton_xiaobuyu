@@ -1,0 +1,19 @@
+{
+  "character_name": "a",
+  "created_at": 1772389065.4920504,
+  "game_day": 1,
+  "game_slot": 8,
+  "last_played": 1772389065.4966195,
+  "phase": "active",
+  "saved_at": 1772389065.4966195,
+  "session_id": "sess_79e7aad5efbc",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "Front Counter",
+    "play_time_hours": null,
+    "player_class": "Fighter",
+    "player_name": "a"
+  },
+  "world_id": "goblin_slayer"
+}

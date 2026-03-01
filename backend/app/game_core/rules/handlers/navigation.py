@@ -88,7 +88,7 @@ class NavigationHandler(StaticCommandHandler):
                 reason="current area is required before entering a sub-location",
             )
         area_template = world.maps.get(area_id)
-        if not isinstance(area_template, Mapping):
+        if area_template is None:
             return ValidationResult(ok=False, reason=f"unknown area: {area_id}")
         location_id = self._resolve_location_alias(cmd.params)
         if location_id is None:
@@ -96,10 +96,7 @@ class NavigationHandler(StaticCommandHandler):
                 ok=False,
                 reason="location_id/location must be a non-empty string",
             )
-        sub_locations = area_template.get("sub_locations", {})
-        if not isinstance(sub_locations, Mapping):
-            sub_locations = {}
-        if location_id in sub_locations:
+        if location_id in area_template.sub_locations:
             return ValidationResult(ok=True)
         # Fallback: check dynamic sub-areas
         if state.has_slice("areas"):

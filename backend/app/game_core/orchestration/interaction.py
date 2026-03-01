@@ -60,18 +60,14 @@ def build_interaction_policy_context(
     area_sub_locations: dict[str, list[str]] = {}
     if world.has_registry("maps"):
         for raw_area in world.maps.list_all():
-            if not isinstance(raw_area, Mapping):
-                continue
-            area_id = str(raw_area.get("id", "")).strip()
+            area_id = raw_area.id.strip() if raw_area.id else ""
             if not area_id:
                 continue
-            raw_sub_locations = raw_area.get("sub_locations", {})
             sub_location_ids: list[str] = []
-            if isinstance(raw_sub_locations, Mapping):
-                for raw_key in raw_sub_locations.keys():
-                    sub_location_id = str(raw_key).strip()
-                    if sub_location_id:
-                        sub_location_ids.append(sub_location_id)
+            for raw_key in raw_area.sub_locations.keys():
+                sub_location_id = str(raw_key).strip()
+                if sub_location_id:
+                    sub_location_ids.append(sub_location_id)
             area_sub_locations[area_id] = sub_location_ids
 
     # NPC positions from AreaSlice
@@ -95,24 +91,22 @@ def build_interaction_policy_context(
     npc_names: dict[str, str] = {}
     if world.has_registry("characters"):
         for raw_character in world.characters.list_all():
-            if not isinstance(raw_character, Mapping):
-                continue
-            npc_id = str(raw_character.get("id", "")).strip()
+            npc_id = raw_character.id.strip()
             if not npc_id:
                 continue
-            npc_name = str(raw_character.get("name", "")).strip() or npc_id
+            npc_name = raw_character.name.strip() or npc_id
             npc_names[npc_id] = npc_name
             if npc_id in npc_positions:
                 continue
             resolved_area: str | None = None
             for field_name in ("area_id", "current_area"):
-                raw_val = str(raw_character.get(field_name, "")).strip()
+                raw_val = str(getattr(raw_character, field_name, "") or "").strip()
                 if raw_val:
                     resolved_area = raw_val
                     break
             resolved_location: str | None = None
             for field_name in ("location_id", "current_location"):
-                raw_val = str(raw_character.get(field_name, "")).strip()
+                raw_val = str(getattr(raw_character, field_name, "") or "").strip()
                 if raw_val:
                     resolved_location = raw_val
                     break

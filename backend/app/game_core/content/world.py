@@ -177,17 +177,11 @@ class WorldInstance:
 
     def _validate_character_map_refs(self) -> list[str]:
         issues: list[str] = []
-        map_ids = {
-            str(item.get("id"))
-            for item in self.maps.list_all()
-            if isinstance(item, Mapping) and item.get("id")
-        }
+        map_ids = {item.id for item in self.maps.list_all() if item.id}
         for character in self.characters.list_all():
-            if not isinstance(character, Mapping):
-                continue
-            character_id = self._entry_id(character)
+            character_id = character.id or "<unknown>"
             for field_name in ("area_id", "current_area"):
-                area_id = self._coerce_non_empty_string(character.get(field_name))
+                area_id = self._coerce_non_empty_string(getattr(character, field_name, None))
                 if area_id is None:
                     continue
                 if area_id not in map_ids:
@@ -198,29 +192,21 @@ class WorldInstance:
 
     def _validate_character_item_refs(self) -> list[str]:
         issues: list[str] = []
-        item_ids = {
-            str(item.get("id"))
-            for item in self.items.list_all()
-            if isinstance(item, Mapping) and item.get("id")
-        }
+        item_ids = self._collect_entry_ids(self.items)
         for character in self.characters.list_all():
-            if not isinstance(character, Mapping):
-                continue
-            character_id = self._entry_id(character)
-            inventory = character.get("inventory")
-            if isinstance(inventory, list):
+            character_id = character.id or "<unknown>"
+            if character.inventory:
                 issues.extend(
                     self._validate_item_refs(
                         owner_id=character_id,
                         owner_label="character",
-                        container=inventory,
+                        container=character.inventory,
                         item_ids=item_ids,
                         prefix="inventory",
                     )
                 )
-            shop = character.get("shop")
-            if isinstance(shop, Mapping):
-                shop_inv_list = shop.get("inventory")
+            if isinstance(character.shop, dict):
+                shop_inv_list = character.shop.get("inventory")
                 if isinstance(shop_inv_list, list):
                     issues.extend(
                         self._validate_item_refs(
@@ -231,10 +217,9 @@ class WorldInstance:
                             prefix="shop.inventory",
                         )
                     )
-            shop_inventory = character.get("shop_inventory")
-            if isinstance(shop_inventory, Mapping):
+            if character.shop_inventory is not None:
                 for pool_name in ("base_pool", "rotating_pool"):
-                    pool = shop_inventory.get(pool_name)
+                    pool = getattr(character.shop_inventory, pool_name, [])
                     if isinstance(pool, list):
                         issues.extend(
                             self._validate_item_refs(
@@ -249,42 +234,23 @@ class WorldInstance:
 
     def _validate_monster_loot_refs(self) -> list[str]:
         issues: list[str] = []
-        item_ids = {
-            str(item.get("id"))
-            for item in self.items.list_all()
-            if isinstance(item, Mapping) and item.get("id")
-        }
+        item_ids = self._collect_entry_ids(self.items)
         for monster in self.monsters.list_all():
-            if not isinstance(monster, Mapping):
-                continue
-            monster_id = self._entry_id(monster)
-            loot_table = monster.get("loot_table")
-            if not isinstance(loot_table, list):
-                continue
-            issues.extend(
-                self._validate_item_refs(
-                    owner_id=monster_id,
-                    owner_label="monster",
-                    container=loot_table,
-                    item_ids=item_ids,
-                    prefix="loot_table",
-                )
-            )
+            monster_id = monster.id or "<unknown>"
+            for index, loot_entry in enumerate(monster.loot_table):
+                if loot_entry.item_id and loot_entry.item_id not in item_ids:
+                    issues.append(
+                        f"monster '{monster_id}' references unknown item '{loot_entry.item_id}' via loot_table[{index}]"
+                    )
         return issues
 
     def _validate_encounter_monster_refs(self) -> list[str]:
         """Check that encounter profile template IDs reference real monsters."""
         issues: list[str] = []
-        monster_ids = {
-            str(m.get("id"))
-            for m in self.monsters.list_all()
-            if isinstance(m, Mapping) and m.get("id")
-        }
+        monster_ids = {m.id for m in self.monsters.list_all() if m.id}
         for area in self.maps.list_all():
-            if not isinstance(area, Mapping):
-                continue
-            area_id = self._entry_id(area)
-            profile = area.get("encounter_profile")
+            area_id = area.id or "<unknown>"
+            profile = area.encounter_profile
             if not isinstance(profile, Mapping):
                 continue
             templates = profile.get("templates")
@@ -303,17 +269,11 @@ class WorldInstance:
     def _validate_character_class_refs(self) -> list[str]:
         """Check that character class references exist in ClassRegistry."""
         issues: list[str] = []
-        class_ids = {
-            str(c.get("id"))
-            for c in self.classes.list_all()
-            if isinstance(c, Mapping) and c.get("id")
-        }
+        class_ids = self._collect_entry_ids(self.classes)
         for character in self.characters.list_all():
-            if not isinstance(character, Mapping):
-                continue
-            character_id = self._entry_id(character)
+            character_id = character.id or "<unknown>"
             for field_name in ("character_class", "class_id"):
-                cid = self._coerce_non_empty_string(character.get(field_name))
+                cid = self._coerce_non_empty_string(getattr(character, field_name, None))
                 if cid is not None and cid not in class_ids:
                     issues.append(
                         f"character '{character_id}' references unknown class '{cid}' via {field_name}"
@@ -323,17 +283,11 @@ class WorldInstance:
     def _validate_character_faction_refs(self) -> list[str]:
         """Check that character faction references exist in FactionRegistry."""
         issues: list[str] = []
-        faction_ids = {
-            str(f.get("id"))
-            for f in self.factions.list_all()
-            if isinstance(f, Mapping) and f.get("id")
-        }
+        faction_ids = {f.id for f in self.factions.list_all() if f.id}
         for character in self.characters.list_all():
-            if not isinstance(character, Mapping):
-                continue
-            character_id = self._entry_id(character)
+            character_id = character.id or "<unknown>"
             for field_name in ("faction", "faction_id"):
-                fid = self._coerce_non_empty_string(character.get(field_name))
+                fid = self._coerce_non_empty_string(getattr(character, field_name, None))
                 if fid is not None and fid not in faction_ids:
                     issues.append(
                         f"character '{character_id}' references unknown faction '{fid}' via {field_name}"
@@ -343,19 +297,10 @@ class WorldInstance:
     def _validate_monster_skill_refs(self) -> list[str]:
         """Check that monster spell/ability references exist in SkillRegistry."""
         issues: list[str] = []
-        skill_ids = {
-            str(s.get("id"))
-            for s in self.skills.list_all()
-            if isinstance(s, Mapping) and s.get("id")
-        }
+        skill_ids = self._collect_entry_ids(self.skills)
         for monster in self.monsters.list_all():
-            if not isinstance(monster, Mapping):
-                continue
-            monster_id = self._entry_id(monster)
-            for field_name in ("spells", "abilities"):
-                refs = monster.get(field_name)
-                if not isinstance(refs, list):
-                    continue
+            monster_id = monster.id or "<unknown>"
+            for field_name, refs in (("spells", monster.spells), ("abilities", monster.ability_refs)):
                 for index, entry in enumerate(refs):
                     sid: str | None = None
                     if isinstance(entry, str):
@@ -371,19 +316,10 @@ class WorldInstance:
     def _validate_milestone_prerequisites(self) -> list[str]:
         """Check that milestone prerequisites reference existing milestones."""
         issues: list[str] = []
-        all_milestone_ids = {
-            str(m.get("id"))
-            for m in self.quests.list_all()
-            if isinstance(m, Mapping) and m.get("id")
-        }
+        all_milestone_ids = {m.id for m in self.quests.list_all() if m.id}
         for milestone in self.quests.list_all():
-            if not isinstance(milestone, Mapping):
-                continue
-            milestone_id = self._entry_id(milestone)
-            prerequisites = milestone.get("prerequisites")
-            if not isinstance(prerequisites, list):
-                continue
-            for index, prereq in enumerate(prerequisites):
+            milestone_id = milestone.id or "<unknown>"
+            for index, prereq in enumerate(milestone.prerequisites):
                 prereq_id = self._coerce_non_empty_string(prereq)
                 if prereq_id is not None and prereq_id not in all_milestone_ids:
                     issues.append(
@@ -399,12 +335,16 @@ class WorldInstance:
             if reg_name == "tags":
                 continue
             for entry in registry.list_all():
-                if not isinstance(entry, Mapping):
+                if isinstance(entry, Mapping):
+                    entry_tags = entry.get("tags")
+                    entry_id = self._entry_id(entry)
+                elif hasattr(entry, "tags"):
+                    entry_tags = entry.tags
+                    entry_id = getattr(entry, "id", "<unknown>")
+                else:
                     continue
-                entry_tags = entry.get("tags")
                 if not isinstance(entry_tags, list):
                     continue
-                entry_id = self._entry_id(entry)
                 for index, tag in enumerate(entry_tags):
                     tag_str = self._coerce_non_empty_string(tag)
                     if tag_str is not None and tag_str not in valid_tags:
@@ -435,11 +375,28 @@ class WorldInstance:
         return issues
 
     @staticmethod
-    def _entry_id(entry: Mapping[str, Any]) -> str:
-        normalized = WorldInstance._coerce_non_empty_string(entry.get("id"))
+    def _entry_id(entry: Any) -> str:
+        if isinstance(entry, Mapping):
+            raw = entry.get("id")
+        else:
+            raw = getattr(entry, "id", None)
+        normalized = WorldInstance._coerce_non_empty_string(raw)
         if normalized is None:
             return "<unknown>"
         return normalized
+
+    @staticmethod
+    def _collect_entry_ids(registry: ContentRegistry) -> set[str]:
+        """Collect all entry IDs from a registry (dict or dataclass entries)."""
+        ids: set[str] = set()
+        for entry in registry.list_all():
+            if isinstance(entry, Mapping):
+                raw = entry.get("id")
+            else:
+                raw = getattr(entry, "id", None)
+            if raw:
+                ids.add(str(raw))
+        return ids
 
     @staticmethod
     def _coerce_non_empty_string(value: Any) -> str | None:

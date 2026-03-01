@@ -184,3 +184,11 @@ class InteractRequest(BaseModel):
     item_id: str | None = None
     quest_id: str | None = None
     count: int = 1
+    message: str | None = None
+
+
+class PrivateChatRequest(BaseModel):
+    """Request body for the private chat stream."""
+
+    npc_id: str
+    message: str

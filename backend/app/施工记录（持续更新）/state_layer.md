@@ -109,3 +109,56 @@ private → 按 audience 列表精确控制
 - [ ] PlayerSlice：等级提升阈值表（当前简化为 `level * 1000`）
 - [ ] AreaSlice：临时子区域过期清理逻辑
 - [ ] EventSlice：6 状态事件状态机完整转换校验
+
+## [D-S04] S-3：EventSlice trigger_condition 完整迁移（2026-03-01）
+
+**问题**：`WorldStateHandler._compute_schedule_event()` 将 `trigger_condition` 预算为整数 `trigger_tick` 后丢弃原始条件信息；`EventSlice` 的 `pop_due_pending()` API 设计与规范不符；缺少 `check_triggers()` / `resolve()` Read API。
+
+**迁移策略**：原始 `trigger_condition` + `created_at` 直接存储，在 `check_triggers()` 中懒惰求值；向后兼容旧数据（`trigger_tick` 字段自动降级处理）。
+
+#### 修改 `app/game_core/state/slices/events.py`
+
+- 新增模块级 `_absolute_tick(time_dict) -> int` 辅助函数
+- 删除 `pop_due_pending(current_tick: int)`
+- 新增 `check_triggers(current_time, current_flags=None, current_location=None) -> list[dict]`：评估条件、移除并返回到期 pending 事件
+- 新增 `_is_condition_met(event, current_abs, current_flags, current_location)` 静态方法：支持 `absolute_tick` / `time_slots_elapsed` / 旧 `trigger_tick` 降级
+- 新增 `resolve(event_id: str)`：`set_state(event_id, "resolved")`
+- 更新 `validate()`：`trigger_condition must be dict`（兼容旧 `trigger_tick must be int`）
+
+#### 修改 `app/game_core/rules/handlers/world_state.py`
+
+- `_compute_schedule_event()`：存储 `trigger_condition + created_at`，不再存储 `trigger_tick`
+- 新增 `_normalize_trigger_condition(params)`：`trigger_tick: N` → `{"type": "absolute_tick", "tick": N}`；`trigger_condition: dict` 直接保存
+- `_validate_schedule_event()` 仍调用 `_resolve_trigger_tick()` 做合法性校验（不影响存储）
+
+#### 修改 `app/game_core/orchestration/hooks/scheduled_event.py`
+
+- `pop_due_pending(current_tick)` → `check_triggers(current_time)` 调用
+- active_event 存储 `trigger_condition`（来自 pending_event 或旧 `trigger_tick` 降级重构），去掉 `trigger_tick` 字段
+- SSE payload 使用 `trigger_condition`
+
+#### 测试更新（3 文件，13 处）
+
+- `tests/test_scheduled_event_hook.py`：5 处 `trigger_tick` → `trigger_condition: {"type": "absolute_tick", "tick": N}` + `created_at`
+- `tests/test_world_state_handler.py`：2 处断言对齐存储格式
+- `tests/test_slice_validation.py`：3 处 validate() 断言对齐
+
+**测试基线**：719 passed（零回归，S-3 为迁移改动）
+
+## 待办：Read API 补齐 + 文档对齐 [挂起]
+
+**来源**：2026-03-01 边界审查，对比设计文档与实现的逐字段差异。
+
+| Slice | 匹配度 | 缺失项 |
+|-------|--------|--------|
+| EventSlice | 60% | 架构偏差（trigger_tick vs trigger_condition）、缺 check_triggers/resolve/spread_rumor |
+| PartySlice | 65% | 缺 get_members/get_approval/get_shared_experiences/count_critical_moments |
+| RelationSlice | 70% | 缺 get_disposition/get_stage/get_faction/get_shop_state、reduce_stock |
+| QuestSlice | 85% | 缺 get_active_quests/get_completion、chapter_completion 范围 0-1 vs 文档 0-100 |
+| FlagSlice | 85% | 缺 get_all()、delete vs remove 命名差异 |
+| AreaSlice | 92% | 缺 count_dynamic_sub_areas/has_cluster_capacity |
+
+**处理原则**：
+- Read API getter 缺失优先补齐（上层逻辑直接依赖）
+- EventSlice 架构偏差需先确认哪种方案保留，再更新文档或代码
+- API 命名差异按"代码为准、更新文档"方向处理（除非代码命名明显不如文档）

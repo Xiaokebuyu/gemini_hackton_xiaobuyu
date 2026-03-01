@@ -14,6 +14,10 @@ from app.game_core.orchestration.pipeline import PipelineHook, PipelineOrchestra
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.orchestration.shared_context import SharedContext
+from app.game_core.orchestration.npc_interaction import (
+    NpcInteractionCoordinator,
+    NpcInteractionResult,
+)
 from app.game_core.orchestration.tick_coordinator import TickCoordinator
 
 __all__ = [
@@ -21,6 +25,8 @@ __all__ = [
     "ContextAssembler",
     "DEFAULT_ACTION_COMMAND_TYPES",
     "DEFAULT_SETTLEMENT_HOOK_TYPES",
+    "NpcInteractionCoordinator",
+    "NpcInteractionResult",
     "PipelineHook",
     "PipelineOrchestrator",
     "SceneBus",

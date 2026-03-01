@@ -33,6 +33,109 @@ _MEANINGFUL_SLICES = frozenset(
     {"player", "flags", "relations", "party", "quests", "areas", "events"}
 )
 
+_TARGET_PARAM_KEYS: tuple[str, ...] = (
+    "target", "seller_npc", "buyer_npc", "npc_id",
+    "target_npc", "character_id", "character",
+    "container_id", "object_id",
+)
+
+_ACTION_VERBS: dict[str, str] = {
+    # Combat
+    "attack": "attacked", "defend": "defended", "disengage": "disengaged",
+    "dash": "dashed", "shove": "shoved", "flee": "fled",
+    "offhand_attack": "attacked (off-hand)", "stand_up": "stood up",
+    "use_combat_item": "used",
+    # Trade
+    "trade_buy": "purchased", "trade_sell": "sold", "refresh_shop": "refreshed shop",
+    # Crime
+    "steal": "stole", "lockpick": "picked lock on",
+    # Navigation
+    "move_area": "traveled to", "enter_sub_location": "entered",
+    "leave_sub_location": "left",
+    # Skill checks
+    "skill_check": "", "saving_throw": "saving throw",
+    "contest": "contested", "investigate": "investigated",
+    # Inventory
+    "pick_up": "picked up", "drop": "dropped",
+    "equip": "equipped", "unequip": "unequipped",
+    "use_item": "used", "consume_resource": "consumed",
+    # Rest
+    "rest_short": "took short rest", "rest_long": "took long rest",
+    "night_watch": "kept watch", "set_camp": "set up camp",
+    # Spellcasting
+    "cast_spell": "cast", "prepare_spells": "prepared spells",
+    "break_concentration": "broke concentration",
+    # Growth
+    "add_xp": "gained experience", "level_up": "leveled up",
+    "apply_asi": "improved ability", "choose_subclass": "chose subclass",
+    "create_character": "created character",
+    # Container
+    "open_container": "opened", "disarm_trap": "disarmed trap on",
+    "take_from_container": "took from", "take_all": "took all from",
+    "interact_object": "interacted with",
+    # World state
+    "set_flag": "set flag", "modify_disposition": "influenced",
+    "modify_approval": "affected approval of", "advance_quest": "advanced quest",
+    "schedule_event": "scheduled event", "create_rumor": "spread rumor",
+    "modify_location": "modified", "add_knowledge": "revealed knowledge to",
+    "modify_completion": "progressed chapter", "adjust_danger": "adjusted danger in",
+}
+
+_TARGET_PREPOSITIONS: dict[str, str] = {
+    "trade_buy": "from", "trade_sell": "to",
+    "steal": "from", "lockpick": "on",
+    "cast_spell": "on", "shove": "",
+    "attack": "", "offhand_attack": "",
+}
+
+_ACTION_CATEGORY_TAGS: dict[str, list[str]] = {
+    # Combat
+    "attack": ["COMBAT"], "defend": ["COMBAT"], "disengage": ["COMBAT"],
+    "dash": ["COMBAT"], "shove": ["COMBAT"], "flee": ["COMBAT"],
+    "offhand_attack": ["COMBAT"], "stand_up": ["COMBAT"],
+    "use_combat_item": ["COMBAT", "ITEM_USE"],
+    # Trade
+    "trade_buy": ["TRANSACTION"], "trade_sell": ["TRANSACTION"],
+    "refresh_shop": ["TRANSACTION"],
+    # Crime
+    "steal": ["CRIME", "THEFT"], "lockpick": ["CRIME"],
+    # Navigation
+    "move_area": ["NAVIGATION"], "enter_sub_location": ["NAVIGATION"],
+    "leave_sub_location": ["NAVIGATION"],
+    # Skill checks
+    "skill_check": ["SKILL_CHECK"], "saving_throw": ["SKILL_CHECK"],
+    "contest": ["SKILL_CHECK"], "investigate": ["SKILL_CHECK", "EXPLORATION"],
+    # Inventory
+    "pick_up": ["INVENTORY"], "drop": ["INVENTORY"],
+    "equip": ["INVENTORY"], "unequip": ["INVENTORY"],
+    "use_item": ["ITEM_USE"], "consume_resource": ["ITEM_USE"],
+    # Rest
+    "rest_short": ["REST"], "rest_long": ["REST"],
+    "night_watch": ["REST"], "set_camp": ["REST"],
+    # Spellcasting
+    "cast_spell": ["SPELLCASTING"], "prepare_spells": ["SPELLCASTING"],
+    "break_concentration": ["SPELLCASTING"],
+    # Growth
+    "add_xp": ["PROGRESSION"], "level_up": ["PROGRESSION"],
+    "apply_asi": ["PROGRESSION"], "choose_subclass": ["PROGRESSION"],
+    "create_character": ["PROGRESSION"],
+    # Container
+    "open_container": ["CONTAINER"], "disarm_trap": ["CONTAINER", "TRAP"],
+    "take_from_container": ["CONTAINER", "LOOT"],
+    "take_all": ["CONTAINER", "LOOT"], "interact_object": ["INTERACTION"],
+    # World state
+    "set_flag": ["WORLD_STATE"],
+    "modify_disposition": ["WORLD_STATE", "SOCIAL"],
+    "modify_approval": ["WORLD_STATE", "SOCIAL"],
+    "advance_quest": ["WORLD_STATE", "QUEST"],
+    "schedule_event": ["WORLD_STATE"],
+    "create_rumor": ["WORLD_STATE", "SOCIAL"],
+    "modify_location": ["WORLD_STATE"],
+    "add_knowledge": ["WORLD_STATE", "SOCIAL"],
+    "modify_completion": ["WORLD_STATE", "QUEST"],
+    "adjust_danger": ["WORLD_STATE"],
+}
+
 
 @dataclass(slots=True)
 class AIOsirisDecision:
@@ -43,7 +146,7 @@ class AIOsirisDecision:
 
 
 class AIOsirisEvaluator(Protocol):
-    def evaluate(
+    async def evaluate(
         self,
         summary: dict[str, Any],
         snapshot: dict[str, Any],
@@ -53,7 +156,7 @@ class AIOsirisEvaluator(Protocol):
 
 
 class NullAIOsirisEvaluator:
-    def evaluate(
+    async def evaluate(
         self,
         summary: dict[str, Any],
         snapshot: dict[str, Any],
@@ -66,7 +169,7 @@ class NullAIOsirisEvaluator:
 class BasicAIOsirisEvaluator:
     """Deterministic default evaluator for the runtime skeleton."""
 
-    def evaluate(
+    async def evaluate(
         self,
         summary: dict[str, Any],
         snapshot: dict[str, Any],
@@ -184,10 +287,10 @@ class AIOsirisHook(NoOpSettlementHook):
     async def execute(self, context: SettlementContext) -> HookResult:
         summary = self._build_summary(context)
         snapshot = self._build_snapshot(context)
-        rules_context = self._build_rules_context()
+        rules_context = self._build_rules_context(context)
 
         try:
-            raw_decision = self._evaluator.evaluate(summary, snapshot, rules_context)
+            raw_decision = await self._evaluator.evaluate(summary, snapshot, rules_context)
         except Exception as exc:
             logger.exception(
                 "hook failed: ai_osiris",
@@ -305,8 +408,8 @@ class AIOsirisHook(NoOpSettlementHook):
         return {
             "time_slot": cls._build_time_slot(context),
             "location": cls._build_location(context),
-            "duration_minutes": 0,
-            "actions": [],
+            "duration_minutes": 60,  # 1 settlement tick = 1 slot = 60 game minutes
+            "actions": cls._enrich_actions(context),
             "state_changes": state_changes,
             "change_count": len(state_changes),
             "changed_slices": cls._changed_slices(context.change_log),
@@ -331,31 +434,138 @@ class AIOsirisHook(NoOpSettlementHook):
                 active_flags = cls._normalize_mapping(raw_flags)
 
         current_chapter = ""
+        chapter_completion: float | None = None
         if context.state.has_slice("narrative_plan"):
             plan_snapshot = context.state.narrative_plan.snapshot()
             current_chapter = cls._coerce_string(plan_snapshot.get("current_chapter"))
+            raw_completion = plan_snapshot.get("chapter_completion")
+            if isinstance(raw_completion, (int, float)):
+                chapter_completion = float(raw_completion)
 
         return {
-            "player": (
-                context.state.player.snapshot()
-                if context.state.has_slice("player")
-                else None
-            ),
-            "party": (
-                context.state.party.snapshot()
-                if context.state.has_slice("party")
-                else None
-            ),
+            "player": cls._build_player(context),
+            "party": cls._build_party(context),
             "nearby_npcs": nearby_npcs,
             "faction_standings": faction_standings,
             "active_flags": active_flags,
             "current_chapter": current_chapter,
+            "chapter_completion": chapter_completion,
             "time": cls._build_time_slot(context),
             "location": location,
         }
 
-    @staticmethod
-    def _build_rules_context() -> dict[str, Any]:
+    @classmethod
+    def _build_player(cls, context: SettlementContext) -> dict[str, Any] | None:
+        if not context.state.has_slice("player"):
+            return None
+        snap = context.state.player.snapshot()
+        curated: dict[str, Any] = {
+            "character_id": snap.get("character_id", ""),
+            "character_name": snap.get("character_name", ""),
+            "level": snap.get("level", 0),
+            "hp": snap.get("hp", 0),
+            "max_hp": snap.get("max_hp", 0),
+            "gold": snap.get("gold", 0),
+            "character_class": snap.get("character_class", ""),
+            "current_area": snap.get("current_area", ""),
+            "current_location": snap.get("current_location"),
+            "guild_rank": snap.get("guild_rank", ""),
+            "ac": snap.get("ac", 0),
+        }
+        curated["active_quests"] = cls._build_active_quests(context)
+        curated["tags"] = cls._build_player_tags(context)
+        return curated
+
+    @classmethod
+    def _build_active_quests(cls, context: SettlementContext) -> list[str]:
+        if not context.state.has_slice("quests"):
+            return []
+        quests = context.state.quests
+        active: list[str] = list(quests.get_available_milestones())
+        for qid, quest in quests.dynamic_quests.items():
+            if isinstance(quest, Mapping) and quest.get("status") not in {
+                "retired", "completed", "failed",
+            }:
+                active.append(qid)
+        return active
+
+    @classmethod
+    def _build_player_tags(cls, context: SettlementContext) -> list[str]:
+        if not context.state.has_slice("player"):
+            return []
+        character_id = context.state.player.character_id
+        if not character_id or not context.world.has_registry("characters"):
+            return []
+        template = context.world.characters.get(character_id)
+        if template is None:
+            return []
+        if not isinstance(template.tags, list):
+            return []
+        return [str(t) for t in template.tags if isinstance(t, str)]
+
+    @classmethod
+    def _build_party(cls, context: SettlementContext) -> list[dict[str, Any]]:
+        if not context.state.has_slice("party"):
+            return []
+        party_snap = context.state.party.snapshot()
+        members = party_snap.get("members", {})
+        approvals = party_snap.get("companion_approval", {})
+
+        result: list[dict[str, Any]] = []
+        for member_id in members:
+            entry: dict[str, Any] = {"id": member_id}
+            entry["approval"] = approvals.get(member_id, 0)
+
+            if context.state.has_slice("relations"):
+                dispositions = context.state.relations.npc_dispositions.get(member_id)
+                if dispositions:
+                    entry["disposition"] = dict(dispositions)
+                stage = context.state.relations.relationship_stages.get(member_id)
+                if stage:
+                    entry["relationship_stage"] = stage
+
+            if context.world.has_registry("characters"):
+                template = context.world.characters.get(member_id)
+                if template is not None:
+                    entry["name"] = cls._coerce_string(template.name)
+                    if isinstance(template.tags, list):
+                        entry["tags"] = [str(t) for t in template.tags if isinstance(t, str)]
+                    entry["faction"] = cls._coerce_string(
+                        template.faction or template.faction_id
+                    )
+
+            result.append(entry)
+        return result
+
+    @classmethod
+    def _build_rules_context(cls, context: SettlementContext) -> dict[str, Any]:
+        world_lore: list[dict[str, Any]] = []
+        if context.world.has_registry("lore"):
+            for entry in context.world.lore.list_all():
+                world_lore.append({
+                    "id": entry.id,
+                    "content": entry.content,
+                    "tags": list(entry.tags),
+                })
+
+        faction_rules: list[dict[str, Any]] = []
+        if context.world.has_registry("factions"):
+            for faction in context.world.factions.list_all():
+                rule: dict[str, Any] = {
+                    "id": faction.id,
+                    "name": faction.name,
+                    "alignment": faction.alignment,
+                }
+                if faction.behavioral_rules:
+                    rule["behavioral_rules"] = faction.behavioral_rules
+                faction_rules.append(rule)
+
+        tag_dimensions: dict[str, list[str]] = {}
+        if context.world.has_registry("tags"):
+            for dimension in context.world.tags.list_all():
+                if dimension.id:
+                    tag_dimensions[dimension.id] = list(dimension.tags)
+
         return {
             "allowed_commands": list(_ALLOWED_COMMAND_TYPES),
             "command_source": "ai_osiris",
@@ -364,6 +574,9 @@ class AIOsirisHook(NoOpSettlementHook):
                 "schedule_event_prefers_trigger_tick": True,
                 "scene_bus_text_deferred": True,
             },
+            "world_lore": world_lore,
+            "faction_rules": faction_rules,
+            "tag_dimensions": tag_dimensions,
         }
 
     @classmethod
@@ -445,6 +658,177 @@ class AIOsirisHook(NoOpSettlementHook):
             return "failed"
         return "partial_failure"
 
+    @classmethod
+    def _enrich_actions(
+        cls, context: SettlementContext,
+    ) -> list[dict[str, Any]]:
+        all_witnesses = cls._collect_witness_ids(context)
+        result: list[dict[str, Any]] = []
+        for action in context.action_log:
+            enriched = dict(action)
+            params = action.get("params", {})
+
+            target = cls._extract_target(params)
+            if target:
+                enriched["target"] = target
+
+            tags = list(_ACTION_CATEGORY_TAGS.get(action.get("type", ""), []))
+            tags.extend(cls._extract_content_tags(context, params))
+            if tags:
+                enriched["tags"] = tags
+
+            enriched["detail"] = cls._build_action_detail(context, action)
+
+            witnesses = [w for w in all_witnesses if w != target]
+            if witnesses:
+                enriched["witnessed_by"] = witnesses
+
+            result.append(enriched)
+        return result
+
+    @classmethod
+    def _build_action_detail(
+        cls,
+        context: SettlementContext,
+        action: dict[str, Any],
+    ) -> str:
+        action_type = action.get("type", "")
+        params = action.get("params", {})
+        success = action.get("success", True)
+        hints = action.get("narrative_hints", [])
+
+        verb = _ACTION_VERBS.get(action_type, action_type.replace("_", " "))
+        parts: list[str] = []
+        if verb:
+            parts.append(verb)
+
+        # Primary entity: item or spell/skill name
+        item_id = params.get("item_id")
+        spell_id = params.get("spell_id") or params.get("skill_id")
+        skill = params.get("skill")
+        if item_id and isinstance(item_id, str):
+            parts.append(cls._resolve_entity_name(context, "items", item_id))
+        elif spell_id and isinstance(spell_id, str):
+            parts.append(cls._resolve_entity_name(context, "skills", spell_id))
+        elif skill and isinstance(skill, str):
+            parts.append(f"{skill} check" if action_type == "skill_check" else str(skill))
+
+        # Target with preposition
+        target = cls._extract_target(params)
+        if target:
+            prep = _TARGET_PREPOSITIONS.get(action_type, "")
+            target_name = cls._resolve_entity_name(context, "characters", target)
+            if prep:
+                parts.append(f"{prep} {target_name}")
+            else:
+                parts.append(target_name)
+        else:
+            area_id = params.get("area_id") or params.get("to")
+            location = params.get("location_id") or params.get("location")
+            if area_id and isinstance(area_id, str):
+                parts.append(area_id)
+            elif location and isinstance(location, str):
+                parts.append(location)
+
+        # DC modifier
+        dc = params.get("dc")
+        if dc is not None:
+            parts.append(f"(DC {dc})")
+
+        detail = " ".join(parts)
+
+        if hints:
+            detail += "; " + "; ".join(str(h) for h in hints if isinstance(h, str))
+
+        if not success:
+            detail += " — failed"
+
+        return detail
+
+    @classmethod
+    def _resolve_entity_name(
+        cls, context: SettlementContext, registry_name: str, entity_id: str,
+    ) -> str:
+        if context.world.has_registry(registry_name):
+            entry = getattr(context.world, registry_name).get(entity_id)
+            if entry is not None:
+                if isinstance(entry, Mapping):
+                    name = entry.get("name")
+                else:
+                    name = getattr(entry, "name", None)
+                if isinstance(name, str) and name:
+                    return name
+        return entity_id
+
+    @classmethod
+    def _collect_witness_ids(cls, context: SettlementContext) -> list[str]:
+        witnesses: list[str] = []
+        seen: set[str] = set()
+
+        if context.state.has_slice("party"):
+            for member_id in context.state.party.members:
+                if member_id not in seen:
+                    seen.add(member_id)
+                    witnesses.append(member_id)
+
+        if context.state.has_slice("player"):
+            current_area = context.state.player.current_area
+            if current_area:
+                if context.state.has_slice("areas"):
+                    area_state = context.state.areas.areas.get(current_area)
+                    if area_state is not None:
+                        for npc_id in area_state.npc_locations:
+                            if npc_id not in seen:
+                                seen.add(npc_id)
+                                witnesses.append(npc_id)
+                if context.world.has_registry("characters"):
+                    for raw_char in context.world.characters.list_all():
+                        char_id = cls._coerce_non_empty_string(raw_char.id)
+                        if char_id is None or char_id in seen:
+                            continue
+                        area_id = cls._coerce_non_empty_string(
+                            raw_char.area_id or raw_char.current_area
+                        )
+                        if area_id == current_area:
+                            seen.add(char_id)
+                            witnesses.append(char_id)
+
+        return witnesses
+
+    @staticmethod
+    def _extract_target(params: dict[str, Any]) -> str | None:
+        for key in _TARGET_PARAM_KEYS:
+            value = params.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    @classmethod
+    def _extract_content_tags(
+        cls, context: SettlementContext, params: dict[str, Any],
+    ) -> list[str]:
+        tags: list[str] = []
+
+        item_id = params.get("item_id")
+        if item_id and isinstance(item_id, str) and context.world.has_registry("items"):
+            item = context.world.items.get(item_id)
+            if item is not None:
+                tags.extend(str(t).upper() for t in item.tags if isinstance(t, str))
+                if item.type:
+                    tags.append(item.type.upper())
+
+        spell_id = params.get("spell_id") or params.get("skill_id")
+        if spell_id and isinstance(spell_id, str) and context.world.has_registry("skills"):
+            skill = context.world.skills.get(spell_id)
+            if skill is not None:
+                if skill.school:
+                    tags.append(skill.school.upper())
+                effect_type = skill.effect.get("type") if skill.effect else None
+                if isinstance(effect_type, str) and effect_type:
+                    tags.append(effect_type.upper())
+
+        return tags
+
     @staticmethod
     def _build_time_slot(context: SettlementContext) -> dict[str, Any] | None:
         if not context.state.has_slice("time"):
@@ -472,20 +856,69 @@ class AIOsirisHook(NoOpSettlementHook):
         context: SettlementContext,
         current_area: str,
     ) -> list[dict[str, Any]]:
-        if not current_area or not context.world.has_registry("characters"):
+        if not current_area:
             return []
 
+        seen_ids: set[str] = set()
         nearby: list[dict[str, Any]] = []
-        for raw_character in context.world.characters.list_all():
-            if not isinstance(raw_character, Mapping):
-                continue
-            area_id = cls._coerce_non_empty_string(raw_character.get("area_id"))
-            if area_id is None:
-                area_id = cls._coerce_non_empty_string(raw_character.get("current_area"))
-            if area_id != current_area:
-                continue
-            nearby.append(cls._normalize_mapping(raw_character))
+
+        # 1. 动态源：AreaSlice.npc_locations
+        if context.state.has_slice("areas"):
+            area_state = context.state.areas.areas.get(current_area)
+            if area_state is not None:
+                for npc_id, location_id in area_state.npc_locations.items():
+                    seen_ids.add(npc_id)
+                    nearby.append(
+                        cls._build_npc_entry(context, npc_id, location_id=location_id)
+                    )
+
+        # 2. 静态补源：CharacterRegistry 模板 area_id
+        if context.world.has_registry("characters"):
+            for raw_char in context.world.characters.list_all():
+                char_id = cls._coerce_non_empty_string(raw_char.id)
+                if char_id is None or char_id in seen_ids:
+                    continue
+                area_id = cls._coerce_non_empty_string(
+                    raw_char.area_id or raw_char.current_area
+                )
+                if area_id != current_area:
+                    continue
+                seen_ids.add(char_id)
+                nearby.append(cls._build_npc_entry(context, char_id))
+
         return nearby
+
+    @classmethod
+    def _build_npc_entry(
+        cls,
+        context: SettlementContext,
+        npc_id: str,
+        *,
+        location_id: str | None = None,
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {"id": npc_id}
+
+        # 模板数据（name, tags, faction）
+        if context.world.has_registry("characters"):
+            template = context.world.characters.get(npc_id)
+            if template is not None:
+                entry["name"] = cls._coerce_string(template.name)
+                if isinstance(template.tags, list):
+                    entry["tags"] = [str(t) for t in template.tags if isinstance(t, str)]
+                entry["faction"] = cls._coerce_string(
+                    template.faction or template.faction_id
+                )
+
+        # 好感度
+        if context.state.has_slice("relations"):
+            dispositions = context.state.relations.npc_dispositions.get(npc_id)
+            if dispositions:
+                entry["disposition"] = dict(dispositions)
+
+        if location_id is not None:
+            entry["location_id"] = location_id
+
+        return entry
 
     @staticmethod
     def _serialize_change(change: StateChange) -> dict[str, Any]:

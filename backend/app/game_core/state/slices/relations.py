@@ -93,6 +93,61 @@ class RelationSlice(StateSlice):
         self.shop_states[npc_id] = dict(state)
         self._dirty = True
 
+    def get_disposition(
+        self, npc_id: str, dimension: str | None = None
+    ) -> dict[str, int] | int | None:
+        """Return NPC disposition dict or single dimension value."""
+        bucket = self.npc_dispositions.get(npc_id)
+        if bucket is None:
+            return None
+        if dimension is None:
+            return dict(bucket)
+        return bucket.get(dimension)
+
+    def get_stage(self, npc_id: str) -> str | None:
+        """Return relationship stage for npc_id."""
+        return self.relationship_stages.get(npc_id)
+
+    def get_faction(self, faction_id: str) -> int:
+        """Return faction standing, 0 if not tracked."""
+        return self.faction_standings.get(faction_id, 0)
+
+    def get_shop_state(self, npc_id: str) -> dict[str, Any] | None:
+        """Return defensive copy of shop state, or None."""
+        state = self.shop_states.get(npc_id)
+        if not isinstance(state, dict):
+            return None
+        result = dict(state)
+        if isinstance(result.get("inventory"), list):
+            result["inventory"] = [
+                dict(item) if isinstance(item, dict) else item
+                for item in result["inventory"]
+            ]
+        return result
+
+    def reduce_stock(self, npc_id: str, item_id: str, count: int) -> bool:
+        """Decrement shop inventory item count. Returns False if not found or insufficient."""
+        if count <= 0:
+            raise ValueError("count must be positive")
+        shop = self.shop_states.get(npc_id)
+        if not isinstance(shop, dict):
+            return False
+        inventory = shop.get("inventory", [])
+        if not isinstance(inventory, list):
+            return False
+        for item in inventory:
+            if not isinstance(item, dict) or item.get("item_id") != item_id:
+                continue
+            current = int(item.get("count", 0))
+            if current < count:
+                return False
+            if current == count:
+                inventory.remove(item)
+            else:
+                item["count"] = current - count
+            return True
+        return False
+
     def validate(self) -> list[str]:
         issues: list[str] = []
         if not isinstance(self.npc_dispositions, dict):

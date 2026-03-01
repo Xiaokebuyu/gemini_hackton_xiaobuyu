@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from app.game_core.narrative.context import AgentContext
@@ -76,7 +77,9 @@ class DescribeEnvironmentTool(_GmTool):
         # Static map content
         map_content = None
         if context.world.has_registry("maps"):
-            map_content = context.world.maps.get(area_id)
+            raw_map = context.world.maps.get(area_id)
+            if raw_map is not None:
+                map_content = dataclasses.asdict(raw_map)
 
         # NPC details
         npcs: list[dict[str, Any]] = []
@@ -85,7 +88,7 @@ class DescribeEnvironmentTool(_GmTool):
             for npc_id in npc_ids:
                 char_data = context.world.characters.get(npc_id)
                 if char_data is not None:
-                    npcs.append({"id": npc_id, "data": char_data})
+                    npcs.append({"id": npc_id, "data": dataclasses.asdict(char_data)})
 
         # Time
         time_info = None
@@ -257,6 +260,7 @@ class SuggestOptionsTool(_GmTool):
                                 "type": "object",
                                 "properties": {
                                     "skill": {"type": "string"},
+                                    "dc": {"type": "integer"},
                                 },
                             },
                             "action": {"type": "string"},
@@ -297,6 +301,7 @@ class SuggestOptionsTool(_GmTool):
             message=f"{len(validated)} options generated.",
             metadata={
                 "status": "ok",
+                "tool": "suggest_options",
                 "event_type": "dialogue_options",
                 "options": validated,
             },
@@ -317,6 +322,9 @@ class SuggestOptionsTool(_GmTool):
             skill = check.get("skill")
             if isinstance(skill, str) and skill.strip():
                 entry["check"] = {"skill": skill.strip()}
+                dc = check.get("dc")
+                if isinstance(dc, int):
+                    entry["check"]["dc"] = dc
                 return entry
 
         action = opt.get("action")

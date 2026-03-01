@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+
+
+@dataclass(slots=True)
+class FactionTemplate:
+    """Typed faction definition."""
+
+    id: str
+    name: str = ""
+    description: str = ""
+    alignment: str = ""
+    relations: dict[str, Any] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    behavioral_rules: str = ""
+    initial_standing: int | None = None
+    base_standing: int | None = None
 
 
 class FactionRegistry(ContentRegistry):
@@ -12,59 +28,72 @@ class FactionRegistry(ContentRegistry):
 
     def __init__(self) -> None:
         super().__init__("factions")
-        self._items: dict[str, dict[str, Any]] = {}
+        self._items: dict[str, FactionTemplate] = {}
+        self._load_issues: list[str] = []
 
     def load(self, data: dict[str, Any]) -> None:
-        self._items = self._coerce_dict_mapping(data)
+        self._items = {}
+        self._load_issues = []
+        coerced = self._coerce_dict_mapping(data)
+        for fid, raw in coerced.items():
+            for field_name in ("name", "description", "alignment"):
+                raw_val = raw.get(field_name)
+                if raw_val is not None and self._coerce_non_empty_string(raw_val) is None:
+                    self._load_issues.append(f"faction '{fid}' has invalid {field_name}")
 
-    def get(self, content_id: str) -> Any | None:
-        item = self._items.get(content_id)
-        return dict(item) if isinstance(item, dict) else item
+            raw_relations = raw.get("relations")
+            if raw_relations is not None and not isinstance(raw_relations, Mapping):
+                self._load_issues.append(f"faction '{fid}' has invalid relations")
 
-    def list_all(self) -> list[Any]:
-        return [dict(value) for value in self._items.values()]
+            raw_tags = raw.get("tags")
+            if raw_tags is not None:
+                if not isinstance(raw_tags, list):
+                    self._load_issues.append(f"faction '{fid}' has invalid tags")
+                else:
+                    for index, tag in enumerate(raw_tags):
+                        if self._coerce_non_empty_string(tag) is None:
+                            self._load_issues.append(
+                                f"faction '{fid}' tags[{index}] must be a non-empty string"
+                            )
+
+            self._items[fid] = FactionTemplate(
+                id=str(raw.get("id", fid)),
+                name=str(raw.get("name") or ""),
+                description=str(raw.get("description") or ""),
+                alignment=str(raw.get("alignment") or ""),
+                relations=(
+                    dict(raw_relations) if isinstance(raw_relations, Mapping) else {}
+                ),
+                tags=(
+                    [str(t) for t in raw_tags if isinstance(t, str) and str(t).strip()]
+                    if isinstance(raw_tags, list) else []
+                ),
+                behavioral_rules=str(raw.get("behavioral_rules") or ""),
+                initial_standing=self._coerce_non_negative_int(raw.get("initial_standing")),
+                base_standing=self._coerce_non_negative_int(raw.get("base_standing")),
+            )
+
+    def get(self, content_id: str) -> FactionTemplate | None:
+        return self._items.get(content_id)
+
+    def list_all(self) -> list[FactionTemplate]:
+        return list(self._items.values())
 
     # ------------------------------------------------------------------
     # Query methods
     # ------------------------------------------------------------------
 
-    def get_by_tag(self, tag: str) -> list[dict[str, Any]]:
+    def get_by_tag(self, tag: str) -> list[FactionTemplate]:
         """Return factions that have the given tag in their tags list."""
-        return [
-            dict(item) for item in self._items.values()
-            if isinstance(item.get("tags"), list) and tag in item["tags"]
-        ]
+        return [item for item in self._items.values() if tag in item.tags]
 
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
 
     def validate(self) -> list[str]:
-        issues: list[str] = []
-        for item_id, item in self._items.items():
-            if not item.get("id"):
-                issues.append(f"faction '{item_id}' missing id")
-
-            if "name" in item and self._coerce_non_empty_string(item.get("name")) is None:
-                issues.append(f"faction '{item_id}' has invalid name")
-
-            if "description" in item and self._coerce_non_empty_string(item.get("description")) is None:
-                issues.append(f"faction '{item_id}' has invalid description")
-
-            if "alignment" in item and self._coerce_non_empty_string(item.get("alignment")) is None:
-                issues.append(f"faction '{item_id}' has invalid alignment")
-
-            if "relations" in item and not isinstance(item.get("relations"), Mapping):
-                issues.append(f"faction '{item_id}' has invalid relations")
-
-            tags = item.get("tags")
-            if tags is not None:
-                if not isinstance(tags, list):
-                    issues.append(f"faction '{item_id}' has invalid tags")
-                else:
-                    for index, tag in enumerate(tags):
-                        if self._coerce_non_empty_string(tag) is None:
-                            issues.append(
-                                f"faction '{item_id}' tags[{index}] must be a non-empty string"
-                            )
+        issues = list(self._load_issues)
+        for fid, faction in self._items.items():
+            if not faction.id:
+                issues.append(f"faction '{fid}' missing id")
         return issues

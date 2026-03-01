@@ -420,7 +420,7 @@ class CombatHandler(StaticCommandHandler):
         assert resolved is not None
         sub_area_id, _, _ = resolved
         item_id = str(cmd.params["item_id"]).strip()
-        item_template = world.items.get(item_id) or {}
+        item_template = world.items.get(item_id)
         heal_amount = self._resolve_heal_amount(item_template)
         if heal_amount is None:
             return handler_success_no_delta(
@@ -745,19 +745,21 @@ class CombatHandler(StaticCommandHandler):
     ) -> list[dict[str, Any]]:
         participants: list[dict[str, Any]] = []
         for monster_id in monster_ids:
-            template = world.monsters.get(monster_id) or {}
-            max_hp = coerce_int(template.get("hp"))
-            if max_hp is None:
-                max_hp = coerce_int(template.get("max_hp"))
-            if max_hp is None or max_hp < 1:
+            template = world.monsters.get(monster_id)
+            if template is None:
                 max_hp = 10
-            ac = coerce_int(template.get("ac"))
-            if ac is None or ac < 1:
                 ac = 10
+                name = monster_id
+            else:
+                max_hp = template.hp or template.max_hp
+                if max_hp is None or max_hp < 1:
+                    max_hp = 10
+                ac = template.ac if template.ac is not None and template.ac >= 1 else 10
+                name = template.name or monster_id
             participants.append(
                 {
                     "monster_id": monster_id,
-                    "name": coerce_non_empty_string(template.get("name")) or monster_id,
+                    "name": name,
                     "hp": max_hp,
                     "max_hp": max_hp,
                     "ac": ac,
@@ -854,9 +856,11 @@ class CombatHandler(StaticCommandHandler):
         }
 
     @staticmethod
-    def _resolve_heal_amount(item_template: Mapping[str, Any]) -> int | None:
+    def _resolve_heal_amount(item_template: Any) -> int | None:
+        if item_template is None:
+            return None
         for key in ("heal_amount", "heal", "restore_hp"):
-            value = coerce_int(item_template.get(key))
+            value = coerce_int(getattr(item_template, key, None))
             if value is not None and value > 0:
                 return value
         return None

@@ -103,7 +103,7 @@ def test_agentic_executor_handles_invalid_calls_and_executes_known_tools() -> No
 
 
 def test_default_narrative_planner_seeds_first_available_milestone() -> None:
-    result = NarrativePlanner().plan(
+    result = asyncio.run(NarrativePlanner().plan(
         {
             "current_tick": 9,
             "quests": {
@@ -116,7 +116,7 @@ def test_default_narrative_planner_seeds_first_available_milestone() -> None:
                 "pacing_frozen": False,
             },
         }
-    )
+    ))
 
     assert result["metadata"]["status"] == "quest_seeded"
     assert result["metadata"]["provider"] == "default_planner"
@@ -132,7 +132,7 @@ def test_default_narrative_planner_seeds_first_available_milestone() -> None:
 
 
 def test_default_narrative_planner_skips_existing_seeded_quest_and_returns_noop() -> None:
-    result = NarrativePlanner().plan(
+    result = asyncio.run(NarrativePlanner().plan(
         {
             "current_tick": 9,
             "quests": {
@@ -145,7 +145,7 @@ def test_default_narrative_planner_skips_existing_seeded_quest_and_returns_noop(
                 "pacing_frozen": False,
             },
         }
-    )
+    ))
 
     assert result["directives"] == []
     assert result["metadata"] == {
@@ -156,7 +156,7 @@ def test_default_narrative_planner_skips_existing_seeded_quest_and_returns_noop(
 
 
 def test_default_narrative_planner_generates_escalation_l1() -> None:
-    result = NarrativePlanner().plan(
+    result = asyncio.run(NarrativePlanner().plan(
         {
             "current_tick": 9,
             "quests": {
@@ -172,7 +172,7 @@ def test_default_narrative_planner_generates_escalation_l1() -> None:
                 "pacing_frozen": False,
             },
         }
-    )
+    ))
 
     assert result["metadata"]["status"] == "escalation_l1"
     assert result["next_scheduled_tick"] == 12
@@ -182,7 +182,7 @@ def test_default_narrative_planner_generates_escalation_l1() -> None:
 
 
 def test_default_narrative_planner_thaws_when_progress_resumes() -> None:
-    result = NarrativePlanner().plan(
+    result = asyncio.run(NarrativePlanner().plan(
         {
             "current_tick": 9,
             "quests": {
@@ -195,7 +195,7 @@ def test_default_narrative_planner_thaws_when_progress_resumes() -> None:
                 "pacing_frozen": True,
             },
         }
-    )
+    ))
 
     assert result["metadata"]["status"] == "thaw"
     assert result["directives"] == [
