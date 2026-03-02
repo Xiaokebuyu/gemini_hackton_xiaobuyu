@@ -71,9 +71,24 @@ class PartySlice(StateSlice):
         """Return companion approval score, 0 if not tracked."""
         return self.companion_approval.get(character_id, 0)
 
-    def get_shared_experiences(self) -> list[dict[str, Any]]:
-        """Return defensive copy of shared experience log."""
-        return [dict(exp) for exp in self.shared_experiences]
+    def get_shared_experiences(
+        self, with_character: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Return defensive copy of shared experiences, optionally filtered by participant."""
+        if with_character is None:
+            return [dict(exp) for exp in self.shared_experiences]
+        return [
+            dict(exp) for exp in self.shared_experiences
+            if with_character in exp.get("participants", [])
+        ]
+
+    def count_critical_moments(self, with_character: str) -> int:
+        """Count shared experiences with this character that were critical moments."""
+        return sum(
+            1 for exp in self.shared_experiences
+            if with_character in exp.get("participants", [])
+            and exp.get("critical_moment", False)
+        )
 
     def validate(self) -> list[str]:
         issues: list[str] = []

@@ -6,10 +6,12 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any, Mapping, Protocol
 
+from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
+from app.game_core.state import StateChange
 
 
 logger = logging.getLogger(__name__)
@@ -324,6 +326,7 @@ class EncounterHook(NoOpSettlementHook):
                         sub_area_id,
                         default_max_slots=slot_capacity,
                     )
+                    context.record_change(StateChange(slice="areas", operation="set", path=f"{area_id}.permanent_hostile_slots.{sub_area_id}", value="occupied"))
                 status = "triggered"
                 sse_events.append(
                     SSEEvent(
@@ -350,6 +353,7 @@ class EncounterHook(NoOpSettlementHook):
                     ),
                     default_max_slots=slot_capacity,
                 )
+                context.record_change(StateChange(slice="areas", operation="set", path=f"{area_id}.permanent_hostile_slots", value="cooldown"))
 
         return HookResult(
             sse_events=sse_events,
@@ -548,14 +552,14 @@ class EncounterHook(NoOpSettlementHook):
             return EncounterProbe(
                 should_check=bool(raw_probe.should_check),
                 command_params=dict(raw_probe.command_params),
-                metadata=cls._normalize_mapping(raw_probe.metadata),
+                metadata=_normalize_mapping(raw_probe.metadata),
             )
         if not isinstance(raw_probe, Mapping):
             return EncounterProbe(metadata={"status": "invalid_response"})
         return EncounterProbe(
             should_check=bool(raw_probe.get("should_check", False)),
-            command_params=cls._normalize_mapping(raw_probe.get("command_params")),
-            metadata=cls._normalize_mapping(raw_probe.get("metadata")),
+            command_params=_normalize_mapping(raw_probe.get("command_params")),
+            metadata=_normalize_mapping(raw_probe.get("metadata")),
         )
 
     @staticmethod
@@ -588,12 +592,6 @@ class EncounterHook(NoOpSettlementHook):
             "detector_metadata": {},
             "encounter_result": {},
         }
-
-    @staticmethod
-    def _normalize_mapping(value: Any) -> dict[str, Any]:
-        if not isinstance(value, Mapping):
-            return {}
-        return {str(key): raw_value for key, raw_value in value.items()}
 
     @staticmethod
     def _coerce_tick(value: Any) -> int | None:

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Awaitable, Callable, Mapping
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -203,6 +206,7 @@ async def _stream_with_lock(
                 session = await _load_session_or_404(world_id, session_id)
                 await execute_fn(session, queue)
         except Exception as exc:
+            logger.exception("stream task failed for session %s", session_id)
             await _emit_terminal_error(queue, exc)
         finally:
             await queue.put(None)

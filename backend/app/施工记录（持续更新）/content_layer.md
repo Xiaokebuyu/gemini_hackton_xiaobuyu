@@ -13,9 +13,9 @@
 | `TagRegistry` | [骨架] | 能 load/get/list_all，无语义校验 |
 | `MapRegistry` | [Phase1] | 连通性/区域/encounter weight/多起点 warning + 查询方法 |
 | `CharacterRegistry` | [Phase2] | name/tags/class/faction + shop_inventory 验证 + 查询方法 |
-| `ItemRegistry` | [Phase1] | type/rarity 白名单 + 武器/防具字段 + 查询方法 |
-| `MonsterRegistry` | [Phase1] | CR/creature_type/abilities/attacks/resistances + 平衡 warning + 查询方法 |
-| `SkillRegistry` | [Phase1] | effect type/school/concentration/duration/action_type 白名单 + 查询方法 |
+| `ItemRegistry` | [F-A完成] | typed sub-struct（WeaponData/ArmorData/ConsumableData）+ 7 查询方法 |
+| `MonsterRegistry` | [F-C完成] | CR/creature_type/abilities/attacks/resistances + 平衡 warning + 查询方法；F-C 补齐 ai_personality/flee_threshold/xp_reward + MonsterAttack.damage_dice/hit_bonus/damage_type |
+| `SkillRegistry` | [F-B完成] | 新增 SkillEffect/SkillCost/StatusEffectTemplate typed struct；effect/cost 迁移为 typed；status_effects 子表 + get_status_effect/list_status_effects；旧键别名（damage/heal/duration_ticks/amount）load 时归一 |
 | `ClassRegistry` | [Phase2] | hit_die/hp/ac/level_features + race/background/subclass 字段 + xp_curve 单调性 |
 | `FactionRegistry` | [Phase3] | name/description/alignment/relations + tags 每项校验 + get_by_tag() |
 | `LoreRegistry` | [Phase3] | name/title/content/text + tags 每项校验 + get_by_tag() |
@@ -53,10 +53,19 @@ ordered_groups = [
 - 平衡 warning：CR↔HP / CR↔AC 范围检查（不阻塞加载）
 - 查询方法：`get_by_cr(min, max)` / `get_by_type(creature_type)`
 
-**ItemRegistry** 新增：
+**ItemRegistry** 新增（D-C04 Phase1）：
 - 消费者字段：`name` / `base_price` 非负整数
 - 游戏机制：`type`（10 种白名单）、`rarity`（5 级白名单）、`damage_dice` / `damage_type` / `ac_bonus` / `weight` / `requires_attunement`
 - 查询方法：`get_equippable()` / `get_by_type()` / `get_by_rarity()`
+
+**ItemRegistry** F-A 迁移（D-C-FA）：
+- 移除平铺字段 `damage_dice` / `damage_type` / `ac_bonus`，迁移为 typed sub-struct
+- 新增 `WeaponData`（damage_dice/damage_type/properties/range/proficiency/slot/versatile_dice）
+- 新增 `ArmorData`（armor_type/base_ac/dex_cap/str_requirement/stealth_disadvantage/proficiency）；armor_type 从 subtype 推断，dex_cap/stealth_disadvantage 按类型自动派生
+- 新增 `ConsumableData`（trigger/charges/effect）；heal_amount > 0 时自动构建
+- 新增 `description` 字段（设计规范对齐）
+- 新增查询方法：`get_weapons(properties?)` / `get_armors(armor_type?)` / `get_consumables()` / `get_by_price_range(min, max)` / `get_by_tags(tags)`
+- 修复 `base_price=0` 被 `or` 短路 Bug（原有缺陷）
 
 **SkillRegistry** 新增：
 - 消费者字段：`concentration`（bool-like）、`duration` / `status_duration` / `duration_ticks`（非负整数）
@@ -311,6 +320,25 @@ ordered_groups = [
 
 ## Dataclass 迁移完成汇总
 
+---
+
+## 屎山清理（2026-03-02）
+
+**MonsterRegistry 三 gold 字段合并**：
+- 移除 `MonsterTemplate.gold` / `.gold_reward` 两个冗余字段，只保留 `gold_drop`
+- load() 时按 `gold_drop → gold → gold_reward` 优先级合并到 `gold_drop`
+- `encounter.py._resolve_gold()` 从三 fallback 简化为直接读 `monster.gold_drop`
+
+**ItemRegistry heal/price 字段合并**：
+- 移除 `ItemTemplate.heal` / `.restore_hp` / `.price` 三个冗余字段，只保留 `heal_amount` 和 `base_price`
+- load() 时 `heal/restore_hp` → `heal_amount`，`price` → `base_price`（别名合并 at load time）
+- `_resolve_heal_amount` 从 combat.py + inventory.py 两处私有方法提取为 `handler_utils.resolve_item_heal_amount()`
+- economy.py `_base_price_for_item` 删除 `item_template.price` fallback
+
+**测试**：831 passed（+19 含同期 stash pop 带入的其他改动）
+
+---
+
 **全部 10/10 Registry 已迁移完毕。**
 
 | Registry | 状态 | Batch | dataclass 数 |
@@ -326,3 +354,54 @@ ordered_groups = [
 | ~~MapRegistry~~ | ✅ | Batch 6A | 1 (AreaTemplate) |
 | ~~QuestRegistry~~ | ✅ | Batch 6B | 3 (MilestoneTemplate, ChapterMeta, InitialEvent) |
 | **合计** | | Batch 0~6B | **18 dataclass** |
+
+---
+
+## [F-D] Connection typed dataclass + MapRegistry 扩展
+
+**日期**：2026-03-02
+
+**背景**：`AreaTemplate.connections` 原为 `list[str]`，丢失旅行时间/连接类型元数据；
+`NavigationHandler` 无连接存在性校验，`time_cost` 硬编码 1.0。
+
+**改动**：
+
+1. **新增 `Connection` dataclass**（`maps.py`）：
+   - 字段：`target: str`, `type: str = "travel"`, `travel_time_minutes: int = 60`, `travel_slots: int = 1`, `description: str = ""`, `tags: list[str]`
+   - `source` 隐含（AreaTemplate 拥有），`blocked` 是运行时状态（AreaState 管理）
+
+2. **`AreaTemplate.connections: list[Connection]`**（原 `list[str]`）
+
+3. **`MapRegistry` 扩展**：
+   - `_load_connections()` 返回 `list[Connection]`（接受 str 和 dict 两种格式）
+   - 新增 `_parse_connection_entry()` — 解析单条 entry（str → Connection，dict → Connection）
+   - 新增 `_parse_travel_minutes(s)` — "30分钟"→30, "2小时"→120, 无法解析→60
+   - 新增 `get_connections(area_id) -> list[Connection]`
+   - 新增 `get_connection(from_id, to_id) -> Connection | None`
+   - `get_adjacent()` 保持 `list[str]`（向后兼容，提取 `conn.target`）
+
+4. **消费端同步**：
+   - `world_knowledge_graph.py` 第 355 行：`conn.target` 替换直接使用 `connected_id`
+
+**[T-2] world_data_loader.py 数据管线修复**（同步）：
+
+- `_load_maps()` 简化为直接透传 dict，不再剥离 connection 对象（MapRegistry 统一解析）
+- `_load_items()` 新增 properties 展平：`adapted.pop("properties")` → 子字段提取到顶层（已有字段优先）
+
+**测试**：`test_content_registries.py` 新增 4 个测试（Connection dataclass / 时间解析 / get_connections / get_adjacent 向后兼容）；`test_navigation_handler.py` 补 connections；`test_world_data_loader.py` 更新连接断言
+
+---
+
+## [F-E] ClassTemplate class_resources_schema
+
+**日期**：2026-03-02
+
+**背景**：`GrowthHandler._compute_level_up()` 已处理 level_features（特性字符串），但不初始化 `class_resources`；`ClassTemplate` 无 resource 配置字段。
+
+**改动**：
+
+1. **`ClassTemplate.class_resources_schema: dict[str, Any]`**（`classes.py`）：
+   - 格式：`{"resource_key": {"max_at_level": {"2": 1, "17": 2}, "recovery": "short_rest"}}`
+   - 新增 `_load_class_resources_schema()` 验证：is Mapping + 每 value 含 max_at_level(Mapping) + recovery(str)
+
+**测试**：`test_content_registries.py` 新增 2 个测试（正确加载 + 格式错误 load_issues）

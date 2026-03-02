@@ -145,6 +145,7 @@ class RelationSlice(StateSlice):
                 inventory.remove(item)
             else:
                 item["count"] = current - count
+            self._dirty = True
             return True
         return False
 

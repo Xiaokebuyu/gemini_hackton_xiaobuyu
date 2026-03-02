@@ -6,6 +6,7 @@ identical implementations across 13 handlers.
 
 from __future__ import annotations
 
+import re
 import random
 from typing import Any, Mapping
 
@@ -16,6 +17,26 @@ from app.game_core.state.delta import StateChange, StateDelta
 # ---------------------------------------------------------------------------
 # Type coercion
 # ---------------------------------------------------------------------------
+
+def resolve_item_heal_amount(item_template: Any) -> int | None:
+    """Return the heal amount from an ItemTemplate, or None if not a healing item.
+
+    Prefers ConsumableData.effect (canonical source) over the legacy heal_amount field.
+    """
+    if item_template is None:
+        return None
+    consumable_data = getattr(item_template, "consumable_data", None)
+    if consumable_data is not None:
+        effect = getattr(consumable_data, "effect", None)
+        if isinstance(effect, dict) and effect.get("type") == "heal":
+            params = effect.get("params", {})
+            if isinstance(params, dict):
+                value = coerce_int(params.get("amount"))
+                if value is not None and value > 0:
+                    return value
+    value = coerce_int(getattr(item_template, "heal_amount", None))
+    return value if value is not None and value > 0 else None
+
 
 def coerce_int(value: Any) -> int | None:
     """Coerce a value to int, returning None on failure."""
@@ -90,6 +111,27 @@ def normalize_tags(raw: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 # Dice utilities
 # ---------------------------------------------------------------------------
+
+_DAMAGE_DICE_RE = re.compile(r"^(\d+)d(\d+)([+-]\d+)?$", re.IGNORECASE)
+
+
+def roll_damage_dice(dice_str: str) -> int:
+    """Roll a damage dice expression and return total.
+
+    Supported formats: "1d4", "2d6", "1d8+3", "2d6-1".
+    Returns 1 on invalid input (safe fallback).
+    """
+    m = _DAMAGE_DICE_RE.match(dice_str.strip())
+    if not m:
+        return 1
+    count = int(m.group(1))
+    faces = int(m.group(2))
+    bonus = int(m.group(3)) if m.group(3) else 0
+    if count < 1 or faces < 1:
+        return 1
+    total = sum(random.randint(1, faces) for _ in range(count)) + bonus
+    return max(1, total)
+
 
 def roll_d20() -> int:
     """Roll a single d20."""

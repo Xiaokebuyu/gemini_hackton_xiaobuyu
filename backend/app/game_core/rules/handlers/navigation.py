@@ -41,7 +41,7 @@ class NavigationHandler(StaticCommandHandler):
             return ExecuteResult.error(validation.reason or "validation failed")
 
         if cmd.type == "move_area":
-            return self._compute_move_area(cmd, state)
+            return self._compute_move_area(cmd, state, world)
         if cmd.type == "enter_sub_location":
             return self._compute_enter_sub_location(cmd, state)
         if cmd.type == "leave_sub_location":
@@ -71,6 +71,12 @@ class NavigationHandler(StaticCommandHandler):
                 ok=False,
                 reason=f"from area mismatch: expected {current_area}, got {from_area}",
             )
+        if current_area:
+            if target_area not in world.maps.get_adjacent(current_area):
+                return ValidationResult(
+                    ok=False,
+                    reason=f"no connection from {current_area} to {target_area}",
+                )
         return ValidationResult(ok=True)
 
     def _validate_enter_sub_location(
@@ -132,8 +138,11 @@ class NavigationHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         target_area = self._resolve_target_area(cmd.params) or ""
+        conn = world.maps.get_connection(state.player.current_area or "", target_area)
+        time_cost = float(conn.travel_slots) if conn is not None else 1.0
         return handler_success(
             "navigation",
             "move_area",
@@ -141,7 +150,7 @@ class NavigationHandler(StaticCommandHandler):
                 StateChange("player", "set", "current_area", target_area),
                 StateChange("player", "set", "current_location", None),
             ],
-            time_cost=1.0,
+            time_cost=time_cost,
             metadata={
                 "from_area": state.player.current_area,
                 "to_area": target_area,

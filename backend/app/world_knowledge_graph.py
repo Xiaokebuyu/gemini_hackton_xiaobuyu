@@ -302,9 +302,9 @@ class WorldKnowledgeGraph:
             )
         # Add faction relation edges after all faction nodes exist
         for faction in world.factions.list_all():
-            if not faction.id or not faction.relations:
+            if not faction.id or not faction.faction_relations:
                 continue
-            for other_id, rel_data in faction.relations.items():
+            for other_id, rel_data in faction.faction_relations.items():
                 if not other_id:
                     continue
                 weight = 1.0
@@ -352,7 +352,7 @@ class WorldKnowledgeGraph:
         for area in world.maps.list_all():
             if not area.id:
                 continue
-            for connected_id in (area.connections or []):
+            for connected_id in world.maps.get_adjacent(area.id):
                 if not connected_id:
                     continue
                 self._add_edge_if_nodes_exist(

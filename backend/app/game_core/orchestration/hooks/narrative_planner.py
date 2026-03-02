@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any, Mapping, Protocol
 
+from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
@@ -66,8 +67,6 @@ class NarrativePlannerHook(NoOpSettlementHook):
         "plant_environmental",
         "fill_area",
     }
-    _UNSUPPORTED_DIRECTIVES: set[str] = set()
-
     def __init__(self, planner: NarrativePlannerProvider | None = None) -> None:
         self.planner = planner or NarrativePlanner()
 
@@ -144,7 +143,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 skipped_invalid_count += 1
                 continue
             kind, payload = normalized
-            if kind in self._UNSUPPORTED_DIRECTIVES or kind not in self._SUPPORTED_DIRECTIVES:
+            if kind not in self._SUPPORTED_DIRECTIVES:
                 skipped_unsupported_count += 1
                 continue
             if not self._apply_directive(kind, payload, context, current_tick=current_tick):
@@ -328,7 +327,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 directives=list(raw.directives),
                 strategy_notes=cls._string_or_empty(raw.strategy_notes),
                 next_scheduled_tick=raw.next_scheduled_tick,
-                metadata=cls._normalize_mapping(raw.metadata),
+                metadata=_normalize_mapping(raw.metadata),
             )
         if isinstance(raw, list):
             return NarrativePlannerDecision(directives=list(raw))
@@ -345,7 +344,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             directives=directives,
             strategy_notes=cls._string_or_empty(raw.get("strategy_notes")),
             next_scheduled_tick=next_tick,
-            metadata=cls._normalize_mapping(raw.get("metadata")),
+            metadata=_normalize_mapping(raw.get("metadata")),
         )
 
     @classmethod
@@ -357,7 +356,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             kind = cls._coerce_non_empty_string(raw.kind)
             if kind is None:
                 return None
-            return kind, cls._normalize_mapping(raw.payload)
+            return kind, _normalize_mapping(raw.payload)
         if isinstance(raw, CreateQuestPlan):
             return "create_quest", cls._merge_payload({"quest_id": raw.quest_id}, raw.payload)
         if isinstance(raw, DirectNpcPlan):
@@ -387,7 +386,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         kind = cls._coerce_non_empty_string(raw.get("kind"))
         if kind is None:
             return None
-        return kind, cls._normalize_mapping(raw.get("payload"))
+        return kind, _normalize_mapping(raw.get("payload"))
 
     def _apply_directive(
         self,
@@ -411,12 +410,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "summary": self._string_or_empty(payload.get("summary")),
                 "source": "narrative_planner",
                 "created_at_tick": current_tick,
-                "metadata": self._normalize_mapping(payload.get("metadata")),
+                "metadata": _normalize_mapping(payload.get("metadata")),
             }
             context.state.quests.add_dynamic_quest(quest_id, quest_payload)
             context.state.narrative_plan.add_history(
                 {"kind": "create_quest", "quest_id": quest_id, "tick": current_tick}
             )
+            context.record_change(StateChange(slice="quests", operation="set", path=f"dynamic.{quest_id}", value=quest_payload))
             return True
 
         if kind == "direct_npc":
@@ -445,7 +445,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     "board_id": board_id,
                     "title": self._string_or_empty(payload.get("title")),
                     "content": self._string_or_empty(payload.get("content")),
-                    "metadata": self._normalize_mapping(payload.get("metadata")),
+                    "metadata": _normalize_mapping(payload.get("metadata")),
                     "published_at_tick": current_tick,
                     "source": "narrative_planner",
                 }
@@ -478,6 +478,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             context.state.narrative_plan.add_history(
                 {"kind": "retire_quest", "quest_id": quest_id, "tick": current_tick}
             )
+            context.record_change(StateChange(slice="quests", operation="set", path=f"dynamic.{quest_id}.status", value="retired"))
             return True
 
         if kind == "spawn_quest_npc":
@@ -495,6 +496,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 return False
             location_id = self._coerce_non_empty_string(payload.get("location_id"))
             context.state.areas.move_npc(npc_id, area_id, location_id)
+            context.record_change(StateChange(slice="areas", operation="set", path=f"npc_location.{npc_id}", value=area_id))
             context.state.narrative_plan.add_directive({
                 "npc_id": npc_id,
                 "directive": {
@@ -533,6 +535,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "description": self._string_or_empty(payload.get("description")),
             }
             context.state.areas.modify_property(area_id, "search_targets", search_targets)
+            context.record_change(StateChange(slice="areas", operation="set", path=f"{area_id}.properties.search_targets", value=search_targets))
             return True
 
         if kind == "fill_area":
@@ -548,14 +551,16 @@ class NarrativePlannerHook(NoOpSettlementHook):
             sub_area_id = self._coerce_non_empty_string(payload.get("id"))
             if sub_area_id is None:
                 sub_area_id = f"fill_{current_tick}"
-            context.state.areas.add_temporary_sub_area(area_id, {
+            sub_area_data = {
                 "id": sub_area_id,
                 "label": self._string_or_empty(payload.get("label")),
                 "description": self._string_or_empty(payload.get("description")),
                 "expiry": -1,
                 "source": "narrative_planner",
                 "created_at_tick": current_tick,
-            })
+            }
+            context.state.areas.add_temporary_sub_area(area_id, sub_area_data)
+            context.record_change(StateChange(slice="areas", operation="set", path=f"{area_id}.temporary_sub_areas.{sub_area_id}", value=sub_area_data))
             return True
 
         return False
@@ -592,19 +597,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
     def _string_or_empty(cls, value: Any) -> str:
         return cls._coerce_non_empty_string(value) or ""
 
-    @staticmethod
-    def _normalize_mapping(value: Any) -> dict[str, Any]:
-        if not isinstance(value, Mapping):
-            return {}
-        return {str(key): raw_value for key, raw_value in value.items()}
-
     @classmethod
     def _merge_payload(
         cls,
         base: Mapping[str, Any],
         extra: Any,
     ) -> dict[str, Any]:
-        merged = cls._normalize_mapping(extra)
+        merged = _normalize_mapping(extra)
         result = dict(merged)
         for key, value in base.items():
             result[str(key)] = value

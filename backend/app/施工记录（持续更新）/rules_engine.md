@@ -454,3 +454,267 @@
 - StatusEffectHook (P20) 扩展：player tick 之后追加 `tick_combat_effects`
 - 有变化时发射 `combat_effects_ticked` SSE
 - 10 新测试 in `tests/test_npc_effect_ticking.py`。基线 429→439
+
+## D-R29: batch_execute delta 累积修复
+
+**日期**：2026-03-02
+**文件**：`rules/engine.py`
+
+**问题**：`RulesEngine.batch_execute()` 的循环没有调用 `state.apply(result.delta)`，
+后续命令看不到前一条命令的状态变更，与设计规范 §2.1 及施工记录 D-R02 的语义不符。
+
+**注意**：`StateContainer.apply()` 是原地变更（返回 `None`），不需要重新赋值，
+正确写法是 `state.apply(result.delta)`（设计规范中的 `state = state.apply(...)` 为伪代码）。
+
+**修复**：
+```python
+if result.success and result.delta is not None:
+    state.apply(result.delta)  # accumulate: each command sees prior changes
+```
+
+**影响**：仅 `batch_execute` 路径。AI Osiris P30 Hook 接入时依赖此语义。
+**测试**：3 新测试 in `tests/test_rules_engine.py`（add_xp→level_up 链式场景）。
+
+## D-R30: spell_resolver.coerce_int 对齐 handler_utils
+
+**日期**：2026-03-02
+**文件**：`rules/handlers/spell_resolver.py`、`rules/handlers/spell.py`
+
+**问题**：
+1. `spell_resolver.py` 自定义了 `coerce_int`，与 `handler_utils.coerce_int` 行为不同：
+   - 原版 `spell_resolver.coerce_int(3.5)` → `3`（静默截断）
+   - `handler_utils.coerce_int(3.5)` → `None`（拒绝非整数 float，对法术位等级更安全）
+   - D-R22 未将此列为有意保留的本地变体
+2. `spell.py` 另有 `_coerce_int` 静态方法，只是对 `coerce_int` 的透传包装，无价值。
+
+**修复**：
+- `spell_resolver.py`：删除本地 `coerce_int` 定义，改为 `from handler_utils import coerce_int`
+- `spell.py`：删除 `_coerce_int` 静态方法，将 2 处 `self._coerce_int(...)` 改为直接调 `coerce_int(...)`
+
+**测试影响**：行为仅对非整数 float 输入（如 `slot_level=3.5`）有差异，无现有测试覆盖此边界。
+现有 spell handler 测试基线全部通过，无回归。
+
+## D-R31: validate/compute 路径中 assert 替换为正确返回路径
+
+**日期**：2026-03-02
+**文件**：`rules/handlers/combat.py`、`rules/handlers/status_effect.py`、`rules/handlers/spell.py`
+
+**问题**：9 处 `assert X is not None`（或 `assert bool(...)`）分布在 validate/compute/helper 方法中：
+- Python `-O` 模式下 assert 被禁用，会导致 NPE 崩溃而非受控失败
+- `validate()` 方法里的 assert 会 raise `AssertionError` 而不是返回 `ValidationResult(ok=False, ...)`，破坏 Handler 契约
+- 逻辑上这些不变量确实成立（前序 validate 已经保证），但表达方式不符合防御性编程规范
+
+**替换规则**：
+- `validate()` 路径 → `return ValidationResult(ok=False, reason="...")`
+- `compute()` 路径 → `return ExecuteResult.error("...")`
+- helper 方法（`_build_effect_payload`）→ 直接删 assert（validate 已保证不变量，下游 state.apply 会在异常值时自然报错）
+
+**修改清单**：
+
+| 文件 | 位置 | 原 assert | 替换为 |
+|------|------|-----------|--------|
+| combat.py | `_validate_direct_resolution_command` | `assert resolved is not None` | `if resolved is None: return ValidationResult(ok=False, reason="active combat sub_area_id is required")` |
+| combat.py | `_compute_flag_command` | `assert resolved is not None` | `if resolved is None: return ExecuteResult.error("active combat not found")` |
+| combat.py | `_compute_flee` | `assert resolved is not None` | 同上 |
+| combat.py | `_compute_use_combat_item` | `assert resolved is not None` | 同上 |
+| combat.py | `_compute_direct_resolution_command` | `assert resolved is not None` | 同上 |
+| combat.py | `_compute_direct_resolution_command` | `assert target_resolution is not None` | `if target_resolution is None: return ExecuteResult.error(f"unknown combat target: {target}")` |
+| combat.py | `_compute_direct_resolution_command` | `assert bool(participant.get("alive", False))` | `if not bool(...): return ExecuteResult.error(f"target is not alive: {target}")` |
+| status_effect.py | `_build_effect_payload` | `assert duration_ticks is not None` | 删除（validate 已确保） |
+| spell.py | `_compute_cast_spell` | `assert template is not None` | `if template is None: return ExecuteResult.error("internal: spell template not found")` |
+
+**测试影响**：无功能变化，837 passed，无回归。
+
+## D-F-B: SpellHandler 消费端对齐 SkillEffect/SkillCost typed struct
+
+**日期**：2026-03-02
+**文件**：`rules/handlers/spell_resolver.py`、`rules/handlers/spell_effects.py`（类型签名），`orchestration/hooks/ai_osiris.py`（漏网消费端修复）
+
+**背景**：❶ 内容层 `SkillTemplate.effect`/`.cost` 从 `dict[str, Any]` 迁移为 `SkillEffect`/`SkillCost` typed dataclass。
+
+**修改**：
+- `spell_resolver.py`：`resolve_effect_payload()` 直接返回 `template.effect`（不再转 dict）；`resolve_effect_type`/`resolve_action_type`/`resolve_resource_cost` 改用 `source_get()`（支持 Mapping + getattr 两路），不再硬写 `cost.get()`
+- `spell_effects.py`：函数签名 `effect: dict[str, Any]`/`Mapping[str, Any]` 改为 `effect: Any`；函数体不变（`read_*` helpers 已通过 `source_get` 支持 dataclass）
+- `ai_osiris.py`（❹ 层）：`skill.effect.get("type")` → `getattr(skill.effect, "type", None)`
+
+**测试**：884 passed，无回归。
+
+## 合规性排查结论（2026-03-02）
+
+**结论：规则引擎层与设计规范 §3.1~§3.13 完全对齐。**
+
+| 项目 | 数量 | 状态 |
+|------|------|------|
+| 设计规范 command_types | 56 | 全部实现 |
+| 缺失命令 | 0 | 无缺漏 |
+| D-R 扩展命令 | 5 | 全部有施工记录 |
+| 未授权扩展 | 0 | 无 |
+
+D-R 扩展（均有记录）：stand_up(D-R24)、consume_resource(D-R25)、investigate(D-R26)、interact_object(D-R27)、tick_combat_effects(D-R28)。
+`create_character`（GrowthHandler）属于运行时初始化命令，不在玩家命令集，设计规范未单独列出但与系统流程兼容。
+
+---
+
+## [F-D] NavigationHandler 连接校验 + travel_slots
+
+**日期**：2026-03-02
+
+**背景**：`_validate_move_area()` 未检查连接存在性（玩家可跨越不相邻区域移动）；`_compute_move_area()` `time_cost` 硬编码 1.0。
+
+**改动**（`navigation.py`）：
+
+1. `_validate_move_area()` 新增连接存在性检查：
+   - 仅在 `current_area` 非空时检查
+   - `target_area not in world.maps.get_adjacent(current_area)` → `ValidationResult(ok=False, "no connection from ... to ...")`
+   - `current_area` 为空时跳过检查（游戏初始化阶段向后兼容）
+
+2. `_compute_move_area(cmd, state, world)` 新增 `world` 参数：
+   - `conn = world.maps.get_connection(current_area, target_area)`
+   - `time_cost = float(conn.travel_slots) if conn is not None else 1.0`
+
+**测试**：`test_rules_engine.py` 新增 4 个测试（连接不存在拒绝 / 连接存在通过 / travel_slots time_cost / 无 current_area 跳过检查）；`test_navigation_handler.py` 补充 connections 使已有测试仍通过
+
+---
+
+## [F-E] GrowthHandler 升级初始化 class_resources
+
+**日期**：2026-03-02
+
+**背景**：`_compute_level_up()` 已处理特性字符串，但不初始化/更新 `class_resources`；`PlayerSlice.class_resources` 和 `RestHandler` 已就绪，唯缺初始化触发。
+
+**改动**（`growth.py`）：
+
+1. `_compute_level_up()` 追加 resource_changes，metadata 新增 `updated_resources`
+
+2. 新增 `_resolve_resource_changes(class_template, target_level, state) -> tuple[list[StateChange], list[str]]`：
+   - 读取 `class_template.class_resources_schema`
+   - 对每个 resource：调用 `_resolve_resource_max_at_level()` 找对应等级的 max
+   - 首次解锁：`current = max = new_max`
+   - max 增加：`current += gain, max = new_max`
+   - max 未变：跳过
+
+3. 新增 `_resolve_resource_max_at_level(max_at_level, target_level) -> int | None`：
+   - 找 `max_at_level` 中 `<= target_level` 的最大键对应值
+   - 无合适键则返回 None（该等级尚未解锁）
+
+**测试**：`test_rules_engine.py` 新增 3 个测试（首次解锁初始化 / max 增量追加 / 已到最高档无变更）
+
+
+### [D-R32] F-A InventoryHandler equip 验证 + AC 重算
+
+**日期**：2026-03-02
+
+**背景**：`_validate_equip` 有 `del world`，完全不验证物品类型与装备槽的兼容性；`_compute_equip/_compute_unequip` 不重算 AC。
+
+**改动**（`inventory.py`）：
+
+1. **`_validate_equip`**：移除 `del world`，增加 type↔slot 约束检查（需 world.items registry）
+   - 新增 `_allowed_slots(template)` 静态方法：armor→{"chest"}，shield→{"off_hand"}，weapon→{weapon_data.slot}，其余→None（宽松）
+
+2. **`compute()` 分发**：`equip`/`unequip` 现在将 world 参数传入对应 `_compute_*`
+
+3. **`_compute_equip`/`_compute_unequip`**：签名添加 world 参数，装备/卸甲后调用 `_compute_ac()` 重算；AC 变化时追加 `StateChange("player", "set", "ac", new_ac)`
+
+4. **新增 `_compute_ac(equipment, state, world)`** 静态方法：
+   - chest slot → ArmorData（light/medium/heavy AC 公式）
+   - off_hand slot → 检测 shield（ArmorData.armor_type=="shield"），叠加 base_ac
+   - 无 items registry → 返回 None（不更新 AC）
+
+**AC 公式**：
+- unarmored：`10 + DEX_mod`
+- light：`10 + base_ac + DEX_mod`
+- medium：`10 + base_ac + min(DEX_mod, 2)`
+- heavy：`10 + base_ac`
+- shield：在上述结果基础上 `+= shield.base_ac`
+
+**测试**：`test_inventory_handler.py` 新增 6 个测试（TestInventoryHandlerEquipFA 类）
+
+
+### [D-R32] F-C：CombatHandler 怪物反击 + CombatAI + XP 分发（2026-03-02）
+
+**目标**：关闭战斗生命周期循环——玩家 attack 后怪物自动决策并反击，击杀后分发 XP。
+
+**handler_utils.py**：新增 `roll_damage_dice(dice_str) -> int`（解析 NdM/NdM+B/NdM-B）
+
+**combat.py 改动**：
+
+1. **方法签名**：`_compute_direct_resolution_command(cmd, state)` → 加 `world`；`_compute_attack_resolution(...)` → 加 `world`
+
+2. **四个新私有方法**：
+   - `_decide_monster_action(ai_personality, hp_ratio, flee_threshold) -> str`
+   - `_roll_monster_attack(name, damage_dice, hit_bonus, player_ac) -> tuple[bool, int, DiceRoll]`
+   - `_resolve_monster_responses(participants, state, world) -> tuple[updated_parts, changes, rolls, metadata]`
+   - `_compute_combat_xp(participants, world) -> int`
+
+3. **整合在 `_compute_attack_resolution` 末尾**：
+   - 若 `combat_active and not combat_cleared`：调用 `_resolve_monster_responses`
+   - 若 `combat_cleared`：调用 `_compute_combat_xp` + 追加 `StateChange("player", "set", "xp", ...)`
+   - metadata 新增 `monster_responses` / `xp_awarded`
+
+**设计决策**：
+- 无 `attacks` 定义的怪物 → action="hold"，不发起攻击（不消耗骰子）
+- `flee_threshold=0.0`（默认）→ 怪物从不主动逃跑
+- `aggressive` 仅在 `hp < 10%` 时才逃跑；`defensive/cowardly` 在 `hp < threshold` 时逃跑
+- 玩家 AC 暂用无装甲公式：`10 + DEX_mod`（装备系统深化后消费 equipped_ac）
+
+**测试**：`tests/test_rules_engine.py` 新增 6 个战斗测试；`tests/test_content_registries.py` 新增 3 个（F-C content）
+
+
+### [D-R33] 设计变形修复：base_ac 语义 + get_equippable + ConsumableData.effect（2026-03-02）
+
+**背景**：F-A 实现后发现三处代码与设计文档存在语义偏差。
+
+**Fix 1：`ArmorData.base_ac` 语义对齐（`items.py` + `inventory.py`）**
+
+- **问题**：设计规范 §6.3 公式 `轻甲: base_ac + DEX_mod`（无 `10 +` 前缀），含义是 `base_ac` 为绝对值（如皮甲=12）；原实现存增量（`ac_bonus=2`），公式 `10 + base_ac + DEX_mod`，当前数值相同但语义不对齐。
+- **`_build_armor_data`**：非盾牌护甲改存绝对值 `base_ac = 10 + ac_bonus`；盾牌保持加成值 `base_ac = ac_bonus`（设计规范盾牌是"当前 AC + 加成"）。
+- **`_compute_ac`**：去掉 `10 +` 前缀（`base_ac + DEX_mod`），与设计规范公式完全对齐。
+- **数值不变**：所有现有 AC 测试零改（旧 `10+2+1=13`，新 `12+1=13`）。
+- **测试**：`test_item_builds_armor_data_from_type_and_subtype` 更新 2 处 `base_ac` 断言（`2→12`，`4→14`）。
+
+**Fix 2：`get_equippable()` 扩展条件（`items.py`）**
+
+- **问题**：仅依赖 `item.slot` 判断可装备性，而 equip 验证用 sub-struct；有 `weapon_data` 但无 `slot` 的武器会被遗漏。
+- **改动**：条件改为 `item.slot or item.weapon_data is not None or item.armor_data is not None`。
+- **测试零改**：现有测试数据的 equippable 物品都有 `item.slot`，结果集不变。
+
+**Fix 3：`resolve_item_heal_amount` 优先读 `ConsumableData.effect`（`handler_utils.py`）**
+
+- **问题**：`consumable_data.effect` 字段填充后无消费端，`resolve_item_heal_amount()` 仍读 `item.heal_amount`。
+- **改动**：优先走 `consumable_data.effect["params"]["amount"]` 路径，fallback 到 `heal_amount`。
+- **测试零改**：heal 值相同，HP delta 断言全部不变。
+
+---
+
+### [D-S-AOE] SpellHandler 法术 DC + 豁免检定 + 多目标（2026-03-02）
+
+**背景**：F-B 已添加 `SkillEffect.save`/`save_dc_stat`/`half_on_save` 字段；F-C 已添加 `MonsterTemplate.abilities`。现在实现消费端。
+
+**改动文件**：`spell_resolver.py` / `spell_effects.py` / `spell.py`
+
+#### 法术 DC（`spell_resolver.py`）
+
+新增 `resolve_spell_dc(state, world) -> int`：
+- `DC = 8 + state.player.proficiency_bonus + state.player.get_modifier(resolve_spellcasting_ability(state, world))`
+- 在 `_compute_cast_spell` 初始化 ctx 时计算并存入 `ctx["spell_dc"]`
+
+#### 豁免检定（`spell_effects.py apply_combat_damage`）
+
+- 签名加 `world: WorldInstance`（`apply_combat_target` 同步透传）
+- 在 damage 算完后，检查 `effect.save`：
+  - 从 `world.monsters.get(target_monster_id).abilities` 取存档属性分
+  - `save_mod = (ability_score - 10) // 2`
+  - `roll_dice("1d20") + save_mod >= spell_dc` → 通过
+  - `half_on_save=True` → 半伤；`half_on_save=False` → 0 伤
+  - ctx 追加 `save_rolls` 记录（target_monster_id, save_ability, roll, mod, total, dc, succeeded）
+- 结果元数据：`save_dc` + `save_rolls` 仅在有存档时追加
+
+#### 多目标/AOE（`spell.py` + `spell_resolver.py`）
+
+- `resolve_cast_targets()` 现在接受多元素 list → `{"mode": "combat", "targets": [...]}`
+- `_compute_cast_spell`：`len == 1` 走原有路径；`len > 1` 循环调用 `apply_combat_target`
+  - `ctx["damage_total"]` 改为累加（多目标求和）
+  - `apply_combat_damage` 用 `ctx["pending_hostile_payloads"].get(sub_area_id, hostile_payload)` 链式读取（与 `apply_combat_control` 对齐）
+  - 所有目标都失败时才 early exit，否则已命中目标的变更保留
+
+**测试基线**：898 passed（+14，含 F-C 的 10 个新增）；spell handler 24 通过（新增 5 个 DC/豁免/多目标测试）

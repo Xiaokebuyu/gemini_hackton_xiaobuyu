@@ -31,6 +31,10 @@ class FlagSlice(StateSlice):
     def has(self, key: str) -> bool:
         return key in self.flags
 
+    def get_all(self) -> dict[str, Any]:
+        """Return defensive copy of all flags."""
+        return dict(self.flags)
+
     def set(self, key: str, value: Any) -> None:
         self.flags[key] = value
         self._dirty = True

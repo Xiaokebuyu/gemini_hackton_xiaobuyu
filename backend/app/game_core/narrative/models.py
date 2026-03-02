@@ -19,7 +19,7 @@ class ToolResult:
 
     @classmethod
     def noop(cls, message: str = "no-op") -> "ToolResult":
-        return cls(success=True, message=message, metadata={"status": "stub"})
+        return cls(success=True, message=message, metadata={"status": "noop"})
 
 
 @dataclass(slots=True)

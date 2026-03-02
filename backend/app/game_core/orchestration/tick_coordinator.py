@@ -7,6 +7,8 @@ from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
+MAX_ACTION_LOG = 100  # 每个 session 保留的最近动作条数上限（防止无界增长污染 LLM 上下文）
+
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.game_core.orchestration.pipeline import PipelineOrchestrator
@@ -164,6 +166,8 @@ class TickCoordinator:
         if result.narrative_hints:
             record["narrative_hints"] = list(result.narrative_hints)
         self.action_log.append(record)
+        if len(self.action_log) > MAX_ACTION_LOG:
+            self.action_log = self.action_log[-MAX_ACTION_LOG:]
 
     def _apply_delta(self, delta: StateDelta | None) -> None:
         if delta is None:

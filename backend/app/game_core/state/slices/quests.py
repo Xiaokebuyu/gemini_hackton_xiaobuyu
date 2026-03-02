@@ -104,6 +104,18 @@ class QuestSlice(StateSlice):
             if ms.state in {"AVAILABLE", "ACTIVE"}
         ]
 
+    def get_active_quests(self) -> list[dict[str, Any]]:
+        """Return dynamic quests with status in_progress, active, or accepted."""
+        active_statuses = {"in_progress", "active", "accepted"}
+        return [
+            dict(q) for q in self.dynamic_quests.values()
+            if isinstance(q, dict) and q.get("status") in active_statuses
+        ]
+
+    def get_completion(self, chapter_id: str) -> float:
+        """Return chapter completion (0.0-1.0), 0.0 if not tracked."""
+        return self.chapter_completion.get(chapter_id, 0.0)
+
     def advance_milestone(
         self,
         milestone_id: str,

@@ -43,6 +43,7 @@ from app.game_core.rules.handlers.spell_resolver import (
     resolve_effect_payload,
     resolve_effect_type,
     resolve_resource_cost,
+    resolve_spell_dc,
     resolve_spell_level,
     resolve_spell_template,
     resolve_spellcasting_ability,
@@ -122,7 +123,7 @@ class SpellHandler(StaticCommandHandler):
 
         resolved_slot_level = spell_level
         if spell_level > 0:
-            slot_level = self._coerce_int(cmd.params.get("slot_level"))
+            slot_level = coerce_int(cmd.params.get("slot_level"))
             if slot_level is not None:
                 resolved_slot_level = slot_level
             if resolved_slot_level < spell_level:
@@ -149,10 +150,11 @@ class SpellHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         spell_id = str(cmd.params["spell_id"]).strip()
         template = resolve_spell_template(spell_id, world)
-        assert template is not None
+        if template is None:
+            return ExecuteResult.error("internal: spell template not found")
         spell_level = resolve_spell_level(template)
         resolved_slot_level = spell_level
-        slot_level = self._coerce_int(cmd.params.get("slot_level"))
+        slot_level = coerce_int(cmd.params.get("slot_level"))
         if slot_level is not None:
             resolved_slot_level = slot_level
 
@@ -201,6 +203,8 @@ class SpellHandler(StaticCommandHandler):
             "target_effect_count": 0,
             "combat_active": False,
             "combat_cleared": False,
+            "spell_dc": resolve_spell_dc(state, world),
+            "save_rolls": [],
         }
 
         if target_mode == "self":
@@ -217,7 +221,7 @@ class SpellHandler(StaticCommandHandler):
                 ctx,
                 roll_dice=self._roll_dice_expression,
             )
-        else:
+        elif len(resolved_targets) == 1:
             early = apply_combat_target(
                 state,
                 template,
@@ -228,8 +232,32 @@ class SpellHandler(StaticCommandHandler):
                 resolved_slot_level,
                 resolved_targets,
                 ctx,
+                world,
                 roll_dice=self._roll_dice_expression,
             )
+        else:
+            # AOE/多目标：逐个应用，ctx["pending_hostile_payloads"] 链式累积
+            early = None
+            for target_id in resolved_targets:
+                sub_early = apply_combat_target(
+                    state,
+                    template,
+                    effect,
+                    effect_type,
+                    spell_id,
+                    spell_level,
+                    resolved_slot_level,
+                    [target_id],
+                    ctx,
+                    world,
+                    roll_dice=self._roll_dice_expression,
+                )
+                if sub_early is not None:
+                    early = sub_early  # 记录失败，但继续尝试其他目标
+            # 只有所有目标都失败（ctx 中无任何 hostile 变更）才提前退出
+            if early is not None and not ctx["pending_hostile_payloads"]:
+                return early
+            early = None
         if early is not None:
             return early
 
@@ -341,6 +369,9 @@ class SpellHandler(StaticCommandHandler):
                     "combat_cleared": ctx["combat_cleared"],
                 }
             )
+        if ctx.get("save_rolls"):
+            metadata["save_dc"] = ctx["spell_dc"]
+            metadata["save_rolls"] = list(ctx["save_rolls"])
         return handler_success(
             "spell",
             "cast_spell",
@@ -475,6 +506,4 @@ class SpellHandler(StaticCommandHandler):
     def _normalize_effect_ids(raw_effect_ids: Any) -> set[str]:
         return coerce_effect_ids(raw_effect_ids)
 
-    @staticmethod
-    def _coerce_int(raw_value: Any) -> int | None:
-        return coerce_int(raw_value)
+

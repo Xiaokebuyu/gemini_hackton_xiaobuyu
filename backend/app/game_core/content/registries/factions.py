@@ -16,7 +16,7 @@ class FactionTemplate:
     name: str = ""
     description: str = ""
     alignment: str = ""
-    relations: dict[str, Any] = field(default_factory=dict)
+    faction_relations: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     behavioral_rules: str = ""
     initial_standing: int | None = None
@@ -41,9 +41,10 @@ class FactionRegistry(ContentRegistry):
                 if raw_val is not None and self._coerce_non_empty_string(raw_val) is None:
                     self._load_issues.append(f"faction '{fid}' has invalid {field_name}")
 
-            raw_relations = raw.get("relations")
+            # Merge "relations" legacy key → "faction_relations" (design spec canonical name)
+            raw_relations = raw.get("faction_relations", raw.get("relations"))
             if raw_relations is not None and not isinstance(raw_relations, Mapping):
-                self._load_issues.append(f"faction '{fid}' has invalid relations")
+                self._load_issues.append(f"faction '{fid}' has invalid faction_relations")
 
             raw_tags = raw.get("tags")
             if raw_tags is not None:
@@ -61,7 +62,7 @@ class FactionRegistry(ContentRegistry):
                 name=str(raw.get("name") or ""),
                 description=str(raw.get("description") or ""),
                 alignment=str(raw.get("alignment") or ""),
-                relations=(
+                faction_relations=(
                     dict(raw_relations) if isinstance(raw_relations, Mapping) else {}
                 ),
                 tags=(

@@ -91,7 +91,7 @@ class StateContainer:
         container.register(time_slice)
 
         player_slice = PlayerSlice()
-        player_slice.restore(player_slice.snapshot())
+        player_slice.clear_dirty()
         container.register(player_slice)
 
         relation_slice = RelationSlice()
@@ -119,7 +119,7 @@ class StateContainer:
         container.register(party_slice)
 
         narrative_plan_slice = NarrativePlanSlice()
-        narrative_plan_slice.restore(narrative_plan_slice.snapshot())
+        narrative_plan_slice.clear_dirty()
         container.register(narrative_plan_slice)
 
         scene_slice = SceneSlice()

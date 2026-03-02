@@ -7,9 +7,11 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any, Mapping, Protocol
 
+from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
+from app.game_core.state import StateChange
 
 
 logger = logging.getLogger(__name__)
@@ -361,12 +363,11 @@ class NpcScheduleHook(NoOpSettlementHook):
                 skipped_invalid_count += 1
                 continue
             accepted_characters.add(normalized_move.character_id)
-            context.state.areas.move_npc(
-                normalized_move.character_id,
-                normalized_move.area_id or "",
-                normalized_move.location_id,
-            )
-            moved_npc_ids.append(normalized_move.character_id)
+            npc_id = normalized_move.character_id
+            target_area = normalized_move.area_id or ""
+            context.state.areas.move_npc(npc_id, target_area, normalized_move.location_id)
+            context.record_change(StateChange(slice="areas", operation="set", path=f"npc_location.{npc_id}", value=target_area))
+            moved_npc_ids.append(npc_id)
             updated_areas.add(normalized_move.area_id or "")
 
         sse_events: list[SSEEvent] = []
@@ -494,7 +495,7 @@ class NpcScheduleHook(NoOpSettlementHook):
         if isinstance(raw_decision, NpcScheduleDecision):
             return NpcScheduleDecision(
                 moves=list(raw_decision.moves),
-                metadata=cls._normalize_mapping(raw_decision.metadata),
+                metadata=_normalize_mapping(raw_decision.metadata),
             )
         if not isinstance(raw_decision, Mapping):
             return NpcScheduleDecision(metadata={"status": "invalid_response"})
@@ -503,7 +504,7 @@ class NpcScheduleHook(NoOpSettlementHook):
         moves = list(raw_moves) if isinstance(raw_moves, list) else []
         return NpcScheduleDecision(
             moves=moves,
-            metadata=cls._normalize_mapping(raw_decision.get("metadata")),
+            metadata=_normalize_mapping(raw_decision.get("metadata")),
         )
 
     @classmethod
@@ -637,12 +638,6 @@ class NpcScheduleHook(NoOpSettlementHook):
                 if location_id:
                     location_ids.add(location_id)
         return location_ids
-
-    @staticmethod
-    def _normalize_mapping(value: Any) -> dict[str, Any]:
-        if not isinstance(value, Mapping):
-            return {}
-        return {str(key): raw_value for key, raw_value in value.items()}
 
     @staticmethod
     def _coerce_non_empty_string(value: Any) -> str | None:

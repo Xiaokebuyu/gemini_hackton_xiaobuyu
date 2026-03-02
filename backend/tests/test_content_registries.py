@@ -562,7 +562,7 @@ def test_map_query_adjacent_and_region():
 
 
 def test_map_get_returns_typed_template():
-    from app.game_core.content.registries.maps import AreaTemplate
+    from app.game_core.content.registries.maps import AreaTemplate, Connection
 
     registry = MapRegistry()
     registry.load({
@@ -587,7 +587,7 @@ def test_map_get_returns_typed_template():
     assert template.name == "Town Square"
     assert template.region == "central"
     assert template.base_danger == 0.5
-    assert template.connections == ["forest"]
+    assert template.connections == [Connection(target="forest")]
     assert "inn" in template.sub_locations
     assert template.sub_locations["inn"]["name"] == "Rusty Dragon"
     assert template.encounter_profile is not None
@@ -1202,7 +1202,7 @@ def test_faction_validates_name_description_and_tags():
     assert "faction 'broken' has invalid name" in issues
     assert "faction 'broken' has invalid description" in issues
     assert "faction 'broken' has invalid alignment" in issues
-    assert "faction 'broken' has invalid relations" in issues
+    assert "faction 'broken' has invalid faction_relations" in issues
     assert "faction 'broken' tags[1] must be a non-empty string" in issues
 
 
@@ -1334,7 +1334,7 @@ def test_faction_get_returns_typed_template():
     assert faction.behavioral_rules == "Patrol the streets."
     assert faction.initial_standing == 5
     assert faction.base_standing is None
-    assert faction.relations == {}
+    assert faction.faction_relations == {}
 
     assert registry.get("nonexistent") is None
 
@@ -1472,13 +1472,16 @@ def test_item_get_returns_typed_template():
     assert item.rarity == "common"
     assert item.base_price == 100
     assert item.slot == "main_hand"
-    assert item.damage_dice == "1d8"
-    assert item.damage_type == "slashing"
+    # weapon attributes are now in weapon_data sub-struct
+    assert item.weapon_data is not None
+    assert item.weapon_data.damage_dice == "1d8"
+    assert item.weapon_data.damage_type == "slashing"
 
     assert registry.get("nonexistent") is None
 
 
 def test_item_heal_amount_aliases():
+    """heal / restore_hp are legacy aliases merged into heal_amount at load time."""
     from app.game_core.content.registries.items import ItemTemplate
 
     registry = ItemRegistry()
@@ -1491,14 +1494,12 @@ def test_item_heal_amount_aliases():
     p1 = registry.get("potion1")
     assert isinstance(p1, ItemTemplate)
     assert p1.heal_amount == 10
-    assert p1.heal is None
-    assert p1.restore_hp is None
 
     p2 = registry.get("potion2")
-    assert p2.heal == 15
+    assert p2.heal_amount == 15  # heal alias merged into heal_amount
 
     p3 = registry.get("potion3")
-    assert p3.restore_hp == 20
+    assert p3.heal_amount == 20  # restore_hp alias merged into heal_amount
 
 
 # ------------------------------------------------------------------
@@ -1507,7 +1508,7 @@ def test_item_heal_amount_aliases():
 
 
 def test_skill_get_returns_typed_template():
-    from app.game_core.content.registries.skills import SkillTemplate
+    from app.game_core.content.registries.skills import SkillCost, SkillEffect, SkillTemplate
 
     registry = SkillRegistry()
     registry.load({
@@ -1516,8 +1517,7 @@ def test_skill_get_returns_typed_template():
             "category": "spell",
             "spell_level": 3,
             "school": "evocation",
-            "concentration": False,
-            "effect": {"type": "damage", "dice": "8d6"},
+            "effect": {"type": "damage", "dice": "8d6", "concentration": False},
             "cost": {"resource": "spell_slot", "amount": 1},
         },
     })
@@ -1528,11 +1528,11 @@ def test_skill_get_returns_typed_template():
     assert spell.category == "spell"
     assert spell.spell_level == 3
     assert spell.school == "evocation"
-    assert spell.concentration is False
-    assert isinstance(spell.effect, dict)
-    assert spell.effect["type"] == "damage"
-    assert isinstance(spell.cost, dict)
-    assert spell.cost["resource"] == "spell_slot"
+    assert isinstance(spell.effect, SkillEffect)
+    assert spell.effect.type == "damage"
+    assert spell.effect.concentration is False
+    assert isinstance(spell.cost, SkillCost)
+    assert spell.cost.resource == "spell_slot"
 
     assert registry.get("nonexistent") is None
 
@@ -1552,3 +1552,627 @@ def test_skill_template_category_normalization():
     assert registry.get("via_type").category == "spell"
     assert registry.get("via_level").category == "spell"
     assert registry.get("non_spell").category == ""
+
+
+# ===========================================================================
+# F-B: SkillEffect / SkillCost / StatusEffectTemplate typed dataclasses
+# ===========================================================================
+
+
+def test_skill_effect_fields_parsed_correctly():
+    """SkillEffect fields are populated from the effect sub-dict."""
+    from app.game_core.content.registries.skills import SkillEffect
+
+    registry = SkillRegistry()
+    registry.load({
+        "mage_armor": {
+            "id": "mage_armor",
+            "category": "spell",
+            "spell_level": 1,
+            "school": "abjuration",
+            "effect": {
+                "type": "buff",
+                "applies_status": "mage_armor_effect",
+                "duration_ticks": 6,
+                "modifiers": {"ac": 3},
+                "concentration": True,
+                "upcast_dice": "1d4",
+            },
+            "cost": {"action_type": "action"},
+        },
+    })
+
+    spell = registry.get("mage_armor")
+    assert isinstance(spell.effect, SkillEffect)
+    assert spell.effect.type == "buff"
+    assert spell.effect.applies_status == "mage_armor_effect"
+    assert spell.effect.status_duration == 6      # parsed from duration_ticks alias
+    assert spell.effect.modifiers == {"ac": 3}
+    assert spell.effect.concentration is True
+    assert spell.effect.upcast_dice == "1d4"
+
+
+def test_skill_cost_fields_parsed_correctly():
+    """SkillCost fields are populated including resource_amount alias."""
+    from app.game_core.content.registries.skills import SkillCost
+
+    registry = SkillRegistry()
+    registry.load({
+        "rage": {
+            "id": "rage",
+            "effect": {"type": "buff"},
+            "cost": {"action_type": "bonus_action", "resource": "rage_charge", "amount": 1},
+        },
+    })
+
+    skill = registry.get("rage")
+    assert isinstance(skill.cost, SkillCost)
+    assert skill.cost.action_type == "bonus_action"
+    assert skill.cost.resource == "rage_charge"
+    assert skill.cost.resource_amount == 1   # normalized from "amount"
+
+
+def test_skill_effect_old_key_aliases_normalized():
+    """Alias keys (damage/heal/duration_ticks) are resolved to canonical fields."""
+    from app.game_core.content.registries.skills import SkillEffect
+
+    registry = SkillRegistry()
+    registry.load({
+        "fire_bolt": {
+            "id": "fire_bolt",
+            "category": "spell",
+            "spell_level": 1,
+            "school": "evocation",
+            "effect": {"type": "damage", "damage": 5, "duration_ticks": 3},
+            "cost": {"action_type": "action"},
+        },
+        "minor_heal": {
+            "id": "minor_heal",
+            "category": "spell",
+            "spell_level": 1,
+            "school": "evocation",
+            "effect": {"type": "heal", "heal": 8},
+            "cost": {"action_type": "action"},
+        },
+    })
+
+    bolt = registry.get("fire_bolt")
+    assert isinstance(bolt.effect, SkillEffect)
+    assert bolt.effect.damage_amount == 5   # from "damage" alias
+    assert bolt.effect.status_duration == 3  # from "duration_ticks" alias
+
+    heal = registry.get("minor_heal")
+    assert heal.effect.heal_amount == 8     # from "heal" alias
+
+
+def test_status_effect_template_loaded_from_sub_table():
+    """StatusEffectTemplate entries in status_effects key are registered."""
+    from app.game_core.content.registries.skills import StatusEffectTemplate
+
+    registry = SkillRegistry()
+    registry.load({
+        "status_effects": {
+            "burning": {
+                "id": "burning",
+                "name": "燃烧",
+                "category": "debuff",
+                "stackable": False,
+                "tick_damage": "1d4",
+                "tick_damage_type": "fire",
+                "prevents_action": False,
+                "cure_conditions": ["lesser_restoration", "long_rest"],
+            },
+        },
+        "fireball": {
+            "id": "fireball",
+            "category": "spell",
+            "spell_level": 3,
+            "school": "evocation",
+            "effect": {"type": "damage", "dice": "8d6"},
+            "cost": {"action_type": "action"},
+        },
+    })
+
+    se = registry.get_status_effect("burning")
+    assert isinstance(se, StatusEffectTemplate)
+    assert se.id == "burning"
+    assert se.name == "燃烧"
+    assert se.category == "debuff"
+    assert se.tick_damage == "1d4"
+    assert se.tick_damage_type == "fire"
+    assert se.cure_conditions == ["lesser_restoration", "long_rest"]
+
+    assert registry.get_status_effect("nonexistent") is None
+    assert len(registry.list_status_effects()) == 1
+
+    # Skills are still loadable alongside status_effects
+    assert registry.get("fireball") is not None
+
+
+def test_skill_effect_defaults_on_empty_effect():
+    """SkillEffect has safe defaults when effect dict is absent or empty."""
+    from app.game_core.content.registries.skills import SkillEffect
+
+    registry = SkillRegistry()
+    registry.load({"stealth": {"id": "stealth", "name": "Stealth"}})
+
+    skill = registry.get("stealth")
+    assert isinstance(skill.effect, SkillEffect)
+    assert skill.effect.type == ""
+    assert skill.effect.concentration is False
+    assert skill.effect.modifiers == {}
+    assert skill.effect.tags == []
+
+
+# ===========================================================================
+# F-D: Connection typed dataclass
+# ===========================================================================
+
+def test_map_connection_typed_dataclass_from_dict() -> None:
+    """Connection dict entries are parsed into typed Connection objects."""
+    from app.game_core.content.registries.maps import Connection, MapRegistry
+
+    registry = MapRegistry()
+    registry.load({
+        "town": {
+            "id": "town",
+            "connections": [
+                {
+                    "target_map_id": "forest",
+                    "connection_type": "travel",
+                    "travel_time": "30分钟",
+                },
+                {
+                    "target_map_id": "cave",
+                    "connection_type": "secret",
+                    "travel_time": "2小时",
+                },
+            ],
+        },
+    })
+
+    template = registry.get("town")
+    assert len(template.connections) == 2
+
+    forest_conn = template.connections[0]
+    assert isinstance(forest_conn, Connection)
+    assert forest_conn.target == "forest"
+    assert forest_conn.type == "travel"
+    assert forest_conn.travel_time_minutes == 30
+    assert forest_conn.travel_slots == 1   # ceil(30/60)=1
+
+    cave_conn = template.connections[1]
+    assert cave_conn.target == "cave"
+    assert cave_conn.type == "secret"
+    assert cave_conn.travel_time_minutes == 120
+    assert cave_conn.travel_slots == 2   # ceil(120/60)=2
+
+
+def test_map_connection_travel_time_parsing() -> None:
+    """_parse_travel_minutes handles Chinese time strings correctly."""
+    from app.game_core.content.registries.maps import MapRegistry
+
+    registry = MapRegistry()
+    assert registry._parse_travel_minutes("30分钟") == 30
+    assert registry._parse_travel_minutes("2小时") == 120
+    assert registry._parse_travel_minutes("2小时30分钟") == 150
+    assert registry._parse_travel_minutes("unknown") == 60  # fallback
+
+
+def test_map_get_connections_and_get_connection() -> None:
+    """get_connections() and get_connection() return typed Connection objects."""
+    from app.game_core.content.registries.maps import Connection, MapRegistry
+
+    registry = MapRegistry()
+    registry.load({
+        "town": {
+            "id": "town",
+            "connections": [
+                {"target_map_id": "forest", "travel_time": "30分钟"},
+                {"target_map_id": "cave", "travel_time": "2小时"},
+            ],
+        },
+        "forest": {"id": "forest"},
+        "cave": {"id": "cave"},
+    })
+
+    conns = registry.get_connections("town")
+    assert len(conns) == 2
+    assert all(isinstance(c, Connection) for c in conns)
+
+    conn = registry.get_connection("town", "forest")
+    assert conn is not None
+    assert conn.target == "forest"
+    assert conn.travel_slots == 1
+
+    conn_cave = registry.get_connection("town", "cave")
+    assert conn_cave is not None
+    assert conn_cave.travel_slots == 2
+
+    assert registry.get_connection("town", "unknown") is None
+    assert registry.get_connections("unknown") == []
+
+
+def test_map_get_adjacent_backward_compat() -> None:
+    """get_adjacent() still returns list[str] even after Connection migration."""
+    from app.game_core.content.registries.maps import MapRegistry
+
+    registry = MapRegistry()
+    registry.load({
+        "town": {
+            "id": "town",
+            "connections": [
+                {"target_map_id": "forest"},
+                {"target_map_id": "cave"},
+            ],
+        },
+    })
+
+    adj = registry.get_adjacent("town")
+    assert adj == ["forest", "cave"]
+    assert all(isinstance(x, str) for x in adj)
+
+
+# ===========================================================================
+# F-E: ClassTemplate class_resources_schema
+# ===========================================================================
+
+def test_class_resources_schema_loads_correctly() -> None:
+    """class_resources_schema is parsed into the ClassTemplate correctly."""
+    from app.game_core.content.registries.classes import ClassRegistry
+
+    registry = ClassRegistry()
+    registry.load({
+        "classes": {
+            "fighter": {
+                "id": "fighter",
+                "class_resources_schema": {
+                    "action_surge": {
+                        "max_at_level": {"2": 1, "17": 2},
+                        "recovery": "short_rest",
+                    },
+                    "second_wind": {
+                        "max_at_level": {"1": 1},
+                        "recovery": "short_rest",
+                    },
+                },
+            },
+        },
+    })
+
+    template = registry.get_class("fighter")
+    assert template is not None
+    schema = template.class_resources_schema
+    assert "action_surge" in schema
+    assert schema["action_surge"]["max_at_level"] == {"2": 1, "17": 2}
+    assert schema["action_surge"]["recovery"] == "short_rest"
+    assert "second_wind" in schema
+    assert schema["second_wind"]["max_at_level"] == {"1": 1}
+
+
+def test_class_resources_schema_validates_format() -> None:
+    """Invalid class_resources_schema entries produce load issues."""
+    from app.game_core.content.registries.classes import ClassRegistry
+
+    registry = ClassRegistry()
+    registry.load({
+        "classes": {
+            "broken": {
+                "id": "broken",
+                "class_resources_schema": "not_a_dict",
+            },
+            "partial": {
+                "id": "partial",
+                "class_resources_schema": {
+                    "bad_resource": "not_a_mapping",
+                    "no_level": {
+                        "max_at_level": "should_be_mapping",
+                        "recovery": "short_rest",
+                    },
+                },
+            },
+        },
+    })
+
+    issues = registry.validate()
+    assert any("broken" in i and "class_resources_schema" in i for i in issues)
+    assert any("bad_resource" in i and "must be a mapping" in i for i in issues)
+    assert any("no_level" in i and "max_at_level" in i for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# F-A: Item 分类型子结构测试
+# ---------------------------------------------------------------------------
+
+def test_item_builds_armor_data_from_type_and_subtype():
+    from app.game_core.content.registries.items import ArmorData
+
+    registry = ItemRegistry()
+    registry.load({
+        "leather": {
+            "id": "leather",
+            "type": "armor",
+            "subtype": "light",
+            "ac_bonus": 2,
+            "rarity": "common",
+        },
+        "chainmail": {
+            "id": "chainmail",
+            "type": "armor",
+            "subtype": "heavy",
+            "ac_bonus": 4,
+        },
+        "no_subtype_armor": {
+            "id": "no_subtype_armor",
+            "type": "armor",
+            "ac_bonus": 1,
+        },
+    })
+
+    assert registry.validate() == []
+
+    leather = registry.get("leather")
+    assert leather is not None
+    assert leather.weapon_data is None
+    assert leather.consumable_data is None
+    assert isinstance(leather.armor_data, ArmorData)
+    assert leather.armor_data.armor_type == "light"
+    assert leather.armor_data.base_ac == 12            # 绝对值：10 + ac_bonus(2)
+    assert leather.armor_data.dex_cap is None          # light → 无上限
+    assert leather.armor_data.stealth_disadvantage is False
+    assert leather.armor_data.proficiency == "light"
+
+    chain = registry.get("chainmail")
+    assert chain is not None
+    assert chain.armor_data.armor_type == "heavy"
+    assert chain.armor_data.base_ac == 14              # 绝对值：10 + ac_bonus(4)
+    assert chain.armor_data.dex_cap == 0               # heavy → DEX 无加成
+    assert chain.armor_data.stealth_disadvantage is True
+
+    no_sub = registry.get("no_subtype_armor")
+    assert no_sub is not None
+    assert no_sub.armor_data.armor_type == "light"     # 无 subtype → 默认 light
+
+
+def test_item_builds_shield_armor_data():
+    from app.game_core.content.registries.items import ArmorData
+
+    registry = ItemRegistry()
+    registry.load({
+        "buckler": {
+            "id": "buckler",
+            "type": "armor",
+            "subtype": "shield",
+            "ac_bonus": 2,
+        },
+    })
+
+    assert registry.validate() == []
+
+    item = registry.get("buckler")
+    assert item is not None
+    assert isinstance(item.armor_data, ArmorData)
+    assert item.armor_data.armor_type == "shield"
+    assert item.armor_data.base_ac == 2
+    assert item.armor_data.dex_cap is None
+    assert item.armor_data.stealth_disadvantage is False
+    assert item.armor_data.proficiency == "shield"
+
+
+def test_item_builds_weapon_data_from_flat_fields():
+    from app.game_core.content.registries.items import WeaponData
+
+    registry = ItemRegistry()
+    registry.load({
+        "longsword": {
+            "id": "longsword",
+            "type": "weapon",
+            "damage_dice": "1d8",
+            "damage_type": "slashing",
+            "weapon_slot": "main_hand",
+            "weapon_properties": ["VERSATILE"],
+            "versatile_dice": "1d10",
+            "weapon_proficiency": "martial",
+        },
+        "dagger": {
+            "id": "dagger",
+            "type": "weapon",
+            "damage_dice": "1d4",
+            "damage_type": "piercing",
+            # no weapon_slot → defaults to main_hand
+        },
+    })
+
+    assert registry.validate() == []
+
+    sword = registry.get("longsword")
+    assert sword is not None
+    assert isinstance(sword.weapon_data, WeaponData)
+    assert sword.weapon_data.damage_dice == "1d8"
+    assert sword.weapon_data.damage_type == "slashing"
+    assert sword.weapon_data.slot == "main_hand"
+    assert sword.weapon_data.properties == ["VERSATILE"]
+    assert sword.weapon_data.versatile_dice == "1d10"
+    assert sword.weapon_data.proficiency == "martial"
+    assert sword.armor_data is None
+    assert sword.consumable_data is None
+
+    dagger = registry.get("dagger")
+    assert dagger is not None
+    assert dagger.weapon_data.slot == "main_hand"      # default
+
+
+def test_item_builds_consumable_data_from_heal_amount():
+    from app.game_core.content.registries.items import ConsumableData
+
+    registry = ItemRegistry()
+    registry.load({
+        "potion": {"id": "potion", "heal_amount": 8},
+        "trinket": {"id": "trinket", "name": "Odd Trinket"},  # no heal
+    })
+
+    potion = registry.get("potion")
+    assert potion is not None
+    assert isinstance(potion.consumable_data, ConsumableData)
+    assert potion.consumable_data.trigger == "on_use"
+    assert potion.consumable_data.charges == 1
+    assert potion.consumable_data.effect["type"] == "heal"
+    assert potion.consumable_data.effect["params"]["amount"] == 8
+    assert potion.weapon_data is None
+    assert potion.armor_data is None
+
+    trinket = registry.get("trinket")
+    assert trinket is not None
+    assert trinket.consumable_data is None
+
+
+def test_item_query_get_weapons_get_armors_get_consumables():
+    registry = ItemRegistry()
+    registry.load({
+        "sword": {
+            "id": "sword", "type": "weapon",
+            "damage_dice": "1d8", "damage_type": "slashing",
+            "weapon_properties": ["FINESSE"],
+        },
+        "bow": {
+            "id": "bow", "type": "weapon",
+            "damage_dice": "1d6", "damage_type": "piercing",
+            "weapon_slot": "ranged",
+        },
+        "leather": {"id": "leather", "type": "armor", "subtype": "light", "ac_bonus": 2},
+        "shield": {"id": "shield", "type": "armor", "subtype": "shield", "ac_bonus": 2},
+        "potion": {"id": "potion", "heal_amount": 5},
+        "misc": {"id": "misc"},
+    })
+
+    weapons = registry.get_weapons()
+    assert {w.id for w in weapons} == {"sword", "bow"}
+
+    finesse_weapons = registry.get_weapons(properties=["FINESSE"])
+    assert {w.id for w in finesse_weapons} == {"sword"}
+
+    armors = registry.get_armors()
+    assert {a.id for a in armors} == {"leather", "shield"}
+
+    light_armors = registry.get_armors(armor_type="light")
+    assert {a.id for a in light_armors} == {"leather"}
+
+    shields = registry.get_armors(armor_type="shield")
+    assert {s.id for s in shields} == {"shield"}
+
+    consumables = registry.get_consumables()
+    assert {c.id for c in consumables} == {"potion"}
+
+
+def test_item_query_get_by_price_range_and_by_tags():
+    registry = ItemRegistry()
+    registry.load({
+        "cheap": {"id": "cheap", "base_price": 5, "tags": ["loot", "common"]},
+        "mid": {"id": "mid", "base_price": 50, "tags": ["loot"]},
+        "pricey": {"id": "pricey", "base_price": 200, "tags": ["rare"]},
+        "free": {"id": "free", "base_price": 0, "tags": []},
+        "no_price": {"id": "no_price"},
+    })
+
+    in_range = registry.get_by_price_range(10, 100)
+    assert {i.id for i in in_range} == {"mid"}
+
+    cheap_range = registry.get_by_price_range(0, 50)
+    assert {i.id for i in cheap_range} == {"cheap", "mid", "free"}
+
+    loot = registry.get_by_tags(["loot"])
+    assert {i.id for i in loot} == {"cheap", "mid"}
+
+    loot_common = registry.get_by_tags(["loot", "common"])
+    assert {i.id for i in loot_common} == {"cheap"}
+
+
+# ===========================================================================
+# MonsterRegistry: MonsterAttack 新字段 + MonsterTemplate AI 字段（F-C）
+# ===========================================================================
+
+def test_monster_attack_loads_damage_fields() -> None:
+    """MonsterAttack 应正确加载 damage_dice / hit_bonus / damage_type。"""
+    registry = MonsterRegistry()
+    registry.load({
+        "goblin": {
+            "id": "goblin",
+            "hp": 7,
+            "ac": 13,
+            "attacks": [
+                {"name": "短剑", "damage_dice": "1d6+2", "hit_bonus": 4, "damage_type": "piercing"},
+                {"name": "bite", "damage_dice": "1d4"},  # 仅 name + damage_dice，其余默认
+            ],
+        }
+    })
+    template = registry.get("goblin")
+    assert template is not None
+    assert len(template.attacks) == 2
+
+    sword = template.attacks[0]
+    assert sword.name == "短剑"
+    assert sword.damage_dice == "1d6+2"
+    assert sword.hit_bonus == 4
+    assert sword.damage_type == "piercing"
+
+    bite = template.attacks[1]
+    assert bite.name == "bite"
+    assert bite.damage_dice == "1d4"
+    assert bite.hit_bonus == 0      # 默认
+    assert bite.damage_type == "physical"  # 默认
+
+
+def test_monster_template_ai_fields_load() -> None:
+    """MonsterTemplate 应正确加载 ai_personality / flee_threshold / xp_reward。"""
+    registry = MonsterRegistry()
+    registry.load({
+        "cowardly_rat": {
+            "id": "cowardly_rat",
+            "hp": 5,
+            "ac": 10,
+            "ai_personality": "cowardly",
+            "flee_threshold": 0.5,
+            "xp_reward": 10,
+        },
+        "aggressive_troll": {
+            "id": "aggressive_troll",
+            "hp": 84,
+            "ac": 15,
+            # 不填 → 使用默认
+        },
+    })
+    rat = registry.get("cowardly_rat")
+    assert rat is not None
+    assert rat.ai_personality == "cowardly"
+    assert rat.flee_threshold == 0.5
+    assert rat.xp_reward == 10
+
+    troll = registry.get("aggressive_troll")
+    assert troll is not None
+    assert troll.ai_personality == "aggressive"   # 默认
+    assert troll.flee_threshold == 0.0             # 默认
+    assert troll.xp_reward == 0                    # 默认
+
+
+def test_roll_damage_dice_various_formats() -> None:
+    """roll_damage_dice 应正确解析 NdM / NdM+B / NdM-B 格式，无效时返回 1。"""
+    from app.game_core.rules.handler_utils import roll_damage_dice
+
+    # 多次运行验证范围
+    for _ in range(50):
+        r = roll_damage_dice("1d4")
+        assert 1 <= r <= 4, f"1d4 out of range: {r}"
+
+        r = roll_damage_dice("2d6")
+        assert 2 <= r <= 12, f"2d6 out of range: {r}"
+
+        r = roll_damage_dice("1d8+3")
+        assert 4 <= r <= 11, f"1d8+3 out of range: {r}"
+
+        r = roll_damage_dice("1d4-1")
+        assert 1 <= r <= 3, f"1d4-1 out of range: {r}"  # min clamped to 1
+
+    # 无效格式
+    assert roll_damage_dice("invalid") == 1
+    assert roll_damage_dice("") == 1
+    assert roll_damage_dice("0d4") == 1   # 骰数为 0 → fallback

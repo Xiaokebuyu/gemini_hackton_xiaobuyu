@@ -234,3 +234,165 @@ class TestInventoryHandler:
         assert result.success is True
         assert result.metadata["amount"] == 1
         assert result.metadata["remaining"] == 1
+
+
+# ---------------------------------------------------------------------------
+# F-A: equip slot constraint + AC recalculation tests
+# ---------------------------------------------------------------------------
+
+def _make_typed_world() -> WorldInstance:
+    """World with typed armor/shield/weapon items for F-A tests."""
+    world = WorldInstance("test_typed")
+    items = ItemRegistry()
+    items.load({
+        "potion": {"id": "potion", "heal_amount": 5},
+        "trinket": {"id": "trinket", "name": "Odd Trinket"},
+        "sword": {"id": "sword", "name": "Sword"},
+        # armor (light): AC = 10 + 2 + DEX_mod
+        "leather_armor": {
+            "id": "leather_armor",
+            "type": "armor",
+            "subtype": "light",
+            "ac_bonus": 2,
+        },
+        # armor (heavy): AC = 10 + 4 (DEX ignored)
+        "chain_mail": {
+            "id": "chain_mail",
+            "type": "armor",
+            "subtype": "heavy",
+            "ac_bonus": 4,
+        },
+        # shield: adds base_ac on top of chest result
+        "buckler": {
+            "id": "buckler",
+            "type": "armor",
+            "subtype": "shield",
+            "ac_bonus": 2,
+        },
+    })
+    world.register(items)
+    return world
+
+
+def _make_typed_state(
+    *,
+    inventory: list[dict] | None = None,
+    equipment: dict | None = None,
+    hp: int = 10,
+    dex: int = 10,
+    ac: int = 10,
+) -> StateContainer:
+    state = StateContainer()
+    player = PlayerSlice()
+    payload: dict = {
+        "hp": hp,
+        "max_hp": 12,
+        "ac": ac,
+        "stats": {"str": 10, "dex": dex, "con": 10, "int": 10, "wis": 10, "cha": 10},
+        "inventory": inventory or [],
+    }
+    if equipment is not None:
+        payload["equipment"] = equipment
+    player.restore(payload)
+    state.register(player)
+    return state
+
+
+class TestInventoryHandlerEquipFA:
+    def test_equip_armor_rejects_wrong_slot(self) -> None:
+        """Armor (non-shield) can only go in 'chest', not main_hand."""
+        state = _make_typed_state(
+            inventory=[{"item_id": "leather_armor", "count": 1, "tags": []}],
+        )
+        result = _make_engine().execute(
+            Command(type="equip", params={"item_id": "leather_armor", "slot": "main_hand"}),
+            state,
+            _make_typed_world(),
+        )
+        assert result.success is False
+        assert "cannot be equipped in slot" in (result.errors[0] if result.errors else "")
+
+    def test_equip_shield_only_allows_off_hand(self) -> None:
+        """Shield must go to off_hand; chest is rejected."""
+        state = _make_typed_state(
+            inventory=[{"item_id": "buckler", "count": 1, "tags": []}],
+        )
+        result = _make_engine().execute(
+            Command(type="equip", params={"item_id": "buckler", "slot": "chest"}),
+            state,
+            _make_typed_world(),
+        )
+        assert result.success is False
+        assert "cannot be equipped in slot" in (result.errors[0] if result.errors else "")
+
+    def test_equip_armor_updates_ac(self) -> None:
+        """Equip light armor with DEX=12 → AC = 10 + 2 + 1 = 13."""
+        state = _make_typed_state(
+            inventory=[{"item_id": "leather_armor", "count": 1, "tags": []}],
+            dex=12,  # DEX mod = +1
+            ac=10,
+        )
+        result = _make_engine().execute(
+            Command(type="equip", params={"item_id": "leather_armor", "slot": "chest"}),
+            state,
+            _make_typed_world(),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "equipped"
+        assert result.metadata["ac"] == 13
+        _apply(result, state)
+        assert state.player.ac == 13
+
+    def test_equip_heavy_armor_ignores_dex(self) -> None:
+        """Heavy armor: AC = 10 + base_ac regardless of DEX."""
+        state = _make_typed_state(
+            inventory=[{"item_id": "chain_mail", "count": 1, "tags": []}],
+            dex=16,  # DEX mod = +3, but heavy armor ignores it
+            ac=10,
+        )
+        result = _make_engine().execute(
+            Command(type="equip", params={"item_id": "chain_mail", "slot": "chest"}),
+            state,
+            _make_typed_world(),
+        )
+        assert result.success is True
+        assert result.metadata["ac"] == 14  # 10 + 4
+        _apply(result, state)
+        assert state.player.ac == 14
+
+    def test_equip_shield_adds_ac_bonus(self) -> None:
+        """Shield equipped to off_hand adds its base_ac on top of current chest AC."""
+        # Start with leather armor already equipped
+        state = _make_typed_state(
+            inventory=[{"item_id": "buckler", "count": 1, "tags": []}],
+            equipment={"chest": {"item_id": "leather_armor"}},
+            dex=12,  # DEX mod = +1 → leather gives AC 13
+            ac=13,
+        )
+        result = _make_engine().execute(
+            Command(type="equip", params={"item_id": "buckler", "slot": "off_hand"}),
+            state,
+            _make_typed_world(),
+        )
+        assert result.success is True
+        assert result.metadata["ac"] == 15  # 13 (leather) + 2 (buckler)
+        _apply(result, state)
+        assert state.player.ac == 15
+
+    def test_unequip_armor_recalculates_ac(self) -> None:
+        """Unequipping armor reverts AC to unarmored (10 + DEX_mod)."""
+        state = _make_typed_state(
+            equipment={"chest": {"item_id": "leather_armor"}},
+            dex=12,
+            ac=13,  # was wearing leather armor
+        )
+        result = _make_engine().execute(
+            Command(type="unequip", params={"slot": "chest"}),
+            state,
+            _make_typed_world(),
+        )
+        assert result.success is True
+        assert result.metadata["status"] == "unequipped"
+        assert result.metadata["ac"] == 11  # unarmored: 10 + 1
+        _apply(result, state)
+        assert state.player.ac == 11

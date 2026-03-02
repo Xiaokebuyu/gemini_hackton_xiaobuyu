@@ -29,3 +29,13 @@ class SettlementContext:
         if result.success and result.delta is not None:
             self._apply_delta(result.delta)
         return result
+
+    def record_change(self, change: StateChange) -> None:
+        """Record a direct slice mutation in change_log + scene_bus.
+
+        Hooks that mutate state via slice methods directly (rather than through
+        execute_command) should call this afterwards so that change_log and
+        scene_bus remain consistent for later hooks and SSE consumers.
+        """
+        self.change_log.append(change)
+        self.scene_bus.record_state_change(change)

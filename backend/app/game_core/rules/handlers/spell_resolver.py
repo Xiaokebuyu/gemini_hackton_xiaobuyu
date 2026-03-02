@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
-from app.game_core.rules.handler_utils import coerce_non_empty_string
+from app.game_core.rules.handler_utils import coerce_int, coerce_non_empty_string
 from app.game_core.rules.models import ValidationResult
 from app.game_core.state import StateContainer
 
@@ -33,23 +33,21 @@ def resolve_spell_level(template: Any) -> int:
     return 0
 
 
-def resolve_effect_payload(template: Any) -> dict[str, Any]:
-    effect = getattr(template, "effect", None)
-    if isinstance(effect, Mapping):
-        return dict(effect)
-    return {}
+def resolve_effect_payload(template: Any) -> Any:
+    """Return the effect object (SkillEffect dataclass or dict) for the template."""
+    return getattr(template, "effect", {})
 
 
 def resolve_effect_type(
     template: Any,
-    effect: Mapping[str, Any],
+    effect: Any,
 ) -> str:
-    value = coerce_non_empty_string(effect.get("type"))
+    value = coerce_non_empty_string(source_get(effect, "type"))
     if value is not None:
         return value
     if read_positive_int(effect, template, "heal_amount", "heal") is not None:
         return "heal"
-    if coerce_non_empty_string(effect.get("applies_status")) is not None:
+    if coerce_non_empty_string(source_get(effect, "applies_status")) is not None:
         return "buff"
     applies = getattr(template, "applies_status", None)
     if applies and isinstance(applies, str):
@@ -74,10 +72,16 @@ def resolve_spellcasting_ability(
     return ability
 
 
+def resolve_spell_dc(state: StateContainer, world: WorldInstance) -> int:
+    """法术豁免 DC = 8 + 熟练加值 + 施法属性修正。"""
+    spellcasting_mod = state.player.get_modifier(resolve_spellcasting_ability(state, world))
+    return 8 + state.player.proficiency_bonus + spellcasting_mod
+
+
 def resolve_action_type(template: Any) -> str:
     cost = getattr(template, "cost", None)
-    if isinstance(cost, Mapping) and cost:
-        action_type = coerce_non_empty_string(cost.get("action_type"))
+    if cost is not None:
+        action_type = coerce_non_empty_string(source_get(cost, "action_type"))
         if action_type is not None:
             return action_type
     return getattr(template, "action_type", "") or "action"
@@ -85,13 +89,17 @@ def resolve_action_type(template: Any) -> str:
 
 def resolve_resource_cost(template: Any) -> tuple[str | None, int]:
     cost = getattr(template, "cost", None)
-    if not isinstance(cost, Mapping) or not cost:
+    if cost is None:
         return (None, 0)
-    resource_key = coerce_non_empty_string(cost.get("resource"))
+    resource_key = coerce_non_empty_string(source_get(cost, "resource"))
     if resource_key is None:
         return (None, 0)
-    amount = coerce_int(cost.get("resource_amount", cost.get("amount", 1)))
-    if amount is None or amount < 1:
+    amount = (
+        coerce_int(source_get(cost, "resource_amount"))
+        or coerce_int(source_get(cost, "amount"))
+        or 1
+    )
+    if amount < 1:
         amount = 1
     return (resource_key, amount)
 
@@ -106,13 +114,16 @@ def resolve_cast_targets(raw_targets: Any) -> dict[str, Any] | None:
         if target.lower() in _SUPPORTED_SELF_TARGETS:
             return {"mode": "self", "targets": ["player"]}
         return {"mode": "combat", "targets": [target]}
-    if isinstance(raw_targets, list) and len(raw_targets) == 1:
-        target = coerce_non_empty_string(raw_targets[0])
-        if target is None:
+    if isinstance(raw_targets, list):
+        cleaned = [coerce_non_empty_string(t) for t in raw_targets]
+        if any(t is None for t in cleaned):
             return None
-        if target.lower() in _SUPPORTED_SELF_TARGETS:
+        targets = [t for t in cleaned if t is not None]
+        if not targets:
+            return None
+        if len(targets) == 1 and targets[0].lower() in _SUPPORTED_SELF_TARGETS:
             return {"mode": "self", "targets": ["player"]}
-        return {"mode": "combat", "targets": [target]}
+        return {"mode": "combat", "targets": targets}
     return None
 
 
@@ -181,15 +192,6 @@ def normalize_mapping(raw_value: Any) -> dict[str, Any]:
     if isinstance(raw_value, Mapping):
         return dict(raw_value)
     return {}
-
-
-def coerce_int(raw_value: Any) -> int | None:
-    if raw_value is None or isinstance(raw_value, bool):
-        return None
-    try:
-        return int(raw_value)
-    except (TypeError, ValueError):
-        return None
 
 
 def get_class_template(

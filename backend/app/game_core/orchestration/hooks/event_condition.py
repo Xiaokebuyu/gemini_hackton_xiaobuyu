@@ -16,12 +16,14 @@ from app.game_core.orchestration.event_engine import (
     _coerce_int,
     _coerce_non_empty_string,
     _coerce_string,
+    _normalize_mapping,
     _normalize_state_name,
 )
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
+from app.game_core.state import StateChange
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +147,7 @@ class EventConditionHook(NoOpSettlementHook):
                     if isinstance(transition, EventTransition)
                 ],
                 commands=list(raw_decision.commands),
-                metadata=cls._normalize_mapping(raw_decision.metadata),
+                metadata=_normalize_mapping(raw_decision.metadata),
             )
         if not isinstance(raw_decision, Mapping):
             return EventConditionDecision(metadata={"status": "invalid_response"})
@@ -163,7 +165,7 @@ class EventConditionHook(NoOpSettlementHook):
         return EventConditionDecision(
             transitions=transitions,
             commands=commands,
-            metadata=cls._normalize_mapping(raw_decision.get("metadata")),
+            metadata=_normalize_mapping(raw_decision.get("metadata")),
         )
 
     @staticmethod
@@ -189,7 +191,7 @@ class EventConditionHook(NoOpSettlementHook):
             return None
 
         raw_patch = raw_transition.get("patch")
-        patch = cls._normalize_mapping(raw_patch) if isinstance(raw_patch, Mapping) else {}
+        patch = _normalize_mapping(raw_patch) if isinstance(raw_patch, Mapping) else {}
         from_state = _normalize_state_name(raw_transition.get("from_state")) or ""
         reason = _coerce_string(raw_transition.get("reason"))
         return EventTransition(
@@ -225,7 +227,7 @@ class EventConditionHook(NoOpSettlementHook):
                 params=dict(raw_command.params),
                 source="system",
                 context=(
-                    cls._normalize_mapping(raw_command.context)
+                    _normalize_mapping(raw_command.context)
                     if isinstance(raw_command.context, Mapping)
                     else None
                 ),
@@ -238,10 +240,10 @@ class EventConditionHook(NoOpSettlementHook):
         if command_type is None or command_type not in _ALLOWED_COMMAND_TYPES:
             return None
 
-        params = cls._normalize_mapping(raw_command.get("params"))
+        params = _normalize_mapping(raw_command.get("params"))
         raw_context = raw_command.get("context")
         context = (
-            cls._normalize_mapping(raw_context)
+            _normalize_mapping(raw_context)
             if isinstance(raw_context, Mapping)
             else None
         )
@@ -280,6 +282,7 @@ class EventConditionHook(NoOpSettlementHook):
                 transition.to_state,
                 patch=transition.patch,
             )
+            context.record_change(StateChange(slice="events", operation="set", path=f"state.{transition.event_id}", value=transition.to_state))
             updated_event = context.state.events.get_event(transition.event_id) or {}
             known_events[transition.event_id] = updated_event
             reason = transition.reason or "state_changed"
@@ -334,8 +337,3 @@ class EventConditionHook(NoOpSettlementHook):
             return "partial_failure"
         return "applied"
 
-    @staticmethod
-    def _normalize_mapping(value: Any) -> dict[str, Any]:
-        if not isinstance(value, Mapping):
-            return {}
-        return {str(key): raw_value for key, raw_value in value.items()}

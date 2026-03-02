@@ -235,3 +235,27 @@ def test_event_sink_none_preserves_original_behavior() -> None:
 
     assert len(events) == 1
     assert events[0].event_type == "tracking_ran"
+
+
+# ------------------------------------------------------------------
+# action_log 滑动窗口测试
+# ------------------------------------------------------------------
+
+
+def test_action_log_capped_at_max() -> None:
+    """action_log 超过 MAX_ACTION_LOG 条后应自动裁剪到上限。"""
+    from app.game_core.orchestration.tick_coordinator import MAX_ACTION_LOG
+    from app.game_core.orchestration.models import PipelineResult
+
+    coordinator = _make_coordinator()
+    overflow = MAX_ACTION_LOG + 20
+
+    # 直接调用 _record_action 模拟超量写入
+    for i in range(overflow):
+        fake_result = PipelineResult(success=True, action_type=f"move_{i}", time_cost=0.1)
+        coordinator._record_action(fake_result)
+
+    assert len(coordinator.action_log) == MAX_ACTION_LOG
+    # 保留的是最新的条目（尾部）
+    assert coordinator.action_log[-1]["type"] == f"move_{overflow - 1}"
+    assert coordinator.action_log[0]["type"] == f"move_{overflow - MAX_ACTION_LOG}"

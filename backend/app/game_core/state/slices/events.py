@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
@@ -15,6 +15,10 @@ def _absolute_tick(time_dict: Mapping[str, Any]) -> int:
 
 class EventSlice(StateSlice):
     """Event queues and event state machine storage."""
+
+    _VALID_STATES: ClassVar[frozenset[str]] = frozenset(
+        {"dormant", "triggered", "active", "resolved", "expired", "cancelled"}
+    )
 
     def __init__(self) -> None:
         super().__init__("events")
@@ -138,6 +142,10 @@ class EventSlice(StateSlice):
             return created_abs + count <= current_abs
         return False
 
+    def trigger(self, event_id: str) -> None:
+        """Transition an active event to the triggered state."""
+        self.set_state(event_id, "triggered")
+
     def resolve(self, event_id: str) -> None:
         """Transition an active event to the resolved state."""
         self.set_state(event_id, "resolved")
@@ -157,6 +165,10 @@ class EventSlice(StateSlice):
                 status = event.get("status")
                 if state != status:
                     issues.append(f"active_events[{key}] state and status must match")
+                if state is not None and state not in self._VALID_STATES:
+                    issues.append(
+                        f"active_events[{key}] state '{state}' is not a valid event state"
+                    )
         if not isinstance(self.pending_events, list):
             issues.append("pending_events must be a list")
         else:

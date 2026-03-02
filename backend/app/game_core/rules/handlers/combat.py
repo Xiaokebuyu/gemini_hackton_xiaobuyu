@@ -13,7 +13,9 @@ from app.game_core.rules.handler_utils import (
     get_non_empty_string,
     handler_success,
     handler_success_no_delta,
+    resolve_item_heal_amount,
     resolve_roll,
+    roll_damage_dice,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
@@ -80,7 +82,7 @@ class CombatHandler(StaticCommandHandler):
         if cmd.type == "use_combat_item":
             return self._compute_use_combat_item(cmd, state, world)
         if cmd.type in self._DIRECT_RESOLUTION_COMMANDS:
-            return self._compute_direct_resolution_command(cmd, state)
+            return self._compute_direct_resolution_command(cmd, state, world)
         if cmd.type == "stand_up":
             return self._compute_stand_up(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
@@ -203,7 +205,8 @@ class CombatHandler(StaticCommandHandler):
         if not common.ok:
             return common
         resolved = self._resolve_active_combat(cmd.params, state, world)
-        assert resolved is not None
+        if resolved is None:
+            return ValidationResult(ok=False, reason="active combat sub_area_id is required")
         _, payload, _ = resolved
         participants = state.areas.participant_snapshots(payload)
         if not participants:
@@ -306,7 +309,8 @@ class CombatHandler(StaticCommandHandler):
         state: StateContainer,
     ) -> ExecuteResult:
         resolved = self._resolve_active_combat(cmd.params, state, None)
-        assert resolved is not None
+        if resolved is None:
+            return ExecuteResult.error("active combat not found")
         sub_area_id, payload, _ = resolved
         updated_payload = dict(payload)
         flags = self._normalized_player_flags(updated_payload)
@@ -337,7 +341,8 @@ class CombatHandler(StaticCommandHandler):
         state: StateContainer,
     ) -> ExecuteResult:
         resolved = self._resolve_active_combat(cmd.params, state, None)
-        assert resolved is not None
+        if resolved is None:
+            return ExecuteResult.error("active combat not found")
         sub_area_id, payload, _ = resolved
         flags = self._normalized_player_flags(payload)
 
@@ -417,11 +422,12 @@ class CombatHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> ExecuteResult:
         resolved = self._resolve_active_combat(cmd.params, state, world)
-        assert resolved is not None
+        if resolved is None:
+            return ExecuteResult.error("active combat not found")
         sub_area_id, _, _ = resolved
         item_id = str(cmd.params["item_id"]).strip()
         item_template = world.items.get(item_id)
-        heal_amount = self._resolve_heal_amount(item_template)
+        heal_amount = resolve_item_heal_amount(item_template)
         if heal_amount is None:
             return handler_success_no_delta(
                 "combat",
@@ -462,16 +468,20 @@ class CombatHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         target = coerce_non_empty_string(cmd.params.get("target")) or ""
         resolved = self._resolve_active_combat(cmd.params, state, None)
-        assert resolved is not None
+        if resolved is None:
+            return ExecuteResult.error("active combat not found")
         sub_area_id, payload, _ = resolved
         participants = state.areas.participant_snapshots(payload)
         target_resolution = state.areas.resolve_participant(target, participants)
-        assert target_resolution is not None
+        if target_resolution is None:
+            return ExecuteResult.error(f"unknown combat target: {target}")
         target_index, participant = target_resolution
-        assert bool(participant.get("alive", False))
+        if not bool(participant.get("alive", False)):
+            return ExecuteResult.error(f"target is not alive: {target}")
 
         if cmd.type == "shove":
             return self._compute_shove_resolution(
@@ -485,6 +495,7 @@ class CombatHandler(StaticCommandHandler):
         return self._compute_attack_resolution(
             command_type=cmd.type,
             state=state,
+            world=world,
             sub_area_id=sub_area_id,
             target=target,
             payload=payload,
@@ -498,6 +509,7 @@ class CombatHandler(StaticCommandHandler):
         *,
         command_type: str,
         state: StateContainer,
+        world: WorldInstance,
         sub_area_id: str,
         target: str,
         payload: Mapping[str, Any],
@@ -546,17 +558,53 @@ class CombatHandler(StaticCommandHandler):
         target_monster_id = state.areas.participant_monster_id(updated_target)
         target_alive = bool(updated_target.get("alive", False))
 
+        # 怪物回合：仅在战斗仍活跃时执行
+        extra_changes: list[StateChange] = []
+        extra_rolls: list[Any] = []
+        monster_responses: list[dict[str, Any]] = []
+
+        if combat_active and not combat_cleared:
+            updated_participants, extra_changes, extra_rolls, monster_responses = \
+                self._resolve_monster_responses(
+                    participants=state.areas.participant_snapshots(updated_payload),
+                    state=state,
+                    world=world,
+                )
+            # 若怪物逃跑导致战斗结束，重建 payload
+            if any(r.get("action") == "flee" for r in monster_responses):
+                updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
+                    updated_payload,
+                    updated_participants,
+                    blocking=bool(updated_payload.get("blocking", False)),
+                    player_flags=self._default_player_flags(),
+                    current_tick=self._current_tick(state),
+                )
+
+        # XP 分发（combat_cleared 可能在怪物逃跑后才为 True）
+        xp_awarded = 0
+        if combat_cleared:
+            xp_awarded = self._compute_combat_xp(
+                state.areas.participant_snapshots(updated_payload), world
+            )
+            if xp_awarded > 0:
+                extra_changes.append(
+                    StateChange("player", "set", "xp", state.player.xp + xp_awarded)
+                )
+
+        all_changes = [
+            StateChange(
+                "areas",
+                "modify",
+                f"hostile_tracking.{sub_area_id}",
+                updated_payload,
+            ),
+            *extra_changes,
+        ]
+
         return handler_success(
             "combat",
             command_type,
-            changes=[
-                StateChange(
-                    "areas",
-                    "modify",
-                    f"hostile_tracking.{sub_area_id}",
-                    updated_payload,
-                )
-            ],
+            changes=all_changes,
             metadata={
                 "status": "hit" if hit else "miss",
                 "sub_area_id": sub_area_id,
@@ -574,8 +622,10 @@ class CombatHandler(StaticCommandHandler):
                 "target_defeated": hit and not target_alive,
                 "combat_active": combat_active,
                 "combat_cleared": combat_cleared,
+                "monster_responses": monster_responses,
+                "xp_awarded": xp_awarded,
             },
-            rolls=[attack_roll],
+            rolls=[attack_roll, *extra_rolls],
             omit_empty_delta=False,
         )
 
@@ -855,19 +905,161 @@ class CombatHandler(StaticCommandHandler):
             "dashed": bool(raw_flags.get("dashed", False)),
         }
 
-    @staticmethod
-    def _resolve_heal_amount(item_template: Any) -> int | None:
-        if item_template is None:
-            return None
-        for key in ("heal_amount", "heal", "restore_hp"):
-            value = coerce_int(getattr(item_template, key, None))
-            if value is not None and value > 0:
-                return value
-        return None
 
     @staticmethod
     def _player_inventory_snapshot(state: StateContainer) -> list[dict[str, Any]]:
         return [item.snapshot() for item in state.player.inventory]
+
+    # ------------------------------------------------------------------
+    # Combat AI helpers（怪物回合决策 + XP 分发）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _decide_monster_action(
+        ai_personality: str,
+        hp_ratio: float,
+        flee_threshold: float,
+    ) -> str:
+        """Decide what action the monster takes this turn.
+
+        Returns "attack" or "flee".
+        flee_threshold == 0.0 means the monster never flees voluntarily.
+        """
+        if flee_threshold > 0.0 and hp_ratio <= flee_threshold:
+            if ai_personality == "aggressive":
+                # Aggressive monsters only flee when nearly dead
+                return "flee" if hp_ratio < 0.1 else "attack"
+            # defensive / cowardly flee once below threshold
+            return "flee"
+        return "attack"
+
+    @staticmethod
+    def _roll_monster_attack(
+        attack_name: str,
+        damage_dice: str,
+        hit_bonus: int,
+        player_ac: int,
+    ) -> tuple[bool, int, Any]:
+        """Roll a monster attack against the player's AC.
+
+        Returns (hit, damage, DiceRoll).
+        """
+        d20, all_d20, dice_notation = resolve_roll()
+        total = d20 + hit_bonus
+        hit = total >= player_ac
+        damage = roll_damage_dice(damage_dice) if hit else 0
+        roll = build_dice_roll(
+            purpose=f"monster_attack:{attack_name}",
+            dice=dice_notation,
+            result=d20,
+            modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+            total=total,
+        )
+        return hit, damage, roll
+
+    def _resolve_monster_responses(
+        self,
+        *,
+        participants: list[dict[str, Any]],
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> tuple[list[dict[str, Any]], list[StateChange], list[Any], list[dict[str, Any]]]:
+        """Resolve each alive monster's action this turn.
+
+        Returns:
+            updated_participants – participant list with fled monsters marked
+            extra_changes        – StateChange list (player HP change if hit)
+            extra_rolls          – DiceRoll list from monster attacks
+            responses            – per-monster action metadata
+        """
+        # 玩家 AC：默认使用无装甲公式（10 + DEX），装备系统深化后消费 equipped_ac
+        player_ac = 10 + state.player.get_modifier("dex")
+        player_hp = state.player.hp
+        updated_participants = [dict(p) for p in participants]
+        extra_changes: list[StateChange] = []
+        extra_rolls: list[Any] = []
+        responses: list[dict[str, Any]] = []
+        total_player_damage = 0
+
+        for idx, p in enumerate(updated_participants):
+            if not bool(p.get("alive", False)):
+                continue  # 已死亡或已逃跑的怪物不再行动
+
+            monster_id = str(p.get("monster_id", ""))
+            hp = int(p.get("hp", 0))
+            max_hp = int(p.get("max_hp", 1))
+            hp_ratio = hp / max_hp if max_hp > 0 else 0.0
+
+            template = world.monsters.get(monster_id) if world.has_registry("monsters") else None
+            ai_personality = getattr(template, "ai_personality", "aggressive") if template else "aggressive"
+            flee_threshold = getattr(template, "flee_threshold", 0.0) if template else 0.0
+
+            action = self._decide_monster_action(ai_personality, hp_ratio, flee_threshold)
+
+            if action == "flee":
+                updated_participants[idx]["alive"] = False
+                updated_participants[idx]["fled"] = True
+                responses.append({
+                    "monster_id": monster_id,
+                    "action": "flee",
+                    "hit": False,
+                    "damage": 0,
+                })
+                continue
+
+            # action == "attack"：仅当怪物模板有 attacks 时才发起攻击
+            attacks = getattr(template, "attacks", []) if template else []
+            if not attacks:
+                # 无 attacks 定义 → 本回合不行动
+                responses.append({
+                    "monster_id": monster_id,
+                    "action": "hold",
+                    "hit": False,
+                    "damage": 0,
+                })
+                continue
+
+            first_attack = attacks[0]
+            attack_name = getattr(first_attack, "name", "strike") or "strike"
+            damage_dice = getattr(first_attack, "damage_dice", "1d4") or "1d4"
+            hit_bonus = int(getattr(first_attack, "hit_bonus", 0) or 0)
+
+            hit, dmg, roll = self._roll_monster_attack(attack_name, damage_dice, hit_bonus, player_ac)
+            extra_rolls.append(roll)
+            total_player_damage += dmg
+            responses.append({
+                "monster_id": monster_id,
+                "action": "attack",
+                "hit": hit,
+                "damage": dmg,
+                "attack_name": attack_name,
+            })
+
+        if total_player_damage > 0:
+            new_hp = max(0, player_hp - total_player_damage)
+            extra_changes.append(StateChange("player", "set", "hp", new_hp))
+
+        return updated_participants, extra_changes, extra_rolls, responses
+
+    def _compute_combat_xp(
+        self,
+        participants: list[dict[str, Any]],
+        world: WorldInstance,
+    ) -> int:
+        """Sum xp_reward for killed monsters (dead but not fled)."""
+        if not world.has_registry("monsters"):
+            return 0
+        total = 0
+        for p in participants:
+            if bool(p.get("alive", True)):
+                continue  # still alive
+            if bool(p.get("fled", False)):
+                continue  # fled, no XP
+            monster_id = str(p.get("monster_id", ""))
+            template = world.monsters.get(monster_id)
+            if template is not None:
+                total += int(getattr(template, "xp_reward", 0) or 0)
+        return total
 
     @staticmethod
     def _remove_from_inventory(

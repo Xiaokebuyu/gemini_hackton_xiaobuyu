@@ -17,10 +17,15 @@ def _make_world() -> WorldInstance:
     maps = MapRegistry()
     maps.load(
         {
-            "town": {"id": "town", "name": "Town"},
+            "town": {
+                "id": "town",
+                "name": "Town",
+                "connections": [{"target_map_id": "forest"}],
+            },
             "forest": {
                 "id": "forest",
                 "name": "Forest",
+                "connections": [{"target_map_id": "town"}],
                 "sub_locations": {
                     "camp": {"id": "camp", "name": "Camp"},
                 },

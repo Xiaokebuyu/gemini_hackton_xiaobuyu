@@ -10,7 +10,12 @@ from app.game_core.content.base import ContentRegistry
 
 @dataclass(slots=True)
 class LoreEntry:
-    """Typed lore / world-rule text block."""
+    """Typed lore / world-rule text block.
+
+    TODO: 设计规范包含 scope 字段（global/regional/local）和 WorldRule 子类型，
+          用于 AI Osiris 按范围过滤世界规则。当前 lore 条目数量有限，
+          tags 过滤已足够；条目规模增长时按设计规范添加 scope 字段。
+    """
 
     id: str
     title: str = ""

@@ -326,10 +326,8 @@ class EncounterHandler(StaticCommandHandler):
         )
 
     def _resolve_gold(self, monster: Any) -> int:
-        for value in (monster.gold_drop, monster.gold, monster.gold_reward):
-            if value is not None and value >= 0:
-                return value
-        return 0
+        value = monster.gold_drop
+        return value if value is not None and value >= 0 else 0
 
     def _resolve_loot_items(
         self,

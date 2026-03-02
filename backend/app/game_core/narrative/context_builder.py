@@ -258,7 +258,7 @@ class AgentContextBuilder:
             "l3_location_details": self._build_l3(current_area, current_location, area_state),
             "l4_dynamic_state": self._build_l4_npc(npc_id),
             "l5_scene_bus": self._build_l5_role("npc", npc_id),
-            "l6_memory_recall": await self._build_l6(npc_id, memory_retriever),
+            "l6_memory_recall": await self._build_l6(npc_id, memory_retriever, role="npc"),
             "l7_engine_result": None,
         }
 
@@ -275,7 +275,7 @@ class AgentContextBuilder:
             "l3_location_details": self._build_l3(current_area, current_location, area_state),
             "l4_dynamic_state": self._build_l4_teammate(char_id),
             "l5_scene_bus": self._build_l5_role("teammate", char_id),
-            "l6_memory_recall": await self._build_l6(char_id, memory_retriever),
+            "l6_memory_recall": await self._build_l6(char_id, memory_retriever, role="teammate"),
             "l7_engine_result": None,
         }
 
@@ -761,7 +761,7 @@ class AgentContextBuilder:
     # ----------------------------------------------------------------
 
     async def _build_l6(
-        self, actor_id: str, retriever: MemoryRetriever | None
+        self, actor_id: str, retriever: MemoryRetriever | None, role: str = "npc"
     ) -> dict[str, Any]:
         """L6 memory recall via injected MemoryRetriever.
 
@@ -770,7 +770,7 @@ class AgentContextBuilder:
         """
         if retriever is None:
             return {"hits": [], "source": "null"}
-        keywords = self._extract_scene_keywords(actor_id)
+        keywords = self._extract_scene_keywords(actor_id, role)
         context: dict[str, Any] = {
             "world": self._world,
             "current_area": self._state.player.snapshot().get("current_area", ""),
@@ -781,13 +781,13 @@ class AgentContextBuilder:
             context=context,
         )
 
-    def _extract_scene_keywords(self, actor_id: str) -> list[str]:
+    def _extract_scene_keywords(self, actor_id: str, role: str = "npc") -> list[str]:
         """Extract keywords from recent scene entries visible to *actor_id*.
 
         Tokenises the last 5 visible entries, deduplicates and caps at 20
         keywords.  Phase 3 can replace this with NLP-based extraction.
         """
-        scene_data = self._build_l5_role("npc", actor_id)
+        scene_data = self._build_l5_role(role, actor_id)
         entries = scene_data.get("entries", [])[-5:]
         words: list[str] = []
         for entry in entries:

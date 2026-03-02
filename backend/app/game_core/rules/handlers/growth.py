@@ -280,6 +280,9 @@ class GrowthHandler(StaticCommandHandler):
         new_proficiency_bonus = self._resolve_proficiency_bonus(target_level)
         new_max_hp = int(state.player.max_hp) + hp_gain_total
         new_hp = min(new_max_hp, int(state.player.hp) + hp_gain_total)
+        resource_changes, updated_resource_keys = self._resolve_resource_changes(
+            class_template, target_level, state,
+        )
 
         return handler_success(
             "growth",
@@ -290,6 +293,7 @@ class GrowthHandler(StaticCommandHandler):
                 StateChange("player", "set", "max_hp", new_max_hp),
                 StateChange("player", "set", "hp", new_hp),
                 StateChange("player", "set", "class_features", new_features),
+                *resource_changes,
             ],
             metadata={
                 "from_level": current_level,
@@ -297,6 +301,7 @@ class GrowthHandler(StaticCommandHandler):
                 "hp_gain": hp_gain_total,
                 "added_features": added_features,
                 "new_proficiency_bonus": new_proficiency_bonus,
+                "updated_resources": updated_resource_keys,
             },
             omit_empty_delta=False,
         )
@@ -622,6 +627,65 @@ class GrowthHandler(StaticCommandHandler):
                 return None
             normalized[stat] = value
         return normalized
+
+    def _resolve_resource_changes(
+        self,
+        class_template: Any,
+        target_level: int,
+        state: StateContainer,
+    ) -> tuple[list[StateChange], list[str]]:
+        """Compute StateChanges for class_resources based on class_resources_schema.
+
+        Returns (changes, updated_keys) so callers can surface the keys in metadata.
+        """
+        if class_template is None:
+            return [], []
+        schema = getattr(class_template, "class_resources_schema", None)
+        if not isinstance(schema, Mapping):
+            return [], []
+        changes: list[StateChange] = []
+        updated_keys: list[str] = []
+        for key, config in schema.items():
+            if not isinstance(config, Mapping):
+                continue
+            max_at_level = config.get("max_at_level", {})
+            if not isinstance(max_at_level, Mapping):
+                continue
+            recovery = str(config.get("recovery", "long_rest"))
+            new_max = self._resolve_resource_max_at_level(max_at_level, target_level)
+            if new_max is None:
+                continue
+            existing = state.player.get_resource(str(key))
+            if existing is None:
+                updated = {"current": new_max, "max": new_max, "recovery": recovery}
+            else:
+                old_max = int(existing.get("max", 0))
+                if new_max <= old_max:
+                    continue
+                gain = new_max - old_max
+                updated = {
+                    "current": int(existing.get("current", 0)) + gain,
+                    "max": new_max,
+                    "recovery": recovery,
+                }
+            changes.append(StateChange("player", "modify", f"class_resources.{key}", updated))
+            updated_keys.append(str(key))
+        return changes, updated_keys
+
+    @staticmethod
+    def _resolve_resource_max_at_level(
+        max_at_level: Mapping[Any, Any], target_level: int,
+    ) -> int | None:
+        """Find the highest max value for levels <= target_level."""
+        best_max: int | None = None
+        for level_key, max_val in max_at_level.items():
+            level = coerce_int(level_key)
+            if level is None or level > target_level:
+                continue
+            v = coerce_int(max_val)
+            if v is not None and (best_max is None or v > best_max):
+                best_max = v
+        return best_max
 
     @staticmethod
     def _non_empty_string(value: Any) -> str | None:

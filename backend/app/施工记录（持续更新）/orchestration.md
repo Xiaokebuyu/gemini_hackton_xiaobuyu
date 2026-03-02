@@ -17,8 +17,8 @@
 | `ContextAssembler` | [完成] | L0-L7 八层 context 组装，覆盖全部 10 Slice + WorldInstance |
 | `SharedContext` | [完成] | world/state/rules_engine/scene_bus 打包 |
 | `AdminCoordinator` | [有意不做] | 规范 §2.1。当前仅 TickCoordinator+InteractionService 两条路径，flat routing 足够。等 3+ coordinator 类型再抽象 |
-| `PrivateChatCoordinator` | [延后] | 规范 §2.5。依赖叙事层 Agent 集成（LLM），无 LLM 只是空壳。随 Agent 主线同步实现 |
-| `EventEngine` 独立模块 | [延后] | 规范 §8。核心逻辑已在 BasicEventConditionEvaluator（Protocol 注入），独立化主要是命名清理。当前无 A6/C1 调用需求 |
+| `PrivateChatCoordinator` | [完成] | D-N19 私聊管线完整实现（visibility="private" + audience，run_private_chat() + _private_chat_result_to_sse()）|
+| `EventEngine` 独立模块 | [完成] | O-2 提取为 event_engine.py（Protocol+Evaluator+dataclasses+helpers），EventConditionHook 使用 |
 | B 阶段 Agent 管线 | [延后] | 规范 §4.2。PipelineOrchestrator 只做 A 阶段，Agent 会话推到应用层。依赖 LLM 接入 |
 | A6/C1 条件检查 | [延后] | 规范 §4 A6+C1。条件检查仅在 P50 settlement 运行，回合制下同 tick 内无感延迟，够用 |
 
@@ -33,6 +33,7 @@
 | P40 | `EncounterHook` | [完成] | EncounterHandler |
 | P50 | `EventConditionHook` | [完成] | EventSlice |
 | P60 | `NpcScheduleHook` | [完成] | AreaSlice |
+| P65 | `RelationshipHook` | [完成] | RelationSlice + PartySlice |
 | P70 | `TimeAdvanceHook` | [完成] | TimeSlice |
 | P75 | `DynamicSubAreaExpiryHook` | [完成] | AreaSlice.tick_expiry |
 | P80 | `GmNarrationHook` | [完成] | AgenticExecutor |
@@ -528,3 +529,144 @@ PipelineOrchestrator 在 engine 执行后将 ExecuteResult 摘要写入 L7（nar
 18. **新增模块常量**：`_ACTION_VERBS`（55 entries）+ `_TARGET_PREPOSITIONS`（8 entries，非默认介词）
 
 **测试**：500 passed（495 + 5 新增），32 个现有 ai_osiris 测试零回归
+
+## D-O24 代码审计修复（2026-03-01）
+
+**背景**：对 app/ 进行代码审计（两份：静态抽样 + 深度核实），找出四类实际有害问题并修复。
+
+### Batch A — action_log 滑动窗口
+
+**问题**：`TickCoordinator.action_log` 只追加从不裁剪，每次 settlement 全量拷贝传入 `SettlementContext`；`ai_osiris._enrich_actions()` 遍历全量 action_log 喂给 LLM，会话越长输入越脏、内存越大。
+
+**改动**：`tick_coordinator.py`
+- 新增模块常量 `MAX_ACTION_LOG = 100`
+- `_record_action()` 末尾追加 trim：`self.action_log = self.action_log[-MAX_ACTION_LOG:]`
+
+**测试**：`test_hook_resilience.py` 新增 `test_action_log_capped_at_max`
+
+---
+
+### Batch B — Hook 绕过 change_log + scene_bus 修复
+
+**问题**：9 处 hook 直接调用 slice 方法修改状态，绕过 `_apply_delta()` → `change_log`/`scene_bus` 不完整。依赖 `change_log` 的 hooks（`ai_osiris._has_meaningful_changes()`、`narrative_planner._has_trigger_change()`）在同轮 settlement 看到残缺世界。
+
+**设计**：在 `SettlementContext` 新增 `record_change(change: StateChange)` 辅助方法，直接变更后调用以补齐 change_log + scene_bus，不改变 slice 的实际写入路径。
+
+**接受的绕过**（有意不改）：`time_advance`（基础推进）、`private_chat_trigger.flags`（冷静期标记）、`narrative_plan.*` 内部元数据（无 hook 依赖）、`dynamic_sub_area_expiry`、`scene_reset`。
+
+**改动**：
+| 文件 | 改动 |
+|------|------|
+| `orchestration/settlement.py` | 新增 `record_change(change)` 方法（3 行） |
+| `orchestration/hooks/narrative_planner.py` | 5 处 `context.record_change(StateChange(...))` |
+| `orchestration/hooks/npc_schedule.py` | 1 处 + 新增 `StateChange` import |
+| `orchestration/hooks/encounter.py` | 2 处 + 新增 `StateChange` import |
+| `orchestration/hooks/event_condition.py` | 1 处 + 新增 `StateChange` import |
+
+---
+
+### Batch C — 异常处理一致性
+
+**问题**：`routers/gameplay.py` 的流任务异常捕获（type (c)）仅 emit SSE 错误事件，无 `logger.exception()` 记录堆栈，排障困难。
+
+**改动**：`routers/gameplay.py`
+- 新增 `import logging` + `logger = logging.getLogger(__name__)`
+- stream task `except Exception` 块新增 `logger.exception("stream task failed for session %s", session_id)`
+
+---
+
+### Batch D — deps.py lifespan 初始化
+
+**问题**：`GAME_RUNTIME = _build_game_runtime()` 在模块顶层执行，import 时触发副作用，测试 mock 窗口极窄，环境变量 mock 需在 import 前完成，测试隔离困难。
+
+**改动**：`app/deps.py`
+- 新增 `from contextlib import asynccontextmanager`
+- 将模块级 `GAME_RUNTIME = _build_game_runtime()` + `app.state.*` 赋值移入 `@asynccontextmanager async def _lifespan(app):`
+- `app = FastAPI(..., lifespan=_lifespan)` 替换原 `app = FastAPI(...)`
+
+**效果**：`deps.py` 在 import 时不再构建 runtime，只在 FastAPI server startup 时执行。
+
+**测试**：812 passed（全量无回归）
+
+---
+
+## [D-O25] 编排层审查 轮次1+2（2026-03-02）
+
+**来源**：编排层设计文档对照审查，对应 O-D01/O-D02/O-D03/O-G01 四项动作。
+
+### O-D01：`_normalize_mapping` 重复定义提取
+
+`encounter.py`、`npc_schedule.py`、`narrative_planner.py`、`event_condition.py` 四个文件各有一份逐字相同的 `@staticmethod _normalize_mapping`（4~6 行）。
+
+**改动**：
+- `app/game_core/orchestration/event_engine.py`：末尾追加模块级 `_normalize_mapping(value) -> dict[str, Any]`
+- `event_condition.py`：在已有 from-event_engine import 行追加 `_normalize_mapping`，删除本地 staticmethod 定义，3 处 `cls._normalize_mapping(` → `_normalize_mapping(`
+- `encounter.py`：新增 import，删定义，4 处调用点替换（实际 3 处 `cls._normalize_mapping`）
+- `npc_schedule.py`：新增 import，删定义，2 处调用点替换
+- `narrative_planner.py`：新增 import，删定义，4 处 `cls._normalize_mapping` + 2 处 `self._normalize_mapping` → `_normalize_mapping(`
+
+**注意**：`_coerce_non_empty_string` 各文件版本行为有差异（narrative_planner 版仅接受 str 类型，更严格），不合并，各保留自有版本。
+
+### O-D02：NarrativePlannerHook 死代码清理
+
+`narrative_planner.py` 中 `_UNSUPPORTED_DIRECTIVES: set[str] = set()` 是恒为空集的类变量（条件 `kind in set()` 恒 False）。
+
+**改动**：
+- 删除 `_UNSUPPORTED_DIRECTIVES` 类变量定义
+- `if kind in self._UNSUPPORTED_DIRECTIVES or kind not in self._SUPPORTED_DIRECTIVES:` → `if kind not in self._SUPPORTED_DIRECTIVES:`
+
+### O-D03：施工记录模块状态表更新
+
+`orchestration.md` 模块状态表两行过时：
+- `PrivateChatCoordinator` [延后] → [完成]（D-N19 已实现）
+- `EventEngine 独立模块` [延后] → [完成]（O-2 已提取）
+
+### O-G01：TimeAdvanceHook 日换商店刷新
+
+设计规范 §3.3 明确"日期变化时对当前区域所有 `refresh_on='daily'` 的商人执行 `refresh_shop`"，此前 `time_advance.py` 完全未实现。
+
+**改动**：`app/game_core/orchestration/hooks/time_advance.py`
+- 新增 `from app.game_core.rules.models import Command`（+ `from typing import Any`）
+- `execute()` 在 `crossed_day` 计算后插入 `shops_refreshed = self._refresh_daily_merchants(context) if crossed_day else 0`
+- SSE payload + metadata 均追加 `"shops_refreshed": shops_refreshed` 字段
+- 新增 `_refresh_daily_merchants(context) -> int`：遍历 daily 商人执行 `refresh_shop`，返回成功计数
+- 新增 `_daily_merchant_ids(context) -> list[str]`：从当前区域 `npc_locations` 过滤 daily 商人（无 areas/player slice 时 fallback 全局扫描）
+
+**测试**：`tests/test_time_advance_hook.py` 追加 4 个测试（`TestTimeAdvanceHookShopRefresh`），更新 2 个已有测试的期望值（含新 `shops_refreshed` 字段）。
+
+**测试基线**：841 passed（837 + 4 新增）
+
+---
+
+## [D-O26] 编排层审查 轮次3（2026-03-02）
+
+**来源**：O-G02 — 推迟至编排层的 RelationSlice.check_stage_transition() 逻辑，以
+Settlement Hook 形式实现跨切片条件检查。
+
+### O-G02：RelationshipHook 关系阶段升级
+
+**设计依据**：NPC 运行时规范 §六，正向路径 4 个阶段转换条件。
+
+**正向阶段路径**：`stranger → acquaintance → friend → close_friend → intimate`
+
+| 转换 | 条件（严格大于） |
+|------|---------------|
+| stranger → acquaintance | approval > 10 |
+| acquaintance → friend | approval > 30，trust > 20，共同经历 ≥ 3 |
+| friend → close_friend | trust > 60，危机选择 ≥ 1，共同经历 ≥ 10 |
+| close_friend → intimate | trust > 80，romance > 60 |
+
+**不实现**：负面路径（cold/hostile/nemesis/broken）暂无消费端，TODO 注释标记。
+
+**新增**：`app/game_core/orchestration/hooks/relationship.py`
+- `HOOK_PRIORITY = 65`（NpcScheduleHook P60 之后，TimeAdvanceHook P70 之前）
+- `should_skip()`：仅 relations 或 party 切片有变更时运行
+- `execute()`：遍历 npc_dispositions，按 `_TRANSITIONS` 表检查并推进阶段
+- `_next_stage()`：跨切片（RelationSlice disposition + PartySlice 共同经历/危机选择）条件评估
+- SSE 事件：`"relationship_stage_changed"` payload = `{npc_id, old_stage, new_stage}`
+
+**修改**：`hooks/__init__.py` + `defaults.py` 注册 RelationshipHook
+
+**测试**：`tests/test_relationship_hook.py`，13 个测试（5 基础 + 8 转换路径）
+
+**测试基线**：854 passed（841 + 13 新增）

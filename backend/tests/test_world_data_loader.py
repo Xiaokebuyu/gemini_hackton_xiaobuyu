@@ -52,13 +52,17 @@ def test_items_all_have_id() -> None:
 # Maps
 # ---------------------------------------------------------------------------
 
-def test_maps_connections_are_strings() -> None:
-    """connections must be a list of plain strings after adapter."""
+def test_maps_connections_preserve_metadata() -> None:
+    """connections must be preserved as dict objects (not stripped to strings).
+
+    世界加载器不再剥离 connection 元数据，MapRegistry 负责解析。
+    """
     maps = _DATA["maps"]
     assert len(maps) > 0
     for area in maps:
         for conn in area.get("connections", []):
-            assert isinstance(conn, str), f"Expected str connection, got {conn!r}"
+            assert isinstance(conn, dict), f"Expected dict connection, got {conn!r}"
+            assert "target_map_id" in conn, f"Connection missing target_map_id: {conn!r}"
 
 
 def test_maps_sub_locations_preserved() -> None:

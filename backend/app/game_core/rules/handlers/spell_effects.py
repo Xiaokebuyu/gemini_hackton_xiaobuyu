@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any, Mapping
 from uuid import uuid4
 
+from app.game_core.content import WorldInstance
 from app.game_core.rules.handler_utils import handler_success_no_delta
 from app.game_core.rules.models import DiceRoll, ExecuteResult
 from app.game_core.state import StateContainer
@@ -29,7 +30,7 @@ from app.game_core.rules.handlers.spell_resolver import (
 def apply_self_target(
     state: StateContainer,
     template: Any,
-    effect: dict[str, Any],
+    effect: Any,
     effect_type: str,
     spell_id: str,
     spell_level: int,
@@ -116,13 +117,14 @@ def apply_self_target(
 def apply_combat_target(
     state: StateContainer,
     template: Any,
-    effect: dict[str, Any],
+    effect: Any,
     effect_type: str,
     spell_id: str,
     spell_level: int,
     resolved_slot_level: int,
     resolved_targets: list[str],
     ctx: dict[str, Any],
+    world: WorldInstance,
     *,
     roll_dice: Callable[[str], int],
 ) -> ExecuteResult | None:
@@ -151,6 +153,7 @@ def apply_combat_target(
             hostile_payload,
             target_monster_id,
             ctx,
+            world,
             roll_dice=roll_dice,
         )
 
@@ -171,7 +174,7 @@ def apply_combat_target(
 def apply_combat_damage(
     state: StateContainer,
     template: Any,
-    effect: dict[str, Any],
+    effect: Any,
     spell_id: str,
     spell_level: int,
     resolved_slot_level: int,
@@ -180,6 +183,7 @@ def apply_combat_damage(
     hostile_payload: dict[str, Any],
     target_monster_id: str,
     ctx: dict[str, Any],
+    world: WorldInstance,
     *,
     roll_dice: Callable[[str], int],
 ) -> ExecuteResult | None:
@@ -200,7 +204,36 @@ def apply_combat_damage(
         )
     ctx["rolls"].extend(damage_rolls)
 
-    participants = state.areas.participant_snapshots(hostile_payload)
+    # 豁免检定：若效果有 save 字段，让目标掷存档骰
+    save_ability = read_non_empty_string(effect, template, "save")
+    if save_ability is not None:
+        monster_template = (
+            world.monsters.get(target_monster_id)
+            if world.has_registry("monsters") else None
+        )
+        abilities: dict[str, int] = getattr(monster_template, "abilities", {}) or {}
+        ability_score = int(abilities.get(save_ability, 10))
+        save_mod = (ability_score - 10) // 2
+        save_raw = roll_dice("1d20")
+        save_total = save_raw + save_mod
+        spell_dc = int(ctx.get("spell_dc", 10))
+        save_succeeded = save_total >= spell_dc
+        half_on_save = read_bool(effect, template, "half_on_save")
+        if save_succeeded:
+            damage_total = max(1, damage_total // 2) if half_on_save else 0
+        ctx.setdefault("save_rolls", []).append({
+            "target_monster_id": target_monster_id,
+            "save_ability": save_ability,
+            "roll": save_raw,
+            "mod": save_mod,
+            "total": save_total,
+            "dc": spell_dc,
+            "succeeded": save_succeeded,
+        })
+
+    # 用 ctx 中已更新的 payload（多目标链式读取，与 apply_combat_control 对齐）
+    current_payload = ctx["pending_hostile_payloads"].get(sub_area_id, hostile_payload)
+    participants = state.areas.participant_snapshots(current_payload)
     target_resolution = state.areas.resolve_participant(
         target_monster_id,
         participants,
@@ -221,13 +254,13 @@ def apply_combat_damage(
     updated_target["alive"] = remaining_hp > 0
     participants[target_index] = updated_target
     updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
-        hostile_payload,
+        current_payload,
         participants,
-        blocking=bool(hostile_payload.get("blocking", False)),
+        blocking=bool(current_payload.get("blocking", False)),
         current_tick=_current_tick(state),
     )
     ctx["pending_hostile_payloads"][sub_area_id] = updated_payload
-    ctx["damage_total"] = damage_total
+    ctx["damage_total"] = ctx.get("damage_total", 0) + damage_total  # 多目标累加
     ctx["target_hp"] = remaining_hp
     ctx["target_alive"] = remaining_hp > 0
     ctx["target_defeated"] = remaining_hp <= 0
@@ -239,7 +272,7 @@ def apply_combat_damage(
 def apply_combat_control(
     state: StateContainer,
     template: Any,
-    effect: dict[str, Any],
+    effect: Any,
     spell_id: str,
     resolved_slot_level: int,
     resolved_targets: list[str],
@@ -343,7 +376,7 @@ def build_spell_effect_instance(
     spell_id: str,
     effect_type: str,
     template: Any,
-    effect: Mapping[str, Any],
+    effect: Any,
 ) -> tuple[dict[str, Any] | None, bool]:
     applies_status = read_non_empty_string(effect, template, "applies_status")
     modifiers = read_mapping(effect, template, "modifiers")
@@ -381,7 +414,7 @@ def build_spell_effect_instance(
 
 def resolve_heal_amount(
     template: Any,
-    effect: Mapping[str, Any],
+    effect: Any,
     spellcasting_mod: int,
     spell_level: int,
     slot_level: int,
@@ -429,7 +462,7 @@ def resolve_heal_amount(
 
 def resolve_damage_amount(
     template: Any,
-    effect: Mapping[str, Any],
+    effect: Any,
     spell_level: int,
     slot_level: int,
     *,

@@ -823,7 +823,7 @@ class AIOsirisHook(NoOpSettlementHook):
             if skill is not None:
                 if skill.school:
                     tags.append(skill.school.upper())
-                effect_type = skill.effect.get("type") if skill.effect else None
+                effect_type = getattr(skill.effect, "type", None) or None
                 if isinstance(effect_type, str) and effect_type:
                     tags.append(effect_type.upper())
 

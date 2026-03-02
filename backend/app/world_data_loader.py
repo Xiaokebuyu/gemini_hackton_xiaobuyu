@@ -50,15 +50,23 @@ def _load_characters(base: Path) -> list[dict[str, Any]]:
 
 
 def _load_items(base: Path) -> list[dict[str, Any]]:
-    """展平嵌套列表，过滤掉字符串表头行。"""
+    """展平嵌套列表，将 properties 子对象展平到顶层字段。"""
     nested = _read(base, "items.json").get("items", [])
-    return [
-        item
-        for batch in nested
-        if isinstance(batch, list)
-        for item in batch
-        if isinstance(item, dict)
-    ]
+    result: list[dict[str, Any]] = []
+    for batch in nested:
+        if not isinstance(batch, list):
+            continue
+        for item in batch:
+            if not isinstance(item, dict):
+                continue
+            adapted = dict(item)
+            props = adapted.pop("properties", None)
+            if isinstance(props, dict):
+                for k, v in props.items():
+                    if k not in adapted:  # 顶层字段优先，properties 作补充
+                        adapted[k] = v
+            result.append(adapted)
+    return result
 
 
 def _load_skills(base: Path) -> list[dict[str, Any]]:
@@ -70,25 +78,9 @@ def _load_monsters(base: Path) -> list[dict[str, Any]]:
 
 
 def _load_maps(base: Path) -> list[dict[str, Any]]:
-    """将 connections 对象中的 target_map_id 提取为字符串。"""
+    """直接透传地图数据，connection 对象由 MapRegistry 负责解析。"""
     items = _read(base, "maps.json").get("maps", [])
-    result: list[dict[str, Any]] = []
-    for area in items:
-        if not isinstance(area, dict):
-            continue
-        adapted = dict(area)
-        raw_conn = adapted.get("connections")
-        if isinstance(raw_conn, list):
-            adapted["connections"] = [
-                entry["target_map_id"]
-                if isinstance(entry, dict)
-                else str(entry)
-                for entry in raw_conn
-                if (isinstance(entry, dict) and entry.get("target_map_id"))
-                or isinstance(entry, str)
-            ]
-        result.append(adapted)
-    return result
+    return [area for area in items if isinstance(area, dict)]
 
 
 def _load_quests(base: Path) -> dict[str, Any]:

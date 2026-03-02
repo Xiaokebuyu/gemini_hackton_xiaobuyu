@@ -23,6 +23,8 @@ class ClassTemplate:
     prepared_limit: int | None = None
     prepared_formula: str = ""
     level_features: dict[str, Any] = field(default_factory=dict)
+    # 格式：{"resource_key": {"max_at_level": {"1": 1, "5": 2}, "recovery": "short_rest"}}
+    class_resources_schema: dict[str, Any] = field(default_factory=dict)
     starting_equipment: list[str] = field(default_factory=list)
     default_equipped: dict[str, str] = field(default_factory=dict)
 
@@ -174,6 +176,7 @@ class ClassRegistry(ContentRegistry):
                 prepared_formula = s
 
         level_features = self._load_level_features(raw, item_id, "class")
+        class_resources_schema = self._load_class_resources_schema(raw, item_id)
 
         starting_equipment = self._load_string_list(raw, "starting_equipment")
         default_equipped = self._load_string_dict(raw, "default_equipped")
@@ -192,6 +195,7 @@ class ClassRegistry(ContentRegistry):
             prepared_limit=prepared_limit,
             prepared_formula=prepared_formula,
             level_features=level_features,
+            class_resources_schema=class_resources_schema,
             starting_equipment=starting_equipment,
             default_equipped=default_equipped,
         )
@@ -395,6 +399,47 @@ class ClassRegistry(ContentRegistry):
                     f"{group} entry '{item_id}' level_features[{key}] must be a list"
                 )
             result[str(key) if not isinstance(key, str) else key] = value
+        return result
+
+    def _load_class_resources_schema(
+        self, raw: dict[str, Any], item_id: str,
+    ) -> dict[str, Any]:
+        """Load and validate class_resources_schema field.
+
+        Expected format:
+            {"action_surge": {"max_at_level": {"2": 1, "17": 2}, "recovery": "short_rest"}}
+        """
+        schema = raw.get("class_resources_schema")
+        if schema is None:
+            return {}
+        if not isinstance(schema, Mapping):
+            self._load_issues.append(
+                f"class entry '{item_id}' has invalid class_resources_schema"
+            )
+            return {}
+        result: dict[str, Any] = {}
+        for key, config in schema.items():
+            key_str = self._coerce_non_empty_string(str(key))
+            if key_str is None:
+                continue
+            if not isinstance(config, Mapping):
+                self._load_issues.append(
+                    f"class entry '{item_id}' class_resources_schema['{key_str}'] must be a mapping"
+                )
+                continue
+            max_at_level = config.get("max_at_level", {})
+            if not isinstance(max_at_level, Mapping):
+                self._load_issues.append(
+                    f"class entry '{item_id}' class_resources_schema['{key_str}'].max_at_level must be a mapping"
+                )
+                continue
+            recovery_raw = config.get("recovery", "long_rest")
+            if self._coerce_non_empty_string(str(recovery_raw)) is None:
+                self._load_issues.append(
+                    f"class entry '{item_id}' class_resources_schema['{key_str}'].recovery must be a non-empty string"
+                )
+                continue
+            result[key_str] = dict(config)
         return result
 
     @staticmethod

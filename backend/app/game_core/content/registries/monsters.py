@@ -25,6 +25,9 @@ class MonsterAttack:
     """A single attack entry."""
 
     name: str = ""
+    damage_dice: str = "1d4"       # 伤害骰格式：NdM / NdM+B / NdM-B
+    hit_bonus: int = 0              # 命中修正（加到 d20 上）
+    damage_type: str = "physical"   # 伤害类型（占位，防御计算深化时消费）
 
 
 @dataclass(slots=True)
@@ -52,12 +55,13 @@ class MonsterTemplate:
     immunities: list[str] = field(default_factory=list)
     attacks: list[MonsterAttack] = field(default_factory=list)
     gold_drop: int | None = None
-    gold: int | None = None
-    gold_reward: int | None = None
     loot_table: list[LootEntry] = field(default_factory=list)
     spells: list[Any] = field(default_factory=list)
     ability_refs: list[Any] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    ai_personality: str = "aggressive"  # aggressive / defensive / cowardly
+    flee_threshold: float = 0.0         # 逃跑阈值（hp/max_hp 比例），0.0 = 不逃
+    xp_reward: int = 0                  # 击杀 XP（TODO: speed 等字段待数据管线就绪后补）
 
 
 class MonsterRegistry(ContentRegistry):
@@ -88,6 +92,13 @@ class MonsterRegistry(ContentRegistry):
             for fn in ("gold_drop", "gold", "gold_reward"):
                 if fn in raw and self._coerce_non_negative_int(raw.get(fn)) is None:
                     self._load_issues.append(f"monster '{mid}' has invalid {fn}")
+            # Merge gold / gold_reward aliases into gold_drop during load
+            _gold_drop: int | None = None
+            for fn in ("gold_drop", "gold", "gold_reward"):
+                val = self._coerce_non_negative_int(raw.get(fn))
+                if val is not None:
+                    _gold_drop = val
+                    break
 
             raw_cr = raw.get("cr")
             cr_val: float | None = None
@@ -122,6 +133,38 @@ class MonsterRegistry(ContentRegistry):
                 list(raw_abilities) if isinstance(raw_abilities, list) else []
             )
 
+            # ai_personality
+            ai_personality = "aggressive"
+            raw_ai = self._coerce_non_empty_string(raw.get("ai_personality"))
+            if raw_ai and raw_ai in ("aggressive", "defensive", "cowardly"):
+                ai_personality = raw_ai
+            elif raw_ai:
+                self._load_issues.append(
+                    f"monster '{mid}' has invalid ai_personality '{raw_ai}', using 'aggressive'"
+                )
+
+            # flee_threshold
+            flee_threshold = 0.0
+            if "flee_threshold" in raw:
+                ft = self._coerce_float(raw.get("flee_threshold"))
+                if ft is not None and 0.0 <= ft <= 1.0:
+                    flee_threshold = ft
+                else:
+                    self._load_issues.append(
+                        f"monster '{mid}' has invalid flee_threshold, using 0.0"
+                    )
+
+            # xp_reward
+            xp_reward = 0
+            if "xp_reward" in raw:
+                xr = self._coerce_non_negative_int(raw.get("xp_reward"))
+                if xr is not None:
+                    xp_reward = xr
+                else:
+                    self._load_issues.append(
+                        f"monster '{mid}' has invalid xp_reward, using 0"
+                    )
+
             self._items[mid] = MonsterTemplate(
                 id=str(raw.get("id", mid)),
                 name=str(raw.get("name") or ""),
@@ -134,13 +177,14 @@ class MonsterRegistry(ContentRegistry):
                 resistances=resistances,
                 immunities=immunities,
                 attacks=attacks,
-                gold_drop=self._coerce_non_negative_int(raw.get("gold_drop")),
-                gold=self._coerce_non_negative_int(raw.get("gold")),
-                gold_reward=self._coerce_non_negative_int(raw.get("gold_reward")),
+                gold_drop=_gold_drop,
                 loot_table=loot_table,
                 spells=spells,
                 ability_refs=ability_refs,
                 tags=tags,
+                ai_personality=ai_personality,
+                flee_threshold=flee_threshold,
+                xp_reward=xp_reward,
             )
 
     def get(self, content_id: str) -> MonsterTemplate | None:
@@ -244,7 +288,35 @@ class MonsterRegistry(ContentRegistry):
                     f"monster '{mid}' attacks[{index}] has invalid name"
                 )
                 continue
-            result.append(MonsterAttack(name=name))
+            # damage_dice
+            damage_dice = "1d4"
+            if "damage_dice" in entry:
+                dd = self._coerce_non_empty_string(entry.get("damage_dice"))
+                if dd:
+                    damage_dice = dd
+            # hit_bonus（可为负数，直接 int 转换）
+            hit_bonus = 0
+            if "hit_bonus" in entry:
+                hb_raw = entry.get("hit_bonus")
+                if hb_raw is not None:
+                    try:
+                        hit_bonus = int(hb_raw)
+                    except (TypeError, ValueError):
+                        self._load_issues.append(
+                            f"monster '{mid}' attacks[{index}] has invalid hit_bonus"
+                        )
+            # damage_type
+            damage_type = "physical"
+            if "damage_type" in entry:
+                dt = self._coerce_non_empty_string(entry.get("damage_type"))
+                if dt:
+                    damage_type = dt
+            result.append(MonsterAttack(
+                name=name,
+                damage_dice=damage_dice,
+                hit_bonus=hit_bonus,
+                damage_type=damage_type,
+            ))
         return result
 
     def _load_loot_table(

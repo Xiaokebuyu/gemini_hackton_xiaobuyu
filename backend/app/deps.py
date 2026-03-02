@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -111,11 +112,16 @@ def _build_game_runtime() -> GameRuntime:
     )
 
 
-GAME_RUNTIME = _build_game_runtime()
-app = FastAPI(title="Game Core API", version="0.1.0")
-app.state.game_runtime = GAME_RUNTIME
-app.state.input_port = FastAPIInputPort()
-app.state.interaction_service = None
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Deferred composition root: build runtime on server startup, not at import time."""
+    app.state.game_runtime = _build_game_runtime()
+    app.state.input_port = FastAPIInputPort()
+    app.state.interaction_service = None
+    yield
+
+
+app = FastAPI(title="Game Core API", version="0.1.0", lifespan=_lifespan)
 
 
 def get_game_runtime() -> GameRuntime:

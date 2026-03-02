@@ -381,7 +381,6 @@ class StatusEffectHandler(StaticCommandHandler):
 
     def _build_effect_payload(self, cmd: Command) -> dict[str, Any]:
         duration_ticks = self._coerce_duration_ticks(cmd.params)
-        assert duration_ticks is not None
         modifiers = self._normalize_mapping(cmd.params.get("modifiers"))
         raw_periodic = cmd.params.get("periodic")
         periodic = {}

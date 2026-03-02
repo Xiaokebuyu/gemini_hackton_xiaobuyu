@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from app.game_core.content import WorldInstance
+
+if TYPE_CHECKING:
+    from app.game_core.content.registries.items import ItemTemplate
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
     coerce_int,
@@ -12,6 +15,7 @@ from app.game_core.rules.handler_utils import (
     handler_failure,
     handler_success,
     handler_success_no_delta,
+    resolve_item_heal_amount,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
@@ -55,9 +59,9 @@ class InventoryHandler(StaticCommandHandler):
         if cmd.type == "drop":
             return self._compute_drop(cmd, state)
         if cmd.type == "equip":
-            return self._compute_equip(cmd, state)
+            return self._compute_equip(cmd, state, world)
         if cmd.type == "unequip":
-            return self._compute_unequip(cmd, state)
+            return self._compute_unequip(cmd, state, world)
         if cmd.type == "use_item":
             return self._compute_use_item(cmd, state, world)
         if cmd.type == "consume_resource":
@@ -113,7 +117,6 @@ class InventoryHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
         item_id = get_non_empty_string(cmd.params, "item_id")
@@ -129,6 +132,16 @@ class InventoryHandler(StaticCommandHandler):
                 ok=False,
                 reason=f"item not in inventory: {item_id}",
             )
+        # Type ↔ slot constraint (requires items registry; permissive when registry absent)
+        if world.has_registry("items"):
+            template = world.items.get(item_id)
+            if template is not None:
+                allowed = self._allowed_slots(template)
+                if allowed is not None and slot not in allowed:
+                    return ValidationResult(
+                        ok=False,
+                        reason=f"item '{item_id}' cannot be equipped in slot '{slot}'",
+                    )
         return ValidationResult(ok=True)
 
     def _validate_unequip(
@@ -239,23 +252,29 @@ class InventoryHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         item_id = str(cmd.params["item_id"]).strip()
         slot = str(cmd.params["slot"]).strip()
         equipment = self._player_equipment_snapshot(state)
         previous_item_id = self._equipped_item_id(equipment.get(slot))
         equipment[slot] = {"item_id": item_id}
+
+        changes: list[StateChange] = [StateChange("player", "set", "equipment", equipment)]
+        new_ac = self._compute_ac(equipment, state, world)
+        if new_ac is not None and new_ac != state.player.ac:
+            changes.append(StateChange("player", "set", "ac", new_ac))
+
         return handler_success(
             "inventory",
             "equip",
-            changes=[
-                StateChange("player", "set", "equipment", equipment),
-            ],
+            changes=changes,
             metadata={
                 "item_id": item_id,
                 "slot": slot,
                 "previous_item_id": previous_item_id,
                 "status": "equipped",
+                "ac": new_ac,
             },
             omit_empty_delta=False,
         )
@@ -264,33 +283,37 @@ class InventoryHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         slot = str(cmd.params["slot"]).strip()
         equipment = self._player_equipment_snapshot(state)
         removed_item_id = self._equipped_item_id(equipment.get(slot))
         if removed_item_id is None:
-            return ExecuteResult(
-                success=True,
-                delta=None,
+            return handler_success_no_delta(
+                "inventory",
+                "unequip",
                 metadata={
-                    "handler": "inventory",
-                    "command": "unequip",
                     "slot": slot,
                     "removed_item_id": None,
                     "status": "noop",
                 },
             )
         equipment[slot] = None
+
+        changes: list[StateChange] = [StateChange("player", "set", "equipment", equipment)]
+        new_ac = self._compute_ac(equipment, state, world)
+        if new_ac is not None and new_ac != state.player.ac:
+            changes.append(StateChange("player", "set", "ac", new_ac))
+
         return handler_success(
             "inventory",
             "unequip",
-            changes=[
-                StateChange("player", "set", "equipment", equipment),
-            ],
+            changes=changes,
             metadata={
                 "slot": slot,
                 "removed_item_id": removed_item_id,
                 "status": "unequipped",
+                "ac": new_ac,
             },
             omit_empty_delta=False,
         )
@@ -303,7 +326,7 @@ class InventoryHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         item_id = str(cmd.params["item_id"]).strip()
         item_template = world.items.get(item_id)
-        heal_amount = self._resolve_heal_amount(item_template)
+        heal_amount = resolve_item_heal_amount(item_template)
         if heal_amount is None:
             return ExecuteResult(
                 success=True,
@@ -393,6 +416,90 @@ class InventoryHandler(StaticCommandHandler):
             },
         )
 
+    # ------------------------------------------------------------------
+    # AC calculation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_ac(
+        equipment: dict[str, Any],
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> int | None:
+        """Recalculate AC from the given equipment snapshot.
+
+        Returns None when no items registry is available (no update).
+        Formula (per design spec §6.3; base_ac is absolute for non-shield armor):
+          - unarmored:  10 + DEX_mod
+          - light:      base_ac + DEX_mod         (base_ac = 10 + raw ac_bonus)
+          - medium:     base_ac + min(DEX_mod, 2)
+          - heavy:      base_ac
+          - shield:     additive bonus (shield.base_ac = raw ac_bonus, e.g. 2)
+        """
+        if not world.has_registry("items"):
+            return None
+
+        # chest slot → armor
+        armor_data = None
+        chest_entry = equipment.get("chest")
+        if isinstance(chest_entry, Mapping):
+            chest_id = chest_entry.get("item_id")
+            if chest_id:
+                t = world.items.get(str(chest_id))
+                if t is not None:
+                    armor_data = t.armor_data
+
+        # off_hand slot → shield (only if ArmorData.armor_type == "shield")
+        shield_data = None
+        off_entry = equipment.get("off_hand")
+        if isinstance(off_entry, Mapping):
+            off_id = off_entry.get("item_id")
+            if off_id:
+                t = world.items.get(str(off_id))
+                if t is not None and t.armor_data is not None:
+                    if t.armor_data.armor_type == "shield":
+                        shield_data = t.armor_data
+
+        dex_mod = state.player.get_modifier("dex")
+
+        if armor_data is None:
+            base = 10 + dex_mod
+        elif armor_data.armor_type == "light":
+            base = armor_data.base_ac + dex_mod
+        elif armor_data.armor_type == "medium":
+            base = armor_data.base_ac + min(dex_mod, 2)
+        elif armor_data.armor_type == "heavy":
+            base = armor_data.base_ac
+        else:
+            # unknown armor_type → treat as unarmored
+            base = 10 + dex_mod
+
+        if shield_data is not None:
+            base += shield_data.base_ac
+
+        return base
+
+    # ------------------------------------------------------------------
+    # Slot constraint helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _allowed_slots(template: "ItemTemplate") -> set[str] | None:
+        """Return the set of valid slots for this item, or None for permissive."""
+        if template.armor_data is not None:
+            if template.armor_data.armor_type == "shield":
+                return {"off_hand"}
+            return {"chest"}
+        if template.weapon_data is not None:
+            ws = template.weapon_data.slot
+            # two_handed weapon occupies main_hand slot
+            return {"main_hand"} if ws == "two_handed" else {ws}
+        return None  # misc / no sub-struct → any slot
+
+    # ------------------------------------------------------------------
+    # Snapshot helpers
+    # ------------------------------------------------------------------
+
     def _player_inventory_snapshot(self, state: StateContainer) -> list[dict[str, Any]]:
         snapshot = state.player.snapshot().get("inventory", [])
         if not isinstance(snapshot, list):
@@ -430,16 +537,6 @@ class InventoryHandler(StaticCommandHandler):
                 continue
             remaining_to_remove = max(0, -remaining)
         return next_inventory
-
-    @staticmethod
-    def _resolve_heal_amount(item_template: Any) -> int | None:
-        if item_template is None:
-            return None
-        for key in ("heal_amount", "heal", "restore_hp"):
-            value = coerce_int(getattr(item_template, key, None))
-            if value is not None and value > 0:
-                return value
-        return None
 
     @staticmethod
     def _equipped_item_id(raw_value: Any) -> str | None:

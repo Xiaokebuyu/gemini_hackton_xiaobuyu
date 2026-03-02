@@ -318,7 +318,7 @@ class RememberTool(_CharacterTool):
         command = Command(
             type="add_knowledge",
             params={"npc_id": character_id, "knowledge": knowledge},
-            source="ai_osiris",
+            source=character_id,
         )
         result = context.run_command(command)
         if not result.success:
@@ -415,7 +415,9 @@ class OfferQuestTool(_CharacterTool):
 class OfferTradeTool(_CharacterTool):
     """Display merchandise for trade (read-only). Merchant NPCs only."""
 
-    applicable_traits = ["merchant"]
+    @property
+    def applicable_traits(self) -> list[str]:
+        return ["merchant"]
 
     @property
     def name(self) -> str:
@@ -606,7 +608,7 @@ class RevealSecretTool(_CharacterTool):
                 "npc_id": character_id,
                 "knowledge": f"Revealed: {secret}",
             },
-            source="ai_osiris",
+            source=character_id,
         )
         result = context.run_command(command)
 

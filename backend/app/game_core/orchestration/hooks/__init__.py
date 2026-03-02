@@ -9,6 +9,7 @@ from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook
 from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
 from app.game_core.orchestration.hooks.npc_schedule import NpcScheduleHook
 from app.game_core.orchestration.hooks.private_chat_trigger import PrivateChatTriggerHook
+from app.game_core.orchestration.hooks.relationship import RelationshipHook
 from app.game_core.orchestration.hooks.scene_reset import SceneBusResetHook
 from app.game_core.orchestration.hooks.scheduled_event import ScheduledEventHook
 from app.game_core.orchestration.hooks.status_effect import StatusEffectHook
@@ -24,6 +25,7 @@ __all__ = [
     "NoOpSettlementHook",
     "NpcScheduleHook",
     "PrivateChatTriggerHook",
+    "RelationshipHook",
     "SceneBusResetHook",
     "ScheduledEventHook",
     "SettlementHook",

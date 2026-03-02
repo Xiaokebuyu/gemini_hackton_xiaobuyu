@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+
+
+@dataclass(slots=True)
+class Connection:
+    """单条区域连接，含旅行元数据。"""
+
+    target: str
+    type: str = "travel"             # travel / gate / secret / teleport
+    travel_time_minutes: int = 60    # 原始旅行分钟数
+    travel_slots: int = 1            # 时间格数 = max(1, ceil(minutes / 60))
+    description: str = ""
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -14,7 +28,9 @@ class AreaTemplate:
     name: str = ""
     region: str = ""
     base_danger: float | None = None
-    connections: list[str] = field(default_factory=list)
+    connections: list[Connection] = field(default_factory=list)
+    # TODO: 设计规范要求 SubLocationTemplate typed struct（含 type/capacity 等）。
+    #       当前存 raw dict，子地点系统深化时迁移为 dataclass。
     sub_locations: dict[str, dict[str, Any]] = field(default_factory=dict)
     encounter_profile: dict[str, Any] | None = None
     is_starting_area: bool = False
@@ -67,7 +83,24 @@ class MapRegistry(ContentRegistry):
         item = self._items.get(area_id)
         if item is None:
             return []
+        return [conn.target for conn in item.connections]
+
+    def get_connections(self, area_id: str) -> list[Connection]:
+        """Return full Connection objects for the given area."""
+        item = self._items.get(area_id)
+        if item is None:
+            return []
         return list(item.connections)
+
+    def get_connection(self, from_id: str, to_id: str) -> Connection | None:
+        """Return the Connection from from_id to to_id, or None if not found."""
+        item = self._items.get(from_id)
+        if item is None:
+            return None
+        for conn in item.connections:
+            if conn.target == to_id:
+                return conn
+        return None
 
     def get_by_region(self, region: str) -> list[AreaTemplate]:
         """Return areas matching the given region."""
@@ -174,8 +207,8 @@ class MapRegistry(ContentRegistry):
 
     def _load_connections(
         self, raw: dict[str, Any], item_id: str,
-    ) -> list[str]:
-        connections: list[str] = []
+    ) -> list[Connection]:
+        connections: list[Connection] = []
         for conn_field in ("connections", "adjacent_areas"):
             raw_conn = raw.get(conn_field)
             if raw_conn is None:
@@ -186,14 +219,59 @@ class MapRegistry(ContentRegistry):
                 )
                 continue
             for idx, entry in enumerate(raw_conn):
-                s = self._coerce_non_empty_string(entry)
-                if s is None:
+                conn = self._parse_connection_entry(entry)
+                if conn is None:
                     self._load_issues.append(
                         f"map '{item_id}' {conn_field}[{idx}] must be a non-empty string"
                     )
                 else:
-                    connections.append(s)
+                    connections.append(conn)
         return connections
+
+    def _parse_connection_entry(self, entry: Any) -> Connection | None:
+        """Parse a raw connection entry (str or dict) into a Connection."""
+        if isinstance(entry, str):
+            target = self._coerce_non_empty_string(entry)
+            if target is None:
+                return None
+            return Connection(target=target)
+        if isinstance(entry, Mapping):
+            target_raw = entry.get("target_map_id") or entry.get("target")
+            target = self._coerce_non_empty_string(target_raw)
+            if target is None:
+                return None
+            conn_type_raw = entry.get("connection_type") or entry.get("type")
+            conn_type = self._coerce_non_empty_string(conn_type_raw) or "travel"
+            travel_time_raw = entry.get("travel_time", "")
+            minutes = self._parse_travel_minutes(str(travel_time_raw)) if travel_time_raw else 60
+            travel_slots = max(1, math.ceil(minutes / 60))
+            description = str(entry.get("description", "")).strip()
+            raw_tags = entry.get("tags", [])
+            tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+            return Connection(
+                target=target,
+                type=conn_type,
+                travel_time_minutes=minutes,
+                travel_slots=travel_slots,
+                description=description,
+                tags=tags,
+            )
+        return None
+
+    @staticmethod
+    def _parse_travel_minutes(travel_time: str) -> int:
+        """Parse travel time strings like '30分钟', '2小时', '2小时30分钟' → minutes.
+
+        Falls back to 60 if the string cannot be parsed.
+        """
+        total = 0
+        hours_match = re.search(r"(\d+)\s*小时", travel_time)
+        minutes_match = re.search(r"(\d+)\s*分钟", travel_time)
+        if hours_match:
+            total += int(hours_match.group(1)) * 60
+        if minutes_match:
+            total += int(minutes_match.group(1))
+        return total if total > 0 else 60
 
     def _load_sub_locations(
         self, raw: dict[str, Any], item_id: str,

@@ -103,12 +103,75 @@ private → 按 audience 列表精确控制
 
 **测试**：`tests/test_slice_validation.py`，6 个测试类 × 2 方法 = 12 新测试
 
+## [D-S06] 状态层缺漏修复（2026-03-02）
+
+**问题**：对照设计文档排查后发现 1 个运行时 Bug + 5 个缺失 Read API + 1 处代码气味 + 3 处文档命名分歧。
+
+#### Fix-1：`RelationSlice.reduce_stock()` dirty 追踪 Bug
+
+`reduce_stock()` 成功扣减库存后未设 `self._dirty = True`，导致变更不会被 `export_dirty()` 捡到，无法持久化。在 `return True` 前加一行修复。
+
+#### Fix-2：`FlagSlice.get_all()` 补齐
+
+设计文档 §3.5 有此 API，补充实现（`dict(self.flags)` 防御拷贝）。
+
+#### Fix-3：`QuestSlice` 补齐两个 Read API
+
+- `get_active_quests()` — 返回 `status in {in_progress, active, accepted}` 的动态任务
+- `get_completion(chapter_id)` — 返回章节完成度，未知章节返回 0.0
+
+#### Fix-4：`PartySlice` 补齐两个 Read API
+
+- `get_shared_experiences(with_character=None)` — 新增可选 participant 过滤参数（向后兼容）
+- `count_critical_moments(with_character)` — 统计含该角色且 `critical_moment=True` 的经历数（❺ NPC运行时规范 §382 消费端）
+
+#### Fix-5：`StateContainer.create_new()` 气味消除
+
+`player_slice.restore(player_slice.snapshot())` 和 `narrative_plan_slice.restore(narrative_plan_slice.snapshot())` 替换为 `clear_dirty()`。`_dirty` 在 `StateSlice.__init__` 已为 False，restore(snapshot()) 的唯一副作用是 `clear_dirty()`，直接调用更清晰。
+
+#### Fix-6：设计文档命名分歧同步
+
+| 分歧 | 代码（正确） | 文档（已更正） |
+|------|------------|------------|
+| FlagSlice write | `remove(key)` | ~~`delete(key)`~~ → `remove(key)` |
+| RelationSlice write | `set_relationship_stage()` | ~~`set_stage()`~~ → `set_relationship_stage()` |
+| QuestSlice DynamicQuest 字段 | `status` | ~~`state`~~ → `status` |
+
+**测试**：新建 `tests/test_state_read_apis.py`，19 个测试（4 类 × dirty/API/边界）
+
+**测试基线**：811 passed（792 + 19 新增，不含预存在的 spell handler 失败 13 个）
+
+## [D-S07] 状态层剩余项收尾（2026-03-02）
+
+### Fix-A：EventSlice validate() 状态值白名单
+
+新增 `_VALID_STATES: ClassVar[frozenset[str]]`，含六个合法态：
+`dormant / triggered / active / resolved / expired / cancelled`
+
+在 `validate()` 的 active_events 循环中，检查 `state not in _VALID_STATES`。
+
+### Fix-B：EventSlice.trigger() 便捷方法
+
+设计文档 §3.7 Write API 列出 `trigger(event_id)` 但代码缺失（`resolve()` 已有）。
+新增 `trigger()` → `set_state(event_id, "triggered")`，与 `resolve()` 对称。
+
+**测试**：在 `tests/test_state_read_apis.py` 追加 3 个测试（22 passed total）
+
+### 关闭说明（无代码修改）
+
+| 项目 | 定性 | 处置 |
+|------|------|------|
+| `advance_quest()` fallthrough | 有意设计 | `world_state.py` 中 `_resolve_quest_kind("auto")` 是上层语义，状态层 fallthrough 是其底层支撑，不改 |
+| `AreaSlice.tick_expiry()` | 状态层已完整 | 该方法已正确实现（递减/移除/dirty）。"触发回调/hostile 同步"属编排层 Hook 职责，不在状态层 |
+| `EventSlice.spread_rumor()` | 推迟，等 schema | rumor schema 无 `id` 字段；实现需破坏 serialize/restore，且谣言系统整体零消费端，等 AI Osiris create_rumor 深化时统一加 ID |
+| `PlayerSlice.add_xp()` 阈值 | 跨层，转规则层 | 设计规范 §3.6 GrowthHandler 管升级，ClassRegistry.xp_curve 是数据源。状态层只存 xp/level，升级判断从 add_xp() 迁出属规则层工作 |
+
 ## 填充 TODO
 
 - [x] 各 Slice 的 `validate()` 实现 — D-S03 完成
-- [ ] PlayerSlice：等级提升阈值表（当前简化为 `level * 1000`）
-- [ ] AreaSlice：临时子区域过期清理逻辑
-- [ ] EventSlice：6 状态事件状态机完整转换校验
+- [x] PlayerSlice：等级提升阈值表 — D-S07：架构偏差，迁移至规则层 GrowthHandler
+- [x] AreaSlice：临时子区域过期清理逻辑 — D-S07：状态层已完整，调用时机属编排层
+- [x] EventSlice：6 状态事件状态机完整转换校验 — D-S07 Fix-A：validate() 加白名单完成
 
 ## [D-S04] S-3：EventSlice trigger_condition 完整迁移（2026-03-01）
 

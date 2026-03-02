@@ -633,11 +633,8 @@ class EconomyHandler(StaticCommandHandler):
         item_template = None
         if world.has_registry("items"):
             item_template = world.items.get(item_id)
-        if item_template is not None:
-            if item_template.base_price is not None:
-                return item_template.base_price
-            if item_template.price is not None:
-                return item_template.price
+        if item_template is not None and item_template.base_price is not None:
+            return item_template.base_price
 
         if entry is not None:
             entry_fallback = self._coerce_non_negative_int(entry.get("price"))

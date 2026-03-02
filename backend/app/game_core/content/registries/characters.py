@@ -27,7 +27,12 @@ class ShopInventory:
 
 @dataclass(slots=True)
 class CharacterTemplate:
-    """Typed NPC / character template."""
+    """Typed NPC / character template.
+
+    TODO: 设计规范包含 NPC 战斗属性（base_hp / stats / attacks），
+          供 NPC 直接参与战斗时使用。当前 NPC 战斗通过 MonsterRegistry 模板挂载，
+          NPC 战斗系统独立深化时在此补齐对应字段。
+    """
 
     id: str
     name: str = ""

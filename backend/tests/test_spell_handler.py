@@ -7,11 +7,12 @@ from typing import Iterable
 import pytest
 
 from app.game_core.content import WorldInstance
-from app.game_core.content.registries import ClassRegistry, SkillRegistry
+from app.game_core.content.registries import ClassRegistry, MonsterRegistry, SkillRegistry
 from app.game_core.orchestration.defaults import build_default_action_dispatcher
 from app.game_core.orchestration.models import StructuredAction
 from app.game_core.rules import Command, RulesEngine
 from app.game_core.rules.handlers import SpellHandler
+from app.game_core.rules.handlers.spell_resolver import resolve_spell_dc
 from app.game_core.state import StateContainer
 from app.game_core.state.slices import AreaSlice, PlayerSlice
 
@@ -602,7 +603,8 @@ class TestSpellHandler:
         assert target_effects[0]["source_spell_id"] == "hold_creature"
         assert target_effects[0]["instance_id"] != "old_hold_1"
 
-    def test_cast_spell_rejects_unsupported_combat_target_shapes(self) -> None:
+    def test_cast_spell_multi_target_partial_success_skips_missing_targets(self) -> None:
+        # 多目标施法：goblin 在战斗中被命中，wolf 不存在被跳过，法术整体成功
         state = _active_combat_state()
 
         result = _make_engine().execute(
@@ -615,9 +617,12 @@ class TestSpellHandler:
         )
 
         assert result.success is True
-        assert result.delta is None
-        assert result.metadata["status"] == "unsupported_target"
-        assert state.player.spell_slots[1]["current"] == 2
+        assert result.delta is not None
+        assert result.metadata["status"] == "cast"
+        # arc_bolt 固定 5 点伤害，goblin 被命中
+        assert result.metadata["damage_total"] == 5
+        _apply(result, state)
+        assert state.player.spell_slots[1]["current"] == 1
 
     def test_cast_spell_requires_a_live_combat_target_for_combat_spells(self) -> None:
         engine = _make_engine()
@@ -649,3 +654,241 @@ class TestSpellHandler:
         assert dead_target.success is True
         assert dead_target.delta is None
         assert dead_target.metadata["status"] == "unsupported_target"
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for F-B saving throw / multi-target tests
+# ---------------------------------------------------------------------------
+
+def _two_target_combat_state(*, participant_hp: int = 10) -> StateContainer:
+    """Combat state with two participants (goblin + orc) in the same combat."""
+    state = _make_state()
+    state.areas.register_hostile(
+        "combat_1",
+        {
+            "area_id": "forest",
+            "status": "engaged",
+            "cleared": False,
+            "blocking": True,
+            "combat_active": True,
+            "combat_round": 1,
+            "participants": [
+                {
+                    "monster_id": "goblin",
+                    "name": "Goblin",
+                    "hp": participant_hp,
+                    "max_hp": participant_hp,
+                    "ac": 13,
+                    "alive": True,
+                },
+                {
+                    "monster_id": "orc",
+                    "name": "Orc",
+                    "hp": participant_hp,
+                    "max_hp": participant_hp,
+                    "ac": 14,
+                    "alive": True,
+                },
+            ],
+        },
+    )
+    return state
+
+
+def _make_save_world(*, goblin_dex: int = 10) -> WorldInstance:
+    """World with save spells and goblin monster with given dex.
+
+    Spells:
+    - fireball: damage 2d6, save=dex, half_on_save=True
+    - ice_lance: damage 2d6, save=dex, half_on_save defaults to False
+    """
+    world = WorldInstance("test_save_world")
+    skills = SkillRegistry()
+    skills.load(
+        {
+            "fireball": {
+                "id": "fireball",
+                "category": "spell",
+                "spell_level": 1,
+                "effect": {
+                    "type": "damage",
+                    "dice": "2d6",
+                    "save": "dex",
+                    "half_on_save": True,
+                },
+                "cost": {"action_type": "action"},
+            },
+            "ice_lance": {
+                "id": "ice_lance",
+                "category": "spell",
+                "spell_level": 1,
+                "effect": {"type": "damage", "dice": "2d6", "save": "dex"},
+                "cost": {"action_type": "action"},
+            },
+        }
+    )
+    world.register(skills)
+    classes = ClassRegistry()
+    classes.load(
+        {
+            "classes": {
+                "wizard": {
+                    "id": "wizard",
+                    "spellcasting_ability": "int",
+                    "prepared_formula": "int_mod + level",
+                }
+            }
+        }
+    )
+    world.register(classes)
+    monsters = MonsterRegistry()
+    monsters.load(
+        {
+            "goblin": {
+                "id": "goblin",
+                "name": "Goblin",
+                "hp": 7,
+                "ac": 13,
+                "abilities": {"dex": goblin_dex},
+            }
+        }
+    )
+    world.register(monsters)
+    return world
+
+
+def _active_save_combat_state(extra_spell: str, *, participant_hp: int = 7) -> StateContainer:
+    """Combat state with one goblin participant + extra_spell added to known/prepared."""
+    state = _make_state()
+    snap = state.player.snapshot()
+    snap["known_spells"] = list(snap.get("known_spells", [])) + [extra_spell]
+    snap["prepared_spells"] = list(snap.get("prepared_spells", [])) + [extra_spell]
+    state.player.restore(snap)
+    state.areas.register_hostile(
+        "combat_1",
+        {
+            "area_id": "forest",
+            "status": "engaged",
+            "cleared": False,
+            "blocking": True,
+            "combat_active": True,
+            "combat_round": 1,
+            "participants": [
+                {
+                    "monster_id": "goblin",
+                    "name": "Goblin",
+                    "hp": participant_hp,
+                    "max_hp": max(1, participant_hp),
+                    "ac": 13,
+                    "alive": True,
+                }
+            ],
+        },
+    )
+    return state
+
+
+# ---------------------------------------------------------------------------
+# New tests: resolve_spell_dc / multi-target / saving throws
+# ---------------------------------------------------------------------------
+
+class TestSpellDcAndSavingThrows:
+    def test_resolve_spell_dc_uses_proficiency_and_spellcasting_mod(self) -> None:
+        # wizard: int=16 → mod=3; proficiency_bonus=2 → DC = 8+2+3 = 13
+        state = _make_state()
+        world = _make_world()
+        assert resolve_spell_dc(state, world) == 13
+
+    def test_cast_spell_multi_target_damages_all_combat_targets(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = _two_target_combat_state(participant_hp=10)
+        _patch_rolls(monkeypatch, [4, 3])  # goblin=4, orc=3
+
+        result = _make_engine().execute(
+            Command(
+                type="cast_spell",
+                params={"spell_id": "arc_burst", "targets": ["goblin", "orc"]},
+            ),
+            state,
+            _make_world(),
+        )
+
+        assert result.success is True
+        assert result.metadata["status"] == "cast"
+        assert result.metadata["damage_total"] == 7  # 4 + 3
+        _apply(result, state)
+        # 验证两个目标 HP 均已更新
+        area_snap = state.areas.snapshot()["areas"]["forest"]
+        participants = area_snap["hostile_tracking"]["combat_1"]["participants"]
+        hp_map = {p["monster_id"]: p["hp"] for p in participants}
+        assert hp_map["goblin"] == 6   # 10 - 4
+        assert hp_map["orc"] == 7      # 10 - 3
+
+    def test_cast_spell_saving_throw_monster_fails_save_full_damage(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # goblin dex=8 → save_mod=-1; roll=1 → total=0 < DC=13 → 失败 → 受全伤
+        state = _active_save_combat_state("fireball", participant_hp=20)
+        world = _make_save_world(goblin_dex=8)
+        _patch_rolls(monkeypatch, [8, 1])  # damage骰=8, save骰=1
+
+        result = _make_engine().execute(
+            Command(type="cast_spell", params={"spell_id": "fireball", "targets": ["goblin"]}),
+            state,
+            world,
+        )
+
+        assert result.success is True
+        assert result.metadata["status"] == "cast"
+        assert result.metadata["damage_total"] == 8
+        assert result.metadata["save_dc"] == 13
+        save_roll = result.metadata["save_rolls"][0]
+        assert save_roll["succeeded"] is False
+        assert save_roll["save_ability"] == "dex"
+        assert save_roll["total"] == 0  # 1 + (-1)
+        _apply(result, state)
+        assert state.player.spell_slots[1]["current"] == 1
+
+    def test_cast_spell_saving_throw_monster_passes_save_half_damage(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # goblin dex=20 → save_mod=5; roll=8 → total=13 >= DC=13 → 成功 → 半伤
+        state = _active_save_combat_state("fireball", participant_hp=20)
+        world = _make_save_world(goblin_dex=20)
+        _patch_rolls(monkeypatch, [10, 8])  # damage骰=10, save骰=8
+
+        result = _make_engine().execute(
+            Command(type="cast_spell", params={"spell_id": "fireball", "targets": ["goblin"]}),
+            state,
+            world,
+        )
+
+        assert result.success is True
+        assert result.metadata["status"] == "cast"
+        assert result.metadata["damage_total"] == 5  # max(1, 10 // 2)
+        save_roll = result.metadata["save_rolls"][0]
+        assert save_roll["succeeded"] is True
+        assert save_roll["total"] == 13  # 8 + 5
+
+    def test_cast_spell_saving_throw_no_half_on_save_zero_damage(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # ice_lance: half_on_save=False → 存档通过则伤害=0，目标 HP 不变
+        state = _active_save_combat_state("ice_lance", participant_hp=7)
+        world = _make_save_world(goblin_dex=20)
+        _patch_rolls(monkeypatch, [4, 20])  # damage骰=4, save骰=20
+
+        result = _make_engine().execute(
+            Command(type="cast_spell", params={"spell_id": "ice_lance", "targets": ["goblin"]}),
+            state,
+            world,
+        )
+
+        assert result.success is True
+        assert result.metadata["status"] == "cast"
+        assert result.metadata["damage_total"] == 0
+        assert result.metadata["target_hp"] == 7   # HP 不变
+        assert result.metadata["target_alive"] is True
+        save_roll = result.metadata["save_rolls"][0]
+        assert save_roll["succeeded"] is True
