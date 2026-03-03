@@ -1,0 +1,56 @@
+import { useState } from 'react'
+import { useOverlayStore } from '../stores/overlayStore'
+import { useStreamStore } from '../stores/streamStore'
+import { saveSession } from '../lib/api'
+
+interface Props {
+  worldId: string
+  sessionId: string
+}
+
+export default function QuickBar({ worldId, sessionId }: Props) {
+  const overlay = useOverlayStore()
+  const isStreaming = useStreamStore((s) => s.isStreaming)
+  const [saveMsg, setSaveMsg] = useState<string | null>(null)
+
+  const handleSave = async () => {
+    try {
+      await saveSession(worldId, sessionId)
+      setSaveMsg('✓ 已保存')
+      setTimeout(() => setSaveMsg(null), 2000)
+    } catch {
+      setSaveMsg('保存失败')
+      setTimeout(() => setSaveMsg(null), 2000)
+    }
+  }
+
+  return (
+    <div className="flex-shrink-0 flex items-center justify-between pt-1.5 border-t border-gray-700/30">
+      <div className="flex gap-2">
+        <button
+          onClick={() => overlay.open('log')}
+          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+        >
+          LOG
+        </button>
+        <button
+          onClick={() => overlay.open('menu')}
+          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+        >
+          MENU
+        </button>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {saveMsg && <span className="text-xs text-amber-400">{saveMsg}</span>}
+        <button
+          onClick={handleSave}
+          disabled={isStreaming}
+          className="text-gray-400 hover:text-gray-200 disabled:opacity-40 text-xs px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+        >
+          SAVE
+        </button>
+      </div>
+    </div>
+  )
+}

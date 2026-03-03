@@ -186,6 +186,30 @@ def test_inventory_map_and_quest_panels_after_character_creation(monkeypatch) ->
     assert "report_in" in quest_payload["milestone_states"]
 
 
+def _parse_sse(response) -> list[dict]:
+    """Parse a text/event-stream response into a list of {event, data} dicts."""
+    events = []
+    current: dict[str, object] = {}
+    for line in response.text.split("\n"):
+        if line.startswith("event: "):
+            current["event"] = line[7:].strip()
+        elif line.startswith("data: "):
+            raw = line[6:].strip()
+            try:
+                current["data"] = json.loads(raw)
+            except json.JSONDecodeError:
+                current["data"] = raw
+        elif line == "" and current:
+            events.append(current)
+            current = {}
+    return events
+
+
+def _sse_event(events: list[dict], event_type: str) -> dict | None:
+    """Return the first event of a given type from a parsed SSE list."""
+    return next((e["data"] for e in events if e.get("event") == event_type), None)
+
+
 def test_navigate_executes_real_runtime_and_maps_failures(monkeypatch) -> None:
     runtime = _runtime()
     monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
@@ -214,17 +238,36 @@ def test_navigate_executes_real_runtime_and_maps_failures(monkeypatch) -> None:
             json={"action": "move_area", "area_id": "missing"},
         )
 
+    # Successful navigate → SSE stream with action_result + scene_change + location_overview
     assert moved.status_code == 200
-    assert moved.json()["success"] is True
-    assert moved.json()["player_location"]["area_id"] == "training_grounds"
+    moved_events = _parse_sse(moved)
+    moved_result = _sse_event(moved_events, "action_result")
+    assert moved_result is not None
+    assert moved_result["success"] is True
+    assert _sse_event(moved_events, "scene_change") is not None
+    moved_overview = _sse_event(moved_events, "location_overview")
+    assert moved_overview is not None
+    assert moved_overview["area_id"] == "training_grounds"
+
     assert entered.status_code == 200
-    assert entered.json()["player_location"]["location_id"] == "yard"
+    entered_overview = _sse_event(_parse_sse(entered), "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["location_id"] == "yard"
+
     assert left.status_code == 200
-    assert left.json()["player_location"]["location_id"] is None
+    left_overview = _sse_event(_parse_sse(left), "location_overview")
+    assert left_overview is not None
+    assert left_overview["location_id"] is None
+
+    # invalid_action: parameter validation before SSE → HTTP 400
     assert invalid_action.status_code == 400
     assert invalid_action.json()["detail"]["code"] == "invalid_navigation_request"
-    assert rejected.status_code == 400
-    assert rejected.json()["detail"]["code"] == "navigation_rejected"
+
+    # rejected: execution failure inside SSE → action_result.success=False
+    assert rejected.status_code == 200
+    rejected_result = _sse_event(_parse_sse(rejected), "action_result")
+    assert rejected_result is not None
+    assert rejected_result["success"] is False
 
 
 def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:

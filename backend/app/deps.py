@@ -21,6 +21,7 @@ from app.world_seed import WORLD_CATALOG, _shell_world_seed
 from app.world_data_loader import load_goblin_slayer_world_data
 
 _GOBLIN_SLAYER_DATA_DIR = Path(__file__).parent.parent / "data" / "goblin_slayer" / "structured_new"
+_V2_DATA_DIR = Path(__file__).parent.parent / "data" / "goblin_slayer" / "v2"
 
 
 def _build_game_runtime() -> GameRuntime:
@@ -123,6 +124,14 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="Game Core API", version="0.1.0", lifespan=_lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 def get_game_runtime() -> GameRuntime:
     """Return the active runtime for request handlers and tests."""
@@ -211,8 +220,14 @@ def _ensure_shell_world(runtime: GameRuntime, world_id: str) -> None:
     """
     if runtime.has_world(world_id):
         return
-    if world_id == "goblin_slayer" and _GOBLIN_SLAYER_DATA_DIR.exists():
-        world_data = load_goblin_slayer_world_data()
+    if world_id == "goblin_slayer":
+        if (_V2_DATA_DIR / "characters.json").exists():
+            from app.game_data_loader_v2 import load_v2_world_data
+            world_data = load_v2_world_data()
+        elif _GOBLIN_SLAYER_DATA_DIR.exists():
+            world_data = load_goblin_slayer_world_data()
+        else:
+            world_data = _shell_world_seed(world_id)
     else:
         world_data = _shell_world_seed(world_id)
     runtime.get_world(world_id, world_data=world_data)

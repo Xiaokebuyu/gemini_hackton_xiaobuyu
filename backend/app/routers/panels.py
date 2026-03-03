@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
 from fastapi import APIRouter
 
@@ -14,6 +14,7 @@ from app.api_models import (
 )
 from app.deps import _load_session_or_404
 from app.game_core import ManagedSession
+from app.scene_views import build_location_overview
 
 router = APIRouter()
 
@@ -139,3 +140,11 @@ async def get_quest_panel(world_id: str, session_id: str) -> QuestPanelResponse:
 
     session = await _load_session_or_404(world_id, session_id)
     return _quest_response(session)
+
+
+@router.get("/api/game/{world_id}/sessions/{session_id}/scene")
+async def get_scene(world_id: str, session_id: str) -> dict[str, Any]:
+    """Return current location_overview for initial game load after resume."""
+
+    session = await _load_session_or_404(world_id, session_id)
+    return build_location_overview(session)

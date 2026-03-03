@@ -12,10 +12,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.api_models import (
-    ActionExecutionResponse,
     InteractRequest,
     NavigateRequest,
-    PlayerLocationBody,
     PrivateChatRequest,
     StructuredActionRequest,
     TextInputRequest,
@@ -32,83 +30,60 @@ from app.deps import (
 from app.game_core import ManagedSession
 from app.game_core.adapters.presentation import format_sse_event
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
+from app.scene_views import build_location_overview, build_scene_change
 
 router = APIRouter()
 
 _SSE_HEADERS = {"Cache-Control": "no-cache"}
 
 
-def _action_execution_response(
-    result: PipelineResult,
-    action_type: str,
-    session: ManagedSession,
-) -> ActionExecutionResponse:
-    """Convert one pipeline result into the JSON action response model."""
-
-    player = session.runtime.state.player
-    return ActionExecutionResponse(
-        success=result.success,
-        action_type=action_type,
-        time_cost=result.time_cost,
-        metadata=dict(result.metadata),
-        errors=list(result.errors),
-        player_location=PlayerLocationBody(
-            area_id=player.current_area,
-            location_id=player.current_location,
-        ),
-    )
-
-
-@router.post(
-    "/api/game/{world_id}/sessions/{session_id}/navigate",
-    response_model=ActionExecutionResponse,
-)
+@router.post("/api/game/{world_id}/sessions/{session_id}/navigate")
 async def navigate(
     world_id: str,
     session_id: str,
     request: NavigateRequest,
-) -> ActionExecutionResponse:
-    """Execute one navigation action through the real runtime pipeline."""
+) -> StreamingResponse:
+    """Execute one navigation action and stream the result as SSE.
 
-    runtime = get_game_runtime()
-    lock = await runtime.session_lock(session_id)
-    async with lock:
-        session = await _load_session_or_404(world_id, session_id)
-        action = request.action.strip()
-        if action not in {"move_area", "enter_sub_location", "leave_sub_location"}:
-            raise _api_error(400, "invalid_navigation_request", "unknown navigation action")
+    Parameter validation raises HTTP 4xx before the stream starts so clients
+    get proper error codes for malformed requests. Execution failures (unknown
+    area, blocked path) surface as action_result with success=False inside the
+    stream.
+    """
+    action = request.action.strip()
+    if action not in {"move_area", "enter_sub_location", "leave_sub_location"}:
+        raise _api_error(400, "invalid_navigation_request", "unknown navigation action")
 
-        params: dict[str, Any] = {}
-        if action == "move_area":
-            area_id = (request.area_id or "").strip()
-            if not area_id:
-                raise _api_error(400, "invalid_navigation_request", "area_id is required")
+    params: dict[str, Any] = {}
+    if action == "move_area":
+        area_id = (request.area_id or "").strip()
+        if not area_id:
+            raise _api_error(400, "invalid_navigation_request", "area_id is required")
+        params["area_id"] = area_id
+    elif action == "enter_sub_location":
+        location_id = (request.location_id or "").strip()
+        if not location_id:
+            raise _api_error(400, "invalid_navigation_request", "location_id is required")
+        params["location_id"] = location_id
+        area_id = (request.area_id or "").strip()
+        if area_id:
             params["area_id"] = area_id
-        elif action == "enter_sub_location":
-            location_id = (request.location_id or "").strip()
-            if not location_id:
-                raise _api_error(
-                    400,
-                    "invalid_navigation_request",
-                    "location_id is required",
-                )
-            params["location_id"] = location_id
-            area_id = (request.area_id or "").strip()
-            if area_id:
-                params["area_id"] = area_id
-        else:
-            area_id = (request.area_id or "").strip()
-            if area_id:
-                params["area_id"] = area_id
+    else:
+        area_id = (request.area_id or "").strip()
+        if area_id:
+            params["area_id"] = area_id
 
-        result = await _execute_structured_action(
-            session,
-            StructuredActionRequest(action_type=action, params=params),
-        )
-        if not result.success:
-            message = result.errors[0] if result.errors else "navigation failed"
-            raise _api_error(400, "navigation_rejected", message)
-        return _action_execution_response(result, action, session)
+    structured_request = StructuredActionRequest(action_type=action, params=params)
+
+    async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        result = await _execute_structured_action(session, structured_request, event_sink=queue.put)
+        await queue.put(_build_action_result_event(result, action))
+        if result.success:
+            await queue.put(SSEEvent("scene_change", build_scene_change(session)))
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+        await queue.put(_build_stream_end_event("completed", result.success))
+
+    return await _stream_with_lock(world_id, session_id, _execute)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +227,7 @@ async def action_stream(
                 await queue.put(evt)
             if reaction_events:
                 await get_game_runtime().save_session(session)
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
     return await _stream_with_lock(world_id, session_id, _execute)
@@ -315,6 +291,7 @@ async def input_stream(
                 await queue.put(evt)
             if reaction_events:
                 await get_game_runtime().save_session(session)
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
     return await _stream_with_lock(world_id, session_id, _execute)
@@ -364,6 +341,7 @@ async def interact_stream(
             if npc_events:
                 await get_game_runtime().save_session(session)
 
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(SSEEvent("stream_end", {
             "reason": interaction_result.reason,
             "success": interaction_result.success,
@@ -410,7 +388,15 @@ async def private_chat_stream(
         )
         if chat_succeeded:
             await get_game_runtime().save_session(session)
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         reason = "completed" if chat_succeeded else "failed"
         await queue.put(SSEEvent("stream_end", {"reason": reason, "success": chat_succeeded}))
 
     return await _stream_with_lock(world_id, session_id, _execute)
+
+
+@router.post("/api/game/{world_id}/sessions/{session_id}/save", status_code=204)
+async def save_session_explicit(world_id: str, session_id: str) -> None:
+    """Explicitly persist the current session state."""
+    session = await _load_session_or_404(world_id, session_id)
+    await get_game_runtime().save_session(session)
