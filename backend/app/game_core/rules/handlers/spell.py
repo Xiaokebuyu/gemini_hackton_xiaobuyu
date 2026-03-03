@@ -106,6 +106,8 @@ class SpellHandler(StaticCommandHandler):
         identity_check = self._validate_character_identity(cmd.params, state, key="caster")
         if identity_check is not None:
             return identity_check
+        if state.player.is_action_prevented():
+            return ValidationResult(ok=False, reason="action prevented by active effect")
 
         spell_id = get_non_empty_string(cmd.params, "spell_id")
         if spell_id is None:

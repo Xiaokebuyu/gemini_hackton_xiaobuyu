@@ -51,6 +51,8 @@ class CombatHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if cmd.type == "start_combat":
             return self._validate_start_combat(cmd, state, world)
+        if state.player.is_action_prevented():
+            return ValidationResult(ok=False, reason="action prevented by active effect")
         if cmd.type in self._FLAG_COMMANDS:
             return self._validate_flag_command(cmd, state, world)
         if cmd.type == "flee":

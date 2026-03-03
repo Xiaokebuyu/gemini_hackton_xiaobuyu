@@ -62,7 +62,20 @@ htmlcov/
 *.tmp
 *.bak
 
-# Claude-specific
+# Claude / Codex / AI tool configs
 .claude/
- 
-施工文档/
+CLAUDE.md
+CODEX_INIT.md
+
+# Internal development docs
+**/施工记录*/
+**/增量执行计划/
+**/博德之门3架构设计规范/
+MEMORY_GATEWAY_INTEGRATION.md
+README_EN.md
+
+# Legacy code
+backend/legacy/
+
+# Game data (large JSON files)
+backend/data/

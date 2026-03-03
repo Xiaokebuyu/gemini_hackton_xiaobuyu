@@ -892,3 +892,25 @@ class TestSpellDcAndSavingThrows:
         assert result.metadata["target_alive"] is True
         save_roll = result.metadata["save_rolls"][0]
         assert save_roll["succeeded"] is True
+
+
+# ---------------------------------------------------------------------------
+# C-1: is_action_prevented blocks spell casting
+# ---------------------------------------------------------------------------
+
+
+def test_cast_spell_blocked_when_action_prevented():
+    """Stunned / paralyzed players cannot cast spells."""
+    world = _make_world()
+    state = _make_state()
+    state.player.active_effects.append(
+        {"effect_id": "stunned", "prevents_action": True, "remaining_ticks": 2}
+    )
+    handler = SpellHandler()
+    result = handler.validate(
+        Command(type="cast_spell", params={"caster": "player_1", "spell_id": "healing_touch"}),
+        state,
+        world,
+    )
+    assert result.ok is False
+    assert "prevented" in result.reason

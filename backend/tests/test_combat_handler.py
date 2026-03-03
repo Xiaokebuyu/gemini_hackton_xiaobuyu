@@ -611,3 +611,68 @@ class TestCombatHandler:
         assert result.success is True
         assert result.delta is None
         assert result.metadata["status"] == "not_prone"
+
+
+# ---------------------------------------------------------------------------
+# C-1: is_action_prevented blocks combat actions
+# ---------------------------------------------------------------------------
+
+
+class TestActionPreventedBlocksCombat:
+    """Stunned / paralyzed players cannot take combat actions."""
+
+    @staticmethod
+    def _stunned_state() -> StateContainer:
+        state = _make_state()
+        state.player.active_effects.append(
+            {"effect_id": "stunned", "prevents_action": True, "remaining_ticks": 2}
+        )
+        # need combat mode for most commands
+        state.player.combat_mode = True
+        state.player.combat_enemies = [{"id": "goblin", "name": "Goblin", "hp": 7, "ac": 13}]
+        return state
+
+    def test_attack_blocked_when_stunned(self):
+        state = self._stunned_state()
+        handler = CombatHandler()
+        result = handler.validate(
+            Command(type="attack", params={"target": "goblin"}),
+            state,
+            _make_world(),
+        )
+        assert result.ok is False
+        assert "prevented" in result.reason
+
+    def test_defend_blocked_when_stunned(self):
+        state = self._stunned_state()
+        handler = CombatHandler()
+        result = handler.validate(
+            Command(type="defend"),
+            state,
+            _make_world(),
+        )
+        assert result.ok is False
+        assert "prevented" in result.reason
+
+    def test_flee_blocked_when_stunned(self):
+        state = self._stunned_state()
+        handler = CombatHandler()
+        result = handler.validate(
+            Command(type="flee"),
+            state,
+            _make_world(),
+        )
+        assert result.ok is False
+        assert "prevented" in result.reason
+
+    def test_start_combat_not_blocked_by_action_prevention(self):
+        """start_combat is engine-initiated, should bypass is_action_prevented."""
+        state = self._stunned_state()
+        handler = CombatHandler()
+        result = handler.validate(
+            Command(type="start_combat", source="engine", params={"enemies": [{"id": "goblin", "name": "Goblin", "hp": 7, "ac": 13}]}),
+            state,
+            _make_world(),
+        )
+        # May fail for other reasons, but NOT because of action prevention
+        assert "prevented" not in (result.reason or "")
