@@ -590,6 +590,8 @@ class AgentContextBuilder:
                     loc_data = sub_locations.get(location_id)
                     if isinstance(loc_data, dict):
                         template = dict(loc_data)
+                    elif dataclasses.is_dataclass(loc_data):
+                        template = dataclasses.asdict(loc_data)
 
         if template is None and location_id and isinstance(area_state, dict):
             for item in area_state.get("temporary_sub_areas", []):

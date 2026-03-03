@@ -31,6 +31,15 @@ class ExplodingDetector:
         raise RuntimeError("detector unavailable")
 
 
+_DEFAULT_FOREST_MAP: dict[str, object] = {
+    "id": "forest",
+    "encounter_slot_capacity": 1,
+    "encounter_table": [
+        {"id": "forest:ambient", "monster_ids": ["goblin"], "weight": 1.0},
+    ],
+}
+
+
 def _make_world(
     *,
     include_maps: bool = True,
@@ -41,7 +50,7 @@ def _make_world(
         maps = MapRegistry()
         maps.load(
             {
-                "forest": forest_map or {"id": "forest"},
+                "forest": forest_map or _DEFAULT_FOREST_MAP,
                 "town": {"id": "town"},
             }
         )
@@ -319,21 +328,11 @@ class TestEncounterHook:
         world = _make_world(
             forest_map={
                 "id": "forest",
-                "encounter_profile": {
-                    "slot_capacity": 1,
-                    "templates": [
-                        {
-                            "id": "forest_patrol",
-                            "periods": ["dusk"],
-                            "source": "encounter",
-                        },
-                        {
-                            "id": "forest_ambush",
-                            "periods": ["dusk"],
-                            "source": "encounter",
-                        },
-                    ],
-                },
+                "encounter_slot_capacity": 1,
+                "encounter_table": [
+                    {"id": "forest_patrol", "monster_ids": ["goblin"], "weight": 1.0},
+                    {"id": "forest_ambush", "monster_ids": ["wolf"], "weight": 1.0},
+                ],
             }
         )
         context = _make_context(danger_level=0.8, slot=18, world=world)
@@ -371,21 +370,11 @@ class TestEncounterHook:
         world = _make_world(
             forest_map={
                 "id": "forest",
-                "encounter_profile": {
-                    "slot_capacity": 1,
-                    "templates": [
-                        {
-                            "id": "forest_patrol",
-                            "periods": ["dusk"],
-                            "source": "encounter",
-                        },
-                        {
-                            "id": "forest_ambush",
-                            "periods": ["dusk"],
-                            "source": "encounter",
-                        },
-                    ],
-                },
+                "encounter_slot_capacity": 1,
+                "encounter_table": [
+                    {"id": "forest_patrol", "monster_ids": ["goblin"], "weight": 1.0},
+                    {"id": "forest_ambush", "monster_ids": ["wolf"], "weight": 1.0},
+                ],
             }
         )
         context = _make_context(danger_level=0.8, slot=18, world=world)

@@ -74,8 +74,9 @@ CODEX_INIT.md
 MEMORY_GATEWAY_INTEGRATION.md
 README_EN.md
 
-# Legacy code
+# Legacy code & temp workspace
 backend/legacy/
+临时工作区/
 
 # Game data (large JSON files)
 backend/data/

@@ -18,9 +18,12 @@ class FactionTemplate:
     alignment: str = ""
     faction_relations: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
-    behavioral_rules: str = ""
+    behavioral_rules: list[str] = field(default_factory=list)
     initial_standing: int | None = None
     base_standing: int | None = None
+    influence_areas: list[str] = field(default_factory=list)
+    leader_id: str | None = None
+    member_ids: list[str] = field(default_factory=list)
 
 
 class FactionRegistry(ContentRegistry):
@@ -57,6 +60,31 @@ class FactionRegistry(ContentRegistry):
                                 f"faction '{fid}' tags[{index}] must be a non-empty string"
                             )
 
+            raw_influence = raw.get("influence_areas")
+            influence_areas = (
+                [str(a).strip() for a in raw_influence if str(a).strip()]
+                if isinstance(raw_influence, list) else []
+            )
+            leader_id_raw = raw.get("leader_id")
+            leader_id = (
+                str(leader_id_raw).strip()
+                if leader_id_raw and str(leader_id_raw).strip()
+                else None
+            )
+            raw_members = raw.get("member_ids")
+            member_ids = (
+                [str(m).strip() for m in raw_members if str(m).strip()]
+                if isinstance(raw_members, list) else []
+            )
+
+            raw_br = raw.get("behavioral_rules", [])
+            if isinstance(raw_br, list):
+                _behavioral_rules = [str(r).strip() for r in raw_br if str(r).strip()]
+            elif isinstance(raw_br, str) and raw_br.strip():
+                _behavioral_rules = [raw_br.strip()]  # 旧格式单字符串向后兼容
+            else:
+                _behavioral_rules = []
+
             self._items[fid] = FactionTemplate(
                 id=str(raw.get("id", fid)),
                 name=str(raw.get("name") or ""),
@@ -69,9 +97,12 @@ class FactionRegistry(ContentRegistry):
                     [str(t) for t in raw_tags if isinstance(t, str) and str(t).strip()]
                     if isinstance(raw_tags, list) else []
                 ),
-                behavioral_rules=str(raw.get("behavioral_rules") or ""),
+                behavioral_rules=_behavioral_rules,
                 initial_standing=self._coerce_non_negative_int(raw.get("initial_standing")),
                 base_standing=self._coerce_non_negative_int(raw.get("base_standing")),
+                influence_areas=influence_areas,
+                leader_id=leader_id,
+                member_ids=member_ids,
             )
 
     def get(self, content_id: str) -> FactionTemplate | None:
@@ -87,6 +118,20 @@ class FactionRegistry(ContentRegistry):
     def get_by_tag(self, tag: str) -> list[FactionTemplate]:
         """Return factions that have the given tag in their tags list."""
         return [item for item in self._items.values() if tag in item.tags]
+
+    def get_factions_in_area(self, area_id: str) -> list[FactionTemplate]:
+        """Get factions with influence in the specified area."""
+        return [f for f in self._items.values() if area_id in f.influence_areas]
+
+    def get_relations_of(self, faction_id: str) -> dict[str, Any]:
+        """Get faction_relations of a specific faction."""
+        faction = self.get(faction_id)
+        return dict(faction.faction_relations) if faction else {}
+
+    def get_behavioral_rules(self, faction_id: str) -> list[str]:
+        """Get behavioral_rules for a faction (for AI Osiris context)."""
+        faction = self.get(faction_id)
+        return list(faction.behavioral_rules) if faction else []
 
     # ------------------------------------------------------------------
     # Validation

@@ -113,3 +113,72 @@ def test_world_load_all_does_not_raise() -> None:
     maps = world.get_registry("maps")
     assert maps is not None
     assert len(maps.list_all()) > 0
+
+
+# ---------------------------------------------------------------------------
+# Monsters（M1-M5）
+# ---------------------------------------------------------------------------
+
+def test_monsters_stats_flattened() -> None:
+    """hp/ac 必须从 stats 子对象展平到顶层。"""
+    combat = [m for m in _DATA["monsters"] if m.get("hp", 0) > 0]
+    assert len(combat) >= 10
+    for m in combat:
+        assert m["hp"] > 0
+        assert m.get("ac", 0) > 0
+
+
+def test_monsters_abilities_present() -> None:
+    """战斗怪物必须有非空的 abilities Mapping。"""
+    for m in _DATA["monsters"]:
+        if m.get("hp", 0) > 0:
+            assert isinstance(m.get("abilities"), dict)
+            assert m["abilities"]  # 非空
+
+
+def test_monsters_creature_type_mapped() -> None:
+    """战斗怪物必须有非空 creature_type（从 type 字段别名）。"""
+    for m in _DATA["monsters"]:
+        if m.get("hp", 0) > 0:
+            assert m.get("creature_type")
+
+
+def test_monsters_attacks_use_damage_dice_key() -> None:
+    """attacks 条目必须用 damage_dice，旧 damage 键必须已重命名。"""
+    for m in _DATA["monsters"]:
+        for atk in m.get("attacks", []):
+            assert "damage_dice" in atk, f"attack missing damage_dice: {atk}"
+            assert "damage" not in atk
+
+
+def test_monsters_hp_zero_entries_filtered() -> None:
+    """hp=0 的规则描述条目必须被过滤掉。"""
+    for m in _DATA["monsters"]:
+        assert m.get("hp", 1) > 0, f"hp=0 entry not filtered: {m.get('id')}"
+
+
+def test_monsters_cr_numeric_or_none() -> None:
+    """cr 字段必须是 float/int 或 None（不能是中文字符串）。"""
+    for m in _DATA["monsters"]:
+        cr = m.get("cr")
+        assert cr is None or isinstance(cr, (int, float))
+
+
+# ---------------------------------------------------------------------------
+# Skills（S1）
+# ---------------------------------------------------------------------------
+
+def test_skills_includes_nested_entries() -> None:
+    """递归展平后技能总数必须 ≥ 50（含嵌套列表中的 108 条角色技能）。"""
+    assert len(_DATA["skills"]) >= 50
+
+
+# ---------------------------------------------------------------------------
+# Items（I1）
+# ---------------------------------------------------------------------------
+
+def test_items_have_parseable_base_price() -> None:
+    """有 price 字符串的物品应能解析到 base_price int（银币）。"""
+    priced = [i for i in _DATA["items"] if isinstance(i.get("price"), str) and i["price"].strip()]
+    parsed = [i for i in priced if isinstance(i.get("base_price"), int)]
+    assert len(parsed) > 0

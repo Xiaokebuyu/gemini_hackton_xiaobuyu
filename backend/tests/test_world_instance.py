@@ -164,12 +164,10 @@ def test_cross_ref_encounter_template_to_monster():
     maps.load({
         "forest": {
             "id": "forest",
-            "encounter_profile": {
-                "templates": [
-                    {"id": "goblin"},
-                    {"id": "missing_monster"},
-                ],
-            },
+            "encounter_table": [
+                {"monster_ids": ["goblin"]},
+                {"monster_ids": ["missing_monster"]},
+            ],
         },
     })
 
@@ -183,7 +181,7 @@ def test_cross_ref_encounter_template_to_monster():
 
     assert "_world" in issues
     assert any(
-        "missing_monster" in i and "encounter template" in i
+        "missing_monster" in i and "encounter_table" in i
         for i in issues["_world"]
     )
     assert not any("goblin" in i and "encounter" in i for i in issues["_world"])
@@ -391,3 +389,207 @@ def test_cross_ref_tag_values_across_registries():
     )
     assert not any("forest" in i for i in issues["_world"])
     assert not any("tropical" in i for i in issues["_world"])
+
+
+# ===========================================================================
+# Batch 1-6: 新增跨 registry 引用校验
+# ===========================================================================
+
+from app.game_core.content.registries.lore import LoreRegistry
+
+
+def test_cross_ref_sub_location_npc_valid():
+    """resident_npc 引用存在的 character → 无 issue。"""
+    world = WorldInstance("test_world")
+
+    maps = MapRegistry()
+    maps.load({
+        "town": {
+            "id": "town",
+            "sub_locations": {
+                "inn": {"id": "inn", "resident_npcs": ["barkeep"]},
+            },
+        },
+    })
+
+    characters = CharacterRegistry()
+    characters.load({"barkeep": {"id": "barkeep", "name": "老板"}})
+
+    world.register(maps)
+    world.register(characters)
+    issues = world.validate()
+
+    world_issues = issues.get("_world", [])
+    assert not any("sub_location" in i and "barkeep" in i for i in world_issues)
+
+
+def test_cross_ref_sub_location_npc_missing():
+    """resident_npc 引用不存在的 character → issue 包含字段信息。"""
+    world = WorldInstance("test_world")
+
+    maps = MapRegistry()
+    maps.load({
+        "town": {
+            "id": "town",
+            "sub_locations": {
+                "inn": {"id": "inn", "resident_npcs": ["ghost_npc"]},
+            },
+        },
+    })
+
+    characters = CharacterRegistry()
+    characters.load({})  # 空，ghost_npc 不存在
+
+    world.register(maps)
+    world.register(characters)
+    issues = world.validate()
+
+    assert "_world" in issues
+    assert any("ghost_npc" in i and "sub_location" in i for i in issues["_world"])
+
+
+def test_cross_ref_hostile_pool_monster_missing():
+    """hostile_pool monster_id 引用不存在的 monster → issue。"""
+    world = WorldInstance("test_world")
+
+    maps = MapRegistry()
+    maps.load({
+        "forest": {
+            "id": "forest",
+            "hostile_pool": [
+                {
+                    "id": "patrol",
+                    "name": "巡逻",
+                    "hostile_config": {
+                        "hostile_groups": [
+                            {"monster_ids": ["wolf", "phantom_beast"], "count": "1d4"},
+                        ],
+                    },
+                }
+            ],
+        },
+    })
+
+    monsters = MonsterRegistry()
+    monsters.load({"wolf": {"id": "wolf", "name": "狼"}})  # phantom_beast 不存在
+
+    world.register(maps)
+    world.register(monsters)
+    issues = world.validate()
+
+    assert "_world" in issues
+    assert any("phantom_beast" in i and "hostile" in i for i in issues["_world"])
+    assert not any("wolf" in i and "hostile" in i for i in issues["_world"])
+
+
+def test_cross_ref_milestone_involved_npc_missing():
+    """milestone.involved_npcs 引用不存在的 character → issue。"""
+    world = WorldInstance("test_world")
+
+    quests = QuestRegistry()
+    quests.load({
+        "milestones": {
+            "m1": {
+                "id": "m1",
+                "name": "寻找线人",
+                "chapter": "chapter1",
+                "involved_npcs": ["informant_npc"],
+                "involved_locations": [],
+            },
+        },
+    })
+
+    characters = CharacterRegistry()
+    characters.load({})  # informant_npc 不存在
+
+    maps = MapRegistry()
+    maps.load({})
+
+    world.register(quests)
+    world.register(characters)
+    world.register(maps)
+    issues = world.validate()
+
+    assert "_world" in issues
+    assert any("informant_npc" in i and "milestone" in i for i in issues["_world"])
+
+
+def test_cross_ref_faction_leader_missing():
+    """faction.leader_id 引用不存在的 character → issue。"""
+    world = WorldInstance("test_world")
+
+    factions = FactionRegistry()
+    factions.load({
+        "guild": {
+            "id": "guild",
+            "name": "商人公会",
+            "leader_id": "missing_boss",
+            "member_ids": [],
+        },
+    })
+
+    characters = CharacterRegistry()
+    characters.load({})  # missing_boss 不存在
+
+    world.register(factions)
+    world.register(characters)
+    issues = world.validate()
+
+    assert "_world" in issues
+    assert any("missing_boss" in i and "leader" in i for i in issues["_world"])
+
+
+def test_cross_ref_faction_influence_area_missing():
+    """faction.influence_areas 引用不存在的 area → issue。"""
+    world = WorldInstance("test_world")
+
+    factions = FactionRegistry()
+    factions.load({
+        "thieves": {
+            "id": "thieves",
+            "name": "盗贼",
+            "influence_areas": ["docks", "ghost_area"],
+        },
+    })
+
+    maps = MapRegistry()
+    maps.load({"docks": {"id": "docks"}})  # ghost_area 不存在
+
+    world.register(factions)
+    world.register(maps)
+    issues = world.validate()
+
+    assert "_world" in issues
+    assert any("ghost_area" in i and "influence_area" in i for i in issues["_world"])
+    assert not any("docks" in i and "influence_area" in i for i in issues["_world"])
+
+
+def test_cross_ref_world_rule_scope_id_missing():
+    """WorldRule scope_id 引用不存在的 area → issue。"""
+    world = WorldInstance("test_world")
+
+    lore = LoreRegistry()
+    lore.load({
+        "rules": {
+            "no_magic": {
+                "id": "no_magic",
+                "title": "禁魔区",
+                "scope": "area",
+                "scope_id": "forbidden_zone",  # 不存在
+            },
+        },
+    })
+
+    maps = MapRegistry()
+    maps.load({})  # forbidden_zone 不存在
+
+    factions = FactionRegistry()
+    factions.load({})
+
+    world.register(lore)
+    world.register(maps)
+    world.register(factions)
+    issues = world.validate()
+
+    assert "_world" in issues
+    assert any("forbidden_zone" in i and "rule" in i for i in issues["_world"])

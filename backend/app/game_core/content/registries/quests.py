@@ -9,6 +9,15 @@ from app.game_core.content.base import ContentRegistry
 
 
 @dataclass(slots=True)
+class MilestoneCondition:
+    """单个里程碑完成/失败条件。"""
+
+    type: str = ""      # location_visited / flag_set / npc_talked / item_obtained / kill_count / time_elapsed
+    params: dict[str, Any] = field(default_factory=dict)
+    optional: bool = False
+
+
+@dataclass(slots=True)
 class MilestoneTemplate:
     id: str
     title: str = ""
@@ -17,6 +26,16 @@ class MilestoneTemplate:
     tags: list[str] = field(default_factory=list)
     prerequisites: list[str] = field(default_factory=list)
     next_milestones: list[str] = field(default_factory=list)
+    # 叙事与进度字段
+    completion_value: int = 10
+    sequence: int = 0
+    narrative_context: str = ""
+    key_elements: list[str] = field(default_factory=list)
+    involved_npcs: list[str] = field(default_factory=list)
+    involved_locations: list[str] = field(default_factory=list)
+    success_conditions: list[MilestoneCondition] = field(default_factory=list)
+    failure_conditions: list[MilestoneCondition] = field(default_factory=list)
+    failure_fallback: str | None = None
 
 
 @dataclass(slots=True)
@@ -267,6 +286,30 @@ class QuestRegistry(ContentRegistry):
             raw, "next_milestones", item_id,
         )
 
+        completion_value = self._coerce_non_negative_int(raw.get("completion_value")) or 10
+        sequence = self._coerce_non_negative_int(raw.get("sequence")) or 0
+        narrative_context = str(raw.get("narrative_context", "")).strip()
+        key_elements = (
+            [str(e) for e in raw.get("key_elements", []) if str(e).strip()]
+            if isinstance(raw.get("key_elements"), list) else []
+        )
+        involved_npcs = (
+            [str(n) for n in raw.get("involved_npcs", []) if str(n).strip()]
+            if isinstance(raw.get("involved_npcs"), list) else []
+        )
+        involved_locations = (
+            [str(l) for l in raw.get("involved_locations", []) if str(l).strip()]
+            if isinstance(raw.get("involved_locations"), list) else []
+        )
+        success_conditions = self._build_conditions(item_id, raw, "success_conditions")
+        failure_conditions = self._build_conditions(item_id, raw, "failure_conditions")
+        failure_fallback_raw = raw.get("failure_fallback")
+        failure_fallback = (
+            str(failure_fallback_raw).strip()
+            if failure_fallback_raw and str(failure_fallback_raw).strip()
+            else None
+        )
+
         return MilestoneTemplate(
             id=item_id,
             title=title,
@@ -275,7 +318,46 @@ class QuestRegistry(ContentRegistry):
             tags=tags,
             prerequisites=prerequisites,
             next_milestones=next_milestones,
+            completion_value=completion_value,
+            sequence=sequence,
+            narrative_context=narrative_context,
+            key_elements=key_elements,
+            involved_npcs=involved_npcs,
+            involved_locations=involved_locations,
+            success_conditions=success_conditions,
+            failure_conditions=failure_conditions,
+            failure_fallback=failure_fallback,
         )
+
+    def _build_conditions(
+        self, mid: str, raw: dict[str, Any], field_name: str,
+    ) -> list[MilestoneCondition]:
+        raw_conds = raw.get(field_name)
+        if raw_conds is None:
+            return []
+        if not isinstance(raw_conds, list):
+            self._load_issues.append(f"milestone '{mid}' has invalid {field_name}")
+            return []
+        result: list[MilestoneCondition] = []
+        for idx, entry in enumerate(raw_conds):
+            if not isinstance(entry, Mapping):
+                self._load_issues.append(
+                    f"milestone '{mid}' {field_name}[{idx}] must be a mapping"
+                )
+                continue
+            cond_type = str(entry.get("type", "")).strip()
+            if not cond_type:
+                self._load_issues.append(
+                    f"milestone '{mid}' {field_name}[{idx}] missing type"
+                )
+                continue
+            params = (
+                dict(entry.get("params", {}))
+                if isinstance(entry.get("params"), Mapping) else {}
+            )
+            optional = bool(entry.get("optional", False))
+            result.append(MilestoneCondition(type=cond_type, params=params, optional=optional))
+        return result
 
     def _build_chapter(
         self, index: int, raw: dict[str, Any],

@@ -42,50 +42,73 @@ def test_map_registry_prefers_explicit_starting_area_and_validates_runtime_field
     assert "map 'forest' has invalid is_starting_area" in issues
 
 
-def test_map_registry_validates_optional_encounter_profile_shape():
+def test_map_registry_loads_encounter_table_new_format():
     registry = MapRegistry()
     registry.load(
         {
             "forest": {
                 "id": "forest",
-                "encounter_profile": {
-                    "slot_capacity": 1,
-                    "templates": [
-                        {
-                            "id": "forest_patrol",
-                            "periods": ["dusk"],
-                            "source": "encounter",
-                        }
-                    ],
-                },
+                "encounter_slot_capacity": 2,
+                "encounter_table": [
+                    {"monster_ids": ["goblin", "wolf"], "weight": 1.5, "min_danger": 0.3},
+                    {"id": "forest_boss", "monster_ids": ["troll"], "weight": 0.5, "min_danger": 0.7},
+                ],
             },
             "wilds": {
                 "id": "wilds",
-                "encounter_profile": {
-                    "slot_capacity": "bad",
-                    "templates": [
-                        {
-                            "id": "   ",
-                            "periods": "dusk",
-                            "source": "   ",
-                        }
-                    ],
-                },
-            },
-            "cave": {
-                "id": "cave",
-                "encounter_profile": [],
+                "encounter_slot_capacity": "bad",
+                "encounter_table": [
+                    {"monster_ids": []},       # no monster_ids → load issue recorded
+                    {"monster_ids": ["orc"], "weight": "invalid"},  # invalid weight → issue
+                ],
             },
         }
     )
 
     issues = registry.validate()
 
-    assert "map 'cave' has invalid encounter_profile" in issues
-    assert "map 'wilds' encounter_profile has invalid slot_capacity" in issues
-    assert "map 'wilds' encounter_profile template 0 has invalid id" in issues
-    assert "map 'wilds' encounter_profile template 0 has invalid periods" in issues
-    assert "map 'wilds' encounter_profile template 0 has invalid source" in issues
+    forest = registry.get("forest")
+    assert forest is not None
+    assert forest.encounter_slot_capacity == 2
+    assert len(forest.encounter_table) == 2
+    # id auto-assigned for first entry (no id in raw), preserved for second
+    assert forest.encounter_table[0].id == "forest_0"
+    assert forest.encounter_table[1].id == "forest_boss"
+    assert forest.encounter_table[0].monster_ids == ["goblin", "wolf"]
+    assert forest.encounter_table[0].weight == 1.5
+    assert forest.encounter_table[0].min_danger == 0.3
+
+    # invalid slot_capacity → issue
+    assert "map 'wilds' has invalid encounter_slot_capacity" in issues
+    # empty monster_ids → issue
+    assert any("wilds" in i and "no monster_ids" in i for i in issues)
+    # invalid weight → issue
+    assert any("wilds" in i and "invalid weight" in i for i in issues)
+
+
+def test_map_registry_encounter_profile_backward_compat():
+    # 旧 encounter_profile dict 格式可以被 load，不产生 issue（向后兼容）
+    registry = MapRegistry()
+    registry.load(
+        {
+            "forest": {
+                "id": "forest",
+                "encounter_profile": {
+                    "slot_capacity": 2,
+                    "templates": [
+                        {"id": "forest_patrol", "monster_ids": ["goblin"]},
+                    ],
+                },
+            },
+        }
+    )
+    issues = registry.validate()
+    forest = registry.get("forest")
+    assert forest is not None
+    assert forest.encounter_slot_capacity == 2
+    assert len(forest.encounter_table) == 1
+    assert forest.encounter_table[0].id == "forest_patrol"
+    assert not any("forest" in i for i in issues)
 
 
 def test_character_registry_validates_inventory_and_shop_shapes():
@@ -159,9 +182,8 @@ def test_monster_registry_validates_combat_and_loot_fields():
                 "id": "goblin",
                 "hp": 0,
                 "ac": "bad",
-                "gold_drop": -1,
                 "loot_table": [
-                    {"item_id": "   ", "count": -1, "chance": 2.0},
+                    {"item_id": "   ", "chance": 2.0},
                     "bad-entry",
                 ],
             }
@@ -172,9 +194,7 @@ def test_monster_registry_validates_combat_and_loot_fields():
 
     assert "monster 'goblin' has invalid hp" in issues
     assert "monster 'goblin' has invalid ac" in issues
-    assert "monster 'goblin' has invalid gold_drop" in issues
     assert "monster 'goblin' loot_table[0] has invalid item_id" in issues
-    assert "monster 'goblin' loot_table[0] has invalid count" in issues
     assert "monster 'goblin' loot_table[0] has invalid chance" in issues
     assert "monster 'goblin' loot_table[1] must be a mapping" in issues
 
@@ -575,7 +595,8 @@ def test_map_get_returns_typed_template():
             "sub_locations": {
                 "inn": {"id": "inn", "name": "Rusty Dragon"},
             },
-            "encounter_profile": {"slot_capacity": 1, "templates": []},
+            "encounter_slot_capacity": 1,
+            "encounter_table": [],
             "is_starting_area": True,
             "tags": ["safe", "urban"],
         },
@@ -589,9 +610,9 @@ def test_map_get_returns_typed_template():
     assert template.base_danger == 0.5
     assert template.connections == [Connection(target="forest")]
     assert "inn" in template.sub_locations
-    assert template.sub_locations["inn"]["name"] == "Rusty Dragon"
-    assert template.encounter_profile is not None
-    assert template.encounter_profile["slot_capacity"] == 1
+    assert template.sub_locations["inn"].name == "Rusty Dragon"
+    assert template.encounter_slot_capacity == 1
+    assert template.encounter_table == []
     assert template.is_starting_area is True
     assert template.tags == ["safe", "urban"]
 
@@ -789,10 +810,336 @@ def test_character_shop_inventory_typed():
     assert char.shop_inventory.sell_markup == 1.5
     assert char.shop_inventory.buy_rate == 0.4
     assert len(char.shop_inventory.base_pool) == 2
-    assert char.shop_inventory.base_pool[0]["item_id"] == "rope"
+    assert char.shop_inventory.base_pool[0].item_id == "rope"
     assert len(char.shop_inventory.rotating_pool) == 1
     assert char.shop_inventory.rotating_slots == 2
     assert char.shop_inventory.refresh_on == "rest"
+
+
+# ------------------------------------------------------------------
+# CharacterTemplate 战斗字段扩展（Batch 1-3）
+# ------------------------------------------------------------------
+
+
+def test_npc_attack_dataclass():
+    from app.game_core.content.registries.characters import NpcAttack
+
+    atk = NpcAttack(name="Sword Strike", hit_bonus=3, damage_dice="1d8", damage_type="slashing", range=1, tags=["melee"])
+    assert atk.name == "Sword Strike"
+    assert atk.hit_bonus == 3
+    assert atk.damage_dice == "1d8"
+    assert atk.damage_type == "slashing"
+    assert atk.range == 1
+    assert atk.tags == ["melee"]
+
+    default = NpcAttack()
+    assert default.name == ""
+    assert default.hit_bonus == 0
+    assert default.damage_dice == "1d4"
+    assert default.damage_type == "physical"
+    assert default.range == 1
+    assert default.tags == []
+
+
+def test_shop_entry_dataclass():
+    from app.game_core.content.registries.characters import ShopEntry
+
+    entry = ShopEntry(item_id="torch", count="unlimited", min_player_level=2, restock=False)
+    assert entry.item_id == "torch"
+    assert entry.count == "unlimited"
+    assert entry.min_player_level == 2
+    assert entry.restock is False
+
+    default = ShopEntry()
+    assert default.item_id == ""
+    assert default.count == "1"
+    assert default.min_player_level == 0
+    assert default.restock is True
+
+
+def test_character_combat_fields_load():
+    registry = CharacterRegistry()
+    registry.load({
+        "warrior_npc": {
+            "id": "warrior_npc",
+            "name": "Village Guard",
+            "base_hp": 30,
+            "base_ac": 14,
+            "level": 3,
+            "proficiency_bonus": 2,
+            "combat_capable": True,
+            "stats": {"str": 16, "dex": 12, "con": 14, "int": 8, "wis": 10, "cha": 9},
+            "attacks": [
+                {"name": "Spear Thrust", "hit_bonus": 5, "damage_dice": "1d6+3", "damage_type": "piercing", "range": 1, "tags": ["melee", "reach"]},
+            ],
+            "skills": ["athletics", "perception"],
+            "secrets": ["knows_the_smuggler"],
+        },
+    })
+
+    char = registry.get("warrior_npc")
+    assert char is not None
+    assert char.base_hp == 30
+    assert char.base_ac == 14
+    assert char.level == 3
+    assert char.proficiency_bonus == 2
+    assert char.combat_capable is True
+    assert char.stats == {"str": 16, "dex": 12, "con": 14, "int": 8, "wis": 10, "cha": 9}
+    assert len(char.attacks) == 1
+    atk = char.attacks[0]
+    assert atk.name == "Spear Thrust"
+    assert atk.hit_bonus == 5
+    assert atk.damage_dice == "1d6+3"
+    assert atk.damage_type == "piercing"
+    assert atk.tags == ["melee", "reach"]
+    assert char.skills == ["athletics", "perception"]
+    assert char.secrets == ["knows_the_smuggler"]
+    assert not registry.validate()
+
+
+def test_character_combat_fields_defaults():
+    """旧格式数据（无战斗字段）应填充默认值，不产生 issues。"""
+    registry = CharacterRegistry()
+    registry.load({
+        "innkeeper": {
+            "id": "innkeeper",
+            "name": "Old Tom",
+        },
+    })
+
+    char = registry.get("innkeeper")
+    assert char is not None
+    assert char.base_hp is None
+    assert char.base_ac is None
+    assert char.level == 1
+    assert char.proficiency_bonus == 2
+    assert char.combat_capable is False
+    assert char.attacks == []
+    assert char.stats == {}
+    assert char.skills == []
+    assert char.secrets == []
+    assert not registry.validate()
+
+
+def test_character_shop_pool_typed():
+    """base_pool / rotating_pool 加载后元素应为 ShopEntry 实例。"""
+    from app.game_core.content.registries.characters import ShopEntry
+
+    registry = CharacterRegistry()
+    registry.load({
+        "shop_npc": {
+            "id": "shop_npc",
+            "shop_inventory": {
+                "base_pool": [
+                    {"item_id": "rope", "count": "5", "restock": False},
+                    {"item_id": "torch", "count": "unlimited"},
+                ],
+                "rotating_pool": [
+                    {"item_id": "potion", "min_player_level": 2},
+                ],
+            },
+        },
+    })
+
+    char = registry.get("shop_npc")
+    assert char is not None
+    si = char.shop_inventory
+    assert si is not None
+
+    assert len(si.base_pool) == 2
+    rope = si.base_pool[0]
+    assert isinstance(rope, ShopEntry)
+    assert rope.item_id == "rope"
+    assert rope.count == "5"
+    assert rope.restock is False
+
+    torch = si.base_pool[1]
+    assert torch.item_id == "torch"
+    assert torch.count == "unlimited"
+    assert torch.restock is True  # 默认
+
+    assert len(si.rotating_pool) == 1
+    potion = si.rotating_pool[0]
+    assert isinstance(potion, ShopEntry)
+    assert potion.item_id == "potion"
+    assert potion.min_player_level == 2
+    assert not registry.validate()
+
+
+# ------------------------------------------------------------------
+# Batch 1-5: QuestRegistry / SkillTemplate / ItemRegistry 补全
+# ------------------------------------------------------------------
+
+
+def test_milestone_condition_dataclass():
+    from app.game_core.content.registries.quests import MilestoneCondition
+
+    cond = MilestoneCondition(type="flag_set", params={"flag": "quest_started"}, optional=True)
+    assert cond.type == "flag_set"
+    assert cond.params == {"flag": "quest_started"}
+    assert cond.optional is True
+
+    default = MilestoneCondition()
+    assert default.type == ""
+    assert default.params == {}
+    assert default.optional is False
+
+
+def test_milestone_template_new_fields_load():
+    registry = QuestRegistry()
+    registry.load({
+        "milestones": {
+            "rescue_villager": {
+                "id": "rescue_villager",
+                "title": "救援村民",
+                "chapter_id": "chapter_1",
+                "completion_value": 20,
+                "sequence": 10,
+                "narrative_context": "玩家需要在时限内救出被困的村民",
+                "key_elements": ["villager_npc", "burning_building"],
+                "involved_npcs": ["npc_elder", "npc_villager"],
+                "involved_locations": ["village_square", "barn"],
+                "success_conditions": [
+                    {"type": "npc_talked", "params": {"npc_id": "npc_villager"}},
+                    {"type": "location_visited", "params": {"area": "barn"}, "optional": True},
+                ],
+                "failure_conditions": [
+                    {"type": "time_elapsed", "params": {"ticks": 10}},
+                ],
+                "failure_fallback": "村民被困，任务失败",
+            },
+        },
+        "chapters": [{"id": "chapter_1", "title": "第一章"}],
+    })
+
+    m = registry.get_milestone("rescue_villager")
+    assert m is not None
+    assert m.completion_value == 20
+    assert m.sequence == 10
+    assert m.narrative_context == "玩家需要在时限内救出被困的村民"
+    assert m.key_elements == ["villager_npc", "burning_building"]
+    assert m.involved_npcs == ["npc_elder", "npc_villager"]
+    assert m.involved_locations == ["village_square", "barn"]
+    assert len(m.success_conditions) == 2
+    assert m.success_conditions[0].type == "npc_talked"
+    assert m.success_conditions[0].params == {"npc_id": "npc_villager"}
+    assert m.success_conditions[0].optional is False
+    assert m.success_conditions[1].optional is True
+    assert len(m.failure_conditions) == 1
+    assert m.failure_conditions[0].type == "time_elapsed"
+    assert m.failure_fallback == "村民被困，任务失败"
+    assert not registry.validate()
+
+
+def test_milestone_conditions_validation():
+    registry = QuestRegistry()
+    registry.load({
+        "milestones": {
+            "bad_milestone": {
+                "id": "bad_milestone",
+                "success_conditions": "not_a_list",
+                "failure_conditions": [
+                    "not_a_mapping",
+                    {"type": ""},        # 空 type
+                    {"type": "flag_set"},  # 合法
+                ],
+            },
+        },
+    })
+
+    issues = registry.validate()
+    assert any("bad_milestone" in i and "success_conditions" in i for i in issues)
+    assert any("bad_milestone" in i and "failure_conditions[0]" in i and "mapping" in i for i in issues)
+    assert any("bad_milestone" in i and "failure_conditions[1]" in i and "missing type" in i for i in issues)
+    m = registry.get_milestone("bad_milestone")
+    assert m is not None
+    assert len(m.success_conditions) == 0
+    assert len(m.failure_conditions) == 1  # 只有合法的那个
+    assert m.failure_conditions[0].type == "flag_set"
+
+
+def test_skill_template_new_fields_load():
+    from app.game_core.content.registries.skills import SkillRegistry
+
+    registry = SkillRegistry()
+    registry.load({
+        "fireball": {
+            "id": "fireball",
+            "name": "火球术",
+            "spell_level": 3,
+            "school": "evocation",
+            "requirements": {"class": ["wizard", "sorcerer"], "level": 5},
+            "usable_in": ["combat", "exploration"],
+        },
+        "sneak": {
+            "id": "sneak",
+            "name": "潜行",
+        },
+    })
+
+    fb = registry.get("fireball")
+    assert fb is not None
+    assert fb.requirements == {"class": ["wizard", "sorcerer"], "level": 5}
+    assert fb.usable_in == ["combat", "exploration"]
+
+    sneak = registry.get("sneak")
+    assert sneak is not None
+    assert sneak.requirements == {}
+    assert sneak.usable_in == []
+    assert not registry.validate()
+
+
+def test_accessory_data_dataclass():
+    from app.game_core.content.registries.items import AccessoryData
+    from app.game_core.content.registries.shared_types import Effect
+
+    eff = Effect(type="buff", params={"stat": "dex", "bonus": 2}, target="self")
+    acc = AccessoryData(slot="neck", effects=[eff])
+    assert acc.slot == "neck"
+    assert len(acc.effects) == 1
+    assert acc.effects[0].type == "buff"
+    assert acc.effects[0].params["bonus"] == 2
+
+    default = AccessoryData()
+    assert default.slot == ""
+    assert default.effects == []
+
+
+def test_item_registry_accessory_type_load():
+    from app.game_core.content.registries.items import AccessoryData, ItemRegistry
+
+    registry = ItemRegistry()
+    registry.load({
+        "amulet_dex": {
+            "id": "amulet_dex",
+            "name": "敏捷护符",
+            "type": "accessory",
+            "rarity": "uncommon",
+            "accessory_slot": "neck",
+            "effects": [
+                {"type": "buff", "params": {"stat": "dex", "bonus": 2}, "target": "self"},
+            ],
+        },
+        "basic_sword": {
+            "id": "basic_sword",
+            "name": "普通剑",
+            "type": "weapon",
+            "damage_dice": "1d6",
+            "damage_type": "slashing",
+        },
+    })
+
+    amulet = registry.get("amulet_dex")
+    assert amulet is not None
+    assert isinstance(amulet.accessory_data, AccessoryData)
+    assert amulet.accessory_data.slot == "neck"
+    assert len(amulet.accessory_data.effects) == 1
+    assert amulet.accessory_data.effects[0].type == "buff"
+
+    sword = registry.get("basic_sword")
+    assert sword is not None
+    assert sword.accessory_data is None
+    assert not registry.validate()
 
 
 # ------------------------------------------------------------------
@@ -970,6 +1317,7 @@ def test_class_validates_hit_die_hp_ac_fields():
 
 
 def test_class_validates_level_features_shape():
+    from app.game_core.content.registries import Feature
     registry = ClassRegistry()
     registry.load({
         "classes": {
@@ -978,7 +1326,7 @@ def test_class_validates_level_features_shape():
                 "level_features": {
                     "1": ["cantrips"],
                     "foo": ["bad_key"],
-                    "3": "not_a_list",
+                    "3": "not_a_list",   # 单字符串简写 → 合法
                 },
             },
         },
@@ -986,9 +1334,17 @@ def test_class_validates_level_features_shape():
 
     issues = registry.validate()
 
+    # non-numeric key → issue
     assert "class entry 'wizard' level_features key 'foo' must be numeric" in issues
-    assert "class entry 'wizard' level_features[3] must be a list" in issues
+    # valid key "1" → no issue
     assert not any("level_features key '1'" in i for i in issues)
+    # "3": "not_a_list" → 简写字符串，被接受为 [Feature(id="not_a_list")]
+    wizard = registry.get_class("wizard")
+    assert wizard is not None
+    assert "3" in wizard.level_features
+    assert len(wizard.level_features["3"]) == 1
+    assert isinstance(wizard.level_features["3"][0], Feature)
+    assert wizard.level_features["3"][0].id == "not_a_list"
 
 
 def test_class_validates_race_fields():
@@ -1122,16 +1478,21 @@ def test_class_get_returns_typed_templates():
     assert isinstance(sub, SubclassTemplate)
     assert sub.class_id == "fighter"
     assert sub.features == ["improved_critical"]
-    assert sub.level_features == {"3": ["remarkable_athlete"]}
+    assert "3" in sub.level_features
+    assert len(sub.level_features["3"]) == 1
+    assert sub.level_features["3"][0].id == "remarkable_athlete"
 
     race = registry.get_race("human")
     assert isinstance(race, RaceTemplate)
     assert race.stat_bonuses == {"str": 1, "dex": 1}
-    assert race.racial_traits == ["versatile"]
+    assert len(race.racial_traits) == 1
+    assert race.racial_traits[0].id == "versatile"
+    assert race.racial_traits[0].name == "versatile"
 
     bg = registry.get_background("soldier")
     assert isinstance(bg, BackgroundTemplate)
-    assert bg.feature == "military_rank"
+    assert bg.feature is not None
+    assert bg.feature.id == "military_rank"
     assert bg.gold_bonus == 10
     assert bg.skill_proficiency == ["athletics", "intimidation"]
 
@@ -1331,7 +1692,7 @@ def test_faction_get_returns_typed_template():
     assert faction.name == "City Watch"
     assert faction.alignment == "lawful"
     assert faction.tags == ["law", "military"]
-    assert faction.behavioral_rules == "Patrol the streets."
+    assert faction.behavioral_rules == ["Patrol the streets."]
     assert faction.initial_standing == 5
     assert faction.base_standing is None
     assert faction.faction_relations == {}
@@ -1412,7 +1773,7 @@ def test_monster_get_returns_typed_template():
     assert monster.ac == 15
     assert monster.cr == 0.25
     assert monster.creature_type == "humanoid"
-    assert monster.gold_drop == 5
+    assert monster.gold_drop == "5"
 
     assert registry.get("nonexistent") is None
 
@@ -1439,12 +1800,12 @@ def test_monster_loot_entry_typed():
     assert isinstance(first, LootEntry)
     assert first.item_id == "gold_pile"
     assert first.chance == 0.8
-    assert first.count == 3
+    assert first.count == "3"
 
     second = monster.loot_table[1]
     assert second.item_id == "gem"
     assert second.chance == 1.0
-    assert second.count == 1
+    assert second.count == "1"
 
 
 def test_item_get_returns_typed_template():
@@ -2016,8 +2377,8 @@ def test_item_builds_consumable_data_from_heal_amount():
     assert isinstance(potion.consumable_data, ConsumableData)
     assert potion.consumable_data.trigger == "on_use"
     assert potion.consumable_data.charges == 1
-    assert potion.consumable_data.effect["type"] == "heal"
-    assert potion.consumable_data.effect["params"]["amount"] == 8
+    assert potion.consumable_data.effect.type == "heal"
+    assert potion.consumable_data.effect.params["amount"] == 8
     assert potion.weapon_data is None
     assert potion.armor_data is None
 
@@ -2176,3 +2537,730 @@ def test_roll_damage_dice_various_formats() -> None:
     assert roll_damage_dice("invalid") == 1
     assert roll_damage_dice("") == 1
     assert roll_damage_dice("0d4") == 1   # 骰数为 0 → fallback
+
+
+# ===========================================================================
+# Batch 1-4: MonsterTemplate / FactionTemplate / LoreRegistry 新字段
+# ===========================================================================
+
+
+def test_monster_new_fields() -> None:
+    """MonsterTemplate 新字段：vulnerabilities/speed/flee_chance/tactics_notes/preferred_terrain/group_size。"""
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({
+        "goblin": {
+            "id": "goblin",
+            "name": "地精",
+            "description": "狡猾的小型类人生物",
+            "vulnerabilities": ["fire", "radiant"],
+            "speed": 40,
+            "flee_chance": 0.8,
+            "tactics_notes": "优先攻击最脆弱的目标",
+            "preferred_terrain": ["cave", "forest"],
+            "group_size": "pack",
+        },
+    })
+    m = reg.get("goblin")
+    assert m is not None
+    assert m.description == "狡猾的小型类人生物"
+    assert "fire" in m.vulnerabilities
+    assert len(m.vulnerabilities) == 2
+    assert m.speed == 40
+    assert m.flee_chance == 0.8
+    assert m.tactics_notes == "优先攻击最脆弱的目标"
+    assert "cave" in m.preferred_terrain
+    assert m.group_size == "pack"
+
+
+def test_monster_new_fields_defaults() -> None:
+    """MonsterTemplate 新字段缺省时使用默认值。"""
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({"troll": {"id": "troll", "name": "巨魔"}})
+    m = reg.get("troll")
+    assert m is not None
+    assert m.description == ""
+    assert m.vulnerabilities == []
+    assert m.speed == 30
+    assert m.flee_chance == 0.5
+    assert m.tactics_notes == ""
+    assert m.preferred_terrain == []
+    assert m.group_size == "solo"
+
+
+def test_monster_flee_chance_invalid() -> None:
+    """flee_chance 非法值 → issue 收集，使用默认 0.5。"""
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({"bat": {"id": "bat", "name": "蝙蝠", "flee_chance": 2.5}})
+    m = reg.get("bat")
+    assert m is not None
+    assert m.flee_chance == 0.5
+    issues = reg.validate()
+    assert any("flee_chance" in i for i in issues)
+
+
+def test_faction_new_fields() -> None:
+    """FactionTemplate 新字段：influence_areas/leader_id/member_ids。"""
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    reg = FactionRegistry()
+    reg.load({
+        "thieves_guild": {
+            "id": "thieves_guild",
+            "name": "盗贼公会",
+            "influence_areas": ["town_market", "docks"],
+            "leader_id": "npc_shadow_boss",
+            "member_ids": ["npc_rogue_a", "npc_rogue_b", "npc_fence"],
+        },
+    })
+    f = reg.get("thieves_guild")
+    assert f is not None
+    assert "town_market" in f.influence_areas
+    assert len(f.influence_areas) == 2
+    assert f.leader_id == "npc_shadow_boss"
+    assert len(f.member_ids) == 3
+    assert "npc_fence" in f.member_ids
+
+
+def test_faction_new_fields_defaults() -> None:
+    """FactionTemplate 新字段缺省时为空值。"""
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    reg = FactionRegistry()
+    reg.load({"guard": {"id": "guard", "name": "城卫"}})
+    f = reg.get("guard")
+    assert f is not None
+    assert f.influence_areas == []
+    assert f.leader_id is None
+    assert f.member_ids == []
+
+
+def test_lore_entry_scope_fields() -> None:
+    """LoreEntry scope/scope_id 字段加载验证。"""
+    from app.game_core.content.registries.lore import LoreRegistry
+
+    reg = LoreRegistry()
+    reg.load({
+        "area_rule": {
+            "id": "area_rule",
+            "title": "禁魔区域",
+            "content": "此区域内不得施法",
+            "scope": "area",
+            "scope_id": "dungeon_zone_3",
+        },
+        "global_law": {
+            "id": "global_law",
+            "title": "帝国法律",
+            "content": "禁止公开携带武器",
+        },
+    })
+    area_rule = reg.get("area_rule")
+    assert area_rule is not None
+    assert area_rule.scope == "area"
+    assert area_rule.scope_id == "dungeon_zone_3"
+
+    global_law = reg.get("global_law")
+    assert global_law is not None
+    assert global_law.scope == "global"
+    assert global_law.scope_id is None
+
+
+def test_lore_registry_structured_format() -> None:
+    """结构化格式 {"entries":..., "rules":...} → WorldRule 正确构建。"""
+    from app.game_core.content.registries.lore import LoreRegistry
+
+    reg = LoreRegistry()
+    reg.load({
+        "entries": {
+            "lore_01": {"id": "lore_01", "title": "世界起源", "content": "传说……"},
+        },
+        "rules": {
+            "rule_magic": {
+                "id": "rule_magic",
+                "title": "魔法规则",
+                "description": "施法消耗法力",
+                "tags": ["magic", "system"],
+                "scope": "global",
+                "priority": 10,
+            },
+        },
+    })
+    assert reg.get("lore_01") is not None
+    rule = reg.get_rule("rule_magic")
+    assert rule is not None
+    assert rule.title == "魔法规则"
+    assert rule.priority == 10
+    assert "magic" in rule.tags
+    assert rule.scope == "global"
+    assert rule.scope_id is None
+
+
+def test_lore_list_rules_by_scope_sorted() -> None:
+    """list_rules_by_scope() 过滤正确 + 按优先级降序排列。"""
+    from app.game_core.content.registries.lore import LoreRegistry
+
+    reg = LoreRegistry()
+    reg.load({
+        "rules": {
+            "r1": {"id": "r1", "title": "规则1", "scope": "area", "scope_id": "town", "priority": 5},
+            "r2": {"id": "r2", "title": "规则2", "scope": "area", "scope_id": "town", "priority": 15},
+            "r3": {"id": "r3", "title": "规则3", "scope": "area", "scope_id": "forest", "priority": 20},
+            "r4": {"id": "r4", "title": "规则4", "scope": "global", "priority": 100},
+        },
+    })
+    # 按 scope=area + scope_id=town 过滤
+    town_rules = reg.list_rules_by_scope("area", "town")
+    assert len(town_rules) == 2
+    assert town_rules[0].id == "r2"  # priority 15 > 5
+    assert town_rules[1].id == "r1"
+
+    # 只按 scope=area 过滤（不指定 scope_id）
+    area_rules = reg.list_rules_by_scope("area")
+    assert len(area_rules) == 3
+
+    # global 规则
+    global_rules = reg.list_rules_by_scope("global")
+    assert len(global_rules) == 1
+    assert global_rules[0].id == "r4"
+
+
+def test_lore_flat_format_backward_compat() -> None:
+    """旧格式（平坦 dict）→ entries 正常解析，rules 为空。"""
+    from app.game_core.content.registries.lore import LoreRegistry
+
+    reg = LoreRegistry()
+    reg.load({
+        "lore_history": {"id": "lore_history", "title": "历史", "content": "往事如烟"},
+        "lore_magic": {"id": "lore_magic", "title": "魔法起源", "content": "远古魔法"},
+    })
+    assert len(reg.list_all()) == 2
+    assert reg.list_rules() == []
+    assert reg.get("lore_history") is not None
+
+
+# ---------------------------------------------------------------------------
+# R-2a: MonsterAttack range/tags + gold_drop str + LootEntry.count str + skills
+# ---------------------------------------------------------------------------
+
+def test_monster_attack_range_and_tags():
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({
+        "troll": {
+            "id": "troll",
+            "attacks": [
+                {"name": "claw", "damage_dice": "1d6", "range": 2, "tags": ["MELEE", "SLASHING"]},
+            ],
+        },
+    })
+    monster = reg.get("troll")
+    assert monster is not None
+    atk = monster.attacks[0]
+    assert atk.range == 2
+    assert atk.tags == ["MELEE", "SLASHING"]
+
+
+def test_monster_attack_range_default():
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({
+        "goblin": {
+            "id": "goblin",
+            "attacks": [{"name": "dagger"}],
+        },
+    })
+    monster = reg.get("goblin")
+    assert monster is not None
+    assert monster.attacks[0].range == 1
+    assert monster.attacks[0].tags == []
+
+
+def test_monster_gold_drop_str_default():
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({"rat": {"id": "rat"}})
+    monster = reg.get("rat")
+    assert monster is not None
+    assert monster.gold_drop == "0"
+
+
+def test_monster_gold_drop_int_backward_compat():
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({"goblin": {"id": "goblin", "gold_drop": 3}})
+    monster = reg.get("goblin")
+    assert monster is not None
+    assert monster.gold_drop == "3"
+
+
+def test_monster_loot_entry_count_str_default():
+    from app.game_core.content.registries.monsters import LootEntry, MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({
+        "dragon": {
+            "id": "dragon",
+            "loot_table": [
+                {"item_id": "gold_pile", "chance": 1.0, "count": "1d4"},
+                {"item_id": "gem"},
+            ],
+        },
+    })
+    monster = reg.get("dragon")
+    assert monster is not None
+    assert isinstance(monster.loot_table[0], LootEntry)
+    assert monster.loot_table[0].count == "1d4"
+    assert monster.loot_table[1].count == "1"   # default
+
+
+def test_monster_skills_field():
+    from app.game_core.content.registries.monsters import MonsterRegistry
+
+    reg = MonsterRegistry()
+    reg.load({
+        "wizard_golem": {
+            "id": "wizard_golem",
+            "skills": ["arcana", "perception"],
+        },
+    })
+    monster = reg.get("wizard_golem")
+    assert monster is not None
+    assert monster.skills == ["arcana", "perception"]
+
+
+# ---------------------------------------------------------------------------
+# R-2b: ConsumableData.effect typed + behavioral_rules list + terrain_type + blocked
+# ---------------------------------------------------------------------------
+
+def test_consumable_data_effect_typed():
+    """consumable_data 子 Mapping → Effect 对象."""
+    from app.game_core.content.registries.items import ConsumableData, ItemRegistry
+    from app.game_core.content.registries.shared_types import Effect
+
+    reg = ItemRegistry()
+    reg.load({
+        "elixir": {
+            "id": "elixir",
+            "type": "consumable",
+            "consumable_data": {
+                "trigger": "on_use",
+                "charges": 2,
+                "effect": {"type": "buff", "params": {"stat": "str", "bonus": 2}, "target": "self"},
+            },
+        },
+    })
+    item = reg.get("elixir")
+    assert item is not None
+    assert isinstance(item.consumable_data, ConsumableData)
+    assert item.consumable_data.trigger == "on_use"
+    assert item.consumable_data.charges == 2
+    assert isinstance(item.consumable_data.effect, Effect)
+    assert item.consumable_data.effect.type == "buff"
+    assert item.consumable_data.effect.params["stat"] == "str"
+    assert item.consumable_data.effect.target == "self"
+
+
+def test_consumable_data_top_level_effect():
+    """顶层 effect 键 → ConsumableData with Effect 对象."""
+    from app.game_core.content.registries.items import ConsumableData, ItemRegistry
+    from app.game_core.content.registries.shared_types import Effect
+
+    reg = ItemRegistry()
+    reg.load({
+        "antidote": {
+            "id": "antidote",
+            "type": "consumable",
+            "effect": {"type": "cure", "params": {"condition": "poison"}, "target": "self"},
+        },
+    })
+    item = reg.get("antidote")
+    assert item is not None
+    assert isinstance(item.consumable_data, ConsumableData)
+    assert isinstance(item.consumable_data.effect, Effect)
+    assert item.consumable_data.effect.type == "cure"
+    assert item.consumable_data.effect.params["condition"] == "poison"
+
+
+def test_consumable_data_heal_amount_backward_compat():
+    """heal_amount → Effect(type='heal') 向后兼容."""
+    from app.game_core.content.registries.shared_types import Effect
+    from app.game_core.content.registries.items import ItemRegistry
+
+    reg = ItemRegistry()
+    reg.load({"potion": {"id": "potion", "heal_amount": 5}})
+    item = reg.get("potion")
+    assert item is not None
+    assert item.consumable_data is not None
+    assert isinstance(item.consumable_data.effect, Effect)
+    assert item.consumable_data.effect.type == "heal"
+    assert item.consumable_data.effect.params["amount"] == 5
+
+
+def test_faction_behavioral_rules_list():
+    """behavioral_rules list 格式."""
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    reg = FactionRegistry()
+    reg.load({
+        "guild": {
+            "id": "guild",
+            "name": "Merchant Guild",
+            "behavioral_rules": ["No theft", "Fair trade only"],
+        },
+    })
+    faction = reg.get("guild")
+    assert faction is not None
+    assert faction.behavioral_rules == ["No theft", "Fair trade only"]
+
+
+def test_faction_behavioral_rules_str_compat():
+    """旧单字符串格式向后兼容 → 单元素 list."""
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    reg = FactionRegistry()
+    reg.load({
+        "watch": {
+            "id": "watch",
+            "behavioral_rules": "Enforce law and order",
+        },
+    })
+    faction = reg.get("watch")
+    assert faction is not None
+    assert faction.behavioral_rules == ["Enforce law and order"]
+
+
+def test_area_terrain_type_and_connection_blocked():
+    """terrain_type 字段读取 + Connection.blocked 默认与显式."""
+    from app.game_core.content.registries.maps import MapRegistry
+
+    reg = MapRegistry()
+    reg.load({
+        "forest": {
+            "id": "forest",
+            "terrain_type": "forest",
+            "connections": [
+                {"target": "town", "blocked": True},
+                {"target": "cave"},
+            ],
+        },
+    })
+    area = reg.get("forest")
+    assert area is not None
+    assert area.terrain_type == "forest"
+    assert len(area.connections) == 2
+    assert area.connections[0].target == "town"
+    assert area.connections[0].blocked is True
+    assert area.connections[1].target == "cave"
+    assert area.connections[1].blocked is False
+
+
+# ---------------------------------------------------------------------------
+# R-2c: RaceTemplate.racial_traits list[Feature] + BackgroundTemplate.feature Feature|None
+# ---------------------------------------------------------------------------
+
+def test_race_racial_traits_str_shorthand():
+    """str 简写格式 → Feature(id=s, name=s)."""
+    from app.game_core.content.registries.classes import ClassRegistry, RaceTemplate
+    from app.game_core.content.registries.class_types import Feature
+
+    reg = ClassRegistry()
+    reg.load({
+        "races": {
+            "elf": {
+                "id": "elf",
+                "racial_traits": ["darkvision", "fey_ancestry"],
+            },
+        },
+    })
+    race = reg.get_race("elf")
+    assert isinstance(race, RaceTemplate)
+    assert len(race.racial_traits) == 2
+    assert all(isinstance(t, Feature) for t in race.racial_traits)
+    assert race.racial_traits[0].id == "darkvision"
+    assert race.racial_traits[1].id == "fey_ancestry"
+
+
+def test_race_racial_traits_mapping_format():
+    """dict Mapping 格式 → Feature via _build_feature."""
+    from app.game_core.content.registries.classes import ClassRegistry
+    from app.game_core.content.registries.class_types import Feature
+
+    reg = ClassRegistry()
+    reg.load({
+        "races": {
+            "dwarf": {
+                "id": "dwarf",
+                "racial_traits": [
+                    {"id": "stonecunning", "name": "Stonecunning", "description": "Bonus on stone checks."},
+                ],
+            },
+        },
+    })
+    race = reg.get_race("dwarf")
+    assert race is not None
+    assert len(race.racial_traits) == 1
+    trait = race.racial_traits[0]
+    assert isinstance(trait, Feature)
+    assert trait.id == "stonecunning"
+    assert trait.name == "Stonecunning"
+
+
+def test_background_feature_typed():
+    """str 简写 + Mapping 两种格式均产生 Feature 对象."""
+    from app.game_core.content.registries.classes import ClassRegistry
+    from app.game_core.content.registries.class_types import Feature
+
+    reg = ClassRegistry()
+    reg.load({
+        "backgrounds": {
+            "soldier": {"id": "soldier", "feature": "military_rank"},
+            "sage": {
+                "id": "sage",
+                "feature": {"id": "researcher", "name": "Researcher", "description": "Find info."},
+            },
+            "hermit": {"id": "hermit"},
+        },
+    })
+    soldier = reg.get_background("soldier")
+    assert soldier is not None
+    assert isinstance(soldier.feature, Feature)
+    assert soldier.feature.id == "military_rank"
+
+    sage = reg.get_background("sage")
+    assert sage is not None
+    assert isinstance(sage.feature, Feature)
+    assert sage.feature.id == "researcher"
+
+    hermit = reg.get_background("hermit")
+    assert hermit is not None
+    assert hermit.feature is None
+
+
+def test_growth_resolves_feature_typed_traits():
+    """GrowthHandler._resolve_class_features 正确从 Feature 对象提取 id."""
+    from app.game_core.content import WorldInstance
+    from app.game_core.content.registries import ClassRegistry
+    from app.game_core.rules import Command, RulesEngine
+    from app.game_core.rules.handlers import GrowthHandler
+    from app.game_core.state import StateContainer
+    from app.game_core.state.slices import PlayerSlice
+
+    world = WorldInstance("test")
+    classes = ClassRegistry()
+    classes.load({
+        "classes": {"fighter": {"id": "fighter", "hit_die": 10}},
+        "races": {"human": {"id": "human", "racial_traits": ["versatile", "bonus_feat"]}},
+        "backgrounds": {"soldier": {"id": "soldier", "feature": "military_rank"}},
+    })
+    world.register(classes)
+
+    state = StateContainer()
+    player = PlayerSlice()
+    player.restore({})
+    state.register(player)
+
+    engine = RulesEngine()
+    engine.register(GrowthHandler())
+    cmd = Command(type="create_character", params={
+        "character_id": "pc_1",
+        "name": "Hero",
+        "race_id": "human", "class_id": "fighter", "background_id": "soldier",
+        "ability_scores": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
+    })
+    result = engine.execute(cmd, state, world)
+    assert result.success is True, result.errors
+    state.apply(result.delta)
+    class_features = state.player.class_features
+    assert "versatile" in class_features
+    assert "bonus_feat" in class_features
+    assert "military_rank" in class_features
+
+
+# ---------------------------------------------------------------------------
+# R-4: Registry Query API 补全
+# ---------------------------------------------------------------------------
+
+
+def test_map_get_sub_location():
+    from app.game_core.content.registries.maps import MapRegistry
+
+    registry = MapRegistry()
+    registry.load({
+        "town": {
+            "id": "town",
+            "sub_locations": {
+                "inn": {"id": "inn", "name": "The Inn"},
+                "market": {"id": "market", "name": "Market Square"},
+            },
+        },
+        "forest": {"id": "forest"},
+    })
+
+    # 正向：找到子地点
+    inn = registry.get_sub_location("town", "inn")
+    assert inn is not None
+    assert inn.id == "inn"
+
+    # loc_id 不存在
+    assert registry.get_sub_location("town", "dungeon") is None
+
+    # area_id 不存在
+    assert registry.get_sub_location("nowhere", "inn") is None
+
+    # area 无子地点
+    assert registry.get_sub_location("forest", "inn") is None
+
+
+def test_faction_get_factions_in_area():
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    registry = FactionRegistry()
+    registry.load({
+        "watch": {"id": "watch", "influence_areas": ["town", "docks"]},
+        "guild": {"id": "guild", "influence_areas": ["town", "market"]},
+        "bandits": {"id": "bandits", "influence_areas": ["forest"]},
+    })
+
+    town_factions = registry.get_factions_in_area("town")
+    assert {f.id for f in town_factions} == {"watch", "guild"}
+
+    forest_factions = registry.get_factions_in_area("forest")
+    assert len(forest_factions) == 1 and forest_factions[0].id == "bandits"
+
+    assert registry.get_factions_in_area("desert") == []
+
+
+def test_faction_get_relations_of():
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    registry = FactionRegistry()
+    registry.load({
+        "watch": {"id": "watch", "faction_relations": {"guild": "neutral", "bandits": "hostile"}},
+        "guild": {"id": "guild"},
+    })
+
+    relations = registry.get_relations_of("watch")
+    assert relations == {"guild": "neutral", "bandits": "hostile"}
+
+    # 返回副本：修改不影响原始数据
+    relations["guild"] = "allied"
+    assert registry.get_relations_of("watch")["guild"] == "neutral"
+
+    # faction 不存在返回空 dict
+    assert registry.get_relations_of("nonexistent") == {}
+
+
+def test_faction_get_behavioral_rules():
+    from app.game_core.content.registries.factions import FactionRegistry
+
+    registry = FactionRegistry()
+    registry.load({
+        "watch": {"id": "watch", "behavioral_rules": ["Patrol the streets.", "Arrest criminals."]},
+        "guild": {"id": "guild"},
+    })
+
+    rules = registry.get_behavioral_rules("watch")
+    assert rules == ["Patrol the streets.", "Arrest criminals."]
+
+    # 返回副本
+    rules.append("extra")
+    assert len(registry.get_behavioral_rules("watch")) == 2
+
+    # faction 无规则 → []
+    assert registry.get_behavioral_rules("guild") == []
+
+    # faction 不存在 → []
+    assert registry.get_behavioral_rules("nonexistent") == []
+
+
+def test_lore_get_rules_for_context_global():
+    from app.game_core.content.registries.lore import LoreRegistry
+
+    registry = LoreRegistry()
+    registry.load({
+        "rules": {
+            "r1": {"id": "r1", "scope": "global", "priority": 10},
+            "r2": {"id": "r2", "scope": "area", "scope_id": "town", "priority": 5},
+            "r3": {"id": "r3", "scope": "faction", "scope_id": "watch", "priority": 3},
+        },
+    })
+
+    # 不传参数只取 global
+    result = registry.get_rules_for_context()
+    assert len(result) == 1
+    assert result[0].id == "r1"
+
+
+def test_lore_get_rules_for_context_mixed():
+    from app.game_core.content.registries.lore import LoreRegistry
+
+    registry = LoreRegistry()
+    registry.load({
+        "rules": {
+            "g1": {"id": "g1", "scope": "global", "priority": 10},
+            "a1": {"id": "a1", "scope": "area", "scope_id": "town", "priority": 7},
+            "a2": {"id": "a2", "scope": "area", "scope_id": "forest", "priority": 6},
+            "f1": {"id": "f1", "scope": "faction", "scope_id": "watch", "priority": 4},
+            "f2": {"id": "f2", "scope": "faction", "scope_id": "guild", "priority": 2},
+        },
+    })
+
+    result = registry.get_rules_for_context(
+        area_id="town",
+        faction_ids=["watch"],
+    )
+    ids = [r.id for r in result]
+    assert ids == ["g1", "a1", "f1"]  # priority 降序，forest/guild 被过滤
+
+    # 空参数 → 只有 global
+    result2 = registry.get_rules_for_context()
+    assert [r.id for r in result2] == ["g1"]
+
+
+def test_skill_get_by_category():
+    from app.game_core.content.registries.skills import SkillRegistry
+
+    registry = SkillRegistry()
+    registry.load({
+        "slash": {"id": "slash", "category": "martial"},
+        "fireball": {"id": "fireball", "category": "spell"},
+        "toughness": {"id": "toughness", "category": "passive"},
+    })
+
+    martial = registry.get_by_category("martial")
+    assert len(martial) == 1 and martial[0].id == "slash"
+
+    assert registry.get_by_category("unknown") == []
+
+
+def test_skill_get_combat_and_exploration():
+    from app.game_core.content.registries.skills import SkillRegistry
+
+    registry = SkillRegistry()
+    registry.load({
+        "slash": {"id": "slash", "usable_in": ["combat"]},
+        "stealth": {"id": "stealth", "usable_in": ["exploration"]},
+        "versatile": {"id": "versatile", "usable_in": ["combat", "exploration"]},
+        "passive": {"id": "passive", "usable_in": []},
+    })
+
+    combat = registry.get_combat_skills()
+    assert {s.id for s in combat} == {"slash", "versatile"}
+
+    exploration = registry.get_exploration_skills()
+    assert {s.id for s in exploration} == {"stealth", "versatile"}
+
+    # 空结果
+    registry2 = SkillRegistry()
+    registry2.load({"p": {"id": "p", "usable_in": []}})
+    assert registry2.get_combat_skills() == []
+    assert registry2.get_exploration_skills() == []

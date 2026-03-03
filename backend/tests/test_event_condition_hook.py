@@ -193,7 +193,7 @@ class TestEventConditionHook:
                 "active_events": {
                     "evt_bad": {
                         "state": "locked",
-                        "conditions": [{"type": "time_elapsed", "count": 3}],
+                        "conditions": [{"type": "unknown_future_condition", "count": 3}],
                     }
                 }
             }

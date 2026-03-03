@@ -10,6 +10,7 @@ import re
 import random
 from typing import Any, Mapping
 
+from app.game_core.content.registries.shared_types import Effect
 from app.game_core.rules.models import DiceRoll, ExecuteResult
 from app.game_core.state.delta import StateChange, StateDelta
 
@@ -28,12 +29,10 @@ def resolve_item_heal_amount(item_template: Any) -> int | None:
     consumable_data = getattr(item_template, "consumable_data", None)
     if consumable_data is not None:
         effect = getattr(consumable_data, "effect", None)
-        if isinstance(effect, dict) and effect.get("type") == "heal":
-            params = effect.get("params", {})
-            if isinstance(params, dict):
-                value = coerce_int(params.get("amount"))
-                if value is not None and value > 0:
-                    return value
+        if isinstance(effect, Effect) and effect.type == "heal":
+            value = coerce_int(effect.params.get("amount"))
+            if value is not None and value > 0:
+                return value
     value = coerce_int(getattr(item_template, "heal_amount", None))
     return value if value is not None and value > 0 else None
 

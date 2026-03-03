@@ -14,15 +14,38 @@ from app.game_core.content.base import ContentRegistry
 
 
 @dataclass(slots=True)
+class NpcAttack:
+    """单次 NPC 攻击动作描述。"""
+
+    name: str = ""
+    hit_bonus: int = 0
+    damage_dice: str = "1d4"
+    damage_type: str = "physical"   # slashing / piercing / bludgeoning / fire / ...
+    range: int = 1                  # 攻击范围（格）
+    tags: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ShopEntry:
+    """商店库存条目（typed，替代旧 dict）。"""
+
+    item_id: str = ""
+    count: str = "1"            # 库存数量："3" / "1d4+1" / "unlimited"
+    min_player_level: int = 0   # 0 = 始终可用
+    restock: bool = True        # 售罄后是否在刷新时补货
+
+
+@dataclass(slots=True)
 class ShopInventory:
     """Typed economy shop inventory attached to a merchant character."""
 
     sell_markup: float | None = None
     buy_rate: float | None = None
-    base_pool: list[dict[str, Any]] = field(default_factory=list)
-    rotating_pool: list[dict[str, Any]] = field(default_factory=list)
+    base_pool: list[ShopEntry] = field(default_factory=list)
+    rotating_pool: list[ShopEntry] = field(default_factory=list)
     rotating_slots: int = 0
     refresh_on: str | list[str] | None = None
+    level_scaling: bool = False
 
 
 @dataclass(slots=True)
@@ -58,6 +81,16 @@ class CharacterTemplate:
     sell_markup: float | None = None
     buy_rate: float | None = None
     refresh_on: str | list[str] | None = None
+    # NPC 战斗属性
+    base_hp: int | None = None
+    base_ac: int | None = None
+    stats: dict[str, int] = field(default_factory=dict)
+    level: int = 1
+    proficiency_bonus: int = 2
+    combat_capable: bool = False
+    attacks: list[NpcAttack] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    secrets: list[str] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------
@@ -191,6 +224,37 @@ class CharacterRegistry(ContentRegistry):
         elif isinstance(raw_refresh, list):
             refresh_on = [str(r) for r in raw_refresh]
 
+        # -- NPC 战斗属性 --
+        base_hp = self._coerce_non_negative_int(raw.get("base_hp"))
+        base_ac = self._coerce_non_negative_int(raw.get("base_ac"))
+        level = self._coerce_positive_int(raw.get("level")) or 1
+        proficiency_bonus = self._coerce_non_negative_int(raw.get("proficiency_bonus")) or 2
+        attacks = self._build_npc_attacks(char_id, raw)
+        # combat_capable: 显式设置优先；否则有 attacks 或 base_hp 自动推导
+        raw_cc = raw.get("combat_capable")
+        if raw_cc is not None:
+            combat_capable = bool(raw_cc)
+        else:
+            combat_capable = bool(attacks) or base_hp is not None
+        raw_stats = raw.get("stats")
+        stats: dict[str, int] = {}
+        if isinstance(raw_stats, Mapping):
+            for attr in ("str", "dex", "con", "int", "wis", "cha"):
+                if attr in raw_stats:
+                    val = self._coerce_non_negative_int(raw_stats[attr])
+                    if val is not None:
+                        stats[attr] = val
+        raw_skills = raw.get("skills")
+        skills: list[str] = (
+            [str(s) for s in raw_skills if isinstance(s, str) and str(s).strip()]
+            if isinstance(raw_skills, list) else []
+        )
+        raw_secrets = raw.get("secrets")
+        secrets: list[str] = (
+            [str(s) for s in raw_secrets if isinstance(s, str) and str(s).strip()]
+            if isinstance(raw_secrets, list) else []
+        )
+
         return CharacterTemplate(
             id=str(raw_id or char_id),
             name=name,
@@ -215,7 +279,47 @@ class CharacterRegistry(ContentRegistry):
             sell_markup=sell_markup,
             buy_rate=buy_rate,
             refresh_on=refresh_on,
+            base_hp=base_hp,
+            base_ac=base_ac,
+            stats=stats,
+            level=level,
+            proficiency_bonus=proficiency_bonus,
+            combat_capable=combat_capable,
+            attacks=attacks,
+            skills=skills,
+            secrets=secrets,
         )
+
+    def _build_npc_attacks(self, char_id: str, raw: dict[str, Any]) -> list[NpcAttack]:
+        raw_attacks = raw.get("attacks")
+        if raw_attacks is None:
+            return []
+        if not isinstance(raw_attacks, list):
+            self._load_issues.append(f"character '{char_id}' has invalid attacks")
+            return []
+        result: list[NpcAttack] = []
+        for idx, entry in enumerate(raw_attacks):
+            if not isinstance(entry, Mapping):
+                self._load_issues.append(
+                    f"character '{char_id}' attacks[{idx}] must be a mapping"
+                )
+                continue
+            name = self._coerce_non_empty_string(entry.get("name"))
+            if name is None:
+                self._load_issues.append(
+                    f"character '{char_id}' attacks[{idx}] missing name"
+                )
+                continue
+            result.append(NpcAttack(
+                name=name,
+                hit_bonus=int(entry["hit_bonus"]) if entry.get("hit_bonus") is not None else 0,
+                damage_dice=str(entry.get("damage_dice", "1d4")).strip() or "1d4",
+                damage_type=str(entry.get("damage_type", "physical")).strip() or "physical",
+                range=int(entry["range"]) if entry.get("range") is not None else 1,
+                tags=[str(t) for t in entry["tags"] if isinstance(t, str)]
+                     if isinstance(entry.get("tags"), list) else [],
+            ))
+        return result
 
     def _extract_optional_string(
         self, char_id: str, raw: dict[str, Any], field_name: str,
@@ -365,7 +469,7 @@ class CharacterRegistry(ContentRegistry):
 
     def _load_pool(
         self, char_id: str, raw_si: Mapping[str, Any], pool_name: str,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ShopEntry]:
         pool = raw_si.get(pool_name)
         if pool is None:
             return []
@@ -374,18 +478,26 @@ class CharacterRegistry(ContentRegistry):
                 f"character '{char_id}' shop_inventory has invalid {pool_name}"
             )
             return []
-        result: list[dict[str, Any]] = []
+        result: list[ShopEntry] = []
         for index, entry in enumerate(pool):
             if not isinstance(entry, Mapping):
                 self._load_issues.append(
                     f"character '{char_id}' shop_inventory.{pool_name}[{index}] must be a mapping"
                 )
                 continue
-            if self._coerce_non_empty_string(entry.get("item_id")) is None:
+            item_id = self._coerce_non_empty_string(entry.get("item_id"))
+            if item_id is None:
                 self._load_issues.append(
                     f"character '{char_id}' shop_inventory.{pool_name}[{index}] missing item_id"
                 )
-            result.append(dict(entry))
+                continue
+            result.append(ShopEntry(
+                item_id=item_id,
+                count=str(entry.get("count", "1")).strip() or "1",
+                min_player_level=int(entry["min_player_level"])
+                                 if entry.get("min_player_level") is not None else 0,
+                restock=bool(entry.get("restock", True)),
+            ))
         return result
 
     @staticmethod

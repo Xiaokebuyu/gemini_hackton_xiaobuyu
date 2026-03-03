@@ -20,6 +20,7 @@ class AreaState:
     discovered_items: set[str] = field(default_factory=set)
     npc_locations: dict[str, str | None] = field(default_factory=dict)
     container_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    interactable_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     hostile_tracking: dict[str, dict[str, Any]] = field(default_factory=dict)
     permanent_hostile_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -33,6 +34,7 @@ class AreaState:
             "discovered_items": sorted(self.discovered_items),
             "npc_locations": dict(self.npc_locations),
             "container_states": deepcopy(self.container_states),
+            "interactable_states": deepcopy(self.interactable_states),
             "hostile_tracking": {
                 key: AreaSlice._copy_hostile_payload(value)
                 for key, value in self.hostile_tracking.items()
@@ -84,6 +86,38 @@ class AreaSlice(StateSlice):
     def is_discovery_found(self, area_id: str, discovery_id: str) -> bool:
         return discovery_id in self.get_area(area_id).discovered_items
 
+    def get_discovered(self, area_id: str) -> set[str]:
+        """Return the set of discovery ids found in this area."""
+        return set(self.get_area(area_id).discovered_items)
+
+    def is_hostile_cleared(self, area_id: str, sub_area_id: str) -> bool:
+        """Return True if the hostile sub-area has been cleared."""
+        state = self.get_area(area_id).hostile_tracking.get(sub_area_id)
+        if not isinstance(state, Mapping):
+            return False
+        return str(state.get("status", "")) == "cleared"
+
+    def is_container_opened(self, area_id: str, container_id: str) -> bool:
+        """Return True if the container has been opened or looted."""
+        state = self.get_area(area_id).container_states.get(container_id)
+        if not isinstance(state, Mapping):
+            return False
+        return bool(state.get("opened") or state.get("looted"))
+
+    def is_trap_detected(self, area_id: str, interactable_id: str) -> bool:
+        """Return True if the trap on this container/interactable has been detected."""
+        state = self.get_area(area_id).container_states.get(interactable_id)
+        if not isinstance(state, Mapping):
+            return False
+        return bool(state.get("trap_detected"))
+
+    def is_interactable_used(self, area_id: str, interactable_id: str) -> bool:
+        """Return True if this one-time interactable has been used."""
+        state = self.get_area(area_id).interactable_states.get(interactable_id)
+        if not isinstance(state, Mapping):
+            return False
+        return bool(state.get("used"))
+
     def get_container_state(
         self,
         area_id: str,
@@ -133,6 +167,12 @@ class AreaSlice(StateSlice):
 
     def mark_discovery(self, area_id: str, discovery_id: str) -> None:
         self.get_area(area_id).discovered_items.add(discovery_id)
+        self._dirty = True
+
+    def mark_interactable_used(self, area_id: str, interactable_id: str) -> None:
+        """Mark a one-time interactable as used."""
+        state = self.get_area(area_id).interactable_states.setdefault(interactable_id, {})
+        state["used"] = True
         self._dirty = True
 
     # ── 2. Container state ───────────────────────────────────────────────────
@@ -535,6 +575,8 @@ class AreaSlice(StateSlice):
                 issues.append(f"area '{area_id}' npc_locations must be a dict")
             if not isinstance(area.container_states, dict):
                 issues.append(f"area '{area_id}' container_states must be a dict")
+            if not isinstance(area.interactable_states, dict):
+                issues.append(f"area '{area_id}' interactable_states must be a dict")
             if not isinstance(area.hostile_tracking, dict):
                 issues.append(f"area '{area_id}' hostile_tracking must be a dict")
             else:
@@ -655,6 +697,20 @@ class AreaSlice(StateSlice):
             _, container_id = change.path.split(".", 1)
             self.upsert_container_state(container_id, dict(change.value))
             return
+        if change.path.startswith("interactable_states."):
+            if change.operation not in {"set", "modify"}:
+                raise ValueError(
+                    f"unsupported interactable state change: {change.operation} {change.path}"
+                )
+            if not isinstance(change.value, Mapping):
+                raise ValueError("interactable state change payload must be a mapping")
+            _, interactable_id = change.path.split(".", 1)
+            area_id = str(change.value.get("area_id", "")).strip()
+            if not area_id:
+                raise ValueError("interactable state change must include area_id")
+            self.get_area(area_id).interactable_states[interactable_id] = dict(change.value)
+            self._dirty = True
+            return
         if "." not in change.path:
             raise ValueError(f"area change path must include area id: {change.path}")
         area_id, field_name = change.path.split(".", 1)
@@ -690,6 +746,7 @@ class AreaSlice(StateSlice):
                 discovered_items=set(raw.discovered_items),
                 npc_locations=dict(raw.npc_locations),
                 container_states={k: dict(v) for k, v in raw.container_states.items()},
+                interactable_states={k: dict(v) for k, v in raw.interactable_states.items()},
                 hostile_tracking={
                     k: AreaSlice._copy_hostile_payload(v)
                     for k, v in raw.hostile_tracking.items()
@@ -719,6 +776,11 @@ class AreaSlice(StateSlice):
             container_states={
                 str(key): dict(value)
                 for key, value in raw.get("container_states", {}).items()
+            },
+            interactable_states={
+                str(key): dict(value)
+                for key, value in raw.get("interactable_states", {}).items()
+                if isinstance(value, Mapping)
             },
             hostile_tracking={
                 str(key): AreaSlice._normalize_hostile_payload(value)

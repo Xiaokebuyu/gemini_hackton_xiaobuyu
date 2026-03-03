@@ -11,6 +11,7 @@ from app.game_core.rules.handler_utils import (
     get_non_empty_string,
     handler_success,
     handler_success_no_delta,
+    roll_damage_dice,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
@@ -326,8 +327,13 @@ class EncounterHandler(StaticCommandHandler):
         )
 
     def _resolve_gold(self, monster: Any) -> int:
-        value = monster.gold_drop
-        return value if value is not None and value >= 0 else 0
+        raw = monster.gold_drop
+        if not raw or raw == "0":
+            return 0
+        try:
+            return max(0, int(raw))
+        except (ValueError, TypeError):
+            return max(0, roll_damage_dice(raw))
 
     def _resolve_loot_items(
         self,
@@ -343,7 +349,12 @@ class EncounterHandler(StaticCommandHandler):
                 if random.random() >= loot_entry.chance:
                     continue
 
-            if loot_entry.count <= 0:
+            raw_count = loot_entry.count
+            try:
+                count = int(raw_count)
+            except (ValueError, TypeError):
+                count = roll_damage_dice(raw_count) if raw_count else 1
+            if count <= 0:
                 continue
 
             item_name = loot_entry.item_id
@@ -358,7 +369,7 @@ class EncounterHandler(StaticCommandHandler):
                 {
                     "item_id": loot_entry.item_id,
                     "name": item_name,
-                    "count": loot_entry.count,
+                    "count": count,
                     "rarity": rarity,
                 }
             )

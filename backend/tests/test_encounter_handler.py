@@ -344,3 +344,21 @@ class TestEncounterHandler:
 
         assert result.success is False
         assert result.errors == ["player slice is required"]
+
+
+def test_resolve_gold_dice_expressions() -> None:
+    """_resolve_gold handles str gold_drop: "0", pure int str, and dice expression."""
+    from app.game_core.rules.handlers.encounter import EncounterHandler
+
+    handler = EncounterHandler()
+
+    class FakeMonster:
+        def __init__(self, gold_drop: str) -> None:
+            self.gold_drop = gold_drop
+
+    assert handler._resolve_gold(FakeMonster("0")) == 0
+    assert handler._resolve_gold(FakeMonster("")) == 0
+    assert handler._resolve_gold(FakeMonster("10")) == 10
+    # Dice expression: result must be >= 1 (roll_damage_dice floor)
+    result = handler._resolve_gold(FakeMonster("1d6"))
+    assert 1 <= result <= 6

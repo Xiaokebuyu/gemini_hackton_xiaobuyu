@@ -269,3 +269,103 @@ class TestEventSliceValidateAndTrigger:
         assert sl.active_events["ev1"]["state"] == "triggered"
         assert sl.active_events["ev1"]["status"] == "triggered"
         assert sl.dirty
+
+
+# ===========================================================================
+# Phase 2: AreaSlice — interactable_states + Read API
+# ===========================================================================
+
+
+class TestAreaSlicePhase2:
+    """Tests for interactable_states field and new read API methods."""
+
+    def _make_slice(self) -> "AreaSlice":
+        from app.game_core.state.slices.area import AreaSlice
+        return AreaSlice()
+
+    def test_interactable_states_restore_snapshot_roundtrip(self):
+        sl = self._make_slice()
+        sl.restore({
+            "areas": {
+                "dungeon": {
+                    "interactable_states": {
+                        "lever_a": {"area_id": "dungeon", "used": True},
+                        "altar":   {"area_id": "dungeon", "used": False},
+                    },
+                }
+            }
+        })
+        snap = sl.snapshot()
+        dungeon = snap["areas"]["dungeon"]
+        assert dungeon["interactable_states"]["lever_a"]["used"] is True
+        assert dungeon["interactable_states"]["altar"]["used"] is False
+
+        # 旧存档无 interactable_states → 默认空 dict，不 crash
+        sl2 = self._make_slice()
+        sl2.restore({"areas": {"town": {"exploration": "visited"}}})
+        assert sl2.snapshot()["areas"]["town"].get("interactable_states", {}) == {}
+
+    def test_get_discovered_returns_set(self):
+        sl = self._make_slice()
+        assert sl.get_discovered("forest") == set()
+
+        sl.mark_discovery("forest", "hidden_shrine")
+        sl.mark_discovery("forest", "old_well")
+        result = sl.get_discovered("forest")
+        assert result == {"hidden_shrine", "old_well"}
+        assert isinstance(result, set)
+
+    def test_is_hostile_cleared(self):
+        from app.game_core.state.slices.area import AreaSlice
+        sl = self._make_slice()
+        sl.upsert_hostile("bandit_camp", {
+            "area_id": "forest",
+            "status": "active",
+        })
+        assert sl.is_hostile_cleared("forest", "bandit_camp") is False
+
+        sl.mark_cleared("bandit_camp", tick=5)
+        assert sl.is_hostile_cleared("forest", "bandit_camp") is True
+
+        # 不存在的 sub_area → False，不 crash
+        assert sl.is_hostile_cleared("forest", "nonexistent") is False
+
+    def test_is_container_opened_and_trap_detected(self):
+        sl = self._make_slice()
+        assert sl.is_container_opened("dungeon", "chest_1") is False
+        assert sl.is_trap_detected("dungeon", "chest_1") is False
+
+        sl.init_container("dungeon", "chest_1", {
+            "opened": True,
+            "trap_detected": True,
+            "remaining_items": [],
+        })
+        assert sl.is_container_opened("dungeon", "chest_1") is True
+        assert sl.is_trap_detected("dungeon", "chest_1") is True
+
+        # looted=True 也算 opened
+        sl.init_container("dungeon", "chest_2", {"looted": True})
+        assert sl.is_container_opened("dungeon", "chest_2") is True
+
+    def test_is_interactable_used_and_apply_state_change(self):
+        from app.game_core.state.delta import StateChange
+        sl = self._make_slice()
+
+        # 初始为 False
+        assert sl.is_interactable_used("temple", "door_lever") is False
+
+        # mark_interactable_used 写入
+        sl.mark_interactable_used("temple", "door_lever")
+        assert sl.is_interactable_used("temple", "door_lever") is True
+        assert sl.dirty
+
+        # StateDelta apply 路径
+        sl2 = self._make_slice()
+        change = StateChange(
+            slice="areas",
+            operation="set",
+            path="interactable_states.altar_switch",
+            value={"area_id": "temple", "used": True},
+        )
+        sl2.apply_state_change(change)
+        assert sl2.is_interactable_used("temple", "altar_switch") is True

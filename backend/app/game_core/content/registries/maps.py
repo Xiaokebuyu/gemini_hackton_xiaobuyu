@@ -8,6 +8,20 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+from app.game_core.content.registries.map_types import (
+    CheckPath,
+    ContainerData,
+    Discovery,
+    EncounterEntry,
+    HostileConfig,
+    HostileGroup,
+    HostileTemplate,
+    InteractableTemplate,
+    SubAreaClusterConfig,
+    SubLocationTemplate,
+    TrapData,
+)
+from app.game_core.content.registries.shared_types import LootTableDef
 
 
 @dataclass(slots=True)
@@ -20,6 +34,7 @@ class Connection:
     travel_slots: int = 1            # 时间格数 = max(1, ceil(minutes / 60))
     description: str = ""
     tags: list[str] = field(default_factory=list)
+    blocked: bool = False
 
 
 @dataclass(slots=True)
@@ -29,12 +44,17 @@ class AreaTemplate:
     region: str = ""
     base_danger: float | None = None
     connections: list[Connection] = field(default_factory=list)
-    # TODO: 设计规范要求 SubLocationTemplate typed struct（含 type/capacity 等）。
-    #       当前存 raw dict，子地点系统深化时迁移为 dataclass。
-    sub_locations: dict[str, dict[str, Any]] = field(default_factory=dict)
-    encounter_profile: dict[str, Any] | None = None
+    sub_locations: dict[str, SubLocationTemplate] = field(default_factory=dict)
+    description: str = ""
+    danger_level: str = ""                              # low / medium / high / extreme
+    discoveries: list[Discovery] = field(default_factory=list)
+    hostile_pool: list[HostileTemplate] | None = None
+    sub_area_cluster_config: SubAreaClusterConfig | None = None
+    encounter_table: list[EncounterEntry] = field(default_factory=list)
+    encounter_slot_capacity: int = 1
     is_starting_area: bool = False
     tags: list[str] = field(default_factory=list)
+    terrain_type: str = ""           # plains / forest / mountain / swamp / urban / underground
 
 
 class MapRegistry(ContentRegistry):
@@ -111,6 +131,13 @@ class MapRegistry(ContentRegistry):
             if item.region.strip().lower() == normalized
         ]
 
+    def get_sub_location(self, area_id: str, loc_id: str) -> SubLocationTemplate | None:
+        """Get a specific sub-location from an area."""
+        area = self.get(area_id)
+        if area is None:
+            return None
+        return area.sub_locations.get(loc_id)
+
     # ------------------------------------------------------------------
     # Validation
     # ------------------------------------------------------------------
@@ -123,12 +150,10 @@ class MapRegistry(ContentRegistry):
             ids = ", ".join(starting_areas)
             issues.append(f"multiple starting areas detected: {ids}")
 
-        for item_id, item in self._items.items():
-            self._validate_encounter_profile(item_id, item.encounter_profile, issues)
         return issues
 
     # ------------------------------------------------------------------
-    # Build helpers
+    # Build helpers — AreaTemplate
     # ------------------------------------------------------------------
 
     def _build_template(
@@ -139,32 +164,93 @@ class MapRegistry(ContentRegistry):
             self._load_issues.append(f"map '{item_id}' missing id")
             return None
 
-        # base_danger — merge danger_level alias
-        raw_danger = raw.get("base_danger", raw.get("danger_level"))
+        # base_danger — numeric float only (danger_level string is a separate field)
+        raw_base_danger = raw.get("base_danger")
+        # backward compat: if base_danger absent, try danger_level only when numeric
+        if raw_base_danger is None and isinstance(raw.get("danger_level"), (int, float)):
+            raw_base_danger = raw.get("danger_level")
         base_danger: float | None = None
-        if raw_danger is not None:
-            base_danger = self._coerce_float(raw_danger)
+        if raw_base_danger is not None:
+            base_danger = self._coerce_float(raw_base_danger)
             if base_danger is None or base_danger < 0:
-                field_name = "base_danger" if "base_danger" in raw else "danger_level"
-                self._load_issues.append(f"map '{item_id}' has invalid {field_name}")
+                self._load_issues.append(f"map '{item_id}' has invalid base_danger")
                 base_danger = None
 
         # connections — merge adjacent_areas alias
         connections = self._load_connections(raw, item_id)
 
-        # sub_locations
+        # sub_locations → dict[str, SubLocationTemplate]
         sub_locations = self._load_sub_locations(raw, item_id)
 
-        # encounter_profile — keep as dict, deep validation in validate()
-        raw_profile = raw.get("encounter_profile")
-        encounter_profile: dict[str, Any] | None = None
-        if raw_profile is not None:
-            if isinstance(raw_profile, Mapping):
-                encounter_profile = dict(raw_profile)
+        # description / danger_level string
+        description = str(raw.get("description", "")).strip()
+        danger_level_raw = raw.get("danger_level")
+        danger_level = (
+            str(danger_level_raw).strip()
+            if danger_level_raw is not None and not isinstance(danger_level_raw, (int, float))
+            else ""
+        )
+
+        # discoveries
+        discoveries: list[Discovery] = []
+        raw_disc = raw.get("discoveries")
+        if isinstance(raw_disc, list):
+            for disc_raw in raw_disc:
+                if isinstance(disc_raw, Mapping):
+                    d = self._build_discovery(item_id, disc_raw)
+                    if d is not None:
+                        discoveries.append(d)
+
+        # hostile_pool
+        hostile_pool: list[HostileTemplate] | None = None
+        raw_hp = raw.get("hostile_pool")
+        if isinstance(raw_hp, list):
+            hostile_pool = []
+            for ht_raw in raw_hp:
+                if isinstance(ht_raw, Mapping):
+                    ht = self._build_hostile_template(item_id, ht_raw)
+                    if ht is not None:
+                        hostile_pool.append(ht)
+
+        # sub_area_cluster_config
+        sub_area_cluster_config: SubAreaClusterConfig | None = None
+        raw_sac = raw.get("sub_area_cluster_config")
+        if isinstance(raw_sac, Mapping):
+            sub_area_cluster_config = self._build_cluster_config(raw_sac)
+
+        # encounter_slot_capacity — 优先新字段，向后兼容旧 encounter_profile.slot_capacity
+        encounter_slot_capacity = 1
+        raw_sc = raw.get("encounter_slot_capacity")
+        if raw_sc is None:
+            old_profile = raw.get("encounter_profile")
+            if isinstance(old_profile, Mapping):
+                raw_sc = old_profile.get("slot_capacity")
+        if raw_sc is not None:
+            coerced_sc = self._coerce_non_negative_int(raw_sc)
+            if coerced_sc is not None:
+                encounter_slot_capacity = coerced_sc
             else:
                 self._load_issues.append(
-                    f"map '{item_id}' has invalid encounter_profile"
+                    f"map '{item_id}' has invalid encounter_slot_capacity"
                 )
+
+        # encounter_table — 优先新格式，兼容旧 encounter_profile dict
+        encounter_table: list[EncounterEntry] = []
+        raw_encounter = raw.get("encounter_table") or raw.get("encounter_profile")
+        if isinstance(raw_encounter, list):
+            for idx, entry in enumerate(raw_encounter):
+                if isinstance(entry, Mapping):
+                    encounter_table.append(
+                        self._build_encounter_entry(item_id, idx, entry)
+                    )
+        elif isinstance(raw_encounter, Mapping):
+            templates = raw_encounter.get("templates", [])
+            if isinstance(templates, list):
+                for idx, entry in enumerate(templates):
+                    if isinstance(entry, Mapping):
+                        encounter_table.append(
+                            self._build_encounter_entry(item_id, idx, entry)
+                        )
 
         # is_starting_area — merge 3 flags
         is_starting = self._load_starting_flag(raw, item_id)
@@ -193,6 +279,8 @@ class MapRegistry(ContentRegistry):
         if raw_name is not None:
             name = str(raw_name).strip()
 
+        terrain_type = str(raw.get("terrain_type", "")).strip()
+
         return AreaTemplate(
             id=entry_id,
             name=name,
@@ -200,9 +288,16 @@ class MapRegistry(ContentRegistry):
             base_danger=base_danger,
             connections=connections,
             sub_locations=sub_locations,
-            encounter_profile=encounter_profile,
+            description=description,
+            danger_level=danger_level,
+            discoveries=discoveries,
+            hostile_pool=hostile_pool,
+            sub_area_cluster_config=sub_area_cluster_config,
+            encounter_table=encounter_table,
+            encounter_slot_capacity=encounter_slot_capacity,
             is_starting_area=is_starting,
             tags=tags,
+            terrain_type=terrain_type,
         )
 
     def _load_connections(
@@ -248,6 +343,7 @@ class MapRegistry(ContentRegistry):
             description = str(entry.get("description", "")).strip()
             raw_tags = entry.get("tags", [])
             tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+            blocked = bool(entry.get("blocked", False))
             return Connection(
                 target=target,
                 type=conn_type,
@@ -255,6 +351,7 @@ class MapRegistry(ContentRegistry):
                 travel_slots=travel_slots,
                 description=description,
                 tags=tags,
+                blocked=blocked,
             )
         return None
 
@@ -275,18 +372,18 @@ class MapRegistry(ContentRegistry):
 
     def _load_sub_locations(
         self, raw: dict[str, Any], item_id: str,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> dict[str, SubLocationTemplate]:
         raw_sub = raw.get("sub_locations")
         if raw_sub is None:
             return {}
         if isinstance(raw_sub, list):
-            result: dict[str, dict[str, Any]] = {}
+            result: dict[str, SubLocationTemplate] = {}
             for entry in raw_sub:
                 if not isinstance(entry, Mapping):
                     continue
-                sid = self._coerce_non_empty_string(entry.get("id"))
-                if sid is not None:
-                    result[sid] = dict(entry)
+                built = self._build_sub_location(item_id, entry)
+                if built is not None:
+                    result[built.id] = built
             return result
         if not isinstance(raw_sub, Mapping):
             self._load_issues.append(
@@ -300,14 +397,9 @@ class MapRegistry(ContentRegistry):
                     f"map '{item_id}' sub_location '{sub_key}' must be a mapping"
                 )
                 continue
-            sub_dict = dict(sub_val)
-            if "id" in sub_dict:
-                sid = self._coerce_non_empty_string(sub_dict.get("id"))
-                if sid is None:
-                    self._load_issues.append(
-                        f"map '{item_id}' sub_location '{sub_key}' has invalid id"
-                    )
-            result[str(sub_key)] = sub_dict
+            built = self._build_sub_location(item_id, sub_val, sub_key=str(sub_key))
+            if built is not None:
+                result[str(sub_key)] = built
         return result
 
     def _load_starting_flag(
@@ -327,66 +419,378 @@ class MapRegistry(ContentRegistry):
         return is_starting
 
     # ------------------------------------------------------------------
-    # Encounter profile deep validation (called from validate())
+    # Build helpers — SubLocationTemplate
     # ------------------------------------------------------------------
 
-    def _validate_encounter_profile(
-        self,
-        item_id: str,
-        profile: dict[str, Any] | None,
-        issues: list[str],
-    ) -> None:
-        if profile is None:
-            return
+    def _build_sub_location(
+        self, area_id: str, raw: dict[str, Any], sub_key: str | None = None,
+    ) -> SubLocationTemplate | None:
+        raw_id = raw.get("id")
+        sid = self._coerce_non_empty_string(raw_id)
+        if sid is None:
+            if raw_id is not None and sub_key is not None:
+                # id key present but value invalid (empty/whitespace)
+                self._load_issues.append(
+                    f"map '{area_id}' sub_location '{sub_key}' has invalid id"
+                )
+            else:
+                self._load_issues.append(f"map '{area_id}' sub_location missing id")
+            return None
 
-        if "slot_capacity" in profile:
-            slot_capacity = self._coerce_non_negative_int(
-                profile.get("slot_capacity")
-            )
-            if slot_capacity is None:
-                issues.append(
-                    f"map '{item_id}' encounter_profile has invalid slot_capacity"
+        name = str(raw.get("name", "")).strip()
+        description = str(raw.get("description", "")).strip()
+
+        raw_tags = raw.get("tags", [])
+        tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+
+        # type: accept interaction_type as alias
+        sl_type = str(raw.get("type") or raw.get("interaction_type") or "visit").strip() or "visit"
+
+        # available_hours: (int, int) tuple or None
+        available_hours: tuple[int, int] | None = None
+        raw_ah = raw.get("available_hours")
+        if raw_ah is not None:
+            if isinstance(raw_ah, (list, tuple)) and len(raw_ah) == 2:
+                try:
+                    available_hours = (int(raw_ah[0]), int(raw_ah[1]))
+                except (TypeError, ValueError):
+                    self._load_issues.append(
+                        f"map '{area_id}' sub_location '{sid}' has invalid available_hours"
+                    )
+            else:
+                self._load_issues.append(
+                    f"map '{area_id}' sub_location '{sid}' has invalid available_hours"
                 )
 
-        if "templates" not in profile:
-            return
-        templates = profile.get("templates")
-        if not isinstance(templates, list):
-            issues.append(
-                f"map '{item_id}' encounter_profile has invalid templates"
+        # resident_npcs
+        raw_npcs = raw.get("resident_npcs", [])
+        resident_npcs = (
+            [str(n) for n in raw_npcs if str(n).strip()]
+            if isinstance(raw_npcs, list)
+            else []
+        )
+
+        # interactables
+        interactables: list[InteractableTemplate] = []
+        raw_ias = raw.get("interactables", [])
+        if isinstance(raw_ias, list):
+            for idx, raw_ia in enumerate(raw_ias):
+                if isinstance(raw_ia, Mapping):
+                    ia = self._build_interactable(area_id, sid, idx, raw_ia)
+                    if ia is not None:
+                        interactables.append(ia)
+
+        # hostile_config
+        hostile_config: HostileConfig | None = None
+        raw_hc = raw.get("hostile_config")
+        if isinstance(raw_hc, Mapping):
+            hostile_config = self._build_hostile_config(area_id, sid, raw_hc)
+
+        return SubLocationTemplate(
+            id=sid,
+            name=name,
+            description=description,
+            tags=tags,
+            type=sl_type,
+            available_hours=available_hours,
+            resident_npcs=resident_npcs,
+            interactables=interactables,
+            hostile_config=hostile_config,
+        )
+
+    def _build_interactable(
+        self, area_id: str, sub_id: str, idx: int, raw: dict[str, Any],
+    ) -> InteractableTemplate | None:
+        ia_id = self._coerce_non_empty_string(raw.get("id"))
+        if ia_id is None:
+            self._load_issues.append(
+                f"map '{area_id}' sub_location '{sub_id}' interactables[{idx}] missing id"
             )
-            return
-        for index, template in enumerate(templates):
-            if not isinstance(template, Mapping):
-                issues.append(
-                    f"map '{item_id}' encounter_profile template {index} must be a mapping"
+            return None
+
+        name = str(raw.get("name", "")).strip()
+        description = str(raw.get("description", "")).strip()
+        ia_type = str(raw.get("type", "inspect")).strip() or "inspect"
+
+        raw_tags = raw.get("tags", [])
+        tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+
+        one_time = bool(raw.get("one_time", False))
+
+        # visibility_dc
+        visibility_dc: int | None = None
+        raw_vdc = raw.get("visibility_dc")
+        if raw_vdc is not None:
+            vdc = self._coerce_non_negative_int(raw_vdc)
+            if vdc is not None:
+                visibility_dc = vdc
+
+        # checks
+        checks: list[CheckPath] = []
+        raw_checks = raw.get("checks", [])
+        if isinstance(raw_checks, list):
+            for cp_raw in raw_checks:
+                if isinstance(cp_raw, Mapping):
+                    checks.append(self._build_check_path(cp_raw))
+
+        # reward
+        reward: dict[str, Any] | None = None
+        raw_reward = raw.get("reward")
+        if isinstance(raw_reward, Mapping):
+            reward = dict(raw_reward)
+
+        # container_data (only when type == "container")
+        container_data: ContainerData | None = None
+        if ia_type == "container":
+            raw_cd = raw.get("container_data")
+            if isinstance(raw_cd, Mapping):
+                container_data = self._build_container_data(area_id, sub_id, raw_cd)
+
+        return InteractableTemplate(
+            id=ia_id,
+            name=name,
+            description=description,
+            type=ia_type,
+            visibility_dc=visibility_dc,
+            checks=checks,
+            reward=reward,
+            one_time=one_time,
+            tags=tags,
+            container_data=container_data,
+        )
+
+    def _build_check_path(self, raw: dict[str, Any]) -> CheckPath:
+        skill = str(raw.get("skill", "")).strip()
+        dc_raw = raw.get("dc")
+        dc = self._coerce_non_negative_int(dc_raw) if dc_raw is not None else None
+        label = str(raw.get("label", "")).strip()
+        fail_raw = raw.get("fail_consequence")
+        fail_consequence = str(fail_raw).strip() if fail_raw is not None else None
+        return CheckPath(
+            skill=skill,
+            dc=dc if dc is not None else 10,
+            label=label,
+            fail_consequence=fail_consequence,
+        )
+
+    def _build_trap_data(self, raw: dict[str, Any]) -> TrapData:
+        detect_dc = self._coerce_non_negative_int(raw.get("detect_dc")) or 15
+        disarm_dc = self._coerce_non_negative_int(raw.get("disarm_dc")) or 15
+        damage = str(raw.get("damage", "1d6")).strip() or "1d6"
+        damage_type = str(raw.get("damage_type", "piercing")).strip() or "piercing"
+        effect_raw = raw.get("effect")
+        effect = str(effect_raw).strip() if effect_raw is not None else None
+        return TrapData(
+            detect_dc=detect_dc,
+            disarm_dc=disarm_dc,
+            damage=damage,
+            damage_type=damage_type,
+            effect=effect,
+        )
+
+    def _build_container_data(
+        self, area_id: str, sub_id: str, raw: dict[str, Any],
+    ) -> ContainerData | None:
+        container_type = str(raw.get("container_type", "chest")).strip() or "chest"
+        locked = bool(raw.get("locked", False))
+        breakable = bool(raw.get("breakable", False))
+
+        trap: TrapData | None = None
+        raw_trap = raw.get("trap")
+        if isinstance(raw_trap, Mapping):
+            trap = self._build_trap_data(raw_trap)
+
+        loot = LootTableDef()
+        raw_loot = raw.get("loot")
+        if isinstance(raw_loot, Mapping):
+            loot_gold = str(raw_loot.get("gold", "0")).strip() or "0"
+            raw_loot_items = raw_loot.get("items", [])
+            loot_items = list(raw_loot_items) if isinstance(raw_loot_items, list) else []
+            loot = LootTableDef(gold=loot_gold, items=loot_items)
+
+        return ContainerData(
+            container_type=container_type,
+            locked=locked,
+            breakable=breakable,
+            trap=trap,
+            loot=loot,
+        )
+
+    def _build_hostile_config(
+        self, area_id: str, sub_id: str, raw: dict[str, Any],
+    ) -> HostileConfig:
+        stealth_dc = self._coerce_non_negative_int(raw.get("stealth_dc")) or 12
+        alert_state = str(raw.get("alert_state", "unaware")).strip() or "unaware"
+        blocking = bool(raw.get("blocking", True))
+        ambient_description = str(raw.get("ambient_description", "")).strip()
+
+        hostile_groups: list[HostileGroup] = []
+        raw_groups = raw.get("hostile_groups", [])
+        if isinstance(raw_groups, list):
+            for idx, grp_raw in enumerate(raw_groups):
+                if isinstance(grp_raw, Mapping):
+                    grp = self._build_hostile_group(area_id, idx, grp_raw)
+                    if grp is not None:
+                        hostile_groups.append(grp)
+
+        return HostileConfig(
+            hostile_groups=hostile_groups,
+            stealth_dc=stealth_dc,
+            alert_state=alert_state,
+            blocking=blocking,
+            ambient_description=ambient_description,
+        )
+
+    def _build_hostile_group(
+        self, area_id: str, idx: int, raw: dict[str, Any],
+    ) -> HostileGroup | None:
+        raw_mids = raw.get("monster_ids", [])
+        monster_ids = (
+            [str(m) for m in raw_mids if str(m).strip()]
+            if isinstance(raw_mids, list)
+            else []
+        )
+        count = str(raw.get("count", "1")).strip() or "1"
+        role = str(raw.get("role", "guard")).strip() or "guard"
+        return HostileGroup(monster_ids=monster_ids, count=count, role=role)
+
+    # ------------------------------------------------------------------
+    # Build helpers — AreaTemplate new fields
+    # ------------------------------------------------------------------
+
+    def _build_discovery(
+        self, area_id: str, raw: dict[str, Any],
+    ) -> Discovery | None:
+        disc_id = self._coerce_non_empty_string(raw.get("id"))
+        if disc_id is None:
+            self._load_issues.append(f"map '{area_id}' discovery missing id")
+            return None
+
+        name = str(raw.get("name", "")).strip()
+        check_type = str(raw.get("check_type", "perception")).strip() or "perception"
+        dc = self._coerce_non_negative_int(raw.get("dc")) or 15
+
+        raw_reward = raw.get("reward", {})
+        reward = dict(raw_reward) if isinstance(raw_reward, Mapping) else {}
+
+        raw_tags = raw.get("tags", [])
+        tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+
+        return Discovery(
+            id=disc_id,
+            name=name,
+            check_type=check_type,
+            dc=dc,
+            reward=reward,
+            tags=tags,
+        )
+
+    def _build_hostile_template(
+        self, area_id: str, raw: dict[str, Any],
+    ) -> HostileTemplate | None:
+        ht_id = self._coerce_non_empty_string(raw.get("id"))
+        if ht_id is None:
+            self._load_issues.append(f"map '{area_id}' hostile_pool entry missing id")
+            return None
+
+        name = str(raw.get("name", "")).strip()
+        description = str(raw.get("description", "")).strip()
+
+        raw_tags = raw.get("tags", [])
+        tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+
+        hostile_config = HostileConfig()
+        raw_hc = raw.get("hostile_config")
+        if isinstance(raw_hc, Mapping):
+            hostile_config = self._build_hostile_config(area_id, ht_id, raw_hc)
+
+        interactables: list[InteractableTemplate] = []
+        raw_ias = raw.get("interactables", [])
+        if isinstance(raw_ias, list):
+            for idx, raw_ia in enumerate(raw_ias):
+                if isinstance(raw_ia, Mapping):
+                    ia = self._build_interactable(area_id, ht_id, idx, raw_ia)
+                    if ia is not None:
+                        interactables.append(ia)
+
+        refresh_delay_ticks = self._coerce_non_negative_int(raw.get("refresh_delay_ticks")) or 12
+        min_danger_raw = raw.get("min_danger")
+        min_danger = float(min_danger_raw) if min_danger_raw is not None else 0.0
+
+        return HostileTemplate(
+            id=ht_id,
+            name=name,
+            description=description,
+            tags=tags,
+            hostile_config=hostile_config,
+            interactables=interactables,
+            refresh_delay_ticks=refresh_delay_ticks,
+            min_danger=min_danger,
+        )
+
+    def _build_cluster_config(self, raw: dict[str, Any]) -> SubAreaClusterConfig:
+        max_dynamic = self._coerce_non_negative_int(raw.get("max_dynamic")) or 5
+        max_permanent_dynamic = self._coerce_non_negative_int(raw.get("max_permanent_dynamic")) or 2
+        raw_fill_tags = raw.get("fill_tags", [])
+        fill_tags = (
+            [str(t) for t in raw_fill_tags if str(t).strip()]
+            if isinstance(raw_fill_tags, list)
+            else []
+        )
+        fill_density = str(raw.get("fill_density", "normal")).strip() or "normal"
+        return SubAreaClusterConfig(
+            max_dynamic=max_dynamic,
+            max_permanent_dynamic=max_permanent_dynamic,
+            fill_tags=fill_tags,
+            fill_density=fill_density,
+        )
+
+    # ------------------------------------------------------------------
+    # Build helpers — EncounterEntry
+    # ------------------------------------------------------------------
+
+    def _build_encounter_entry(
+        self, area_id: str, idx: int, raw: dict[str, Any],
+    ) -> EncounterEntry:
+        raw_id = self._coerce_non_empty_string(raw.get("id"))
+        entry_id = raw_id if raw_id else f"{area_id}_{idx}"
+
+        raw_mids = raw.get("monster_ids", [])
+        monster_ids = (
+            [str(m) for m in raw_mids if str(m).strip()]
+            if isinstance(raw_mids, list)
+            else []
+        )
+        if not monster_ids:
+            self._load_issues.append(
+                f"map '{area_id}' encounter_table[{idx}] has no monster_ids"
+            )
+
+        weight = 1.0
+        raw_weight = raw.get("weight")
+        if raw_weight is not None:
+            try:
+                weight = max(0.0, float(raw_weight))
+            except (TypeError, ValueError):
+                self._load_issues.append(
+                    f"map '{area_id}' encounter_table[{idx}] has invalid weight"
                 )
-                continue
-            if self._coerce_non_empty_string(template.get("id")) is None:
-                issues.append(
-                    f"map '{item_id}' encounter_profile template {index} has invalid id"
-                )
-            if "periods" in template:
-                periods = template.get("periods")
-                if not isinstance(periods, list):
-                    issues.append(
-                        f"map '{item_id}' encounter_profile template {index} has invalid periods"
-                    )
-                else:
-                    for period_index, period in enumerate(periods):
-                        if self._coerce_non_empty_string(period) is None:
-                            issues.append(
-                                f"map '{item_id}' encounter_profile template {index} period {period_index} must be a non-empty string"
-                            )
-            if "source" in template and (
-                self._coerce_non_empty_string(template.get("source")) is None
-            ):
-                issues.append(
-                    f"map '{item_id}' encounter_profile template {index} has invalid source"
-                )
-            if "weight" in template:
-                w = self._coerce_float(template.get("weight"))
-                if w is None or w <= 0:
-                    issues.append(
-                        f"map '{item_id}' encounter_profile template {index} has invalid weight"
-                    )
+
+        min_danger = 0.0
+        raw_min = raw.get("min_danger")
+        if raw_min is not None:
+            try:
+                min_danger = max(0.0, float(raw_min))
+            except (TypeError, ValueError):
+                pass
+
+        description = str(raw.get("description", "")).strip()
+
+        return EncounterEntry(
+            id=entry_id,
+            monster_ids=monster_ids,
+            weight=weight,
+            min_danger=min_danger,
+            description=description,
+        )
+

@@ -200,6 +200,12 @@ class BasicEventConditionEvaluator:
             return self._check_time_reached(state, params), 0
         if condition_type == "quest_state":
             return self._check_quest_state(state, params), 0
+        if condition_type == "disposition":
+            return self._check_disposition(state, params), 0
+        if condition_type == "time_elapsed":
+            return self._check_time_elapsed(state, params), 0
+        if condition_type == "custom":
+            return self._check_custom(state, params), 0
         return False, 1
 
     @staticmethod
@@ -334,6 +340,54 @@ class BasicEventConditionEvaluator:
         if not isinstance(quest, dict):
             return False
         return str(quest.get("status", "")).lower() == expected_state.lower()
+
+    @staticmethod
+    def _check_disposition(state: StateContainer, params: dict[str, Any]) -> bool:
+        """Check if NPC disposition dimension meets threshold.
+
+        params:
+            npc_id: str, dimension: str (approval/trust/fear/romance),
+            threshold: int, operator: str (gte/lte/eq, default gte)
+        """
+        if not state.has_slice("relations"):
+            return False
+        npc_id = _coerce_non_empty_string(params.get("npc_id"))
+        dimension = _coerce_non_empty_string(params.get("dimension"))
+        if not npc_id or not dimension:
+            return False
+        threshold = _coerce_int(params.get("threshold", 0))
+        if threshold is None:
+            return False
+        value = state.relations.get_disposition(npc_id, dimension)
+        if not isinstance(value, int):
+            return False
+        operator = _coerce_string(params.get("operator")).lower() or "gte"
+        if operator == "lte":
+            return value <= threshold
+        if operator == "eq":
+            return value == threshold
+        return value >= threshold  # default: gte
+
+    @staticmethod
+    def _check_time_elapsed(state: StateContainer, params: dict[str, Any]) -> bool:
+        """Check if N ticks have elapsed since a reference tick.
+
+        params:
+            since_tick: int, elapsed: int (required ticks)
+        """
+        if not state.has_slice("time"):
+            return False
+        since_tick = _coerce_int(params.get("since_tick"))
+        elapsed = _coerce_int(params.get("elapsed", 0))
+        if since_tick is None or elapsed is None:
+            return False
+        return (state.time.absolute_tick() - since_tick) >= elapsed
+
+    @staticmethod
+    def _check_custom(state: StateContainer, params: dict[str, Any]) -> bool:
+        """Extension point — always False in BasicEvaluator."""
+        del state, params
+        return False
 
 
 # ------------------------------------------------------------------

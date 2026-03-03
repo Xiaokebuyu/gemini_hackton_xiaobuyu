@@ -99,6 +99,8 @@ class SkillTemplate:
     tags: list[str] = field(default_factory=list)
     effect: SkillEffect = field(default_factory=SkillEffect)
     cost: SkillCost = field(default_factory=SkillCost)
+    requirements: dict[str, Any] = field(default_factory=dict)
+    usable_in: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +145,10 @@ class SkillRegistry(ContentRegistry):
             if is_spell:
                 category = "spell"
                 self._validate_spell_fields(sid, raw)
+            else:
+                raw_category = str(raw.get("category", "")).strip()
+                if raw_category:
+                    category = raw_category
 
             spell_level = self._coerce_non_negative_int(
                 raw.get("spell_level", raw.get("level"))
@@ -163,6 +169,14 @@ class SkillRegistry(ContentRegistry):
                 tags=tags,
                 effect=self._parse_effect(sid, raw),
                 cost=self._parse_cost(sid, raw),
+                requirements=(
+                    dict(raw.get("requirements", {}))
+                    if isinstance(raw.get("requirements"), Mapping) else {}
+                ),
+                usable_in=(
+                    [str(u) for u in raw.get("usable_in", []) if str(u).strip()]
+                    if isinstance(raw.get("usable_in"), list) else []
+                ),
             )
 
     # ------------------------------------------------------------------
@@ -193,6 +207,18 @@ class SkillRegistry(ContentRegistry):
             s for s in self._items.values()
             if s.category == "spell" and s.school == normalized
         ]
+
+    def get_by_category(self, category: str) -> list[SkillTemplate]:
+        """Get skills by category (martial / spell / passive)."""
+        return [s for s in self._items.values() if s.category == category]
+
+    def get_combat_skills(self) -> list[SkillTemplate]:
+        """Get skills usable in combat."""
+        return [s for s in self._items.values() if "combat" in s.usable_in]
+
+    def get_exploration_skills(self) -> list[SkillTemplate]:
+        """Get skills usable in exploration."""
+        return [s for s in self._items.values() if "exploration" in s.usable_in]
 
     def get_status_effect(self, effect_id: str) -> StatusEffectTemplate | None:
         """Return a StatusEffectTemplate by ID, or None if not registered."""

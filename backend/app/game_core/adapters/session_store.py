@@ -355,8 +355,10 @@ class SaveStore:
         if area_template is not None:
             if current_location:
                 location_template = area_template.sub_locations.get(current_location)
-                if isinstance(location_template, Mapping):
-                    name = location_template.get("name")
+                if location_template is not None:
+                    name = getattr(location_template, "name", None)
+                    if name is None and isinstance(location_template, Mapping):
+                        name = location_template.get("name")
                     if isinstance(name, str) and name.strip():
                         return name.strip()
                 return current_location

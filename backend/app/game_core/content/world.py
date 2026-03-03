@@ -173,6 +173,24 @@ class WorldInstance:
             issues.extend(self._validate_milestone_prerequisites())
         if self.has_registry("tags"):
             issues.extend(self._validate_tag_value_refs())
+        if self.has_registry("maps") and self.has_registry("characters"):
+            issues.extend(self._validate_sub_location_npc_refs())
+        if self.has_registry("maps") and self.has_registry("monsters"):
+            issues.extend(self._validate_hostile_pool_monster_refs())
+        if self.has_registry("maps") and self.has_registry("items"):
+            issues.extend(self._validate_sub_location_loot_refs())
+        if self.has_registry("maps"):
+            issues.extend(self._validate_discovery_reward_refs())
+        if (self.has_registry("quests") and self.has_registry("characters")
+                and self.has_registry("maps")):
+            issues.extend(self._validate_milestone_npc_location_refs())
+        if self.has_registry("factions") and self.has_registry("characters"):
+            issues.extend(self._validate_faction_member_refs())
+        if self.has_registry("factions") and self.has_registry("maps"):
+            issues.extend(self._validate_faction_area_refs())
+        if (self.has_registry("lore") and self.has_registry("maps")
+                and self.has_registry("factions")):
+            issues.extend(self._validate_world_rule_scope_refs())
         return issues
 
     def _validate_character_map_refs(self) -> list[str]:
@@ -245,25 +263,17 @@ class WorldInstance:
         return issues
 
     def _validate_encounter_monster_refs(self) -> list[str]:
-        """Check that encounter profile template IDs reference real monsters."""
+        """Check that encounter_table entries reference real monsters."""
         issues: list[str] = []
         monster_ids = {m.id for m in self.monsters.list_all() if m.id}
         for area in self.maps.list_all():
             area_id = area.id or "<unknown>"
-            profile = area.encounter_profile
-            if not isinstance(profile, Mapping):
-                continue
-            templates = profile.get("templates")
-            if not isinstance(templates, list):
-                continue
-            for index, template in enumerate(templates):
-                if not isinstance(template, Mapping):
-                    continue
-                tid = self._coerce_non_empty_string(template.get("id"))
-                if tid is not None and tid not in monster_ids:
-                    issues.append(
-                        f"map '{area_id}' encounter template[{index}] references unknown monster '{tid}'"
-                    )
+            for idx, entry in enumerate(area.encounter_table):
+                for mid in entry.monster_ids:
+                    if mid not in monster_ids:
+                        issues.append(
+                            f"map '{area_id}' encounter_table[{idx}] references unknown monster '{mid}'"
+                        )
         return issues
 
     def _validate_character_class_refs(self) -> list[str]:
@@ -353,6 +363,144 @@ class WorldInstance:
                         )
         return issues
 
+    def _validate_sub_location_npc_refs(self) -> list[str]:
+        """Check that sub_location.resident_npcs reference existing characters."""
+        issues: list[str] = []
+        for area in self.maps.list_all():
+            area_id = area.id or "<unknown>"
+            for sub_id, sub in area.sub_locations.items():
+                for npc_id in sub.resident_npcs:
+                    if self.characters.get(npc_id) is None:
+                        issues.append(
+                            f"area '{area_id}' sub_location '{sub_id}' references unknown character '{npc_id}'"
+                        )
+        return issues
+
+    def _validate_hostile_pool_monster_refs(self) -> list[str]:
+        """Check that hostile_pool monster_ids reference existing monsters."""
+        issues: list[str] = []
+        monster_ids = {m.id for m in self.monsters.list_all() if m.id}
+        for area in self.maps.list_all():
+            area_id = area.id or "<unknown>"
+            if not area.hostile_pool:
+                continue
+            for ht in area.hostile_pool:
+                ht_id = ht.id or "<unknown>"
+                for group in ht.hostile_config.hostile_groups:
+                    for mid in group.monster_ids:
+                        if mid not in monster_ids:
+                            issues.append(
+                                f"area '{area_id}' hostile '{ht_id}' references unknown monster '{mid}'"
+                            )
+        return issues
+
+    def _validate_sub_location_loot_refs(self) -> list[str]:
+        """Check that interactable container loot item ids reference existing items."""
+        issues: list[str] = []
+        item_ids = self._collect_entry_ids(self.items)
+        for area in self.maps.list_all():
+            area_id = area.id or "<unknown>"
+            for sub_id, sub in area.sub_locations.items():
+                for ia in sub.interactables:
+                    if ia.container_data is None or not ia.container_data.loot.items:
+                        continue
+                    for idx, entry in enumerate(ia.container_data.loot.items):
+                        if isinstance(entry, str):
+                            iid = self._coerce_non_empty_string(entry)
+                        elif isinstance(entry, Mapping):
+                            iid = self._coerce_non_empty_string(entry.get("item_id"))
+                        else:
+                            iid = None
+                        if iid and iid not in item_ids:
+                            issues.append(
+                                f"area '{area_id}' interactable '{ia.id}' loot[{idx}] references unknown item '{iid}'"
+                            )
+        return issues
+
+    def _validate_discovery_reward_refs(self) -> list[str]:
+        """Check that discovery rewards of type 'item' reference existing items."""
+        issues: list[str] = []
+        item_ids = self._collect_entry_ids(self.items) if self.has_registry("items") else set()
+        for area in self.maps.list_all():
+            area_id = area.id or "<unknown>"
+            for disc in area.discoveries:
+                reward = disc.reward
+                if not isinstance(reward, Mapping) or reward.get("type") != "item":
+                    continue
+                ref_id = self._coerce_non_empty_string(reward.get("id"))
+                if ref_id and ref_id not in item_ids:
+                    issues.append(
+                        f"area '{area_id}' discovery '{disc.id}' reward references unknown item '{ref_id}'"
+                    )
+        return issues
+
+    def _validate_milestone_npc_location_refs(self) -> list[str]:
+        """Check milestone involved_npcs and involved_locations references."""
+        issues: list[str] = []
+        char_ids = self._collect_entry_ids(self.characters)
+        map_ids = {m.id for m in self.maps.list_all() if m.id}
+        for milestone in self.quests.list_all():
+            milestone_id = milestone.id or "<unknown>"
+            for npc_id in milestone.involved_npcs:
+                if npc_id not in char_ids:
+                    issues.append(
+                        f"milestone '{milestone_id}' references unknown character '{npc_id}'"
+                    )
+            for loc_id in milestone.involved_locations:
+                if loc_id not in map_ids:
+                    issues.append(
+                        f"milestone '{milestone_id}' references unknown location '{loc_id}'"
+                    )
+        return issues
+
+    def _validate_faction_member_refs(self) -> list[str]:
+        """Check faction leader_id and member_ids reference existing characters."""
+        issues: list[str] = []
+        char_ids = self._collect_entry_ids(self.characters)
+        for faction in self.factions.list_all():
+            faction_id = faction.id or "<unknown>"
+            if faction.leader_id and faction.leader_id not in char_ids:
+                issues.append(
+                    f"faction '{faction_id}' references unknown leader '{faction.leader_id}'"
+                )
+            for mid in faction.member_ids:
+                if mid not in char_ids:
+                    issues.append(
+                        f"faction '{faction_id}' references unknown member '{mid}'"
+                    )
+        return issues
+
+    def _validate_faction_area_refs(self) -> list[str]:
+        """Check faction influence_areas reference existing map areas."""
+        issues: list[str] = []
+        map_ids = {m.id for m in self.maps.list_all() if m.id}
+        for faction in self.factions.list_all():
+            faction_id = faction.id or "<unknown>"
+            for area_id in faction.influence_areas:
+                if area_id not in map_ids:
+                    issues.append(
+                        f"faction '{faction_id}' references unknown influence_area '{area_id}'"
+                    )
+        return issues
+
+    def _validate_world_rule_scope_refs(self) -> list[str]:
+        """Check WorldRule scope_id references existing area or faction."""
+        issues: list[str] = []
+        map_ids = {m.id for m in self.maps.list_all() if m.id}
+        faction_ids = {f.id for f in self.factions.list_all() if f.id}
+        for rule in self.lore.list_rules():
+            if not rule.scope_id:
+                continue
+            if rule.scope == "area" and rule.scope_id not in map_ids:
+                issues.append(
+                    f"rule '{rule.id}' references unknown area '{rule.scope_id}'"
+                )
+            elif rule.scope == "faction" and rule.scope_id not in faction_ids:
+                issues.append(
+                    f"rule '{rule.id}' references unknown faction '{rule.scope_id}'"
+                )
+        return issues
+
     def _validate_item_refs(
         self,
         *,
@@ -364,9 +512,10 @@ class WorldInstance:
     ) -> list[str]:
         issues: list[str] = []
         for index, entry in enumerate(container):
-            if not isinstance(entry, Mapping):
-                continue
-            item_id = self._coerce_non_empty_string(entry.get("item_id"))
+            if isinstance(entry, Mapping):
+                item_id = self._coerce_non_empty_string(entry.get("item_id"))
+            else:
+                item_id = self._coerce_non_empty_string(getattr(entry, "item_id", None))
             if item_id is None or item_id in item_ids:
                 continue
             issues.append(

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
+from app.game_core.content.registries.characters import ShopEntry
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
     coerce_float,
@@ -382,13 +383,15 @@ class EconomyHandler(StaticCommandHandler):
         current_stock: list[dict[str, Any]] = []
         base_pool = shop_inventory.base_pool
         for entry in base_pool:
+            entry_item_id = (
+                entry.item_id if isinstance(entry, ShopEntry)
+                else (get_non_empty_string(entry, "item_id") or "")
+            )
             normalized = self._normalize_shop_entry(
                 entry,
                 "base",
                 world,
-                previous_row=previous_base_rows.get(
-                    get_non_empty_string(entry, "item_id") or ""
-                ),
+                previous_row=previous_base_rows.get(entry_item_id),
             )
             if normalized is not None:
                 current_stock.append(normalized)
@@ -429,20 +432,29 @@ class EconomyHandler(StaticCommandHandler):
         *,
         previous_row: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        if not isinstance(entry, Mapping):
-            return None
-        item_id = get_non_empty_string(entry, "item_id")
-        if item_id is None:
+        if isinstance(entry, ShopEntry):
+            item_id = entry.item_id or None
+            if not item_id:
+                return None
+            unlimited = entry.count == "unlimited"
+            count = 0 if unlimited else (coerce_int(entry.count) or 1)
+            restock = entry.restock
+            base_price = self._base_price_for_item(item_id, None, world)
+            price_override = None
+        elif isinstance(entry, Mapping):
+            item_id = get_non_empty_string(entry, "item_id")
+            if item_id is None:
+                return None
+            count = coerce_int(entry.get("count", 1))
+            if count is None or count < 1:
+                return None
+            unlimited = bool(entry.get("unlimited", False))
+            restock = bool(entry.get("restock", True))
+            base_price = self._base_price_for_item(item_id, entry, world)
+            price_override = self._coerce_non_negative_int(entry.get("price"))
+        else:
             return None
 
-        count = coerce_int(entry.get("count", 1))
-        if count is None or count < 1:
-            return None
-        unlimited = bool(entry.get("unlimited", False))
-        restock = bool(entry.get("restock", True))
-
-        base_price = self._base_price_for_item(item_id, entry, world)
-        price_override = self._coerce_non_negative_int(entry.get("price"))
         if unlimited:
             remaining: int | None = None
         elif (
@@ -482,10 +494,13 @@ class EconomyHandler(StaticCommandHandler):
         player_level = int(state.player.level) if state.has_slice("player") else 1
         eligible: list[dict[str, Any]] = []
         for entry in rotating_pool:
-            if not isinstance(entry, Mapping):
+            if isinstance(entry, ShopEntry):
+                min_player_level = entry.min_player_level
+            elif isinstance(entry, Mapping):
+                min_player_level = coerce_int(entry.get("min_player_level")) or 0
+            else:
                 continue
-            min_player_level = coerce_int(entry.get("min_player_level"))
-            if min_player_level is not None and player_level < min_player_level:
+            if min_player_level > 0 and player_level < min_player_level:
                 continue
             normalized = self._normalize_shop_entry(entry, "rotating", world)
             if normalized is not None:

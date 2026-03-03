@@ -11,14 +11,14 @@
 | `ContentRegistry` ABC | [完成] | 含 `_coerce_dict_mapping` 共享方法 |
 | `WorldInstance` | [完成] | typed properties + 三步加载顺序 |
 | `TagRegistry` | [骨架] | 能 load/get/list_all，无语义校验 |
-| `MapRegistry` | [Phase1] | 连通性/区域/encounter weight/多起点 warning + 查询方法 |
+| `MapRegistry` | [Phase1] | 连通性/区域/encounter weight/多起点 warning + 查询方法；R-4 补 get_sub_location() |
 | `CharacterRegistry` | [Phase2] | name/tags/class/faction + shop_inventory 验证 + 查询方法 |
 | `ItemRegistry` | [F-A完成] | typed sub-struct（WeaponData/ArmorData/ConsumableData）+ 7 查询方法 |
 | `MonsterRegistry` | [F-C完成] | CR/creature_type/abilities/attacks/resistances + 平衡 warning + 查询方法；F-C 补齐 ai_personality/flee_threshold/xp_reward + MonsterAttack.damage_dice/hit_bonus/damage_type |
-| `SkillRegistry` | [F-B完成] | 新增 SkillEffect/SkillCost/StatusEffectTemplate typed struct；effect/cost 迁移为 typed；status_effects 子表 + get_status_effect/list_status_effects；旧键别名（damage/heal/duration_ticks/amount）load 时归一 |
+| `SkillRegistry` | [F-B完成] | 新增 SkillEffect/SkillCost/StatusEffectTemplate typed struct；effect/cost 迁移为 typed；status_effects 子表 + get_status_effect/list_status_effects；旧键别名（damage/heal/duration_ticks/amount）load 时归一；R-4 补 get_by_category/get_combat_skills/get_exploration_skills + 修正非法术 category 加载 |
 | `ClassRegistry` | [Phase2] | hit_die/hp/ac/level_features + race/background/subclass 字段 + xp_curve 单调性 |
-| `FactionRegistry` | [Phase3] | name/description/alignment/relations + tags 每项校验 + get_by_tag() |
-| `LoreRegistry` | [Phase3] | name/title/content/text + tags 每项校验 + get_by_tag() |
+| `FactionRegistry` | [Phase3] | name/description/alignment/relations + tags 每项校验 + get_by_tag()；R-4 补 get_factions_in_area/get_relations_of/get_behavioral_rules |
+| `LoreRegistry` | [Phase3] | name/title/content/text + tags 每项校验 + get_by_tag()；R-4 补 get_rules_for_context() |
 | `QuestRegistry` | [Phase2] | milestone/chapter/event 字段验证 + 查询方法 |
 
 ## 决策记录
@@ -405,3 +405,350 @@ ordered_groups = [
    - 新增 `_load_class_resources_schema()` 验证：is Mapping + 每 value 含 max_at_level(Mapping) + recovery(str)
 
 **测试**：`test_content_registries.py` 新增 2 个测试（正确加载 + 格式错误 load_issues）
+
+---
+
+## [T-2b] 数据管线修复（world_data_loader.py 补全）
+
+**日期**：2026-03-02
+
+**背景**：T-2 只处理了 characters/items/maps，对 monsters 和 skills 的格式差异未适配，导致战斗系统和技能系统在真实数据下实质性失效（所有怪物 hp/ac=None，108 条角色技能全部丢失）。
+
+**改动**（`app/world_data_loader.py`）：
+
+- **M1-M5 `_load_monsters` 全面重写**：
+  - M1: `stats` 子对象展平 → 顶层 `hp`/`ac`；六维属性构建 `abilities` Mapping
+  - M2: `type` → `creature_type` 别名
+  - M3: `challenge_rating`（中文等级）→ `_CR_TIER_MAP` 映射为 float cr（白瓷=0.25…青铜=12.0）
+  - M4: `attacks[].damage` → `attacks[].damage_dice` 重命名（兼容 `roll_damage_dice` 格式）
+  - M5: 过滤 `stats.hp == 0` 的规则描述条目（"世界生态系统…" 等）
+- **S1 `_load_skills` 递归展平**：`_flatten()` 递归处理嵌套列表，108 条角色技能恢复加载
+- **I1 `_load_items` 价格解析**：`_parse_price_sp()` 解析 "30 sp"/"5 gp" → int 银币；`base_price` 自动填充
+- **常量**：新增 `_CR_TIER_MAP` + `_parse_price_sp()` 工具函数
+
+**测试**：`test_world_data_loader.py` 新增 8 个断言（monsters stats/abilities/creature_type/attacks/hp过滤/cr数值、skills数量≥50、items base_price）
+
+**基线**：906 passed（+13 相对 893，含本次 8 个新测试）
+
+---
+
+## [增量执行计划] Batch 1-1a — shared_types + map_types 新建
+
+**日期**：2026-03-03
+**基线**：906 → 932 passed（+26）
+
+**背景**：`AreaTemplate.sub_locations` 计划迁移为 `dict[str, SubLocationTemplate]` typed struct（Batch 1-1b）。
+1-1a 是纯增量前置阶段：新建类型定义文件和导出，不触碰现有 maps.py 类型变更。
+
+**新建文件（2 个）**：
+
+1. **`app/game_core/content/registries/shared_types.py`**：
+   - `Effect` dataclass（type/params/target/tags）— 跨 registry 共享，用于 ConsumableData + AccessoryData（后续 batch）
+   - `LootTableDef` dataclass（gold/items）— items 用 `list[Any]` 避免与 monsters.py 循环 import
+
+2. **`app/game_core/content/registries/map_types.py`**：
+   - 10 个 dataclass（全部 `@dataclass(slots=True)`，全字段有默认值）：
+     `CheckPath`, `TrapData`, `ContainerData`, `InteractableTemplate`,
+     `HostileGroup`, `HostileConfig`, `HostileTemplate`,
+     `Discovery`, `SubAreaClusterConfig`, `SubLocationTemplate`
+   - `ContainerData.loot` / `HostileTemplate.hostile_config` 使用 `field(default_factory=...)` 避免可变默认值
+
+**修改文件（1 个）**：
+- `app/game_core/content/registries/__init__.py`：追加 12 个新类型的 import 和 `__all__` 导出
+
+**新建测试（1 个）**：
+- `tests/test_map_types.py`：26 个测试覆盖所有新 dataclass 的默认值 + 完整值 + 嵌套构造 + `__init__` re-export
+
+## [增量执行计划] Batch 1-1b — maps.py 类型变更 + 消费端修复
+
+**日期**：2026-03-03
+**基线**：932 → 939 passed（+7 MapRegistry 集成测试）
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/maps.py`**（主要）：
+   - `AreaTemplate.sub_locations` 类型：`dict[str, dict[str, Any]]` → `dict[str, SubLocationTemplate]`，移除 TODO 注释
+   - `AreaTemplate` 新增 5 字段：`description`/`danger_level`（str）/`discoveries`/`hostile_pool`/`sub_area_cluster_config`
+   - `_load_sub_locations()` 完全重写：返回 `dict[str, SubLocationTemplate]`，list/dict 两种格式均支持
+   - 新增 10 个 `_build_*()` helper：`_build_sub_location`/`_build_interactable`/`_build_check_path`/`_build_trap_data`/`_build_container_data`/`_build_hostile_config`/`_build_hostile_group`/`_build_hostile_template`/`_build_discovery`/`_build_cluster_config`
+   - `_build_template()` 追加新字段提取逻辑
+   - `base_danger` 解析：不再把字符串 `danger_level` 当 float 别名，只在 `danger_level` 为数值时向后兼容
+
+2. **消费端修复（各 2-5 行）**：
+   - `app/routers/panels.py`：`isinstance(Mapping)` → `getattr(.name)` + Mapping fallback
+   - `app/game_core/adapters/session_store.py`：`isinstance(Mapping)` → `is not None` + `getattr(.name)`
+   - `app/game_core/orchestration/context_assembler.py`：加 `elif dataclasses.is_dataclass(location_data): template = dataclasses.asdict(location_data)`
+   - `app/game_core/narrative/context_builder.py`：同上
+
+3. **测试修复**：
+   - `tests/test_content_registries.py:592`：`sub_locations["inn"]["name"]` → `sub_locations["inn"].name`
+   - `tests/test_map_types.py`：追加 7 个 MapRegistry 集成测试
+
+**不需要改动的文件**（key-only 访问，类型变更透明）：
+`navigation.py` / `world_state.py` / `interaction.py` / `interaction_service.py` / `npc_schedule.py` / `runtime.py` / `world_knowledge_graph.py` / `gm_tools.py`
+
+## [增量执行计划] Batch 1-2 — ClassRegistry 扩展
+
+**日期**：2026-03-03
+**基线**：939 → 957 passed（+18 新测试）
+
+**主要改动**：
+
+1. **新建 `app/game_core/content/registries/class_types.py`**：
+   - `ResourceConfig`（max_at_level/recovery）
+   - `Feature`（id/name/description/type/skill_id/resource_config）
+   - `SpellcastingConfig`（stat/cantrips_known/spell_slots/spells_known/prepared_formula）
+
+2. **`app/game_core/content/registries/classes.py`**（主要）：
+   - `ClassTemplate` 新增 7 字段：`tags`/`armor_proficiency`/`weapon_proficiency`/`save_proficiency`/`skill_choices`/`spellcasting: SpellcastingConfig|None`/`subclass_options`
+   - `SubclassTemplate` 新增 6 字段：`name`/`description`/`tags`/`requirements`/`additional_proficiency`/`additional_spellcasting: SpellcastingConfig|None`
+   - `RaceTemplate` 新增 4 字段：`tags`/`speed`（默认 30）/`languages`/`size`（默认 "medium"）
+   - `BackgroundTemplate` 新增 2 字段：`tool_proficiency`/`equipment`
+   - 新增 `_build_spellcasting_config()` helper（双层 Mapping 解析 spell_slots，stat 缺失记 issue）
+   - 向后兼容回填：SpellcastingConfig.stat → `spellcasting_ability`，SpellcastingConfig.prepared_formula → `prepared_formula`
+   - 全部字段均有默认值，**零破坏性变更**
+
+3. **`app/game_core/content/registries/__init__.py`**：新增 `Feature`/`ResourceConfig`/`SpellcastingConfig` 导出
+
+4. **新建测试 `tests/test_class_types.py`**（18 个测试）：
+   - 3 个 dataclass 默认值 + 完整值测试
+   - `__init__` re-export 验证
+   - ClassRegistry 集成：spellcasting 子对象解析 + 回填 / 只有拍平字段 / stat 缺失 issue / proficiency 字段
+   - SubclassTemplate / RaceTemplate / BackgroundTemplate 新字段加载验证
+
+**不需要改动的消费端**：
+`spell.py` 继续读 `spellcasting_ability`（拍平字段），`growth.py` 继续读 `level_features`，两者均无需修改。
+
+## [增量执行计划] Batch 1-3 — CharacterTemplate 战斗字段 + ShopEntry typed 化
+
+**日期**：2026-03-03
+**基线**：957 → 962 passed（+5 新测试）
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/characters.py`**：
+   - 新增 `NpcAttack` dataclass（6 字段：name/hit_bonus/damage_dice/damage_type/range/tags）
+   - 新增 `ShopEntry` dataclass（4 字段：item_id/count/min_player_level/restock）
+   - `ShopInventory` 变更：`base_pool`/`rotating_pool` 类型 `list[dict]` → `list[ShopEntry]`；新增 `level_scaling: bool = False`
+   - `CharacterTemplate` 新增 9 个 NPC 战斗字段：`base_hp`/`base_ac`/`stats`/`level`/`proficiency_bonus`/`combat_capable`/`attacks`/`skills`/`secrets`
+   - 新增 `_build_npc_attacks()` helper（模式参考 monsters.py `_load_attacks()`）
+   - `_load_pool()` 返回类型 `list[dict]` → `list[ShopEntry]`，逐项构建 ShopEntry（缺 item_id → issue + skip）
+   - `_build_template()` 追加战斗字段提取逻辑；`combat_capable` 未显式设置时自动推导（有 attacks 或 base_hp → True）
+
+2. **`app/game_core/rules/handlers/economy.py`**：
+   - 新增 `from app.game_core.content.registries.characters import ShopEntry`
+   - `_normalize_shop_entry()`：ShopEntry 分支（属性访问）+ Mapping 分支（向后兼容）；ShopEntry 的 `count=="unlimited"` → `unlimited=True`，`price_override=None`
+   - `_select_rotating_entries()`：去掉 `isinstance(entry, Mapping)` guard，改为 ShopEntry/Mapping 两分支提取 `min_player_level`
+   - base pool 调用处 `get_non_empty_string(entry, "item_id")` → `entry.item_id if isinstance(entry, ShopEntry)`
+
+3. **`app/game_core/content/world.py`**（计划外）：
+   - `_validate_item_refs()` 原有 `isinstance(entry, Mapping)` guard 导致 ShopEntry 被跳过，改为 Mapping/其他 两分支（Mapping 用 `.get()`，其他用 `getattr()`）
+
+4. **`app/game_core/content/registries/__init__.py`**：新增 `NpcAttack`/`ShopEntry` 导出
+
+5. **测试修复 + 新增**（`tests/test_content_registries.py`）：
+   - 修复 `test_character_shop_inventory_typed`：`base_pool[0]["item_id"]` → `base_pool[0].item_id`
+   - 新增 5 个：`test_npc_attack_dataclass` / `test_shop_entry_dataclass` / `test_character_combat_fields_load` / `test_character_combat_fields_defaults` / `test_character_shop_pool_typed`
+
+**关键设计决策**：
+- `NpcAttack` 与 `MonsterAttack` 相似但不合并：NpcAttack 多 `range`/`tags`，MonsterAttack 无这两字段，职责分离
+- `ShopEntry.count` 为字符串（"1"/"unlimited"/"1d4+1"），economy.py 解析时 `count=="unlimited"` → unlimited，否则 `coerce_int(count) or 1`
+- `price_override` 未加入 ShopEntry — 设计规范未包含此字段，typed pool 统一走 world registry 价格查询
+- world.py `_validate_item_refs` 用 `getattr()` 兼容，不 import ShopEntry（避免跨层依赖）
+
+## [增量执行计划] Batch 1-4 — MonsterTemplate / FactionTemplate / LoreRegistry 补全
+
+**日期**：2026-03-03
+**基线**：957 → 971 passed（+14 新测试）
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/monsters.py`**：
+   - `MonsterTemplate` 新增 7 字段：`description`/`vulnerabilities`/`speed`（默认 30）/`flee_chance`（默认 0.5，配合现有 `flee_threshold`）/`tactics_notes`/`preferred_terrain`/`group_size`（默认 "solo"）
+   - 复用现有 `_load_list_of_strings()` 处理 vulnerabilities/preferred_terrain
+   - `flee_chance` 验证：非法值（越界 0~1）记 issue，回退到 0.5
+
+2. **`app/game_core/content/registries/factions.py`**：
+   - `FactionTemplate` 新增 3 字段：`influence_areas`/`leader_id`/`member_ids`
+   - leader_id 为 str|None，空字符串归 None
+
+3. **`app/game_core/content/registries/lore.py`**（主要改写）：
+   - `LoreEntry` 新增 2 字段：`scope`（默认 "global"）/`scope_id`
+   - 新增 `WorldRule` dataclass（7 字段）
+   - `LoreRegistry` 扩展：`_rules` 存储 + `get_rule()`/`list_rules()`/`list_rules_by_scope()`（过滤+降序排列）
+   - `load()` 支持结构化格式 `{"entries":..., "rules":...}` 和旧平坦格式（向后兼容）
+   - 新增 `_build_lore_entry()` / `_build_world_rule()` helpers（原 load 内联逻辑提取）
+   - `validate()` 加 rules 遍历
+
+4. **`app/game_core/content/registries/__init__.py`**：新增 `WorldRule` 导出
+
+**不需要改动的消费端**：所有消费端字段有默认值，零破坏性变更。
+
+## [增量执行计划] Batch 1-5 — QuestRegistry / SkillTemplate / ItemRegistry 补全
+
+**日期**：2026-03-03
+**基线**：962 → 977 passed（+6 新测试，其余为 Batch 1-4 带入）
+
+**前置依赖**：`shared_types.py`（Effect）已由 Batch 1-1 完成。全部纯增量，零破坏性变更。
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/quests.py`**：
+   - 新增 `MilestoneCondition` dataclass（3 字段：type/params/optional）
+   - `MilestoneTemplate` 新增 9 字段：`completion_value`/`sequence`/`narrative_context`/`key_elements`/`involved_npcs`/`involved_locations`/`success_conditions`/`failure_conditions`/`failure_fallback`
+   - 新增 `_build_conditions()` helper（缺 type / 非 Mapping → issue + skip）
+   - 更新 `_build_milestone()` 提取并传入全部新字段
+
+2. **`app/game_core/content/registries/skills.py`**：
+   - `SkillTemplate` 新增 2 字段：`requirements: dict[str, Any]`（默认 {}）/`usable_in: list[str]`（默认 []）
+   - 更新 `load()` 中 `SkillTemplate(...)` 构造调用
+
+3. **`app/game_core/content/registries/items.py`**：
+   - 新增 `from .shared_types import Effect` 和 `from typing import Mapping`
+   - `_ITEM_TYPES` 添加 `"accessory"`（设计文档未显式说明，但 `_build_accessory_data` 需要）
+   - 新增 `AccessoryData` dataclass（2 字段：slot/effects: list[Effect]）
+   - `ItemTemplate` 新增 `accessory_data: AccessoryData | None = None`
+   - 新增 `_build_accessory_data(raw, item_type)` static helper
+   - 更新 `load()` 调用 + `ItemTemplate(...)` 传入 `accessory_data`
+
+4. **`app/game_core/content/registries/__init__.py`**：新增 `MilestoneCondition`/`AccessoryData` 导出
+
+**关键设计决策**：
+- `MilestoneCondition.type` 不做白名单校验（设计规范注释：仅检查非空，白名单留 validate 时处理）
+- `AccessoryData.slot` 同理（head/neck/cloak/hands/finger/feet 白名单留 validate）
+- `SkillTemplate.requirements` 留 `dict[str, Any]`，不做 typed struct（结构因技能类型而异）
+- `ConsumableData.effect` 保留 `dict[str, Any]`，TODO 注释已存在，留下轮处理
+
+## [增量执行计划] Batch 1-6 — WorldInstance 跨 registry 引用校验
+
+**日期**：2026-03-03
+**基线**：971 → 984 passed（+13 新测试，含 7 个新 B6 测试 + 已有 6 个因 B6 结构更新自然增加）
+
+**主要改动**：
+
+1. **`app/game_core/content/world.py`**（主要）：
+   - `_validate_cross_registry_refs()` 追加 8 个 has_registry guard + 方法调用
+   - 新增 8 个私有校验方法：
+     - `_validate_sub_location_npc_refs()`：sub_location.resident_npcs → CharacterRegistry
+     - `_validate_hostile_pool_monster_refs()`：area.hostile_pool[].hostile_config.hostile_groups[].monster_ids → MonsterRegistry
+     - `_validate_sub_location_loot_refs()`：interactable.container_data.loot.items → ItemRegistry（支持 str / Mapping 两种 item 格式）
+     - `_validate_discovery_reward_refs()`：discovery.reward type=="item" → ItemRegistry
+     - `_validate_milestone_npc_location_refs()`：milestone.involved_npcs → CharacterRegistry，milestone.involved_locations → MapRegistry
+     - `_validate_faction_member_refs()`：faction.leader_id / member_ids → CharacterRegistry
+     - `_validate_faction_area_refs()`：faction.influence_areas → MapRegistry
+     - `_validate_world_rule_scope_refs()`：WorldRule scope_id → MapRegistry(area) / FactionRegistry(faction)
+
+2. **Task A（__init__.py 导出）**：已由外部改动完成，零工作量。
+
+3. **`tests/test_world_instance.py`**：追加 7 个测试函数（valid + missing 两条路径各覆盖）。
+
+**内容层完整性状态**：Batch 1-1 ~ 1-4 + 1-6 已完成（跳过 1-3/1-5，由外部完成）。WorldInstance 现共有 17 条跨 registry 校验。
+
+---
+
+## R-2a：MonsterRegistry 修正（2026-03-03）
+
+**测试基线**：984 → 1008（+24，含本批 7 个）
+
+**改动原因**：MonsterAttack 缺 range/tags 字段；gold_drop/LootEntry.count 类型与设计文档不符（应为骰子表达式 str）；MonsterTemplate 缺 skills 字段。
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/monsters.py`**：
+   - `MonsterAttack`：新增 `range: int = 1`、`tags: list[str]`；`_load_attacks()` 追加读取
+   - `LootEntry.count`：`int = 1` → `str = "1"`；`_load_loot_table()` 改为 str 直存，不再做非负整数校验
+   - `MonsterTemplate.gold_drop`：`int | None = None` → `str = "0"`；load() 三别名合并逻辑改为 str 转换（int 别名向后兼容）；`MonsterTemplate.skills`：新增 `list[str]`，`_load_list_of_strings` 提取
+
+2. **`app/game_core/rules/handlers/encounter.py`**（消费端同步）：
+   - import `roll_damage_dice`
+   - `_resolve_gold()`：改为 str 解析（"0"→0，纯数字→int，骰表达式→roll）
+   - `_resolve_loot_items()`：count str→int 解析，count<=0 跳过
+
+3. **`tests/test_content_registries.py`**：
+   - 更新 `test_monster_registry_validates_combat_and_loot_fields`：删除 gold_drop=-1/count=-1 的旧验证断言（str 类型不在 load 时报 invalid）
+   - 更新 `test_monster_registry_basic`：`gold_drop == "5"`
+   - 更新 `test_monster_loot_entry_typed`：`count == "3"` / `"1"`
+   - 新增 6 个测试（MonsterAttack range/tags、gold_drop str 默认、int 向后兼容、LootEntry count str、skills 字段）
+
+4. **`tests/test_encounter_handler.py`**：新增 `test_resolve_gold_dice_expressions`
+
+---
+
+## R-2b：其他 Registry 字段修正（2026-03-03）
+
+**测试基线**：1008 → 1015（+7，含本批 6 个）
+
+**改动原因**：ConsumableData.effect 存为 dict 与设计文档不符；behavioral_rules 应为 list；AreaTemplate 缺 terrain_type；Connection 缺 blocked 字段。
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/items.py`**：
+   - `ConsumableData.effect: dict[str, Any]` → `Effect | None = None`
+   - `_build_consumable_data(heal_amount)` → `_build_consumable_data(raw, heal_amount)`：扩展为三路解析（consumable_data 子 Mapping 优先 → heal_amount fallback → 顶层 effect 字段）
+   - 调用方改为 `self._build_consumable_data(raw, _heal_amount)`
+
+2. **`app/game_core/rules/handler_utils.py`**（消费端同步）：
+   - 追加 `from app.game_core.content.registries.shared_types import Effect`
+   - `resolve_item_heal_amount()`: `isinstance(effect, dict)` → `isinstance(effect, Effect)`，属性访问改为 `.type` / `.params`
+
+3. **`app/game_core/content/registries/factions.py`**：
+   - `behavioral_rules: str = ""` → `list[str]`
+   - load() 新增三路解析：list 格式、旧单字符串向后兼容 → 单元素 list、其他 → []
+
+4. **`app/game_core/content/registries/maps.py`**：
+   - `Connection.blocked: bool = False` + `_parse_connection_entry()` 读取
+   - `AreaTemplate.terrain_type: str = ""` + `_build_template()` 读取
+
+5. **`tests/test_content_registries.py`**：
+   - 更新 2 处已有断言（effect dict 访问 → .type/.params 属性；behavioral_rules str → list）
+   - 新增 6 个测试（consumable_data 子 Mapping、顶层 effect、heal_amount compat、behavioral_rules list/str、terrain_type + blocked）
+
+---
+
+## R-2c：ClassRegistry 子类型修正（2026-03-03）
+
+**测试基线**：1015 → 1019（+4）
+
+**改动原因**：R-1b 已实现 `_build_feature()`；本 batch 将 racial_traits / background.feature 从简单类型升级为 Feature typed struct。
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/classes.py`**：
+   - `RaceTemplate.racial_traits: list[str]` → `list[Feature]`；`_build_race_template()` 替换 `_load_validated_string_list` 为 dual-format 解析（str 简写 → Feature；Mapping → `_build_feature()`；空白字符串仍发出 load_issue）
+   - `BackgroundTemplate.feature: str = ""` → `Feature | None = None`；`_build_background_template()` 改为三路解析（str→Feature；Mapping→`_build_feature()`；空白字符串仍发出 issue）
+
+2. **`app/game_core/rules/handlers/growth.py`**（消费端同步）：
+   - 追加 `from app.game_core.content.registries.class_types import Feature`
+   - `_resolve_class_features()` 两处改为 Feature-aware 提取（racial_traits + background.feature），保留 str 向后兼容 fallback
+
+3. **`tests/test_content_registries.py`**：
+   - 更新 2 处已有断言（racial_traits==["versatile"] → Feature 对象检查；bg.feature=="military_rank" → feature.id 检查）
+   - 新增 4 个测试（str 简写、Mapping 格式、background Feature、GrowthHandler E2E）
+
+---
+
+### [D-R4] R-4 — Registry Query API 补全（2026-03-03）
+
+**测试基线**：1031 → 1039（+8）
+
+**改动原因**：各 Registry 只有核心 `get()` / `list_all()`，设计文档要求的查询方法缺失。补全有消费端的 8 个必要方法，纯加方法无破坏性变更。
+
+**主要改动**：
+
+1. **`app/game_core/content/registries/maps.py`**：
+   - 新增 `get_sub_location(area_id, loc_id) -> SubLocationTemplate | None`（封装 `area.sub_locations.get(loc_id)`）
+
+2. **`app/game_core/content/registries/factions.py`**：
+   - 新增 `get_factions_in_area(area_id)` — 按 `influence_areas` 过滤
+   - 新增 `get_relations_of(faction_id)` — 返回 `faction_relations` 副本，不存在返回 `{}`
+   - 新增 `get_behavioral_rules(faction_id)` — 返回 `behavioral_rules` 副本，不存在返回 `[]`
+
+3. **`app/game_core/content/registries/lore.py`**：
+   - 新增 `get_rules_for_context(*, chapter_id, area_id, faction_ids)` — 合并 global + chapter + area + faction scope，按 priority 降序返回
+
+4. **`app/game_core/content/registries/skills.py`**：
+   - 新增 `get_by_category(category)` / `get_combat_skills()` / `get_exploration_skills()`
+   - **顺带修正**：`load()` 对非法术条目从未读取原始 `category` 字段（始终为 `""`），导致 `get_by_category("martial")` 等永远返回空。修复：非法术条目追加读取 `raw.get("category")`
+
+5. **`tests/test_content_registries.py`**：
+   - 新增 8 个测试（每方法 1 个函数，含正向 + 空结果/miss 断言）

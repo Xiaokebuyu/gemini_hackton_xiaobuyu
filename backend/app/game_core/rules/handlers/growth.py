@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
+from app.game_core.content.registries.class_types import Feature
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import coerce_int, get_non_empty_string, handler_success
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
@@ -510,16 +511,25 @@ class GrowthHandler(StaticCommandHandler):
         features: list[str] = []
         if race_template is not None:
             for trait in race_template.racial_traits:
-                normalized = self._non_empty_string(trait)
-                if normalized is not None:
-                    features.append(normalized)
+                if isinstance(trait, Feature):
+                    if trait.id:
+                        features.append(trait.id)
+                else:
+                    normalized = self._non_empty_string(trait)
+                    if normalized is not None:
+                        features.append(normalized)
 
         features = self._merge_features(features, self._resolve_level_features(class_template, 1, 1))
 
         if background_template is not None:
-            background_feature = self._non_empty_string(background_template.feature)
-            if background_feature is not None:
-                features = self._merge_features(features, [background_feature])
+            bg_feature = background_template.feature
+            if isinstance(bg_feature, Feature):
+                if bg_feature.id:
+                    features = self._merge_features(features, [bg_feature.id])
+            elif isinstance(bg_feature, str):
+                normalized = self._non_empty_string(bg_feature)
+                if normalized is not None:
+                    features = self._merge_features(features, [normalized])
         return features
 
     def _resolve_level_features(
@@ -539,7 +549,10 @@ class GrowthHandler(StaticCommandHandler):
             if not isinstance(raw_features, list):
                 continue
             for feature in raw_features:
-                normalized = self._non_empty_string(feature)
+                if hasattr(feature, "id"):
+                    normalized = feature.id.strip() or None
+                else:
+                    normalized = self._non_empty_string(feature)
                 if normalized is not None and normalized not in features:
                     features.append(normalized)
         return features
@@ -565,7 +578,10 @@ class GrowthHandler(StaticCommandHandler):
             )
             if isinstance(level_features, list):
                 for feature in level_features:
-                    normalized = self._non_empty_string(feature)
+                    if hasattr(feature, "id"):
+                        normalized = feature.id.strip() or None
+                    else:
+                        normalized = self._non_empty_string(feature)
                     if normalized is not None and normalized not in features:
                         features.append(normalized)
         return features

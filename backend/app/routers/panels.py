@@ -61,10 +61,11 @@ def _map_response(session: ManagedSession) -> MapPanelResponse:
             if not location_id:
                 continue
             location_name = location_id
-            if isinstance(raw_location, Mapping):
-                raw_name = str(raw_location.get("name", "")).strip()
-                if raw_name:
-                    location_name = raw_name
+            raw_name = getattr(raw_location, "name", None)
+            if raw_name is None and isinstance(raw_location, Mapping):
+                raw_name = raw_location.get("name", "")
+            if raw_name:
+                location_name = str(raw_name).strip() or location_name
             sub_locations.append({"id": location_id, "name": location_name})
         tags = [str(tag) for tag in template.tags if str(tag).strip()]
         raw_danger = state_area.get(

@@ -225,3 +225,38 @@ private → 按 audience 列表精确控制
 - Read API getter 缺失优先补齐（上层逻辑直接依赖）
 - EventSlice 架构偏差需先确认哪种方案保留，再更新文档或代码
 - API 命名差异按"代码为准、更新文档"方向处理（除非代码命名明显不如文档）
+
+## [增量执行计划] Phase 2 — AreaSlice 运行时字段补全
+
+**日期**：2026-03-03
+**基线**：977 → 989 passed（+5 新测试，其余含 Batch 1-4/1-6 等外部改动），0 regression
+
+**背景**：内容层 Phase 1 已完成，`AreaSlice` 对应的 `interactable_states` 字段缺失，5 个 read API 方法缺失。
+
+**主要改动（`app/game_core/state/slices/area.py`）**：
+
+1. **`AreaState` 新增字段**：
+   - `interactable_states: dict[str, dict[str, Any]]` — one-time 交互物使用状态
+
+2. **`AreaState.snapshot()`**：新增 `"interactable_states": deepcopy(self.interactable_states)`
+
+3. **`_coerce_area_state()` 两路径补全**：
+   - AreaState 分支：`interactable_states={k: dict(v) for k, v in raw.interactable_states.items()}`
+   - dict 分支：`raw.get("interactable_states", {})` 向后兼容（旧存档无此字段不 crash）
+
+4. **新增 5 个 Read API 方法**：
+   - `get_discovered(area_id) -> set[str]`
+   - `is_hostile_cleared(area_id, sub_area_id) -> bool`（读 `hostile_tracking` status=="cleared"）
+   - `is_container_opened(area_id, container_id) -> bool`（读 `container_states` opened/looted）
+   - `is_trap_detected(area_id, interactable_id) -> bool`（读 `container_states` trap_detected）
+   - `is_interactable_used(area_id, interactable_id) -> bool`（读 `interactable_states` used）
+
+5. **新增 Write 方法**：`mark_interactable_used(area_id, interactable_id)`
+
+6. **`apply_state_change()` 新分支**：`interactable_states.*` 路径（must include area_id in value）
+
+7. **`validate()` 扩展**：`interactable_states must be a dict` 检查
+
+**关键设计决策**：
+- `is_trap_detected` 读 `container_states`（trap 信息跟随容器状态），不读 `interactable_states`
+- `validate()` 只做 is dict 检查，内部结构不做强校验（与 `container_states` 保持同等粒度）

@@ -3,9 +3,12 @@
 from app.game_core.rules.handlers.combat import CombatHandler
 from app.game_core.rules.handlers.container import ContainerHandler
 from app.game_core.rules.handlers.crime import CrimeHandler
+from app.game_core.rules.handlers.discovery import DiscoveryHandler
 from app.game_core.rules.handlers.economy import EconomyHandler
 from app.game_core.rules.handlers.encounter import EncounterHandler
 from app.game_core.rules.handlers.growth import GrowthHandler
+from app.game_core.rules.handlers.hostile_area import HostileAreaHandler
+from app.game_core.rules.handlers.interactable import InteractableHandler
 from app.game_core.rules.handlers.inventory import InventoryHandler
 from app.game_core.rules.handlers.navigation import NavigationHandler
 from app.game_core.rules.handlers.rest import RestHandler
@@ -18,9 +21,12 @@ __all__ = [
     "CombatHandler",
     "ContainerHandler",
     "CrimeHandler",
+    "DiscoveryHandler",
     "EconomyHandler",
     "EncounterHandler",
     "GrowthHandler",
+    "HostileAreaHandler",
+    "InteractableHandler",
     "InventoryHandler",
     "NavigationHandler",
     "RestHandler",

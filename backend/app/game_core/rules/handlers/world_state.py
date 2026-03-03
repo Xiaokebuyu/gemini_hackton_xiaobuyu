@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from uuid import uuid4
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
@@ -628,6 +629,7 @@ class WorldStateHandler(StaticCommandHandler):
         created_at = state.time.get_current_time() if state.has_slice("time") else None
         text = self._normalize_create_rumor_text(cmd.params) or ""
         rumor = {
+            "rumor_id": cmd.params.get("rumor_id") or f"rumor_{uuid4().hex[:12]}",
             "text": text,
             "content": text,
             "spread_to": spread_to,

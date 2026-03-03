@@ -221,6 +221,8 @@ class ContextAssembler:
                     location_data = sub_locations.get(current_location)
                     if isinstance(location_data, dict):
                         template = dict(location_data)
+                    elif dataclasses.is_dataclass(location_data):
+                        template = dataclasses.asdict(location_data)
 
         # Fallback: check dynamic sub-areas in area state
         if template is None and current_location and isinstance(current_area_state, dict):

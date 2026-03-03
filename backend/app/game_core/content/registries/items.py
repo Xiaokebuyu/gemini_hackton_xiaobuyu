@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
+from app.game_core.content.registries.shared_types import Effect
 
 _ITEM_TYPES = frozenset({
     "weapon", "armor", "shield", "potion", "scroll",
-    "wand", "ring", "amulet", "consumable", "misc",
+    "wand", "ring", "amulet", "consumable", "misc", "accessory",
 })
 
 _RARITIES = frozenset({
@@ -59,15 +60,20 @@ class ArmorData:
 
 
 @dataclass(slots=True)
-class ConsumableData:
-    """Typed consumable attributes.
+class AccessoryData:
+    """Typed accessory attributes (type == 'accessory')."""
 
-    effect 暂存为 dict，待 F-B SkillEffect 类型化后升级。
-    """
+    slot: str = ""    # head / neck / cloak / hands / finger / feet
+    effects: list[Effect] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ConsumableData:
+    """Typed consumable attributes."""
 
     trigger: str = "on_use"                         # on_use / on_hit / on_receive
     charges: int = 1
-    effect: dict[str, Any] = field(default_factory=dict)
+    effect: Effect | None = None
 
 
 @dataclass(slots=True)
@@ -89,6 +95,7 @@ class ItemTemplate:
     weapon_data: WeaponData | None = None
     armor_data: ArmorData | None = None
     consumable_data: ConsumableData | None = None
+    accessory_data: AccessoryData | None = None
 
 
 class ItemRegistry(ContentRegistry):
@@ -178,7 +185,8 @@ class ItemRegistry(ContentRegistry):
             # -- Build typed sub-structs --
             weapon_data = self._build_weapon_data(raw)
             armor_data = self._build_armor_data(raw, item_type)
-            consumable_data = self._build_consumable_data(_heal_amount)
+            consumable_data = self._build_consumable_data(raw, _heal_amount)
+            accessory_data = self._build_accessory_data(raw, item_type)
 
             self._items[iid] = ItemTemplate(
                 id=str(raw.get("id", iid)),
@@ -195,6 +203,7 @@ class ItemRegistry(ContentRegistry):
                 weapon_data=weapon_data,
                 armor_data=armor_data,
                 consumable_data=consumable_data,
+                accessory_data=accessory_data,
             )
 
     # ------------------------------------------------------------------
@@ -245,15 +254,77 @@ class ItemRegistry(ContentRegistry):
         )
 
     @staticmethod
-    def _build_consumable_data(heal_amount: int | None) -> ConsumableData | None:
-        """Build ConsumableData when heal_amount is present."""
-        if heal_amount is None or heal_amount <= 0:
+    def _build_consumable_data(raw: dict[str, Any], heal_amount: int | None) -> ConsumableData | None:
+        """Build ConsumableData from raw item dict."""
+        # 优先读 consumable_data 子 Mapping
+        cd_raw = raw.get("consumable_data")
+        if isinstance(cd_raw, Mapping):
+            trigger = str(cd_raw.get("trigger", "on_use")).strip() or "on_use"
+            charges = 1
+            raw_charges = cd_raw.get("charges")
+            if raw_charges is not None:
+                try:
+                    charges = max(1, int(raw_charges))
+                except (ValueError, TypeError):
+                    pass
+            effect: Effect | None = None
+            eff_raw = cd_raw.get("effect")
+            if isinstance(eff_raw, Mapping):
+                effect = Effect(
+                    type=str(eff_raw.get("type", "")).strip(),
+                    params=dict(eff_raw.get("params", {})) if isinstance(eff_raw.get("params"), Mapping) else {},
+                    target=str(eff_raw.get("target", "self")).strip(),
+                    tags=[str(t) for t in eff_raw.get("tags", []) if isinstance(t, str)] if isinstance(eff_raw.get("tags"), list) else [],
+                )
+            return ConsumableData(trigger=trigger, charges=charges, effect=effect)
+
+        # 兼容旧格式：heal_amount → heal Effect
+        if heal_amount is not None and heal_amount > 0:
+            return ConsumableData(
+                trigger="on_use",
+                charges=1,
+                effect=Effect(type="heal", params={"amount": heal_amount}, target="self"),
+            )
+
+        # 顶层 effect 字段
+        eff_raw = raw.get("effect")
+        if isinstance(eff_raw, Mapping):
+            effect = Effect(
+                type=str(eff_raw.get("type", "")).strip(),
+                params=dict(eff_raw.get("params", {})) if isinstance(eff_raw.get("params"), Mapping) else {},
+                target=str(eff_raw.get("target", "self")).strip(),
+                tags=[str(t) for t in eff_raw.get("tags", []) if isinstance(t, str)] if isinstance(eff_raw.get("tags"), list) else [],
+            )
+            return ConsumableData(trigger="on_use", charges=1, effect=effect)
+
+        return None
+
+    @staticmethod
+    def _build_accessory_data(raw: dict[str, Any], item_type: str) -> AccessoryData | None:
+        """Build AccessoryData when item_type == 'accessory'."""
+        if item_type != "accessory":
             return None
-        return ConsumableData(
-            trigger="on_use",
-            charges=1,
-            effect={"type": "heal", "params": {"amount": heal_amount}},
-        )
+        slot = str(raw.get("accessory_slot") or raw.get("slot") or "").strip()
+        effects: list[Effect] = []
+        raw_effects = raw.get("effects", [])
+        if isinstance(raw_effects, list):
+            for eff_raw in raw_effects:
+                if isinstance(eff_raw, Mapping):
+                    effects.append(Effect(
+                        type=str(eff_raw.get("type", "")).strip(),
+                        params=(
+                            dict(eff_raw.get("params", {}))
+                            if isinstance(eff_raw.get("params"), Mapping) else {}
+                        ),
+                        target=str(eff_raw.get("target", "self")).strip(),
+                        tags=(
+                            [str(t) for t in eff_raw.get("tags", []) if isinstance(t, str)]
+                            if isinstance(eff_raw.get("tags"), list) else []
+                        ),
+                    ))
+        if not slot and not effects:
+            return None
+        return AccessoryData(slot=slot, effects=effects)
 
     # ------------------------------------------------------------------
     # Public accessors

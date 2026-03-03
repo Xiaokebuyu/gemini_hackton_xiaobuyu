@@ -28,6 +28,8 @@ class MonsterAttack:
     damage_dice: str = "1d4"       # 伤害骰格式：NdM / NdM+B / NdM-B
     hit_bonus: int = 0              # 命中修正（加到 d20 上）
     damage_type: str = "physical"   # 伤害类型（占位，防御计算深化时消费）
+    range: int = 1                  # 攻击距离（格），1=近战
+    tags: list[str] = field(default_factory=list)  # 如 ["MELEE", "SLASHING"]
 
 
 @dataclass(slots=True)
@@ -36,7 +38,7 @@ class LootEntry:
 
     item_id: str = ""
     chance: float = 1.0
-    count: int = 1
+    count: str = "1"               # 骰子表达式 "1" / "1d3" / "2d4"
 
 
 @dataclass(slots=True)
@@ -54,14 +56,22 @@ class MonsterTemplate:
     resistances: list[str] = field(default_factory=list)
     immunities: list[str] = field(default_factory=list)
     attacks: list[MonsterAttack] = field(default_factory=list)
-    gold_drop: int | None = None
+    gold_drop: str = "0"            # 骰子表达式 "1d6" / "2d10+5" / "0"
     loot_table: list[LootEntry] = field(default_factory=list)
     spells: list[Any] = field(default_factory=list)
     ability_refs: list[Any] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)  # SkillRegistry 引用
     ai_personality: str = "aggressive"  # aggressive / defensive / cowardly
     flee_threshold: float = 0.0         # 逃跑阈值（hp/max_hp 比例），0.0 = 不逃
-    xp_reward: int = 0                  # 击杀 XP（TODO: speed 等字段待数据管线就绪后补）
+    xp_reward: int = 0
+    description: str = ""
+    vulnerabilities: list[str] = field(default_factory=list)
+    speed: int = 30
+    flee_chance: float = 0.5            # 低于 flee_threshold 时的逃跑概率
+    tactics_notes: str = ""
+    preferred_terrain: list[str] = field(default_factory=list)
+    group_size: str = "solo"            # solo / pair / pack / horde
 
 
 class MonsterRegistry(ContentRegistry):
@@ -89,15 +99,12 @@ class MonsterRegistry(ContentRegistry):
                 if fn in raw and self._coerce_positive_int(raw.get(fn)) is None:
                     self._load_issues.append(f"monster '{mid}' has invalid {fn}")
 
+            # Merge gold / gold_reward aliases into gold_drop; store as dice-expression str
+            _gold_drop = "0"
             for fn in ("gold_drop", "gold", "gold_reward"):
-                if fn in raw and self._coerce_non_negative_int(raw.get(fn)) is None:
-                    self._load_issues.append(f"monster '{mid}' has invalid {fn}")
-            # Merge gold / gold_reward aliases into gold_drop during load
-            _gold_drop: int | None = None
-            for fn in ("gold_drop", "gold", "gold_reward"):
-                val = self._coerce_non_negative_int(raw.get(fn))
-                if val is not None:
-                    _gold_drop = val
+                raw_val = raw.get(fn)
+                if raw_val is not None:
+                    _gold_drop = str(raw_val).strip() or "0"
                     break
 
             raw_cr = raw.get("cr")
@@ -165,6 +172,24 @@ class MonsterRegistry(ContentRegistry):
                         f"monster '{mid}' has invalid xp_reward, using 0"
                     )
 
+            description = str(raw.get("description", "")).strip()
+            vulnerabilities = self._load_list_of_strings(mid, raw, "vulnerabilities")
+            speed_raw = self._coerce_non_negative_int(raw.get("speed"))
+            speed = speed_raw if speed_raw is not None else 30
+            flee_chance = 0.5
+            if "flee_chance" in raw:
+                fc = self._coerce_float(raw.get("flee_chance"))
+                if fc is not None and 0.0 <= fc <= 1.0:
+                    flee_chance = fc
+                else:
+                    self._load_issues.append(
+                        f"monster '{mid}' has invalid flee_chance, using 0.5"
+                    )
+            tactics_notes = str(raw.get("tactics_notes", "")).strip()
+            preferred_terrain = self._load_list_of_strings(mid, raw, "preferred_terrain")
+            group_size = str(raw.get("group_size", "solo")).strip() or "solo"
+            skills = self._load_list_of_strings(mid, raw, "skills")
+
             self._items[mid] = MonsterTemplate(
                 id=str(raw.get("id", mid)),
                 name=str(raw.get("name") or ""),
@@ -185,6 +210,14 @@ class MonsterRegistry(ContentRegistry):
                 ai_personality=ai_personality,
                 flee_threshold=flee_threshold,
                 xp_reward=xp_reward,
+                description=description,
+                vulnerabilities=vulnerabilities,
+                speed=speed,
+                flee_chance=flee_chance,
+                tactics_notes=tactics_notes,
+                preferred_terrain=preferred_terrain,
+                group_size=group_size,
+                skills=skills,
             )
 
     def get(self, content_id: str) -> MonsterTemplate | None:
@@ -311,11 +344,26 @@ class MonsterRegistry(ContentRegistry):
                 dt = self._coerce_non_empty_string(entry.get("damage_type"))
                 if dt:
                     damage_type = dt
+            # range
+            atk_range = 1
+            raw_range = entry.get("range")
+            if raw_range is not None:
+                try:
+                    atk_range = max(1, int(raw_range))
+                except (ValueError, TypeError):
+                    pass
+            # tags
+            atk_tags: list[str] = []
+            raw_atk_tags = entry.get("tags")
+            if isinstance(raw_atk_tags, list):
+                atk_tags = [str(t) for t in raw_atk_tags if str(t).strip()]
             result.append(MonsterAttack(
                 name=name,
                 damage_dice=damage_dice,
                 hit_bonus=hit_bonus,
                 damage_type=damage_type,
+                range=atk_range,
+                tags=atk_tags,
             ))
         return result
 
@@ -345,16 +393,11 @@ class MonsterRegistry(ContentRegistry):
                     )
                 else:
                     item_id_val = s
-            # count
-            count_val = 1
-            if "count" in entry:
-                c = self._coerce_non_negative_int(entry.get("count"))
-                if c is None:
-                    self._load_issues.append(
-                        f"monster '{mid}' loot_table[{index}] has invalid count"
-                    )
-                else:
-                    count_val = c
+            # count: stored as dice-expression str
+            raw_count = entry.get("count", "1")
+            count_val = str(raw_count).strip() if raw_count is not None else "1"
+            if not count_val:
+                count_val = "1"
             # chance
             chance_val = 1.0
             if "chance" in entry:

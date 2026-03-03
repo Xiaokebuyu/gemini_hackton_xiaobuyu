@@ -103,6 +103,11 @@ class NavigationHandler(StaticCommandHandler):
                 reason="location_id/location must be a non-empty string",
             )
         if location_id in area_template.sub_locations:
+            # TODO: 检查 SubLocationTemplate.available_hours vs TimeSlice.slot
+            # 当前不阻止进入，深化时需要：
+            # - 获取目标 sub_location 的 available_hours
+            # - 映射当前 time_slot → hour
+            # - hour 不在范围 → ValidationResult(ok=False, "location closed")
             return ValidationResult(ok=True)
         # Fallback: check dynamic sub-areas
         if state.has_slice("areas"):

@@ -132,6 +132,10 @@ class InventoryHandler(StaticCommandHandler):
                 ok=False,
                 reason=f"item not in inventory: {item_id}",
             )
+        # TODO: 接入 proficiency.check_weapon_proficiency / check_armor_proficiency
+        # 当前不阻止装备，深化战斗时需要：
+        # - 非熟练武器：攻击不加 proficiency_bonus
+        # - 非熟练护甲：能力检定/豁免/攻击劣势，不能施法
         # Type ↔ slot constraint (requires items registry; permissive when registry absent)
         if world.has_registry("items"):
             template = world.items.get(item_id)

@@ -8,9 +8,12 @@ from app.game_core.rules.handlers import (
     CombatHandler,
     ContainerHandler,
     CrimeHandler,
+    DiscoveryHandler,
     EconomyHandler,
     EncounterHandler,
     GrowthHandler,
+    HostileAreaHandler,
+    InteractableHandler,
     InventoryHandler,
     NavigationHandler,
     RestHandler,
@@ -35,6 +38,9 @@ DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
     WorldStateHandler,
     StatusEffectHandler,
     SpellHandler,
+    DiscoveryHandler,
+    InteractableHandler,
+    HostileAreaHandler,
 )
 
 

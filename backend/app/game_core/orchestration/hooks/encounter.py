@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-from typing import Any, Mapping, Protocol
+import random
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
@@ -12,6 +13,9 @@ from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
 from app.game_core.state import StateChange
+
+if TYPE_CHECKING:
+    from app.game_core.content.registries.map_types import EncounterEntry
 
 
 logger = logging.getLogger(__name__)
@@ -80,8 +84,8 @@ class BasicEncounterDetector:
             return self._noop("slot_capacity_reached")
 
         selected_template = self._select_template(
-            period=period,
-            encounter_profile=context.get("encounter_profile"),
+            encounter_table=context.get("encounter_table", []),
+            danger_level=danger_level,
             area_state=area_state,
         )
         if selected_template is None:
@@ -166,16 +170,10 @@ class BasicEncounterDetector:
     def _select_template(
         cls,
         *,
-        period: str,
-        encounter_profile: Any,
+        encounter_table: list[dict[str, Any]],
+        danger_level: float,
         area_state: Any,
-    ) -> dict[str, str] | None:
-        if not isinstance(encounter_profile, Mapping):
-            return None
-        templates = encounter_profile.get("templates")
-        if not isinstance(templates, list):
-            return None
-
+    ) -> dict[str, Any] | None:
         active_template_ids = cls._template_ids(
             area_state.get("active_template_ids") if isinstance(area_state, Mapping) else None
         )
@@ -183,26 +181,42 @@ class BasicEncounterDetector:
             area_state.get("cooling_template_ids") if isinstance(area_state, Mapping) else None
         )
 
-        for template in templates:
-            if not isinstance(template, Mapping):
+        candidates: list[dict[str, Any]] = []
+        weights: list[float] = []
+        for entry in encounter_table:
+            if not isinstance(entry, Mapping):
                 continue
-            template_id = cls._coerce_non_empty_string(template.get("id"))
-            if template_id is None:
+            entry_id = cls._coerce_non_empty_string(entry.get("id"))
+            if entry_id is None:
                 continue
-            periods: list[str] = []
-            raw_periods = template.get("periods")
-            if isinstance(raw_periods, list):
-                for value in raw_periods:
-                    normalized = cls._coerce_non_empty_string(value)
-                    if normalized is not None:
-                        periods.append(normalized)
-            if periods and period not in periods:
+            if entry_id in active_template_ids or entry_id in cooling_template_ids:
                 continue
-            if template_id in active_template_ids or template_id in cooling_template_ids:
+            try:
+                min_danger = float(entry.get("min_danger", 0.0))
+            except (TypeError, ValueError):
+                min_danger = 0.0
+            if danger_level < min_danger:
                 continue
-            source = cls._coerce_non_empty_string(template.get("source")) or "encounter"
-            return {"id": template_id, "source": source}
-        return None
+            try:
+                weight = max(0.0, float(entry.get("weight", 1.0)))
+            except (TypeError, ValueError):
+                weight = 1.0
+            if weight <= 0.0:
+                continue
+            candidates.append(entry)
+            weights.append(weight)
+
+        if not candidates:
+            return None
+
+        selected = random.choices(candidates, weights=weights, k=1)[0]
+        raw_monster_ids = selected.get("monster_ids", [])
+        monster_ids = list(raw_monster_ids) if isinstance(raw_monster_ids, list) else []
+        return {
+            "id": cls._coerce_non_empty_string(selected.get("id")) or "",
+            "monster_ids": monster_ids,
+            "source": "encounter",
+        }
 
 
 class EncounterHook(NoOpSettlementHook):
@@ -236,10 +250,9 @@ class EncounterHook(NoOpSettlementHook):
             )
 
         current_tick = context.state.time.absolute_tick()
-        encounter_profile = self._resolve_encounter_profile(context, area_id)
-        slot_capacity = self._coerce_tick(encounter_profile.get("slot_capacity"))
-        if slot_capacity is None:
-            slot_capacity = self.DEFAULT_SLOT_CAPACITY
+        area_map = context.world.maps.get(area_id) if context.world.has_registry("maps") else None
+        slot_capacity = area_map.encounter_slot_capacity if area_map is not None else self.DEFAULT_SLOT_CAPACITY
+        encounter_table = area_map.encounter_table if area_map is not None else []
         slot_bucket = context.state.areas.sync_permanent_hostile_slots(
             area_id,
             current_tick=current_tick,
@@ -252,7 +265,7 @@ class EncounterHook(NoOpSettlementHook):
             period=period,
             danger_level=danger_level,
             slot_bucket=slot_bucket,
-            encounter_profile=encounter_profile,
+            encounter_table=encounter_table,
         )
         try:
             raw_probe = self._detector.plan(detector_context)
@@ -407,7 +420,7 @@ class EncounterHook(NoOpSettlementHook):
         period: str,
         danger_level: float,
         slot_bucket: Mapping[str, Any],
-        encounter_profile: Mapping[str, Any],
+        encounter_table: list[EncounterEntry],
     ) -> dict[str, Any]:
         area_state = context.state.areas.get_area(area_id)
         hostile_count = len(area_state.hostile_tracking)
@@ -466,7 +479,15 @@ class EncounterHook(NoOpSettlementHook):
             "absolute_tick": context.state.time.absolute_tick(),
             "danger_level": danger_level,
             "player_on_world_map": True,
-            "encounter_profile": dict(encounter_profile),
+            "encounter_table": [
+                {
+                    "id": e.id,
+                    "monster_ids": list(e.monster_ids),
+                    "weight": e.weight,
+                    "min_danger": e.min_danger,
+                }
+                for e in encounter_table
+            ],
             "area_state": {
                 "danger_level": danger_level,
                 "hostile_count": hostile_count,
@@ -478,69 +499,6 @@ class EncounterHook(NoOpSettlementHook):
                 "cooling_template_ids": cooling_template_ids,
                 "next_refresh_tick": next_refresh_tick,
             },
-        }
-
-    @classmethod
-    def _resolve_encounter_profile(
-        cls,
-        context: SettlementContext,
-        area_id: str,
-    ) -> dict[str, Any]:
-        fallback = {
-            "slot_capacity": cls.DEFAULT_SLOT_CAPACITY,
-            "templates": [
-                {
-                    "id": f"{area_id}:ambient",
-                    "periods": [],
-                    "source": "encounter",
-                }
-            ],
-        }
-        if not context.world.has_registry("maps"):
-            return fallback
-
-        raw_map = context.world.maps.get(area_id)
-        if raw_map is None:
-            return fallback
-        raw_profile = raw_map.encounter_profile
-        if not isinstance(raw_profile, Mapping):
-            return fallback
-
-        slot_capacity = cls._coerce_tick(raw_profile.get("slot_capacity"))
-        if slot_capacity is None:
-            slot_capacity = cls.DEFAULT_SLOT_CAPACITY
-        slot_capacity = max(0, slot_capacity)
-
-        normalized_templates: list[dict[str, Any]] = []
-        raw_templates = raw_profile.get("templates")
-        if isinstance(raw_templates, list):
-            for raw_template in raw_templates:
-                if not isinstance(raw_template, Mapping):
-                    continue
-                template_id = cls._coerce_non_empty_string(raw_template.get("id"))
-                if template_id is None:
-                    continue
-                periods: list[str] = []
-                raw_periods = raw_template.get("periods")
-                if isinstance(raw_periods, list):
-                    for value in raw_periods:
-                        period = cls._coerce_non_empty_string(value)
-                        if period is not None:
-                            periods.append(period)
-                source = cls._coerce_non_empty_string(raw_template.get("source")) or "encounter"
-                normalized_templates.append(
-                    {
-                        "id": template_id,
-                        "periods": periods,
-                        "source": source,
-                    }
-                )
-
-        if not normalized_templates:
-            return fallback
-        return {
-            "slot_capacity": slot_capacity,
-            "templates": normalized_templates,
         }
 
     @classmethod

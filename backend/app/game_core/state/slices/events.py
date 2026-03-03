@@ -92,6 +92,25 @@ class EventSlice(StateSlice):
         self.rumors.append(dict(rumor))
         self._dirty = True
 
+    def spread_rumor(self, rumor_id: str, npc_id: str) -> bool:
+        """Add npc_id to a rumor's known_by list.
+
+        Returns True if added, False if already known or rumor not found.
+        """
+        for rumor in self.rumors:
+            rid = rumor.get("rumor_id") or rumor.get("id") or rumor.get("event_id")
+            if rid == rumor_id:
+                known_by = rumor.get("known_by")
+                if not isinstance(known_by, list):
+                    known_by = []
+                    rumor["known_by"] = known_by
+                if npc_id in known_by:
+                    return False
+                known_by.append(npc_id)
+                self._dirty = True
+                return True
+        return False
+
     def check_triggers(
         self,
         current_time: Mapping[str, Any],
@@ -202,6 +221,12 @@ class EventSlice(StateSlice):
             return
         if change.path == "rumors" and isinstance(change.value, Mapping):
             self.add_rumor(dict(change.value))
+            return
+        if change.path == "rumors.spread" and isinstance(change.value, Mapping):
+            rumor_id = str(change.value.get("rumor_id", ""))
+            npc_id = str(change.value.get("npc_id", ""))
+            if rumor_id and npc_id:
+                self.spread_rumor(rumor_id, npc_id)
             return
         raise ValueError(
             f"unsupported event state change: {change.operation} {change.path}"
