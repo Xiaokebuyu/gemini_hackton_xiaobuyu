@@ -263,13 +263,19 @@ def build_classes_request(groups: dict[str, list[dict]]) -> tuple[str, str]:
     prompt = f"""{sys}
 
 ## 任务
-根据哥布林杀手世界的职业体系，生成以下职业和种族的结构化数据。
+根据哥布林杀手世界的职业体系，生成以下职业、种族、背景的结构化数据。
 
 ## 需要的职业（6个）
 战士(fighter)、神官(priest)、游侠(ranger)、魔法师(wizard)、武道家(martial_artist)、斥候(scout)
 
 ## 需要的种族（5个）
 人类(human)、精灵/森人(elf)、矮人/矿人(dwarf)、蜥蜴人(lizardman)、圃人/半身人(halfling)
+
+## 需要的背景（至少6个，优先包含以下）
+士兵(soldier)、冒险者(adventurer)、学者(scholar)、罪犯(criminal)、流浪者(wanderer)、民间英雄(folk_hero)
+
+可选补充：
+贵族(noble)、工匠(artisan)、侍僧(acolyte)
 
 ## 输出 JSON Schema
 {{
@@ -311,6 +317,19 @@ def build_classes_request(groups: dict[str, list[dict]]) -> tuple[str, str]:
       "racial_traits": [{{"id": "string", "name": "string", "description": "string"}}],
       "tags": ["string"]
     }}
+  }},
+  "backgrounds": {{
+    "<background_id>": {{
+      "id": "string",
+      "name": "string (中文)",
+      "description": "string",
+      "feature": "string（背景特性 ID；如没有可填空字符串）",
+      "gold_bonus": 10,
+      "starting_gold": 15,
+      "skill_proficiency": ["athletics", "survival"],
+      "tool_proficiency": ["thieves_tools"],
+      "equipment": ["rope_hempen_50ft", "torch"]
+    }}
   }}
 }}
 
@@ -320,8 +339,12 @@ def build_classes_request(groups: dict[str, list[dict]]) -> tuple[str, str]:
 - spellcasting_ability：施法属性（如神官"wis"，法师"int"），非施法职业填 ""
 - spellcasting：施法配置对象，非施法职业填 null。施法职业需填 stat/cantrips_known/spell_slots/spells_known
 - stat_bonuses（种族）：种族属性加值，如人类 {{"str":1,"dex":1,"con":1,"int":1,"wis":1,"cha":1}}，矮人 {{"con":2,"wis":1}}
+- backgrounds 必须输出，不可省略，不可为空对象
+- 背景字段名使用 skill_proficiency（单数）和 tool_proficiency（单数），与当前内容层 schema 保持一致
+- gold_bonus 与 starting_gold 至少填一个；如果两者都能判断，优先同时填
+- feature 建议填简洁稳定的 snake_case ID；如确实无合适特性，可填空字符串
 
-## 角色资料参考（职业/种族信息）
+## 角色资料参考（职业/种族/背景信息）
 {char_ref}
 """
     return ("classes", prompt)
@@ -943,9 +966,12 @@ def main() -> None:
 
     # 提取 IDs
     classes_data = classes_raw.get("classes", {}) if isinstance(classes_raw, dict) else {}
+    backgrounds_data = classes_raw.get("backgrounds", {}) if isinstance(classes_raw, dict) else {}
     class_ids    = list(classes_data.keys())
+    background_ids = list(backgrounds_data.keys())
     faction_ids  = list(factions_raw.keys()) if isinstance(factions_raw, dict) else []
     print(f"  class_ids: {class_ids}")
+    print(f"  background_ids: {background_ids}")
     print(f"  faction_ids: {faction_ids}")
 
     # ── Phase 2: Skills + Items ──────────────────────────────────────────────

@@ -1,0 +1,71 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": []
+    },
+    "cow_girl_farm": {
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    },
+    "water_capital": {
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

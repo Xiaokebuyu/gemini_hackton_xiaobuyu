@@ -1,14 +1,19 @@
 {
-  "ac": 10,
+  "ac": 12,
   "active_effects": [],
-  "character_class": "",
-  "character_id": "",
-  "character_name": "",
-  "class_features": [],
+  "character_class": "fighter",
+  "character_id": "pc_8de0d70b14af",
+  "character_name": "Buyu",
+  "class_features": [
+    "versatility",
+    "fighting_style",
+    "second_wind",
+    "guild_membership"
+  ],
   "class_resources": {},
   "concentration": null,
-  "current_area": "",
-  "current_location": null,
+  "current_area": "frontier_town",
+  "current_location": "mother_earth_temple",
   "equipment": {
     "ammo": null,
     "amulet": null,
@@ -24,7 +29,7 @@
     "ring_l": null,
     "ring_r": null
   },
-  "gold": 0,
+  "gold": 15,
   "guild_rank": "porcelain",
   "guild_reputation": 0,
   "hp": 10,
@@ -37,13 +42,13 @@
   "save_proficiencies": [],
   "spell_slots": {},
   "stats": {
-    "cha": 10,
-    "con": 10,
-    "dex": 10,
-    "int": 10,
-    "str": 10,
-    "wis": 10
+    "cha": 15,
+    "con": 11,
+    "dex": 14,
+    "int": 16,
+    "str": 13,
+    "wis": 9
   },
-  "subclass": null,
+  "subclass": "None",
   "xp": 0
 }

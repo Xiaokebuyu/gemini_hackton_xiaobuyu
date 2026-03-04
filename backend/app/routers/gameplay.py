@@ -22,6 +22,7 @@ from app.deps import (
     _api_error,
     _execute_structured_action,
     _load_session_or_404,
+    _session_phase,
     get_agent_orchestration,
     get_game_runtime,
     get_input_port,
@@ -31,6 +32,13 @@ from app.game_core import ManagedSession
 from app.game_core.adapters.presentation import format_sse_event
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.game_core.rules.models import Command
+from app.opening_views import (
+    build_opening_character_enters,
+    build_opening_comment,
+    build_opening_dialogue_options,
+    build_opening_narration,
+    build_opening_status_snapshot,
+)
 from app.scene_views import build_location_overview, build_scene_change
 
 router = APIRouter()
@@ -501,6 +509,45 @@ async def input_stream(
                 await get_game_runtime().save_session(session)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
+
+    return await _stream_with_lock(world_id, session_id, _execute)
+
+
+@router.post("/api/game/{world_id}/sessions/{session_id}/opening/stream")
+async def opening_stream(
+    world_id: str,
+    session_id: str,
+) -> StreamingResponse:
+    """Stream the deterministic new-game opening sequence."""
+
+    session = await _load_session_or_404(world_id, session_id)
+    if _session_phase(session) != "active":
+        raise _api_error(409, "opening_not_available", "opening is only available for active sessions")
+    if not session.runtime.state.player.current_area.strip():
+        raise _api_error(409, "opening_not_available", "player has no current area")
+
+    async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        await queue.put(SSEEvent("scene_change", build_scene_change(session)))
+
+        narration = build_opening_narration(session).strip()
+        if narration:
+            await queue.put(SSEEvent("gm_narration", {"content": narration}))
+
+        gm_comment = build_opening_comment(session)
+        if gm_comment.get("content"):
+            await queue.put(SSEEvent("gm_comment", dict(gm_comment)))
+
+        for payload in build_opening_character_enters(session):
+            await queue.put(SSEEvent("character_enter", payload))
+
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+
+        opening_options = build_opening_dialogue_options(session)
+        if opening_options:
+            await queue.put(SSEEvent("dialogue_options", {"options": opening_options}))
+
+        await queue.put(_build_stream_end_event("completed", True))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
