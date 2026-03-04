@@ -724,6 +724,21 @@ class AreaSlice(StateSlice):
         if field_name == "exploration":
             self.set_exploration(area_id, str(change.value))
             return
+        if field_name == "temporary_sub_areas":
+            if change.operation not in {"set", "modify"}:
+                raise ValueError(
+                    f"unsupported temporary sub-area change: {change.operation} {change.path}"
+                )
+            if not isinstance(change.value, list):
+                raise ValueError("temporary sub-area payload must be a list")
+            normalized: list[dict[str, Any]] = []
+            for item in change.value:
+                if not isinstance(item, Mapping):
+                    raise ValueError("temporary sub-area entries must be mappings")
+                normalized.append(dict(item))
+            self.get_area(area_id).temporary_sub_areas = normalized
+            self._dirty = True
+            return
         if field_name.startswith("properties.") and change.operation in {"set", "modify"}:
             key = field_name.split(".", 1)[1]
             self.modify_property(area_id, key, change.value)
@@ -867,6 +882,9 @@ class AreaSlice(StateSlice):
         *,
         by_monster_id_only: bool = False,
     ) -> tuple[int, dict[str, Any]] | None:
+        for index, participant in enumerate(participants):
+            if str(participant.get("id", "")).strip() == target:
+                return (index, self._copy_participant(participant))
         for index, participant in enumerate(participants):
             if self.participant_monster_id(participant) == target:
                 return (index, self._copy_participant(participant))
@@ -1085,7 +1103,7 @@ class AreaSlice(StateSlice):
     def _normalize_participant(participant: Mapping[str, Any]) -> dict[str, Any]:
         normalized = {str(key): value for key, value in participant.items()}
 
-        for key in ("monster_id", "name"):
+        for key in ("id", "monster_id", "name"):
             if key in normalized:
                 normalized[key] = AreaSlice._coerce_text(normalized.get(key))
         for key in ("hp", "max_hp", "ac"):

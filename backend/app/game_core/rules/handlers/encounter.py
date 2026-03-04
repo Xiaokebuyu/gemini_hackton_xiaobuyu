@@ -110,6 +110,14 @@ class EncounterHandler(StaticCommandHandler):
                     reason="template_id must be a non-empty string",
                 )
 
+        if "monster_ids" in cmd.params and self._normalize_monster_ids(
+            cmd.params.get("monster_ids")
+        ) is None:
+            return ValidationResult(
+                ok=False,
+                reason="monster_ids must be a list of non-empty values",
+            )
+
         return ValidationResult(ok=True)
 
     def _validate_generate_loot(
@@ -187,18 +195,63 @@ class EncounterHandler(StaticCommandHandler):
 
         source = self._get_optional_non_empty_string(cmd.params.get("source")) or "encounter"
         template_id = self._get_optional_non_empty_string(cmd.params.get("template_id"))
+        monster_ids = self._normalize_monster_ids(cmd.params.get("monster_ids")) or []
+        monster_count = len(monster_ids)
+        threat_level = self._get_optional_non_empty_string(cmd.params.get("threat_level")) or (
+            self._threat_level_for(danger, monster_count)
+        )
+        stealth_dc = self._coerce_int(cmd.params.get("stealth_dc"))
+        if stealth_dc is None:
+            stealth_dc = self._default_stealth_dc(threat_level)
+        description = (
+            self._get_optional_non_empty_string(cmd.params.get("description"))
+            or f"A hostile group stirs in {area_id}."
+        )
+        name = (
+            self._get_optional_non_empty_string(cmd.params.get("name"))
+            or description
+        )
         sub_area_id = self._resolve_sub_area_id(cmd, state, area_id)
         current_tick = state.time.absolute_tick() if state.has_slice("time") else None
         blocking = danger >= 0.6
+        temporary_sub_areas = self._upsert_temporary_sub_area(
+            state,
+            area_id=area_id,
+            sub_area_id=sub_area_id,
+            payload={
+                "id": sub_area_id,
+                "name": name,
+                "label": name,
+                "type": "encounter",
+                "source": source,
+                "temporary": True,
+                "hostile": True,
+                "blocking": blocking,
+                "threat_level": threat_level,
+                "description": description,
+                "expiry": 6,
+            },
+        )
         hostile_state = {
             "area_id": area_id,
+            "sub_area_id": sub_area_id,
             "source": source,
-            "status": "active",
+            "status": "spotted",
             "cleared": False,
+            "combat_active": False,
             "created_at_tick": current_tick,
             "period": period,
             "danger_snapshot": danger,
             "blocking": blocking,
+            "monster_ids": list(monster_ids),
+            "monster_count": monster_count,
+            "threat_level": threat_level,
+            "stealth_dc": stealth_dc,
+            "name": name,
+            "description": description,
+            "last_stealth_result": None,
+            "last_stealth_choice": None,
+            "entry_mode": None,
         }
         if template_id is not None:
             hostile_state["template_id"] = template_id
@@ -206,6 +259,12 @@ class EncounterHandler(StaticCommandHandler):
             "encounter",
             "encounter_check",
             changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"{area_id}.temporary_sub_areas",
+                    temporary_sub_areas,
+                ),
                 StateChange(
                     "areas",
                     "modify",
@@ -219,6 +278,12 @@ class EncounterHandler(StaticCommandHandler):
                 "sub_area_id": sub_area_id,
                 "blocking": blocking,
                 "source": source,
+                "monster_ids": list(monster_ids),
+                "monster_count": monster_count,
+                "threat_level": threat_level,
+                "stealth_dc": stealth_dc,
+                "name": name,
+                "description": description,
                 **({"template_id": template_id} if template_id is not None else {}),
             },
         )
@@ -255,11 +320,22 @@ class EncounterHandler(StaticCommandHandler):
                 state.time.absolute_tick() if state.has_slice("time") else None
             ),
         )
+        temporary_sub_areas = self._clear_temporary_sub_area(
+            state,
+            area_id=area_id,
+            sub_area_id=sub_area_id,
+        )
 
         return handler_success(
             "encounter",
             "clear_hostile",
             changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"{area_id}.temporary_sub_areas",
+                    temporary_sub_areas,
+                ),
                 StateChange(
                     "areas",
                     "modify",
@@ -385,6 +461,47 @@ class EncounterHandler(StaticCommandHandler):
             return world.maps.get(area_id) is not None
         return area_id in state.areas.areas
 
+    def _upsert_temporary_sub_area(
+        self,
+        state: StateContainer,
+        *,
+        area_id: str,
+        sub_area_id: str,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        updated: list[dict[str, Any]] = []
+        replaced = False
+        for item in state.areas.list_temporary_sub_areas(area_id):
+            candidate_id = self._get_optional_non_empty_string(item.get("id"))
+            if candidate_id != sub_area_id:
+                updated.append(dict(item))
+                continue
+            updated.append(dict(payload))
+            replaced = True
+        if not replaced:
+            updated.append(dict(payload))
+        return updated
+
+    def _clear_temporary_sub_area(
+        self,
+        state: StateContainer,
+        *,
+        area_id: str,
+        sub_area_id: str,
+    ) -> list[dict[str, Any]]:
+        updated: list[dict[str, Any]] = []
+        for item in state.areas.list_temporary_sub_areas(area_id):
+            candidate_id = self._get_optional_non_empty_string(item.get("id"))
+            if candidate_id != sub_area_id:
+                updated.append(dict(item))
+                continue
+            cleared = dict(item)
+            cleared["hostile"] = False
+            cleared["blocking"] = False
+            cleared["cleared"] = True
+            updated.append(cleared)
+        return updated
+
     @classmethod
     def _period_multiplier(cls, period: str) -> float:
         return cls._PERIOD_MULTIPLIERS[period]
@@ -439,3 +556,23 @@ class EncounterHandler(StaticCommandHandler):
                 return None
             monster_ids.append(normalized)
         return monster_ids
+
+    @staticmethod
+    def _threat_level_for(danger: float, monster_count: int) -> str:
+        score = max(float(danger), monster_count * 0.35)
+        if score >= 1.45:
+            return "deadly"
+        if score >= 1.0:
+            return "hard"
+        if score >= 0.55:
+            return "moderate"
+        return "easy"
+
+    @staticmethod
+    def _default_stealth_dc(threat_level: str) -> int:
+        return {
+            "easy": 10,
+            "moderate": 12,
+            "hard": 14,
+            "deadly": 16,
+        }.get(threat_level, 12)

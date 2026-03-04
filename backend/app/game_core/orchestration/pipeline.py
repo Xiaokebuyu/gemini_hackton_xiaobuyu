@@ -128,6 +128,7 @@ class PipelineOrchestrator:
             action_type=ctx.command.type if ctx.command is not None else "noop",
             errors=list(ctx.execute_result.errors),
             narrative_hints=list(ctx.execute_result.narrative_hints),
+            rolls=list(ctx.execute_result.rolls),
             metadata={"assembled_context": ctx.assembled_context},
         )
 

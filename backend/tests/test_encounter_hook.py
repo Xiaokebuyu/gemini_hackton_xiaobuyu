@@ -460,15 +460,22 @@ class TestEncounterHook:
         assert result.metadata["encounter_result"]["triggered"] is True
         assert hostile is not None
         assert hostile["area_id"] == "forest"
-        assert hostile["status"] == "active"
+        assert hostile["status"] == "spotted"
         assert hostile["source"] == "hook"
         assert result.sse_events[0].event_type == "encounter_spotted"
-        assert result.sse_events[0].payload == {
-            "area_id": "forest",
-            "sub_area_id": "forced_encounter",
-            "blocking": False,
-            "source": "hook",
-        }
+        payload = result.sse_events[0].payload
+        assert payload["area_id"] == "forest"
+        assert payload["sub_area_id"] == "forced_encounter"
+        assert payload["blocking"] is False
+        assert payload["source"] == "hook"
+        # enriched fields
+        assert "name" in payload
+        assert "description" in payload
+        assert "threat_level" in payload
+        assert "monster_count" in payload
+        assert "options" in payload
+        assert payload["options"][0]["action"] == "enter"
+        assert payload["threat_level"] == hostile["threat_level"]
         assert context.scene_bus.snapshot()["entries"] == []
 
     def test_detector_error_returns_sse_without_mutating_state(self) -> None:

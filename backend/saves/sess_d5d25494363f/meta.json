@@ -1,0 +1,19 @@
+{
+  "character_name": "",
+  "created_at": 1772526380.8646665,
+  "game_day": 1,
+  "game_slot": 8,
+  "last_played": 1772526380.8646665,
+  "phase": "character_creation",
+  "saved_at": 1772526380.8646665,
+  "session_id": "sess_d5d25494363f",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "",
+    "play_time_hours": null,
+    "player_class": "",
+    "player_name": ""
+  },
+  "world_id": "goblin_slayer"
+}

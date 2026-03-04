@@ -1,7 +1,37 @@
-"""Tests for HostileAreaHandler noop skeleton."""
+"""Tests for HostileAreaHandler — enter_hostile stealth check."""
 
 from app.game_core.rules.handlers.hostile_area import HostileAreaHandler
 from app.game_core.rules.models import Command
+from app.game_core.state import StateContainer
+from app.game_core.state.slices.player import PlayerSlice
+from app.game_core.state.slices.area import AreaSlice
+
+
+def _make_state(dex: int = 10) -> StateContainer:
+    """Build a minimal StateContainer with player + areas slices."""
+    state = StateContainer()
+
+    player = PlayerSlice()
+    player.restore({
+        "character_id": "hero",
+        "current_area": "forest",
+        "current_location": None,
+        "stats": {"str": 10, "dex": dex, "con": 10, "int": 10, "wis": 10, "cha": 10},
+    })
+    state.register(player)
+
+    areas = AreaSlice()
+    areas.restore({
+        "areas": {
+            "forest": {
+                "danger_level": 0.5,
+                "npc_locations": {},
+                "hostile_tracking": {},
+            }
+        }
+    })
+    state.register(areas)
+    return state
 
 
 class TestHostileAreaHandler:
@@ -9,13 +39,87 @@ class TestHostileAreaHandler:
         h = HostileAreaHandler()
         assert "enter_hostile" in h.command_types
 
-    def test_validate_ok(self):
+    def test_validate_requires_sub_area_id(self):
         h = HostileAreaHandler()
-        result = h.validate(Command(type="enter_hostile"), None, None)
+        state = _make_state()
+        result = h.validate(Command(type="enter_hostile", params={}), state, None)
+        assert result.ok is False
+        assert "sub_area_id" in result.reason
+
+    def test_validate_ok_with_sub_area_id(self):
+        h = HostileAreaHandler()
+        state = _make_state()
+        result = h.validate(
+            Command(type="enter_hostile", params={"sub_area_id": "hostile_1"}),
+            state, None,
+        )
         assert result.ok is True
 
-    def test_compute_deferred(self):
+    def test_validate_requires_player_slice(self):
         h = HostileAreaHandler()
-        result = h.compute(Command(type="enter_hostile"), None, None)
+        state = StateContainer()
+        result = h.validate(
+            Command(type="enter_hostile", params={"sub_area_id": "hostile_1"}),
+            state, None,
+        )
+        assert result.ok is False
+
+    def test_compute_returns_success_with_roll(self):
+        h = HostileAreaHandler()
+        state = _make_state(dex=14)  # DEX mod = +2
+        result = h.compute(
+            Command(type="enter_hostile", params={"sub_area_id": "hostile_1"}),
+            state, None,
+        )
         assert result.success is True
-        assert result.metadata.get("status") == "deferred"
+        assert len(result.rolls) == 1
+        roll = result.rolls[0]
+        assert roll.purpose == "stealth"
+        meta = result.metadata
+        assert meta["sub_area_id"] == "hostile_1"
+        assert "success" in meta
+        assert "roll" in meta
+        assert "dc" in meta
+        assert "modifier" in meta
+        assert meta["dc"] == 13  # default dc
+        assert meta["modifier"] == 2  # DEX 14 → +2
+
+    def test_compute_total_equals_roll_plus_modifier(self):
+        h = HostileAreaHandler()
+        state = _make_state(dex=16)  # +3
+        result = h.compute(
+            Command(type="enter_hostile", params={"sub_area_id": "h1"}),
+            state, None,
+        )
+        meta = result.metadata
+        assert meta["total"] == meta["roll"] + meta["modifier"]
+        assert meta["modifier"] == 3  # DEX 16 → +3
+
+    def test_compute_success_has_options(self):
+        """If stealth passed, options include surprise_attack."""
+        h = HostileAreaHandler()
+        state = _make_state(dex=10)
+        result = h.compute(
+            Command(type="enter_hostile", params={"sub_area_id": "h1"}),
+            state, None,
+        )
+        meta = result.metadata
+        if meta["success"]:
+            actions = {opt["action"] for opt in meta.get("options", [])}
+            assert "surprise_attack" in actions
+        else:
+            assert "surprise_state" in meta
+            assert meta["surprise_state"] in ("none", "enemy_surprise")
+
+    def test_compute_fail_has_surprise_state(self):
+        """If stealth failed, surprise_state is set."""
+        h = HostileAreaHandler()
+        # DEX 1 = -5 modifier, virtually guaranteed to fail
+        state = _make_state(dex=1)
+        result = h.compute(
+            Command(type="enter_hostile", params={"sub_area_id": "h1"}),
+            state, None,
+        )
+        meta = result.metadata
+        if not meta["success"]:
+            assert meta["surprise_state"] in ("none", "enemy_surprise")

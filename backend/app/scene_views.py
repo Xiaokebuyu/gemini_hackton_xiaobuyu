@@ -103,6 +103,7 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
     # ── sub_locations ─────────────────────────────────────────────────────────
 
     sub_locations: list[dict[str, Any]] = []
+    seen_sub_location_ids: set[str] = set()
     if area_template is not None:
         for loc_id, loc_template in area_template.sub_locations.items():
             loc_id_str = str(loc_id).strip()
@@ -117,6 +118,38 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
                 "type": str(raw_type),
                 "available": True,  # available_hours check deferred to MVP+
             })
+            seen_sub_location_ids.add(loc_id_str)
+
+    if area_state is not None:
+        for raw_sub_area in area_state.temporary_sub_areas:
+            if not isinstance(raw_sub_area, dict):
+                continue
+            sub_area_id = str(raw_sub_area.get("id", "")).strip()
+            if not sub_area_id or sub_area_id in seen_sub_location_ids:
+                continue
+            sub_area_name = (
+                str(raw_sub_area.get("name") or raw_sub_area.get("label") or sub_area_id)
+                .strip()
+                or sub_area_id
+            )
+            entry = {
+                "id": sub_area_id,
+                "name": sub_area_name,
+                "type": str(raw_sub_area.get("type") or "visit"),
+                "available": True,
+                "temporary": bool(raw_sub_area.get("temporary", True)),
+                "source": str(raw_sub_area.get("source") or "runtime"),
+            }
+            if "hostile" in raw_sub_area:
+                entry["hostile"] = bool(raw_sub_area.get("hostile", False))
+            if "threat_level" in raw_sub_area:
+                threat_level = str(raw_sub_area.get("threat_level") or "").strip()
+                if threat_level:
+                    entry["threat_level"] = threat_level
+            if "blocking" in raw_sub_area:
+                entry["blocking"] = bool(raw_sub_area.get("blocking", False))
+            sub_locations.append(entry)
+            seen_sub_location_ids.add(sub_area_id)
 
     # ── interactables (current sub_location only) ─────────────────────────────
 
@@ -211,6 +244,19 @@ def build_scene_change(
                     raw_name = getattr(loc_template, "name", "")
                     if raw_name:
                         location_name = str(raw_name).strip() or location_name
+                else:
+                    area_state = session.runtime.state.areas.areas.get(current_area_id)
+                    if area_state is not None:
+                        for raw_sub_area in area_state.temporary_sub_areas:
+                            if not isinstance(raw_sub_area, dict):
+                                continue
+                            sub_area_id = str(raw_sub_area.get("id", "")).strip()
+                            if sub_area_id != current_location_id:
+                                continue
+                            raw_name = raw_sub_area.get("name") or raw_sub_area.get("label")
+                            if raw_name:
+                                location_name = str(raw_name).strip() or location_name
+                            break
 
     return {
         "location_id": current_location_id,

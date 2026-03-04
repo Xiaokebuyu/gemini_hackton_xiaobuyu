@@ -133,9 +133,12 @@ class TestEncounterHandler:
         hostile = state.areas.get_hostile_state("_encounter_forest_9")
         assert hostile is not None
         assert hostile["area_id"] == "forest"
-        assert hostile["status"] == "active"
+        assert hostile["status"] == "spotted"
         assert hostile["created_at_tick"] == 9
         assert hostile["blocking"] is True
+        temporary = state.areas.list_temporary_sub_areas("forest")
+        assert temporary[0]["id"] == "_encounter_forest_9"
+        assert temporary[0]["hostile"] is True
 
     def test_encounter_check_force_triggered_overrides_threshold(self) -> None:
         result = _execute(

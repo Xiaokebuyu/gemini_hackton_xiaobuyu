@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable, Mapping
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.api_models import (
     InteractRequest,
@@ -30,6 +30,7 @@ from app.deps import (
 from app.game_core import ManagedSession
 from app.game_core.adapters.presentation import format_sse_event
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
+from app.game_core.rules.models import Command
 from app.scene_views import build_location_overview, build_scene_change
 
 router = APIRouter()
@@ -76,10 +77,22 @@ async def navigate(
     structured_request = StructuredActionRequest(action_type=action, params=params)
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        before_location = session.runtime.state.player.current_location
         result = await _execute_structured_action(session, structured_request, event_sink=queue.put)
         await queue.put(_build_action_result_event(result, action))
         if result.success:
+            if action == "leave_sub_location":
+                previous_location = _non_empty_string(before_location)
+                if previous_location is not None:
+                    await _reset_hostile_to_spotted(session, previous_location)
             await queue.put(SSEEvent("scene_change", build_scene_change(session)))
+            if action == "enter_sub_location":
+                await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+                location_id = _non_empty_string(params.get("location_id"))
+                if location_id is not None:
+                    await _emit_hostile_entry_events(queue, session, sub_area_id=location_id)
+                await queue.put(_build_stream_end_event("completed", result.success))
+                return
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -135,6 +148,201 @@ def _build_stream_end_event(reason: str, success: bool) -> SSEEvent:
         event_type="stream_end",
         payload={"reason": reason, "success": success},
     )
+
+
+def _non_empty_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _get_hostile_payload(
+    session: ManagedSession,
+    sub_area_id: str,
+) -> dict[str, Any] | None:
+    payload = session.runtime.state.areas.get_hostile_state(sub_area_id)
+    if not isinstance(payload, Mapping):
+        return None
+    return session.runtime.state.areas.copy_hostile_state(payload)
+
+
+async def _execute_command(
+    session: ManagedSession,
+    command: Command,
+) -> PipelineResult:
+    result = await session.runtime.tick_coordinator.process(command)
+    await get_game_runtime().save_session(session)
+    return result
+
+
+async def _emit_hostile_entry_events(
+    queue: asyncio.Queue[SSEEvent | None],
+    session: ManagedSession,
+    *,
+    sub_area_id: str,
+) -> None:
+    payload = _get_hostile_payload(session, sub_area_id)
+    if payload is None:
+        return
+    status = _non_empty_string(payload.get("status")) or "spotted"
+    if bool(payload.get("cleared", False)) or bool(payload.get("combat_active", False)):
+        return
+    if status != "spotted":
+        return
+
+    result = await _execute_command(
+        session,
+        Command(
+            type="enter_hostile",
+            params={"sub_area_id": sub_area_id},
+            source="system",
+        ),
+    )
+    if not result.success:
+        return
+
+    stealth_meta = dict(result.metadata)
+    for roll in result.rolls:
+        modifier = 0
+        for item in roll.modifiers:
+            try:
+                modifier += int(item.get("value", 0))
+            except (AttributeError, TypeError, ValueError):
+                continue
+        await queue.put(
+            SSEEvent(
+                "dice_roll",
+                {
+                    "type": roll.dice,
+                    "result": roll.result,
+                    "modifier": modifier,
+                    "total": roll.total,
+                    "dc": int(stealth_meta.get("dc", 0)),
+                    "success": bool(stealth_meta.get("success", False)),
+                    "skill": "stealth",
+                    "roller": "player",
+                    "roller_name": session.runtime.state.player.character_name or "Player",
+                },
+            )
+        )
+
+    await queue.put(
+        SSEEvent(
+            "stealth_result",
+            {
+                "success": bool(stealth_meta.get("success", False)),
+                "roll": int(stealth_meta.get("roll", 0)),
+                "dc": int(stealth_meta.get("dc", 0)),
+                "modifier": int(stealth_meta.get("modifier", 0)),
+                "advantage": bool(stealth_meta.get("advantage", False)),
+                "disadvantage": bool(stealth_meta.get("disadvantage", False)),
+                "narrative": str(stealth_meta.get("narrative", "")),
+                "options": list(stealth_meta.get("options", [])),
+                "surprise_state": str(stealth_meta.get("surprise_state", "none")),
+            },
+        )
+    )
+
+    if bool(stealth_meta.get("success", False)):
+        return
+
+    start_result = await _execute_command(
+        session,
+        Command(
+            type="start_combat",
+            params={
+                "sub_area_id": sub_area_id,
+                "surprise_state": str(stealth_meta.get("surprise_state", "none")),
+            },
+            source="system",
+        ),
+    )
+    if not start_result.success:
+        return
+
+    combat_payload = _get_hostile_payload(session, sub_area_id)
+    if combat_payload is None:
+        return
+    await queue.put(
+        SSEEvent(
+            "combat_start",
+            {
+                "sub_area_id": sub_area_id,
+                "round": int(combat_payload.get("combat_round", 1)),
+                "surprise_state": str(combat_payload.get("surprise_state", "none")),
+                "blocking": bool(combat_payload.get("blocking", False)),
+                "participants": _participant_cards(combat_payload, include_is_dead=False),
+                "player": _player_card(session),
+            },
+        )
+    )
+
+
+async def _reset_hostile_to_spotted(
+    session: ManagedSession,
+    sub_area_id: str,
+) -> None:
+    payload = _get_hostile_payload(session, sub_area_id)
+    if payload is None:
+        return
+    if bool(payload.get("cleared", False)) or bool(payload.get("combat_active", False)):
+        return
+    updated = session.runtime.state.areas.copy_hostile_state(payload)
+    updated["status"] = "spotted"
+    updated["entry_mode"] = None
+    updated["last_stealth_result"] = None
+    updated["last_stealth_choice"] = None
+    session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
+    await get_game_runtime().save_session(session)
+
+
+def _participant_cards(
+    payload: Mapping[str, Any],
+    *,
+    include_is_dead: bool,
+) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    raw_participants = payload.get("participants", [])
+    if not isinstance(raw_participants, list):
+        return cards
+    for item in raw_participants:
+        if not isinstance(item, Mapping):
+            continue
+        card = {
+            "id": str(item.get("id", "")),
+            "name": str(item.get("name") or item.get("monster_id") or "Unknown"),
+            "hp": int(item.get("hp", 0)),
+            "max_hp": int(item.get("max_hp", 0)),
+            "status_effects": [
+                str(effect.get("effect_name") or effect.get("effect_id") or "")
+                for effect in item.get("active_effects", [])
+                if isinstance(effect, Mapping)
+                and str(effect.get("effect_name") or effect.get("effect_id") or "")
+            ],
+        }
+        if include_is_dead:
+            card["is_dead"] = not bool(item.get("alive", False))
+        else:
+            card["ac"] = int(item.get("ac", 10))
+            card["is_player"] = False
+        cards.append(card)
+    return cards
+
+
+def _player_card(session: ManagedSession) -> dict[str, Any]:
+    player = session.runtime.state.player
+    return {
+        "hp": int(player.hp),
+        "max_hp": int(player.max_hp),
+        "ac": int(player.ac),
+        "active_effects": [
+            str(effect.get("effect_name") or effect.get("effect_id") or "")
+            for effect in player.active_effects
+            if isinstance(effect, Mapping)
+            and str(effect.get("effect_name") or effect.get("effect_id") or "")
+        ],
+    }
 
 
 def _build_stream_error_event(exc: Exception) -> SSEEvent:
@@ -395,8 +603,13 @@ async def private_chat_stream(
     return await _stream_with_lock(world_id, session_id, _execute)
 
 
-@router.post("/api/game/{world_id}/sessions/{session_id}/save", status_code=204)
-async def save_session_explicit(world_id: str, session_id: str) -> None:
+@router.post(
+    "/api/game/{world_id}/sessions/{session_id}/save",
+    status_code=204,
+    response_class=Response,
+)
+async def save_session_explicit(world_id: str, session_id: str) -> Response:
     """Explicitly persist the current session state."""
     session = await _load_session_or_404(world_id, session_id)
     await get_game_runtime().save_session(session)
+    return Response(status_code=204)

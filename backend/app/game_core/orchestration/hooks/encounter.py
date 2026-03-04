@@ -96,6 +96,22 @@ class BasicEncounterDetector:
             command_params={
                 "template_id": selected_template["id"],
                 "source": selected_template["source"],
+                "monster_ids": list(selected_template["monster_ids"]),
+                "name": selected_template["description"] or "Hostile Encounter",
+                "description": (
+                    selected_template["description"]
+                    or "A hostile group appears nearby."
+                ),
+                "threat_level": self._threat_level_for(
+                    danger_level,
+                    len(selected_template["monster_ids"]),
+                ),
+                "stealth_dc": self._stealth_dc_for(
+                    self._threat_level_for(
+                        danger_level,
+                        len(selected_template["monster_ids"]),
+                    )
+                ),
             },
             metadata={
                 "status": "deterministic",
@@ -215,8 +231,29 @@ class BasicEncounterDetector:
         return {
             "id": cls._coerce_non_empty_string(selected.get("id")) or "",
             "monster_ids": monster_ids,
+            "description": cls._coerce_non_empty_string(selected.get("description")) or "",
             "source": "encounter",
         }
+
+    @staticmethod
+    def _threat_level_for(danger_level: float, monster_count: int) -> str:
+        score = max(float(danger_level), monster_count * 0.35)
+        if score >= 1.45:
+            return "deadly"
+        if score >= 1.0:
+            return "hard"
+        if score >= 0.55:
+            return "moderate"
+        return "easy"
+
+    @staticmethod
+    def _stealth_dc_for(threat_level: str) -> int:
+        return {
+            "easy": 10,
+            "moderate": 12,
+            "hard": 14,
+            "deadly": 16,
+        }.get(threat_level, 12)
 
 
 class EncounterHook(NoOpSettlementHook):
@@ -347,7 +384,21 @@ class EncounterHook(NoOpSettlementHook):
                         payload={
                             "area_id": encounter_result.get("area_id", area_id),
                             "sub_area_id": encounter_result.get("sub_area_id"),
+                            "name": encounter_result.get("name", "Hostile Encounter"),
+                            "description": encounter_result.get(
+                                "description",
+                                "A hostile group appears nearby.",
+                            ),
                             "blocking": bool(encounter_result.get("blocking", False)),
+                            "threat_level": encounter_result.get(
+                                "threat_level",
+                                "moderate",
+                            ),
+                            "monster_count": int(encounter_result.get("monster_count", 0)),
+                            "options": [
+                                {"action": "enter", "label": "接近（进入战斗区域）"},
+                                {"action": "retreat", "label": "原路返回"},
+                            ],
                             "source": encounter_result.get("source", "encounter"),
                         },
                     )
@@ -485,6 +536,7 @@ class EncounterHook(NoOpSettlementHook):
                     "monster_ids": list(e.monster_ids),
                     "weight": e.weight,
                     "min_danger": e.min_danger,
+                    "description": e.description,
                 }
                 for e in encounter_table
             ],
@@ -557,6 +609,47 @@ class EncounterHook(NoOpSettlementHook):
             return int(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _build_combat_start_payload(
+        context: SettlementContext,
+        *,
+        sub_area_id: str,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        participants = context.state.areas.participant_snapshots(payload)
+        return {
+            "sub_area_id": sub_area_id,
+            "round": int(payload.get("combat_round", 1)),
+            "surprise_state": str(payload.get("surprise_state", "none")),
+            "blocking": bool(payload.get("blocking", False)),
+            "participants": [
+                {
+                    "id": str(item.get("id", "")),
+                    "name": str(item.get("name") or item.get("monster_id") or "Unknown"),
+                    "hp": int(item.get("hp", 0)),
+                    "max_hp": int(item.get("max_hp", 0)),
+                    "ac": int(item.get("ac", 10)),
+                    "is_player": False,
+                    "status_effects": [
+                        str(effect.get("effect_name") or effect.get("effect_id") or "")
+                        for effect in item.get("active_effects", [])
+                        if isinstance(effect, Mapping)
+                    ],
+                }
+                for item in participants
+            ],
+            "player": {
+                "hp": int(context.state.player.hp),
+                "max_hp": int(context.state.player.max_hp),
+                "ac": int(context.state.player.ac),
+                "active_effects": [
+                    str(effect.get("effect_name") or effect.get("effect_id") or "")
+                    for effect in context.state.player.active_effects
+                    if isinstance(effect, Mapping)
+                ],
+            },
+        }
 
     @staticmethod
     def _coerce_non_empty_string(value: Any) -> str | None:

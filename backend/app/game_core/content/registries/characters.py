@@ -255,6 +255,13 @@ class CharacterRegistry(ContentRegistry):
             if isinstance(raw_secrets, list) else []
         )
 
+        # -- Schedule --
+        raw_schedule = raw.get("schedule")
+        schedule: dict[str, str] | None = (
+            {str(k): str(v) for k, v in raw_schedule.items()}
+            if isinstance(raw_schedule, Mapping) else None
+        )
+
         return CharacterTemplate(
             id=str(raw_id or char_id),
             name=name,
@@ -272,6 +279,7 @@ class CharacterRegistry(ContentRegistry):
             speech_pattern=speech_pattern,
             appearance=appearance,
             backstory=backstory,
+            schedule=schedule,
             inventory=inventory,
             shop=shop,
             shop_inventory=shop_inventory,

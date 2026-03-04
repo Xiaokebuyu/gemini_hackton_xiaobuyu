@@ -80,7 +80,6 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("discover", "discover"),
     ("passive_scan", "passive_scan"),
     ("interact_object_v2", "interact_object_v2"),
-    ("enter_hostile", "enter_hostile"),
 )
 
 DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (

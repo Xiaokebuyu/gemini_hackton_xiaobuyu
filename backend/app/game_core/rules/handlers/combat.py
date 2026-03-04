@@ -33,6 +33,7 @@ class CombatHandler(StaticCommandHandler):
         "offhand_attack",
         "start_combat",
         "stand_up",
+        "advance_combat_round",
     )
 
     _FLAG_COMMANDS = {
@@ -51,6 +52,8 @@ class CombatHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if cmd.type == "start_combat":
             return self._validate_start_combat(cmd, state, world)
+        if cmd.type == "advance_combat_round":
+            return self._validate_advance_combat_round(cmd, state, world)
         if state.player.is_action_prevented():
             return ValidationResult(ok=False, reason="action prevented by active effect")
         if cmd.type in self._FLAG_COMMANDS:
@@ -77,6 +80,8 @@ class CombatHandler(StaticCommandHandler):
 
         if cmd.type == "start_combat":
             return self._compute_start_combat(cmd, state, world)
+        if cmd.type == "advance_combat_round":
+            return self._compute_advance_combat_round(cmd, state, world)
         if cmd.type in self._FLAG_COMMANDS:
             return self._compute_flag_command(cmd, state)
         if cmd.type == "flee":
@@ -153,6 +158,24 @@ class CombatHandler(StaticCommandHandler):
         identity_check = self._validate_character_identity(cmd.params, state)
         if identity_check is not None:
             return identity_check
+        resolved = self._resolve_active_combat(cmd.params, state, world)
+        if resolved is None:
+            return ValidationResult(ok=False, reason="active combat sub_area_id is required")
+        return ValidationResult(ok=True)
+
+    def _validate_advance_combat_round(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ValidationResult:
+        if cmd.source not in {"engine", "system"}:
+            return ValidationResult(
+                ok=False,
+                reason="advance_combat_round is restricted to engine/system",
+            )
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
         resolved = self._resolve_active_combat(cmd.params, state, world)
         if resolved is None:
             return ValidationResult(ok=False, reason="active combat sub_area_id is required")
@@ -333,6 +356,40 @@ class CombatHandler(StaticCommandHandler):
             metadata={
                 "status": flag_key,
                 "sub_area_id": sub_area_id,
+            },
+            omit_empty_delta=False,
+        )
+
+    def _compute_advance_combat_round(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ExecuteResult:
+        resolved = self._resolve_active_combat(cmd.params, state, world)
+        if resolved is None:
+            return ExecuteResult.error("active combat not found")
+        sub_area_id, payload, _ = resolved
+        updated_payload = state.areas.copy_hostile_state(payload)
+        current_round = int(updated_payload.get("combat_round", 1))
+        next_round = 1 if current_round < 1 else current_round + 1
+        updated_payload["combat_round"] = next_round
+        updated_payload["player_flags"] = self._default_player_flags()
+        return handler_success(
+            "combat",
+            "advance_combat_round",
+            changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"hostile_tracking.{sub_area_id}",
+                    updated_payload,
+                )
+            ],
+            metadata={
+                "status": "advanced",
+                "sub_area_id": sub_area_id,
+                "combat_round": next_round,
             },
             omit_empty_delta=False,
         )
@@ -796,6 +853,7 @@ class CombatHandler(StaticCommandHandler):
         world: WorldInstance,
     ) -> list[dict[str, Any]]:
         participants: list[dict[str, Any]] = []
+        seen: dict[str, int] = {}
         for monster_id in monster_ids:
             template = world.monsters.get(monster_id)
             if template is None:
@@ -808,8 +866,10 @@ class CombatHandler(StaticCommandHandler):
                     max_hp = 10
                 ac = template.ac if template.ac is not None and template.ac >= 1 else 10
                 name = template.name or monster_id
+            seen[monster_id] = seen.get(monster_id, 0) + 1
             participants.append(
                 {
+                    "id": f"{monster_id}_{seen[monster_id]}",
                     "monster_id": monster_id,
                     "name": name,
                     "hp": max_hp,
@@ -1118,4 +1178,3 @@ class CombatHandler(StaticCommandHandler):
             if monster_id is not None:
                 monster_ids.append(monster_id)
         return monster_ids
-

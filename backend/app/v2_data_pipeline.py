@@ -1,15 +1,17 @@
 """
-V2 数据管线 — 从 lorabook 散文提取结构化游戏数据（Gemini Batch API）。
+V2 数据管线 — 从 lorabook 散文提取结构化游戏数据。
 
 运行方式：
     cd backend
-    PYTHONPATH=. python3 -m app.v2_data_pipeline
+    PYTHONPATH=. python3 -m app.v2_data_pipeline                 # Batch API（默认）
+    PYTHONPATH=. python3 -m app.v2_data_pipeline --mode immediate # 逐条直接调用
 
 环境变量：
     GEMINI_API_KEY 或 GOOGLE_API_KEY
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import time
@@ -132,6 +134,38 @@ class BatchRunner:
         print(f"  [{display_name}] Parsed {len(results)}/{len(requests)} results")
         return results
 
+    def run_immediate(
+        self,
+        requests: list[tuple[str, str]],
+        display_name: str,
+        temperature: float = 0.7,
+        response_mime_type: str = "application/json",
+        max_output_tokens: int = 65536,
+    ) -> dict[str, str]:
+        """逐条直接调用 generate_content，返回 {key: raw_json_text}。"""
+        from google.genai import types
+
+        results: dict[str, str] = {}
+        for i, (key, prompt) in enumerate(requests, 1):
+            print(f"  [{display_name}] ({i}/{len(requests)}) generating: {key}")
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type=response_mime_type,
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                ),
+            )
+            text = response.text or ""
+            if text:
+                results[key] = text
+                print(f"    ✓ {key}: {len(text)} chars")
+            else:
+                print(f"    ✗ {key}: empty response")
+        print(f"  [{display_name}] Done {len(results)}/{len(requests)}")
+        return results
+
 
 # ─── 数据加载 ─────────────────────────────────────────────────────────────────
 
@@ -245,11 +279,19 @@ def build_classes_request(groups: dict[str, list[dict]]) -> tuple[str, str]:
       "name": "string (中文)",
       "description": "string",
       "hit_die": "d10 | d8 | d6 | d12",
+      "base_hp": 10,
+      "hp_per_level": 6,
       "armor_proficiency": ["light", "medium", "heavy", "shield"],
       "weapon_proficiency": ["simple", "martial"],
       "save_proficiency": ["str", "dex", "con", "int", "wis", "cha"],
       "skill_choices": {{"choose": 2, "from": ["athletics", "perception"]}},
-      "spellcasting": null,
+      "spellcasting_ability": "wis (施法属性，非施法职业填空字符串)",
+      "spellcasting": {{
+        "stat": "wis",
+        "cantrips_known": {{"1": 3, "4": 4}},
+        "spell_slots": {{"1": {{"1": 2}}, "3": {{"1": 3, "2": 1}}}},
+        "spells_known": {{"1": 4, "3": 6}}
+      }},
       "level_features": {{
         "1": [{{"id": "string", "name": "string", "description": "string"}}]
       }},
@@ -265,11 +307,19 @@ def build_classes_request(groups: dict[str, list[dict]]) -> tuple[str, str]:
       "speed": 30,
       "languages": ["common"],
       "size": "medium",
+      "stat_bonuses": {{"str": 2, "con": 1}},
       "racial_traits": [{{"id": "string", "name": "string", "description": "string"}}],
       "tags": ["string"]
     }}
   }}
 }}
+
+职业字段说明：
+- base_hp：1级基础HP（战士10，神官8，法师6，对应hit_die最大值）
+- hp_per_level：升级增加HP（hit_die均值+1，如d10→6，d8→5，d6→4）
+- spellcasting_ability：施法属性（如神官"wis"，法师"int"），非施法职业填 ""
+- spellcasting：施法配置对象，非施法职业填 null。施法职业需填 stat/cantrips_known/spell_slots/spells_known
+- stat_bonuses（种族）：种族属性加值，如人类 {{"str":1,"dex":1,"con":1,"int":1,"wis":1,"cha":1}}，矮人 {{"con":2,"wis":1}}
 
 ## 角色资料参考（职业/种族信息）
 {char_ref}
@@ -417,21 +467,16 @@ def build_items_request(groups: dict[str, list[dict]], status_effect_ids: list[s
     "type": "weapon | armor | consumable | misc | accessory",
     "rarity": "common | uncommon | rare",
     "base_price": 10,
-    "weight": "light | medium | heavy",
+    "weight": 2.0,
     "slot": "main_hand | off_hand | body | none",
     "tags": ["string"],
-    "weapon_data": {{
-      "damage_dice": "1d8",
-      "damage_type": "slashing | piercing | bludgeoning",
-      "properties": ["light"],
-      "range": 1,
-      "proficiency": "simple | martial"
-    }},
-    "armor_data": {{
-      "armor_type": "light | medium | heavy | shield",
-      "base_ac": 14,
-      "stealth_disadvantage": false
-    }},
+    "damage_dice": "1d8 (仅武器)",
+    "damage_type": "slashing | piercing | bludgeoning (仅武器)",
+    "properties": ["light", "finesse"],
+    "range": 1,
+    "weapon_proficiency": "simple | martial (仅武器)",
+    "ac_bonus": 4,
+    "subtype": "light | medium | heavy | shield (仅护甲)",
     "consumable_data": {{
       "trigger": "on_use",
       "charges": 1,
@@ -444,7 +489,12 @@ def build_items_request(groups: dict[str, list[dict]], status_effect_ids: list[s
   }}
 ]
 
-注意：weapon_data / armor_data / consumable_data 中只填写对应 type 的字段，其余为 null。
+字段填写规则：
+- weight：浮点数（磅），如短剑 2.0、长剑 3.0、重甲 65.0、药水 0.5、杂物 1.0
+- 武器(type=weapon)：填 damage_dice/damage_type/properties/range/weapon_proficiency，省略 ac_bonus/subtype/consumable_data
+- 护甲(type=armor)：填 ac_bonus（AC加值，不是绝对AC，如皮甲ac_bonus=1，链甲ac_bonus=6，盾牌ac_bonus=2）和 subtype，省略武器字段和consumable_data
+- 消耗品(type=consumable)：填 consumable_data，省略武器和护甲字段
+- 杂物/饰品：只填基础字段，省略武器/护甲/消耗品字段
 
 ## 参考资料
 {monster_ref}
@@ -566,7 +616,7 @@ def build_monsters_request(
       {{"item_id": "string (从物品 IDs 选择)", "chance": 0.3, "count": "1"}}
     ],
     "gold_drop": "1d4",
-    "ai_personality": "aggressive | cowardly | tactical",
+    "ai_personality": "aggressive | defensive | cowardly",
     "flee_threshold": 0.3,
     "flee_chance": 0.6,
     "tactics_notes": "string (中文，战术特征)",
@@ -648,15 +698,40 @@ def build_maps_request(
       }}
     }},
     "hostile_pool": [
-      {{"monster_ids": ["goblin"], "count": "2d4", "role": "patrol | ambush"}}
+      {{
+        "id": "string (如 goblin_patrol)",
+        "name": "string (中文，如 哥布林巡逻队)",
+        "description": "string (中文)",
+        "hostile_config": {{
+          "hostile_groups": [
+            {{"monster_ids": ["goblin"], "count": "2d4", "role": "patrol | ambush | guard"}}
+          ],
+          "stealth_dc": 12,
+          "blocking": true
+        }}
+      }}
     ],
     "encounter_table": [
-      {{"monster_id": "string", "weight": 1.0, "min_count": 1, "max_count": 4}}
+      {{"monster_ids": ["goblin", "goblin"], "weight": 1.0, "description": "string (中文)"}}
+    ],
+    "discoveries": [
+      {{
+        "id": "string",
+        "name": "string (中文)",
+        "check_type": "perception | investigation",
+        "dc": 15,
+        "reward": {{"gold": "2d10", "items": ["healing_potion"]}},
+        "tags": []
+      }}
     ]
   }}
 ]
 
-注意：frontier_town 和 cow_girl_farm 的 hostile_pool 为 null；ancient_ruins 的 hostile_pool 应填充哥布林。
+字段说明：
+- hostile_pool：敌对区域配置（HostileTemplate 格式），需要 id + hostile_config 嵌套。安全区域（frontier_town/cow_girl_farm）设为 null
+- encounter_table：遭遇条目，monster_ids 是列表（用列表长度表示数量，如3个哥布林 = ["goblin","goblin","goblin"]）
+- discoveries：隐藏发现点，安全区域设为 []，危险区域设 1-3 个
+- ancient_ruins 应有丰富的 hostile_pool（哥布林巢穴）和 discoveries（隐藏宝藏/秘密通道）
 
 ## 地点资料
 {location_text}
@@ -792,26 +867,30 @@ def _collect_tags_recursive(data: Any, collected: set[str]) -> None:
             _collect_tags_recursive(item, collected)
 
 
-def generate_tags(all_outputs: dict[str, Any]) -> dict[str, list[str]]:
-    """Phase 5: 扫描所有输出的 tags 字段，按维度分类。"""
+def generate_tags(all_outputs: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Phase 5: 扫描所有输出的 tags 字段，按维度分类。
+
+    输出格式对齐 TagRegistry.load() 期望：
+    {dim_key: {"id": dim_key, "description": "", "tags": [strings]}}
+    """
     collected: set[str] = set()
     for data in all_outputs.values():
         _collect_tags_recursive(data, collected)
 
-    dimensions: dict[str, list[str]] = {k: [] for k in _TAG_KEYWORDS}
-    dimensions["general"] = []
+    dimensions: dict[str, dict[str, Any]] = {}
+    for k in _TAG_KEYWORDS:
+        dimensions[k] = {"id": k, "description": "", "tags": []}
+    dimensions["general"] = {"id": "general", "description": "", "tags": []}
 
-    assigned: set[str] = set()
     for tag in sorted(collected):
         categorized = False
         for dim, keywords in _TAG_KEYWORDS.items():
             if any(kw in tag for kw in keywords):
-                dimensions[dim].append(tag)
-                assigned.add(tag)
+                dimensions[dim]["tags"].append(tag)
                 categorized = True
                 break
         if not categorized:
-            dimensions["general"].append(tag)
+            dimensions["general"]["tags"].append(tag)
 
     return dimensions
 
@@ -820,6 +899,13 @@ def generate_tags(all_outputs: dict[str, Any]) -> dict[str, list[str]]:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="V2 数据管线")
+    parser.add_argument(
+        "--mode", choices=["batch", "immediate"], default="batch",
+        help="batch=Batch API（默认），immediate=逐条直接调用",
+    )
+    args = parser.parse_args()
+
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("环境变量 GEMINI_API_KEY 或 GOOGLE_API_KEY 未设置")
@@ -833,6 +919,12 @@ def main() -> None:
     runner = BatchRunner(model=MODEL, api_key=api_key)
     groups = load_entries()
 
+    def run(requests: list[tuple[str, str]], display_name: str) -> dict[str, str]:
+        if args.mode == "immediate":
+            return runner.run_immediate(requests, display_name)
+        return runner.run_batch(requests, BATCH_TEMP, display_name)
+
+    print(f"模式：{args.mode}")
     print(f"已加载条目：{ {t: len(v) for t, v in groups.items()} }")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -843,7 +935,7 @@ def main() -> None:
         build_classes_request(groups),
         build_factions_request(groups),
     ]
-    p1_results = runner.run_batch(p1_requests, BATCH_TEMP, "v2-phase1")
+    p1_results = run(p1_requests, "v2-phase1")
 
     lore_data   = parse_and_save(p1_results.get("lore", "{}"),    OUTPUT_DIR / "lore.json")
     classes_raw = parse_and_save(p1_results.get("classes", "{}"), OUTPUT_DIR / "classes.json")
@@ -862,9 +954,20 @@ def main() -> None:
         build_skills_request(groups, class_ids),
         build_items_request(groups, []),  # 第一次运行无 status_effect_ids，后续可补
     ]
-    p2_results = runner.run_batch(p2_requests, BATCH_TEMP, "v2-phase2")
+    p2_results = run(p2_requests, "v2-phase2")
 
-    skills_raw = parse_and_save(p2_results.get("skills", "{}"), OUTPUT_DIR / "skills.json")
+    skills_parsed = parse_json_safe(p2_results.get("skills", "{}"))
+    # 展平：把 {"skills": {...}, "status_effects": {...}} 变成
+    # {skill_id: {...}, ..., "status_effects": {...}}
+    if isinstance(skills_parsed, dict) and "skills" in skills_parsed:
+        inner = skills_parsed.pop("skills")
+        if isinstance(inner, dict):
+            skills_parsed = {**inner, **skills_parsed}
+    (OUTPUT_DIR / "skills.json").write_text(
+        json.dumps(skills_parsed, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    skills_raw = skills_parsed
+    print(f"  ✓ Saved skills.json")
     items_raw  = parse_and_save(p2_results.get("items", "[]"),  OUTPUT_DIR / "items.json")
 
     # 转为 dict 格式并保存（items 可能是 list）
@@ -876,7 +979,7 @@ def main() -> None:
 
     skill_ids = []
     if isinstance(skills_raw, dict):
-        skill_ids = list(skills_raw.get("skills", skills_raw).keys())
+        skill_ids = [k for k in skills_raw if k != "status_effects"]
     item_ids = list(items_dict.keys())
 
     status_effect_ids: list[str] = []
@@ -899,7 +1002,7 @@ def main() -> None:
         build_characters_request(batch2, "characters_batch2", faction_ids, class_ids, skill_ids, item_ids),
         build_monsters_request(groups, item_ids),
     ]
-    p3_results = runner.run_batch(p3_requests, BATCH_TEMP, "v2-phase3")
+    p3_results = run(p3_requests, "v2-phase3")
 
     chars_b1 = parse_json_safe(p3_results.get("characters_batch1", "[]"))
     chars_b2 = parse_json_safe(p3_results.get("characters_batch2", "[]"))
@@ -934,7 +1037,7 @@ def main() -> None:
         build_maps_request(groups, char_ids, monster_ids),
         build_quests_request(groups, char_ids, ["frontier_town", "cow_girl_farm", "water_capital", "ancient_ruins"]),
     ]
-    p4_results = runner.run_batch(p4_requests, BATCH_TEMP, "v2-phase4")
+    p4_results = run(p4_requests, "v2-phase4")
 
     maps_raw   = parse_and_save(p4_results.get("maps", "[]"),   OUTPUT_DIR / "maps.json")
     quests_raw = parse_and_save(p4_results.get("quests", "{}"), OUTPUT_DIR / "quests.json")
@@ -963,7 +1066,7 @@ def main() -> None:
     (OUTPUT_DIR / "tags.json").write_text(
         json.dumps(tags, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    total_tags = sum(len(v) for v in tags.values())
+    total_tags = sum(len(v["tags"]) for v in tags.values())
     print(f"  ✓ Saved tags.json ({total_tags} tags across {len(tags)} dimensions)")
 
     # ── 完成 ─────────────────────────────────────────────────────────────────
