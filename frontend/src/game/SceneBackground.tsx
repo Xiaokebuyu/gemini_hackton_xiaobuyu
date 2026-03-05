@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react'
 import { useSceneStore } from '../stores/sceneStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { getBackground } from '../lib/resource-map'
+import { fetchSceneImage } from '../lib/api'
 
 function getGradient(key: string): string {
   const lower = key.toLowerCase()
@@ -16,8 +19,29 @@ function getGradient(key: string): string {
 }
 
 export default function SceneBackground() {
-  const { backgroundKey, currentArea, currentLocation, isTransitioning } = useSceneStore()
-  const imgUrl = backgroundKey ? getBackground(currentArea, currentLocation) : ''
+  const { backgroundKey, currentArea, currentLocation } = useSceneStore()
+  const { worldId, sessionId } = useSessionStore()
+  const [generatedUrl, setGeneratedUrl] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(false)
+
+  // 场景变化时，若无静态图则触发 AI 背景生成
+  useEffect(() => {
+    if (!currentArea || !worldId || !sessionId) return
+    if (getBackground(currentArea, currentLocation)) return  // 已有静态图，跳过
+    setGeneratedUrl('')
+    setIsLoading(true)
+    fetchSceneImage(worldId, sessionId, currentArea, currentLocation)
+      .then((result) => {
+        if (result.image_url) {
+          setGeneratedUrl(result.image_url)
+        }
+      })
+      .catch(() => {})  // 静默失败，保持 CSS 渐变
+      .finally(() => setIsLoading(false))
+  }, [currentArea, currentLocation, worldId, sessionId])
+
+  const staticUrl = backgroundKey ? getBackground(currentArea, currentLocation) : ''
+  const imgUrl = staticUrl || generatedUrl
   const gradient = getGradient(backgroundKey || currentArea)
 
   return (
@@ -25,24 +49,22 @@ export default function SceneBackground() {
       {/* CSS 渐变兜底 */}
       <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
 
-      {/* 背景图片（若有） */}
+      {/* Loading shimmer 叠层 */}
+      {isLoading && !imgUrl && (
+        <div className="absolute inset-0 bg-gray-900/60 animate-pulse" />
+      )}
+
+      {/* 背景图片（若有）*/}
       {imgUrl && (
         <img
           src={imgUrl}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-700 opacity-100"
           onError={(e) => {
             ;(e.target as HTMLImageElement).style.display = 'none'
           }}
         />
       )}
-
-      {/* 转场遮罩 */}
-      <div
-        className={`absolute inset-0 bg-black transition-opacity duration-500 ${
-          isTransitioning ? 'opacity-80' : 'opacity-0 pointer-events-none'
-        }`}
-      />
     </div>
   )
 }

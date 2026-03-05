@@ -9,8 +9,12 @@ interface PlayerState {
   gold: number
   area: string
   location: string | null
+  day: number
+  slot: number
+  period: string
 
-  updateFromPanel: (data: Record<string, unknown>) => void
+  updateFromPanel: (data: unknown) => void
+  updateFromStatus: (data: Record<string, unknown>) => void
 }
 
 export const usePlayerStore = create<PlayerState>((set) => ({
@@ -22,9 +26,20 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   gold: 0,
   area: '',
   location: null,
+  day: 1,
+  slot: 0,
+  period: 'dawn',
 
   updateFromPanel: (data) => {
-    const player = (data.player ?? data) as Record<string, unknown>
+    const payload = (typeof data === 'object' && data !== null)
+      ? data as Record<string, unknown>
+      : {}
+    const nestedPlayer = payload.player
+    const player = (
+      nestedPlayer && typeof nestedPlayer === 'object'
+        ? nestedPlayer
+        : payload
+    ) as Record<string, unknown>
     set({
       name: String(player.character_name ?? player.name ?? ''),
       characterClass: String(player.character_class ?? ''),
@@ -36,4 +51,14 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       location: player.current_location != null ? String(player.current_location) : null,
     })
   },
+
+  updateFromStatus: (data) =>
+    set((state) => ({
+      hp: Number(data.hp ?? state.hp),
+      maxHp: Number(data.max_hp ?? state.maxHp),
+      gold: Number(data.gold ?? state.gold),
+      day: Number(data.day ?? state.day),
+      slot: Number(data.slot ?? state.slot),
+      period: String(data.period ?? state.period),
+    })),
 }))

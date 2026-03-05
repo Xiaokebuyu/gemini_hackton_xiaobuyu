@@ -221,6 +221,7 @@ class SpellHandler(StaticCommandHandler):
                 spellcasting_mod,
                 resolved_targets,
                 ctx,
+                world,
                 roll_dice=self._roll_dice_expression,
             )
         elif len(resolved_targets) == 1:

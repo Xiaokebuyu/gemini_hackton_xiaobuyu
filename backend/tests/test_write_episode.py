@@ -134,7 +134,7 @@ class TestWriteEpisode:
         assert llm.call_count == 0
 
     def test_inserts_edge_from_triple(self) -> None:
-        """LLM returns a valid triple → one new graph edge inserted."""
+        """LLM returns a valid triple → actor-private edge inserted."""
         llm = _StubLlm(tool_calls=[{
             "name": "record_triple",
             "args": {
@@ -146,7 +146,7 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "Tom sold the sword.")]
         asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.has_edge("merchant_tom", "iron_sword")
+        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
 
     def test_skips_unknown_subject(self) -> None:
         """Triple with unresolvable subject → silently skipped, no crash."""
@@ -161,7 +161,7 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "some dialogue")]
         asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.edge_count() == 0
+        assert g.actor_edge_count("npc_01") == 0
 
     def test_skips_unknown_object(self) -> None:
         """Triple with unresolvable object → silently skipped."""
@@ -176,7 +176,7 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "dialogue")]
         asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.edge_count() == 0
+        assert g.actor_edge_count("npc_01") == 0
 
     def test_llm_exception_returns_gracefully(self) -> None:
         """LLM raises exception → error is swallowed, no propagation."""
@@ -184,10 +184,10 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "dialogue")]
         asyncio.run(g.write_episode("npc_01", msgs, {}))  # must not raise
-        assert g.edge_count() == 0
+        assert g.actor_edge_count("npc_01") == 0
 
     def test_multiple_triples_inserted(self) -> None:
-        """Multiple valid tool_calls → multiple edges inserted."""
+        """Multiple valid tool_calls → multiple actor-private edges inserted."""
         llm = _StubLlm(tool_calls=[
             {
                 "name": "record_triple",
@@ -209,8 +209,8 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "two facts")]
         asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.has_edge("merchant_tom", "iron_sword")
-        assert g.has_edge("iron_sword", "merchant_tom")
+        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
+        assert g.has_actor_edge("npc_01", "iron_sword", "merchant_tom")
 
     def test_weight_propagated_to_edge(self) -> None:
         """weight field in triple is correctly written to the graph edge."""
@@ -226,9 +226,22 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "opinion")]
         asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.has_edge("merchant_tom", "iron_sword")
-        edge_data = g._graph["merchant_tom"]["iron_sword"]
+        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
+        edge_data = g._actor_graphs["npc_01"]["merchant_tom"]["iron_sword"]
         assert abs(edge_data["weight"] - 0.42) < 1e-9
+
+    def test_remember_creates_actor_private_memory_node(self) -> None:
+        g = _make_graph_with_nodes()
+
+        result = asyncio.run(
+            g.remember("npc_01", "Player fears the hidden cellar.", {})
+        )
+
+        assert result["status"] == "ok"
+        memory_id = result["memory_id"]
+        actor_graph = g._actor_graphs["npc_01"]
+        assert actor_graph.nodes[memory_id]["node_type"] == "memory_note"
+        assert "hidden cellar" in actor_graph.nodes[memory_id]["description"].lower()
 
 
 # ------------------------------------------------------------------

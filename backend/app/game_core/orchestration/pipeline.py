@@ -117,7 +117,7 @@ class PipelineOrchestrator:
         if ctx.execute_result is None:
             return PipelineResult(
                 success=True,
-                metadata={"assembled_context": ctx.assembled_context, "status": "stub"},
+                metadata={"status": "stub"},
             )
 
         return PipelineResult(
@@ -129,7 +129,7 @@ class PipelineOrchestrator:
             errors=list(ctx.execute_result.errors),
             narrative_hints=list(ctx.execute_result.narrative_hints),
             rolls=list(ctx.execute_result.rolls),
-            metadata={"assembled_context": ctx.assembled_context},
+            metadata={},
         )
 
     def _hooks_for(self, extension_point: str) -> list[PipelineHook]:

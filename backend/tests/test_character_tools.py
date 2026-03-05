@@ -56,6 +56,7 @@ def _ctx(
     with_party: bool = False,
     party_payload: dict[str, Any] | None = None,
     execute_command: Any = None,
+    metadata: dict[str, Any] | None = None,
 ) -> AgentContext:
     state = StateContainer()
 
@@ -74,11 +75,14 @@ def _ctx(
         party.restore(party_payload or {})
         state.register(party)
 
+    context_metadata = {"character_id": character_id} if character_id else {}
+    if metadata:
+        context_metadata.update(dict(metadata))
     return AgentContext(
         role=role,
         world=WorldInstance("test"),
         state=state,
-        metadata={"character_id": character_id} if character_id else {},
+        metadata=context_metadata,
         execute_command=execute_command,
     )
 
@@ -192,19 +196,36 @@ def test_update_feeling_rejects_invalid_dimension() -> None:
 # ------------------------------------------------------------------
 
 
-def test_remember_constructs_knowledge_command() -> None:
+def test_remember_writes_actor_memory() -> None:
     log, executor = _recording_executor()
-    context = _ctx(character_id="npc_alice", execute_command=executor)
+    calls: list[dict[str, Any]] = []
+
+    async def _memory_writer(actor_id: str, knowledge: str, context_payload: dict[str, Any]) -> dict[str, Any]:
+        calls.append(
+            {
+                "actor_id": actor_id,
+                "knowledge": knowledge,
+                "context": dict(context_payload),
+            }
+        )
+        return {"memory_id": "memory:npc_alice:1"}
+
+    context = _ctx(
+        character_id="npc_alice",
+        execute_command=executor,
+        metadata={"memory_writer": _memory_writer},
+    )
 
     result = asyncio.run(
         RememberTool().execute({"knowledge": "Player helped me once."}, context)
     )
 
     assert result.success is True
-    assert len(log) == 1
-    assert log[0].type == "add_knowledge"
-    assert log[0].params["npc_id"] == "npc_alice"
-    assert log[0].params["knowledge"] == "Player helped me once."
+    assert log == []
+    assert len(calls) == 1
+    assert calls[0]["actor_id"] == "npc_alice"
+    assert calls[0]["knowledge"] == "Player helped me once."
+    assert result.metadata["memory_id"] == "memory:npc_alice:1"
 
 
 # ------------------------------------------------------------------

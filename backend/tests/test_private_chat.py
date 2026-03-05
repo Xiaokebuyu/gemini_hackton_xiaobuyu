@@ -11,6 +11,7 @@ from app.game_core.content import WorldInstance
 from app.game_core.narrative.context_window import ContextWindow
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.gm_tools import register_gm_tools
+from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.character_tools import register_npc_tools, register_teammate_tools
 from app.game_core.narrative.models import AgentResult, ToolResult
 from app.game_core.narrative.registry import RoleToolRegistry
@@ -255,6 +256,34 @@ class TestPrivateChatCoordinator:
         assert "player" in audience
         assert "npc:merchant_tom" in audience
 
+    def test_npc_speech_entry_is_also_private(self) -> None:
+        """NPC speech emitted during private chat must remain private on SceneBus."""
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        coordinator, _ = _build_coordinator(
+            llm_responses=[
+                {
+                    "tool_calls": [
+                        {"name": "speak", "args": {"text": "Keep this between us."}},
+                    ],
+                },
+            ],
+            world=world,
+            state=state,
+        )
+
+        asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Tell me quietly.",
+            execute_command=_noop_executor,
+        ))
+
+        entries = state.scene.snapshot()["entries"]
+        npc_entries = [e for e in entries if e["source"] == "merchant_tom"]
+        assert npc_entries, "Expected at least one NPC scene entry"
+        assert npc_entries[-1]["visibility"] == "private"
+        assert npc_entries[-1]["audience"] == ["player", "npc:merchant_tom"]
+
     def test_result_has_no_gm_or_teammate_fields(self) -> None:
         """PrivateChatResult must not have gm_result or teammate_results."""
         coordinator, _ = _build_coordinator(
@@ -266,7 +295,8 @@ class TestPrivateChatCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert not hasattr(result, "gm_result")
+        # gm_result is Phase 2b inner monologue (present but may be None)
+        assert hasattr(result, "gm_result")
         assert not hasattr(result, "teammate_results")
 
     def test_dialogue_options_present(self) -> None:
@@ -289,17 +319,20 @@ class TestPrivateChatCoordinator:
         coordinator, _ = _build_coordinator(
             llm_responses=[{"text": "", "finish_reason": "stop"}],
         )
-        window = ContextWindow(actor_id="merchant_tom", max_tokens=10000)
-        initial_count = len(window.messages)
+        instance = NPCInstance(
+            actor_id="merchant_tom",
+            context_window=ContextWindow(actor_id="merchant_tom", max_tokens=10000),
+        )
+        initial_count = len(instance.context_window.messages)
 
         asyncio.run(coordinator.execute(
             npc_id="merchant_tom",
             player_message="Testing window update",
             execute_command=_noop_executor,
-            context_window=window,
+            instance=instance,
         ))
 
-        assert len(window.messages) == initial_count + 2
+        assert len(instance.context_window.messages) == initial_count + 2
 
     def test_overflow_populates_graphize_candidates(self) -> None:
         """Tiny max_tokens forces overflow → graphize_candidates non-empty."""
@@ -307,16 +340,52 @@ class TestPrivateChatCoordinator:
             llm_responses=[{"text": "", "finish_reason": "stop"}],
         )
         # max_tokens=1 will overflow immediately
-        window = ContextWindow(actor_id="merchant_tom", max_tokens=1)
+        instance = NPCInstance(
+            actor_id="merchant_tom",
+            context_window=ContextWindow(actor_id="merchant_tom", max_tokens=1),
+        )
 
         result = asyncio.run(coordinator.execute(
             npc_id="merchant_tom",
             player_message="overflow test",
             execute_command=_noop_executor,
-            context_window=window,
+            instance=instance,
         ))
 
         assert len(result.graphize_candidates) > 0
+
+    def test_private_chat_consumes_active_directive_immediately(self) -> None:
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        coordinator, llm = _build_coordinator(
+            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            world=world,
+            state=state,
+        )
+        directive = {
+            "npc_id": "merchant_tom",
+            "directive": {"kind": "hint", "topic": "hidden_cellar"},
+            "priority": "high",
+            "expires_at_tick": 12,
+            "consumed": False,
+        }
+        instance = NPCInstance(
+            actor_id="merchant_tom",
+            context_window=ContextWindow(actor_id="merchant_tom", max_tokens=10000),
+            directive_queue=[directive],
+        )
+
+        result = asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Tell me privately.",
+            execute_command=_noop_executor,
+            instance=instance,
+        ))
+
+        assert result.success is True
+        assert directive["consumed"] is True
+        assert instance.directive_queue == []
+        assert "hidden_cellar" in llm.calls[0]["system_prompt"]
 
     def test_time_cost_is_one_sixth(self) -> None:
         """Private chat time cost must equal 1/6."""

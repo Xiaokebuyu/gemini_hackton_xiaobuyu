@@ -1109,10 +1109,41 @@ graphs/{world_id}/
 
 ---
 
+## 补遗：增量实现中确立的 NPC/队友系统（2026-03-05 追记）
+
+### A. 负面关系跃迁
+
+原始设计定义了 cold→hostile→enemy 阶段存在但未指定跃迁条件。实现中 `RelationshipHook` 基于 approval + trust 双维度阈值判定渐进跃迁。进入 hostile/enemy 时自动调用 `CompanionManager.force_leave()`。
+
+### B. CompanionManager 公共 API
+
+`orchestration/companion_manager.py`，独立编排组件（非 Hook）：
+
+- `recruit(npc_id) -> RecruitResult` — 前置检查 tag / 关系阶段 / 队伍容量
+- `dismiss(npc_id) -> RecruitResult` — 从队伍移除
+- `force_leave(npc_id, reason) -> RecruitResult` — NPC 主动离队，由 RelationshipHook 调用
+
+**HTTP 端点**：`POST .../companion/recruit`、`POST .../companion/dismiss`（streaming SSE）
+
+### C. 营火对话
+
+`CampfireHook`（P63）— 长休后触发，从 SharedExperience 中选择经历回忆，巩固队伍关系，emit `campfire_dialogue` SSE。
+
+### D. SharedExperience 录入
+
+`SharedExperienceHook`（P55）— 从 action_log + SceneBus tags 自动检测共同经历（combat/quest/rest），写入 PartySlice。CampfireHook 消费。
+
+### E. Directive GC
+
+`NarrativePlannerHook.execute()` 开头清理已消费 + 已过期的 directives。
+
+---
+
 ## 变更日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-05 | 补遗 A-E：负面跃迁 + CompanionManager API + 营火对话 + SharedExperience + Directive GC |
 | 2026-02-26 | 创建。InstanceManager 实例池（LRU 淘汰 + 资源动态分配）+ 双层认知（ContextWindow + MemoryGraph）+ 四维好感度模型 + 关系阶段系统（正面 5 阶 + 负面 4 阶）+ NPC 日程（P60 Hook）+ NPC Directive 机制 + 路人系统（PasserbyPool + NarrativePlanner 投递）+ 队友系统（招募/离队/发言决策/共同经历/危机选择/营火回忆/个人线/记忆驱动战斗行为）+ 视角感知 + 三层记忆图谱 |
 | 2026-02-26 | 文档更名为"❺ NPC与队友运行时规范"，明确隶属于 ❺ AI 叙事层子文档。新增 §七 私聊机械层：进入条件 + PrivateChatSceneBuilder 场景模板（复用 DynamicSubAreaManager 生成临时私密子地点）+ 上下文注入结构 + 记忆召回权重调整 + 秘密吐露机制（CharacterTemplate.secrets + trust_threshold）+ romance_eligible 字段 + 外部事件打断机制。后续章节编号 +1 |
 | 2026-02-27 | 文档统一修订：§4.2 新增 npc_impressions 与 MemoryGraph 分工说明（两者面向不同消费者，不需同步）。knowledge 节点来源改为 NPC remember 工具/对话图谱化。NpcScheduleHook/私聊/CompanionManager 标注受控例外类别。NpcScheduleHook.execute() 签名同步 SettlementContext |

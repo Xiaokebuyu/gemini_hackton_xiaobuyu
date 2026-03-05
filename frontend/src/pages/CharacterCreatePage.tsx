@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getCharacterOptions, createCharacter } from '../lib/api'
+import { usePlayerStore } from '../stores/playerStore'
+import { useSessionStore } from '../stores/sessionStore'
 import type { CharacterCreationOptions, CharacterOption } from '../types/api'
 
 // ─── 属性配置 ────────────────────────────────────────────────────────────────
@@ -15,6 +17,15 @@ const ATTR_LABELS: Record<Attr, string> = {
   INT: '智力',
   WIS: '感知',
   CHA: '魅力',
+}
+
+const ATTR_API_KEYS: Record<Attr, string> = {
+  STR: 'str',
+  DEX: 'dex',
+  CON: 'con',
+  INT: 'int',
+  WIS: 'wis',
+  CHA: 'cha',
 }
 
 const STANDARD_ARRAY = [15, 14, 13, 12, 10, 8]
@@ -77,6 +88,8 @@ const EMPTY_FORM: FormState = {
 export default function CharacterCreatePage() {
   const { worldId, sid } = useParams<{ worldId: string; sid: string }>()
   const navigate = useNavigate()
+  const setSession = useSessionStore((s) => s.setSession)
+  const updateFromPanel = usePlayerStore((s) => s.updateFromPanel)
 
   const [step, setStep] = useState(1)
   const [options, setOptions] = useState<CharacterCreationOptions | null>(null)
@@ -111,9 +124,9 @@ export default function CharacterCreatePage() {
     try {
       const abilityScores: Record<string, number> = {}
       for (const attr of ATTRS) {
-        abilityScores[attr] = form.abilityScores[attr] ?? 8
+        abilityScores[ATTR_API_KEYS[attr]] = form.abilityScores[attr] ?? 8
       }
-      await createCharacter(worldId, sid, {
+      const result = await createCharacter(worldId, sid, {
         name: form.name.trim(),
         race: form.race,
         character_class: form.characterClass,
@@ -121,7 +134,9 @@ export default function CharacterCreatePage() {
         ability_scores: abilityScores,
         backstory: form.backstory.trim() || undefined,
       })
-      navigate(`/${worldId}/sessions/${sid}/play`)
+      setSession(worldId, sid, result.phase)
+      updateFromPanel(result)
+      navigate(`/${worldId}/sessions/${sid}/play?opening=1`)
     } catch (err: unknown) {
       setError((err as Error).message ?? '创建失败')
     } finally {

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from app.game_core.content import ContentRegistry, WorldInstance
+from app.game_core.narrative.instance_manager import InstanceManager
 from app.game_core.content.registries import (
     CharacterRegistry,
     ClassRegistry,
@@ -83,6 +84,17 @@ class DefaultRuntime:
     scene_bus: SceneBus
     pipeline: PipelineOrchestrator
     tick_coordinator: TickCoordinator
+    instance_manager: InstanceManager | None = None
+
+
+def _register_default_content_registries(world: WorldInstance) -> None:
+    for registry_type in DEFAULT_CONTENT_REGISTRY_TYPES:
+        world.register(registry_type())
+
+
+def _register_default_state_slices(state: StateContainer) -> None:
+    for slice_type in DEFAULT_STATE_SLICE_TYPES:
+        state.register(slice_type())
 
 
 def build_default_world(
@@ -91,8 +103,7 @@ def build_default_world(
 ) -> WorldInstance:
     """Build a default world container with the canonical registries."""
     world = WorldInstance(world_id)
-    for registry_type in DEFAULT_CONTENT_REGISTRY_TYPES:
-        world.register(registry_type())
+    _register_default_content_registries(world)
     if world_data is not None:
         world.load_all(world_data)
     return world
@@ -101,18 +112,19 @@ def build_default_world(
 def build_default_state() -> StateContainer:
     """Build a scaffold-only empty state container with canonical slices."""
     state = StateContainer()
-    for slice_type in DEFAULT_STATE_SLICE_TYPES:
-        state.register(slice_type())
+    _register_default_state_slices(state)
     return state
 
 
 def build_default_runtime(
     world_id: str,
     world_data: dict[str, Any] | None = None,
+    *,
+    instance_manager: InstanceManager | None = None,
 ) -> DefaultRuntime:
     """Build a fully wired default runtime for a new session."""
     world = build_default_world(world_id, world_data=world_data)
-    return build_runtime_for_world(world)
+    return build_runtime_for_world(world, instance_manager=instance_manager)
 
 
 def build_restored_runtime(
@@ -131,6 +143,7 @@ def build_runtime_for_world(
     gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
     osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
     narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+    instance_manager: InstanceManager | None = None,
 ) -> DefaultRuntime:
     """Build a fully wired default runtime for an already loaded world.
 
@@ -167,7 +180,7 @@ def build_runtime_for_world(
     if narrative_planner_factory is not None:
         planner = narrative_planner_factory()
         tick_coordinator.register_settlement_hook(
-            NarrativePlannerHook(planner=planner)
+            NarrativePlannerHook(planner=planner, instance_manager=instance_manager)
         )
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
@@ -178,6 +191,7 @@ def build_runtime_for_world(
         scene_bus=scene_bus,
         pipeline=pipeline,
         tick_coordinator=tick_coordinator,
+        instance_manager=instance_manager,
     )
 
 
@@ -188,6 +202,7 @@ def build_restored_runtime_for_world(
     gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
     osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
     narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+    instance_manager: InstanceManager | None = None,
 ) -> DefaultRuntime:
     """Build a fully wired default runtime from restored session payload."""
     state = StateContainer.create_restored(world, session_data)
@@ -216,7 +231,7 @@ def build_restored_runtime_for_world(
     if narrative_planner_factory is not None:
         planner = narrative_planner_factory()
         tick_coordinator.register_settlement_hook(
-            NarrativePlannerHook(planner=planner)
+            NarrativePlannerHook(planner=planner, instance_manager=instance_manager)
         )
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
@@ -227,4 +242,5 @@ def build_restored_runtime_for_world(
         scene_bus=scene_bus,
         pipeline=pipeline,
         tick_coordinator=tick_coordinator,
+        instance_manager=instance_manager,
     )

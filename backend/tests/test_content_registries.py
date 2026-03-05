@@ -893,7 +893,11 @@ def test_character_combat_fields_load():
     assert atk.damage_type == "piercing"
     assert atk.tags == ["melee", "reach"]
     assert char.skills == ["athletics", "perception"]
-    assert char.secrets == ["knows_the_smuggler"]
+    from app.game_core.content.registries.characters import SecretEntry
+    assert len(char.secrets) == 1
+    assert isinstance(char.secrets[0], SecretEntry)
+    assert char.secrets[0].content == "knows_the_smuggler"
+    assert char.secrets[0].trust_threshold == 50
     assert not registry.validate()
 
 

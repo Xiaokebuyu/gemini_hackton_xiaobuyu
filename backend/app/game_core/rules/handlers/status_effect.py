@@ -10,6 +10,7 @@ from app.game_core.rules.handler_utils import (
     coerce_non_empty_string,
     handler_success,
     normalize_tags,
+    resolve_roll,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
@@ -60,7 +61,7 @@ class StatusEffectHandler(StaticCommandHandler):
             return ExecuteResult.error(validation.reason or "validation failed")
 
         if cmd.type == "apply_effect":
-            return self._compute_apply_effect(cmd, state)
+            return self._compute_apply_effect(cmd, state, world)
         if cmd.type == "remove_effect":
             return self._compute_remove_effect(cmd, state)
         if cmd.type == "remove_effect_by_type":
@@ -117,8 +118,9 @@ class StatusEffectHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
-        effect = self._build_effect_payload(cmd)
+        effect = self._build_effect_payload(cmd, world)
         current_effects = self._copy_effects(state)
         replaced_count = 0
         next_effects: list[dict[str, Any]] = []
@@ -267,6 +269,25 @@ class StatusEffectHandler(StaticCommandHandler):
             current_effects, current_hp, max_hp
         )
 
+        # save_end_of_turn: 每回合尝试豁免以移除效果
+        saved_off_count = 0
+        if any(e.get("save_end_of_turn") for e in next_effects):
+            surviving: list[dict[str, Any]] = []
+            for effect in next_effects:
+                save_ability = effect.get("save_end_of_turn")
+                save_dc_val = effect.get("save_dc")
+                if isinstance(save_ability, str) and save_ability and isinstance(save_dc_val, int):
+                    save_mod = state.player.get_modifier(save_ability)
+                    if save_ability in getattr(state.player, "save_proficiencies", []):
+                        save_mod += state.player.proficiency_bonus
+                    roll, _, _ = resolve_roll()
+                    if roll + save_mod >= save_dc_val:
+                        saved_off_count += 1
+                        continue
+                surviving.append(effect)
+            next_effects = surviving
+            expired_count += saved_off_count
+
         hp_delta = next_hp - current_hp
         changes: list[StateChange] = [
             StateChange(
@@ -379,7 +400,7 @@ class StatusEffectHandler(StaticCommandHandler):
             omit_empty_delta=False,
         )
 
-    def _build_effect_payload(self, cmd: Command) -> dict[str, Any]:
+    def _build_effect_payload(self, cmd: Command, world: WorldInstance) -> dict[str, Any]:
         duration_ticks = self._coerce_duration_ticks(cmd.params)
         modifiers = self._normalize_mapping(cmd.params.get("modifiers"))
         raw_periodic = cmd.params.get("periodic")
@@ -389,7 +410,7 @@ class StatusEffectHandler(StaticCommandHandler):
                 "damage": self._coerce_non_negative_int(raw_periodic.get("damage"), default=0),
                 "heal": self._coerce_non_negative_int(raw_periodic.get("heal"), default=0),
             }
-        return {
+        payload = {
             "effect_id": str(cmd.params["effect_id"]).strip(),
             "effect_type": str(cmd.params["effect_type"]).strip(),
             "source": coerce_non_empty_string(cmd.params.get("source")) or cmd.source,
@@ -400,6 +421,11 @@ class StatusEffectHandler(StaticCommandHandler):
             "periodic": periodic,
             "tags": normalize_tags(cmd.params.get("tags")),
         }
+        if world.has_registry("skills"):
+            from app.game_core.rules.handlers.spell_effects import merge_status_effect_template
+            se_template = world.skills.get_status_effect(payload["effect_id"])
+            merge_status_effect_template(payload, se_template)
+        return payload
 
     @staticmethod
     def _copy_effects(state: StateContainer) -> list[dict[str, Any]]:

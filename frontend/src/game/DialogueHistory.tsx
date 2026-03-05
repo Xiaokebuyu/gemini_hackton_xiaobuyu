@@ -1,13 +1,29 @@
 import { useEffect, useRef } from 'react'
 import { useDialogueStore } from '../stores/dialogueStore'
+import { useStreamStore } from '../stores/streamStore'
 import type { DialogueEntry } from '../types/game'
 
-function Message({ msg }: { msg: DialogueEntry }) {
+function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean }) {
+  const cursor = showCursor ? (
+    <span className="inline-block w-0.5 h-4 bg-amber-400 animate-pulse ml-0.5 align-middle" />
+  ) : null
+
   switch (msg.type) {
     case 'gm':
       return (
         <div className="py-1">
-          <p className="italic text-amber-200/90 leading-relaxed">{msg.content}</p>
+          <p className="italic text-amber-200/90 leading-relaxed">
+            {msg.content}{cursor}
+          </p>
+        </div>
+      )
+
+    case 'gm_comment':
+      return (
+        <div className="py-1">
+          <p className="italic text-gray-400/90 text-sm leading-relaxed">
+            {msg.content}{cursor}
+          </p>
         </div>
       )
 
@@ -15,7 +31,9 @@ function Message({ msg }: { msg: DialogueEntry }) {
       return (
         <div className="py-1">
           <span className="text-sky-400 font-bold text-sm mr-2">{msg.speaker}</span>
-          <span className="text-gray-100">&ldquo;{msg.content}&rdquo;</span>
+          <span className="text-gray-100">
+            &ldquo;{msg.content}&rdquo;{cursor}
+          </span>
         </div>
       )
 
@@ -49,6 +67,15 @@ function Message({ msg }: { msg: DialogueEntry }) {
         </div>
       )
 
+    case 'stream':
+      return (
+        <div className="py-1">
+          <p className="text-amber-100/85 leading-relaxed">
+            {msg.content}{cursor}
+          </p>
+        </div>
+      )
+
     default:
       return <div className="text-gray-400 text-sm py-0.5">{msg.content}</div>
   }
@@ -56,6 +83,7 @@ function Message({ msg }: { msg: DialogueEntry }) {
 
 export default function DialogueHistory() {
   const messages = useDialogueStore((s) => s.messages)
+  const isStreaming = useStreamStore((s) => s.isStreaming)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -67,7 +95,13 @@ export default function DialogueHistory() {
       {messages.length === 0 ? (
         <p className="text-gray-600 text-sm italic text-center py-4">世界在等待...</p>
       ) : (
-        messages.map((msg) => <Message key={msg.id} msg={msg} />)
+        messages.map((msg, i) => (
+          <Message
+            key={msg.id}
+            msg={msg}
+            showCursor={isStreaming && i === messages.length - 1}
+          />
+        ))
       )}
       <div ref={endRef} />
     </div>

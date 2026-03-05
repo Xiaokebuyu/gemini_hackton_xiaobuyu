@@ -566,6 +566,20 @@ class AIOsirisHook(NoOpSettlementHook):
                 if dimension.id:
                     tag_dimensions[dimension.id] = list(dimension.tags)
 
+        world_rules: list[dict[str, Any]] = []
+        if context.world.has_registry("lore"):
+            current_area = (
+                context.state.player.current_area
+                if context.state.has_slice("player") else ""
+            )
+            for rule in context.world.lore.get_rules_for_context(area_id=current_area):
+                world_rules.append({
+                    "id": rule.id,
+                    "title": rule.title,
+                    "description": rule.description,
+                    "priority": rule.priority,
+                })
+
         return {
             "allowed_commands": list(_ALLOWED_COMMAND_TYPES),
             "command_source": "ai_osiris",
@@ -577,6 +591,7 @@ class AIOsirisHook(NoOpSettlementHook):
             "world_lore": world_lore,
             "faction_rules": faction_rules,
             "tag_dimensions": tag_dimensions,
+            "world_rules": world_rules,
         }
 
     @classmethod

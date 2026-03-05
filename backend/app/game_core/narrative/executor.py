@@ -285,14 +285,14 @@ class AgenticExecutor:
         """
         blocks: list[str] = []
 
-        # L0: World constants (cap: 5 lore entries + 5 faction names)
+        # L0: World constants (cap: 3 lore entries + 5 faction names)
         l0 = layers.get("l0_world_constants") or {}
         l0_parts: list[str] = []
         world_id = l0.get("world_id", "")
         if world_id:
             l0_parts.append(f"World: {world_id}")
         for label, items, cap in (
-            ("Lore", l0.get("lore", []), 5),
+            ("Lore", l0.get("lore", []), 3),
             ("Factions", l0.get("factions", []), 5),
         ):
             lines: list[str] = []
@@ -301,8 +301,14 @@ class AgenticExecutor:
                     getattr(item, "name", None)
                     or (item.get("name") if isinstance(item, dict) else None)
                 )
-                if name:
-                    lines.append(f"  - {name}")
+                if not name:
+                    continue
+                desc = (
+                    getattr(item, "description", None)
+                    or (item.get("description") if isinstance(item, dict) else None)
+                )
+                line = f"  - {name}: {desc}" if desc else f"  - {name}"
+                lines.append(line)
             if lines:
                 l0_parts.append(f"{label}:\n" + "\n".join(lines))
         if l0_parts:

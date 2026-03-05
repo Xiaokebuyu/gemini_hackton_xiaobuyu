@@ -177,16 +177,17 @@ class NarrativePlanner:
         current_tick = ctx["current_tick"]
         milestone_label = self._milestone_label(milestone_id)
         quest_id = f"dq_{milestone_id}"
+        target_detail: dict[str, Any] = ctx.get("target_milestone_detail") or {}
 
         if level == 1:
             return self._l1_hint(current_tick, milestone_id, milestone_label)
         if level == 2:
-            return self._l2_recommend(current_tick, milestone_id, milestone_label)
+            return self._l2_recommend(current_tick, milestone_id, milestone_label, target_detail)
         if level == 3:
             quest_exists = quest_id in ctx["dynamic_quest_ids"]
             return self._l3_urgent(
                 current_tick, milestone_id, milestone_label,
-                quest_id, quest_exists,
+                quest_id, quest_exists, target_detail,
             )
         if level == 4:
             area_cluster = ctx.get("area_cluster")
@@ -223,14 +224,20 @@ class NarrativePlanner:
         }
 
     def _l2_recommend(
-        self, tick: int, milestone_id: str, label: str,
+        self,
+        tick: int,
+        milestone_id: str,
+        label: str,
+        target_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        involved = (target_detail or {}).get("involved_npcs", [])
+        npc_id = involved[0] if involved else "guild_clerk"
         return {
             "directives": [
                 {
                     "kind": "direct_npc",
                     "payload": {
-                        "npc_id": "guild_clerk",
+                        "npc_id": npc_id,
                         "directive": {
                             "kind": "recommend_quest",
                             "milestone_id": milestone_id,
@@ -241,7 +248,7 @@ class NarrativePlanner:
                 },
                 {"kind": "escalate", "payload": {"delta": 1}},
             ],
-            "strategy_notes": f"L2 recommend: NPC guides toward {milestone_id}.",
+            "strategy_notes": f"L2 recommend: NPC {npc_id} guides toward {milestone_id}.",
             "next_scheduled_tick": tick + 3,
             "metadata": {
                 "status": "escalation_l2",
@@ -258,7 +265,22 @@ class NarrativePlanner:
         label: str,
         quest_id: str,
         quest_exists: bool,
+        target_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        detail = target_detail or {}
+        involved = detail.get("involved_npcs", [])
+        npc_id = involved[0] if involved else "guild_clerk"
+        key_elements: list[str] = detail.get("key_elements", [])
+        involved_locations: list[str] = detail.get("involved_locations", [])
+        narrative_context: str = detail.get("narrative_context", "")
+
+        if narrative_context:
+            summary = narrative_context
+        elif key_elements:
+            summary = f"Involves: {', '.join(key_elements[:3])}."
+        else:
+            summary = f"An urgent matter tied to {milestone_id}."
+
         directives: list[dict[str, Any]] = []
         if not quest_exists:
             directives.append({
@@ -266,18 +288,20 @@ class NarrativePlanner:
                 "payload": {
                     "quest_id": quest_id,
                     "title": f"Urgent: {label}",
-                    "summary": f"An urgent matter tied to {milestone_id}.",
+                    "summary": summary,
                     "status": "available",
                     "metadata": {
                         "source_milestone": milestone_id,
                         "urgency": "high",
+                        "key_elements": key_elements,
+                        "involved_locations": involved_locations,
                     },
                 },
             })
         directives.append({
             "kind": "direct_npc",
             "payload": {
-                "npc_id": "guild_clerk",
+                "npc_id": npc_id,
                 "directive": {
                     "kind": "present_quest",
                     "quest_id": quest_id,
@@ -289,7 +313,7 @@ class NarrativePlanner:
         directives.append({"kind": "escalate", "payload": {"delta": 1}})
         return {
             "directives": directives,
-            "strategy_notes": f"L3 urgent: press player toward {milestone_id}.",
+            "strategy_notes": f"L3 urgent: NPC {npc_id} presses player toward {milestone_id}.",
             "next_scheduled_tick": tick + 3,
             "metadata": {
                 "status": "escalation_l3",
@@ -441,6 +465,7 @@ class NarrativePlanner:
             "area_cluster": self._normalize_area_cluster(
                 context.get("area_cluster")
             ),
+            "target_milestone_detail": dict(context.get("target_milestone_detail") or {}),
         }
 
     @staticmethod

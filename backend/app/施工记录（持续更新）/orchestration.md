@@ -670,3 +670,345 @@ Settlement Hook 形式实现跨切片条件检查。
 **测试**：`tests/test_relationship_hook.py`，13 个测试（5 基础 + 8 转换路径）
 
 **测试基线**：854 passed（841 + 13 新增）
+
+---
+
+## [D-O27] EventSlice 状态集补全 + on_trigger one-shot 路径正式化（2026-03-05）
+
+**背景**：P1-C 深化（D-N25）引入 `on_trigger` 字段和 dormant→resolved one-shot 执行路径，事后审查发现两处遗漏需要补文档和修 bug。
+
+### 遗漏 1：EventSlice._VALID_STATES 缺 "available"
+
+D-O11 明确定义 `dormant → available` 为合法转换，但 `EventSlice._VALID_STATES` 未包含 `"available"`，导致 `EventConditionHook` 产生的 available 转换在 `validate()` 时被标为非法状态。
+
+**修复**：`app/game_core/state/slices/events.py` — `_VALID_STATES` 追加 `"available"`。
+
+注：`"locked"` 有意不加——locked 事件仍在 `pending_events`，尚未 activate 进 `active_events`，不属于 _VALID_STATES 管辖范围。
+
+### 遗漏 2：on_trigger 字段正式化
+
+P1-C Phase 2 扩展了 `BasicEventConditionEvaluator._evaluate_event()`，引入 `on_trigger` 字段用于事件触发时的一次性命令执行。该字段在 D-O11 及其他架构文档中均未定义，此处正式化。
+
+**定义**：`on_trigger` 是 active_event dict 的可选字段（`list[dict]`），每项为 command dict（需含 `type`/`params`）。
+
+**两条 dormant 出口路径**：
+
+| 路径 | 触发条件 | 终态 | 用途 |
+|------|----------|------|------|
+| dormant → **resolved** | conditions_met + 有 on_trigger | resolved（不再检查） | 自动条件触发命令（如 advance_quest）|
+| dormant → **available** | conditions_met + 无 on_trigger | available → triggered → active | 暴露给 NPC/玩家的可触发事件 |
+
+**P1 文档偏差**：P1-C Phase 2 描述 "dormant→triggered→active" 路径；实际实现改为 dormant→resolved（one-shot），跳过 triggered 中间状态，避免额外 tick 延迟。对 condition-watcher 类事件（milestone success/failure 监视器）语义更准确。
+
+**代码位置**：`app/game_core/orchestration/event_engine.py` — `BasicEventConditionEvaluator._evaluate_event()`
+
+### 遗漏 3：MilestoneUnlockHook 与 NarrativePlanner 的 1-tick 延迟
+
+P1 文档声称"同一 settlement 内完成解锁，Planner 直接看到 AVAILABLE"，并以 P20→P25→P35 顺序描述（P1 文档自有的概念编号）。但实际 HOOK_PRIORITY 值：
+
+| Hook | HOOK_PRIORITY |
+|------|--------------|
+| NarrativePlannerHook | 35 |
+| EventConditionHook | 50 |
+| MilestoneUnlockHook | 55 |
+
+执行顺序：`Planner(35) → EventCondition(50) → MilestoneUnlock(55)`
+
+---
+
+## D-P3a：未消费数据与死代码清理（2026-03-05）
+
+**范围**：A 真死文件清理 + B Buff/Debuff 管线接线 + C 怪物伤害类型交互
+
+### A. 真死文件删除
+
+- 删除 `data/goblin_slayer/structured_new/`（20MB，11 文件）：v2 完整覆盖，运行时不加载
+- 删除 `data/goblin_slayer/v2/batch_temp/`（88KB，3 个 .jsonl）：LLM 构建产物
+- 删除 `tests/test_world_data_loader.py`：测试已删数据目录的旧 loader，随数据一起清理
+
+**纠错**：审计文档误判"PlayerSlice 8 个死方法"为死代码，实际均已实现；"ai_personality/flee_threshold 未消费"也是误判，CombatHandler._decide_monster_action() 早已使用。
+
+### B. Buff/Debuff 管线接线
+
+**combat.py — B1：player AC 修正**（`_resolve_monster_responses()` ~L1037）
+- 改前：`player_ac = 10 + state.player.get_modifier("dex")`（占位公式）
+- 改后：`effect_mods = state.player.get_effect_modifiers(); player_ac = state.player.ac + effect_mods.get("ac", 0)`
+- 现在使用角色创建时写入的真实 AC（含装备），加上活跃效果修正
+
+**combat.py — B2：玩家攻击优势**（`_compute_attack_resolution()` ~L579）
+- 改前：`resolve_roll()`（固定单骰）
+- 改后：`adv = state.player.get_advantage_on_attacks_against(); resolve_roll(advantage=adv)`
+- 同时在 metadata 新增 `advantage` 字段
+
+**skill_check.py — B3：自动劣势**（`_compute_skill_check()` + `_compute_saving_throw()`）
+- 两处均新增：若 `cmd.params` 未显式指定 disadvantage，检查 `state.player.get_disadvantage_checks()`
+- 匹配规则：`skill in dis_checks` 或 `"all" in dis_checks`（saving_throw 用 ability 匹配）
+- metadata 新增 `auto_disadvantage` 字段区分自动劣势与显式劣势
+
+### C. 怪物伤害类型交互
+
+**combat.py — C1：resistance/immunity/vulnerability**（`_compute_attack_resolution()` damage 计算后）
+- 新增可选命令参数 `damage_type`（默认 `"physical"`）
+- 命中后查询 `world.monsters.get(monster_id)`（需要 world 有 monsters registry）
+- immunity → damage=0，multiplier=0.0；resistance → max(1, damage//2)，multiplier=0.5；vulnerability → damage*2，multiplier=2.0
+- metadata 新增 `damage_type`、`damage_multiplier` 字段
+- 调用方（`_compute_direct_resolution_command`）从 `cmd.params` 透传 `damage_type`
+
+### 测试
+
+新增 14 个测试（全部通过）：
+- `tests/test_combat_handler.py::TestEffectPipelineIntegration`（8 个）：AC 存储字段、effect AC修正、advantage 元数据、immunity/resistance/vulnerability、物理默认值
+- `tests/test_skill_check_handler.py::TestAutoDisadvantage`（6 个）：特定技能自动劣势、不跨技能生效、all 关键字、显式劣势保留、saving_throw 自动劣势
+
+**测试基线**：1214 passed（原 1200 + 14 新增），6 个预存失败不变（test_hostile_area_handler × 5 + test_v2_knowledge_graph_edges × 1）
+
+P1 文档假设 EventCondition 在 NarrativePlanner 之前运行，但实际恰好相反。结果：Tick T 里 EventCondition+MilestoneUnlock 完成里程碑解锁，Tick T+1 的 NarrativePlanner 才能看到新 AVAILABLE 里程碑。1-tick 延迟，游戏中无感。修复方案（将 NarrativePlannerHook 移至 P>55）影响大，不做。见 D-N25 同步记录。
+
+---
+
+## D-P3b：Buff/Debuff 管线闭合（效果创建层修复）（2026-03-05）
+
+**范围**：修复 D-P3a 未解决的根因——效果实例创建时不传播 StatusEffectTemplate 行为字段。同时修正 D-P3a 引入的语义错误。
+
+### Phase 1 — 数据补全 + 模板字段传播
+
+**data/goblin_slayer/v2/skills.json — 1a: 填充 StatusEffectTemplate 行为字段**
+- `poisoned`：补 `disadvantage_on: ["attack","ability_check"]`，`cure_conditions: ["long_rest"]`
+- `shielded`：补 `modifiers: {"ac": 2}`
+- `blinded`：补 `disadvantage_on: ["attack"]`，`advantage_on_attacks_against: true`
+- `blessed`：补 `modifiers: {"attack": 1, "saving_throw": 1}`
+- `intoxicated`：补 `cure_conditions: ["damage"]`（`prevents_action: true` 已有）
+
+**skills.py — 1d: StatusEffectTemplate 新增字段**
+- 新增 `advantage_on_attacks_against: bool = False`（持有此效果的单位被攻击时，攻击者获得优势）
+- `_parse_status_effect_template()` 新增对应解析
+
+**spell_effects.py — 1b: 新增 merge_status_effect_template() 纯函数**
+- 将 StatusEffectTemplate 行为字段（disadvantage_checks / advantage_on_attacks_against / prevents_action / save_end_of_turn / save_dc / cure_conditions / modifiers）合并到效果实例 dict
+- 实例已有值优先，就地修改
+
+**spell_effects.py + spell.py — 1c: 路径 A 接入**
+- `apply_self_target()` 新增 `world` 参数；查询 StatusEffectTemplate 后传入 `build_spell_effect_instance(status_effect_template=se_template)`
+- `apply_combat_control()` 同样新增 `world` 参数 + 查询模板
+- `apply_combat_target()` 透传 world 给 apply_combat_control 调用
+- `spell.py` 透传 world 给 apply_self_target 调用
+
+**status_effect.py — 1c: 路径 B 接入**
+- `compute()` 透传 world 给 `_compute_apply_effect()`
+- `_build_effect_payload()` 在 return 前查询 StatusEffectTemplate 并调用 merge
+
+### Phase 2 — 战斗修正语义修正
+
+**combat.py — 2a: 玩家攻击加值含效果修正**（`_compute_attack_resolution()`）
+- 新增 `effect_mods.get("attack", 0)` 加入 `attack_total`
+- build_dice_roll modifiers 列表追加 `{"name": "effects", "value": attack_bonus_from_effects}`
+
+**combat.py — 2b: 新增 `_participant_effect_ac_mod()` 模块级纯函数**
+- 遍历 participant.active_effects，累加 modifiers["ac"]
+- 两处调用：`_compute_attack_resolution` 和 `_compute_shove_resolution` 的 `target_ac`
+
+**combat.py — 2c: 修正 advantage 语义**
+- **玩家攻击侧**：改为检查目标怪物的 `active_effects` 是否有 `advantage_on_attacks_against`（原为检查玩家自身）
+- **怪物攻击侧**：`_resolve_monster_responses()` 新增 `monster_adv_on_player = state.player.get_advantage_on_attacks_against()`；`_roll_monster_attack()` 新增 `advantage` 参数，透传给 `resolve_roll(advantage=advantage)`
+
+### Phase 3 — save_end_of_turn
+
+**status_effect.py — `_compute_tick_effects()`**
+- `_tick_effect_list` 返回后，过滤含 `save_end_of_turn` 字段的效果：roll d20 + save_mod（含 proficiency if proficient）≥ save_dc 则移除
+- 移除数量叠加到 `expired_count`
+
+### 测试
+
+新增 15 个测试：
+- `tests/test_spell_effects.py`（新建，10 个）：merge 函数各字段传播、实例优先、None 无操作、空列表不设 key
+- `tests/test_combat_handler.py::TestEffectPipelineIntegration`（追加 3 个）：玩家攻击含效果加值、怪物 AC 含效果修正、怪物攻击含优势
+- `tests/test_status_effect_handler.py::TestSaveEndOfTurn`（追加 2 个）：豁免成功移除效果、豁免失败保留效果
+
+**测试基线**：1229 passed（原 1214 + 15 新增），6 个预存失败不变
+
+## D-P3c：怪物 AI 深化 + 小型管线闭合（2026-03-05）
+
+**范围**：P3-2（怪物 AI）+ P3-4（熟练度函数实装）+ P3-7（Lore scope 过滤 + WorldRule 注入）
+
+### P3-2：怪物 AI 深化（combat.py）
+
+**Phase 1 — flee_chance 概率化**
+- `_decide_monster_action()` 新增 `flee_chance: float = 0.5` 参数
+- 逻辑重构：`flee_threshold <= 0.0 or hp_ratio > flee_threshold → attack`；aggressive 且 hp≥0.1 → attack；否则 `random.random() < flee_chance` 决定 flee/attack
+- `_resolve_monster_responses()` 提取 `flee_chance = getattr(template, "flee_chance", 0.5)` 并传入
+
+**Phase 2 — 多攻击智能选择**
+- 新增 `_estimate_damage(dice_str)` 静态方法：NdM → N*(M+1)/2 期望值
+- 新增 `_select_attack(attacks, ai_personality)` 静态方法：aggressive=最高伤害，defensive=最高命中，cowardly=最远射程
+- 替换 `attacks[0]` 为 `_select_attack(attacks, ai_personality)`；提取 `damage_type`
+
+**Phase 3 — 玩家伤害抗性**
+- 新增 `_apply_player_damage_resistance(damage, damage_type, state)` 静态方法：检查 player.active_effects tags，`{type}_immunity → 0`，`{type}_resistance → damage//2`，`{type}_vulnerability → damage*2`
+- 怪物命中后调用；responses 追加 `damage_type` 字段
+
+**Phase 4 — prevents_action 跳过怪物行动**
+- 获取怪物 participant `active_effects`，若含 `prevents_action=True` 效果 → append stunned response + continue
+
+### P3-4：熟练度函数实装（proficiency.py）
+
+3 个 always-True 占位 → 真实实现：
+- `check_weapon_proficiency`：`weapon_data.weapon_proficiency` 须在 `class_template.weapon_proficiency` 中；空值 → True
+- `check_armor_proficiency`：`armor_data.armor_type` 须在 `class_template.armor_proficiency` 中；空值 → True
+- `check_save_proficiency`：`save_type` 须在 `class_template.save_proficiency` 中；空值 → True
+
+### P3-7：Lore scope 过滤 + WorldRule 注入
+
+**P3-7a — context_builder.py `_build_l0()`**
+- `lore = self._world.lore.list_all()` → 过滤 `e.scope in ("global", "")` 或 `e.scope == "area" and e.scope_id == current_area`
+
+**P3-7b — ai_osiris.py `_build_rules_context()`**
+- 新增 `world_rules` 列表：调用 `get_rules_for_context(area_id=current_area)`，每条 `{id, title, description, priority}`
+- 加入 return dict
+
+### 测试
+
+新增 22 个测试：
+- `tests/test_combat_handler.py::TestMonsterAI`（新增 11 个）：flee_chance=0/1/threshold=0、estimate_damage、aggressive/cowardly攻击选择、resistance/immunity/vulnerability/无匹配、prevents_action stunned
+- `tests/test_proficiency.py`（改写为 3 个测试类，10 个用例）：weapon/armor/save 各有 match/no_match/empty
+- `tests/test_context_builder.py::TestLoreScopeFilter`（新增 3 个）：global 包含、area 匹配包含、area 不匹配排除
+
+**测试基线**：1251 passed（原 1229 + 22 新增），6 个预存失败不变
+
+## D-P3d：NarrativePlanner 精确引导（P3-6 Phase 1-3）（2026-03-05）
+
+**范围**：P3-6 Phase 1-3（Phase 4 failure_fallback 推后）
+
+### Phase 1a — `_build_planner_context()` 注入 milestone detail
+
+**narrative_planner.py**
+- 新增 `_build_target_milestone_detail(context)` 私有方法（15 行）：查询 `context.world.quests.get_milestone(current_target_milestone)`，返回 `{key_elements, involved_npcs, involved_locations, narrative_context, failure_fallback}`
+- `_build_planner_context()` 返回 dict 末尾追加 `"target_milestone_detail": self._build_target_milestone_detail(context)`
+
+### Phase 1b — `_format_planner_context()` 追加里程碑详情
+
+**narrators.py**
+- "故事蓝图" 段落末尾插入 4 行：关键要素 / 相关NPC / 相关地点 / 叙事背景（有 target_detail 时才显示）
+
+### Phase 2+3 — planner.py 使用 milestone detail
+
+**planner.py**
+- `_normalize_context()` 追加 `"target_milestone_detail": dict(context.get("target_milestone_detail") or {})`
+- `_level_response()` 提取 `target_detail` 并传给 L2/L3
+- `_l2_recommend()` 新增 `target_detail` 参数（默认 None）：`involved_npcs[0]` 优先，否则 `"guild_clerk"` fallback
+- `_l3_urgent()` 新增 `target_detail` 参数（默认 None）：NPC 同上；create_quest summary 优先用 `narrative_context`，其次用 `key_elements` 拼接；metadata 追加 `key_elements` + `involved_locations`
+
+**向后兼容**：默认参数保证现有测试无需修改，`guild_clerk` fallback 保持
+
+### 测试
+
+新增 5 个测试（`tests/test_narrative_planner_hook.py::TestP36MilestoneDetail`）：
+- `test_build_planner_context_includes_milestone_detail`：context 有 key_elements/involved_npcs
+- `test_build_planner_context_no_detail_without_target_milestone`：无目标 → `{}`
+- `test_l2_uses_involved_npc_from_milestone`：L2 strategy_notes 含 "sheriff_dane"
+- `test_l2_falls_back_to_guild_clerk_without_involved_npcs`：无 involved_npcs → guild_clerk
+- `test_l3_create_quest_metadata_includes_key_elements`：动态任务含 key_elements + narrative_context summary
+
+---
+
+### [D-P3e] P3-8 环境交互深化（2026-03-05）
+
+**范围**：4 个 Phase，8 个文件改动。
+
+#### Phase 0 — AreaSlice.mark_trap_detected()
+
+**`app/game_core/state/slices/area.py`**
+- 新增 `mark_trap_detected(area_id, interactable_id)` 方法，紧跟 `mark_interactable_used()` 之后
+- `is_trap_detected()` 已有（读取 `container_states[id]["trap_detected"]`），mark 方法对应写入
+- 同文件 `apply_state_change()` 新增 `discovered_items.{id}` 分支，调用 `mark_discovery()`
+
+#### Phase 1 — available_hours 时间验证
+
+**`app/game_core/rules/handlers/navigation.py`**
+- 模块级增加 `_PERIOD_HOUR_MID = {"dawn": 7, "day": 13, "dusk": 19, "night": 1}`
+- 模块级增加 `_is_location_open(available_hours, period)` 辅助函数，支持跨午夜区间
+- `_validate_enter_sub_location()` 内替换旧 TODO 注释 → 真实时间检查（period 来自 `state.time.period`）
+- 返回 `ValidationResult(ok=False, reason="location_closed")` 当子地点在当前时段关闭
+
+#### Phase 2 — PassivePerceptionHook（新建）
+
+**`app/game_core/orchestration/hooks/passive_perception.py`**（新建）
+- `PassivePerceptionHook`，`HOOK_PRIORITY = 45`，`HOOK_NAME = "passive_perception"`
+- `should_skip(change_log)`：仅当 `player.current_area` 或 `player.current_location` 发生变更时触发
+- `execute(context)`：
+  1. 计算 `passive = 10 + get_modifier("wis")`
+  2. 若 `current_location is None`：扫描区域 discoveries（passive ≥ dc → mark_discovery + SSE `discovery_found`）
+  3. 若 `current_location` 有值：扫描子地点 interactables（`visibility_dc` → `hidden_object_revealed`；trap `detect_dc` → `trap_detected`）
+
+**`app/game_core/orchestration/hooks/__init__.py`**：新增导出
+**`app/game_core/orchestration/defaults.py`**：`EncounterHook,` 之后插入 `PassivePerceptionHook,  # P45`；Hook 状态表同步更新（P45 行）
+
+#### Phase 3 — DiscoveryHandler 真实实现
+
+**`app/game_core/rules/handlers/discovery.py`**
+- `passive_scan`：保留 `deferred_to_hook` 占位（PassivePerceptionHook 处理）
+- `discover`：真实实现
+  - 校验：area_id、discovery_id 必填，template 必须存在，未已发现
+  - `random.randint(1, 20) + get_skill_bonus(template.check_type)`
+  - 成功：`StateChange("areas", "set", f"{area_id}.discovered_items.{discovery_id}", True)`
+  - 失败：`handler_success_no_delta(..., metadata={"passed": False, ...})`
+
+#### Phase 4 — InteractableHandler 真实实现
+
+**`app/game_core/rules/handlers/interactable.py`**
+- `interact_object_v2`：真实实现
+  - 必须在子地点（`current_location` 非 None）
+  - 无 checks → 直接成功（inspect 型）
+  - 有 checks → `check_path.skill` + `check_path.dc` roll，骰点 = `randint(1,20) + get_skill_bonus(skill)`
+  - one_time 且成功：`StateChange("areas", "set", f"interactable_states.{id}", {"area_id": area_id, "used": True})`
+
+#### 旧骨架测试清理
+
+`tests/test_discovery_handler.py` / `tests/test_interactable_handler.py`：删除基于 None 参数的 noop 测试，保留 `test_command_types` 验证
+
+#### 测试
+
+新增 `tests/test_environment_interaction.py`（28 个测试）：
+- `TestIsLocationOpen`（4）：时间验证辅助函数（跨午夜、各时段）
+- `TestNavigationHandlerAvailableHours`（3）：验证 NavigationHandler 时间拒绝
+- `TestPassivePerceptionHook`（6）：自动感知、miss、hidden interactable 揭露、trap 检测、跳过已发现
+- `TestDiscoveryHandler`（7）：主动发现成功/失败/已发现/area 未知等
+- `TestInteractableHandler`（6）：不在子地点、未知 interactable、无 checks 直接成功、one_time 重复阻断
+- `TestMarkTrapDetected`（2）：`mark_trap_detected` 写入与读取
+
+**基线**：1256 → 1279 passed（+28 新增，-4 旧 noop 移除，-1 flaky pre-existing from D-P3c）
+
+**测试基线**：1256 passed（原 1251 + 5 新增），6 个预存失败不变
+
+---
+
+### [D-P3f] P3 收尾：遭遇数据补全 + failure_fallback 链路（2026-03-05）
+
+**范围**：P3-5（数据）+ P3-6 Phase 4（failure_fallback 消费）
+
+#### P3-5 遭遇数据补全
+
+**`data/goblin_slayer/v2/maps.json`**
+- `frontier_town.encounter_table`：填入 2 条（goblin×3 + hobgoblin+goblin，weight 0.7/0.3）
+- `cow_girl_farm.encounter_table`：填入 2 条（goblin×2 + goblin+goblin_shaman，weight 0.6/0.4）
+- 数据来源：`ch2_1_entries.jsonl` 叙事推导（小镇周边边境袭扰 / 偏远牧场易遭袭击）
+- 所有 monster_id 均在 monsters.json 中存在（goblin/hobgoblin/goblin_shaman）
+
+#### P3-6 Phase 4 failure_fallback 链路
+
+**`app/game_core/orchestration/hooks/narrative_planner.py`**
+- `execute()` 中 sse_events 填充后、prune_consumed_and_expired 前，新增 FAILED 检测块
+- 遍历 change_log：`change.slice=="quests"` + `path.startswith("milestone_states.")` + `value.get("state")=="FAILED"`
+- 提取 `milestone_id`，读取 `world.quests.get_milestone(milestone_id).failure_fallback`
+- emit SSEEvent `"milestone_failed"` with `{milestone_id, failure_fallback}`
+- **无降级逻辑**：不创建替代任务，不调整 strategy_notes
+
+**`data/goblin_slayer/v2/quests.json`**
+- `ms_call_from_water_capital` 里程碑新增 `failure_fallback` 字段（示例数据）
+
+#### 测试
+
+新增 `tests/test_p3f_completion.py`（8 个测试）：
+- `TestEncounterTableData`（4）：frontier_town/cow_girl_farm 条目数、schema 有效性、monster_id 合法性
+- `TestMilestoneFailedSSE`（4）：FAILED 触发 SSE、failure_fallback 文本、None→空串、COMPLETED 不触发
+
+**基线**：1279 → 1291 passed（+8 新增，其余增量来自数据补全使原有测试解除阻断）

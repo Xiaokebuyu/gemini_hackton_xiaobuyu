@@ -94,12 +94,14 @@ class GameRuntime:
         self,
         save_store: SaveStore | None = None,
         agent_orchestration: Any = None,
+        instance_manager: Any = None,
         gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
         osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
         narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
     ) -> None:
         self._save_store = save_store or SaveStore(self._default_persistence_port())
         self._agent_orchestration = agent_orchestration
+        self._instance_manager = instance_manager
         self._gm_narrator_factory = gm_narrator_factory
         self._osiris_evaluator_factory = osiris_evaluator_factory
         self._narrative_planner_factory = narrative_planner_factory
@@ -187,7 +189,12 @@ class GameRuntime:
             gm_narrator_factory=self._gm_narrator_factory,
             osiris_evaluator_factory=self._osiris_evaluator_factory,
             narrative_planner_factory=self._narrative_planner_factory,
+            instance_manager=self._instance_manager,
         )
+        if self._agent_orchestration is not None:
+            runtime.tick_coordinator.set_agent_round_runner(
+                self._agent_orchestration.run_post_action_round
+            )
         resolved_session_id = session_id or self._new_session_id()
         await self._save_store.save_runtime(resolved_session_id, runtime)
         return ManagedSession(
@@ -318,9 +325,14 @@ class GameRuntime:
             gm_narrator_factory=self._gm_narrator_factory,
             osiris_evaluator_factory=self._osiris_evaluator_factory,
             narrative_planner_factory=self._narrative_planner_factory,
+            instance_manager=self._instance_manager,
         )
         if runtime is None:
             return None
+        if self._agent_orchestration is not None:
+            runtime.tick_coordinator.set_agent_round_runner(
+                self._agent_orchestration.run_post_action_round
+            )
         return ManagedSession(
             world_id=world_id,
             session_id=session_id,

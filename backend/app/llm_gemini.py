@@ -94,23 +94,26 @@ class GeminiLlmAdapter:
         role = msg["role"]
         parts: list[types.Part] = []
         for p in msg.get("parts", []):
+            sig = p.get("thought_signature")
             if "text" in p:
                 parts.append(types.Part(text=p["text"]))
             elif "function_call" in p:
                 fc = p["function_call"]
-                parts.append(types.Part(function_call=types.FunctionCall(
+                part = types.Part(function_call=types.FunctionCall(
                     name=fc["name"],
                     args=fc.get("args", {}),
-                )))
+                ))
+                if sig:
+                    part.thought_signature = sig
+                parts.append(part)
             elif "function_response" in p:
                 fr = p["function_response"]
                 parts.append(types.Part.from_function_response(
                     name=fr["name"],
                     response=fr.get("response", {}),
                 ))
-            elif "thought_signature" in p:
-                # Preserve Gemini 3 thought signatures for multi-turn context integrity
-                parts.append(types.Part(thought_signature=p["thought_signature"]))
+            elif sig:
+                parts.append(types.Part(thought_signature=sig))
         return types.Content(role=role, parts=parts)
 
     @staticmethod

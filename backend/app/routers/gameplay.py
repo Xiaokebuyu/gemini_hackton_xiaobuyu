@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
 from app.api_models import (
+    CompanionRequest,
     InteractRequest,
     NavigateRequest,
     PrivateChatRequest,
@@ -21,6 +22,7 @@ from app.api_models import (
 from app.deps import (
     _api_error,
     _execute_structured_action,
+    _finalize_dialogue_turn,
     _load_session_or_404,
     _session_phase,
     get_agent_orchestration,
@@ -427,22 +429,18 @@ async def action_stream(
     request: StructuredActionRequest,
 ) -> StreamingResponse:
     """Execute one structured action and stream the result."""
+    session = await _load_session_or_404(world_id, session_id)
+    action_type = request.action_type.strip()
+    if not action_type:
+        raise _api_error(400, "invalid_action_request", "action_type must be non-empty")
+    if not isinstance(request.params, dict):
+        raise _api_error(400, "invalid_action_request", "params must be an object")
+    if not session.runtime.action_dispatcher.has_action(action_type):
+        raise _api_error(400, "unknown_action", f"unknown action: {action_type}")
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
         result = await _execute_structured_action(session, request, event_sink=queue.put)
         await queue.put(_build_action_result_event(result, request.action_type))
-        agent_svc = get_agent_orchestration()
-        if agent_svc is not None and result.success:
-            async def _text_chunk_sink_action(chunk: str) -> None:
-                await queue.put(SSEEvent("text_chunk", {"text": chunk}))
-            reaction_events = await agent_svc.generate_post_action_reactions(
-                session=session, result=result,
-                text_chunk_sink=_text_chunk_sink_action,
-            )
-            for evt in reaction_events:
-                await queue.put(evt)
-            if reaction_events:
-                await get_game_runtime().save_session(session)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -495,18 +493,6 @@ async def input_stream(
             event_sink=queue.put,
         )
         await queue.put(_build_action_result_event(result, action_type))
-        agent_svc = get_agent_orchestration()
-        if agent_svc is not None and result.success:
-            async def _text_chunk_sink_input(chunk: str) -> None:
-                await queue.put(SSEEvent("text_chunk", {"text": chunk}))
-            reaction_events = await agent_svc.generate_post_action_reactions(
-                session=session, result=result,
-                text_chunk_sink=_text_chunk_sink_input,
-            )
-            for evt in reaction_events:
-                await queue.put(evt)
-            if reaction_events:
-                await get_game_runtime().save_session(session)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -565,6 +551,8 @@ async def interact_stream(
             {"channel": "interaction", "payload": request.model_dump()},
         )
         interaction_result = await get_interaction_service().execute(session, normalized)
+        stream_success = interaction_result.success
+        stream_reason = interaction_result.reason
         for event in interaction_result.events:
             event_type = getattr(event, "event_type", None)
             payload = getattr(event, "payload", None)
@@ -593,13 +581,24 @@ async def interact_stream(
             )
             for evt in npc_events:
                 await queue.put(evt)
-            if npc_events:
-                await get_game_runtime().save_session(session)
+            dialogue_succeeded = not any(
+                evt.event_type in ("npc_error", "npc_response_error")
+                for evt in npc_events
+            )
+            stream_success = stream_success and dialogue_succeeded
+            if not dialogue_succeeded:
+                stream_reason = "dialogue_failed"
+            if dialogue_succeeded and npc_events:
+                await _finalize_dialogue_turn(
+                    session,
+                    time_cost=1 / 6,
+                    event_sink=queue.put,
+                )
 
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(SSEEvent("stream_end", {
-            "reason": interaction_result.reason,
-            "success": interaction_result.success,
+            "reason": stream_reason,
+            "success": stream_success,
         }))
 
     return await _stream_with_lock(world_id, session_id, _execute)
@@ -642,10 +641,83 @@ async def private_chat_stream(
             e.event_type in ("npc_error", "stream_error") for e in events
         )
         if chat_succeeded:
-            await get_game_runtime().save_session(session)
+            await _finalize_dialogue_turn(
+                session,
+                time_cost=1 / 6,
+                event_sink=queue.put,
+            )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         reason = "completed" if chat_succeeded else "failed"
         await queue.put(SSEEvent("stream_end", {"reason": reason, "success": chat_succeeded}))
+
+    return await _stream_with_lock(world_id, session_id, _execute)
+
+
+# ---------------------------------------------------------------------------
+# Companion recruit / dismiss
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/game/{world_id}/sessions/{session_id}/companion/recruit")
+async def companion_recruit(
+    world_id: str,
+    session_id: str,
+    request: CompanionRequest,
+) -> StreamingResponse:
+    """Recruit an NPC as a companion and stream the result."""
+
+    async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        from app.game_core.orchestration.companion_manager import CompanionManager
+
+        state = session.runtime.state
+        mgr = CompanionManager(session.runtime.world, state)
+        result = mgr.recruit(request.npc_id)
+
+        if result.success:
+            members = list((state.party.members or {}).keys()) if state.has_slice("party") else []
+            await queue.put(SSEEvent("companion_recruited", {
+                "npc_id": request.npc_id,
+                "reason": result.reason,
+                "party_members": members,
+            }))
+            await get_game_runtime().save_session(session)
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+        await queue.put(_build_stream_end_event(
+            result.reason if not result.success else "completed",
+            result.success,
+        ))
+
+    return await _stream_with_lock(world_id, session_id, _execute)
+
+
+@router.post("/api/game/{world_id}/sessions/{session_id}/companion/dismiss")
+async def companion_dismiss(
+    world_id: str,
+    session_id: str,
+    request: CompanionRequest,
+) -> StreamingResponse:
+    """Dismiss a companion and stream the result."""
+
+    async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        from app.game_core.orchestration.companion_manager import CompanionManager
+
+        state = session.runtime.state
+        mgr = CompanionManager(session.runtime.world, state)
+        result = mgr.dismiss(request.npc_id)
+
+        if result.success:
+            members = list((state.party.members or {}).keys()) if state.has_slice("party") else []
+            await queue.put(SSEEvent("companion_dismissed", {
+                "npc_id": request.npc_id,
+                "reason": result.reason,
+                "party_members": members,
+            }))
+            await get_game_runtime().save_session(session)
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+        await queue.put(_build_stream_end_event(
+            result.reason if not result.success else "completed",
+            result.success,
+        ))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -17,7 +18,42 @@ from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.orchestration.shared_context import SharedContext
 from app.game_core.orchestration.hooks.base import SettlementHook
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.models import ExecuteResult
 from app.game_core.state import StateChange, StateContainer, StateDelta
+
+AgentRoundRunner = Callable[
+    [SharedContext, PipelineResult, Callable[[StateDelta | None], None], Callable[[SSEEvent], Awaitable[None]] | None],
+    Awaitable[list[SSEEvent]],
+]
+
+
+@dataclass(slots=True)
+class CallableAgentRoundHook:
+    """Adapter that lets app-layer callables plug into the post-action hook chain."""
+
+    name: str
+    runner: AgentRoundRunner
+    priority: int = 50
+
+    async def execute(
+        self,
+        shared: SharedContext,
+        result: PipelineResult,
+        apply_delta: Callable[[StateDelta | None], None],
+        event_sink: Callable[[SSEEvent], Awaitable[None]] | None = None,
+    ) -> list[SSEEvent]:
+        return await self.runner(shared, result, apply_delta, event_sink)
+
+
+_SEMANTIC_TAGS: dict[str, list[str]] = {
+    "rest_long":     ["REST", "LONG_REST"],
+    "rest_short":    ["REST", "SHORT_REST"],
+    "start_combat":  ["COMBAT"],
+    "end_combat":    ["COMBAT_END"],
+    "navigate":      ["NAVIGATION"],
+    "skill_check":   ["SKILL_CHECK"],
+    "advance_quest": ["QUEST_PROGRESS"],
+}
 
 
 class TickCoordinator:
@@ -39,10 +75,29 @@ class TickCoordinator:
         self.change_log: list[StateChange] = []
         self.action_log: list[dict[str, Any]] = []
         self.settlement_hooks: list[SettlementHook] = []
+        self.agent_round_hooks: list[CallableAgentRoundHook] = []
 
     def register_settlement_hook(self, hook: SettlementHook) -> None:
         self.settlement_hooks.append(hook)
         self.settlement_hooks.sort(key=lambda item: item.priority)
+
+    def register_agent_round_hook(self, hook: CallableAgentRoundHook) -> None:
+        self.agent_round_hooks.append(hook)
+        self.agent_round_hooks.sort(key=lambda item: item.priority)
+
+    def clear_agent_round_hooks(self) -> None:
+        self.agent_round_hooks = []
+
+    def set_agent_round_runner(self, runner: AgentRoundRunner | None) -> None:
+        """Backward-compatible shorthand for installing one post-action hook."""
+        self.clear_agent_round_hooks()
+        if runner is not None:
+            self.register_agent_round_hook(
+                CallableAgentRoundHook(
+                    name="post_action_agent_round",
+                    runner=runner,
+                )
+            )
 
     async def process(
         self,
@@ -62,6 +117,31 @@ class TickCoordinator:
         if result.success and result.delta is not None:
             self._apply_delta(result.delta)
         self._record_action(result)
+        self._emit_action_tags(result)    # Phase 0
+        if result.success and self.agent_round_hooks:
+            for hook in self.agent_round_hooks:
+                try:
+                    agent_events = await hook.execute(
+                        shared,
+                        result,
+                        self._apply_delta,
+                        event_sink,
+                    )
+                except Exception as exc:
+                    logger.exception("agent round hook failed: %s", hook.name)
+                    error_event = SSEEvent(
+                        event_type="agent_hook_error",
+                        payload={
+                            "hook": hook.name,
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
+                    result.sse_events.append(error_event)
+                    if event_sink is not None:
+                        await event_sink(error_event)
+                    continue
+                result.sse_events.extend(agent_events)
         self.accumulate(result.time_cost)
         while self.check_settlement():
             before_accumulated = self.state.time.accumulated
@@ -144,6 +224,41 @@ class TickCoordinator:
                     await event_sink(event)
         return collected_events
 
+    def apply_external_result(self, result: ExecuteResult) -> None:
+        """Record a rules-engine result produced outside PipelineOrchestrator.
+
+        Dialogue/private-chat agent tools execute intra-turn micro-commands
+        directly through the rules engine. Their deltas still need to enter
+        TickCoordinator's change_log so settlement hooks can observe them.
+        """
+        if result.success and result.delta is not None:
+            self._apply_delta(result.delta)
+
+    async def finalize_external_turn(
+        self,
+        time_cost: float,
+        event_sink: Callable[[SSEEvent], Awaitable[None]] | None = None,
+    ) -> list[SSEEvent]:
+        """Finalize one non-pipeline turn by consuming time and settlement.
+
+        Used by the dedicated interaction/private-chat routes, which have
+        their own agentic execution path but still belong to the same tick
+        lifecycle as normal player actions.
+        """
+        collected_events: list[SSEEvent] = []
+        self.accumulate(time_cost)
+        while self.check_settlement():
+            before_accumulated = self.state.time.accumulated
+            settlement_events = await self._tick_settlement(event_sink)
+            collected_events.extend(settlement_events)
+            if (
+                self.state.has_slice("time")
+                and self.state.time.accumulated >= 1.0
+                and self.state.time.accumulated >= before_accumulated
+            ):
+                raise RuntimeError("settlement made no progress")
+        return collected_events
+
     def export_dirty(self) -> dict[str, dict[str, Any]]:
         """Return serialized dirty-slice data for the outer persistence boundary.
 
@@ -151,6 +266,24 @@ class TickCoordinator:
         responsible for actual persistence — see D-O22 in orchestration.md.
         """
         return self.state.export_dirty()
+
+    def _emit_action_tags(self, result: PipelineResult) -> None:
+        """Write semantic ENGINE tags to SceneBus for downstream hook consumption.
+
+        Phase 0 prerequisite for Phase 3 (SharedExperience) and Phase 4 (Teammate).
+        """
+        tags = _SEMANTIC_TAGS.get(result.action_type, [])
+        if not tags:
+            return
+        content = f"[{result.action_type}]"
+        if result.narrative_hints:
+            content = f"{content} {result.narrative_hints[0]}"
+        self.scene_bus.add_entry({
+            "source": "ENGINE",
+            "content": content,
+            "visibility": "system",
+            "tags": tags,
+        })
 
     def _record_action(self, result: PipelineResult) -> None:
         if result.action_type == "noop":

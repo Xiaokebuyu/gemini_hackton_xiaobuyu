@@ -37,6 +37,7 @@ NODE_MONSTER = "monster"
 NODE_SKILL = "skill"
 NODE_MILESTONE = "milestone"
 NODE_LORE_CONCEPT = "lore_concept"
+NODE_MEMORY = "memory_note"
 
 # ------------------------------------------------------------------
 # Edge relation types
@@ -146,6 +147,8 @@ class WorldKnowledgeGraph:
 
     def __init__(self, llm: LlmPort | None = None) -> None:
         self._graph: nx.DiGraph = nx.DiGraph()
+        self._actor_graphs: dict[str, nx.DiGraph] = {}
+        self._actor_memory_counts: dict[str, int] = {}
         self._seeded: set[str] = set()
         self._lore_graphized: set[str] = set()
         self._llm = llm
@@ -179,21 +182,25 @@ class WorldKnowledgeGraph:
         if not keywords:
             return []
 
-        seeds = self._find_seed_nodes(keywords)
+        query_graph = self._build_query_graph(actor_id)
+        seeds = self._find_seed_nodes_in_graph(query_graph, keywords)
         if not seeds:
             return []
 
-        activation = self._spread_activation(seeds, max_depth, decay)
+        activation = self._spread_activation_in_graph(query_graph, seeds, max_depth, decay)
 
-        # Exclude seed nodes themselves — return only *activated neighbours*
         seed_set = set(seeds)
         ranked = sorted(
-            ((nid, act) for nid, act in activation.items() if nid not in seed_set),
+            (
+                (nid, act)
+                for nid, act in activation.items()
+                if nid not in seed_set or self._is_memory_node(query_graph, nid)
+            ),
             key=lambda x: x[1],
             reverse=True,
         )[:top_k]
 
-        return [self._node_to_hit(nid, act) for nid, act in ranked]
+        return [self._node_to_hit_from_graph(query_graph, nid, act) for nid, act in ranked]
 
     # ------------------------------------------------------------------
     # Seeding
@@ -503,22 +510,31 @@ class WorldKnowledgeGraph:
     # ------------------------------------------------------------------
 
     def _find_seed_nodes(self, keywords: list[str]) -> list[str]:
+        return self._find_seed_nodes_in_graph(self._graph, keywords)
+
+    def _find_seed_nodes_in_graph(
+        self,
+        graph: nx.DiGraph,
+        keywords: list[str],
+    ) -> list[str]:
         """Return node IDs matching any keyword (case-insensitive).
 
-        Matches against: node_id, label, and tags.
+        Matches against: node_id, label, tags, and description.
         """
         lower_kws = [kw.lower() for kw in keywords if kw]
         if not lower_kws:
             return []
         seeds: list[str] = []
-        for node_id, data in self._graph.nodes(data=True):
+        for node_id, data in graph.nodes(data=True):
             label_lower = (data.get("label") or "").lower()
+            desc_lower = (data.get("description") or "").lower()
             tags_lower = [t.lower() for t in (data.get("tags") or [])]
             node_id_lower = node_id.lower()
             for kw in lower_kws:
                 if (
                     kw in node_id_lower
                     or kw in label_lower
+                    or kw in desc_lower
                     or any(kw in tag for tag in tags_lower)
                 ):
                     seeds.append(node_id)
@@ -531,13 +547,22 @@ class WorldKnowledgeGraph:
         max_depth: int,
         decay: float,
     ) -> dict[str, float]:
+        return self._spread_activation_in_graph(self._graph, seeds, max_depth, decay)
+
+    def _spread_activation_in_graph(
+        self,
+        graph: nx.DiGraph,
+        seeds: list[str],
+        max_depth: int,
+        decay: float,
+    ) -> dict[str, float]:
         """BFS spreading activation on the undirected view of the graph.
 
         Each seed starts with activation=1.0.  Activation spreads to
         neighbours multiplied by *decay* × edge_weight per hop.
         Only the highest activation value is kept per node.
         """
-        undirected = self._graph.to_undirected()
+        undirected = graph.to_undirected()
         activation: dict[str, float] = {s: 1.0 for s in seeds}
         # frontier: (node_id, current_activation, depth)
         frontier: list[tuple[str, float, int]] = [
@@ -562,8 +587,16 @@ class WorldKnowledgeGraph:
         return activation
 
     def _node_to_hit(self, node_id: str, activation: float) -> dict[str, Any]:
+        return self._node_to_hit_from_graph(self._graph, node_id, activation)
+
+    def _node_to_hit_from_graph(
+        self,
+        graph: nx.DiGraph,
+        node_id: str,
+        activation: float,
+    ) -> dict[str, Any]:
         """Convert a graph node to the L6 hit dict format."""
-        data = self._graph.nodes[node_id]
+        data = graph.nodes[node_id]
         return {
             "node_id": node_id,
             "node_type": data.get("node_type", "unknown"),
@@ -591,6 +624,16 @@ class WorldKnowledgeGraph:
 
     def has_edge(self, src: str, dst: str) -> bool:
         return self._graph.has_edge(src, dst)
+
+    def actor_edge_count(self, actor_id: str) -> int:
+        actor_graph = self._actor_graphs.get(actor_id)
+        return actor_graph.number_of_edges() if actor_graph is not None else 0
+
+    def has_actor_edge(self, actor_id: str, src: str, dst: str) -> bool:
+        actor_graph = self._actor_graphs.get(actor_id)
+        if actor_graph is None:
+            return False
+        return actor_graph.has_edge(src, dst)
 
     # ------------------------------------------------------------------
     # write_episode — Phase 3b: LLM triple extraction
@@ -629,7 +672,47 @@ class WorldKnowledgeGraph:
             return
 
         for triple in triples:
-            self._apply_triple(triple)
+            self._apply_actor_triple(actor_id, triple)
+
+    async def remember(
+        self,
+        actor_id: str,
+        knowledge: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one actor-private memory note."""
+        text = str(knowledge).strip()
+        if not text:
+            return {"status": "ignored"}
+
+        world = context.get("world")
+        if world is not None:
+            self.ensure_seeded(world)
+
+        actor_graph = self._ensure_actor_graph(actor_id)
+        next_index = self._actor_memory_counts.get(actor_id, 0) + 1
+        self._actor_memory_counts[actor_id] = next_index
+        memory_id = f"memory:{actor_id}:{next_index}"
+        actor_graph.add_node(
+            memory_id,
+            node_type=NODE_MEMORY,
+            label=text[:80],
+            tags=["memory", actor_id],
+            description=text,
+            metadata={
+                "actor_id": actor_id,
+                "memory_kind": "remember",
+            },
+        )
+        if actor_id in self._graph:
+            self._copy_base_node_to_actor_graph(actor_id, actor_id)
+            actor_graph.add_edge(
+                actor_id,
+                memory_id,
+                relation=EdgeType.KNOWS_ABOUT,
+                weight=1.0,
+            )
+        return {"status": "ok", "memory_id": memory_id}
 
     # ------------------------------------------------------------------
     # Phase 3b: LLM triple extraction helpers
@@ -673,6 +756,31 @@ class WorldKnowledgeGraph:
         if src != dst:
             self._graph.add_edge(src, dst, relation=relation, weight=weight)
 
+    def _apply_actor_triple(self, actor_id: str, triple: dict[str, Any]) -> None:
+        subject_name = str(triple.get("subject", "")).strip()
+        relation = str(triple.get("relation", EdgeType.RELATED_TO)).strip()
+        object_name = str(triple.get("object", "")).strip()
+        weight = float(triple.get("weight", 1.0))
+
+        if not subject_name or not object_name:
+            return
+
+        query_graph = self._build_query_graph(actor_id)
+        subject_ids = self._find_seed_nodes_in_graph(query_graph, [subject_name])
+        object_ids = self._find_seed_nodes_in_graph(query_graph, [object_name])
+        if not subject_ids or not object_ids:
+            return
+
+        src = subject_ids[0]
+        dst = object_ids[0]
+        if src == dst:
+            return
+
+        actor_graph = self._ensure_actor_graph(actor_id)
+        self._copy_base_node_to_actor_graph(actor_id, src)
+        self._copy_base_node_to_actor_graph(actor_id, dst)
+        actor_graph.add_edge(src, dst, relation=relation, weight=weight)
+
     def _collect_lore_texts(self, world: WorldInstance) -> list[str]:
         """Collect lore and character description texts for LLM enrichment."""
         texts: list[str] = []
@@ -688,6 +796,35 @@ class WorldKnowledgeGraph:
                 if desc:
                     texts.append(f"[Character: {char.name}]\n{desc}")
         return texts
+
+    def _build_query_graph(self, actor_id: str) -> nx.DiGraph:
+        actor_graph = self._actor_graphs.get(actor_id)
+        if actor_graph is None or actor_graph.number_of_nodes() == 0:
+            return self._graph
+        combined = self._graph.copy()
+        for node_id, data in actor_graph.nodes(data=True):
+            combined.add_node(node_id, **dict(data))
+        for src, dst, data in actor_graph.edges(data=True):
+            combined.add_edge(src, dst, **dict(data))
+        return combined
+
+    def _ensure_actor_graph(self, actor_id: str) -> nx.DiGraph:
+        actor_graph = self._actor_graphs.get(actor_id)
+        if actor_graph is None:
+            actor_graph = nx.DiGraph()
+            self._actor_graphs[actor_id] = actor_graph
+        return actor_graph
+
+    def _copy_base_node_to_actor_graph(self, actor_id: str, node_id: str) -> None:
+        actor_graph = self._ensure_actor_graph(actor_id)
+        if node_id in actor_graph:
+            return
+        if node_id in self._graph:
+            actor_graph.add_node(node_id, **dict(self._graph.nodes[node_id]))
+
+    @staticmethod
+    def _is_memory_node(graph: nx.DiGraph, node_id: str) -> bool:
+        return graph.nodes[node_id].get("node_type") == NODE_MEMORY
 
 
 # ------------------------------------------------------------------

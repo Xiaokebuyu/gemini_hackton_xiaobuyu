@@ -139,3 +139,26 @@ export interface QuestPanelData {
   dynamic_quests: Record<string, unknown>
   chapter_completion: Record<string, number>
 }
+
+export interface InventoryItem {
+  item_id: string
+  name: string
+  count: number
+  type?: string
+  base_price?: number
+  [k: string]: unknown
+}
+
+export interface InventoryPanelData {
+  gold: number
+  inventory: InventoryItem[]
+  equipment: Record<string, InventoryItem | null>
+}
+
+// ── 图片生成 ──────────────────────────────────────────────────────────────────
+
+export interface ImageResponse {
+  image_url: string | null
+  source: 'cached' | 'generated' | 'fallback'
+  error?: string | null
+}

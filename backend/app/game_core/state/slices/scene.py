@@ -69,11 +69,54 @@ class SceneSlice(StateSlice):
 
     def get_for_character(self, character_id: str) -> list[SceneEntry]:
         visible: list[SceneEntry] = []
+        audience_tokens = {character_id}
+        if ":" not in character_id:
+            audience_tokens.add(f"npc:{character_id}")
+            audience_tokens.add(f"teammate:{character_id}")
         for entry in self.entries:
             if entry.visibility == "system":
                 continue
             if entry.visibility == "private":
-                if entry.audience is None or character_id not in entry.audience:
+                if entry.audience is None:
+                    continue
+                normalized = {str(item) for item in entry.audience}
+                if not normalized.intersection(audience_tokens):
+                    continue
+            visible.append(self._copy_entry(entry))
+        return visible
+
+    def get_for_role(
+        self,
+        role: str,
+        character_id: str | None = None,
+    ) -> list[SceneEntry]:
+        """Return entries visible to one viewer role.
+
+        Visibility rules match the design spec:
+        - gm: public + private, but not system
+        - npc/teammate: public + private entries whose audience contains
+          ``npc:{id}`` / ``teammate:{id}``
+        """
+        if role == "gm":
+            return [
+                self._copy_entry(entry)
+                for entry in self.entries
+                if entry.visibility != "system"
+            ]
+        if role not in {"npc", "teammate"}:
+            raise ValueError(f"unsupported scene viewer role: {role}")
+        if not character_id:
+            raise ValueError(f"{role} scene view requires character_id")
+        audience_token = f"{role}:{character_id}"
+        visible: list[SceneEntry] = []
+        for entry in self.entries:
+            if entry.visibility == "system":
+                continue
+            if entry.visibility == "private":
+                if entry.audience is None:
+                    continue
+                normalized = {str(item) for item in entry.audience}
+                if audience_token not in normalized:
                     continue
             visible.append(self._copy_entry(entry))
         return visible

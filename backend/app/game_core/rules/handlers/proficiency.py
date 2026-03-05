@@ -24,24 +24,29 @@ def check_weapon_proficiency(
     class_template: "CharacterTemplate",
     weapon_data: "ItemTemplate",
 ) -> bool:
-    """检查武器熟练度。当前 always True（占位）。"""
-    # TODO: class_template.weapon_proficiency 包含 weapon_data.proficiency 才返回 True
-    return True
+    """检查武器熟练度。weapon_data.weapon_proficiency 须在 class_template.weapon_proficiency 中。"""
+    prof = getattr(weapon_data, "weapon_proficiency", "")
+    if not prof:
+        return True
+    return prof in getattr(class_template, "weapon_proficiency", [])
 
 
 def check_armor_proficiency(
     class_template: "CharacterTemplate",
     armor_data: "ItemTemplate",
 ) -> bool:
-    """检查护甲熟练度。当前 always True（占位）。"""
-    # TODO: class_template.armor_proficiency 包含 armor_data.armor_type 才返回 True
-    return True
+    """检查护甲熟练度。armor_data.armor_type 须在 class_template.armor_proficiency 中。"""
+    armor_type = getattr(armor_data, "armor_type", "")
+    if not armor_type:
+        return True
+    return armor_type in getattr(class_template, "armor_proficiency", [])
 
 
 def check_save_proficiency(
     class_template: "CharacterTemplate",
     save_type: str,
 ) -> bool:
-    """检查豁免熟练度。当前 always True（占位）。"""
-    # TODO: class_template.save_proficiency 包含 save_type 才返回 True
-    return True
+    """检查豁免熟练度。save_type 须在 class_template.save_proficiency 中。"""
+    if not save_type:
+        return True
+    return save_type in getattr(class_template, "save_proficiency", [])

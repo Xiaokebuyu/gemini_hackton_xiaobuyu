@@ -302,61 +302,16 @@ class ContextAssembler:
         character_id: str | None,
     ) -> dict[str, Any]:
         """L5 for role-filtered agent callers: filtered entries, no state delta log."""
-        scene_snapshot = shared.scene_bus.snapshot()
-        entries = cls._copy_entries(scene_snapshot.get("entries", []))
-        visible_entries = cls._visible_entries_for_role(
-            entries,
-            role,
-            character_id,
-        )
+        visible_entries = [
+            entry.snapshot()
+            for entry in shared.scene_bus.get_for_role(role, character_id)
+        ]
         return {
             "entries": visible_entries,
             "state_changes": [],
             "viewer_role": role,
             "viewer_id": character_id,
         }
-
-    @classmethod
-    def _visible_entries_for_role(
-        cls,
-        entries: list[dict[str, Any]],
-        role: str,
-        character_id: str | None,
-    ) -> list[dict[str, Any]]:
-        """Filter scene entries according to the role visibility rules."""
-        if role == "gm":
-            return [
-                dict(entry)
-                for entry in entries
-                if str(entry.get("visibility", "public")) != "system"
-            ]
-
-        audience_token = cls._audience_token(role, character_id)
-        visible_entries: list[dict[str, Any]] = []
-        for entry in entries:
-            visibility = str(entry.get("visibility", "public"))
-            if visibility == "system":
-                continue
-            if visibility == "private":
-                audience = entry.get("audience")
-                if not isinstance(audience, list):
-                    continue
-                normalized = {str(item) for item in audience}
-                if audience_token not in normalized:
-                    continue
-            visible_entries.append(dict(entry))
-        return visible_entries
-
-    @staticmethod
-    def _audience_token(role: str, character_id: str | None) -> str:
-        """Translate role + naked character id into the scene audience token."""
-        if not character_id:
-            raise ValueError(f"{role} context requires character_id")
-        if role == "npc":
-            return f"npc:{character_id}"
-        if role == "teammate":
-            return f"teammate:{character_id}"
-        raise ValueError(f"role does not use audience token: {role}")
 
     @staticmethod
     def _build_memory_recall_stub() -> dict[str, Any]:

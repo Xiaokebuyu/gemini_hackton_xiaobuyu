@@ -15,6 +15,11 @@ export interface SubLocation {
   name: string
   type: string
   available: boolean
+  hostile?: boolean
+  threat_level?: 'easy' | 'moderate' | 'hard' | 'deadly'
+  blocking?: boolean
+  temporary?: boolean
+  source?: string
 }
 
 export interface Interactable {
@@ -42,9 +47,17 @@ export interface LocationOverview {
   exits: Exit[]
 }
 
-export type GameMode = 'explore' | 'dialogue' | 'private_chat' | 'combat'
+export type GameMode = 'explore' | 'dialogue' | 'private_chat' | 'combat' | 'encounter'
 
-export type MessageType = 'gm' | 'npc' | 'emote' | 'teammate' | 'system' | 'player'
+export type MessageType =
+  | 'gm'
+  | 'gm_comment'
+  | 'npc'
+  | 'emote'
+  | 'teammate'
+  | 'system'
+  | 'player'
+  | 'stream'
 
 export interface DialogueEntry {
   id: string
@@ -61,4 +74,10 @@ export interface GameOption {
   icon?: string
   action: () => void
   disabled?: boolean
+}
+
+export interface PortraitSlot {
+  position: 'left' | 'center' | 'right'
+  characterId: string
+  isActive: boolean
 }

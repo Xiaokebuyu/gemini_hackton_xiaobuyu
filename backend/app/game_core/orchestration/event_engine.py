@@ -96,15 +96,20 @@ class BasicEventConditionEvaluator:
             return EventConditionDecision(metadata={"unsupported_condition_count": 0})
 
         transitions: list[EventTransition] = []
+        all_commands: list[Any] = []
         unsupported_condition_count = 0
         for event_id, event in state.events.list_active_events().items():
-            transition, unsupported_count = self._evaluate_event(state, event_id, event)
+            transition, commands, unsupported_count = self._evaluate_event(
+                state, event_id, event,
+            )
             unsupported_condition_count += unsupported_count
             if transition is not None:
                 transitions.append(transition)
+            all_commands.extend(commands)
 
         return EventConditionDecision(
             transitions=transitions,
+            commands=all_commands,
             metadata={"unsupported_condition_count": unsupported_condition_count},
         )
 
@@ -113,7 +118,14 @@ class BasicEventConditionEvaluator:
         state: StateContainer,
         event_id: str,
         event: Mapping[str, Any],
-    ) -> tuple[EventTransition | None, int]:
+    ) -> tuple[EventTransition | None, list[dict[str, Any]], int]:
+        """Evaluate a single event and return (transition, on_trigger_commands, unsupported_count).
+
+        When a dormant/locked event's conditions are met:
+        - If the event has ``on_trigger`` commands → transition to "resolved" (one-shot)
+          and return those commands for immediate execution.
+        - Otherwise → transition to "available" (standard state machine path).
+        """
         current_state = _canonical_state(event)
         conditions_met, unsupported_count = self._conditions_met(
             state,
@@ -121,6 +133,23 @@ class BasicEventConditionEvaluator:
         )
 
         if current_state in {"locked", "dormant"} and conditions_met:
+            raw_on_trigger = event.get("on_trigger")
+            if raw_on_trigger and isinstance(raw_on_trigger, list):
+                # One-shot: fire commands and mark resolved so the event doesn't re-trigger.
+                commands = [
+                    dict(c) for c in raw_on_trigger if isinstance(c, Mapping)
+                ]
+                return (
+                    EventTransition(
+                        event_id=event_id,
+                        from_state=current_state,
+                        to_state="resolved",
+                        reason="conditions_met_triggered",
+                    ),
+                    commands,
+                    unsupported_count,
+                )
+            # Standard: no on_trigger → transition to available
             return (
                 EventTransition(
                     event_id=event_id,
@@ -128,6 +157,7 @@ class BasicEventConditionEvaluator:
                     to_state="available",
                     reason="conditions_met",
                 ),
+                [],
                 unsupported_count,
             )
 
@@ -141,10 +171,11 @@ class BasicEventConditionEvaluator:
                         to_state="active",
                         reason="triggered_ready",
                     ),
+                    [],
                     unsupported_count,
                 )
 
-        return None, unsupported_count
+        return None, [], unsupported_count
 
     def _conditions_met(
         self,
@@ -206,6 +237,12 @@ class BasicEventConditionEvaluator:
             return self._check_time_elapsed(state, params), 0
         if condition_type == "custom":
             return self._check_custom(state, params), 0
+        if condition_type == "npc_talked":
+            return self._check_npc_talked(state, params), 0
+        if condition_type == "item_obtained":
+            return self._check_item_obtained(state, params), 0
+        if condition_type == "kill_count":
+            return self._check_kill_count(state, params), 0
         return False, 1
 
     @staticmethod
@@ -388,6 +425,60 @@ class BasicEventConditionEvaluator:
         """Extension point — always False in BasicEvaluator."""
         del state, params
         return False
+
+    @staticmethod
+    def _check_npc_talked(state: StateContainer, params: Mapping[str, Any]) -> bool:
+        """Check if the player has talked to a specific NPC.
+
+        Reads the ``talked_to_{npc_id}`` flag written by NpcInteractionCoordinator
+        and PrivateChatCoordinator at the start of each interaction.
+
+        params:
+            npc_id: str — NPC identifier
+        """
+        npc_id = _coerce_non_empty_string(params.get("npc_id"))
+        if npc_id is None or not state.has_slice("flags"):
+            return False
+        return bool(state.flags.get(f"talked_to_{npc_id}"))
+
+    @staticmethod
+    def _check_item_obtained(state: StateContainer, params: Mapping[str, Any]) -> bool:
+        """Check if the player currently holds a specific item.
+
+        Searches the player's inventory for an entry with matching item_id.
+
+        params:
+            item_id: str — item identifier to look for
+        """
+        item_id = _coerce_non_empty_string(params.get("item_id"))
+        if item_id is None or not state.has_slice("player"):
+            return False
+        inventory = state.player.snapshot().get("inventory", [])
+        return any(
+            isinstance(item, dict) and item.get("item_id") == item_id
+            for item in inventory
+        )
+
+    @staticmethod
+    def _check_kill_count(state: StateContainer, params: Mapping[str, Any]) -> bool:
+        """Check if kill count for a monster type meets the required threshold.
+
+        Reads ``kill_count_{monster_type}`` from FlagSlice, which is written
+        by the combat handler when a monster of that type is defeated.
+
+        params:
+            monster_type: str — monster type key (e.g. "goblin")
+            count: int       — required kill count (default 1)
+        """
+        monster_type = _coerce_non_empty_string(params.get("monster_type"))
+        required = _coerce_int(params.get("count", 1)) or 1
+        if monster_type is None or not state.has_slice("flags"):
+            return False
+        current = state.flags.get(f"kill_count_{monster_type}", 0)
+        try:
+            return int(current) >= required
+        except (TypeError, ValueError):
+            return False
 
 
 # ------------------------------------------------------------------

@@ -225,6 +225,27 @@ class TestWorldKnowledgeGraph:
         )
         assert len(result) <= 2
 
+    def test_query_spread_includes_actor_private_memory_hit(self) -> None:
+        g = _make_graph_with_fixture()
+        asyncio.run(
+            g.remember("npc_01", "The hidden cellar lies beneath the tavern.", {})
+        )
+
+        result = asyncio.run(g.query_spread("npc_01", ["hidden cellar"], context={}))
+
+        node_ids = {hit["node_id"] for hit in result}
+        assert any(node_id.startswith("memory:npc_01:") for node_id in node_ids)
+
+    def test_query_spread_does_not_leak_other_actor_memory(self) -> None:
+        g = _make_graph_with_fixture()
+        asyncio.run(
+            g.remember("npc_01", "The hidden cellar lies beneath the tavern.", {})
+        )
+
+        result = asyncio.run(g.query_spread("npc_02", ["hidden cellar"], context={}))
+
+        assert result == []
+
     def test_node_to_hit_format(self) -> None:
         g = _make_graph_with_fixture()
         hit = g._node_to_hit("merchant_tom", 0.75)

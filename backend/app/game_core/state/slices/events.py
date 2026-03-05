@@ -17,7 +17,7 @@ class EventSlice(StateSlice):
     """Event queues and event state machine storage."""
 
     _VALID_STATES: ClassVar[frozenset[str]] = frozenset(
-        {"dormant", "triggered", "active", "resolved", "expired", "cancelled"}
+        {"dormant", "available", "triggered", "active", "resolved", "expired", "cancelled"}
     )
 
     def __init__(self) -> None:

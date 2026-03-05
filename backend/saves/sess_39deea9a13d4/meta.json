@@ -1,0 +1,19 @@
+{
+  "character_name": "调试者",
+  "created_at": 1772738929.4739635,
+  "game_day": 1,
+  "game_slot": 8,
+  "last_played": 1772738929.4765773,
+  "phase": "active",
+  "saved_at": 1772738929.4765773,
+  "session_id": "sess_39deea9a13d4",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "调试者"
+  },
+  "world_id": "goblin_slayer"
+}

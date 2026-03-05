@@ -5,17 +5,21 @@ from __future__ import annotations
 from app.game_core.orchestration.action_dispatcher import ActionDispatcher
 from app.game_core.orchestration.hooks import (
     AIOsirisHook,
+    CampfireHook,
     DynamicSubAreaExpiryHook,
     EncounterHook,
     EventConditionHook,
     GmNarrationHook,
+    MilestoneUnlockHook,
     NarrativePlannerHook,
     NpcScheduleHook,
+    PassivePerceptionHook,
     PrivateChatTriggerHook,
     RelationshipHook,
     SceneBusResetHook,
     ScheduledEventHook,
     SettlementHook,
+    SharedExperienceHook,
     StatusEffectHook,
     TimeAdvanceHook,
 )
@@ -88,8 +92,12 @@ DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     AIOsirisHook,
     NarrativePlannerHook,
     EncounterHook,
+    PassivePerceptionHook,  # P45
     EventConditionHook,
+    MilestoneUnlockHook,
     NpcScheduleHook,
+    SharedExperienceHook,   # P62
+    CampfireHook,           # NEW (P63)
     RelationshipHook,
     PrivateChatTriggerHook,
     TimeAdvanceHook,

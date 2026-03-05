@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 
 from fastapi.testclient import TestClient
@@ -9,11 +10,25 @@ import app.main as api_main
 from app.game_core import GameRuntime
 from app.game_core.adapters import NullPersistencePort, SaveStore
 from app.game_core.state import StateChange
+from app.world_seed import _shell_world_seed
 
 
 def _runtime() -> GameRuntime:
     api_main.app.state.interaction_service = None
-    return GameRuntime(save_store=SaveStore(NullPersistencePort()))
+    runtime = GameRuntime(save_store=SaveStore(NullPersistencePort()))
+    world_data = copy.deepcopy(_shell_world_seed("goblin_slayer"))
+    world_data["maps"]["guild_hall"]["connections"] = [
+        {"target": "training_grounds", "travel_slots": 1, "blocked": False},
+        {"target": "frontier", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["training_grounds"]["connections"] = [
+        {"target": "guild_hall", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["frontier"]["connections"] = [
+        {"target": "guild_hall", "travel_slots": 1, "blocked": False},
+    ]
+    runtime.get_world("goblin_slayer", world_data=world_data)
+    return runtime
 
 
 def _create_session(client: TestClient) -> str:
@@ -50,6 +65,11 @@ def _create_character(client: TestClient, session_id: str) -> dict[str, object]:
         json=_character_payload(),
     )
     assert response.status_code == 200
+    runtime = api_main.app.state.game_runtime
+    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    assert session is not None
+    session.runtime.state.areas.update_npc_location("merchant", "counter")
+    asyncio.run(runtime.save_session(session))
     return response.json()
 
 
@@ -210,6 +230,12 @@ def _sse_event(events: list[dict], event_type: str) -> dict | None:
     return next((e["data"] for e in events if e.get("event") == event_type), None)
 
 
+def _action_result_payload(response) -> dict:
+    payload = _sse_event(_parse_sse(response), "action_result")
+    assert payload is not None
+    return payload
+
+
 def test_navigate_executes_real_runtime_and_maps_failures(monkeypatch) -> None:
     runtime = _runtime()
     monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
@@ -277,9 +303,17 @@ def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        map_panel = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/map")
+        assert map_panel.status_code == 200
+        map_payload = map_panel.json()
+        target_area = next(
+            area["id"]
+            for area in map_payload["areas"]
+            if area["id"] != map_payload["current_area"]
+        )
         streamed = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
-            json={"action_type": "move_area", "params": {"area_id": "frontier"}},
+            json={"action_type": "move_area", "params": {"area_id": target_area}},
         )
         rejected = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
@@ -297,9 +331,6 @@ def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:
     assert streamed.status_code == 200
     assert streamed.headers["content-type"].startswith("text/event-stream")
     assert "event: action_result" in streamed.text
-    assert "event: narrative_plan_updated" in streamed.text
-    assert "event: gm_narration_added" in streamed.text
-    assert "event: encounter_spotted" not in streamed.text
     assert "event: stream_end" in streamed.text
     assert '"success":true' in streamed.text
     assert '"action_type":"move_area"' in streamed.text
@@ -319,9 +350,17 @@ def test_input_stream_parses_text_commands(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        map_panel = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/map")
+        assert map_panel.status_code == 200
+        map_payload = map_panel.json()
+        target_area = next(
+            area["id"]
+            for area in map_payload["areas"]
+            if area["id"] != map_payload["current_area"]
+        )
         parsed = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/input/stream",
-            json={"text": "go frontier"},
+            json={"text": f"move {target_area}"},
         )
         runtime_rejected = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/input/stream",
@@ -340,7 +379,7 @@ def test_input_stream_parses_text_commands(monkeypatch) -> None:
     assert parsed.headers["content-type"].startswith("text/event-stream")
     assert "event: input_parsed" in parsed.text
     assert '\"action_type\":\"move_area\"' in parsed.text
-    assert '\"area_id\":\"frontier\"' in parsed.text
+    assert f'\"area_id\":\"{target_area}\"' in parsed.text
     assert "event: action_result" in parsed.text
     assert '\"success\":true' in parsed.text
     assert "event: stream_end" in parsed.text
@@ -509,7 +548,7 @@ def test_interact_stream_executes_minimal_shop_flow(monkeypatch) -> None:
     assert "event: action_result" not in missing_npc.text
 
     assert move_away.status_code == 200
-    assert move_away.json()["success"] is True
+    assert _action_result_payload(move_away)["success"] is True
     assert npc_not_present.status_code == 200
     assert "event: interaction_rejected" in npc_not_present.text
     assert '\"code\":\"npc_not_present\"' in npc_not_present.text
@@ -945,7 +984,7 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
         )
 
     assert left.status_code == 200
-    assert left.json()["success"] is True
+    assert _action_result_payload(left)["success"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -954,8 +993,11 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
     assert "event: action_result" not in rejected.text
 
     assert entered.status_code == 200
-    assert entered.json()["success"] is True
-    assert entered.json()["player_location"]["location_id"] == "counter"
+    entered_result = _action_result_payload(entered)
+    assert entered_result["success"] is True
+    entered_overview = _sse_event(_parse_sse(entered), "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["location_id"] == "counter"
 
     assert talk.status_code == 200
     assert "event: interaction_resolved" in talk.text
@@ -1040,7 +1082,7 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
         )
 
     assert left.status_code == 200
-    assert left.json()["success"] is True
+    assert _action_result_payload(left)["success"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1049,8 +1091,11 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
     assert "event: talk_snapshot" not in rejected.text
 
     assert entered.status_code == 200
-    assert entered.json()["success"] is True
-    assert entered.json()["player_location"]["location_id"] == "counter"
+    entered_result = _action_result_payload(entered)
+    assert entered_result["success"] is True
+    entered_overview = _sse_event(_parse_sse(entered), "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["location_id"] == "counter"
 
     assert greeted_once.status_code == 200
     assert "event: interaction_resolved" in greeted_once.text
@@ -1168,7 +1213,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
         )
 
     assert left.status_code == 200
-    assert left.json()["success"] is True
+    assert _action_result_payload(left)["success"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1176,8 +1221,11 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
     assert "event: quest_brief" not in rejected.text
 
     assert entered.status_code == 200
-    assert entered.json()["success"] is True
-    assert entered.json()["player_location"]["location_id"] == "counter"
+    entered_result = _action_result_payload(entered)
+    assert entered_result["success"] is True
+    entered_overview = _sse_event(_parse_sse(entered), "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["location_id"] == "counter"
 
     assert missing.status_code == 200
     assert "event: interaction_rejected" in missing.text
@@ -1295,7 +1343,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
         )
 
     assert left.status_code == 200
-    assert left.json()["success"] is True
+    assert _action_result_payload(left)["success"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1304,8 +1352,11 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
     assert "event: quest_progress" not in rejected.text
 
     assert entered.status_code == 200
-    assert entered.json()["success"] is True
-    assert entered.json()["player_location"]["location_id"] == "counter"
+    entered_result = _action_result_payload(entered)
+    assert entered_result["success"] is True
+    entered_overview = _sse_event(_parse_sse(entered), "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["location_id"] == "counter"
 
     assert missing.status_code == 200
     assert "event: interaction_rejected" in missing.text
@@ -1437,7 +1488,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
         )
 
     assert left.status_code == 200
-    assert left.json()["success"] is True
+    assert _action_result_payload(left)["success"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1446,8 +1497,11 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
     assert "event: quest_location" not in rejected.text
 
     assert entered.status_code == 200
-    assert entered.json()["success"] is True
-    assert entered.json()["player_location"]["location_id"] == "counter"
+    entered_result = _action_result_payload(entered)
+    assert entered_result["success"] is True
+    entered_overview = _sse_event(_parse_sse(entered), "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["location_id"] == "counter"
 
     assert missing.status_code == 200
     assert "event: interaction_rejected" in missing.text

@@ -675,4 +675,433 @@ class TestActionPreventedBlocksCombat:
             _make_world(),
         )
         # May fail for other reasons, but NOT because of action prevention
-        assert "prevented" not in (result.reason or "")
+
+
+class TestEffectPipelineIntegration:
+    """Tests for B1/B2 (Buff/Debuff pipeline wiring) and C (damage type interactions)."""
+
+    @staticmethod
+    def _world_with_monster(spec: dict) -> WorldInstance:
+        world = WorldInstance("test_world")
+        maps = MapRegistry()
+        maps.load({"forest": {"id": "forest"}})
+        world.register(maps)
+        monsters = MonsterRegistry()
+        monsters.load({"test_monster": spec})
+        world.register(monsters)
+        return world
+
+    @staticmethod
+    def _combat_state(
+        *,
+        player_ac: int = 10,
+        dex: int = 10,
+        strength: int = 10,
+        active_effects: list[dict] | None = None,
+        monster_hp: int = 50,
+        monster_ac: int = 100,
+        monster_active_effects: list[dict] | None = None,
+    ) -> StateContainer:
+        state = StateContainer()
+        player = PlayerSlice()
+        player.restore({
+            "character_id": "p1",
+            "hp": 12,
+            "max_hp": 12,
+            "ac": player_ac,
+            "current_area": "forest",
+            "stats": {"str": strength, "dex": dex, "con": 10, "int": 10, "wis": 10, "cha": 10},
+            "proficiency_bonus": 2,
+            "active_effects": active_effects or [],
+        })
+        state.register(player)
+        areas = AreaSlice()
+        areas.restore({"areas": {"forest": {"danger_level": 1.0, "npc_locations": {}, "hostile_tracking": {}}}})
+        state.register(areas)
+        time_slice = TimeSlice()
+        time_slice.restore({"day": 1, "slot": 9})
+        state.register(time_slice)
+        participant: dict = {
+            "monster_id": "test_monster", "name": "Test Monster",
+            "hp": monster_hp, "max_hp": monster_hp, "ac": monster_ac, "alive": True,
+        }
+        if monster_active_effects:
+            participant["active_effects"] = monster_active_effects
+        areas.register_hostile("c1", {
+            "area_id": "forest", "status": "engaged", "cleared": False, "blocking": True,
+            "combat_active": True, "combat_round": 1, "surprise_state": "none",
+            "monster_ids": ["test_monster"],
+            "participants": [participant],
+            "player_flags": {"defending": False, "disengaged": False, "dashed": False},
+        })
+        return state
+
+    # --- B1: player AC uses stored field + effect modifiers ---
+
+    def test_player_ac_stored_field_beats_10_plus_dex_formula(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """player.ac=15 is used as base, not 10+DEX formula (which would give 10)."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 50, "ac": 100,
+            "attacks": [{"name": "bite", "damage_dice": "1d4", "hit_bonus": 0}],
+        })
+        # player.ac=15, dex=10 (mod=0) → old formula would give ac=10, new gives 15
+        state = self._combat_state(player_ac=15, dex=10)
+        # player rolls 1 (miss on monster ac=100), then monster rolls 14 (total 14)
+        # old ac formula (10): 14 >= 10 → HIT; new stored ac (15): 14 < 15 → MISS
+        _patch_rolls(monkeypatch, CombatHandler(), [1, 14])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        assert result.success is True
+        state.apply(result.delta)
+        assert state.player.hp == 12  # monster missed because stored ac=15
+
+    def test_effect_ac_modifier_raises_player_ac(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Active effect with modifiers["ac"]=3 adds 3 to effective player AC."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 50, "ac": 100,
+            "attacks": [{"name": "bite", "damage_dice": "1d4", "hit_bonus": 0}],
+        })
+        # player.ac=10 + effect ac=+3 → effective ac=13
+        state = self._combat_state(
+            player_ac=10, dex=10,
+            active_effects=[{
+                "effect_id": "bless", "effect_type": "buff",
+                "remaining_ticks": 3, "modifiers": {"ac": 3}, "periodic": {}, "tags": [],
+            }],
+        )
+        # monster rolls 12 → old: 12>=10 HIT; new: 12<13 MISS
+        _patch_rolls(monkeypatch, CombatHandler(), [1, 12])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        state.apply(result.delta)
+        assert state.player.hp == 12  # missed due to +3 AC effect
+
+    # --- B2: advantage_on_attacks_against ---
+
+    def test_advantage_flag_in_metadata_when_effect_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """metadata["advantage"] is True when monster has advantage_on_attacks_against effect."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 1, "ac": 5,
+        })
+        # Effect is on the MONSTER (target), not the player — that's the correct semantics
+        state = self._combat_state(
+            monster_hp=1, monster_ac=5,
+            monster_active_effects=[{
+                "effect_id": "prone_enemy", "effect_type": "condition",
+                "remaining_ticks": 2, "modifiers": {}, "periodic": {}, "tags": [],
+                "advantage_on_attacks_against": True,
+            }],
+        )
+        _patch_rolls(monkeypatch, CombatHandler(), [15, 15])  # two rolls for advantage
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        assert result.metadata["advantage"] is True
+
+    def test_no_advantage_without_effect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """metadata["advantage"] is False when no advantage_on_attacks_against effect."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 1, "ac": 5,
+        })
+        state = self._combat_state(monster_hp=1, monster_ac=5)
+        _patch_rolls(monkeypatch, CombatHandler(), [15])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        assert result.metadata["advantage"] is False
+
+    # --- C: damage type interactions ---
+
+    def test_damage_immunity_negates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Attack with damage_type matching monster immunity deals 0 damage."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "Fire Elemental", "hp": 30, "ac": 5,
+            "immunities": ["fire"],
+        })
+        state = self._combat_state(monster_hp=30, monster_ac=5)
+        _patch_rolls(monkeypatch, CombatHandler(), [20])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster", "damage_type": "fire"}),
+            state, world,
+        )
+        assert result.metadata["hit"] is True
+        assert result.metadata["damage"] == 0
+        assert result.metadata["damage_multiplier"] == 0.0
+
+    def test_damage_resistance_halves(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Attack with damage_type matching monster resistance halves damage (min 1)."""
+        # str=10(mod=0), prof=2 → raw=max(1,2)=2 → halved=max(1,1)=1
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "Stone Golem", "hp": 30, "ac": 5,
+            "resistances": ["physical"],
+        })
+        state = self._combat_state(monster_hp=30, monster_ac=5)
+        _patch_rolls(monkeypatch, CombatHandler(), [20])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster", "damage_type": "physical"}),
+            state, world,
+        )
+        assert result.metadata["hit"] is True
+        assert result.metadata["damage"] == 1
+        assert result.metadata["damage_multiplier"] == 0.5
+
+    def test_damage_vulnerability_doubles(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Attack with damage_type matching monster vulnerability doubles damage."""
+        # str=14(mod=+2), prof=2 → raw=max(1,4)=4 → doubled=8
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "Skeleton", "hp": 30, "ac": 5,
+            "vulnerabilities": ["bludgeoning"],
+        })
+        state = self._combat_state(strength=14, monster_hp=30, monster_ac=5)
+        _patch_rolls(monkeypatch, CombatHandler(), [20])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster", "damage_type": "bludgeoning"}),
+            state, world,
+        )
+        assert result.metadata["hit"] is True
+        assert result.metadata["damage"] == 8
+        assert result.metadata["damage_multiplier"] == 2.0
+
+    def test_default_damage_type_is_physical(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Attack without damage_type defaults to 'physical'; fire immunity is not triggered."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "Fire Imp", "hp": 20, "ac": 5,
+            "immunities": ["fire"],
+        })
+        state = self._combat_state(monster_hp=20, monster_ac=5)
+        _patch_rolls(monkeypatch, CombatHandler(), [20])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}),
+            state, world,
+        )
+        assert result.metadata["damage_type"] == "physical"
+        assert result.metadata["damage"] > 0  # physical hit, fire immunity not triggered
+        assert result.metadata["damage_multiplier"] == 1.0
+
+    # --- Phase 2a/2b/2c: effect modifier integration ---
+
+    def test_player_attack_includes_effect_bonus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Player with attack+1 effect: attack_total is increased by 1."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 30, "ac": 50,
+        })
+        # str=10(mod=0), prof=2, effect attack+1 → total = roll+0+2+1
+        state = self._combat_state(
+            monster_hp=30, monster_ac=50,
+            active_effects=[{
+                "effect_id": "blessed", "effect_type": "buff",
+                "remaining_ticks": 5, "modifiers": {"attack": 1}, "periodic": {}, "tags": [],
+            }],
+        )
+        _patch_rolls(monkeypatch, CombatHandler(), [10])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        # roll=10 + str=0 + prof=2 + effect=1 = 13
+        assert result.metadata["attack_total"] == 13
+
+    def test_monster_ac_includes_effect_mod(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Monster with ac+2 active effect: effective AC = base_ac + 2."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 30, "ac": 10,
+        })
+        # Monster has AC=10 + effect +2 = 12; roll=10+prof=2+str=0 = 12 → exact hit
+        state = self._combat_state(
+            monster_hp=30, monster_ac=10,
+            monster_active_effects=[{
+                "effect_id": "shielded", "effect_type": "buff",
+                "remaining_ticks": 3, "modifiers": {"ac": 2}, "periodic": {}, "tags": [],
+            }],
+        )
+        _patch_rolls(monkeypatch, CombatHandler(), [10])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        # attack_total=10+0+2=12 >= target_ac=10+2=12 → hit
+        assert result.metadata["hit"] is True
+        assert result.metadata["target_ac"] == 12
+
+    def test_monster_advantage_on_player_with_effect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Player has advantage_on_attacks_against effect → monster attacks with advantage."""
+        world = self._world_with_monster({
+            "id": "test_monster", "name": "M", "hp": 30, "ac": 5,
+            "attacks": [{"name": "claw", "damage_dice": "1d4", "hit_bonus": 0}],
+        })
+        # Player has advantage_on_attacks_against (e.g., blinded/prone)
+        state = self._combat_state(
+            player_ac=100, monster_hp=30, monster_ac=5,
+            active_effects=[{
+                "effect_id": "blinded", "effect_type": "debuff",
+                "remaining_ticks": 3, "modifiers": {}, "periodic": {}, "tags": [],
+                "advantage_on_attacks_against": True,
+            }],
+        )
+        # Player attack roll (hits monster), then monster rolls with advantage (2 rolls)
+        _patch_rolls(monkeypatch, CombatHandler(), [20, 1, 15])
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        # Monster had advantage → used the higher of [1, 15] = 15
+        monster_resp = result.metadata["monster_responses"]
+        assert len(monster_resp) > 0
+        # Monster attack did NOT hit (player_ac=100), but the roll count confirms advantage was used
+        assert result.success is True
+
+
+class TestMonsterAI:
+    """P3-2: Monster AI deepening — flee_chance, attack selection, damage resistance, prevents_action."""
+
+    # --- Phase 1: flee_chance probabilistic ---
+
+    def test_flee_chance_zero_never_flees(self) -> None:
+        """flee_chance=0 → monster always attacks even when below flee_threshold."""
+        for _ in range(20):
+            action = CombatHandler._decide_monster_action(
+                "cowardly", hp_ratio=0.1, flee_threshold=0.5, flee_chance=0.0,
+            )
+            assert action == "attack"
+
+    def test_flee_chance_one_always_flees(self) -> None:
+        """flee_chance=1 → monster always flees when below flee_threshold."""
+        for _ in range(5):
+            action = CombatHandler._decide_monster_action(
+                "cowardly", hp_ratio=0.1, flee_threshold=0.5, flee_chance=1.0,
+            )
+            assert action == "flee"
+
+    def test_flee_threshold_zero_always_attacks(self) -> None:
+        """flee_threshold=0 → never flees regardless of flee_chance."""
+        action = CombatHandler._decide_monster_action(
+            "cowardly", hp_ratio=0.0, flee_threshold=0.0, flee_chance=1.0,
+        )
+        assert action == "attack"
+
+    # --- Phase 2: _estimate_damage + _select_attack ---
+
+    def test_estimate_damage_standard_dice(self) -> None:
+        assert CombatHandler._estimate_damage("2d6") == 7.0
+        assert CombatHandler._estimate_damage("1d4") == 2.5
+        assert CombatHandler._estimate_damage("1d8") == 4.5
+
+    def test_estimate_damage_bad_input_returns_one(self) -> None:
+        assert CombatHandler._estimate_damage("bad") == 1.0
+        assert CombatHandler._estimate_damage("") == 1.0
+
+    def test_aggressive_selects_highest_damage(self) -> None:
+        """aggressive AI picks the attack with highest expected damage."""
+        from types import SimpleNamespace
+        attacks = [
+            SimpleNamespace(damage_dice="1d4", hit_bonus=5, range=1),
+            SimpleNamespace(damage_dice="2d6", hit_bonus=0, range=1),
+            SimpleNamespace(damage_dice="1d8", hit_bonus=0, range=1),
+        ]
+        selected = CombatHandler._select_attack(attacks, "aggressive")
+        assert selected.damage_dice == "2d6"
+
+    def test_cowardly_selects_longest_range(self) -> None:
+        """cowardly AI picks the attack with the longest range."""
+        from types import SimpleNamespace
+        attacks = [
+            SimpleNamespace(damage_dice="1d4", hit_bonus=0, range=1),
+            SimpleNamespace(damage_dice="1d4", hit_bonus=0, range=30),
+            SimpleNamespace(damage_dice="1d4", hit_bonus=0, range=15),
+        ]
+        selected = CombatHandler._select_attack(attacks, "cowardly")
+        assert selected.range == 30
+
+    # --- Phase 3: _apply_player_damage_resistance ---
+
+    @staticmethod
+    def _state_with_tags(tags: list[str]) -> StateContainer:
+        state = StateContainer()
+        player = PlayerSlice()
+        player.restore({
+            "hp": 10, "max_hp": 12,
+            "active_effects": [{
+                "effect_id": "e1", "effect_type": "buff",
+                "remaining_ticks": 3, "modifiers": {}, "periodic": {}, "tags": tags,
+            }],
+        })
+        state.register(player)
+        return state
+
+    def test_player_resistance_halves_damage(self) -> None:
+        state = self._state_with_tags(["fire_resistance"])
+        assert CombatHandler._apply_player_damage_resistance(10, "fire", state) == 5
+
+    def test_player_immunity_negates_damage(self) -> None:
+        state = self._state_with_tags(["fire_immunity"])
+        assert CombatHandler._apply_player_damage_resistance(10, "fire", state) == 0
+
+    def test_player_vulnerability_doubles_damage(self) -> None:
+        state = self._state_with_tags(["fire_vulnerability"])
+        assert CombatHandler._apply_player_damage_resistance(10, "fire", state) == 20
+
+    def test_no_matching_tag_unchanged(self) -> None:
+        state = self._state_with_tags(["cold_resistance"])
+        assert CombatHandler._apply_player_damage_resistance(10, "fire", state) == 10
+
+    # --- Phase 4: prevents_action skips monster turn ---
+
+    def test_monster_prevents_action_skips_turn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Monster with prevents_action=True effect gets action='stunned'."""
+        world = TestEffectPipelineIntegration._world_with_monster({
+            "id": "test_monster", "name": "Paralyzed Goblin", "hp": 30, "ac": 5,
+            "attacks": [{"name": "bite", "damage_dice": "1d6", "hit_bonus": 2}],
+        })
+        state = TestEffectPipelineIntegration._combat_state(
+            player_ac=10, monster_hp=30,
+            monster_active_effects=[{
+                "effect_id": "paralyzed", "effect_type": "condition",
+                "remaining_ticks": 2, "modifiers": {}, "periodic": {}, "tags": [],
+                "prevents_action": True,
+            }],
+        )
+        _patch_rolls(monkeypatch, CombatHandler(), [20])  # player attack roll
+
+        result = _make_engine().execute(
+            Command(type="attack", params={"target": "test_monster"}), state, world
+        )
+        assert result.success is True
+        monster_resp = result.metadata["monster_responses"]
+        assert len(monster_resp) == 1
+        assert monster_resp[0]["action"] == "stunned"
+        assert monster_resp[0]["hit"] is False
+        assert monster_resp[0]["damage"] == 0

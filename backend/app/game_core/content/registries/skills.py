@@ -80,6 +80,7 @@ class StatusEffectTemplate:
     save_end_of_turn: str | None = None         # 每回合结束豁免属性
     save_dc: int | None = None                  # 豁免 DC
     cure_conditions: list[str] = field(default_factory=list)   # 移除条件
+    advantage_on_attacks_against: bool = False  # 持有此效果的单位被攻击时，攻击者获得优势
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +413,7 @@ class SkillRegistry(ContentRegistry):
             save_end_of_turn=self._coerce_non_empty_string(raw.get("save_end_of_turn")),
             save_dc=self._coerce_non_negative_int(raw.get("save_dc")),
             cure_conditions=cure_conditions,
+            advantage_on_attacks_against=bool(raw.get("advantage_on_attacks_against", False)),
         )
 
     # ------------------------------------------------------------------

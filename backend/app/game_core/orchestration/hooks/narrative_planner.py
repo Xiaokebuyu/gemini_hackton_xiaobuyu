@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any, Mapping, Protocol
 
+from app.game_core.narrative.instance_manager import InstanceManager
 from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
@@ -67,8 +68,14 @@ class NarrativePlannerHook(NoOpSettlementHook):
         "plant_environmental",
         "fill_area",
     }
-    def __init__(self, planner: NarrativePlannerProvider | None = None) -> None:
+    def __init__(
+        self,
+        planner: NarrativePlannerProvider | None = None,
+        *,
+        instance_manager: InstanceManager | None = None,
+    ) -> None:
         self.planner = planner or NarrativePlanner()
+        self._instance_manager = instance_manager
 
     def should_skip(self, change_log: list[StateChange]) -> bool:
         del change_log
@@ -194,6 +201,30 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     },
                 )
             )
+        # Detect FAILED milestone transitions and surface failure_fallback
+        for change in context.change_log:
+            if (
+                change.slice == "quests"
+                and change.path.startswith("milestone_states.")
+                and isinstance(change.value, dict)
+                and change.value.get("state") == "FAILED"
+            ):
+                milestone_id = change.path[len("milestone_states."):]
+                fallback: str | None = None
+                if context.world.has_registry("quests"):
+                    tmpl = context.world.quests.get_milestone(milestone_id)
+                    fallback = tmpl.failure_fallback if tmpl else None
+                sse_events.append(SSEEvent(
+                    event_type="milestone_failed",
+                    payload={
+                        "milestone_id": milestone_id,
+                        "failure_fallback": fallback or "",
+                    },
+                ))
+
+        # Directive GC — prune consumed and expired entries each planning cycle
+        context.state.narrative_plan.prune_consumed_and_expired(current_tick)
+
         return HookResult(
             sse_events=sse_events,
             metadata={
@@ -311,13 +342,32 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "last_run_tick": context.state.narrative_plan.last_run_tick,
                 "next_scheduled_tick": context.state.narrative_plan.next_scheduled_tick,
                 "pacing_frozen": context.state.narrative_plan.pacing_frozen,
-                "behavior_window_size": len(context.state.narrative_plan.behavior_window),
+                "behavior_window": list(context.state.narrative_plan.behavior_window),
             },
             "area_cluster": area_cluster,
             "scene": {
                 "entry_count": len(scene_snapshot.get("entries", [])),
                 "state_change_count": len(scene_snapshot.get("state_changes", [])),
             },
+            "target_milestone_detail": self._build_target_milestone_detail(context),
+        }
+
+    def _build_target_milestone_detail(
+        self, context: SettlementContext,
+    ) -> dict[str, Any]:
+        """P3-6: 返回当前目标里程碑的叙事细节，供确定性和 LLM planner 精确决策。"""
+        target_milestone_id = context.state.narrative_plan.current_target_milestone
+        if not target_milestone_id or not context.world.has_registry("quests"):
+            return {}
+        template = context.world.quests.get_milestone(target_milestone_id)
+        if template is None:
+            return {}
+        return {
+            "key_elements": list(template.key_elements),
+            "involved_npcs": list(template.involved_npcs),
+            "involved_locations": list(template.involved_locations),
+            "narrative_context": template.narrative_context,
+            "failure_fallback": template.failure_fallback,
         }
 
     @classmethod
@@ -417,6 +467,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 {"kind": "create_quest", "quest_id": quest_id, "tick": current_tick}
             )
             context.record_change(StateChange(slice="quests", operation="set", path=f"dynamic.{quest_id}", value=quest_payload))
+            # P1-C Phase 1: map milestone success/failure conditions to EventSlice events
+            self._create_milestone_condition_events(quest_id, context, current_tick=current_tick)
             return True
 
         if kind == "direct_npc":
@@ -426,14 +478,38 @@ class NarrativePlannerHook(NoOpSettlementHook):
             directive = payload.get("directive")
             if directive is not None and not isinstance(directive, Mapping):
                 return False
-            context.state.narrative_plan.add_directive(
+            expires_at_tick = current_tick + 24
+            raw_expiry = payload.get("expires_at_tick")
+            if raw_expiry is not None:
+                try:
+                    expires_at_tick = int(raw_expiry)
+                except (TypeError, ValueError):
+                    return False
+            priority = payload.get("priority")
+            if isinstance(priority, str):
+                normalized_priority = priority.strip().lower() or "medium"
+            else:
+                normalized_priority = "medium"
+            if normalized_priority not in {"high", "medium", "low"}:
+                return False
+            stored_directive = context.state.narrative_plan.add_directive(
                 {
                     "npc_id": npc_id,
                     "directive": dict(directive) if isinstance(directive, Mapping) else {},
+                    "priority": normalized_priority,
                     "issued_at_tick": current_tick,
+                    "expires_at_tick": expires_at_tick,
+                    "linked_quest_id": self._coerce_non_empty_string(payload.get("linked_quest_id")),
                     "source": "narrative_planner",
+                    "consumed": False,
                 }
             )
+            if self._instance_manager is not None:
+                self._instance_manager.inject_directive(
+                    npc_id,
+                    stored_directive,
+                    current_tick=current_tick,
+                )
             return True
 
         if kind == "publish_bulletin":
@@ -564,6 +640,60 @@ class NarrativePlannerHook(NoOpSettlementHook):
             return True
 
         return False
+
+    def _create_milestone_condition_events(
+        self,
+        milestone_id: str,
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> None:
+        """Create dormant EventSlice events from a MilestoneTemplate's conditions.
+
+        Called after a create_quest directive so that EventConditionHook can
+        automatically advance the milestone state when game conditions are met.
+        No-op if the milestone doesn't exist in QuestRegistry or has no conditions.
+        """
+        if not context.state.has_slice("events"):
+            return
+        if not context.world.has_registry("quests"):
+            return
+        milestone = context.world.quests.get_milestone(milestone_id)
+        if milestone is None:
+            return
+
+        specs: list[tuple[list[Any], str]] = []
+        if milestone.success_conditions:
+            specs.append((list(milestone.success_conditions), "COMPLETED"))
+        if milestone.failure_conditions:
+            specs.append((list(milestone.failure_conditions), "FAILED"))
+
+        for conditions, outcome_state in specs:
+            prefix = "sc" if outcome_state == "COMPLETED" else "fc"
+            for idx, cond in enumerate(conditions):
+                event_id = f"milestone_{milestone_id}_{prefix}_{idx}"
+                if context.state.events.get_event(event_id) is not None:
+                    continue  # already registered
+                context.state.events.activate(event_id, {
+                    "id": event_id,
+                    "event_id": event_id,
+                    "state": "dormant",
+                    "status": "dormant",
+                    "conditions": [{"type": cond.type, "params": dict(cond.params)}],
+                    "on_trigger": [{
+                        "type": "advance_quest",
+                        "params": {"quest_id": milestone_id, "to_state": outcome_state},
+                    }],
+                    "source": "narrative_planner",
+                    "milestone_id": milestone_id,
+                    "created_at_tick": current_tick,
+                })
+                context.record_change(StateChange(
+                    slice="events",
+                    operation="set",
+                    path=f"active_events.{event_id}",
+                    value={"state": "dormant"},
+                ))
 
     @staticmethod
     def _noop_metadata(

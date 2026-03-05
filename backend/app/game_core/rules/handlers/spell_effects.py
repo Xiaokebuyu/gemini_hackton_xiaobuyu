@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from app.game_core.content import WorldInstance
+from app.game_core.content.registries.skills import StatusEffectTemplate
 from app.game_core.rules.handler_utils import handler_success_no_delta
 from app.game_core.rules.models import DiceRoll, ExecuteResult
 from app.game_core.state import StateContainer
@@ -38,6 +39,7 @@ def apply_self_target(
     spellcasting_mod: int,
     resolved_targets: list[str],
     ctx: dict[str, Any],
+    world: WorldInstance,
     *,
     roll_dice: Callable[[str], int],
 ) -> ExecuteResult | None:
@@ -64,11 +66,16 @@ def apply_self_target(
         ctx["target_hp"] = target_hp
         return None
 
+    applies_status = read_non_empty_string(effect, template, "applies_status")
+    se_template = None
+    if applies_status and world.has_registry("skills"):
+        se_template = world.skills.get_status_effect(applies_status)
     effect_instance, concentration_requested = build_spell_effect_instance(
         spell_id,
         effect_type,
         template,
         effect,
+        status_effect_template=se_template,
     )
     if effect_instance is None:
         return unsupported_cast_spell(
@@ -168,6 +175,7 @@ def apply_combat_target(
         hostile_payload,
         target_monster_id,
         ctx,
+        world,
     )
 
 
@@ -280,12 +288,18 @@ def apply_combat_control(
     hostile_payload: dict[str, Any],
     target_monster_id: str,
     ctx: dict[str, Any],
+    world: WorldInstance,
 ) -> ExecuteResult | None:
+    applies_status = read_non_empty_string(effect, template, "applies_status")
+    se_template = None
+    if applies_status and world.has_registry("skills"):
+        se_template = world.skills.get_status_effect(applies_status)
     effect_instance, concentration_requested = build_spell_effect_instance(
         spell_id,
         "control",
         template,
         effect,
+        status_effect_template=se_template,
     )
     if effect_instance is None:
         return unsupported_cast_spell(
@@ -372,11 +386,35 @@ def apply_combat_control(
     return None
 
 
+def merge_status_effect_template(
+    effect_dict: dict[str, Any],
+    template: StatusEffectTemplate | None,
+) -> None:
+    """将 StatusEffectTemplate 行为字段合并到效果实例 dict（实例已有值优先）。就地修改。"""
+    if template is None:
+        return
+    if "disadvantage_checks" not in effect_dict and template.disadvantage_on:
+        effect_dict["disadvantage_checks"] = list(template.disadvantage_on)
+    if "advantage_on_attacks_against" not in effect_dict and template.advantage_on_attacks_against:
+        effect_dict["advantage_on_attacks_against"] = True
+    if "prevents_action" not in effect_dict and template.prevents_action:
+        effect_dict["prevents_action"] = True
+    if "save_end_of_turn" not in effect_dict and template.save_end_of_turn:
+        effect_dict["save_end_of_turn"] = template.save_end_of_turn
+    if "save_dc" not in effect_dict and template.save_dc is not None:
+        effect_dict["save_dc"] = template.save_dc
+    if "cure_conditions" not in effect_dict and template.cure_conditions:
+        effect_dict["cure_conditions"] = list(template.cure_conditions)
+    if not effect_dict.get("modifiers") and template.modifiers:
+        effect_dict["modifiers"] = dict(template.modifiers)
+
+
 def build_spell_effect_instance(
     spell_id: str,
     effect_type: str,
     template: Any,
     effect: Any,
+    status_effect_template: StatusEffectTemplate | None = None,
 ) -> tuple[dict[str, Any] | None, bool]:
     applies_status = read_non_empty_string(effect, template, "applies_status")
     modifiers = read_mapping(effect, template, "modifiers")
@@ -409,6 +447,7 @@ def build_spell_effect_instance(
         "tags": tags,
         "from_concentration": concentration,
     }
+    merge_status_effect_template(effect_instance, status_effect_template)
     return (effect_instance, concentration)
 
 

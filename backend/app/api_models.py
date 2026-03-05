@@ -192,3 +192,9 @@ class PrivateChatRequest(BaseModel):
 
     npc_id: str
     message: str
+
+
+class CompanionRequest(BaseModel):
+    """Request body for companion recruit/dismiss."""
+
+    npc_id: str

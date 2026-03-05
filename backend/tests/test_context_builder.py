@@ -121,7 +121,7 @@ class TestLayerBuilders:
         ctx = asyncio.run(builder.build_npc_context("merchant_tom"))
 
         l4 = ctx["l4_dynamic_state"]
-        assert set(l4.keys()) == {"disposition", "stage", "impressions"}
+        assert {"disposition", "stage", "impressions"}.issubset(l4.keys())
         assert l4["disposition"]["approval"] == 25
         assert l4["disposition"]["trust"] == 15
         assert l4["stage"] == "acquaintance"
@@ -779,3 +779,49 @@ class TestTeammateFull:
         assert "Paladin Aria" in tm_full.system_prompt
         assert "40" in tm_full.system_prompt   # approval
         assert "50" in tm_full.system_prompt   # trust
+
+
+class TestLoreScopeFilter:
+    """P3-7a: L0 lore is filtered by scope (global/area only)."""
+
+    @staticmethod
+    def _world_with_lore(entries: list[dict]) -> WorldInstance:
+        return build_default_world(
+            "test_world",
+            world_data={
+                "lore": {e["id"]: e for e in entries},
+            },
+        )
+
+    def test_global_lore_always_included(self) -> None:
+        world = self._world_with_lore([
+            {"id": "rule_global", "content": "Global rule", "scope": "global"},
+        ])
+        runtime = build_runtime_for_world(world)
+        runtime.state.player.restore({"current_area": "dungeon"})
+        builder = AgentContextBuilder(world, runtime.state)
+        l0 = builder._build_l0()
+        ids = [e.id for e in l0["lore"]]
+        assert "rule_global" in ids
+
+    def test_area_lore_included_when_matching_area(self) -> None:
+        world = self._world_with_lore([
+            {"id": "dungeon_lore", "content": "Dungeon secret", "scope": "area", "scope_id": "dungeon"},
+        ])
+        runtime = build_runtime_for_world(world)
+        runtime.state.player.restore({"current_area": "dungeon"})
+        builder = AgentContextBuilder(world, runtime.state)
+        l0 = builder._build_l0()
+        ids = [e.id for e in l0["lore"]]
+        assert "dungeon_lore" in ids
+
+    def test_area_lore_excluded_when_different_area(self) -> None:
+        world = self._world_with_lore([
+            {"id": "dungeon_lore", "content": "Dungeon secret", "scope": "area", "scope_id": "dungeon"},
+        ])
+        runtime = build_runtime_for_world(world)
+        runtime.state.player.restore({"current_area": "town"})
+        builder = AgentContextBuilder(world, runtime.state)
+        l0 = builder._build_l0()
+        ids = [e.id for e in l0["lore"]]
+        assert "dungeon_lore" not in ids

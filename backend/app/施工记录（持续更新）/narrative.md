@@ -851,3 +851,284 @@ write_episode 实现（LLM 三元组提取）留 Phase 3b。
 - `tests/test_context_builder.py::TestTeammateFull`（4 个测试）：七层 keys、未知角色→None、call_count==1、system_prompt 内容正确
 
 **测试基线**：745 passed（新增 4 个测试，零回归）
+
+---
+
+## [D-N23] P1-A：Planner LLM 上下文补全（2026-03-05）
+
+**问题**：`AgenticNarrativePlanner.plan()` 通过 `_format_planner_context()` 格式化上下文，但该函数只输出 5 个字段，而 Hook 已构建 15+ 字段完整上下文（time, location, recent_changes, strategy_notes, area_cluster, behavior_window 等）。
+
+**改动**：
+- `narrative_planner.py` `_build_planner_context()`：`behavior_window_size` → `behavior_window: list(...)`
+- `narrators.py` `_format_planner_context()`：完全重写，按设计规范四部分格式化
+
+**范围说明**：设计规范 §3.1 还要求 `player.level`、`guild_rank`、`party`、`play_style_tags`、`area_npcs`、`relevant_factions` 等字段。这些字段 Hook 的 `_build_planner_context()` 本身不构建（只输出 15 个固定字段），`narrators.py` 无法格式化没有的数据。补齐这些字段需要先扩展 Hook 的 context 构建（读 PlayerSlice、CharacterRegistry、AreaSlice.npc_locations 等），属于独立的 Hook 扩展任务，不在本轮 P1-A 范围内。
+
+**测试基线**：1051 passed（零回归）
+
+---
+
+## [D-N24] P1-B：NPC 指令消费链路（2026-03-05）
+
+**问题**：`direct_npc` 指令写入 `NarrativePlanSlice.npc_directives`，但 NPC Agent 对话时完全不读取。
+
+**改动**：
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/narrative/context_window.py` | +`directive_queue` 字段 + `consume_directive()` 方法 |
+| `app/game_core/narrative/instance_manager.py` | `get_or_create()` 新增 npc_directives/current_tick 参数，注入未消费指令 |
+| `app/agent_orchestration.py` | 3 处 get_or_create 调用注入 directives + current_tick |
+| `app/game_core/orchestration/npc_interaction.py` | Step 1 消费 directive → 传给 build_npc_full_context |
+| `app/game_core/narrative/context_builder.py` | `_build_npc_prompt_text` 加 active_directive；`build_npc_full_context` 透传 |
+| `app/game_core/narrative/character_tools.py` | `OfferQuestTool` source `"ai_osiris"` → `"npc"` |
+
+**设计关键**：directive_queue 存 state dict 直接引用，consume_directive() 标记 consumed=True 直接写回 state，snapshot() 时自动带出。过期 lifetime 默认 24 ticks（1 游戏天）。
+
+**已接受偏差（对照设计规范 + P1 文档）**：
+
+1. **active instance 直接注入未实现**（NPC规范 §8.3 step 2）：设计规范要求当 directive 写入时，若目标 NPC 有活跃实例则直接注入 directive_queue。当前实现仅在 `get_or_create()` 新建窗口时注入，pool 内已有窗口不感知新 directive。根本原因：NarrativePlannerHook 在 game_core 层，InstanceManager 在 app 层，架构隔离红线不允许跨层调用。影响：新 directive 加入时若目标 NPC 窗口在 pool，最多延迟 1 次 LRU 淘汰周期后才注入（下下次交互）。游戏中可接受。
+
+2. **flush_to_state() 未实现**（P1 文档 Step 2）：P1 文档要求 LRU 淘汰前显式回写 consumed 状态。当前实现通过直接引用代替：directive_queue 存 state dict 引用而非拷贝，consume_directive() 原地 `consumed=True` 自动传播，NarrativePlanSlice.snapshot() 做 `dict(item)` 浅拷贝时捕获。仅在 session 生命周期内引用链有效（restore 只在 session 加载时发生，创建新 dict 对象不影响）。功能等价，实现更简洁。
+
+3. **priority 比较修复**：设计规范 priority 为 str（"high"/"medium"/"low"），原 `max(eligible, key=lambda d: d.get("priority", 0))` 字母序错误（"medium">"low">"high"）。已修复为 `_directive_priority()` 函数，支持 str→int 映射 + int 两种格式。
+
+**测试基线**：1051 passed（零回归）
+
+---
+
+## [D-N25] P1-C：任务生命周期闭环（2026-03-05）
+
+**Phase 1：create_quest → EventSlice**：`NarrativePlannerHook` 新增 `_create_milestone_condition_events()`，为每条 success/failure condition 注册 dormant 事件（on_trigger → advance_quest）。
+
+**Phase 2：BasicEventConditionEvaluator 支持 on_trigger**：`_evaluate_event()` 返回类型加 commands list。dormant 条件满足且有 on_trigger → 转 "resolved"（一次性）+ 返回命令；无 on_trigger → 原有 "available" 路径。`evaluate()` 聚合所有事件的命令供 EventConditionHook 统一执行。
+
+> P1 文档说明 "dormant→triggered→active" 路径；实际实现改为 dormant→resolved（one-shot），见 D-O27 偏差说明。
+
+**Phase 3：MilestoneUnlockHook (P55)**：新建文件，HOOK_PRIORITY=55（EventConditionHook=50 之后）。`should_skip=False`（原因：EventConditionHook 的 execute_command 走 _apply_delta 不写 change_log）。`execute()` 扫描所有 COMPLETED milestone，检查 next_milestones prerequisites，满足则 advance_quest AVAILABLE + emit "milestone_unlocked" SSE。
+
+注册到 `hooks/__init__.py` + `defaults.py`。
+
+**附带修复**：`EventSlice._VALID_STATES` 补入 `"available"`（D-O27 遗漏 1）。
+
+**已接受偏差——MilestoneUnlock 1-tick 延迟**：P1 文档要求"同一 settlement 内完成解锁，Planner 直接看到 AVAILABLE"（P1 文档中称 P20→P25→P35 顺序）。实际 HOOK_PRIORITY 值：NarrativePlannerHook=35、EventConditionHook=50、MilestoneUnlockHook=55。执行顺序为 Planner(35)→EventCondition(50)→MilestoneUnlock(55)，MilestoneUnlock 反而排在 NarrativePlanner 之后。P1 文档的 P20/P35 是概念编号，不是实际优先级数值，文档对 hook 顺序的假设有误。实际效果：Tick T 的 EventCondition+MilestoneUnlock 解锁下游里程碑，Tick T+1 的 NarrativePlanner 才能看到新 AVAILABLE。1-tick 延迟，游戏中无感。若要同 tick 可见需将 NarrativePlannerHook 移至 P>55，影响大，不做。见 D-O27 同步更新。
+
+**测试基线**：1051 passed（零回归）
+
+---
+
+## [D-N26] P2/P5 Round 1：Prompt 层丰富化 + Secrets Schema 升级（2026-03-05）
+
+### 背景
+
+NPC/Teammate 系统提示只消费了 `name/personality/dialogue_style/tags`，`CharacterTemplate` 的 `backstory/speech_pattern/character_class/faction/secrets` 完全未注入，导致对话质量不佳。
+
+### Phase 1b：SecretEntry dataclass（characters.py）
+
+- 新增 `SecretEntry(content, trust_threshold=50, tags=[])` dataclass（`NpcAttack` 之后，`ShopEntry` 之前）
+- `CharacterTemplate.secrets` 类型 `list[str]` → `list[SecretEntry]`
+- `_build_template()` 向后兼容解析：`str` → `SecretEntry(content=s, threshold=50)`；`Mapping` → 完整 SecretEntry
+
+### Phase 1：Prompt 丰富化（context_builder.py + executor.py）
+
+**新增模块级常量/函数**：
+- `_STAGE_GUIDES: dict[str, str]` — 8 种关系阶段对应行为指引
+- `_trust_hint(trust) -> str` — 5 档信任描述
+- `_romance_hint(romance) -> str` — 4 档浪漫描述（<20 返回空）
+- `_resolve_stage(state, char_id) -> str` — 读 RelationSlice.relationship_stages
+- `_filter_secrets(secrets_raw, trust_val) -> list[str]` — str 兼容 + SecretEntry 门槛
+
+**`_build_npc_prompt_text()` 新增参数 `time_info` 和段落**：backstory / speech_pattern / identity / behavior（stage+trust+romance）/ time / secrets（trust-gated）
+
+**`_build_l4_npc()` 新增 `"time"` 键**，上游 `build_npc_full_context()` + `build_npc_system_prompt()` 传递 `time_info`
+
+**`_build_teammate_prompt_text()` 动态化**：新增 `stage` + `time_info` 参数，复用行为指引函数
+
+**executor.py**：L0 lore cap 5→3；每条目加 description
+
+### 测试
+
+新增 `tests/test_prompt_enrichment.py`（39 个测试）。已有测试小修：`test_content_registries.py`（secrets 检查 SecretEntry 对象）、`test_context_builder.py`（L4 keys 改 issubset）。
+
+**测试基线**：1084 passed（零回归）
+
+---
+
+## [D-N27] P2/P5 Round 2：私聊上下文差异化 + 场景生成 + GM 内心旁白（2026-03-05）
+
+### 背景
+
+Phase 2：私聊对话与普通对话完全一致，NPC 无法感知"私下交谈"的语境。Phase 2b：私聊中缺少玩家内心独白维度。
+
+### Phase 2：私聊上下文差异化 + 场景生成
+
+**context_builder.py**：
+- `_build_npc_prompt_text()` 新增 `is_private: bool = False` 参数
+  - is_private=True 时注入 `## Private conversation context` 段
+  - secrets 门槛降低 20：`effective_trust = trust + (20 if is_private else 0)`
+- `build_npc_full_context()` 新增 `is_private: bool = False` 参数，透传给 `_build_npc_prompt_text()`
+
+**private_chat.py**：
+- 新增 `_PRIVATE_CHAT_SCENES` 模块常量（4 种 area 标签 × 若干模板）
+- `PrivateChatResult` 新增 `scene_id: str | None = None` + `scene_name: str = ""`
+- 新增 `_create_private_scene()` 方法：幂等（先清旧 → 再建新）+ 按 area tags 匹配模板
+- `execute()` 调用改为 `is_private=True`，Step 1 后创建私聊场景
+
+**agent_orchestration.py**：
+- `_private_chat_result_to_sse()` 前置 `scene_change` 事件（`location_id/name/background/transition`）
+
+### Phase 2b：GM 内心旁白
+
+**context_builder.py**：
+- 新增 `GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT` 常量（玩家内心独白，非毒舌 GM）
+- `AgentContextBuilder.build_gm_private_chat_prompt()` 返回该常量
+
+**private_chat.py**：
+- `PrivateChatResult` 新增 `gm_result: AgentResult | None = None`（docstring 注明是内心独白非第三方观察）
+- `execute()` Step 2.5：GM 内心旁白，`max_turns=1`，默认 pass_turn
+
+**agent_orchestration.py**：
+- `_private_chat_result_to_sse()` 处理 `gm_result` → `gm_comment` SSE（`tone="introspective"`）
+
+### 测试
+
+新增 `tests/test_private_chat_enrichment.py`（14 个测试）。已有测试小修：`test_private_chat.py`（`gm_result` 字段存在但允许为 None）。
+
+**测试基线**：1098 passed（零回归）
+
+## [D-N28] P2/P5 Round 3：SceneBus 事件标签 + SharedExperience Hook + Teammate 场景修正（2026-03-05）
+
+### 背景
+
+Phase 0：SceneBus 缺少语义标签，Phase 3/4 的战斗/危机检测无法工作。Phase 3：PartySlice 有 `record_experience()` API，但没有 Hook 调用它。Phase 4：Teammate 反应概率固定，无法感知"战斗刚结束"或"刚开过口"等上下文。三者依赖链：Phase 0 写 COMBAT_END → Phase 3 检测到战斗经历 → Phase 4 Teammate 感知。
+
+### Phase 0：SceneBus ENGINE 标签注入（tick_coordinator.py）
+
+- 新增模块级常量 `_SEMANTIC_TAGS`（7 种 action_type → tag 列表）
+- 新增 `_emit_action_tags(result)` 方法：写入 `source="ENGINE"` + `visibility="system"` 的 SceneBus 条目
+- `process()` 在 `_record_action()` 后立即调用 `_emit_action_tags()`
+
+### Phase 3：SharedExperienceHook（新建 hooks/shared_experience.py）
+
+- `HOOK_PRIORITY = 62`（NpcScheduleHook=60 之后，RelationshipHook=65 之前）
+- `_detect_experience()` 优先级：combat > quest > rest，从 action_log 和 SceneBus ENGINE tags 双重检测
+- 命中后调用 `context.state.party.record_experience(experience)`
+- `hooks/__init__.py` 导入 + `__all__` 追加；`defaults.py` 注册到 `DEFAULT_SETTLEMENT_HOOK_TYPES`
+
+### Phase 4：Teammate 场景感知修正（npc_interaction.py）
+
+- `_should_teammate_respond()` 新增 `scene_entries` 参数（可选，向后兼容）
+- 场景调整：`COMBAT_END+0.3 / CRISIS+0.4 / TRIVIAL-0.2 / recent_speaks×-0.15`
+- `execute_interaction()` Step 4 在队友循环前提取 `scene_entries` 并传入
+
+### 测试
+
+新增 `tests/test_round3_engine_tags.py`（12 个）+ `tests/test_round3_shared_experience.py`（19 个），共 31 个新测试。
+
+**测试基线**：1129 passed（零回归）
+
+## [D-N29] P2/P5 Round 4：CampfireHook + 负面关系跃迁 + Directive GC（2026-03-05）
+
+### 背景
+
+Phase 5：SharedExperienceHook 已录入战斗/任务/休息经历，但没有任何消费端——长休后队友沉默。Phase 6a：RelationshipHook 只处理正面跃迁，好感度暴跌不会触发 cold/hostile。Phase 6b：NarrativePlanSlice.npc_directives 无限增长，消费/过期的 directive 不清理。
+
+### Phase 5：CampfireHook（新建 hooks/campfire.py，P63）
+
+- 触发条件：LONG_REST tag + party 成员 + 今天有重大经历（必触发）/ 无重大经历 30% 概率
+- 队友资格：stage 不在 stranger/cold/hostile/nemesis + approval ≥ 0
+- 经历选择：优先今天的重大经历（+100）、critical_moment（+30）、major 类型（+10）
+- 输出：`campfire_dialogue` SSE event（teammate_id / content / memory_type / memory_summary）
+- 附带 +5 approval（`RelationSlice.modify_disposition`）
+- 注册：`hooks/__init__.py` + `defaults.py`（P63，在 SharedExperienceHook=62 与 RelationshipHook=65 之间）
+
+### Phase 6a：负面关系跃迁（relationship.py）
+
+- 新增 `_NEGATIVE_ENTRY_THRESHOLD`：acquaintance(-20) / friend(-30) / close_friend(-40) / intimate(-50) → cold
+- 新增模块级函数 `_next_negative_stage(current_stage, dispositions)`
+- `execute()` 循环内：正面检测返回 None 时改查负面方向，最后统一执行 `set_relationship_stage`
+- 负面渐进（cold→hostile→nemesis）及恢复路径延迟到轮5
+
+### Phase 6b：Directive GC（narrative_plan.py + narrative_planner.py）
+
+- `NarrativePlanSlice.prune_consumed_and_expired(current_tick)` 过滤 `consumed==True` 或 `expires_at_tick < current_tick` 的 directive，返回清除数量
+- `NarrativePlannerHook.execute()` 在最终 `return HookResult(...)` 前调用 GC
+
+### 测试
+
+新增 `tests/test_round4_campfire.py`（22 个）+ `tests/test_round4_negative_stages.py`（13 个）+ `tests/test_round4_directive_gc.py`（9 个），共 44 个新测试。
+
+**测试基线**：1173 passed（零回归）
+
+## [D-N30] P2/P5 Round 5：CompanionManager + 负面关系深化 + EventEngine 条件扩展（2026-03-05）
+
+### 背景
+
+Phase 7（CompanionManager 招募/离队）从未实现，RelationshipHook 的 cold→hostile→enemy 渐进跃迁 deferred 到本轮。Phase 8（EventEngine 缺 npc_talked / item_obtained / kill_count 条件类型）限制了事件触发能力。Phase 9 (InstanceManager tiering) 因单模型偏好跳过。
+
+### Phase A：CompanionManager + 负面关系深化
+
+**新建 `app/game_core/orchestration/companion_manager.py`**：
+- `RecruitResult` dataclass（success / reason 字段）
+- `CompanionManager(world, state)` 类，不是 Hook，被 RelationshipHook 和（未来）InteractionService 调用
+- `recruit(npc_id)` 前置条件：has "recruitable" tag + stage != stranger + approval > 0 + party not full + not already member
+- `dismiss(npc_id)` 直接调 `state.party.remove_member()`
+- `force_leave(npc_id, reason)` 包装 dismiss，reason 改为 `force_leave:{reason}`
+
+**扩展 `hooks/relationship.py`**：
+- 新增 `_NEGATIVE_PROGRESSION`：`"cold" → ("hostile", {approval:-50, trust:-30})`，`"hostile" → ("enemy", {trust:-60})`
+- `_next_negative_stage()` 扩展：在 `_NEGATIVE_ENTRY_THRESHOLD` 查不到时，改查 `_NEGATIVE_PROGRESSION`，所有维度均需满足阈值
+- `execute()` 补丁：当 new_stage 为 hostile/enemy 且 npc_id 在 party.members 时，实例化 CompanionManager 调 force_leave()，emit `companion_dismissed` SSE + record_change
+
+### Phase B：EventEngine 3 个新条件类型
+
+**扩展 `event_engine.py`**：
+- `_check_npc_talked(state, params)` → 读 FlagSlice `talked_to_{npc_id}` flag
+- `_check_item_obtained(state, params)` → 查 PlayerSlice.snapshot()["inventory"] 中是否有 item_id
+- `_check_kill_count(state, params)` → 读 FlagSlice `kill_count_{monster_type}` flag，比较 count
+
+**flag 写入**：
+- `npc_interaction.py` Step 1：每次交互后写 `talked_to_{npc_id}=True`（npc_full != None 后）
+- `private_chat.py` Step 1：私聊也写同样 flag
+- `kill_count_{type}` 写入侧：✅ **已完成**（见 D-P5-78 below）
+
+### 测试
+
+新增 `tests/test_round5_companion.py`（21 个）+ `tests/test_round5_event_conditions.py`（17 个），共 38 个新测试。
+
+**测试基线**：1194 passed（零回归）
+
+---
+
+## D-P5-78: Phase 7/8 收尾（2026-03-05）
+
+### Phase 8：kill_count 写入侧
+
+**改动文件**：`rules/handlers/combat.py`
+
+在 `_compute_attack_resolution()` 的 `if combat_cleared:` 块内（XP 分发之后），遍历所有参与者，为死亡（非逃跑）的怪物写入 `kill_count_{monster_id}` flag：
+- 只计 `alive=False AND fled=False` 的怪物
+- 使用 FlagSlice "set" 操作（读-改-写，因 FlagSlice 不支持 "add"）
+- 与 XP StateChange 一起放入 `extra_changes`，原子应用
+
+闭合链路：`CombatHandler → kill_count flag → EventEngine._check_kill_count() → MilestoneCondition`
+
+### Phase 7：CompanionManager API 端点
+
+**改动文件**：`api_models.py` + `routers/gameplay.py`
+
+新增 `CompanionRequest(npc_id: str)` model 和两个 streaming 端点：
+- `POST .../companion/recruit` — 调用 `CompanionManager.recruit()`，成功 emit `companion_recruited` SSE
+- `POST .../companion/dismiss` — 调用 `CompanionManager.dismiss()`，成功 emit `companion_dismissed` SSE
+
+两端点均遵循 `_stream_with_lock` 模式，成功后 save + `location_overview` + `stream_end`。
+
+### 测试
+
+新增 `tests/test_combat_kill_count.py`（4 个测试）：
+- `test_kill_count_incremented_on_defeat`: 击杀后 flag 递增
+- `test_kill_count_not_incremented_on_flee`: 逃跑不计数
+- `test_kill_count_accumulates`: 多次击杀累积
+- `test_kill_count_different_monster_types`: 不同怪物分开计数
+
+CompanionManager 单元测试已在 `test_round5_companion.py` 中完备（21 个），无需新增。

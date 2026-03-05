@@ -41,15 +41,26 @@ class _CharacterTool(AgentTool):
         content: str,
         *,
         tags: list[str] | None = None,
-        visibility: str = "public",
+        visibility: str | None = None,
+        audience: list[str] | None = None,
     ) -> None:
         """Write to SceneBus if available (controlled exception A)."""
+        metadata = context.metadata if isinstance(context.metadata, dict) else {}
+        resolved_visibility = visibility or str(
+            metadata.get("scene_visibility", "public")
+        )
+        resolved_audience = audience
+        if resolved_audience is None:
+            raw_audience = metadata.get("scene_audience")
+            if isinstance(raw_audience, list):
+                resolved_audience = [str(item) for item in raw_audience]
         if context.state.has_slice("scene"):
             context.state.scene.add_entry(
                 SceneEntry(
                     source=source,
                     content=content,
-                    visibility=visibility,
+                    visibility=resolved_visibility,
+                    audience=resolved_audience,
                     tags=tags or [],
                 )
             )
@@ -315,23 +326,32 @@ class RememberTool(_CharacterTool):
                 metadata={"status": "invalid_params"},
             )
 
-        command = Command(
-            type="add_knowledge",
-            params={"npc_id": character_id, "knowledge": knowledge},
-            source=character_id,
-        )
-        result = context.run_command(command)
-        if not result.success:
+        writer = context.metadata.get("memory_writer")
+        if not callable(writer):
             return ToolResult(
                 success=False,
-                message=result.errors[0] if result.errors else "command failed",
-                metadata={"status": "command_failed"},
+                message="memory writer unavailable.",
+                metadata={"status": "memory_unavailable"},
             )
+        try:
+            write_result = await writer(
+                character_id,
+                knowledge,
+                {"scene_entries": list(context.scene_entries)},
+            )
+        except Exception:
+            return ToolResult(
+                success=False,
+                message="memory write failed.",
+                metadata={"status": "memory_write_failed"},
+            )
+        metadata = {"status": "ok", "event_type": "memory_written"}
+        if isinstance(write_result, dict):
+            metadata.update({str(k): v for k, v in write_result.items()})
         return ToolResult(
             success=True,
             message=f"Remembered: {knowledge}",
-            commands=[command],
-            metadata={"status": "ok"},
+            metadata=metadata,
         )
 
 
@@ -390,7 +410,7 @@ class OfferQuestTool(_CharacterTool):
         command = Command(
             type="advance_quest",
             params={"quest_id": quest_id, "to_state": to_state},
-            source="ai_osiris",
+            source="npc",
         )
         result = context.run_command(command)
         if not result.success:

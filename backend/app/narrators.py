@@ -219,15 +219,104 @@ Output valid JSON only, no markdown fences."""
 
 
 def _format_planner_context(ctx: dict[str, Any]) -> str:
-    """Format planner context as a compact summary for the LLM."""
-    np = ctx.get("narrative_plan", {})
+    """Format planner context as a structured summary for the LLM.
+
+    Covers the four parts from NarrativePlanner设计规范 §3.1 + §8:
+      1. 故事蓝图 — milestone graph + state
+      2. 当前叙事计划状态 — strategy, dynamic quests
+      3. 玩家行为画像 — location, time, area cluster, recent behavior
+      4. 世界上下文 — triggered state changes this tick
+    """
+    np_ctx = ctx.get("narrative_plan", {})
     q = ctx.get("quests", {})
-    return (
-        f"Chapter: {np.get('current_chapter', '?')} "
-        f"(escalation={np.get('escalation_level', 0)}, "
-        f"stalled={np.get('ticks_since_milestone_progress', 0)} ticks)\n"
-        f"Target: {np.get('current_target_milestone', 'none')}\n"
-        f"Available milestones: {', '.join(q.get('available_milestones', [])) or 'none'}\n"
-        f"Active milestones: {', '.join(q.get('active_milestones', [])) or 'none'}\n"
-        f"Pacing frozen: {np.get('pacing_frozen', False)}"
-    )
+    time = ctx.get("time", {})
+    location = ctx.get("location", {})
+    area_cluster = ctx.get("area_cluster")
+    behavior_window = np_ctx.get("behavior_window", [])
+
+    # ---- Part 1: 故事蓝图 ----
+    lines: list[str] = [
+        "## 故事蓝图",
+        (
+            f"Chapter: {np_ctx.get('current_chapter', '?')} | "
+            f"Escalation: {np_ctx.get('escalation_level', 0)} | "
+            f"Stalled: {np_ctx.get('ticks_since_milestone_progress', 0)} ticks | "
+            f"Completion: {np_ctx.get('chapter_completion', 0.0):.0%}"
+        ),
+        f"Target milestone: {np_ctx.get('current_target_milestone', 'none')}",
+        f"Pacing frozen: {np_ctx.get('pacing_frozen', False)}",
+        f"Available milestones: {', '.join(q.get('available_milestones', [])) or 'none'}",
+        f"Active milestones:    {', '.join(q.get('active_milestones', [])) or 'none'}",
+        f"Completed milestones: {', '.join(q.get('completed_milestones', [])) or 'none'}",
+    ]
+    target_detail = ctx.get("target_milestone_detail") or {}
+    if target_detail:
+        lines += [
+            f"关键要素: {', '.join(target_detail.get('key_elements', [])) or '(无)'}",
+            f"相关NPC: {', '.join(target_detail.get('involved_npcs', [])) or '(无)'}",
+            f"相关地点: {', '.join(target_detail.get('involved_locations', [])) or '(无)'}",
+            f"叙事背景: {target_detail.get('narrative_context', '') or '(无)'}",
+        ]
+
+    # ---- Part 2: 当前叙事计划状态 ----
+    lines += [
+        "",
+        "## 当前叙事计划状态",
+        f"Strategy notes: {np_ctx.get('strategy_notes', '') or '(none)'}",
+    ]
+    dynamic_quests = q.get("dynamic_quests", {})
+    if dynamic_quests:
+        dq_parts = [
+            f"{qid}({info.get('status', '?')})"
+            for qid, info in dynamic_quests.items()
+        ]
+        lines.append(f"Dynamic quests: {', '.join(dq_parts)}")
+    else:
+        lines.append("Dynamic quests: none")
+
+    # ---- Part 3: 玩家行为画像 ----
+    lines += [
+        "",
+        "## 玩家行为画像",
+        (
+            f"Time: Day {time.get('day', 0)}, Slot {time.get('slot', 0)}, "
+            f"Period: {time.get('period', '?')} (tick {ctx.get('current_tick', 0)})"
+        ),
+        (
+            f"Location: area={location.get('area_id', '?')}, "
+            f"location={location.get('location_id') or '(none)'}"
+        ),
+    ]
+    if area_cluster:
+        lines.append(
+            f"Area cluster: {area_cluster['area_id']} | "
+            f"has_capacity={area_cluster['has_capacity']} | "
+            f"total_dynamic={area_cluster['total_dynamic']}"
+        )
+    if behavior_window:
+        recent = behavior_window[-3:]
+        behavior_parts = [
+            f"tick={b.get('tick', 0)} reason={b.get('reason', '?')} "
+            f"directives={b.get('directive_count', 0)}"
+            for b in recent
+        ]
+        lines.append(f"Recent planner runs (last {len(recent)}): " + " / ".join(behavior_parts))
+
+    # ---- Part 4: 世界上下文 ----
+    changed_slices = ctx.get("changed_slices", [])
+    change_count = ctx.get("change_count", 0)
+    lines += [
+        "",
+        "## 世界上下文",
+        f"Changed slices: {', '.join(changed_slices) or 'none'} ({change_count} changes total)",
+    ]
+    recent_changes = ctx.get("recent_changes", [])
+    if recent_changes:
+        change_lines = [
+            f"  {c.get('slice', '?')}.{c.get('path', '?')} "
+            f"[{c.get('operation', '?')}] = {str(c.get('value', '?'))[:60]}"
+            for c in recent_changes[-8:]
+        ]
+        lines.append("Recent changes:\n" + "\n".join(change_lines))
+
+    return "\n".join(lines)

@@ -103,13 +103,27 @@ def build_opening_character_enters(session: ManagedSession) -> list[dict[str, An
     else:
         positions = _OPENING_POSITIONS_3
 
+    state = session.runtime.state
     events: list[dict[str, Any]] = []
     for index, npc in enumerate(present_npcs):
+        npc_id = str(npc.get("character_id", "")).strip()
+        emotion = "neutral"
+        if npc_id and state.has_slice("relations"):
+            disp = state.relations.get_disposition(npc_id) or {}
+            if isinstance(disp, dict):
+                approval = int(disp.get("approval", 0))
+                trust = int(disp.get("trust", 0))
+                if approval > 50:
+                    emotion = "happy"
+                elif approval < -30:
+                    emotion = "angry"
+                elif trust < -20:
+                    emotion = "sad"
         events.append(
             {
-                "character_id": str(npc.get("character_id", "")).strip(),
+                "character_id": npc_id,
                 "position": positions[index],
-                "emotion": "neutral",
+                "emotion": emotion,
                 "animation": "fade_in",
             }
         )

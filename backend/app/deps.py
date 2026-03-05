@@ -5,6 +5,10 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -16,7 +20,7 @@ from app.api_models import StructuredActionRequest
 from app.interaction_service import InteractionService
 from app.game_core import GameRuntime, ManagedSession
 from app.game_core.adapters import FastAPIInputPort, InputPort
-from app.game_core.orchestration.models import PipelineResult
+from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.world_seed import WORLD_CATALOG, _shell_world_seed
 from app.world_data_loader import load_goblin_slayer_world_data
 
@@ -106,6 +110,7 @@ def _build_game_runtime() -> GameRuntime:
     # ── end app-layer construction ─────────────────────────────────────────────
 
     return GameRuntime(
+        instance_manager=instance_manager,
         agent_orchestration=agent_orchestration,
         gm_narrator_factory=gm_narrator_factory,
         osiris_evaluator_factory=osiris_evaluator_factory,
@@ -116,9 +121,12 @@ def _build_game_runtime() -> GameRuntime:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Deferred composition root: build runtime on server startup, not at import time."""
-    app.state.game_runtime = _build_game_runtime()
-    app.state.input_port = FastAPIInputPort()
-    app.state.interaction_service = None
+    if getattr(app.state, "game_runtime", None) is None:
+        app.state.game_runtime = _build_game_runtime()
+    if getattr(app.state, "input_port", None) is None:
+        app.state.input_port = FastAPIInputPort()
+    if not hasattr(app.state, "interaction_service"):
+        app.state.interaction_service = None
     yield
 
 
@@ -284,3 +292,19 @@ async def _execute_structured_action(
     )
     await get_game_runtime().save_session(session)
     return result
+
+
+async def _finalize_dialogue_turn(
+    session: ManagedSession,
+    *,
+    time_cost: float,
+    event_sink: Callable[[SSEEvent], Any] | None = None,
+) -> list[SSEEvent]:
+    """Finalize one dialogue/private-chat turn through TickCoordinator."""
+
+    settlement_events = await session.runtime.tick_coordinator.finalize_external_turn(
+        time_cost=time_cost,
+        event_sink=event_sink,
+    )
+    await get_game_runtime().save_session(session)
+    return settlement_events

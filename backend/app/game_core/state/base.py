@@ -357,6 +357,18 @@ class StateContainer:
                     continue
                 raw_danger = item.base_danger if item.base_danger is not None else 1.0
                 tags = [str(tag) for tag in item.tags]
+
+                # Populate npc_locations from sub_location.resident_npcs
+                npc_locations: dict[str, str | None] = {}
+                for sub_id, sub_template in item.sub_locations.items():
+                    sub_id_str = str(sub_id).strip()
+                    if not sub_id_str:
+                        continue
+                    for npc_id in getattr(sub_template, "resident_npcs", []):
+                        npc_id_str = str(npc_id).strip()
+                        if npc_id_str:
+                            npc_locations[npc_id_str] = sub_id_str
+
                 areas[area_id] = {
                     "exploration": "undiscovered",
                     "danger_level": cls._as_float(raw_danger, 1.0),
@@ -364,11 +376,25 @@ class StateContainer:
                     "tags": tags,
                     "temporary_sub_areas": [],
                     "discovered_items": [],
-                    "npc_locations": {},
+                    "npc_locations": npc_locations,
                     "container_states": {},
                     "hostile_tracking": {},
                     "permanent_hostile_slots": {},
                 }
+
+        # Place NPCs from CharacterRegistry that aren't already placed by resident_npcs
+        if world.has_registry("characters"):
+            placed_npcs: set[str] = set()
+            for area_data in areas.values():
+                placed_npcs.update(area_data["npc_locations"].keys())
+            for char in world.characters.list_all():
+                char_id = cls._normalize_identifier(char.id)
+                if char_id is None or char_id in placed_npcs:
+                    continue
+                char_area = (char.area_id or char.current_area or "").strip()
+                if char_area and char_area in areas:
+                    areas[char_area]["npc_locations"][char_id] = None
+
         return {"areas": areas}
 
     @classmethod

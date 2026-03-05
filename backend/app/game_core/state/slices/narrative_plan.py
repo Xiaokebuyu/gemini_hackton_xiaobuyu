@@ -93,9 +93,11 @@ class NarrativePlanSlice(StateSlice):
         self.current_target_milestone = milestone_id
         self._dirty = True
 
-    def add_directive(self, directive: dict[str, Any]) -> None:
-        self.npc_directives.append(dict(directive))
+    def add_directive(self, directive: dict[str, Any]) -> dict[str, Any]:
+        stored = dict(directive)
+        self.npc_directives.append(stored)
         self._dirty = True
+        return stored
 
     def add_bulletin(self, bulletin: dict[str, Any]) -> None:
         self.active_bulletins.append(dict(bulletin))
@@ -112,6 +114,19 @@ class NarrativePlanSlice(StateSlice):
     def schedule_next(self, tick: int | None) -> None:
         self.next_scheduled_tick = tick
         self._dirty = True
+
+    def prune_consumed_and_expired(self, current_tick: int) -> int:
+        """Remove consumed or expired directives. Returns count of removed items."""
+        before = len(self.npc_directives)
+        self.npc_directives = [
+            d for d in self.npc_directives
+            if not d.get("consumed", False)
+            and d.get("expires_at_tick", current_tick + 1) >= current_tick
+        ]
+        pruned = before - len(self.npc_directives)
+        if pruned > 0:
+            self._dirty = True
+        return pruned
 
     def adjust_escalation(self, delta: int) -> None:
         self.escalation_level = max(0, self.escalation_level + delta)

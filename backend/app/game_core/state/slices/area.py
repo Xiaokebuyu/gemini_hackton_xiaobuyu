@@ -175,6 +175,12 @@ class AreaSlice(StateSlice):
         state["used"] = True
         self._dirty = True
 
+    def mark_trap_detected(self, area_id: str, interactable_id: str) -> None:
+        """Mark a trap on this container/interactable as detected."""
+        state = self.get_area(area_id).container_states.setdefault(interactable_id, {})
+        state["trap_detected"] = True
+        self._dirty = True
+
     # ── 2. Container state ───────────────────────────────────────────────────
 
     def init_container(
@@ -742,6 +748,11 @@ class AreaSlice(StateSlice):
         if field_name.startswith("properties.") and change.operation in {"set", "modify"}:
             key = field_name.split(".", 1)[1]
             self.modify_property(area_id, key, change.value)
+            return
+        if field_name.startswith("discovered_items.") and change.operation in {"set", "add"}:
+            discovery_id = field_name.split(".", 1)[1]
+            if discovery_id:
+                self.mark_discovery(area_id, discovery_id)
             return
         raise ValueError(
             f"unsupported area state change: {change.operation} {change.path}"

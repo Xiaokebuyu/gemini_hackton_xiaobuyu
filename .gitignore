@@ -70,7 +70,6 @@ CODEX_INIT.md
 # Internal development docs
 **/施工记录*/
 **/增量执行计划/
-**/博德之门3架构设计规范/
 MEMORY_GATEWAY_INTEGRATION.md
 README_EN.md
 
@@ -80,3 +79,7 @@ backend/legacy/
 
 # Game data (large JSON files)
 backend/data/
+
+# Node dependencies
+node_modules/
+frontend/node_modules/

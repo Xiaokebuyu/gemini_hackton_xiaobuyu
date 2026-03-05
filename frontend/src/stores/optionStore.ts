@@ -7,8 +7,8 @@ interface OptionState {
   isLocked: boolean
   hasDialogueOptions: boolean   // 是否已有 LLM 生成的对话选项（用于判断是否跳过 buildFromOverview）
 
-  setOptions: (opts: GameOption[]) => void
-  setFromDialogueOptions: (items: DialogueOptionItem[], onSelect: (label: string) => void) => void
+  setOptions: (opts: GameOption[], hasDialogueOptions?: boolean) => void
+  setFromDialogueOptions: (items: DialogueOptionItem[], onSelect: (item: DialogueOptionItem) => void) => void
   buildFromOverview: (overview: LocationOverview, handlers: OverviewHandlers) => void
   lock: () => void
   unlock: () => void
@@ -35,6 +35,7 @@ const SUB_LOCATION_TYPE_ICON: Record<string, string> = {
   rest: '⛺',
   worship: '⛪',
   dungeon: '⚔',
+  encounter: '⚔',
   visit: '🚪',
   discovery: '🔍',
 }
@@ -44,16 +45,22 @@ export const useOptionStore = create<OptionState>((set) => ({
   isLocked: false,
   hasDialogueOptions: false,
 
-  setOptions: (opts) => set({ options: opts }),
+  setOptions: (opts, hasDialogueOptions = false) => set({ options: opts, hasDialogueOptions }),
 
   // LLM 生成的对话选项（dialogue_options 事件）
   setFromDialogueOptions: (items, onSelect) => {
-    const opts: GameOption[] = items.map((item) => ({
-      id: item.id,
-      label: item.label,
-      icon: item.icon,
-      action: () => onSelect(item.label),
-    }))
+    const opts = items
+      .map<GameOption | null>((item) => {
+        const label = item.label ?? item.text ?? String(item.id ?? '').trim()
+        if (!label) return null
+        return {
+          id: String(item.id ?? label),
+          label,
+          icon: item.icon,
+          action: () => onSelect(item),
+        }
+      })
+      .filter((item): item is GameOption => item !== null)
     set({ options: opts, hasDialogueOptions: true })
   },
 

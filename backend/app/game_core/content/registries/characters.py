@@ -26,6 +26,15 @@ class NpcAttack:
 
 
 @dataclass(slots=True)
+class SecretEntry:
+    """NPC 秘密条目，含独立 trust 门槛（NPC规范 §七.5）。"""
+
+    content: str
+    trust_threshold: int = 50
+    tags: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ShopEntry:
     """商店库存条目（typed，替代旧 dict）。"""
 
@@ -90,7 +99,7 @@ class CharacterTemplate:
     combat_capable: bool = False
     attacks: list[NpcAttack] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
-    secrets: list[str] = field(default_factory=list)
+    secrets: list[SecretEntry] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------
@@ -250,10 +259,17 @@ class CharacterRegistry(ContentRegistry):
             if isinstance(raw_skills, list) else []
         )
         raw_secrets = raw.get("secrets")
-        secrets: list[str] = (
-            [str(s) for s in raw_secrets if isinstance(s, str) and str(s).strip()]
-            if isinstance(raw_secrets, list) else []
-        )
+        secrets: list[SecretEntry] = []
+        if isinstance(raw_secrets, list):
+            for s in raw_secrets:
+                if isinstance(s, str) and s.strip():
+                    secrets.append(SecretEntry(content=s.strip()))
+                elif isinstance(s, Mapping):
+                    secrets.append(SecretEntry(
+                        content=str(s.get("content", "")),
+                        trust_threshold=int(s.get("trust_threshold", 50)),
+                        tags=[str(t) for t in s.get("tags", []) if isinstance(t, str)],
+                    ))
 
         # -- Schedule --
         raw_schedule = raw.get("schedule")

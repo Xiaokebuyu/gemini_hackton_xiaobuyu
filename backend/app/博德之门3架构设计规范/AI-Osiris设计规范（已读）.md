@@ -376,10 +376,23 @@ def tick_settlement(self):
 
 ---
 
+## 补遗：增量实现中确立的规则注入（2026-03-05 追记）
+
+### A. WorldRule 注入 Osiris 上下文
+
+`_build_rules_context()` 新增 `world_rules` 字段：从 `world.lore.get_rules_for_context(area_id=current_area)` 获取当前适用的 WorldRule（按 scope 过滤 + priority 排序），注入 Osiris 推理上下文。
+
+### B. Faction behavioral_rules 消费
+
+`_build_rules_context()` 已组装 `faction_rules`（每个 faction 的 id/name/alignment/behavioral_rules），传给 AIOsirisEvaluator。
+
+---
+
 ## 变更日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-05 | 补遗 A-B：WorldRule 注入 + Faction behavioral_rules 消费 |
 | 2026-02-26 | 创建。输入三部分设计（摘要+快照+规则）+ 输出指令类型全集（10 类）+ 引擎验证规则 + prompt 模板 + TickCoordinator 集成 + 延迟事件机制 |
 | 2026-02-26 | 关闭全部 6 个开放问题：Q1 中等详细度、Q2 管线统一提供、Q3 固定枚举、Q4 medium thinking、Q5 仅 0 成本算 trivial、Q6 统一 prompt。补充对话时间成本说明 |
 | 2026-02-27 | 文档统一修订：§5 重写为 AIOsirisHook 内部视角（去除独立 time_advance / scene_bus.reset 步骤，明确 P30 在 SettlementHook 链内执行）。§5.2 空结算优化改为 should_skip() 机制。add_knowledge 目标澄清为 RelationSlice.npc_impressions（不写 MemoryGraph，两者不需同步） |

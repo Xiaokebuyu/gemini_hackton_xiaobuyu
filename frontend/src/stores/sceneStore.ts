@@ -1,6 +1,29 @@
 import { create } from 'zustand'
-import type { LocationOverview, PresentNpc, GameMode } from '../types/game'
+import type { LocationOverview, PresentNpc, GameMode, PortraitSlot } from '../types/game'
 import type { SceneChangeData } from '../types/sse'
+
+const POSITION_MAP: Array<'left' | 'center' | 'right'> = ['center', 'left', 'right']
+const POSITIONS_2: Array<'left' | 'right'> = ['left', 'right']
+
+function buildPortraits(npcs: PresentNpc[]): PortraitSlot[] {
+  const capped = npcs.slice(0, 3)
+  if (capped.length === 0) return []
+  if (capped.length === 1) {
+    return [{ position: 'center', characterId: capped[0].character_id, isActive: false }]
+  }
+  if (capped.length === 2) {
+    return POSITIONS_2.map((pos, i) => ({
+      position: pos,
+      characterId: capped[i].character_id,
+      isActive: false,
+    }))
+  }
+  return capped.map((npc, i) => ({
+    position: POSITION_MAP[i],
+    characterId: npc.character_id,
+    isActive: false,
+  }))
+}
 
 interface SceneState {
   backgroundKey: string          // 资源 key，格式 "area_id" 或 "area_id/location_id"
@@ -8,12 +31,24 @@ interface SceneState {
   currentLocation: string | null
   presentNpcs: PresentNpc[]
   gameMode: GameMode
+  openingInProgress: boolean
   isTransitioning: boolean       // 转场动画中
+  portraits: PortraitSlot[]      // Layer 1 立绘槽位
+  activePortraitId: string | null
+  locationName: string           // 转场时显示的地点名
+  transitionKey: number          // 每次 transitionTo() 自增，触发动画
+  lastOverview: LocationOverview | null  // 最近一次 overview 快照（用于退出对话重建选项）
+  activeNpcId: string | null             // 当前对话 NPC ID（对话上下文指示器）
 
   updateFromOverview: (overview: LocationOverview) => void
   transitionTo: (data: SceneChangeData) => void
   setGameMode: (mode: GameMode) => void
+  setOpeningInProgress: (v: boolean) => void
   setTransitioning: (v: boolean) => void
+  setActivePortrait: (characterId: string | null) => void
+  addOpeningPortrait: (characterId: string, position: PortraitSlot['position']) => void
+  clearPortraits: () => void
+  setActiveNpc: (npcId: string | null) => void
 }
 
 export const useSceneStore = create<SceneState>((set) => ({
@@ -22,28 +57,59 @@ export const useSceneStore = create<SceneState>((set) => ({
   currentLocation: null,
   presentNpcs: [],
   gameMode: 'explore',
+  openingInProgress: false,
   isTransitioning: false,
+  portraits: [],
+  activePortraitId: null,
+  locationName: '',
+  transitionKey: 0,
+  lastOverview: null,
+  activeNpcId: null,
 
   updateFromOverview: (overview) => {
     const key = overview.location_id
       ? `${overview.area_id}/${overview.location_id}`
       : overview.area_id
-    set({
+    set((s) => ({
       currentArea: overview.area_id,
       currentLocation: overview.location_id,
       presentNpcs: overview.present_npcs,
       backgroundKey: key,
-    })
+      portraits: s.openingInProgress ? s.portraits : buildPortraits(overview.present_npcs),
+      activePortraitId: s.openingInProgress ? s.activePortraitId : null,
+      lastOverview: overview,
+    }))
   },
 
-  transitionTo: (data) => {
-    set({
+  transitionTo: (data) =>
+    set((s) => ({
       isTransitioning: true,
       currentLocation: data.location_id,
+      locationName: data.location_name,
+      transitionKey: s.transitionKey + 1,
       // backgroundKey 和 currentArea 在 updateFromOverview 里由 location_overview 更新
-    })
-  },
+    })),
 
   setGameMode: (mode) => set({ gameMode: mode }),
+  setOpeningInProgress: (v) => set({ openingInProgress: v }),
   setTransitioning: (v) => set({ isTransitioning: v }),
+
+  setActivePortrait: (characterId) =>
+    set((s) => ({
+      activePortraitId: characterId,
+      portraits: s.portraits.map((p) => ({
+        ...p,
+        isActive: p.characterId === characterId,
+      })),
+    })),
+
+  addOpeningPortrait: (characterId, position) =>
+    set((s) => {
+      const next = s.portraits.filter((p) => p.characterId !== characterId && p.position !== position)
+      next.push({ position, characterId, isActive: false })
+      return { portraits: next }
+    }),
+
+  clearPortraits: () => set({ portraits: [], activePortraitId: null }),
+  setActiveNpc: (npcId) => set({ activeNpcId: npcId }),
 }))

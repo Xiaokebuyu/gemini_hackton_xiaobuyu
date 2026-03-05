@@ -27,6 +27,13 @@ class SceneBus:
     def get_for_character(self, character_id: str) -> list[SceneEntry]:
         return self._scene.get_for_character(character_id)
 
+    def get_for_role(
+        self,
+        role: str,
+        character_id: str | None = None,
+    ) -> list[SceneEntry]:
+        return self._scene.get_for_role(role, character_id)
+
     def record_state_change(self, change: StateChange | dict[str, Any]) -> None:
         if isinstance(change, StateChange):
             payload = {

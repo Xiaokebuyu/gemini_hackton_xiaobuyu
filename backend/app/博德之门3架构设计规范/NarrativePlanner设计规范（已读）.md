@@ -877,8 +877,27 @@ NarrativePlanner 的 `spawn_quest_npc` 和 `plant_environmental` 指令可能影
 
 ---
 
+## 补遗：增量实现中确立的 Planner 消费链路（2026-03-05 追记）
+
+### A. LOCKED→AVAILABLE 转换执行者
+
+设计中描述了 prerequisites 图但未指定转换执行者。实现中由 `MilestoneUnlockHook`（P25，在 NarrativePlannerHook P35 之前）负责检查 + 状态转换 + 播种新事件条件。
+
+### B. Planner 上下文注入里程碑细节
+
+`_build_planner_context()` 新增 `target_milestone_detail`，将当前目标里程碑的 key_elements / involved_npcs / involved_locations / failure_fallback 注入 planner 决策上下文和 LLM prompt。
+
+### C. MilestoneTemplate 字段消费
+
+- `involved_npcs` — 确定性 planner L2/L3 优先选择相关 NPC 投递指令
+- `key_elements` — L3 create_quest payload 携带叙事要素
+- `failure_fallback` — 里程碑 FAILED 时通过 SSE `milestone_failed` 事件暴露
+
+---
+
 ## 变更日志
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-05 | 补遗 A-C：MilestoneUnlockHook + 里程碑细节注入 + MilestoneTemplate 字段消费 |
 | 2026-02-26 | 创建。"价值与价格"核心理念 + QuestRegistry 演化为故事里程碑 + NarrativePlanner 动态任务生成 + 7 种指令类型 + 递进升级策略（L0-L5）+ 触发条件（条件+兜底）+ NarrativePlanSlice + Prompt 模板 + TickCoordinator P35 集成 |

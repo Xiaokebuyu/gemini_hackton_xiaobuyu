@@ -4,8 +4,8 @@ Tracks the message sequence fed to an LLM agent.  When ``current_tokens``
 reaches ``overflow_threshold * max_tokens``, the caller should pop the oldest
 messages and pass them to MemoryGraphizer (Phase 2-3) to free window space.
 
-Phase 1 scope: data structure + overflow detection only.
-Phase 2-3 will add MemoryGraphizer integration and persistence.
+ContextWindow is intentionally limited to short-lived working memory. Instance-
+level semantics such as directive queues belong to ``NPCInstance``.
 
 Design reference: ❺ NPC与队友运行时规范 §四 (ContextWindow)
 Decision record: D-N14-Phase1 (narrative.md)

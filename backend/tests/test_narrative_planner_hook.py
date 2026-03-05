@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from app.game_core.content import WorldInstance
+from app.game_core.narrative.instance_manager import InstanceManager
 from app.game_core.orchestration.hooks.narrative_planner import (
     NarrativePlannerDecision,
     NarrativePlannerHook,
@@ -337,6 +338,39 @@ class TestNarrativePlannerHook:
         assert context.state.quests.get_dynamic_quest("dq_existing")["status"] == "retired"
         assert context.state.narrative_plan.quest_history[-1]["kind"] == "retire_quest"
 
+    def test_direct_npc_hot_injects_into_active_instance(self) -> None:
+        planner = RecordingPlanner(
+            {
+                "directives": [
+                    {
+                        "kind": "direct_npc",
+                        "payload": {
+                            "npc_id": "npc_guard",
+                            "directive": {"kind": "hint", "topic": "west_gate"},
+                            "priority": "high",
+                        },
+                    },
+                ]
+            }
+        )
+        context = _make_context(change_log=[StateChange("player", "set", "current_area", "forest")])
+        instance_manager = InstanceManager()
+        active_instance = instance_manager.get_or_create("npc_guard", current_tick=3)
+
+        result = asyncio.run(
+            NarrativePlannerHook(
+                planner=planner,
+                instance_manager=instance_manager,
+            ).execute(context)
+        )
+
+        assert result.metadata["applied_kinds"] == ["direct_npc"]
+        assert len(context.state.narrative_plan.npc_directives) == 1
+        stored = context.state.narrative_plan.npc_directives[-1]
+        assert stored["priority"] == "high"
+        assert stored["consumed"] is False
+        assert active_instance.directive_queue == [stored]
+
     def test_unsupported_directives_are_counted(self) -> None:
         planner = RecordingPlanner(
             {
@@ -574,3 +608,147 @@ class TestNarrativePlannerHook:
         assert result.metadata["planner_metadata"]["status"] == "area_fill"
         sub_areas = context.state.areas.list_temporary_sub_areas("forest")
         assert len(sub_areas) >= 1
+
+
+class TestP36MilestoneDetail:
+    """P3-6: NarrativePlanner 精确引导 — milestone detail 注入与 NPC 选择。"""
+
+    @staticmethod
+    def _world_with_milestone(
+        milestone_id: str,
+        *,
+        key_elements: list[str] | None = None,
+        involved_npcs: list[str] | None = None,
+        involved_locations: list[str] | None = None,
+        narrative_context: str = "",
+    ) -> WorldInstance:
+        from app.game_core.content.registries import QuestRegistry
+        world = WorldInstance("test_world")
+        quests = QuestRegistry()
+        quests.load({
+            "milestones": {
+                milestone_id: {
+                    "id": milestone_id,
+                    "chapter_id": "chapter_1",
+                    "key_elements": key_elements or [],
+                    "involved_npcs": involved_npcs or [],
+                    "involved_locations": involved_locations or [],
+                    "narrative_context": narrative_context,
+                },
+            },
+            "chapters": [{"id": "chapter_1"}],
+        })
+        world.register(quests)
+        return world
+
+    @staticmethod
+    def _context_with_world(base_ctx: SettlementContext, world: WorldInstance) -> SettlementContext:
+        return SettlementContext(
+            change_log=base_ctx.change_log,
+            state=base_ctx.state,
+            world=world,
+            scene_bus=base_ctx.scene_bus,
+            _rules_engine=base_ctx._rules_engine,
+            _apply_delta=base_ctx._apply_delta,
+        )
+
+    def test_build_planner_context_includes_milestone_detail(self) -> None:
+        """_build_planner_context() 注入 key_elements 和 involved_npcs。"""
+        world = self._world_with_milestone(
+            "ms_find_crypt",
+            key_elements=["find_crypt", "ancient_seal"],
+            involved_npcs=["captain_smith"],
+        )
+        context = self._context_with_world(
+            _make_context(
+                narrative_plan_payload={"current_target_milestone": "ms_find_crypt"},
+            ),
+            world,
+        )
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+        detail = result["target_milestone_detail"]
+        assert detail["key_elements"] == ["find_crypt", "ancient_seal"]
+        assert detail["involved_npcs"] == ["captain_smith"]
+
+    def test_build_planner_context_no_detail_without_target_milestone(self) -> None:
+        """current_target_milestone = None → target_milestone_detail = {}。"""
+        context = _make_context(
+            narrative_plan_payload={"current_target_milestone": None},
+        )
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+        assert result["target_milestone_detail"] == {}
+
+    def test_l2_uses_involved_npc_from_milestone(self) -> None:
+        """L2 escalation 使用 milestone involved_npcs[0] 而非硬编码 guild_clerk。"""
+        world = self._world_with_milestone("ms_a", involved_npcs=["sheriff_dane"])
+        context = self._context_with_world(
+            _make_context(
+                narrative_plan_payload={
+                    "last_run_tick": 3,
+                    "ticks_since_milestone_progress": 8,
+                    "escalation_level": 1,
+                    "current_target_milestone": "ms_a",
+                },
+                quest_payload={
+                    "milestone_states": {"ms_a": {"state": "ACTIVE"}},
+                    "dynamic_quests": {
+                        "dq_ms_a": {"status": "active", "title": "Lead", "summary": "ok"},
+                    },
+                },
+            ),
+            world,
+        )
+        asyncio.run(NarrativePlannerHook().execute(context))
+        # strategy_notes is saved to narrative_plan slice
+        strategy = context.state.narrative_plan.strategy_notes
+        assert "sheriff_dane" in strategy
+
+    def test_l2_falls_back_to_guild_clerk_without_involved_npcs(self) -> None:
+        """involved_npcs 为空 → fallback to guild_clerk（原有行为）。"""
+        context = _make_context(
+            narrative_plan_payload={
+                "last_run_tick": 3,
+                "ticks_since_milestone_progress": 8,
+                "escalation_level": 1,
+            },
+            quest_payload={
+                "milestone_states": {"ms_a": {"state": "ACTIVE"}},
+                "dynamic_quests": {
+                    "dq_ms_a": {"status": "active", "title": "Lead", "summary": "ok"},
+                },
+            },
+        )
+        asyncio.run(NarrativePlannerHook().execute(context))
+        strategy = context.state.narrative_plan.strategy_notes
+        assert "guild_clerk" in strategy
+
+    def test_l3_create_quest_metadata_includes_key_elements(self) -> None:
+        """L3 urgency 生成的动态任务 metadata 包含 key_elements，summary 使用 narrative_context。"""
+        world = self._world_with_milestone(
+            "ms_a",
+            key_elements=["magic_stone", "prophecy"],
+            involved_npcs=["sage_elder"],
+            narrative_context="Seek the ancient magic stone.",
+        )
+        context = self._context_with_world(
+            _make_context(
+                narrative_plan_payload={
+                    "last_run_tick": 3,
+                    "ticks_since_milestone_progress": 11,
+                    "escalation_level": 2,
+                    "current_target_milestone": "ms_a",
+                },
+                quest_payload={
+                    "milestone_states": {"ms_a": {"state": "ACTIVE"}},
+                    "dynamic_quests": {},
+                },
+            ),
+            world,
+        )
+        result = asyncio.run(NarrativePlannerHook().execute(context))
+        assert result.metadata["planner_metadata"]["status"] == "escalation_l3"
+        dq = context.state.quests.get_dynamic_quest("dq_ms_a")
+        assert dq is not None
+        meta = dq.get("metadata", {})
+        assert meta.get("key_elements") == ["magic_stone", "prophecy"]
+        assert "ancient magic stone" in dq.get("summary", "")

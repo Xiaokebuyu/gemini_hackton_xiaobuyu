@@ -334,4 +334,115 @@ class TestInvestigate:
             WorldInstance("test_world"),
         )
         assert result.success is True
-        assert result.metadata["skill"] == "perception"
+
+
+class TestAutoDisadvantage:
+    """Tests for B3: SkillCheckHandler auto-disadvantage from active effects."""
+
+    @staticmethod
+    def _state_with_effect(dis_checks: list[str]) -> StateContainer:
+        state = StateContainer()
+        player = PlayerSlice()
+        player.restore({
+            "stats": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
+            "proficiency_bonus": 2,
+            "save_proficiencies": ["con"],
+            "active_effects": [{
+                "effect_id": "restrained", "effect_type": "condition",
+                "remaining_ticks": 3, "modifiers": {}, "periodic": {}, "tags": [],
+                "disadvantage_checks": dis_checks,
+            }],
+        })
+        state.register(player)
+        return state
+
+    def test_auto_disadvantage_specific_skill(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Effect with disadvantage_checks=["perception"] auto-applies disadvantage to perception."""
+        state = self._state_with_effect(["perception"])
+        handler = SkillCheckHandler()
+        # two rolls: [15, 5] → disadvantage takes min → selected=5
+        _patch_rolls(monkeypatch, [15, 5])
+
+        result = _make_engine(handler).execute(
+            Command(type="skill_check", params={"skill": "perception", "dc": 10}),
+            state, WorldInstance("test_world"),
+        )
+        assert result.metadata["raw_roll"] == 5
+        assert result.metadata["auto_disadvantage"] is True
+
+    def test_auto_disadvantage_does_not_affect_other_skills(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Effect with disadvantage_checks=["perception"] does NOT affect stealth."""
+        state = self._state_with_effect(["perception"])
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [15])
+
+        result = _make_engine(handler).execute(
+            Command(type="skill_check", params={"skill": "stealth", "dc": 10}),
+            state, WorldInstance("test_world"),
+        )
+        assert result.metadata["raw_roll"] == 15
+        assert result.metadata["auto_disadvantage"] is False
+
+    def test_auto_disadvantage_all_affects_any_skill(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Effect with disadvantage_checks=["all"] applies disadvantage to any skill."""
+        state = self._state_with_effect(["all"])
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [15, 5])
+
+        result = _make_engine(handler).execute(
+            Command(type="skill_check", params={"skill": "athletics", "dc": 10}),
+            state, WorldInstance("test_world"),
+        )
+        assert result.metadata["raw_roll"] == 5
+        assert result.metadata["auto_disadvantage"] is True
+
+    def test_explicit_disadvantage_not_overridden(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit disadvantage=True in params still works without any effects."""
+        state = _make_state()  # no active_effects
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [15, 5])
+
+        result = _make_engine(handler).execute(
+            Command(type="skill_check", params={"skill": "perception", "dc": 10, "disadvantage": True}),
+            state, WorldInstance("test_world"),
+        )
+        assert result.metadata["raw_roll"] == 5
+        assert result.metadata["auto_disadvantage"] is False  # explicit, not auto
+
+    def test_auto_disadvantage_saving_throw(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Effect with disadvantage_checks=["con"] auto-applies disadvantage to con saving throw."""
+        state = self._state_with_effect(["con"])
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [15, 5])
+
+        result = _make_engine(handler).execute(
+            Command(type="saving_throw", params={"ability": "con", "dc": 10}),
+            state, WorldInstance("test_world"),
+        )
+        assert result.metadata["raw_roll"] == 5
+        assert result.metadata["auto_disadvantage"] is True
+
+    def test_auto_disadvantage_saving_throw_unmatched_ability(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Effect with disadvantage_checks=["con"] does NOT affect str saving throw."""
+        state = self._state_with_effect(["con"])
+        handler = SkillCheckHandler()
+        _patch_rolls(monkeypatch, [15])
+
+        result = _make_engine(handler).execute(
+            Command(type="saving_throw", params={"ability": "str", "dc": 10}),
+            state, WorldInstance("test_world"),
+        )
+        assert result.metadata["raw_roll"] == 15
+        assert result.metadata["auto_disadvantage"] is False

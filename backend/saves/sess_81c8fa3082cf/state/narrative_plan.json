@@ -1,0 +1,36 @@
+{
+  "active_bulletins": [],
+  "behavior_window": [
+    {
+      "changed_slices": [
+        "player"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 8
+    }
+  ],
+  "chapter_completion": 0.0,
+  "current_chapter": "",
+  "current_target_milestone": null,
+  "escalation_level": 1,
+  "last_run_tick": 8,
+  "next_scheduled_tick": null,
+  "npc_directives": [
+    {
+      "consumed": false,
+      "directive": {},
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "cow_girl",
+      "priority": "medium",
+      "source": "narrative_planner"
+    }
+  ],
+  "pacing_frozen": false,
+  "play_style_tags": [],
+  "quest_history": [],
+  "strategy_notes": "Initiate the narrative arc at the farm. Escalate from neutral state and establish the first interaction via the available banter milestone.",
+  "ticks_since_milestone_progress": 8
+}

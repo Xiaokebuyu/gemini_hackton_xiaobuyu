@@ -7,8 +7,10 @@ from typing import Any
 
 from app.game_core.bootstrap import build_default_world, build_runtime_for_world
 from app.game_core.content import WorldInstance
+from app.game_core.narrative.context_window import ContextWindow
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.gm_tools import register_gm_tools
+from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.character_tools import register_npc_tools, register_teammate_tools
 from app.game_core.narrative.registry import RoleToolRegistry
 from app.game_core.orchestration.npc_interaction import (
@@ -195,6 +197,44 @@ class TestNpcInteractionCoordinator:
         ))
 
         assert abs(result.time_cost - (1 / 6)) < 1e-9
+
+    def test_active_instance_directive_is_consumed_immediately(self) -> None:
+        world = _world_with_characters()
+        state = _state_with_party(world)
+        coordinator, llm = _build_coordinator(
+            [
+                {"text": "", "finish_reason": "stop"},
+                {"text": "", "finish_reason": "stop"},
+            ],
+            world=world,
+            state=state,
+        )
+        directive = {
+            "npc_id": "merchant_tom",
+            "directive": {"kind": "hint", "topic": "west_gate"},
+            "priority": "high",
+            "expires_at_tick": 12,
+            "consumed": False,
+        }
+        instance = NPCInstance(
+            actor_id="merchant_tom",
+            context_window=ContextWindow(actor_id="merchant_tom", max_tokens=10_000),
+            directive_queue=[directive],
+        )
+
+        result = asyncio.run(
+            coordinator.execute_interaction(
+                npc_id="merchant_tom",
+                player_message="Anything new?",
+                execute_command=_noop_executor,
+                instance=instance,
+            )
+        )
+
+        assert result.success is True
+        assert directive["consumed"] is True
+        assert instance.directive_queue == []
+        assert "west_gate" in llm.calls[0]["system_prompt"]
 
     def test_scene_entry_written_for_player_message(self) -> None:
         world = _world_with_characters()

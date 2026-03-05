@@ -112,6 +112,7 @@ class SaveStore:
         gm_narrator_factory: Any = None,
         osiris_evaluator_factory: Any = None,
         narrative_planner_factory: Any = None,
+        instance_manager: Any = None,
     ) -> DefaultRuntime | None:
         """Load and restore one runtime using an already loaded world."""
         raw = await self._persistence.load(session_id)
@@ -123,6 +124,7 @@ class SaveStore:
             gm_narrator_factory=gm_narrator_factory,
             osiris_evaluator_factory=osiris_evaluator_factory,
             narrative_planner_factory=narrative_planner_factory,
+            instance_manager=instance_manager,
         )
 
     async def list_session_meta(

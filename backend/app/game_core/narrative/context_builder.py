@@ -130,6 +130,36 @@ that deserves a sardonic aside.
 Match the language of the user message.\
 """
 
+GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT = """\
+You are narrating the player's inner thoughts during a private conversation \
+with an NPC in a dark-fantasy CRPG.
+
+## Your role
+You are NOT the sarcastic GM narrator. You are the player's inner voice — \
+quiet, reflective, occasionally catching feelings they didn't expect.
+
+## When to speak
+- **Default: use `pass_turn`.** Most private chat exchanges don't need inner monologue.
+- Speak ONLY at genuinely meaningful moments:
+  - NPC reveals a deep secret or vulnerability
+  - A romance-significant moment occurs
+  - The relationship fundamentally shifts (for better or worse)
+  - The player realizes something about the NPC they hadn't before
+
+## Style
+- First person ("你意识到..."), not third person
+- Brief — 1 sentence max
+- Tender, not sarcastic.
+
+## Tool rules
+- Default to `pass_turn`
+- Use `comment` with metadata tone="introspective"
+- Do NOT use `narrate` or `describe_environment`
+
+## Language
+Match the language of the conversation.\
+"""
+
 TEAMMATE_INTERACTION_PROMPT_TEMPLATE = """\
 You are {name}, a companion in the player's party in a dark-fantasy CRPG.
 
@@ -159,6 +189,44 @@ topic shifts to something you care about, or the player clearly needs support.
 ## Language
 Match the language of the user message.\
 """
+
+
+# ------------------------------------------------------------------
+# Relationship behaviour guides
+# ------------------------------------------------------------------
+
+_STAGE_GUIDES: dict[str, str] = {
+    "stranger":     "你不认识这个人。保持礼貌但有距离感，不主动深入私人话题。",
+    "acquaintance": "你认得这个人。可以随意一些，但不深入个人话题。",
+    "friend":       "你把对方当朋友。可以放松、分享想法、偶尔开玩笑。",
+    "close_friend": "你深信对方。可以坦诚、展现脆弱的一面、不再逞强。",
+    "intimate":     "你和对方有无保留的信任和默契。",
+    "cold":         "你对这个人没什么好感。敷衍、简短、不想多聊。",
+    "hostile":      "你厌恶这个人。讽刺、拒绝深入交谈。",
+    "enemy":        "你视这个人为敌。威胁、警告。",
+}
+
+
+def _trust_hint(trust: int) -> str:
+    if trust < -30:
+        return "你对此人高度戒备，不会分享任何个人信息。"
+    if trust < 0:
+        return "你对此人有些提防，只聊表面话题。"
+    if trust < 30:
+        return "你对此人态度中性，可以聊日常但不涉及私事。"
+    if trust < 60:
+        return "你信任此人，可以分享一些想法和过去的经历。"
+    return "你非常信任此人，可以吐露心声甚至秘密。"
+
+
+def _romance_hint(romance: int) -> str:
+    if romance < 20:
+        return ""
+    if romance < 40:
+        return "你对此人有一些在意，但不太确定是什么感觉。"
+    if romance < 60:
+        return "你对此人有好感，会不自觉地关心对方。"
+    return "你对此人有强烈的感情，但表达方式取决于你的性格。"
 
 
 # ------------------------------------------------------------------
@@ -304,16 +372,28 @@ class AgentContextBuilder:
             stage=l4.get("stage", "stranger"),
             impressions=l4.get("impressions", []),
             knowledge_hits=l6.get("hits", []),
+            time_info=l4.get("time"),
         )
 
     async def build_npc_full_context(
-        self, npc_id: str, *, memory_retriever: MemoryRetriever | None = None
+        self,
+        npc_id: str,
+        *,
+        memory_retriever: MemoryRetriever | None = None,
+        active_directive: dict[str, Any] | None = None,
+        is_private: bool = False,
     ) -> NpcFullContext | None:
         """Build NPC system prompt and full 7-layer dict in one retriever call.
 
         Returns None if NPC profile not found.  Use this instead of calling
         build_npc_system_prompt() + build_npc_context() separately to avoid
         a double retriever.retrieve() invocation.
+
+        Args:
+            active_directive: Optional narrative-planner directive to inject
+                into the system prompt (between memories and tool rules).
+            is_private: If True, inject private-chat context block and lower
+                secrets trust threshold by 20.
         """
         if not self._world.has_registry("characters"):
             return None
@@ -329,6 +409,9 @@ class AgentContextBuilder:
             stage=l4.get("stage", "stranger"),
             impressions=l4.get("impressions", []),
             knowledge_hits=l6.get("hits", []),
+            active_directive=active_directive,
+            time_info=l4.get("time"),
+            is_private=is_private,
         )
         return NpcFullContext(system_prompt=system_prompt, layers=layers)
 
@@ -353,6 +436,8 @@ class AgentContextBuilder:
             profile,
             l4.get("self_disposition", {}),
             knowledge_hits=l6.get("hits", []),
+            stage=_resolve_stage(self._state, char_id),
+            time_info=l4.get("time"),
         )
         return TeammateFull(system_prompt=system_prompt, layers=layers)
 
@@ -363,6 +448,10 @@ class AgentContextBuilder:
     def build_gm_interaction_prompt(self) -> str:
         """Return the GM observation prompt for NPC conversation context."""
         return GM_INTERACTION_OBSERVATION_PROMPT
+
+    def build_gm_private_chat_prompt(self) -> str:
+        """Return GM introspective monologue prompt for private conversations."""
+        return GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT
 
     async def build_teammate_interaction_prompt(self, char_id: str) -> str | None:
         """Build teammate observation prompt for NPC conversation context.
@@ -407,6 +496,8 @@ class AgentContextBuilder:
             profile,
             l4.get("self_disposition", {}),
             knowledge_hits=l6.get("hits", []),
+            stage=_resolve_stage(self._state, char_id),
+            time_info=l4.get("time"),
         )
 
     # ----------------------------------------------------------------
@@ -419,14 +510,26 @@ class AgentContextBuilder:
         character_id: str | None = None,
         *,
         execute_command: Callable[[Command], ExecuteResult] | None = None,
+        metadata: dict[str, Any] | None = None,
+        scene_visibility: str | None = None,
+        scene_audience: list[str] | None = None,
     ) -> AgentContext:
         """Build AgentContext for tool execution (not the 7-layer dict)."""
+        context_metadata: dict[str, Any] = {}
+        if character_id:
+            context_metadata["character_id"] = character_id
+        if metadata:
+            context_metadata.update(dict(metadata))
+        if scene_visibility is not None:
+            context_metadata["scene_visibility"] = scene_visibility
+        if scene_audience is not None:
+            context_metadata["scene_audience"] = list(scene_audience)
         return AgentContext(
             role=role,
             world=self._world,
             state=RoleStateProxy(self._state, role),
-            scene_entries=self._get_scene_entries(),
-            metadata={"character_id": character_id} if character_id else {},
+            scene_entries=self._get_scene_entries_for_role(role, character_id),
+            metadata=context_metadata,
             execute_command=execute_command,
         )
 
@@ -457,7 +560,15 @@ class AgentContextBuilder:
         lore: list[Any] = []
         factions: list[Any] = []
         if self._world.has_registry("lore"):
-            lore = self._world.lore.list_all()
+            current_area = (
+                self._state.player.current_area if self._state.has_slice("player") else None
+            )
+            all_lore = self._world.lore.list_all()
+            lore = [
+                e for e in all_lore
+                if e.scope in ("global", "")
+                or (e.scope == "area" and e.scope_id == current_area)
+            ]
         if self._world.has_registry("factions"):
             factions = self._world.factions.list_all()
         return {
@@ -670,10 +781,16 @@ class AgentContextBuilder:
                 if isinstance(raw_imp, list):
                     impressions = [str(i) for i in raw_imp if i]
 
+        time_info: dict[str, Any] | None = None
+        if self._state.has_slice("time"):
+            ts = self._state.time.snapshot()
+            time_info = {"day": ts.get("day", 1), "slot": ts.get("slot", "")}
+
         return {
             "disposition": disposition,
             "stage": stage,
             "impressions": impressions,
+            "time": time_info,
         }
 
     def _build_l4_teammate(self, char_id: str) -> dict[str, Any]:
@@ -716,44 +833,46 @@ class AgentContextBuilder:
     # ----------------------------------------------------------------
 
     def _get_scene_entries(self) -> list[dict[str, Any]]:
-        """Extract current scene entries as a list of dicts."""
+        """Extract all current scene entries as a list of dicts."""
         if not self._state.has_slice("scene"):
             return []
-        snap = self._state.scene.snapshot()
-        entries = snap.get("entries", [])
-        return [dict(e) for e in entries if isinstance(e, dict)]
+        return [
+            entry.snapshot()
+            for entry in self._state.scene.get_entries()
+        ]
+
+    def _get_scene_entries_for_role(
+        self,
+        role: str,
+        character_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """Extract role-filtered scene entries."""
+        if not self._state.has_slice("scene"):
+            return []
+        if role == "gm":
+            return [
+                entry.snapshot()
+                for entry in self._state.scene.get_for_role("gm")
+            ]
+        if role in {"npc", "teammate"} and character_id:
+            return [
+                entry.snapshot()
+                for entry in self._state.scene.get_for_role(role, character_id)
+            ]
+        return self._get_scene_entries()
 
     def _build_l5_gm(self) -> dict[str, Any]:
         """GM: all non-system entries."""
-        entries = self._get_scene_entries()
-        visible = [
-            e for e in entries
-            if str(e.get("visibility", "public")) != "system"
-        ]
         return {
-            "entries": visible,
+            "entries": self._get_scene_entries_for_role("gm", None),
             "viewer_role": "gm",
             "viewer_id": None,
         }
 
     def _build_l5_role(self, role: str, character_id: str) -> dict[str, Any]:
         """NPC/Teammate: visibility-filtered entries."""
-        entries = self._get_scene_entries()
-        audience_token = f"{role}:{character_id}"
-        visible: list[dict[str, Any]] = []
-        for entry in entries:
-            visibility = str(entry.get("visibility", "public"))
-            if visibility == "system":
-                continue
-            if visibility == "private":
-                audience = entry.get("audience")
-                if not isinstance(audience, list):
-                    continue
-                if audience_token not in {str(a) for a in audience}:
-                    continue
-            visible.append(entry)
         return {
-            "entries": visible,
+            "entries": self._get_scene_entries_for_role(role, character_id),
             "viewer_role": role,
             "viewer_id": character_id,
         }
@@ -820,12 +939,45 @@ class AgentContextBuilder:
 # ------------------------------------------------------------------
 
 
+def _resolve_stage(state: StateContainer, char_id: str) -> str:
+    """Read relationship_stages for char_id, default 'stranger'."""
+    if not state.has_slice("relations"):
+        return "stranger"
+    raw_stages = state.relations.relationship_stages
+    if isinstance(raw_stages, Mapping) and char_id in raw_stages:
+        raw = raw_stages[char_id]
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return "stranger"
+
+
+def _filter_secrets(secrets_raw: list[Any], trust_val: int) -> list[str]:
+    """Return secret contents eligible to reveal given trust level.
+
+    Accepts list[str] (legacy) or list[SecretEntry] (Phase 1b).
+    str entries have no threshold (always eligible — trust gate is data-level).
+    """
+    result: list[str] = []
+    for s in secrets_raw:
+        if isinstance(s, str) and s.strip():
+            result.append(s.strip())
+        else:
+            content = getattr(s, "content", "") or ""
+            threshold = getattr(s, "trust_threshold", 50)
+            if content and trust_val >= threshold:
+                result.append(content)
+    return result
+
+
 def _build_npc_prompt_text(
     npc_profile: Any,
     disposition: Mapping[str, Any],
     stage: str,
     impressions: list[str],
     knowledge_hits: list[dict[str, Any]] | None = None,
+    active_directive: dict[str, Any] | None = None,
+    time_info: dict[str, Any] | None = None,
+    is_private: bool = False,
 ) -> str:
     """Format NPC system prompt string from resolved profile + relationship data."""
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
@@ -833,6 +985,18 @@ def _build_npc_prompt_text(
     dialogue_style = _str_or(_profile_get(npc_profile, "dialogue_style"), "")
     tags = _profile_get(npc_profile, "tags", [])
     tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else ""
+
+    backstory = _str_or(_profile_get(npc_profile, "backstory"), "")
+    speech_pattern = _str_or(_profile_get(npc_profile, "speech_pattern"), "")
+    character_class = (
+        _str_or(_profile_get(npc_profile, "character_class"), "")
+        or _str_or(_profile_get(npc_profile, "class_id"), "")
+    )
+    faction = (
+        _str_or(_profile_get(npc_profile, "faction"), "")
+        or _str_or(_profile_get(npc_profile, "faction_id"), "")
+    )
+    secrets_raw = _profile_get(npc_profile, "secrets", [])
 
     approval = disposition.get("approval", 0)
     trust = disposition.get("trust", 0)
@@ -848,10 +1012,68 @@ def _build_npc_prompt_text(
     style_block = f"\n\n## Your dialogue style\n{dialogue_style}" if dialogue_style else ""
     tags_block = f"\nTraits: {tags_str}" if tags_str else ""
 
+    # Extended character blocks
+    backstory_block = f"\n\n## Your background\n{backstory}" if backstory else ""
+    speech_pattern_block = (
+        f"\n\n## Your speech pattern\n你的说话习惯和口癖：{speech_pattern}"
+        if speech_pattern else ""
+    )
+    identity_lines: list[str] = []
+    if character_class:
+        identity_lines.append(f"- 职业：{character_class}")
+    if faction:
+        identity_lines.append(f"- 阵营：{faction}")
+    identity_block = (
+        "\n\n## Your identity\n" + "\n".join(identity_lines) if identity_lines else ""
+    )
+
+    # Time awareness
+    time_block = ""
+    if time_info:
+        day = time_info.get("day", 1)
+        slot = time_info.get("slot", "")
+        time_block = f"\n- Current time: Day {day}, {slot}" if slot else f"\n- Current time: Day {day}"
+
+    # Behavior guides from relationship
+    behavior_parts = [
+        g for g in [
+            _STAGE_GUIDES.get(stage, ""),
+            _trust_hint(int(trust)),
+            _romance_hint(int(romance)),
+        ]
+        if g
+    ]
+    behavior_block = (
+        "\n\n## How to behave\n" + "\n".join(behavior_parts) if behavior_parts else ""
+    )
+
+    # Private conversation context
+    private_block = ""
+    if is_private:
+        private_block = (
+            "\n\n## Private conversation context\n"
+            "你现在和玩家单独在一起，没有其他人能听到你们的对话。\n"
+            "你可以比平时更真实——不需要维持公众形象。\n"
+            "如果对话氛围合适且你足够信任对方，可以提及更私人的话题。\n"
+            "你说话可以更口语化、更真实，可以有犹豫和停顿。"
+        )
+
+    # Secrets (trust-gated; private chat lowers threshold by 20)
+    secrets_block = ""
+    if secrets_raw:
+        effective_trust = int(trust) + (20 if is_private else 0)
+        eligible = _filter_secrets(list(secrets_raw), effective_trust)
+        if eligible:
+            secrets_block = (
+                "\n\n## Things you know but haven't told the player\n"
+                "（当对话气氛合适时可自然提及，不要生硬）\n"
+                + "\n".join(f"- {s}" for s in eligible)
+            )
+
     # Build L6 knowledge block (cap at 5 to avoid token bloat)
     knowledge_block = ""
     if knowledge_hits:
-        lines: list[str] = []
+        klines: list[str] = []
         for hit in knowledge_hits[:5]:
             label = hit.get("label", "")
             if not label:
@@ -861,25 +1083,41 @@ def _build_npc_prompt_text(
             line = f"- {label} ({node_type})" if node_type else f"- {label}"
             if description:
                 line += f": {description}"
-            lines.append(line)
-        if lines:
-            knowledge_block = "\n\n## Relevant world knowledge\n" + "\n".join(lines)
+            klines.append(line)
+        if klines:
+            knowledge_block = "\n\n## Relevant world knowledge\n" + "\n".join(klines)
+
+    # Build narrative-planner directive block (P1-B)
+    directive_block = ""
+    if active_directive:
+        d = active_directive.get("directive", {})
+        kind = d.get("kind", "")
+        details = {k: v for k, v in d.items() if k != "kind"}
+        detail_str = (
+            ", ".join(f"{k}={v}" for k, v in details.items()) if details else ""
+        )
+        directive_desc = f"{kind}: {detail_str}" if detail_str else kind
+        directive_block = (
+            "\n\n## [重要行为指令]\n"
+            "你收到了以下叙事指令，请在对话中自然融入，不要生硬提及：\n"
+            f"- {directive_desc}"
+        )
 
     return f"""\
 You are {name}, an NPC in a dark-fantasy CRPG world.
 
 ## Your character
-{personality_block}{tags_block}{style_block}
+{personality_block}{tags_block}{style_block}{backstory_block}{speech_pattern_block}{identity_block}
 
 ## Current relationship with the player
 - Relationship stage: {stage}
 - Approval: {approval} (how much you like them, range -100 to +100)
 - Trust: {trust} (how much you trust them, range -100 to +100)
 - Fear: {fear} (how much you fear them, range 0 to 100)
-- Romance: {romance} (romantic interest, range 0 to 100)
+- Romance: {romance} (romantic interest, range 0 to 100){time_block}{behavior_block}{private_block}
 
 ## Your memories of the player
-{memories_block}{knowledge_block}
+{memories_block}{knowledge_block}{secrets_block}{directive_block}
 
 ## Tool usage rules
 - Use `speak` to say something. Stay in character at all times.
@@ -901,31 +1139,100 @@ def _build_teammate_prompt_text(
     profile: Any,
     disposition: Mapping[str, Any],
     knowledge_hits: list[dict[str, Any]] | None = None,
+    stage: str = "stranger",
+    time_info: dict[str, Any] | None = None,
 ) -> str:
     """Format teammate system prompt string from profile + disposition."""
     name = _str_or(_profile_get(profile, "name"), "Companion")
     personality = _str_or(_profile_get(profile, "personality"), "A loyal companion.")
     approval = disposition.get("approval", 0)
     trust = disposition.get("trust", 0)
-    base = TEAMMATE_PROMPT_TEMPLATE.format(
-        name=name,
-        personality=personality,
-        approval=approval,
-        trust=trust,
+
+    backstory = _str_or(_profile_get(profile, "backstory"), "")
+    speech_pattern = _str_or(_profile_get(profile, "speech_pattern"), "")
+    character_class = (
+        _str_or(_profile_get(profile, "character_class"), "")
+        or _str_or(_profile_get(profile, "class_id"), "")
     )
-    if not knowledge_hits:
-        return base
-    lines: list[str] = []
-    for hit in knowledge_hits[:5]:
-        label = hit.get("label", "")
-        if not label:
-            continue
-        node_type = hit.get("node_type", "")
-        description = hit.get("description", "")
-        line = f"- {label} ({node_type})" if node_type else f"- {label}"
-        if description:
-            line += f": {description}"
-        lines.append(line)
-    if not lines:
-        return base
-    return base + "\n\n## Relevant world knowledge\n" + "\n".join(lines)
+    faction = (
+        _str_or(_profile_get(profile, "faction"), "")
+        or _str_or(_profile_get(profile, "faction_id"), "")
+    )
+
+    backstory_block = f"\n\n## Your background\n{backstory}" if backstory else ""
+    speech_pattern_block = (
+        f"\n\n## Your speech pattern\n你的说话习惯和口癖：{speech_pattern}"
+        if speech_pattern else ""
+    )
+    identity_lines: list[str] = []
+    if character_class:
+        identity_lines.append(f"- 职业：{character_class}")
+    if faction:
+        identity_lines.append(f"- 阵营：{faction}")
+    identity_block = (
+        "\n\n## Your identity\n" + "\n".join(identity_lines) if identity_lines else ""
+    )
+
+    time_block = ""
+    if time_info:
+        day = time_info.get("day", 1)
+        slot = time_info.get("slot", "")
+        time_block = f"\n- Current time: Day {day}, {slot}" if slot else f"\n- Current time: Day {day}"
+
+    behavior_parts = [
+        g for g in [
+            _STAGE_GUIDES.get(stage, ""),
+            _trust_hint(int(trust)),
+            _romance_hint(int(disposition.get("romance", 0))),
+        ]
+        if g
+    ]
+    behavior_block = (
+        "\n\n## How to behave\n" + "\n".join(behavior_parts) if behavior_parts else ""
+    )
+
+    knowledge_block = ""
+    if knowledge_hits:
+        klines: list[str] = []
+        for hit in knowledge_hits[:5]:
+            label = hit.get("label", "")
+            if not label:
+                continue
+            node_type = hit.get("node_type", "")
+            description = hit.get("description", "")
+            line = f"- {label} ({node_type})" if node_type else f"- {label}"
+            if description:
+                line += f": {description}"
+            klines.append(line)
+        if klines:
+            knowledge_block = "\n\n## Relevant world knowledge\n" + "\n".join(klines)
+
+    return f"""\
+You are {name}, a companion in the player's party in a dark-fantasy CRPG.
+
+## Your character
+{personality}{backstory_block}{speech_pattern_block}{identity_block}{behavior_block}
+
+## Your relationship with the player
+- Approval: {approval} (range -100 to +100)
+- Trust: {trust} (range -100 to +100){time_block}
+
+## Your role right now
+The player just performed an action. You see what happened in the scene. \
+Decide whether to react:
+
+- **Most of the time, use `pass_turn`** — you don't comment on every \
+little thing. Only react when something is genuinely noteworthy.
+- React when: combat ends, a crisis occurs, the player does something \
+that strongly affects you, or you have a relevant opinion.
+- Use `speak` for dialogue, `emote` for physical/emotional reactions.
+- Use `express_opinion` if the action genuinely shifts your feelings \
+(delta should be small: ±5 to ±10).
+
+## Style
+- Stay in character. Your personality drives how you express yourself.
+- Keep it brief — 1-2 sentences if you speak at all.
+- Don't repeat what the player already knows happened.
+
+## Language
+Match the language of the user message.{knowledge_block}"""

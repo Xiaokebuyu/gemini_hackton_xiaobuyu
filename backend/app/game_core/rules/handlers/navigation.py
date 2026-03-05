@@ -11,6 +11,20 @@ from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
 
 
+_PERIOD_HOUR_MID: dict[str, int] = {"dawn": 7, "day": 13, "dusk": 19, "night": 1}
+
+
+def _is_location_open(available_hours: tuple[int, int] | None, period: str) -> bool:
+    """Return True if the location is open during the given time period."""
+    if available_hours is None:
+        return True
+    start, end = available_hours
+    mid = _PERIOD_HOUR_MID.get(period, 12)
+    if start <= end:
+        return start <= mid < end
+    return mid >= start or mid < end  # 跨午夜
+
+
 class NavigationHandler(StaticCommandHandler):
     COMMAND_TYPES = ("move_area", "enter_sub_location", "leave_sub_location")
 
@@ -103,11 +117,11 @@ class NavigationHandler(StaticCommandHandler):
                 reason="location_id/location must be a non-empty string",
             )
         if location_id in area_template.sub_locations:
-            # TODO: 检查 SubLocationTemplate.available_hours vs TimeSlice.slot
-            # 当前不阻止进入，深化时需要：
-            # - 获取目标 sub_location 的 available_hours
-            # - 映射当前 time_slot → hour
-            # - hour 不在范围 → ValidationResult(ok=False, "location closed")
+            sub_loc = world.maps.get_sub_location(area_id, location_id)
+            if sub_loc is not None and sub_loc.available_hours is not None:
+                period = state.time.period if state.has_slice("time") else "day"
+                if not _is_location_open(sub_loc.available_hours, period):
+                    return ValidationResult(ok=False, reason="location_closed")
             return ValidationResult(ok=True)
         # Fallback: check dynamic sub-areas
         if state.has_slice("areas"):

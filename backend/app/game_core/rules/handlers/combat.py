@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+import re
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
@@ -19,6 +21,20 @@ from app.game_core.rules.handler_utils import (
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
+
+
+def _participant_effect_ac_mod(participant: Mapping[str, Any]) -> int:
+    """从战斗参与者的 active_effects 中提取 AC 修正总量。"""
+    total = 0
+    for effect in participant.get("active_effects", []):
+        mods = effect.get("modifiers")
+        if isinstance(mods, Mapping):
+            raw = mods.get("ac", 0)
+            try:
+                total += int(raw)
+            except (TypeError, ValueError):
+                pass
+    return total
 
 
 class CombatHandler(StaticCommandHandler):
@@ -561,6 +577,7 @@ class CombatHandler(StaticCommandHandler):
             participants=participants,
             target_index=target_index,
             participant=participant,
+            damage_type=str(cmd.params.get("damage_type", "physical")).strip().lower(),
         )
 
     def _compute_attack_resolution(
@@ -575,12 +592,17 @@ class CombatHandler(StaticCommandHandler):
         participants: list[dict[str, Any]],
         target_index: int,
         participant: Mapping[str, Any],
+        damage_type: str = "physical",
     ) -> ExecuteResult:
-        roll_result, all_rolls, dice = resolve_roll()
+        target_effects = participant.get("active_effects", [])
+        adv = any(bool(e.get("advantage_on_attacks_against")) for e in target_effects)
+        roll_result, all_rolls, dice = resolve_roll(advantage=adv)
         strength_mod = state.player.get_modifier("str")
         prof = state.player.proficiency_bonus
-        attack_total = roll_result + strength_mod + prof
-        target_ac = state.areas.participant_ac(participant)
+        effect_mods = state.player.get_effect_modifiers()
+        attack_bonus_from_effects = effect_mods.get("attack", 0)
+        attack_total = roll_result + strength_mod + prof + attack_bonus_from_effects
+        target_ac = state.areas.participant_ac(participant) + _participant_effect_ac_mod(participant)
         hit = attack_total >= target_ac
 
         attack_roll = build_dice_roll(
@@ -590,17 +612,32 @@ class CombatHandler(StaticCommandHandler):
             modifiers=[
                 {"name": "str", "value": strength_mod},
                 {"name": "proficiency", "value": prof},
+                {"name": "effects", "value": attack_bonus_from_effects},
             ],
             total=attack_total,
         )
 
         updated_target = dict(participant)
         damage = 0
+        damage_multiplier = 1.0
         if hit:
-            damage = 1 if command_type == "offhand_attack" else max(
+            raw_damage = 1 if command_type == "offhand_attack" else max(
                 1,
                 prof + strength_mod,
             )
+            monster_id = state.areas.participant_monster_id(participant)
+            template = world.monsters.get(monster_id) if world.has_registry("monsters") else None
+            if template is not None:
+                if damage_type in getattr(template, "immunities", []):
+                    raw_damage = 0
+                    damage_multiplier = 0.0
+                elif damage_type in getattr(template, "resistances", []):
+                    raw_damage = max(1, raw_damage // 2)
+                    damage_multiplier = 0.5
+                elif damage_type in getattr(template, "vulnerabilities", []):
+                    raw_damage = raw_damage * 2
+                    damage_multiplier = 2.0
+            damage = raw_damage
             remaining_hp = max(0, state.areas.participant_hp(participant) - damage)
             updated_target["hp"] = remaining_hp
             updated_target["alive"] = remaining_hp > 0
@@ -649,6 +686,17 @@ class CombatHandler(StaticCommandHandler):
                 extra_changes.append(
                     StateChange("player", "set", "xp", state.player.xp + xp_awarded)
                 )
+            # kill_count flags for defeated (non-fled) monsters
+            if state.has_slice("flags"):
+                for p in state.areas.participant_snapshots(updated_payload):
+                    if not p.get("alive", True) and not p.get("fled", False):
+                        mid = state.areas.participant_monster_id(p)
+                        if mid:
+                            key = f"kill_count_{mid}"
+                            cur = int(state.flags.get(key, 0) or 0)
+                            extra_changes.append(
+                                StateChange("flags", "set", f"flags.{key}", cur + 1)
+                            )
 
         all_changes = [
             StateChange(
@@ -675,6 +723,9 @@ class CombatHandler(StaticCommandHandler):
                 "attack_total": attack_total,
                 "target_ac": target_ac,
                 "damage": damage,
+                "damage_type": damage_type,
+                "damage_multiplier": damage_multiplier,
+                "advantage": adv,
                 "hit": hit,
                 "target_hp": state.areas.participant_hp(updated_target),
                 "target_alive": target_alive,
@@ -701,7 +752,7 @@ class CombatHandler(StaticCommandHandler):
         roll_result, all_rolls, dice = resolve_roll()
         athletics_bonus = state.player.get_skill_bonus("athletics")
         shove_total = roll_result + athletics_bonus
-        target_ac = state.areas.participant_ac(participant)
+        target_ac = state.areas.participant_ac(participant) + _participant_effect_ac_mod(participant)
         resist_dc = 10 + max(0, target_ac - 10)
         passed = shove_total >= resist_dc
 
@@ -981,19 +1032,60 @@ class CombatHandler(StaticCommandHandler):
         ai_personality: str,
         hp_ratio: float,
         flee_threshold: float,
+        flee_chance: float = 0.5,
     ) -> str:
         """Decide what action the monster takes this turn.
 
         Returns "attack" or "flee".
         flee_threshold == 0.0 means the monster never flees voluntarily.
+        flee_chance: probability of actually fleeing once below flee_threshold.
         """
-        if flee_threshold > 0.0 and hp_ratio <= flee_threshold:
-            if ai_personality == "aggressive":
-                # Aggressive monsters only flee when nearly dead
-                return "flee" if hp_ratio < 0.1 else "attack"
-            # defensive / cowardly flee once below threshold
-            return "flee"
-        return "attack"
+        if flee_threshold <= 0.0 or hp_ratio > flee_threshold:
+            return "attack"
+        if ai_personality == "aggressive" and hp_ratio >= 0.1:
+            return "attack"
+        return "flee" if random.random() < flee_chance else "attack"
+
+    @staticmethod
+    def _estimate_damage(dice_str: str) -> float:
+        """期望伤害估算，如 '2d6' → 7.0，用于攻击选择。"""
+        m = re.match(r"(\d+)d(\d+)", str(dice_str))
+        if not m:
+            return 1.0
+        n, d = int(m.group(1)), int(m.group(2))
+        return n * (d + 1) / 2.0
+
+    @staticmethod
+    def _select_attack(attacks: list[Any], ai_personality: str) -> Any:
+        """根据 ai_personality 从多攻击中选择最优攻击。"""
+        if len(attacks) <= 1:
+            return attacks[0]
+        if ai_personality == "aggressive":
+            return max(
+                attacks,
+                key=lambda a: CombatHandler._estimate_damage(getattr(a, "damage_dice", "1d4")),
+            )
+        if ai_personality == "defensive":
+            return max(attacks, key=lambda a: int(getattr(a, "hit_bonus", 0) or 0))
+        # cowardly: 选射程最远
+        return max(attacks, key=lambda a: int(getattr(a, "range", 1) or 1))
+
+    @staticmethod
+    def _apply_player_damage_resistance(
+        damage: int,
+        damage_type: str,
+        state: StateContainer,
+    ) -> int:
+        """检查玩家 active_effects 的 tags，应用 immunity/resistance/vulnerability。"""
+        for effect in state.player.get_active_effects():
+            tags = effect.get("tags", [])
+            if f"{damage_type}_immunity" in tags:
+                return 0
+            if f"{damage_type}_resistance" in tags:
+                return max(1, damage // 2)
+            if f"{damage_type}_vulnerability" in tags:
+                return damage * 2
+        return damage
 
     @staticmethod
     def _roll_monster_attack(
@@ -1001,12 +1093,13 @@ class CombatHandler(StaticCommandHandler):
         damage_dice: str,
         hit_bonus: int,
         player_ac: int,
+        advantage: bool = False,
     ) -> tuple[bool, int, Any]:
         """Roll a monster attack against the player's AC.
 
         Returns (hit, damage, DiceRoll).
         """
-        d20, all_d20, dice_notation = resolve_roll()
+        d20, all_d20, dice_notation = resolve_roll(advantage=advantage)
         total = d20 + hit_bonus
         hit = total >= player_ac
         damage = roll_damage_dice(damage_dice) if hit else 0
@@ -1034,8 +1127,10 @@ class CombatHandler(StaticCommandHandler):
             extra_rolls          – DiceRoll list from monster attacks
             responses            – per-monster action metadata
         """
-        # 玩家 AC：默认使用无装甲公式（10 + DEX），装备系统深化后消费 equipped_ac
-        player_ac = 10 + state.player.get_modifier("dex")
+        # 玩家 AC：使用 stored ac 字段 + 活跃效果修正（如防御姿态 +2 AC）
+        effect_mods = state.player.get_effect_modifiers()
+        player_ac = state.player.ac + effect_mods.get("ac", 0)
+        monster_adv_on_player = state.player.get_advantage_on_attacks_against()
         player_hp = state.player.hp
         updated_participants = [dict(p) for p in participants]
         extra_changes: list[StateChange] = []
@@ -1055,8 +1150,20 @@ class CombatHandler(StaticCommandHandler):
             template = world.monsters.get(monster_id) if world.has_registry("monsters") else None
             ai_personality = getattr(template, "ai_personality", "aggressive") if template else "aggressive"
             flee_threshold = getattr(template, "flee_threshold", 0.0) if template else 0.0
+            flee_chance = float(getattr(template, "flee_chance", 0.5)) if template else 0.5
 
-            action = self._decide_monster_action(ai_personality, hp_ratio, flee_threshold)
+            # Phase 4: 若怪物受 prevents_action 效果影响，跳过本回合
+            monster_effects = p.get("active_effects", [])
+            if any(bool(e.get("prevents_action")) for e in monster_effects):
+                responses.append({
+                    "monster_id": monster_id,
+                    "action": "stunned",
+                    "hit": False,
+                    "damage": 0,
+                })
+                continue
+
+            action = self._decide_monster_action(ai_personality, hp_ratio, flee_threshold, flee_chance)
 
             if action == "flee":
                 updated_participants[idx]["alive"] = False
@@ -1081,12 +1188,18 @@ class CombatHandler(StaticCommandHandler):
                 })
                 continue
 
-            first_attack = attacks[0]
-            attack_name = getattr(first_attack, "name", "strike") or "strike"
-            damage_dice = getattr(first_attack, "damage_dice", "1d4") or "1d4"
-            hit_bonus = int(getattr(first_attack, "hit_bonus", 0) or 0)
+            selected_attack = self._select_attack(attacks, ai_personality)
+            attack_name = getattr(selected_attack, "name", "strike") or "strike"
+            damage_dice = getattr(selected_attack, "damage_dice", "1d4") or "1d4"
+            hit_bonus = int(getattr(selected_attack, "hit_bonus", 0) or 0)
+            damage_type = getattr(selected_attack, "damage_type", "physical") or "physical"
 
-            hit, dmg, roll = self._roll_monster_attack(attack_name, damage_dice, hit_bonus, player_ac)
+            hit, dmg, roll = self._roll_monster_attack(
+                attack_name, damage_dice, hit_bonus, player_ac,
+                advantage=monster_adv_on_player,
+            )
+            if hit and dmg > 0:
+                dmg = self._apply_player_damage_resistance(dmg, damage_type, state)
             extra_rolls.append(roll)
             total_player_damage += dmg
             responses.append({
@@ -1094,6 +1207,7 @@ class CombatHandler(StaticCommandHandler):
                 "action": "attack",
                 "hit": hit,
                 "damage": dmg,
+                "damage_type": damage_type,
                 "attack_name": attack_name,
             })
 

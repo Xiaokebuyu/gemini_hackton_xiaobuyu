@@ -25,6 +25,7 @@ from app.game_core.content import WorldInstance
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, _profile_get
 from app.game_core.narrative.context_window import ContextWindow, WindowMessage
 from app.game_core.narrative.executor import AgenticExecutor
+from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
 from app.game_core.narrative.models import AgentResult
 from app.game_core.rules.models import Command, ExecuteResult
@@ -77,11 +78,13 @@ class NpcInteractionCoordinator:
         state: StateContainer,
         *,
         memory_retriever: MemoryRetriever | None = None,
+        memory_writer: Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
     ) -> None:
         self._executor = executor
         self._world = world
         self._state = state
         self._memory_retriever = memory_retriever
+        self._memory_writer = memory_writer
 
     async def execute_interaction(
         self,
@@ -89,7 +92,7 @@ class NpcInteractionCoordinator:
         player_message: str,
         execute_command: Callable[[Command], ExecuteResult],
         intent: str = "talk",
-        context_window: ContextWindow | None = None,
+        instance: NPCInstance | None = None,
         text_chunk_sink: Callable[[str], Awaitable[None]] | None = None,
     ) -> NpcInteractionResult:
         """Run the full 6-step NPC interaction flow.
@@ -104,10 +107,23 @@ class NpcInteractionCoordinator:
             NpcInteractionResult with raw agent results and options.
         """
         builder = AgentContextBuilder(self._world, self._state)
+        context_window: ContextWindow | None = (
+            instance.context_window if instance is not None else None
+        )
 
         # ---- Step 1: Setup ----------------------------------------
+        # Consume any narrative-planner directive before building the system prompt
+        # so that the directive block can be injected into the NPC's prompt.
+        active_directive: dict[str, Any] | None = None
+        if instance is not None and self._state.has_slice("time"):
+            active_directive = instance.consume_directive(
+                self._state.time.absolute_tick()
+            )
+
         npc_full = await builder.build_npc_full_context(
-            npc_id, memory_retriever=self._memory_retriever,
+            npc_id,
+            memory_retriever=self._memory_retriever,
+            active_directive=active_directive,
         )
         if npc_full is None:
             logger.warning("NpcInteractionCoordinator: NPC not found: %s", npc_id)
@@ -119,6 +135,10 @@ class NpcInteractionCoordinator:
         npc_profile = self._world.characters.get(npc_id) if self._world.has_registry("characters") else None
         npc_tags = list(_profile_get(npc_profile, "tags", [])) if npc_profile is not None else []
 
+        # Record interaction in FlagSlice for EventEngine npc_talked conditions.
+        if self._state.has_slice("flags"):
+            self._state.flags.set(f"talked_to_{npc_id}", True)
+
         if self._state.has_slice("scene"):
             self._state.scene.add_entry(SceneEntry(
                 source="player",
@@ -128,7 +148,13 @@ class NpcInteractionCoordinator:
             ))
 
         npc_context = builder.build_agent_context(
-            "npc", npc_id, execute_command=execute_command,
+            "npc",
+            npc_id,
+            execute_command=execute_command,
+            metadata=(
+                {"memory_writer": self._memory_writer}
+                if self._memory_writer is not None else None
+            ),
         )
 
         # ---- Step 2: NPC Agent Response ---------------------------
@@ -198,8 +224,15 @@ class NpcInteractionCoordinator:
         if self._state.has_slice("party"):
             members = self._state.party.members
             if isinstance(members, dict) and members:
+                # Collect scene entries for teammate probability adjustment (Phase 4)
+                scene_entries: list[dict[str, Any]] = []
+                if self._state.has_slice("scene"):
+                    snap = self._state.scene.snapshot()
+                    scene_entries = [
+                        dict(e) for e in snap.get("entries", []) if isinstance(e, dict)
+                    ]
                 for member_id in members:
-                    if not _should_teammate_respond(self._world, member_id):
+                    if not _should_teammate_respond(self._world, member_id, scene_entries=scene_entries):
                         continue
                     tm_prompt = await builder.build_teammate_interaction_prompt(member_id)
                     if tm_prompt is None:
@@ -271,10 +304,15 @@ def _extract_speech_text(result: AgentResult) -> str:
     return " ".join(parts) if parts else "(NPC said nothing)"
 
 
-def _should_teammate_respond(world: WorldInstance, char_id: str) -> bool:
+def _should_teammate_respond(
+    world: WorldInstance,
+    char_id: str,
+    scene_entries: list[dict[str, Any]] | None = None,
+) -> bool:
     """Probabilistic gate for teammate reactions (设计规范 §10.3.2).
 
     Reads ``response_tendency`` from the character profile (default 0.3).
+    Applies scene-context adjustments when scene_entries are provided.
     Clamps result to [0.05, 0.95].
     """
     profile = None
@@ -287,6 +325,26 @@ def _should_teammate_respond(world: WorldInstance, char_id: str) -> bool:
             tendency = float(raw)
         except (TypeError, ValueError):
             tendency = 0.3
+
+    if scene_entries:
+        all_tags: set[str] = set()
+        recent_speaks = 0
+        for e in scene_entries:
+            all_tags.update(e.get("tags", []) if isinstance(e, dict) else [])
+            if (
+                isinstance(e, dict)
+                and str(e.get("source", "")).startswith(f"TEAMMATE:{char_id}")
+            ):
+                recent_speaks += 1
+
+        if "COMBAT_END" in all_tags:
+            tendency += 0.3
+        if "CRISIS" in all_tags:
+            tendency += 0.4
+        if "TRIVIAL" in all_tags:
+            tendency -= 0.2
+        tendency -= recent_speaks * 0.15
+
     return random.random() < max(0.05, min(0.95, tendency))
 
 

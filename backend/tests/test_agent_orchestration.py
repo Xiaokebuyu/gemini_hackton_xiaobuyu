@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import patch
 
 from app.agent_orchestration import (
     AgentOrchestrationService,
@@ -24,6 +25,9 @@ from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.models import AgentResult, ToolResult
 from app.game_core.narrative.registry import RoleToolRegistry
 from app.game_core.orchestration.models import PipelineResult
+from app.game_core.orchestration.shared_context import SharedContext
+from app.game_core.rules.models import Command
+from app.game_core.state.slices.scene import SceneEntry
 
 
 # ------------------------------------------------------------------
@@ -126,6 +130,57 @@ def _session_with_npc() -> ManagedSession:
     )
 
 
+def _session_for_post_action_round() -> ManagedSession:
+    world = build_default_world(
+        "test_world",
+        world_data={
+            "characters": {
+                "merchant_tom": {
+                    "id": "merchant_tom",
+                    "name": "Merchant Tom",
+                    "personality": "A shrewd but fair merchant.",
+                    "dialogue_style": "Speaks with a slight drawl.",
+                    "tags": ["merchant", "human"],
+                    "response_tendency": 1.0,
+                },
+                "paladin_aria": {
+                    "id": "paladin_aria",
+                    "name": "Paladin Aria",
+                    "personality": "A devout and brave paladin.",
+                    "tags": ["holy", "warrior"],
+                    "response_tendency": 1.0,
+                },
+            },
+        },
+    )
+    runtime = build_runtime_for_world(world)
+    runtime.state.player.restore({
+        "character_name": "TestPlayer",
+        "character_class": "warrior",
+        "current_area": "town",
+        "current_location": "market",
+    })
+    runtime.state.areas.get_area("town").npc_locations["merchant_tom"] = "market"
+    runtime.state.party.restore({
+        "members": {
+            "paladin_aria": {
+                "status": "active",
+            },
+        },
+    })
+    runtime.state.scene.add_entry(SceneEntry(
+        source="player",
+        content="The player moves decisively.",
+        visibility="public",
+        tags=["action"],
+    ))
+    return ManagedSession(
+        world_id="test_world",
+        session_id="test_post_action",
+        runtime=runtime,
+    )
+
+
 def _build_service(
     llm_responses: list[dict[str, Any]] | None = None,
 ) -> tuple[AgentOrchestrationService, RecordingLlmProvider]:
@@ -144,6 +199,93 @@ def _build_service(
     executor = AgenticExecutor(tool_registry=registry, llm=llm)
     service = AgentOrchestrationService(executor)
     return service, llm
+
+
+class SequencedReactionExecutor:
+    """Minimal executor that simulates post-action agent side effects."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def run_agentic(
+        self,
+        *,
+        role: str,
+        context: Any,
+        system_prompt: str,
+        user_message: str,
+        **_: Any,
+    ) -> AgentResult:
+        self.calls.append({
+            "role": role,
+            "scene_entries": [dict(entry) for entry in context.scene_entries],
+            "user_message": user_message,
+            "system_prompt": system_prompt,
+        })
+        if role == "gm":
+            return AgentResult(
+                tool_results=[
+                    ToolResult(
+                        success=True,
+                        message="Dust rolls across the market.",
+                        metadata={"event_type": "gm_narration"},
+                    )
+                ]
+            )
+        if role == "npc":
+            context.state.scene.add_entry(SceneEntry(
+                source="merchant_tom",
+                content="Merchant Tom eyes the movement.",
+                visibility="public",
+                tags=["speech"],
+            ))
+            return AgentResult(
+                tool_results=[
+                    ToolResult(
+                        success=True,
+                        message="Merchant Tom eyes the movement.",
+                        metadata={"event_type": "speech"},
+                    )
+                ]
+            )
+        if role == "teammate":
+            context.state.scene.add_entry(SceneEntry(
+                source="TEAMMATE:paladin_aria",
+                content="Aria keeps a hand near her sword.",
+                visibility="public",
+                tags=["speech"],
+            ))
+            return AgentResult(
+                tool_results=[
+                    ToolResult(
+                        success=True,
+                        message="Aria keeps a hand near her sword.",
+                        metadata={"event_type": "speech"},
+                    )
+                ]
+            )
+        return AgentResult()
+
+
+def test_make_command_executor_records_change_log() -> None:
+    """Dialogue tool commands should enter TickCoordinator change_log."""
+    session = _session_with_npc()
+    executor = _make_command_executor(session)
+
+    result = executor(Command(
+        type="modify_disposition",
+        params={
+            "npc_id": "merchant_tom",
+            "dimension": "approval",
+            "delta": 5,
+        },
+        source="merchant_tom",
+    ))
+
+    assert result.success is True
+    assert session.runtime.state.relations.get_disposition("merchant_tom", "approval") == 30
+    assert session.runtime.tick_coordinator.change_log
+    assert session.runtime.tick_coordinator.change_log[-1].slice == "relations"
 
 
 # ------------------------------------------------------------------
@@ -461,6 +603,58 @@ class TestPostActionReactions:
 
         teammate_events = [e for e in events if e.event_type == "teammate_response"]
         assert teammate_events == []
+
+    def test_run_post_action_round_shares_scene_bus_in_order(self) -> None:
+        session = _session_for_post_action_round()
+        executor = SequencedReactionExecutor()
+        service = AgentOrchestrationService(executor)  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+
+        collected: list[tuple[str, dict[str, Any]]] = []
+
+        async def _event_sink(event) -> None:
+            collected.append((event.event_type, dict(event.payload)))
+
+        pipeline_result = PipelineResult(
+            success=True,
+            action_type="move_area",
+            narrative_hints=["The player advances."],
+            time_cost=1 / 6,
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            events = asyncio.run(
+                service.run_post_action_round(
+                    shared,
+                    pipeline_result,
+                    session.runtime.tick_coordinator._apply_delta,
+                    _event_sink,
+                )
+            )
+
+        assert [event.event_type for event in events] == [
+            "gm_narration",
+            "npc_response",
+            "teammate_response",
+        ]
+        assert [event_type for event_type, _ in collected] == [
+            "gm_narration",
+            "npc_response",
+            "teammate_response",
+        ]
+
+        roles = [call["role"] for call in executor.calls]
+        assert roles == ["gm", "npc", "teammate"]
+        npc_scene = executor.calls[1]["scene_entries"]
+        teammate_scene = executor.calls[2]["scene_entries"]
+        assert any(entry["source"] == "GM" for entry in npc_scene)
+        assert any(entry["content"] == "Merchant Tom eyes the movement." for entry in teammate_scene)
+        assert any(entry["content"] == "Dust rolls across the market." for entry in teammate_scene)
 
 
 class TestGracefulDegradation:

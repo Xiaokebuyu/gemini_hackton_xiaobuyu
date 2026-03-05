@@ -153,9 +153,15 @@ class SkillCheckHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         skill = str(cmd.params["skill"]).strip()
         dc = int(cmd.params["dc"])
+        explicit_adv = bool(cmd.params.get("advantage", False))
+        explicit_dis = bool(cmd.params.get("disadvantage", False))
+        if not explicit_dis:
+            dis_checks = state.player.get_disadvantage_checks()
+            if skill in dis_checks or "all" in dis_checks:
+                explicit_dis = True
         roll_result, all_rolls, dice = resolve_roll(
-            advantage=bool(cmd.params.get("advantage", False)),
-            disadvantage=bool(cmd.params.get("disadvantage", False)),
+            advantage=explicit_adv,
+            disadvantage=explicit_dis,
         )
         modifier = state.player.get_skill_bonus(skill)
         total = roll_result + modifier
@@ -182,6 +188,7 @@ class SkillCheckHandler(StaticCommandHandler):
                 "all_rolls": list(all_rolls),
                 "modifier": modifier,
                 "total": total,
+                "auto_disadvantage": explicit_dis and not bool(cmd.params.get("disadvantage", False)),
             },
         )
 
@@ -192,9 +199,14 @@ class SkillCheckHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         ability = str(cmd.params["ability"]).strip()
         dc = int(cmd.params["dc"])
+        explicit_dis = bool(cmd.params.get("disadvantage", False))
+        if not explicit_dis:
+            dis_checks = state.player.get_disadvantage_checks()
+            if ability in dis_checks or "all" in dis_checks:
+                explicit_dis = True
         roll_result, all_rolls, dice = resolve_roll(
             advantage=bool(cmd.params.get("advantage", False)),
-            disadvantage=bool(cmd.params.get("disadvantage", False)),
+            disadvantage=explicit_dis,
         )
         modifier = state.player.get_modifier(ability)
         if ability in getattr(state.player, "save_proficiencies", []):
@@ -222,6 +234,7 @@ class SkillCheckHandler(StaticCommandHandler):
                 "all_rolls": list(all_rolls),
                 "modifier": modifier,
                 "total": total,
+                "auto_disadvantage": explicit_dis and not bool(cmd.params.get("disadvantage", False)),
             },
         )
 

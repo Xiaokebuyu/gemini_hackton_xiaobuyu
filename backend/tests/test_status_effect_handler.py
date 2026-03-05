@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.game_core.content import WorldInstance
 from app.game_core.rules import Command, RulesEngine
 from app.game_core.rules.handlers import StatusEffectHandler
@@ -160,3 +162,67 @@ class TestStatusEffectHandler:
 
         assert result.success is False
         assert result.errors == ["player slice is required"]
+
+
+class TestSaveEndOfTurn:
+    """Tests for Phase 3: save_end_of_turn in _compute_tick_effects."""
+
+    @staticmethod
+    def _make_state_with_save_effect(
+        *,
+        save_ability: str = "con",
+        save_dc: int = 12,
+        con: int = 10,
+        save_proficiencies: list[str] | None = None,
+    ) -> StateContainer:
+        state = StateContainer()
+        player = PlayerSlice()
+        player.restore({
+            "hp": 10,
+            "max_hp": 12,
+            "stats": {"str": 10, "dex": 10, "con": con, "int": 10, "wis": 10, "cha": 10},
+            "proficiency_bonus": 2,
+            "save_proficiencies": save_proficiencies or [],
+            "active_effects": [{
+                "effect_id": "paralyzed", "effect_type": "condition",
+                "remaining_ticks": 5,
+                "duration_ticks": 5,
+                "remaining_duration": 5,
+                "modifiers": {}, "periodic": {}, "tags": [],
+                "save_end_of_turn": save_ability,
+                "save_dc": save_dc,
+            }],
+        })
+        state.register(player)
+        return state
+
+    def test_save_end_of_turn_removes_effect_on_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Successful save_end_of_turn removes the effect immediately."""
+        state = self._make_state_with_save_effect(save_dc=12, con=10)  # con mod=0
+        # patch resolve_roll → roll=12; 12+0 >= 12 → save succeeds
+        monkeypatch.setattr(
+            "app.game_core.rules.handler_utils.roll_d20", lambda: 12
+        )
+        result = _execute(Command(type="tick_effects"), state)
+        assert result.success is True
+        state.apply(result.delta)
+        assert len(state.player.active_effects) == 0
+        assert result.metadata["expired_count"] == 1
+
+    def test_save_end_of_turn_keeps_effect_on_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Failed save_end_of_turn keeps the effect (duration countdown still ticks)."""
+        state = self._make_state_with_save_effect(save_dc=20, con=10)  # very high DC
+        # patch resolve_roll → roll=1; 1+0 < 20 → save fails
+        monkeypatch.setattr(
+            "app.game_core.rules.handler_utils.roll_d20", lambda: 1
+        )
+        result = _execute(Command(type="tick_effects"), state)
+        assert result.success is True
+        state.apply(result.delta)
+        # Effect still present (ticked once: remaining_ticks = 5-1 = 4)
+        assert len(state.player.active_effects) == 1
+        assert state.player.active_effects[0]["remaining_ticks"] == 4

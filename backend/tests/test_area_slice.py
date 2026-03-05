@@ -476,3 +476,93 @@ class TestAreaSlice:
         assert any("refresh_at_tick must be an integer" in issue for issue in issues)
         assert any("used_template_id 0 must be a non-empty string" in issue for issue in issues)
         assert any("refresh entry 1 must be a mapping" in issue for issue in issues)
+
+
+class TestInitialAreaPayloadNpcPlacement:
+    """Verify that StateContainer.create_new populates npc_locations."""
+
+    def _build_world(self) -> "WorldInstance":
+        from app.game_core.content import WorldInstance
+        from app.game_core.content.registries import (
+            CharacterRegistry, MapRegistry,
+        )
+
+        world = WorldInstance("test")
+        maps = MapRegistry()
+        maps.load({
+            "town": {
+                "id": "town",
+                "name": "Town",
+                "is_starting_area": True,
+                "sub_locations": {
+                    "guild": {
+                        "id": "guild",
+                        "name": "Guild Hall",
+                        "resident_npcs": ["alice", "bob"],
+                    },
+                    "temple": {
+                        "id": "temple",
+                        "name": "Temple",
+                        "resident_npcs": ["carol"],
+                    },
+                },
+            },
+            "forest": {
+                "id": "forest",
+                "name": "Forest",
+                "sub_locations": {},
+            },
+        })
+        world.register(maps)
+
+        chars = CharacterRegistry()
+        chars.load({
+            "alice": {"id": "alice", "name": "Alice", "area_id": "town"},
+            "bob": {"id": "bob", "name": "Bob", "area_id": "town"},
+            "carol": {"id": "carol", "name": "Carol", "area_id": "town"},
+            "dave": {"id": "dave", "name": "Dave", "area_id": "forest"},
+            "eve": {"id": "eve", "name": "Eve", "area_id": ""},
+        })
+        world.register(chars)
+        return world
+
+    def test_resident_npcs_placed_in_sub_locations(self) -> None:
+        from app.game_core.state import StateContainer
+
+        world = self._build_world()
+        container = StateContainer.create_new(world)
+
+        town = container.areas.areas["town"]
+        assert town.npc_locations["alice"] == "guild"
+        assert town.npc_locations["bob"] == "guild"
+        assert town.npc_locations["carol"] == "temple"
+
+    def test_character_registry_fallback_places_at_area_level(self) -> None:
+        from app.game_core.state import StateContainer
+
+        world = self._build_world()
+        container = StateContainer.create_new(world)
+
+        forest = container.areas.areas["forest"]
+        assert forest.npc_locations["dave"] is None
+
+    def test_character_registry_skips_already_placed(self) -> None:
+        from app.game_core.state import StateContainer
+
+        world = self._build_world()
+        container = StateContainer.create_new(world)
+
+        # alice is placed by resident_npcs in guild, not overwritten
+        town = container.areas.areas["town"]
+        assert town.npc_locations["alice"] == "guild"
+
+    def test_character_with_empty_area_not_placed(self) -> None:
+        from app.game_core.state import StateContainer
+
+        world = self._build_world()
+        container = StateContainer.create_new(world)
+
+        all_npcs: set[str] = set()
+        for area in container.areas.areas.values():
+            all_npcs.update(area.npc_locations.keys())
+        assert "eve" not in all_npcs
