@@ -75,6 +75,10 @@ def _world_with_characters() -> WorldInstance:
     return build_default_world(
         "test_world",
         world_data={
+            "tags": {
+                "profession": {"id": "profession", "tags": ["merchant"]},
+                "ancestry": {"id": "ancestry", "tags": ["human"]},
+            },
             "characters": {
                 "merchant_tom": {
                     "id": "merchant_tom",

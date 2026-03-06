@@ -364,6 +364,21 @@ def test_npc_text_only_response_is_protocol_error() -> None:
     assert result.metadata["text_present"] is True
 
 
+def test_npc_passive_metadata_allows_silent_pass_turn() -> None:
+    llm = RecordingLlmProvider([
+        LlmResponse(text="", finish_reason="stop"),
+    ])
+    executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+    ctx = _ctx(role="npc", metadata={"is_passive": True})
+
+    result = asyncio.run(executor.run_agentic("npc", ctx))
+
+    assert result.text == ""
+    assert result.tool_results == []
+    assert result.metadata["status"] == "completed"
+    assert result.metadata["finish_reason"] == "pass_turn"
+
+
 def test_npc_multiple_dialogue_tools_is_protocol_error() -> None:
     """NPC cannot emit two dialogue tools in the same turn."""
     llm = RecordingLlmProvider([

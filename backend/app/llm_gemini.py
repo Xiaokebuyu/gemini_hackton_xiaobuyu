@@ -46,6 +46,9 @@ class GeminiLlmAdapter:
             system_instruction=system_prompt or None,
             tools=[gemini_tools] if gemini_tools else None,
             temperature=self._temperature,
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.LOW,
+            ),
         )
 
         response = await self._client.aio.models.generate_content(
@@ -74,6 +77,9 @@ class GeminiLlmAdapter:
             temperature=self._temperature,
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="NONE"),
+            ),
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.LOW,
             ),
         )
         async for chunk in await self._client.aio.models.generate_content_stream(

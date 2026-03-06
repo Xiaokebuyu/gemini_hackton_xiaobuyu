@@ -59,38 +59,131 @@ class SharedExperienceHook(NoOpSettlementHook):
 
         # Priority 1: combat
         if "COMBAT_END" in bus_tags or "end_combat" in action_types:
-            return {
-                "type": "combat",
-                "summary": f"Day {day} combat at {location}",
-                "day": day,
-                "location": location,
-                "participants": participants,
-                "critical_moment": False,
-                "emotion_tags": ["danger", "relief"],
-            }
+            return _build_experience(
+                "combat",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} combat at {location}",
+                critical_moment="COMBAT_END" in bus_tags,
+                emotion_tags=["danger", "relief"],
+            )
 
-        # Priority 2: quest progress
+        # Priority 2: crisis / betrayal / loss signals (new in GAP3 phase2)
+        if {"CRISIS", "BEREAVEMENT", "RELATIONSHIP_DROPPING"} & bus_tags:
+            return _build_experience(
+                "crisis",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} crisis at {location}",
+                critical_moment=True,
+                emotion_tags=["alert"],
+            )
+        if {"BETRAYAL", "TRUST_LOSS"} & bus_tags:
+            return _build_experience(
+                "betrayal",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} betrayal at {location}",
+                critical_moment=True,
+                emotion_tags=["grief", "alert"],
+            )
+        if "LOSS" in bus_tags:
+            return _build_experience(
+                "loss",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} loss at {location}",
+                critical_moment=True,
+                emotion_tags=["sorrow"],
+            )
+
+        # Priority 3: quest progress
         if "advance_quest" in action_types or "QUEST_PROGRESS" in bus_tags:
-            return {
-                "type": "discovery",
-                "summary": f"Day {day} quest progress at {location}",
-                "day": day,
-                "location": location,
-                "participants": participants,
-                "critical_moment": False,
-                "emotion_tags": ["achievement"],
-            }
+            return _build_experience(
+                "discovery",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} quest progress at {location}",
+                critical_moment=False,
+                emotion_tags=["achievement"],
+            )
 
-        # Priority 3: long rest
+        # Priority 4: exploration
+        if "navigate" in action_types or "NAVIGATION" in bus_tags:
+            return _build_experience(
+                "exploration",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} explored {location}",
+                critical_moment=False,
+                emotion_tags=["curiosity"],
+            )
+
+        # Priority 5: dialogue
+        if (
+            "talk" in action_types
+            or "speak" in action_types
+            or any(a in bus_tags for a in ("DIALOGUE", "NPC_INTERACTION"))
+        ):
+            return _build_experience(
+                "dialogue",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} meaningful dialogue at {location}",
+                critical_moment=False,
+                emotion_tags=["empathy"],
+            )
+
+        # Priority 6: celebration
+        if "CRISIS_RESOLVED" in bus_tags or "VICTORY" in bus_tags:
+            return _build_experience(
+                "celebration",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} celebration at {location}",
+                critical_moment=False,
+                emotion_tags=["joy"],
+            )
+
+        # Priority 7: long rest
         if "rest_long" in action_types or "LONG_REST" in bus_tags:
-            return {
-                "type": "rest",
-                "summary": f"Day {day} camp at {location}",
-                "day": day,
-                "location": location,
-                "participants": participants,
-                "critical_moment": False,
-                "emotion_tags": ["rest"],
-            }
+            return _build_experience(
+                "rest",
+                day=day,
+                location=location,
+                participants=participants,
+                summary=f"Day {day} camp at {location}",
+                critical_moment=False,
+                emotion_tags=["rest"],
+            )
 
         return None
+
+
+def _build_experience(
+    exp_type: str,
+    *,
+    day: int,
+    location: str,
+    participants: list[str],
+    summary: str,
+    critical_moment: bool,
+    emotion_tags: list[str],
+) -> dict[str, Any]:
+    return {
+        "type": exp_type,
+        "summary": summary,
+        "day": day,
+        "location": location,
+        "participants": participants,
+        "critical_moment": critical_moment,
+        "emotion_tags": emotion_tags,
+    }

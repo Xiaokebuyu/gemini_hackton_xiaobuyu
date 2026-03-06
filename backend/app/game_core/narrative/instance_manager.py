@@ -40,7 +40,7 @@ class NPCInstance:
     last_interaction_tick: int = 0
     interaction_count: int = 0
     model_tier: str = "primary"
-    thinking_level: str = "medium"
+    thinking_level: str = "low"
 
     def record_interaction(self, current_tick: int) -> None:
         self.last_interaction_tick = max(self.last_interaction_tick, current_tick)

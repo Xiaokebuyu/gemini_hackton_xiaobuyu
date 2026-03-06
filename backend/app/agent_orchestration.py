@@ -6,6 +6,7 @@ and converts AgentResult into SSE events for the streaming endpoints.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import logging
 import random
@@ -33,6 +34,8 @@ from app.game_core.orchestration.shared_context import SharedContext
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateDelta
 from app.game_core.state.slices.scene import SceneEntry
+from app.opening_views import build_opening_dialogue_options
+from app.scene_views import build_location_overview
 
 if TYPE_CHECKING:
     from app.game_core import ManagedSession
@@ -40,11 +43,40 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DIALOGUE_FOLLOW_UP_ACTIONS = {"skill_check", "saving_throw", "contest", "investigate"}
+_NPC_PASSIVE_SKIP_ACTIONS: set[str] = {
+    "noop",
+    "look_inventory",
+    "equip",
+    "unequip",
+    "use_item",
+    "drop_item",
+    "check_stats",
+    "check_quest_log",
+    "check_map",
+    "save_game",
+    "load_game",
+    "trade_buy",
+    "trade_sell",
+    "attack",
+    "defend",
+    "disengage",
+    "rest_short",
+    "rest_long",
+}
 
 
 # ------------------------------------------------------------------
 # AgentOrchestrationService
 # ------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class OpeningSequence:
+    """GM-generated opening beat with per-part fallback support."""
+
+    narration_event: SSEEvent | None = None
+    comment_event: SSEEvent | None = None
+    dialogue_options_event: SSEEvent | None = None
 
 
 class AgentOrchestrationService:
@@ -195,6 +227,45 @@ class AgentOrchestrationService:
         return _private_chat_result_to_sse(
             result,
             action_dispatcher=session.runtime.action_dispatcher,
+        )
+
+    async def generate_opening_sequence(
+        self,
+        session: ManagedSession,
+    ) -> OpeningSequence:
+        """Generate the GM opening beat for a new-game session."""
+        builder = AgentContextBuilder(session.runtime.world, session.runtime.state)
+        context = builder.build_agent_context("gm")
+        user_message = _build_opening_user_message(session)
+
+        try:
+            agent_result = await self._executor.run_agentic(
+                role="gm",
+                context=context,
+                system_prompt=builder.build_gm_opening_prompt(),
+                user_message=user_message,
+                max_turns=2,
+                context_layers=builder.build_gm_opening_context(),
+            )
+        except Exception:
+            logger.exception("GM opening Agent failed")
+            return OpeningSequence()
+
+        narration_event: SSEEvent | None = None
+        comment_event: SSEEvent | None = None
+        for event in _gm_result_to_sse(agent_result):
+            if event.event_type == "gm_narration" and narration_event is None:
+                narration_event = event
+            elif event.event_type == "gm_comment" and comment_event is None:
+                comment_event = event
+
+        return OpeningSequence(
+            narration_event=narration_event,
+            comment_event=comment_event,
+            dialogue_options_event=_build_opening_dialogue_options_event(
+                session,
+                agent_result,
+            ),
         )
 
     # ---- NPC dialogue (single-step, kept for backward compat) ----
@@ -539,6 +610,11 @@ class AgentOrchestrationService:
         members = state.party.members
         if not isinstance(members, dict) or not members:
             return events
+        companion_manager = getattr(session.runtime, "companion_manager", None)
+        current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
+        member_ids = [member_id for member_id in members if str(member_id).strip()]
+        if companion_manager is not None:
+            companion_manager.sync_members(member_ids, current_tick=current_tick)
 
         user_message = json.dumps(
             {
@@ -553,7 +629,14 @@ class AgentOrchestrationService:
         # Create builder once — reused across all teammates in this tick
         builder = AgentContextBuilder(world, state)
 
-        for member_id in members:
+        for member_id in member_ids:
+            instance = (
+                companion_manager.get_or_create(member_id, current_tick=current_tick)
+                if companion_manager is not None
+                else None
+            )
+            context_window = instance.context_window if instance is not None else None
+            history = _window_to_history(context_window) if context_window is not None else None
             # Build system prompt + 7-layer context in one retriever call (N-7 Phase 2)
             tm_full = await builder.build_teammate_full_context(
                 member_id, memory_retriever=self._memory_retriever,
@@ -574,6 +657,7 @@ class AgentOrchestrationService:
                     user_message=user_message,
                     max_turns=2,
                     context_layers=tm_full.layers,
+                    conversation_history=history,
                 )
             except Exception:
                 logger.exception("Teammate Agent failed: %s", member_id)
@@ -587,7 +671,36 @@ class AgentOrchestrationService:
                 )
                 continue
 
-            events.extend(_teammate_result_to_sse(member_id, agent_result))
+            if context_window is not None:
+                context_window.add_message(
+                    WindowMessage(
+                        role="user",
+                        content=user_message,
+                        token_count=_approx_tokens(user_message),
+                        metadata={},
+                    )
+                )
+                visible_reply = _extract_visible_reply_text(agent_result)
+                if visible_reply:
+                    context_window.add_message(
+                        WindowMessage(
+                            role="model",
+                            content=visible_reply,
+                            token_count=_approx_tokens(visible_reply),
+                            metadata={},
+                        )
+                    )
+
+            teammate_events = _teammate_result_to_sse(member_id, agent_result)
+            for event in teammate_events:
+                if event.event_type == "teammate_response":
+                    shared.scene_bus.add_entry({
+                        "source": f"TEAMMATE:{member_id}",
+                        "content": str(event.payload.get("content") or event.payload.get("action", "")),
+                        "visibility": "public",
+                        "tags": [event.event_type, "passive_reaction"],
+                    })
+            events.extend(teammate_events)
 
         return events
 
@@ -607,6 +720,11 @@ class AgentOrchestrationService:
         members = state.party.members
         if not isinstance(members, dict) or not members:
             return events
+        companion_manager = shared.companion_manager
+        current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
+        member_ids = [member_id for member_id in members if str(member_id).strip()]
+        if companion_manager is not None:
+            companion_manager.sync_members(member_ids, current_tick=current_tick)
 
         user_message = json.dumps(
             {
@@ -623,12 +741,20 @@ class AgentOrchestrationService:
             for entry in shared.scene_bus.get_for_role("gm")
         ]
 
-        for member_id in members:
+        for member_id in member_ids:
             if not _should_teammate_respond(world, member_id, scene_entries=scene_entries):
                 continue
+            instance = (
+                companion_manager.get_or_create(member_id, current_tick=current_tick)
+                if companion_manager is not None
+                else None
+            )
+            context_window = instance.context_window if instance is not None else None
+            history = _window_to_history(context_window) if context_window is not None else None
             tm_full = await builder.build_teammate_full_context(
                 member_id,
                 memory_retriever=self._memory_retriever,
+                companion_instance=instance,
             )
             if tm_full is None:
                 continue
@@ -646,6 +772,7 @@ class AgentOrchestrationService:
                     user_message=user_message,
                     max_turns=2,
                     context_layers=tm_full.layers,
+                    conversation_history=history,
                 )
             except Exception:
                 logger.exception("Teammate Agent failed: %s", member_id)
@@ -659,7 +786,36 @@ class AgentOrchestrationService:
                 )
                 continue
 
-            events.extend(_teammate_result_to_sse(member_id, agent_result))
+            if context_window is not None:
+                context_window.add_message(
+                    WindowMessage(
+                        role="user",
+                        content=user_message,
+                        token_count=_approx_tokens(user_message),
+                        metadata={},
+                    )
+                )
+                visible_reply = _extract_visible_reply_text(agent_result)
+                if visible_reply:
+                    context_window.add_message(
+                        WindowMessage(
+                            role="model",
+                            content=visible_reply,
+                            token_count=_approx_tokens(visible_reply),
+                            metadata={},
+                        )
+                    )
+
+            teammate_events = _teammate_result_to_sse(member_id, agent_result)
+            for event in teammate_events:
+                if event.event_type == "teammate_response":
+                    shared.scene_bus.add_entry({
+                        "source": f"TEAMMATE:{member_id}",
+                        "content": str(event.payload.get("content") or event.payload.get("action", "")),
+                        "visibility": "public",
+                        "tags": [event.event_type, "passive_reaction"],
+                    })
+            events.extend(teammate_events)
             scene_entries = [
                 entry.snapshot()
                 for entry in shared.scene_bus.get_for_role("gm")
@@ -677,6 +833,8 @@ class AgentOrchestrationService:
     ) -> list[SSEEvent]:
         state = shared.state
         world = shared.world
+        if result.action_type in _NPC_PASSIVE_SKIP_ACTIONS:
+            return []
         forced_npc_id = _dialogue_npc_id_from_result(result)
         nearby_npc_ids = self._collect_nearby_npcs(
             shared,
@@ -688,6 +846,12 @@ class AgentOrchestrationService:
         builder = AgentContextBuilder(world, state)
         user_message = json.dumps(
             {
+                "context": "passive_observation",
+                "what_happened": (
+                    result.narrative_hints[0]
+                    if result.narrative_hints
+                    else f"The player performed: {result.action_type}"
+                ),
                 "action_type": result.action_type,
                 "success": result.success,
                 "narrative_hints": list(result.narrative_hints),
@@ -720,6 +884,7 @@ class AgentOrchestrationService:
                 npc_id,
                 memory_retriever=self._memory_retriever,
                 active_directive=active_directive,
+                is_passive=True,
             )
             if npc_full is None:
                 continue
@@ -729,14 +894,14 @@ class AgentOrchestrationService:
                 else None
             )
             npc_tags = list(_profile_get(npc_profile, "tags", [])) if npc_profile is not None else []
+            metadata: dict[str, Any] = {"is_passive": True}
+            if memory_writer is not None:
+                metadata["memory_writer"] = memory_writer
             context = builder.build_agent_context(
                 "npc",
                 npc_id,
                 execute_command=execute_command,
-                metadata=(
-                    {"memory_writer": memory_writer}
-                    if memory_writer is not None else None
-                ),
+                metadata=metadata,
             )
             history = _window_to_history(context_window) if context_window is not None else None
 
@@ -763,6 +928,8 @@ class AgentOrchestrationService:
                     result=agent_result,
                 )
                 continue
+            if agent_result.metadata.get("finish_reason") == "pass_turn":
+                continue
 
             if context_window is not None:
                 context_window.add_message(
@@ -784,7 +951,17 @@ class AgentOrchestrationService:
                         )
                     )
 
-            events.extend(_npc_result_to_sse(npc_id, agent_result))
+            npc_events = _npc_result_to_sse(npc_id, agent_result)
+            for event in npc_events:
+                if event.event_type in ("npc_response", "npc_emote"):
+                    event.payload["passive"] = True
+                    shared.scene_bus.add_entry({
+                        "source": f"NPC:{npc_id}",
+                        "content": str(event.payload.get("content") or event.payload.get("action", "")),
+                        "visibility": "public",
+                        "tags": [event.event_type, "passive_reaction"],
+                    })
+            events.extend(npc_events)
             scene_entries = [
                 entry.snapshot()
                 for entry in shared.scene_bus.get_for_role("gm")
@@ -826,13 +1003,25 @@ class AgentOrchestrationService:
         return instance
 
     async def _flush_pending_writebacks(self, session: ManagedSession) -> None:
-        await self._flush_pending_writebacks_for_world(session.runtime.world)
+        await self._flush_pending_writebacks_for_world(
+            session.runtime.world,
+            companion_manager=getattr(session.runtime, "companion_manager", None),
+        )
 
-    async def _flush_pending_writebacks_for_world(self, world: Any) -> None:
+    async def _flush_pending_writebacks_for_world(
+        self,
+        world: Any,
+        companion_manager: Any | None = None,
+    ) -> None:
         if self._instance_manager is None:
             return
         for pending in self._instance_manager.drain_pending_writebacks():
-            await self._write_episode_for_world(world, pending.actor_id, pending.messages)
+            await self._write_episode_for_world(
+                world,
+                pending.actor_id,
+                pending.messages,
+                companion_manager=companion_manager,
+            )
 
     async def _write_episode(
         self,
@@ -840,24 +1029,41 @@ class AgentOrchestrationService:
         actor_id: str,
         messages: list[WindowMessage],
     ) -> None:
-        await self._write_episode_for_world(session.runtime.world, actor_id, messages)
+        await self._write_episode_for_world(
+            session.runtime.world,
+            actor_id,
+            messages,
+            companion_manager=getattr(session.runtime, "companion_manager", None),
+        )
 
     async def _write_episode_for_world(
         self,
         world: Any,
         actor_id: str,
         messages: list[WindowMessage],
+        companion_manager: Any | None = None,
     ) -> None:
         if not messages:
             return
         graph = getattr(self._memory_retriever, "_graph", None)
         if graph is None:
             return
+        companion = companion_manager.get(actor_id) if companion_manager is not None else None
+        recent_events = []
+        if companion is not None:
+            recent_events = [
+                {
+                    "action": record.action_type,
+                    "summary": record.summary,
+                    "tags": record.tags,
+                }
+                for record in list(companion.get_recent_events(5))
+            ]
         try:
             await graph.write_episode(
                 actor_id=actor_id,
                 messages=messages,
-                context={"world": world},
+                context={"world": world, "recent_events": recent_events},
             )
         except Exception:
             logger.exception("write_episode failed for %s", actor_id)
@@ -1203,6 +1409,19 @@ def _dialogue_options_unavailable_event(
     )
 
 
+def _extract_suggest_options_from_result(result: AgentResult | None) -> list[dict[str, Any]] | None:
+    if result is None:
+        return None
+    for tool_result in result.tool_results:
+        metadata = tool_result.metadata if isinstance(tool_result.metadata, dict) else {}
+        if not tool_result.success or metadata.get("tool") != "suggest_options":
+            continue
+        options = metadata.get("options")
+        if isinstance(options, list) and options:
+            return [dict(option) for option in options if isinstance(option, dict)]
+    return None
+
+
 def _dialogue_option_dispatch(
     npc_id: str,
     option: dict[str, Any],
@@ -1290,6 +1509,175 @@ def _serialize_dialogue_options(
             entry["dispatch"] = dispatch
         serialized.append(entry)
     return serialized
+
+
+def _opening_option_dispatch(
+    session: ManagedSession,
+    option: dict[str, Any],
+) -> dict[str, Any] | None:
+    check = option.get("check")
+    if isinstance(check, dict):
+        skill = str(check.get("skill") or "").strip()
+        dc = check.get("dc")
+        if skill and isinstance(dc, int):
+            return {
+                "kind": "action",
+                "payload": {
+                    "action_type": "skill_check",
+                    "params": {"skill": skill, "dc": dc},
+                    "context": {
+                        "interaction_type": "opening_option",
+                    },
+                },
+            }
+
+    action = str(option.get("action") or "").strip()
+    overview = build_location_overview(session)
+    current_location_id = str(overview.get("location_id") or "").strip()
+
+    if action == "talk_first_npc":
+        present_npcs = [
+            item for item in overview.get("present_npcs", [])
+            if isinstance(item, dict) and str(item.get("character_id", "")).strip()
+        ]
+        if present_npcs:
+            npc_id = str(present_npcs[0].get("character_id", "")).strip()
+            return {
+                "kind": "interact",
+                "payload": {
+                    "intent": "talk",
+                    "target_kind": "npc",
+                    "target_id": npc_id,
+                },
+            }
+
+    if action == "enter_first_sub_location":
+        sub_locations = [
+            item for item in overview.get("sub_locations", [])
+            if isinstance(item, dict)
+            and bool(item.get("available", False))
+            and str(item.get("id", "")).strip()
+            and str(item.get("id", "")).strip() != current_location_id
+        ]
+        if sub_locations:
+            loc_id = str(sub_locations[0].get("id", "")).strip()
+            return {
+                "kind": "navigate",
+                "payload": {
+                    "action": "enter_sub_location",
+                    "location_id": loc_id,
+                },
+            }
+
+    if action == "move_first_exit":
+        exits = [
+            item for item in overview.get("exits", [])
+            if isinstance(item, dict)
+            and not bool(item.get("blocked", False))
+            and str(item.get("target_area_id", "")).strip()
+        ]
+        if exits:
+            target_area_id = str(exits[0].get("target_area_id", "")).strip()
+            return {
+                "kind": "navigate",
+                "payload": {
+                    "action": "move_area",
+                    "area_id": target_area_id,
+                },
+            }
+
+    if action == "look_around":
+        return {
+            "kind": "input",
+            "payload": {
+                "text": str(option.get("text") or "观察四周").strip() or "观察四周",
+            },
+        }
+
+    return None
+
+
+def _serialize_opening_options(
+    session: ManagedSession,
+    options: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for raw in options:
+        if not isinstance(raw, dict):
+            continue
+        entry = dict(raw)
+        dispatch = _opening_option_dispatch(session, entry)
+        if dispatch is None:
+            continue
+        entry["dispatch"] = dispatch
+        serialized.append(entry)
+    return serialized
+
+
+def _build_opening_dialogue_options_event(
+    session: ManagedSession,
+    result: AgentResult | None,
+) -> SSEEvent | None:
+    options = _extract_suggest_options_from_result(result)
+    if options:
+        serialized = _serialize_opening_options(session, options)
+        if serialized:
+            return SSEEvent(
+                event_type="dialogue_options",
+                payload={"options": serialized},
+            )
+
+    fallback = build_opening_dialogue_options(session)
+    if not fallback:
+        return None
+    return SSEEvent(
+        event_type="dialogue_options",
+        payload={"options": fallback},
+    )
+
+
+def _build_opening_user_message(session: ManagedSession) -> str:
+    overview = build_location_overview(session)
+    present_npcs = [
+        str(item.get("name") or item.get("character_id") or "").strip()
+        for item in overview.get("present_npcs", [])
+        if isinstance(item, dict)
+        and str(item.get("name") or item.get("character_id") or "").strip()
+    ]
+    sub_locations = [
+        str(item.get("name") or item.get("id") or "").strip()
+        for item in overview.get("sub_locations", [])
+        if isinstance(item, dict)
+        and bool(item.get("available", False))
+        and str(item.get("name") or item.get("id") or "").strip()
+    ]
+    exits = [
+        str(item.get("name") or item.get("target_area_id") or "").strip()
+        for item in overview.get("exits", [])
+        if isinstance(item, dict)
+        and not bool(item.get("blocked", False))
+        and str(item.get("name") or item.get("target_area_id") or "").strip()
+    ]
+    dynamic_quests = session.runtime.state.quests.snapshot().get("dynamic_quests", {})
+    opening_quest_title = ""
+    if isinstance(dynamic_quests, dict):
+        for quest in dynamic_quests.values():
+            if not isinstance(quest, dict):
+                continue
+            status = str(quest.get("status", "")).strip().lower()
+            if status in {"available", "accepted", "active", "in_progress"}:
+                opening_quest_title = str(quest.get("title") or quest.get("summary") or "").strip()
+                if opening_quest_title:
+                    break
+    payload = {
+        "current_area": session.runtime.state.player.current_area,
+        "current_location": session.runtime.state.player.current_location,
+        "present_npcs": present_npcs[:3],
+        "sub_locations": sub_locations[:3],
+        "exits": exits[:3],
+        "opening_quest": opening_quest_title or None,
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _private_chat_result_to_sse(

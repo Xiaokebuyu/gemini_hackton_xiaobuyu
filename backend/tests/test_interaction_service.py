@@ -26,6 +26,7 @@ def _interaction_session(*, location_id: str | None = "counter"):
     session.runtime.state.player.apply_state_change(
         StateChange("player", "set", "current_area", "guild_hall")
     )
+    session.runtime.state.areas.update_npc_location("merchant", "counter")
     session.runtime.state.player.apply_state_change(
         StateChange("player", "set", "current_location", location_id)
     )

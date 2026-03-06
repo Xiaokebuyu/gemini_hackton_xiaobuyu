@@ -50,6 +50,31 @@ class _StubLoreEntry:
         self.description = description
 
 
+class _CaptureStubLlm(_StubLlm):
+    def __init__(self) -> None:
+        super().__init__(tool_calls=[{
+            "name": "record_triple",
+            "args": {
+                "subject": "Merchant Tom",
+                "relation": "interacted_with",
+                "object": "Iron Sword",
+            },
+        }])
+        self.last_dialogue: str = ""
+
+    async def generate(
+        self,
+        system_prompt: str,
+        history: list[dict[str, Any]],
+        declarations: list[dict[str, Any]],
+    ) -> LlmResponse:
+        if history:
+            parts = history[0].get("parts", [])
+            if parts and isinstance(parts[0], dict):
+                self.last_dialogue = str(parts[0].get("text", ""))
+        return await super().generate(system_prompt, history, declarations)
+
+
 class _StubRegistry:
     def __init__(self, entries: list[Any]) -> None:
         self._entries = entries
@@ -229,6 +254,33 @@ class TestWriteEpisode:
         assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
         edge_data = g._actor_graphs["npc_01"]["merchant_tom"]["iron_sword"]
         assert abs(edge_data["weight"] - 0.42) < 1e-9
+
+    def test_recent_events_context_is_included(self) -> None:
+        """recent_events context should be embedded into LLM input."""
+        llm = _CaptureStubLlm()
+        g = _make_graph_with_nodes(llm=llm)
+        msgs = [_make_msg("user", "greet")]
+        asyncio.run(g.write_episode(
+            "npc_01",
+            msgs,
+            {
+                "world": _StubWorld("test_world"),
+                "recent_events": [
+                    {
+                        "action": "navigate",
+                        "summary": "scouted the old bridge",
+                        "tags": ["NAVIGATION"],
+                    },
+                    {
+                        "action": "skill_check",
+                        "summary": "locked pick test passed",
+                        "tags": ["SKILL_CHECK"],
+                    },
+                ],
+            },
+        ))
+        assert "scouted the old bridge" in llm.last_dialogue
+        assert "Recent player companion observations" in llm.last_dialogue
 
     def test_remember_creates_actor_private_memory_node(self) -> None:
         g = _make_graph_with_nodes()

@@ -286,6 +286,9 @@ class TestKnowledgeGraphWithWorld:
         world = build_default_world(
             "test_kg_world",
             world_data={
+                "tags": {
+                    "ancestry": {"id": "ancestry", "tags": ["human", "elf"]},
+                },
                 "characters": {
                     "npc_alpha": {"id": "npc_alpha", "name": "Alpha", "tags": ["human"]},
                     "npc_beta": {"id": "npc_beta", "name": "Beta", "tags": ["elf"]},

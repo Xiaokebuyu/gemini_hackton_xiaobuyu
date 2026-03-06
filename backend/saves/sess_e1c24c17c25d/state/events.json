@@ -1,0 +1,22 @@
+{
+  "active_events": {},
+  "pending_events": [],
+  "rumors": [
+    {
+      "area_id": null,
+      "content": "A new porcelain-rank adventurer named xiaobuyu showed remarkable wit and insight at the counter today. Even the Silver-rank veterans took notice.",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 8
+      },
+      "metadata": {},
+      "rumor_id": "talented_rookie_arrival",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "A new porcelain-rank adventurer named xiaobuyu showed remarkable wit and insight at the counter today. Even the Silver-rank veterans took notice."
+    }
+  ]
+}

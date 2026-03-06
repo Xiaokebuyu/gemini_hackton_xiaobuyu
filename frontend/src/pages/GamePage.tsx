@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { audio } from '../lib/audio'
 import { getCharacter, getScene } from '../lib/api'
+import { useDialogueStore } from '../stores/dialogueStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSceneStore } from '../stores/sceneStore'
@@ -34,9 +35,14 @@ const EncounterPanel    = lazy(() => import('../game/combat/EncounterPanel'))
 
 export default function GamePage() {
   const { worldId: routeWorldId, sid: routeSessionId } = useParams<{ worldId: string; sid: string }>()
-  const location = useLocation()
   const navigate = useNavigate()
-  const { worldId: storedWorldId, sessionId: storedSessionId, phase, setSession } = useSessionStore()
+  const {
+    worldId: storedWorldId,
+    sessionId: storedSessionId,
+    phase,
+    setSession,
+    setPhase,
+  } = useSessionStore()
   const worldId = storedWorldId ?? routeWorldId ?? null
   const sessionId = storedSessionId ?? routeSessionId ?? null
   const gameMode = useSceneStore((s) => s.gameMode)
@@ -47,7 +53,6 @@ export default function GamePage() {
   const overlay = useOverlayStore()
   const updatePlayer = usePlayerStore((s) => s.updateFromPanel)
   const [initError, setInitError] = useState<string | null>(null)
-  const openingRequested = new URLSearchParams(location.search).get('opening') === '1'
 
   // ── OverviewHandlers 循环依赖解决 ──────────────────────────────────────────
   // sendNavigate/sendInteract 来自 useGameStream，但 useGameStream 需要 handlers，
@@ -59,7 +64,8 @@ export default function GamePage() {
     sendInteract: () => {},
     sendNavigate: () => {},
   })
-  const openingStartedRef = useRef(false)
+  const sendOpeningRef = useRef<() => void>(() => {})
+  const openingRequestRef = useRef<string | null>(null)
 
   // 稳定的 handlers 对象（useRef.current，整个生命周期不变）
   const overviewHandlers = useRef<OverviewHandlers>({
@@ -96,6 +102,16 @@ export default function GamePage() {
   sendRef.current.sendInteract = sendInteract
   sendRef.current.sendNavigate = sendNavigate
 
+  useEffect(() => {
+    sendOpeningRef.current = sendOpening
+  }, [sendOpening])
+
+  useEffect(() => {
+    if (!worldId || !sessionId || phase !== 'opening_ready' || initError) {
+      openingRequestRef.current = null
+    }
+  }, [worldId, sessionId, phase, initError])
+
   // ── BGM 随 gameMode 切换 ────────────────────────────────────────────────────
   useEffect(() => {
     const key =
@@ -118,23 +134,63 @@ export default function GamePage() {
       return
     }
     let cancelled = false
+    const optionStore = useOptionStore.getState()
+    const dialogueStore = useDialogueStore.getState()
+    const sessionStore = useSessionStore.getState()
+
+    const hydrateOverview = (overview: Parameters<typeof updateFromOverview>[0]) => {
+      updateFromOverview(overview)
+      optionStore.buildFromOverview(overview, overviewHandlers)
+    }
+
+    const startOpeningFlow = () => {
+      const sessionKey = `${worldId}:${sessionId}`
+      if (openingRequestRef.current === sessionKey) {
+        return
+      }
+      openingRequestRef.current = sessionKey
+      setInitError(null)
+      optionStore.clearOptions()
+      dialogueStore.resetMessages()
+      clearPortraits()
+      setOpeningInProgress(true)
+      sendOpeningRef.current()
+    }
+
+    const bootstrap = sessionStore.consumeResumeBootstrap(worldId, sessionId)
+    if (bootstrap) {
+      dialogueStore.resetMessages()
+      updatePlayer({ phase: bootstrap.phase, player: bootstrap.player })
+      setPhase(bootstrap.phase)
+      if (bootstrap.phase === 'opening_ready') {
+        startOpeningFlow()
+        return () => {
+          cancelled = true
+        }
+      }
+      hydrateOverview(bootstrap.scene)
+      if (bootstrap.resume_narration?.trim()) {
+        dialogueStore.addMessage({ type: 'gm', content: bootstrap.resume_narration.trim() })
+      }
+      return () => {
+        cancelled = true
+      }
+    }
 
     const loadCharacter = getCharacter(worldId, sessionId)
       .then((panel) => {
         if (!cancelled) {
           updatePlayer(panel)
+          setPhase(panel.phase)
         }
+        return panel
       })
 
-    if (openingRequested) {
-      setInitError(null)
-      useOptionStore.getState().clearOptions()
-      clearPortraits()
-      setOpeningInProgress(true)
+    if (phase === 'opening_ready') {
       loadCharacter
         .then(() => {
           if (!cancelled) {
-            sendOpening()
+            startOpeningFlow()
           }
         })
         .catch((err: Error) => {
@@ -149,12 +205,16 @@ export default function GamePage() {
     }
 
     Promise.all([getScene(worldId, sessionId), loadCharacter])
-      .then(([overview]) => {
+      .then(([overview, panel]) => {
         if (cancelled) {
           return
         }
-        updateFromOverview(overview)
-        useOptionStore.getState().buildFromOverview(overview, overviewHandlers)
+        if (panel.phase === 'opening_ready') {
+          startOpeningFlow()
+          return
+        }
+        dialogueStore.resetMessages()
+        hydrateOverview(overview)
       })
       .catch((err: Error) => {
         if (!cancelled) {
@@ -168,35 +228,15 @@ export default function GamePage() {
   }, [
     worldId,
     sessionId,
-    openingRequested,
+    phase,
     navigate,
     overviewHandlers,
     clearPortraits,
     setOpeningInProgress,
     updateFromOverview,
     updatePlayer,
+    setPhase
   ])
-
-  useEffect(() => {
-    if (!openingRequested) {
-      openingStartedRef.current = false
-      return
-    }
-    if (openingInProgress) {
-      openingStartedRef.current = true
-    }
-  }, [openingRequested, openingInProgress])
-
-  useEffect(() => {
-    if (!openingRequested || openingInProgress || !openingStartedRef.current) {
-      return
-    }
-    if (!worldId || !sessionId) {
-      return
-    }
-    openingStartedRef.current = false
-    navigate(`/${worldId}/sessions/${sessionId}/play`, { replace: true })
-  }, [openingRequested, openingInProgress, worldId, sessionId, navigate])
 
   // ── 错误态 ────────────────────────────────────────────────────────────────
   if (initError) {
@@ -215,6 +255,9 @@ export default function GamePage() {
 
   // ── 覆盖层路由 ────────────────────────────────────────────────────────────
   const renderOverlay = () => {
+    if (openingInProgress) {
+      return null
+    }
     switch (overlay.current) {
       case 'log':
         return <LogOverlay />

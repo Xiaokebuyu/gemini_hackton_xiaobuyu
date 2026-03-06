@@ -7,11 +7,17 @@ imported, tested, and replaced independently of the settlement hook.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, TYPE_CHECKING, Mapping, Protocol
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.models import Command
 from app.game_core.state import StateContainer
+from app.game_core.state.delta import StateChange
+
+if TYPE_CHECKING:
+    from app.game_core.orchestration.scene_bus import SceneBus
+    from app.game_core.rules import RulesEngine
+    from app.game_core.state import StateDelta
 
 
 # ------------------------------------------------------------------
@@ -529,3 +535,93 @@ def _normalize_mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     return {str(key): raw_value for key, raw_value in value.items()}
+
+
+def run_inline_event_check(
+    *,
+    state: StateContainer,
+    world: WorldInstance,
+    rules_engine: "RulesEngine",
+    apply_delta: Callable[["StateDelta | None"], None],
+    change_log: list[StateChange],
+    scene_bus: "SceneBus",
+    label: str,
+) -> list[dict[str, Any]]:
+    """Evaluate event conditions, apply transitions, and execute on_trigger commands.
+
+    This is the lightweight inline counterpart to ``EventConditionHook``.
+    A6/C1/external checks use this for immediate in-tick reactivity.
+    """
+    if not state.has_slice("events"):
+        return []
+
+    evaluator = BasicEventConditionEvaluator()
+    decision = evaluator.evaluate(state, world)
+
+    payloads: list[dict[str, Any]] = []
+
+    for transition in decision.transitions:
+        event_snapshot = state.events.get_event(transition.event_id)
+        if event_snapshot is None:
+            continue
+        if transition.to_state not in _SUPPORTED_STATES:
+            continue
+
+        from_state = _canonical_state(event_snapshot)
+        state.events.set_state(
+            transition.event_id,
+            transition.to_state,
+            patch=transition.patch,
+        )
+        change = StateChange(
+            slice="events",
+            operation="set",
+            path=f"state.{transition.event_id}",
+            value=transition.to_state,
+        )
+        change_log.append(change)
+        scene_bus.record_state_change(change)
+        payloads.append(
+            {
+                "event_id": transition.event_id,
+                "from_state": from_state,
+                "to_state": transition.to_state,
+                "reason": transition.reason,
+                "source": label,
+            },
+        )
+
+    for raw_command in decision.commands:
+        command = _coerce_event_command(raw_command)
+        if command is None:
+            continue
+        try:
+            result = rules_engine.execute(command, state, world)
+        except Exception:
+            continue
+        if result.success and result.delta is not None:
+            apply_delta(result.delta)
+
+    return payloads
+
+
+def _coerce_event_command(raw: Any) -> Command | None:
+    if isinstance(raw, Command):
+        if raw.type in _ALLOWED_COMMAND_TYPES:
+            return Command(type=raw.type, params=dict(raw.params), source="system")
+        return None
+    if not isinstance(raw, Mapping):
+        return None
+
+    command_type = _coerce_string(raw.get("type"))
+    if not command_type or command_type not in _ALLOWED_COMMAND_TYPES:
+        return None
+    raw_params = raw.get("params")
+    params = _normalize_mapping(raw_params) if isinstance(raw_params, Mapping) else {}
+    raw_context = raw.get("context")
+    context = (
+        _normalize_mapping(raw_context)
+        if isinstance(raw_context, Mapping)
+        else None
+    )
+    return Command(type=command_type, params=params, source="system", context=context)

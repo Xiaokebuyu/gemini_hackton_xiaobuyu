@@ -31,6 +31,30 @@ _CAMPFIRE_LINES: dict[str, list[str]] = {
         "今晚的营火让我想到{summary}。",
         "能这样休息一下，感觉还不错。",
     ],
+    "exploration": [
+        "我一直记得今天的这次探索：{summary}。",
+        "这次探索很有意思，{summary}。",
+    ],
+    "dialogue": [
+        "和你们的对话我还在回味，尤其是{summary}。",
+        "这段对话之后，心里有些想法：{summary}。",
+    ],
+    "crisis": [
+        "今天那一刻有点紧张，{summary}。",
+        "这次危机很危险，{summary}。",
+    ],
+    "celebration": [
+        "终于有一点值得庆祝的时刻：{summary}。",
+        "这次胜利值得回味：{summary}。",
+    ],
+    "loss": [
+        "想到今天的损失还是有点难受：{summary}。",
+        "今天的失落让我很难过：{summary}。",
+    ],
+    "betrayal": [
+        "那次判断失误/误会让我很在意，{summary}。",
+        "今天的背离让我反思了不少：{summary}。",
+    ],
 }
 
 
@@ -73,7 +97,12 @@ class CampfireHook(NoOpSettlementHook):
         for member_id in members:
             if not _teammate_eligible(member_id, context):
                 continue
-            memory = _select_memory(member_id, context, day)
+            memory = _select_memory(
+                member_id,
+                context,
+                day,
+                companion_manager=context.companion_manager,
+            )
             if memory is None:
                 continue
             line = _generate_campfire_line(memory)
@@ -142,6 +171,7 @@ def _select_memory(
     member_id: str,
     context: SettlementContext,
     today: int,
+    companion_manager: Any | None = None,
 ) -> dict[str, Any] | None:
     """Select the most relevant shared memory for campfire recall.
 
@@ -151,9 +181,26 @@ def _select_memory(
     - critical_moment flag: +30
     - Major type (combat/discovery): +10
     """
-    experiences = context.state.party.get_shared_experiences(
-        with_character=member_id
+    experiences = list(context.state.party.get_shared_experiences(with_character=member_id))
+    companion_manager_obj = (
+        companion_manager if companion_manager is not None else context.companion_manager
     )
+    companion_instance = (
+        companion_manager_obj.get(member_id) if companion_manager_obj is not None else None
+    )
+    if companion_instance is not None:
+        day_start_tick = ((today - 1) * 24) + 1 if today > 0 else 0
+        for record in companion_instance.get_recent_events(20):
+            if record.tick < day_start_tick:
+                continue
+            experiences.append({
+                "type": _infer_experience_type(record),
+                "summary": record.summary,
+                "day": today,
+                "participants": [member_id],
+                "critical_moment": record.has_rolls,
+                "emotion_tags": _infer_emotions(record.tags),
+            })
     if not experiences:
         return None
 
@@ -162,7 +209,7 @@ def _select_memory(
         exp_type = exp.get("type", "")
         exp_day = exp.get("day", 0)
         is_today = exp_day == today and today > 0
-        is_major = exp_type in ("combat", "discovery")
+        is_major = exp_type in ("combat", "discovery", "crisis", "celebration")
         if is_today and is_major:
             score += 100
         elif is_today:
@@ -174,6 +221,50 @@ def _select_memory(
         return score
 
     return max(experiences, key=_score)
+
+
+def _infer_experience_type(record: Any) -> str:
+    action_type = str(getattr(record, "action_type", "")).lower()
+    tags = {str(tag).upper() for tag in getattr(record, "tags", [])}
+    transitions = {str(tag).upper() for tag in getattr(record, "event_transitions", [])}
+    if action_type in {"combat", "end_combat"} or "COMBAT_END" in tags or "COMBAT_END" in transitions:
+        return "combat"
+    if (
+        action_type in {"advance_quest", "complete_quest"}
+        or "QUEST_PROGRESS" in tags
+        or "QUEST_COMPLETE" in tags
+    ):
+        return "discovery"
+    if action_type in {"navigate", "explore"} or "NAVIGATION" in tags:
+        return "exploration"
+    if action_type in {"speak", "dialogue", "talk"} or "NPC" in tags:
+        return "dialogue"
+    if "CRISIS" in tags or "CRITICAL" in tags:
+        return "crisis"
+    if "DEFIANCE" in tags or "RELATIONSHIP" in tags:
+        return "betrayal"
+    if "LOSS" in tags or "DEFEAT" in tags or "ALLY_LOST" in tags:
+        return "loss"
+    if "VICTORY" in tags or "CELEBRATION" in tags or "QUEST_COMPLETE" in tags:
+        return "celebration"
+    return "rest"
+
+
+def _infer_emotions(tags: list[str] | None) -> list[str]:
+    raw = {str(tag).lower() for tag in tags or []}
+    if "crisis" in raw or "combat" in raw or "combat_end" in raw:
+        return ["danger", "concern"]
+    if "quest_complete" in raw or "quest_progress" in raw:
+        return ["achievement"]
+    if "crisis" in raw:
+        return ["alert"]
+    if "defeat" in raw or "loss" in raw or "death" in raw:
+        return ["grief"]
+    if "navigation" in raw or "exploration" in raw:
+        return ["curiosity"]
+    if "npc" in raw or "dialogue" in raw:
+        return ["empathy"]
+    return ["intimacy"]
 
 
 def _generate_campfire_line(memory: dict[str, Any]) -> str:

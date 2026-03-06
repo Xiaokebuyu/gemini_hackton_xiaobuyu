@@ -74,10 +74,19 @@ class RecordingLlmProvider:
 # ------------------------------------------------------------------
 
 
+def _test_world_tags() -> dict[str, Any]:
+    return {
+        "profession": {"id": "profession", "tags": ["merchant", "warrior"]},
+        "ancestry": {"id": "ancestry", "tags": ["human"]},
+        "affinity": {"id": "affinity", "tags": ["holy"]},
+    }
+
+
 def _world_with_characters() -> WorldInstance:
     return build_default_world(
         "test_world",
         world_data={
+            "tags": _test_world_tags(),
             "characters": {
                 "merchant_tom": {
                     "id": "merchant_tom",
@@ -510,6 +519,7 @@ class TestTeammateInInteraction:
         world = build_default_world(
             "test_world",
             world_data={
+                "tags": _test_world_tags(),
                 "characters": {
                     "merchant_tom": {
                         "id": "merchant_tom",
@@ -589,6 +599,7 @@ class TestShouldTeammateRespond:
         world = build_default_world(
             "test",
             world_data={
+                "tags": _test_world_tags(),
                 "characters": {
                     "eager": {
                         "id": "eager",
@@ -609,6 +620,7 @@ class TestShouldTeammateRespond:
         world = build_default_world(
             "test",
             world_data={
+                "tags": _test_world_tags(),
                 "characters": {
                     "silent": {
                         "id": "silent",

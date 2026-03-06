@@ -12,7 +12,7 @@ from app.deps import (
     _api_error,
     _execute_structured_action,
     _load_session_or_404,
-    get_game_runtime,
+    get_admin_coordinator,
 )
 from app.game_core import ManagedSession
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
@@ -365,7 +365,7 @@ async def encounter_action(
             updated = session.runtime.state.areas.copy_hostile_state(payload)
             updated["last_stealth_choice"] = choice
             session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-            await get_game_runtime().save_session(session)
+            await get_admin_coordinator().save_session(session)
             await queue.put(
                 _manual_action_result(
                     choice,
@@ -648,7 +648,7 @@ async def _reset_hostile_to_spotted(
     updated["last_stealth_result"] = None
     updated["last_stealth_choice"] = last_choice
     session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
 
 
 async def _deactivate_combat(
@@ -662,7 +662,7 @@ async def _deactivate_combat(
     updated["status"] = status
     updated["combat_active"] = False
     session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
 
 
 async def _generate_loot(
@@ -713,7 +713,7 @@ async def _execute_command(
     command: Command,
 ) -> PipelineResult:
     result = await session.runtime.tick_coordinator.process(command)
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
     return result
 
 

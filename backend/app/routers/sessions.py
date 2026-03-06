@@ -6,23 +6,26 @@ from fastapi import APIRouter, Response
 
 from app.api_models import (
     HealthResponse,
+    ResumeLocationVisualResponse,
+    ResumeSessionResponse,
     SessionLifecycleResponse,
     SessionSummaryBody,
     SessionSummaryResponse,
     WorldSummaryResponse,
 )
 from app.deps import (
-    _api_error,
-    _ensure_shell_world,
     _load_session_or_404,
     _require_world,
     _session_not_found,
     _session_phase,
     _validate_session_id,
+    get_admin_coordinator,
     get_game_runtime,
 )
 from app.game_core import ManagedSession
 from app.game_core.runtime import SavedSessionInfo
+from app.resume_views import build_resume_location_visual, build_resume_narration
+from app.scene_views import build_location_overview
 from app.world_seed import WORLD_CATALOG
 
 router = APIRouter()
@@ -35,6 +38,26 @@ def _session_lifecycle_response(session: ManagedSession) -> SessionLifecycleResp
         world_id=session.world_id,
         session_id=session.session_id,
         phase=_session_phase(session),
+    )
+
+
+def _resume_response(session: ManagedSession) -> ResumeSessionResponse:
+    party_snapshot = (
+        session.runtime.state.party.snapshot()
+        if session.runtime.state.has_slice("party")
+        else {}
+    )
+    return ResumeSessionResponse(
+        world_id=session.world_id,
+        session_id=session.session_id,
+        phase=_session_phase(session),
+        player=session.runtime.state.player.snapshot(),
+        scene=build_location_overview(session),
+        party=dict(party_snapshot) if isinstance(party_snapshot, dict) else {},
+        location_visual=ResumeLocationVisualResponse(
+            **build_resume_location_visual(session),
+        ),
+        resume_narration=build_resume_narration(session),
     )
 
 
@@ -110,21 +133,19 @@ async def create_session(world_id: str) -> SessionLifecycleResponse:
     """Create one new session against the built-in shell world."""
 
     _require_world(world_id)
-    runtime = get_game_runtime()
-    _ensure_shell_world(runtime, world_id)
-    session = await runtime.create_session(world_id)
+    session = await get_admin_coordinator().create_session(world_id)
     return _session_lifecycle_response(session)
 
 
 @router.post(
     "/api/game/{world_id}/sessions/{session_id}/resume",
-    response_model=SessionLifecycleResponse,
+    response_model=ResumeSessionResponse,
 )
-async def resume_session(world_id: str, session_id: str) -> SessionLifecycleResponse:
+async def resume_session(world_id: str, session_id: str) -> ResumeSessionResponse:
     """Resume one stored session against the built-in shell world."""
 
     session = await _load_session_or_404(world_id, session_id)
-    return _session_lifecycle_response(session)
+    return _resume_response(session)
 
 
 @router.delete("/api/game/{world_id}/sessions/{session_id}")
@@ -133,7 +154,7 @@ async def delete_session(world_id: str, session_id: str) -> Response:
 
     _require_world(world_id)
     _validate_session_id(session_id)
-    deleted = await get_game_runtime().delete_session(world_id, session_id)
+    deleted = await get_admin_coordinator().delete_session(world_id, session_id)
     if not deleted:
         _session_not_found()
     return Response(status_code=204)

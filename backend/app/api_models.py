@@ -67,6 +67,28 @@ class SessionLifecycleResponse(BaseModel):
     phase: str
 
 
+class ResumeLocationVisualResponse(BaseModel):
+    """Minimal visual hints for restoring the current scene."""
+
+    area_id: str
+    location_id: str | None
+    background_key: str
+    present_character_ids: list[str] = Field(default_factory=list)
+
+
+class ResumeSessionResponse(BaseModel):
+    """Full resume payload used to hydrate the game view in one request."""
+
+    world_id: str
+    session_id: str
+    phase: str
+    player: dict[str, Any]
+    scene: dict[str, Any]
+    party: dict[str, Any] = Field(default_factory=dict)
+    location_visual: ResumeLocationVisualResponse
+    resume_narration: str
+
+
 class CharacterCreationOptionsResponse(BaseModel):
     """Character creation options exposed by the API shell."""
 

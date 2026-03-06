@@ -138,9 +138,33 @@ def test_detect_rest_via_bus_tag() -> None:
     assert exp["type"] == "rest"
 
 
+def test_detect_exploration_via_bus_tag() -> None:
+    hook = SharedExperienceHook()
+    ctx, _ = _make_context(engine_tags=["NAVIGATION"])
+    exp = hook._detect_experience(ctx)
+    assert exp is not None
+    assert exp["type"] == "exploration"
+
+
+def test_detect_dialogue_via_action_log() -> None:
+    hook = SharedExperienceHook()
+    ctx, _ = _make_context(action_log=[{"type": "talk"}])
+    exp = hook._detect_experience(ctx)
+    assert exp is not None
+    assert exp["type"] == "dialogue"
+
+
+def test_detect_betrayal_from_tag() -> None:
+    hook = SharedExperienceHook()
+    ctx, _ = _make_context(engine_tags=["BETRAYAL"])
+    exp = hook._detect_experience(ctx)
+    assert exp is not None
+    assert exp["type"] == "betrayal"
+
+
 def test_detect_returns_none_for_no_relevant_event() -> None:
     hook = SharedExperienceHook()
-    ctx, _ = _make_context(action_log=[{"type": "navigate"}])
+    ctx, _ = _make_context(action_log=[{"type": "wait"}])
     exp = hook._detect_experience(ctx)
     assert exp is None
 
@@ -202,7 +226,7 @@ def test_execute_returns_empty_when_no_members() -> None:
 
 def test_execute_returns_empty_when_no_event_detected() -> None:
     hook = SharedExperienceHook()
-    ctx, _ = _make_context(action_log=[{"type": "navigate"}])
+    ctx, _ = _make_context(action_log=[{"type": "wait"}])
     asyncio.run(hook.execute(ctx))
     experiences = ctx.state.party.get_shared_experiences()
     assert len(experiences) == 0

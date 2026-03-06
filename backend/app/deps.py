@@ -4,28 +4,24 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
     from app.agent_orchestration import AgentOrchestrationService
 
 from fastapi import FastAPI, HTTPException
 
+from app.admin_coordinator import AdminCoordinator
 from app.api_models import StructuredActionRequest
 from app.interaction_service import InteractionService
 from app.game_core import GameRuntime, ManagedSession
 from app.game_core.adapters import FastAPIInputPort, InputPort
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
-from app.world_seed import WORLD_CATALOG, _shell_world_seed
-from app.world_data_loader import load_goblin_slayer_world_data
-
-_GOBLIN_SLAYER_DATA_DIR = Path(__file__).parent.parent / "data" / "goblin_slayer" / "structured_new"
-_V2_DATA_DIR = Path(__file__).parent.parent / "data" / "goblin_slayer" / "v2"
+from app.world_seed import WORLD_CATALOG
 
 
 def _build_game_runtime() -> GameRuntime:
@@ -123,6 +119,8 @@ async def _lifespan(app: FastAPI):
     """Deferred composition root: build runtime on server startup, not at import time."""
     if getattr(app.state, "game_runtime", None) is None:
         app.state.game_runtime = _build_game_runtime()
+    if getattr(app.state, "admin_coordinator", None) is None:
+        app.state.admin_coordinator = AdminCoordinator(app.state.game_runtime)
     if getattr(app.state, "input_port", None) is None:
         app.state.input_port = FastAPIInputPort()
     if not hasattr(app.state, "interaction_service"):
@@ -151,6 +149,17 @@ def get_input_port() -> InputPort:
     """Return the active inbound adapter for request handlers and tests."""
 
     return app.state.input_port
+
+
+def get_admin_coordinator() -> AdminCoordinator:
+    """Return the active session-level coordinator."""
+
+    runtime = get_game_runtime()
+    coordinator = getattr(app.state, "admin_coordinator", None)
+    if coordinator is None or getattr(coordinator, "runtime", None) is not runtime:
+        coordinator = AdminCoordinator(runtime)
+        app.state.admin_coordinator = coordinator
+    return coordinator
 
 
 def get_agent_orchestration() -> AgentOrchestrationService | None:
@@ -221,24 +230,11 @@ def _require_world(world_id: str) -> None:
 
 
 def _ensure_shell_world(runtime: GameRuntime, world_id: str) -> None:
-    """Load the canonical world into cache if not already present.
-
-    For goblin_slayer: uses structured JSON files when available, otherwise falls
-    back to the synthetic shell seed.
-    """
-    if runtime.has_world(world_id):
-        return
-    if world_id == "goblin_slayer":
-        if (_V2_DATA_DIR / "characters.json").exists():
-            from app.game_data_loader_v2 import load_v2_world_data
-            world_data = load_v2_world_data()
-        elif _GOBLIN_SLAYER_DATA_DIR.exists():
-            world_data = load_goblin_slayer_world_data()
-        else:
-            world_data = _shell_world_seed(world_id)
-    else:
-        world_data = _shell_world_seed(world_id)
-    runtime.get_world(world_id, world_data=world_data)
+    """Ensure one canonical world is loaded and validated."""
+    try:
+        runtime.ensure_world(world_id)
+    except ValueError as exc:
+        raise _api_error(500, "world_bootstrap_failed", str(exc)) from exc
 
 
 async def _load_session_or_404(world_id: str, session_id: str) -> ManagedSession:
@@ -246,31 +242,23 @@ async def _load_session_or_404(world_id: str, session_id: str) -> ManagedSession
 
     _require_world(world_id)
     _validate_session_id(session_id)
-    runtime = get_game_runtime()
-    _ensure_shell_world(runtime, world_id)
-    session = await runtime.resume_session(world_id, session_id)
+    session = await get_admin_coordinator().get_session(world_id, session_id)
     if session is None:
         _session_not_found()
     return session
 
 
 def _session_phase(session: ManagedSession) -> str:
-    """Derive the current lifecycle phase from the player slice."""
+    """Return the persisted lifecycle phase for one managed session."""
 
-    player = session.runtime.state.player
-    if (
-        player.character_id.strip()
-        and player.character_name.strip()
-        and player.character_class.strip()
-    ):
-        return "active"
-    return "character_creation"
+    return session.phase
 
 
 async def _execute_structured_action(
     session: ManagedSession,
     request: StructuredActionRequest,
-    event_sink: Callable | None = None,
+    event_sink: Callable[[SSEEvent], Awaitable[None]] | None = None,
+    after_engine: Callable[[PipelineResult], Awaitable[None]] | None = None,
 ) -> PipelineResult:
     """Execute one structured action through the real tick pipeline."""
 
@@ -289,8 +277,9 @@ async def _execute_structured_action(
             "context": dict(request.context) if isinstance(request.context, dict) else None,
         },
         event_sink=event_sink,
+        after_engine=after_engine,
     )
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
     return result
 
 
@@ -306,5 +295,5 @@ async def _finalize_dialogue_turn(
         time_cost=time_cost,
         event_sink=event_sink,
     )
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
     return settlement_events

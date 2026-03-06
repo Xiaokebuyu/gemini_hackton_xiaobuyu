@@ -25,6 +25,7 @@ from app.deps import (
     _finalize_dialogue_turn,
     _load_session_or_404,
     _session_phase,
+    get_admin_coordinator,
     get_agent_orchestration,
     get_game_runtime,
     get_input_port,
@@ -95,7 +96,7 @@ async def navigate(
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
         before_location = session.runtime.state.player.current_location
-        result = await _execute_structured_action(session, structured_request, event_sink=queue.put)
+        result = await _execute_structured_action(session, structured_request)
         await queue.put(_build_action_result_event(result, action))
         if result.success:
             if action == "leave_sub_location":
@@ -103,6 +104,9 @@ async def navigate(
                 if previous_location is not None:
                     await _reset_hostile_to_spotted(session, previous_location)
             await queue.put(SSEEvent("scene_change", build_scene_change(session)))
+        for event in result.sse_events:
+            await queue.put(event)
+        if result.success:
             if action == "enter_sub_location":
                 await queue.put(SSEEvent("location_overview", build_location_overview(session)))
                 location_id = _non_empty_string(params.get("location_id"))
@@ -307,7 +311,7 @@ async def _execute_command(
     command: Command,
 ) -> PipelineResult:
     result = await session.runtime.tick_coordinator.process(command)
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
     return result
 
 
@@ -429,7 +433,7 @@ async def _reset_hostile_to_spotted(
     updated["last_stealth_result"] = None
     updated["last_stealth_choice"] = None
     session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
 
 
 def _participant_cards(
@@ -488,13 +492,6 @@ def _build_stream_error_event(exc: Exception) -> SSEEvent:
     )
 
 
-def _split_action_stream_events(events: list[SSEEvent]) -> tuple[list[SSEEvent], list[SSEEvent]]:
-    for index, event in enumerate(events):
-        if event.event_type in _AGENT_REACTION_EVENTS:
-            return events[:index], events[index:]
-    return list(events), []
-
-
 async def _emit_terminal_error(
     queue: asyncio.Queue[SSEEvent | None], exc: Exception,
 ) -> None:
@@ -520,8 +517,8 @@ async def _stream_with_lock(
     # Pre-validate: raises HTTPException before HTTP 200 headers are sent.
     await _load_session_or_404(world_id, session_id)
 
-    runtime = get_game_runtime()
-    lock = await runtime.session_lock(session_id)
+    coordinator = get_admin_coordinator()
+    lock = await coordinator.session_lock(world_id, session_id)
     queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue()
 
     async def _execute() -> None:
@@ -571,14 +568,16 @@ async def action_stream(
         raise _api_error(400, "unknown_action", f"unknown action: {action_type}")
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
-        result = await _execute_structured_action(session, request)
-        before_summary, after_summary = _split_action_stream_events(result.sse_events)
-        for event in before_summary:
-            await queue.put(event)
-        await _emit_roll_events(queue, result=result, session=session)
-        await queue.put(_build_action_result_event(result, request.action_type))
-        for event in after_summary:
-            await queue.put(event)
+        async def _after_engine(result: PipelineResult) -> None:
+            await _emit_roll_events(queue, result=result, session=session)
+            await queue.put(_build_action_result_event(result, request.action_type))
+
+        result = await _execute_structured_action(
+            session,
+            request,
+            event_sink=queue.put,
+            after_engine=_after_engine,
+        )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -625,17 +624,16 @@ async def input_stream(
                 "params": params,
             },
         ))
+        async def _after_engine(result: PipelineResult) -> None:
+            await _emit_roll_events(queue, result=result, session=session)
+            await queue.put(_build_action_result_event(result, action_type))
+
         result = await _execute_structured_action(
             session,
             StructuredActionRequest(action_type=action_type, params=params),
+            event_sink=queue.put,
+            after_engine=_after_engine,
         )
-        before_summary, after_summary = _split_action_stream_events(result.sse_events)
-        for event in before_summary:
-            await queue.put(event)
-        await _emit_roll_events(queue, result=result, session=session)
-        await queue.put(_build_action_result_event(result, action_type))
-        for event in after_summary:
-            await queue.put(event)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -650,12 +648,25 @@ async def opening_stream(
     """Stream the deterministic new-game opening sequence."""
 
     session = await _load_session_or_404(world_id, session_id)
-    if _session_phase(session) != "active":
-        raise _api_error(409, "opening_not_available", "opening is only available for active sessions")
+    current_phase = _session_phase(session)
+    if current_phase != "opening_ready":
+        raise _api_error(
+            409,
+            "opening_not_available",
+            "opening is only available for opening-ready sessions",
+        )
     if not session.runtime.state.player.current_area.strip():
         raise _api_error(409, "opening_not_available", "player has no current area")
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        current_phase = _session_phase(session)
+        if current_phase != "opening_ready":
+            raise _api_error(
+                409,
+                "opening_not_available",
+                "opening is only available for opening-ready sessions",
+            )
+
         bootstrap_events = await get_game_runtime().bootstrap_opening_planner(
             session,
             persist=True,
@@ -665,24 +676,45 @@ async def opening_stream(
 
         await queue.put(SSEEvent("scene_change", build_scene_change(session)))
 
-        narration = build_opening_narration(session).strip()
-        if narration:
-            await queue.put(SSEEvent("gm_narration", {"content": narration}))
+        opening_sequence = None
+        agent_svc = get_agent_orchestration()
+        if agent_svc is not None:
+            opening_sequence = await agent_svc.generate_opening_sequence(session)
 
-        gm_comment = build_opening_comment(session)
-        if gm_comment.get("content"):
-            await queue.put(SSEEvent("gm_comment", dict(gm_comment)))
+        narration_event = opening_sequence.narration_event if opening_sequence is not None else None
+        if narration_event is not None:
+            await queue.put(narration_event)
+        else:
+            narration = build_opening_narration(session).strip()
+            if narration:
+                await queue.put(SSEEvent("gm_narration", {"content": narration}))
+
+        comment_event = opening_sequence.comment_event if opening_sequence is not None else None
+        if comment_event is not None:
+            await queue.put(comment_event)
+        else:
+            gm_comment = build_opening_comment(session)
+            if gm_comment.get("content"):
+                await queue.put(SSEEvent("gm_comment", dict(gm_comment)))
 
         for payload in build_opening_character_enters(session):
             await queue.put(SSEEvent("character_enter", payload))
 
         await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
+        options_event = (
+            opening_sequence.dialogue_options_event
+            if opening_sequence is not None
+            else None
+        )
+        if options_event is not None:
+            await queue.put(options_event)
+        else:
+            opening_options = build_opening_dialogue_options(session)
+            if opening_options:
+                await queue.put(SSEEvent("dialogue_options", {"options": opening_options}))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-
-        opening_options = build_opening_dialogue_options(session)
-        if opening_options:
-            await queue.put(SSEEvent("dialogue_options", {"options": opening_options}))
-
+        session.phase = "active"
+        await get_admin_coordinator().save_session(session)
         await queue.put(_build_stream_end_event("completed", True))
 
     return await _stream_with_lock(world_id, session_id, _execute)
@@ -830,7 +862,7 @@ async def companion_recruit(
                 "reason": result.reason,
                 "party_members": members,
             }))
-            await get_game_runtime().save_session(session)
+            await get_admin_coordinator().save_session(session)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event(
             result.reason if not result.success else "completed",
@@ -862,7 +894,7 @@ async def companion_dismiss(
                 "reason": result.reason,
                 "party_members": members,
             }))
-            await get_game_runtime().save_session(session)
+            await get_admin_coordinator().save_session(session)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event(
             result.reason if not result.success else "completed",
@@ -880,5 +912,5 @@ async def companion_dismiss(
 async def save_session_explicit(world_id: str, session_id: str) -> Response:
     """Explicitly persist the current session state."""
     session = await _load_session_or_404(world_id, session_id)
-    await get_game_runtime().save_session(session)
+    await get_admin_coordinator().save_session(session)
     return Response(status_code=204)

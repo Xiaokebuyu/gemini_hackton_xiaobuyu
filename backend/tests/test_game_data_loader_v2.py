@@ -45,5 +45,5 @@ def test_v2_knowledge_graph_edges() -> None:
     world = build_default_world("goblin_slayer", world_data=world_data)
     graph = WorldKnowledgeGraph()
     graph.ensure_seeded(world)
-    assert graph.graph.number_of_nodes() > 20, "Graph has too few nodes"
-    assert graph.graph.number_of_edges() > 10, "Graph has too few edges"
+    assert graph._graph.number_of_nodes() > 20, "Graph has too few nodes"
+    assert graph._graph.number_of_edges() > 10, "Graph has too few edges"

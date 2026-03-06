@@ -1,0 +1,61 @@
+{
+  "faction_standings": {
+    "adventurer_guild": 0,
+    "earth_mother_church": 0,
+    "frontier_merchants": 0,
+    "kingdom": 0
+  },
+  "npc_dispositions": {
+    "cow_girl": {
+      "approval": 50,
+      "fear": 0,
+      "romance": 70,
+      "trust": 80
+    },
+    "dwarf_shaman": {
+      "approval": 20,
+      "fear": 0,
+      "romance": 0,
+      "trust": 30
+    },
+    "goblin_slayer": {
+      "approval": 0,
+      "fear": 5,
+      "romance": 0,
+      "trust": 10
+    },
+    "guild_girl": {
+      "approval": 19,
+      "fear": 0,
+      "romance": 50,
+      "trust": 33
+    },
+    "high_elf_archer": {
+      "approval": 10,
+      "fear": 0,
+      "romance": 5,
+      "trust": 25
+    },
+    "lizard_priest": {
+      "approval": 15,
+      "fear": 0,
+      "romance": 0,
+      "trust": 40
+    },
+    "priestess": {
+      "approval": 20,
+      "fear": 0,
+      "romance": 10,
+      "trust": 30
+    }
+  },
+  "npc_impressions": {},
+  "relationship_stages": {
+    "cow_girl": "acquaintance",
+    "dwarf_shaman": "acquaintance",
+    "guild_girl": "acquaintance",
+    "lizard_priest": "acquaintance",
+    "priestess": "acquaintance"
+  },
+  "shop_states": {}
+}

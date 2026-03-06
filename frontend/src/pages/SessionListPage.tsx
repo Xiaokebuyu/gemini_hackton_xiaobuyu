@@ -8,6 +8,7 @@ export default function SessionListPage() {
   const { worldId } = useParams<{ worldId: string }>()
   const navigate = useNavigate()
   const setSession = useSessionStore((s) => s.setSession)
+  const setResumeBootstrap = useSessionStore((s) => s.setResumeBootstrap)
 
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -48,6 +49,7 @@ export default function SessionListPage() {
     try {
       const res = await resumeSession(worldId, sid)
       setSession(worldId, res.session_id, res.phase)
+      setResumeBootstrap(res)
       navigate(`/${worldId}/sessions/${sid}/play`)
     } catch (err: unknown) {
       setError((err as Error).message ?? '加载存档失败')

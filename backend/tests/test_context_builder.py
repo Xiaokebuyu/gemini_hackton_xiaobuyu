@@ -16,6 +16,15 @@ from app.game_core.narrative.context_builder import (
     _build_teammate_prompt_text,
 )
 from app.game_core.state import StateContainer
+from app.game_core.narrative.companion_runtime import TickRecord
+
+
+class _FakeCompanionInstance:
+    def __init__(self, events: list[TickRecord]) -> None:
+        self._events = events
+
+    def get_recent_events(self, n: int = 10) -> list[TickRecord]:
+        return list(self._events[-n:])
 
 
 # ------------------------------------------------------------------
@@ -23,10 +32,19 @@ from app.game_core.state import StateContainer
 # ------------------------------------------------------------------
 
 
+def _test_world_tags() -> dict[str, Any]:
+    return {
+        "profession": {"id": "profession", "tags": ["merchant", "warrior"]},
+        "ancestry": {"id": "ancestry", "tags": ["human"]},
+        "affinity": {"id": "affinity", "tags": ["holy"]},
+    }
+
+
 def _world_with_characters() -> WorldInstance:
     return build_default_world(
         "test_world",
         world_data={
+            "tags": _test_world_tags(),
             "characters": {
                 "merchant_tom": {
                     "id": "merchant_tom",
@@ -392,6 +410,18 @@ class TestPurePromptFormatters:
         assert "stranger" in prompt
         assert "No previous memories" in prompt
 
+    def test_npc_prompt_text_respects_passive_flag(self) -> None:
+        prompt = _build_npc_prompt_text(
+            npc_profile={"name": "Tom"},
+            disposition={},
+            stage="stranger",
+            impressions=[],
+            is_passive=True,
+        )
+
+        assert "You just witnessed a player action. You are NOT being spoken to directly." in prompt
+        assert "MUST respond when spoken to" not in prompt
+
     def test_teammate_prompt_text_includes_personality(self) -> None:
         prompt = _build_teammate_prompt_text(
             profile={"name": "Aria", "personality": "A brave paladin."},
@@ -718,6 +748,20 @@ class TestNpcFullContext:
         assert "Trust: 15" in npc_full.system_prompt
         assert "Bought a sword last time" in npc_full.system_prompt
 
+    def test_build_npc_full_context_passive_uses_passive_prompt_rules(self) -> None:
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        builder = AgentContextBuilder(world, state)
+
+        npc_full = asyncio.run(builder.build_npc_full_context(
+            "merchant_tom",
+            is_passive=True,
+        ))
+
+        assert npc_full is not None
+        assert "You just witnessed a player action. You are NOT being spoken to directly." in npc_full.system_prompt
+        assert "You MUST respond when spoken to" not in npc_full.system_prompt
+
 
 # ------------------------------------------------------------------
 # TestTeammateFull — N-7 Phase 2: single-retriever TeammateFull
@@ -779,6 +823,34 @@ class TestTeammateFull:
         assert "Paladin Aria" in tm_full.system_prompt
         assert "40" in tm_full.system_prompt   # approval
         assert "50" in tm_full.system_prompt   # trust
+
+    def test_system_prompt_includes_companion_observation_context(self) -> None:
+        """build_teammate_full_context injects recent companion observations from event log."""
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        builder = AgentContextBuilder(world, state)
+        companion = _FakeCompanionInstance([
+            TickRecord(
+                tick=1,
+                action_type="navigate",
+                success=True,
+                summary="Scouted the northern ridge.",
+                tags=["NAVIGATION"],
+                involved_npcs=["paladin_aria"],
+                has_rolls=False,
+                event_transitions=[],
+            )
+        ])
+
+        tm_full = asyncio.run(
+            builder.build_teammate_full_context(
+                "paladin_aria",
+                companion_instance=companion,
+            )
+        )
+
+        assert tm_full is not None
+        assert "Recent observations" in tm_full.system_prompt
 
 
 class TestLoreScopeFilter:

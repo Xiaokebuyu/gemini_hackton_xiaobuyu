@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.context import AgentContext
+from app.game_core.narrative.companion_runtime import CompanionInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
 from app.game_core.narrative.role_proxy import RoleStateProxy
 from app.game_core.rules.models import Command, ExecuteResult
@@ -149,6 +150,45 @@ next actionable player dialogue options.
 - Avoid repeating what the NPC just said.
 - Include a graceful exit option when the conversation is winding down.
 - Match the language of the user message.\
+"""
+
+GM_OPENING_PROMPT = """\
+You are the Game Master narrator for the opening scene of a dark-fantasy CRPG.
+
+## Your role right now
+This is the player's first moment in the game world. You have the full opening \
+context: world state, current location, nearby NPCs, the first quest hook, and \
+the immediately available paths out of the scene.
+
+Produce one playable opening beat:
+
+1. Always call `narrate` once with 2-4 sentences that establish the place, \
+mood, and the first obvious thing the player can do.
+2. You may call `comment` once if a short sardonic aside improves the tone.
+3. Always call `suggest_options` once with 2-4 immediately actionable options.
+
+## Opening option rules
+- Prefer concrete actions grounded in the current scene.
+- For `suggest_options`, use only these `action` values when not using a check:
+  - `talk_first_npc`
+  - `enter_first_sub_location`
+  - `move_first_exit`
+  - `look_around`
+- Only use an action if that target clearly exists in the opening context.
+- Use `check` only if the opening beat genuinely calls for an immediate skill check.
+
+## Style
+- Natural opening, not an exposition dump.
+- Sharp, sardonic, but still inviting the player to act.
+- Do not narrate the entire adventure. Only the first beat.
+
+## Tool rules
+- Do NOT call `describe_environment`.
+- Do NOT call `pass_turn`.
+- The opening must always end with actionable options.
+
+## Language
+Match the language of the user message.\
 """
 
 GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT = """\
@@ -352,11 +392,20 @@ class AgentContextBuilder:
         }
 
     async def build_teammate_context(
-        self, char_id: str, *, memory_retriever: MemoryRetriever | None = None
+        self,
+        char_id: str,
+        *,
+        memory_retriever: MemoryRetriever | None = None,
+        companion_instance: CompanionInstance | None = None,
     ) -> dict[str, Any]:
         """队友: 队伍视角，L0 + L1(部分) + L2-L6。"""
         current_area, current_location = self._resolve_location()
         area_state = self._get_area_state(current_area)
+        l6 = await self._build_l6(char_id, memory_retriever, role="teammate")
+        companion_summary = _build_companion_memory_context(companion_instance)
+        if companion_summary:
+            l6 = dict(l6)
+            l6["companion_memory"] = companion_summary
         return {
             "l0_world_constants": self._build_l0(),
             "l1_chapter_state": self._build_l1_teammate(),
@@ -364,7 +413,7 @@ class AgentContextBuilder:
             "l3_location_details": self._build_l3(current_area, current_location, area_state),
             "l4_dynamic_state": self._build_l4_teammate(char_id),
             "l5_scene_bus": self._build_l5_role("teammate", char_id),
-            "l6_memory_recall": await self._build_l6(char_id, memory_retriever, role="teammate"),
+            "l6_memory_recall": l6,
             "l7_engine_result": None,
         }
 
@@ -403,6 +452,7 @@ class AgentContextBuilder:
         memory_retriever: MemoryRetriever | None = None,
         active_directive: dict[str, Any] | None = None,
         is_private: bool = False,
+        is_passive: bool = False,
     ) -> NpcFullContext | None:
         """Build NPC system prompt and full 7-layer dict in one retriever call.
 
@@ -433,11 +483,16 @@ class AgentContextBuilder:
             active_directive=active_directive,
             time_info=l4.get("time"),
             is_private=is_private,
+            is_passive=is_passive,
         )
         return NpcFullContext(system_prompt=system_prompt, layers=layers)
 
     async def build_teammate_full_context(
-        self, char_id: str, *, memory_retriever: MemoryRetriever | None = None
+        self,
+        char_id: str,
+        *,
+        memory_retriever: MemoryRetriever | None = None,
+        companion_instance: CompanionInstance | None = None,
     ) -> TeammateFull | None:
         """Build teammate system prompt and full 7-layer dict in one retriever call.
 
@@ -450,13 +505,18 @@ class AgentContextBuilder:
         profile = self._world.characters.get(char_id)
         if profile is None:
             return None
-        layers = await self.build_teammate_context(char_id, memory_retriever=memory_retriever)
+        layers = await self.build_teammate_context(
+            char_id,
+            memory_retriever=memory_retriever,
+            companion_instance=companion_instance,
+        )
         l4 = layers["l4_dynamic_state"] or {}
         l6 = layers["l6_memory_recall"] or {}
         system_prompt = _build_teammate_prompt_text(
             profile,
             l4.get("self_disposition", {}),
             knowledge_hits=l6.get("hits", []),
+            companion_memory=l6.get("companion_memory"),
             stage=_resolve_stage(self._state, char_id),
             time_info=l4.get("time"),
         )
@@ -474,9 +534,19 @@ class AgentContextBuilder:
         """Return the GM prompt for generating follow-up dialogue options."""
         return GM_DIALOGUE_OPTIONS_PROMPT
 
+    def build_gm_opening_prompt(self) -> str:
+        """Return the GM prompt for the new-game opening sequence."""
+        return GM_OPENING_PROMPT
+
     def build_gm_private_chat_prompt(self) -> str:
         """Return GM introspective monologue prompt for private conversations."""
         return GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT
+
+    def build_gm_opening_context(self) -> dict[str, Any]:
+        """GM opening context — same 7 layers, with an explicit opening hint."""
+        context = self.build_gm_context(hints=["opening_scene"])
+        context["l7_engine_result"]["opening"] = True
+        return context
 
     async def build_teammate_interaction_prompt(self, char_id: str) -> str | None:
         """Build teammate observation prompt for NPC conversation context.
@@ -976,6 +1046,20 @@ def _resolve_stage(state: StateContainer, char_id: str) -> str:
     return "stranger"
 
 
+def _build_companion_memory_context(
+    companion: CompanionInstance | None,
+) -> str:
+    if companion is None:
+        return ""
+    recent = companion.get_recent_events(5)
+    if not recent:
+        return ""
+    lines = ["## Recent observations"]
+    for r in recent:
+        lines.append(f"- [{r.action_type}] {r.summary}")
+    return "\n".join(lines)
+
+
 def _filter_secrets(secrets_raw: list[Any], trust_val: int) -> list[str]:
     """Return secret contents eligible to reveal given trust level.
 
@@ -1003,6 +1087,7 @@ def _build_npc_prompt_text(
     active_directive: dict[str, Any] | None = None,
     time_info: dict[str, Any] | None = None,
     is_private: bool = False,
+    is_passive: bool = False,
 ) -> str:
     """Format NPC system prompt string from resolved profile + relationship data."""
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
@@ -1128,6 +1213,33 @@ def _build_npc_prompt_text(
             f"- {directive_desc}"
         )
 
+    if is_passive:
+        tool_rules = """\
+## Tool usage rules
+- You just witnessed a player action. You are NOT being spoken to directly.
+- If the action is relevant to you, react briefly with `speak` (1-2 sentences max) or `emote`.
+- If the action has nothing to do with you, use `emote` with a brief idle action or do nothing.
+- Use `update_feeling` only if the action genuinely changes your feelings.
+- Do NOT initiate conversation topics or offer quests/trade unprompted.
+- Do not output plain text outside tool calls.
+- Use at most one visible response: one `speak` OR one `emote`.
+"""
+    else:
+        tool_rules = """\
+## Tool usage rules
+- Use `speak` to say something. Stay in character at all times.
+- Use `emote` for physical actions or emotional expressions.
+- Use `update_feeling` if the conversation meaningfully changes your feelings toward the player (keep delta small: ±5 to ±15).
+- Use `remember` to note important new information from this conversation.
+- Use `refuse` if asked something you wouldn't agree to.
+- Use `offer_quest` / `offer_trade` / `reveal_secret` only when contextually appropriate.
+- Do not output plain text outside tool calls.
+- Use at most one visible dialogue tool per turn: exactly one of `speak` or `refuse`. You may also use at most one `emote`.
+- If you need `update_feeling`, `remember`, or other side effects, call them in the same turn before your final visible response.
+- After calling `speak` or `refuse`, your turn is over. Do not make more tool calls in later turns.
+- You MUST respond when spoken to — do not use `pass_turn`.
+"""
+
     return f"""\
 You are {name}, an NPC in a dark-fantasy CRPG world.
 
@@ -1144,23 +1256,7 @@ You are {name}, an NPC in a dark-fantasy CRPG world.
 ## Your memories of the player
 {memories_block}{knowledge_block}{secrets_block}{directive_block}
 
-## Tool usage rules
-- Use `speak` to say something. Stay in character at all times.
-- Use `emote` for physical actions or emotional expressions.
-- Use `update_feeling` if the conversation meaningfully changes your \
-feelings toward the player (keep delta small: ±5 to ±15).
-- Use `remember` to note important new information from this conversation.
-- Use `refuse` if asked something you wouldn't agree to.
-- Use `offer_quest` / `offer_trade` / `reveal_secret` only when \
-contextually appropriate.
-- Do not output plain text outside tool calls.
-- Use at most one visible dialogue tool per turn: exactly one of `speak` \
-or `refuse`. You may also use at most one `emote`.
-- If you need `update_feeling`, `remember`, or other side effects, call \
-them in the same turn before your final visible response.
-- After calling `speak` or `refuse`, your turn is over. Do not make more \
-tool calls in later turns.
-- You MUST respond when spoken to — do not use `pass_turn`.
+{tool_rules}
 
 ## Language
 Respond in the same language as the player's message.\
@@ -1171,6 +1267,7 @@ def _build_teammate_prompt_text(
     profile: Any,
     disposition: Mapping[str, Any],
     knowledge_hits: list[dict[str, Any]] | None = None,
+    companion_memory: str | None = None,
     stage: str = "stranger",
     time_info: dict[str, Any] | None = None,
 ) -> str:
@@ -1238,6 +1335,7 @@ def _build_teammate_prompt_text(
             klines.append(line)
         if klines:
             knowledge_block = "\n\n## Relevant world knowledge\n" + "\n".join(klines)
+    companion_block = f"\n\n{companion_memory}" if companion_memory else ""
 
     return f"""\
 You are {name}, a companion in the player's party in a dark-fantasy CRPG.
@@ -1272,4 +1370,4 @@ of making a separate follow-up turn.
 - Don't repeat what the player already knows happened.
 
 ## Language
-Match the language of the user message.{knowledge_block}"""
+Match the language of the user message.{knowledge_block}{companion_block}"""

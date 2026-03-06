@@ -21,6 +21,26 @@ from app.game_core.state import StateContainer
 from app.game_core.state.slices import SceneSlice
 from app.game_core.state.slices.party import PartySlice
 from app.game_core.state.slices.relations import RelationSlice
+from app.game_core.narrative.companion_runtime import TickRecord
+
+
+class _FakeCompanionInstance:
+    def __init__(self, records: list[TickRecord]) -> None:
+        self._records = records
+
+    def get_recent_events(self, n: int = 10) -> list[TickRecord]:
+        return list(self._records[-n:])
+
+
+class _FakeCompanionManager:
+    def __init__(self, member_id: str, instance: _FakeCompanionInstance) -> None:
+        self._member_id = member_id
+        self._instance = instance
+
+    def get(self, member_id: str) -> _FakeCompanionInstance | None:
+        if member_id == self._member_id:
+            return self._instance
+        return None
 
 
 # ------------------------------------------------------------------
@@ -36,6 +56,7 @@ def _make_context(
     stages: dict | None = None,
     dispositions: dict | None = None,
     experiences: list | None = None,
+    companion_manager: object | None = None,
     with_party: bool = True,
     with_relations: bool = True,
 ) -> SettlementContext:
@@ -81,6 +102,7 @@ def _make_context(
         _rules_engine=RulesEngine(),
         _apply_delta=lambda d: None,
         action_log=action_log or [],
+        companion_manager=companion_manager,
     )
 
 
@@ -205,6 +227,27 @@ def test_select_memory_critical_moment_ranked_higher() -> None:
     assert mem["summary"] == "today rest"
 
 
+def test_select_memory_includes_companion_recent_events() -> None:
+    records = [
+        TickRecord(
+            tick=1,
+            action_type="navigate",
+            success=True,
+            summary="Crossed the old bridge.",
+            tags=["NAVIGATION"],
+            involved_npcs=[],
+            has_rolls=False,
+            event_transitions=[],
+        )
+    ]
+    manager = _FakeCompanionManager("hero", _FakeCompanionInstance(records))
+    ctx = _make_context(experiences=[], companion_manager=manager)
+    mem = _select_memory("hero", ctx, today=1, companion_manager=manager)
+    assert mem is not None
+    assert mem["type"] == "exploration"
+    assert "Crossed the old bridge." in mem["summary"]
+
+
 # ------------------------------------------------------------------
 # _generate_campfire_line
 # ------------------------------------------------------------------
@@ -289,3 +332,33 @@ def test_execute_bumps_approval_plus_5() -> None:
     asyncio.run(CampfireHook().execute(ctx))
     approval = ctx.state.relations.get_disposition("hero", "approval")
     assert approval == 15
+
+
+def test_execute_uses_companion_events_when_shared_experiences_empty() -> None:
+    manager = _FakeCompanionManager(
+        "hero",
+        _FakeCompanionInstance([
+            TickRecord(
+                tick=5,
+                action_type="navigate",
+                success=True,
+                summary="We walked through ancient ruins.",
+                tags=["NAVIGATION"],
+                involved_npcs=[],
+                has_rolls=False,
+                event_transitions=[],
+            ),
+        ]),
+    )
+    ctx = _make_context(
+        engine_tags=["LONG_REST", "COMBAT_END"],
+        stages={"hero": "acquaintance"},
+        dispositions={"hero": {"approval": 10}},
+        experiences=[],
+        companion_manager=manager,
+    )
+    result = asyncio.run(CampfireHook().execute(ctx))
+    assert len(result.sse_events) == 1
+    payload = result.sse_events[0].payload
+    assert payload["memory_type"] == "exploration"
+    assert "ancient ruins" in payload["memory_summary"]

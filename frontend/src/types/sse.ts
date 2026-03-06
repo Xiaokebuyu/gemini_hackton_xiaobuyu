@@ -25,11 +25,13 @@ export interface NpcResponseData {
   npc_id: string
   content: string
   type: 'speech' | 'refuse' | 'emote'
+  passive?: boolean
 }
 
 export interface NpcEmoteData {
   npc_id: string
   action: string
+  passive?: boolean
 }
 
 export interface TeammateResponseData {

@@ -73,11 +73,20 @@ class RecordingLlmProvider:
 # ------------------------------------------------------------------
 
 
+def _test_world_tags() -> dict[str, Any]:
+    return {
+        "profession": {"id": "profession", "tags": ["merchant", "warrior", "guard"]},
+        "ancestry": {"id": "ancestry", "tags": ["human"]},
+        "affinity": {"id": "affinity", "tags": ["holy"]},
+    }
+
+
 def _world_with_npc() -> WorldInstance:
     """Build a world with one test NPC."""
     world = build_default_world(
         "test_world",
         world_data={
+            "tags": _test_world_tags(),
             "characters": {
                 "merchant_tom": {
                     "id": "merchant_tom",
@@ -135,6 +144,7 @@ def _session_for_post_action_round() -> ManagedSession:
     world = build_default_world(
         "test_world",
         world_data={
+            "tags": _test_world_tags(),
             "characters": {
                 "merchant_tom": {
                     "id": "merchant_tom",
@@ -327,6 +337,29 @@ class TestPromptBuilders:
         assert "Approval: 30" in prompt
         assert "Bought a sword" in prompt
         assert "Kind person" in prompt
+
+    def test_npc_prompt_passive_mode_skips_direct_response_constraint(self) -> None:
+        prompt = _build_npc_prompt_text(
+            npc_profile={"name": "Tom", "personality": "Shrewd merchant"},
+            disposition={"approval": 30, "trust": 10, "fear": 0, "romance": 0},
+            stage="stranger",
+            impressions=["Bought a sword"],
+            is_passive=True,
+        )
+
+        assert "You are NOT being spoken to directly" in prompt
+        assert "pass_turn" not in prompt
+
+    def test_npc_prompt_default_mode_forces_direct_response(self) -> None:
+        prompt = _build_npc_prompt_text(
+            npc_profile={"name": "Tom", "personality": "Shrewd merchant"},
+            disposition={"approval": 30, "trust": 10, "fear": 0, "romance": 0},
+            stage="stranger",
+            impressions=["Bought a sword"],
+            is_passive=False,
+        )
+
+        assert "You MUST respond when spoken to" in prompt
 
     def test_npc_prompt_handles_empty_profile(self) -> None:
         prompt = _build_npc_prompt_text(
@@ -631,6 +664,131 @@ class TestPostActionReactions:
         teammate_events = [e for e in events if e.event_type == "teammate_response"]
         assert teammate_events == []
 
+    def test_run_post_action_round_skips_meta_actions_from_npc_and_teammate(self) -> None:
+        class NoReactionExecutor:
+            def __init__(self) -> None:
+                self.roles: list[str] = []
+
+            async def run_agentic(
+                self,
+                *,
+                role: str,
+                context: Any,
+                system_prompt: str,
+                user_message: str,
+                **_: Any,
+            ) -> AgentResult:
+                self.roles.append(role)
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                success=True,
+                                message="Player checked the inventory.",
+                                metadata={"event_type": "gm_narration"},
+                            )
+                        ]
+                    )
+                return AgentResult(
+                    metadata={
+                        "status": "completed",
+                        "finish_reason": "pass_turn",
+                    }
+                )
+
+        service = AgentOrchestrationService(NoReactionExecutor())  # type: ignore[arg-type]
+        session = _session_with_npc()
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+
+        pipeline_result = PipelineResult(
+            success=True,
+            action_type="look_inventory",
+            narrative_hints=["Player checks inventory."],
+            time_cost=0.1,
+        )
+
+        events = asyncio.run(service.run_post_action_round(
+            shared,
+            pipeline_result,
+            session.runtime.tick_coordinator._apply_delta,
+        ))
+
+        assert [e.event_type for e in events] == ["gm_narration"]
+        assert service._executor.roles == ["gm"]  # type: ignore[attr-defined]
+
+    def test_run_post_action_round_marks_passive_observation_context(self) -> None:
+        class CaptureExecutor:
+            def __init__(self) -> None:
+                self.user_messages: dict[str, str] = {}
+
+            async def run_agentic(
+                self,
+                *,
+                role: str,
+                context: Any,
+                system_prompt: str,
+                user_message: str,
+                **_: Any,
+            ) -> AgentResult:
+                self.user_messages[role] = user_message
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                success=True,
+                                message="Dust rolls across the market.",
+                                metadata={"event_type": "gm_narration"},
+                            )
+                        ]
+                    )
+                if role == "npc":
+                    return AgentResult(
+                        metadata={
+                            "status": "completed",
+                            "finish_reason": "pass_turn",
+                        }
+                    )
+                return AgentResult(
+                    metadata={
+                        "status": "completed",
+                        "finish_reason": "pass_turn",
+                    }
+                )
+
+        executor = CaptureExecutor()
+        service = AgentOrchestrationService(executor)  # type: ignore[arg-type]
+        session = _session_for_post_action_round()
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+        pipeline_result = PipelineResult(
+            success=True,
+            action_type="move_area",
+            narrative_hints=["Player shifts to a new alley."],
+            time_cost=1 / 6,
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            asyncio.run(service.run_post_action_round(
+                shared,
+                pipeline_result,
+                session.runtime.tick_coordinator._apply_delta,
+            ))
+
+        npc_user_message = executor.user_messages.get("npc", "")
+        assert "passive_observation" in npc_user_message
+        assert "Player shifts to a new alley." in npc_user_message
+        teammate_user_message = executor.user_messages.get("teammate", "")
+        assert teammate_user_message is not None
+
     def test_run_post_action_round_shares_scene_bus_in_order(self) -> None:
         session = _session_for_post_action_round()
         executor = SequencedReactionExecutor()
@@ -682,6 +840,14 @@ class TestPostActionReactions:
         assert any(entry["source"] == "GM" for entry in npc_scene)
         assert any(entry["content"] == "Merchant Tom eyes the movement." for entry in teammate_scene)
         assert any(entry["content"] == "Dust rolls across the market." for entry in teammate_scene)
+        assert any(
+            e["source"] == "NPC:merchant_tom"
+            for e in session.runtime.state.scene.snapshot()["entries"]
+        )
+        assert any(
+            e["source"] == "TEAMMATE:paladin_aria"
+            for e in session.runtime.state.scene.snapshot()["entries"]
+        )
 
     def test_run_post_action_round_drops_protocol_error_reactions(self) -> None:
         session = _session_for_post_action_round()
@@ -741,6 +907,54 @@ class TestPostActionReactions:
             )
 
         assert [event.event_type for event in events] == ["gm_narration"]
+
+    def test_npc_passive_reaction_events_carry_passive_flag(self) -> None:
+        """Passive NPC reactions must include passive=True in SSE payload."""
+
+        class SpeechExecutor:
+            async def run_agentic(
+                self, *, role: str, context: Any, system_prompt: str,
+                user_message: str, **_: Any,
+            ) -> AgentResult:
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[ToolResult(
+                            success=True, message="Wind blows.",
+                            metadata={"event_type": "gm_narration"},
+                        )]
+                    )
+                if role == "npc":
+                    return AgentResult(
+                        tool_results=[ToolResult(
+                            success=True, message="Be careful out there.",
+                            metadata={"event_type": "speech"},
+                        )]
+                    )
+                return AgentResult(metadata={"status": "completed", "finish_reason": "pass_turn"})
+
+        session = _session_for_post_action_round()
+        service = AgentOrchestrationService(SpeechExecutor())  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+        pipeline_result = PipelineResult(
+            success=True, action_type="move_area",
+            narrative_hints=["The player moves."], time_cost=1 / 6,
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            events = asyncio.run(service.run_post_action_round(
+                shared, pipeline_result,
+                session.runtime.tick_coordinator._apply_delta,
+            ))
+
+        npc_events = [e for e in events if e.event_type == "npc_response"]
+        assert len(npc_events) >= 1
+        for e in npc_events:
+            assert e.payload.get("passive") is True, "passive flag missing from NPC passive reaction"
 
 
 class TestGracefulDegradation:
@@ -862,6 +1076,7 @@ class TestInteractionResultToSSE:
         world = build_default_world(
             "test_world",
             world_data={
+                "tags": _test_world_tags(),
                 "characters": {
                     "merchant_tom": {
                         "id": "merchant_tom",
@@ -986,6 +1201,7 @@ class TestInteractionResultToSSE:
         world = build_default_world(
             "test_world",
             world_data={
+                "tags": _test_world_tags(),
                 "characters": {
                     "merchant_tom": {
                         "id": "merchant_tom",

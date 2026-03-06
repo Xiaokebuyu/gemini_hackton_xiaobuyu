@@ -136,7 +136,7 @@ export default function CharacterCreatePage() {
       })
       setSession(worldId, sid, result.phase)
       updateFromPanel(result)
-      navigate(`/${worldId}/sessions/${sid}/play?opening=1`)
+      navigate(`/${worldId}/sessions/${sid}/play`)
     } catch (err: unknown) {
       setError((err as Error).message ?? '创建失败')
     } finally {

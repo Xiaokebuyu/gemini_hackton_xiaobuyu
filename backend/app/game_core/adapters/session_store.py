@@ -42,6 +42,8 @@ class SaveStore:
         self,
         session_id: str,
         runtime: DefaultRuntime,
+        *,
+        phase: str | None = None,
     ) -> SaveResult:
         """Persist one runtime into the configured port."""
         lock = await self._lock_for(session_id)
@@ -65,8 +67,14 @@ class SaveStore:
                 write_state = dict(existing_state)
                 write_state.update(persistable_dirty)
 
-            meta = self._build_meta(session_id, runtime, existing_meta=existing_meta)
-            wrote_to_port = wrote_full_snapshot or bool(persistable_dirty)
+            meta = self._build_meta(
+                session_id,
+                runtime,
+                existing_meta=existing_meta,
+                phase=phase,
+            )
+            meta_changed = dict(existing_meta) != meta
+            wrote_to_port = wrote_full_snapshot or bool(persistable_dirty) or meta_changed
             if wrote_to_port:
                 await self._persistence.save(
                     session_id,
@@ -115,17 +123,40 @@ class SaveStore:
         instance_manager: Any = None,
     ) -> DefaultRuntime | None:
         """Load and restore one runtime using an already loaded world."""
-        raw = await self._persistence.load(session_id)
-        if not isinstance(raw, Mapping) or not raw:
-            return None
-        state_payload, _ = self._normalize_loaded_payload(raw)
-        return build_restored_runtime_for_world(
-            world, state_payload,
+        runtime, _ = await self.load_runtime_record_for_world(
+            world,
+            session_id,
             gm_narrator_factory=gm_narrator_factory,
             osiris_evaluator_factory=osiris_evaluator_factory,
             narrative_planner_factory=narrative_planner_factory,
             instance_manager=instance_manager,
         )
+        return runtime
+
+    async def load_runtime_record_for_world(
+        self,
+        world: WorldInstance,
+        session_id: str,
+        *,
+        gm_narrator_factory: Any = None,
+        osiris_evaluator_factory: Any = None,
+        narrative_planner_factory: Any = None,
+        instance_manager: Any = None,
+    ) -> tuple[DefaultRuntime | None, dict[str, Any]]:
+        """Load one runtime plus persisted metadata using an already loaded world."""
+        raw = await self._persistence.load(session_id)
+        if not isinstance(raw, Mapping) or not raw:
+            return None, {}
+        state_payload, meta_payload = self._normalize_loaded_payload(raw)
+        runtime = build_restored_runtime_for_world(
+            world,
+            state_payload,
+            gm_narrator_factory=gm_narrator_factory,
+            osiris_evaluator_factory=osiris_evaluator_factory,
+            narrative_planner_factory=narrative_planner_factory,
+            instance_manager=instance_manager,
+        )
+        return runtime, meta_payload
 
     async def list_session_meta(
         self,
@@ -194,6 +225,8 @@ class SaveStore:
         session_id: str,
         runtime: DefaultRuntime,
         existing_meta: Mapping[str, Any] | None = None,
+        *,
+        phase: str | None = None,
     ) -> dict[str, Any]:
         now = time_module.time()
         existing_meta = existing_meta or {}
@@ -210,7 +243,7 @@ class SaveStore:
             if runtime.state.has_slice("player")
             else ""
         )
-        phase = self._derive_phase(runtime)
+        resolved_phase = phase or self._derive_phase(runtime)
         summary = {
             "player_name": character_name,
             "player_class": self._resolve_player_class_label(runtime),
@@ -225,7 +258,7 @@ class SaveStore:
             "created_at": created_at,
             "last_played": now,
             "saved_at": now,
-            "phase": phase,
+            "phase": resolved_phase,
             "game_day": game_day,
             "game_slot": game_slot,
             "character_name": character_name,
@@ -316,11 +349,20 @@ class SaveStore:
         if not runtime.state.has_slice("player"):
             return "character_creation"
         player = runtime.state.player
+        flags = runtime.state.flags.snapshot() if runtime.state.has_slice("flags") else {}
+        raw_phase = flags.get("session_phase") if isinstance(flags, Mapping) else None
+        if isinstance(raw_phase, str) and raw_phase.strip():
+            return raw_phase.strip()
         if player.character_id and player.character_name and player.character_class:
             return "active"
         return "character_creation"
 
     def _derive_phase_from_state_payload(self, state_payload: Mapping[str, Any]) -> str:
+        flags = state_payload.get("flags", {})
+        if isinstance(flags, Mapping):
+            raw_phase = flags.get("session_phase")
+            if isinstance(raw_phase, str) and raw_phase.strip():
+                return raw_phase.strip()
         player = state_payload.get("player", {})
         if not isinstance(player, Mapping):
             return "character_creation"

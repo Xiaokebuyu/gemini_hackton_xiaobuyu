@@ -15,6 +15,7 @@ interface DialogueState {
   resolveStreamMessage: (entry: Omit<DialogueEntry, 'id' | 'timestamp'>) => void
   clearPendingStream: () => void
   clearForSceneChange: () => void
+  resetMessages: () => void
 }
 
 export const useDialogueStore = create<DialogueState>((set) => ({
@@ -116,4 +117,6 @@ export const useDialogueStore = create<DialogueState>((set) => ({
       }
     })
   },
+
+  resetMessages: () => set({ messages: [], pendingStreamId: null }),
 }))

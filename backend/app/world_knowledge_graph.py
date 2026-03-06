@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+import json
 from typing import TYPE_CHECKING, Any
 
 import networkx as nx
@@ -662,9 +663,18 @@ class WorldKnowledgeGraph:
         if not dialogue.strip():
             return
 
+        recent_events = context.get("recent_events")
+        recent_block = ""
+        if isinstance(recent_events, list) and recent_events:
+            recent_block = "\n\n## Recent player companion observations\n" + json.dumps(
+                recent_events,
+                ensure_ascii=False,
+                default=str,
+            )
+
         try:
             triples = await self._extract_triples_via_llm(
-                f"NPC ID: {actor_id}\n\n{dialogue}",
+                f"NPC ID: {actor_id}\n\n{dialogue}{recent_block}",
                 _DIALOGUE_EXTRACTION_PROMPT,
             )
         except Exception:

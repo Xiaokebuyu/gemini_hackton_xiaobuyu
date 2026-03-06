@@ -11,10 +11,10 @@ from app.api_models import (
 )
 from app.deps import (
     _api_error,
-    _ensure_shell_world,
     _load_session_or_404,
     _require_world,
     _session_phase,
+    get_admin_coordinator,
     get_game_runtime,
 )
 from app.game_core import CharacterCreationSpec
@@ -31,7 +31,6 @@ async def character_creation_options(world_id: str) -> CharacterCreationOptionsR
 
     _require_world(world_id)
     runtime = get_game_runtime()
-    _ensure_shell_world(runtime, world_id)
     options = runtime.get_character_creation_options(world_id)
     return CharacterCreationOptionsResponse(
         races=list(options.races),
@@ -52,7 +51,8 @@ async def complete_character_creation(
     """Submit the first-pass character-creation payload."""
 
     runtime = get_game_runtime()
-    lock = await runtime.session_lock(session_id)
+    coordinator = get_admin_coordinator()
+    lock = await coordinator.session_lock(world_id, session_id)
     async with lock:
         session = await _load_session_or_404(world_id, session_id)
         race_id = (request.race_id or request.race or "").strip()
@@ -76,6 +76,7 @@ async def complete_character_creation(
             result = await runtime.complete_character_creation(session, spec)
         except ValueError as exc:
             raise _api_error(400, "invalid_character_creation", str(exc)) from exc
+        await coordinator.save_session(session)
         return CharacterPanelResponse(
             phase=result.phase,
             player=dict(result.player),

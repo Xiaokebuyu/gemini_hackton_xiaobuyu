@@ -163,6 +163,21 @@ function formatCompanionMessage(action: 'join' | 'leave', npcId: string, reason?
     : `${npcId} 离开了队伍${suffix}`
 }
 
+const OPENING_TEXT_STEP_MS = 22
+const OPENING_TEXT_HOLD_MS = 260
+const OPENING_SCENE_DELAY_MS = 900
+const OPENING_PORTRAIT_DELAY_MS = 400
+const OPENING_STATUS_DELAY_MS = 240
+const OPENING_OPTIONS_DELAY_MS = 180
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+}
+
+function revealChunks(text: string): string[] {
+  return Array.from(text ?? '')
+}
+
 interface SessionOverride {
   worldId?: string
   sessionId?: string
@@ -181,6 +196,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
   // AbortController：每次发新请求前 abort 上一个流
   const abortRef = useRef<AbortController | null>(null)
+  const openingQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   const handleEvent = useCallback((event: { event: string; data: unknown }) => {
     const addSystemMessage = (content: string) => {
@@ -211,10 +227,159 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       }
     }
 
+    const queueOpeningStep = (step: () => Promise<void>) => {
+      openingQueueRef.current = openingQueueRef.current
+        .then(step)
+        .catch((err) => {
+          console.error('opening choreography failed', err)
+        })
+    }
+
+    const revealOpeningMessage = async (
+      type: 'gm' | 'gm_comment',
+      content: string,
+    ) => {
+      const trimmed = content.trim()
+      if (!trimmed) return
+      dialogue.clearPendingStream()
+      for (const chunk of revealChunks(trimmed)) {
+        dialogue.appendStreamChunk(chunk)
+        await sleep(OPENING_TEXT_STEP_MS)
+      }
+      dialogue.resolveStreamMessage({ type, content: trimmed })
+      await sleep(OPENING_TEXT_HOLD_MS)
+    }
+
+    const applyDialogueOptions = (d: DialogueOptionsData) => {
+      if (d.npc_id) {
+        scene.setActiveNpc(d.npc_id)
+        resolveDialogueMode()
+      }
+      options.setFromDialogueOptions(d.options, (item) => {
+        const label = item.label ?? item.text ?? String(item.id ?? '').trim()
+        if (item.dispatch) {
+          if (item.dispatch.kind === 'navigate') {
+            void sendNavigate(item.dispatch.payload as unknown as NavigateRequest)
+            return
+          }
+          if (item.dispatch.kind === 'interact') {
+            void sendInteract(item.dispatch.payload as unknown as InteractRequest)
+            return
+          }
+          if (item.dispatch.kind === 'input') {
+            void sendInput(item.dispatch.payload as unknown as TextInputRequest)
+            return
+          }
+          if (item.dispatch.kind === 'action') {
+            void sendAction(item.dispatch.payload as unknown as StructuredActionRequest)
+            return
+          }
+          if (item.dispatch.kind === 'local') {
+            const payload = item.dispatch.payload as Record<string, unknown>
+            if (payload.action === 'leave_dialogue') {
+              leaveDialogue()
+              return
+            }
+          }
+        }
+
+        const activeNpcId = useSceneStore.getState().activeNpcId
+        if (activeNpcId && label) {
+          void sendInteract({
+            intent: 'talk',
+            target_kind: 'npc',
+            target_id: activeNpcId,
+            message: label,
+          })
+        }
+      })
+    }
+
+    const applySceneChange = (d: SceneChangeData) => {
+      scene.transitionTo(d)
+      scene.clearPortraits()
+      dialogue.clearForSceneChange()
+      if (d.background === 'private') {
+        scene.setGameMode('private_chat')
+      } else {
+        scene.setActiveNpc(null)
+        scene.setGameMode('explore')
+      }
+      audio.playTransition()
+    }
+
+    const applyLocationOverview = (d: LocationOverview) => {
+      scene.updateFromOverview(d)
+      const sceneState = useSceneStore.getState()
+      if (!useOptionStore.getState().hasDialogueOptions && !sceneState.activeNpcId) {
+        options.buildFromOverview(d, overviewHandlers)
+      }
+    }
+
+    const applyStatusUpdate = (d: StatusUpdateData) => {
+      if (d.kind === 'hud') {
+        usePlayerStore.getState().updateFromStatus(d as Record<string, unknown>)
+        return
+      }
+      if (typeof d.hp_delta === 'number' && d.hp_delta !== 0) {
+        const kind = d.hp_delta < 0 ? 'damage' : 'heal'
+        const targetId = d.target_id ?? 'unknown'
+        combat.addDamageNumber(Math.abs(d.hp_delta), kind, targetId)
+        combat.addLogEntry(
+          d.hp_delta < 0
+            ? `${targetId} 受到 ${-d.hp_delta} 点伤害`
+            : `${targetId} 恢复 ${d.hp_delta} 点生命`
+        )
+        if (d.hp_delta < 0) audio.playHit()
+        else audio.playHeal()
+      }
+    }
+
+    const finalizeStream = (d: { success?: boolean }) => {
+      const wasOpening = useSceneStore.getState().openingInProgress
+      dialogue.clearPendingStream()
+      stream.setStreaming(false)
+      options.unlock()
+      scene.setOpeningInProgress(false)
+      scene.setTransitioning(false)
+      if (wasOpening && d.success !== false && worldId && sessionId) {
+        useSessionStore.getState().setSession(worldId, sessionId, 'active')
+      }
+      const combatState = useCombatStore.getState()
+      if (combatState.combatActive) {
+        scene.setGameMode('combat')
+        return
+      }
+      if (combatState.encounterActive) {
+        scene.setGameMode('encounter')
+        return
+      }
+      const sceneState = useSceneStore.getState()
+      const nextMode: GameMode = sceneState.activeNpcId
+        ? sceneState.gameMode === 'private_chat' ? 'private_chat' : 'dialogue'
+        : 'explore'
+      scene.setGameMode(nextMode)
+    }
+
+    const applyStreamError = (d: StreamErrorData) => {
+      const detail = d.message || d.code || '流处理失败'
+      addErrorMessage(`错误：${detail}`)
+      stream.setStreaming(false)
+      options.unlock()
+      scene.setOpeningInProgress(false)
+      scene.setTransitioning(false)
+    }
+
     switch (event.event) {
       // ── 对话流消息 ───────────────────────────────────────────────────────
       case 'gm_narration': {
         const d = cast<GmNarrationData>(event.data)
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            await revealOpeningMessage('gm', d.content)
+          })
+          break
+        }
         dialogue.resolveStreamMessage({ type: 'gm', content: d.content })
         break
       }
@@ -225,6 +390,12 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'gm_comment': {
         const d = cast<GmCommentData>(event.data)
         if (d.content) {
+          if (useSceneStore.getState().openingInProgress) {
+            queueOpeningStep(async () => {
+              await revealOpeningMessage('gm_comment', d.content)
+            })
+            break
+          }
           dialogue.resolveStreamMessage({ type: 'gm_comment', content: d.content })
         }
         break
@@ -237,18 +408,22 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
           speaker: d.npc_id,
           content: d.content,
         })
-        scene.setActivePortrait(d.npc_id)
-        scene.setActiveNpc(d.npc_id)
-        resolveDialogueMode()
+        if (!d.passive) {
+          scene.setActivePortrait(d.npc_id)
+          scene.setActiveNpc(d.npc_id)
+          resolveDialogueMode()
+        }
         break
       }
 
       case 'npc_emote': {
         const d = cast<NpcEmoteData>(event.data)
         dialogue.resolveStreamMessage({ type: 'emote', speaker: d.npc_id, content: d.action })
-        scene.setActivePortrait(d.npc_id)
-        scene.setActiveNpc(d.npc_id)
-        resolveDialogueMode()
+        if (!d.passive) {
+          scene.setActivePortrait(d.npc_id)
+          scene.setActiveNpc(d.npc_id)
+          resolveDialogueMode()
+        }
         break
       }
 
@@ -270,6 +445,13 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       case 'character_enter': {
         const d = cast<CharacterEnterData>(event.data)
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            scene.addOpeningPortrait(d.character_id, d.position)
+            await sleep(OPENING_PORTRAIT_DELAY_MS)
+          })
+          break
+        }
         scene.addOpeningPortrait(d.character_id, d.position)
         break
       }
@@ -277,48 +459,14 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       // ── 选项 ─────────────────────────────────────────────────────────────
       case 'dialogue_options': {
         const d = cast<DialogueOptionsData>(event.data)
-        if (d.npc_id) {
-          scene.setActiveNpc(d.npc_id)
-          resolveDialogueMode()
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            applyDialogueOptions(d)
+            await sleep(OPENING_OPTIONS_DELAY_MS)
+          })
+          break
         }
-        options.setFromDialogueOptions(d.options, (item) => {
-          const label = item.label ?? item.text ?? String(item.id ?? '').trim()
-          if (item.dispatch) {
-            if (item.dispatch.kind === 'navigate') {
-              void sendNavigate(item.dispatch.payload as unknown as NavigateRequest)
-              return
-            }
-            if (item.dispatch.kind === 'interact') {
-              void sendInteract(item.dispatch.payload as unknown as InteractRequest)
-              return
-            }
-            if (item.dispatch.kind === 'input') {
-              void sendInput(item.dispatch.payload as unknown as TextInputRequest)
-              return
-            }
-            if (item.dispatch.kind === 'action') {
-              void sendAction(item.dispatch.payload as unknown as StructuredActionRequest)
-              return
-            }
-            if (item.dispatch.kind === 'local') {
-              const payload = item.dispatch.payload as Record<string, unknown>
-              if (payload.action === 'leave_dialogue') {
-                leaveDialogue()
-                return
-              }
-            }
-          }
-
-          const activeNpcId = useSceneStore.getState().activeNpcId
-          if (activeNpcId && label) {
-            void sendInteract({
-              intent: 'talk',
-              target_kind: 'npc',
-              target_id: activeNpcId,
-              message: label,
-            })
-          }
-        })
+        applyDialogueOptions(d)
         break
       }
 
@@ -503,27 +651,27 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       // ── 场景切换（导航时）────────────────────────────────────────────────
       case 'scene_change': {
         const d = cast<SceneChangeData>(event.data)
-        scene.transitionTo(d)
-        scene.clearPortraits()
-        dialogue.clearForSceneChange()
-        if (d.background === 'private') {
-          scene.setGameMode('private_chat')
-        } else {
-          scene.setActiveNpc(null)
-          scene.setGameMode('explore')
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            applySceneChange(d)
+            await sleep(OPENING_SCENE_DELAY_MS)
+          })
+          break
         }
-        audio.playTransition()
+        applySceneChange(d)
         break
       }
 
       // ── 场景数据（所有流末尾都有）────────────────────────────────────────
       case 'location_overview': {
         const d = cast<LocationOverview>(event.data)
-        scene.updateFromOverview(d)
-        const sceneState = useSceneStore.getState()
-        if (!useOptionStore.getState().hasDialogueOptions && !sceneState.activeNpcId) {
-          options.buildFromOverview(d, overviewHandlers)
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            applyLocationOverview(d)
+          })
+          break
         }
+        applyLocationOverview(d)
         break
       }
 
@@ -603,22 +751,14 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       case 'status_update': {
         const d = cast<StatusUpdateData>(event.data)
-        if (d.kind === 'hud') {
-          usePlayerStore.getState().updateFromStatus(d as Record<string, unknown>)
+        if (useSceneStore.getState().openingInProgress && d.kind === 'hud') {
+          queueOpeningStep(async () => {
+            applyStatusUpdate(d)
+            await sleep(OPENING_STATUS_DELAY_MS)
+          })
           break
         }
-        if (typeof d.hp_delta === 'number' && d.hp_delta !== 0) {
-          const kind = d.hp_delta < 0 ? 'damage' : 'heal'
-          const targetId = d.target_id ?? 'unknown'
-          combat.addDamageNumber(Math.abs(d.hp_delta), kind, targetId)
-          combat.addLogEntry(
-            d.hp_delta < 0
-              ? `${targetId} 受到 ${-d.hp_delta} 点伤害`
-              : `${targetId} 恢复 ${d.hp_delta} 点生命`
-          )
-          if (d.hp_delta < 0) audio.playHit()
-          else audio.playHeal()
-        }
+        applyStatusUpdate(d)
         break
       }
 
@@ -651,36 +791,26 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       // ── 流控制 ───────────────────────────────────────────────────────────
       case 'stream_end': {
-        dialogue.clearPendingStream()
-        stream.setStreaming(false)
-        options.unlock()
-        scene.setOpeningInProgress(false)
-        scene.setTransitioning(false)
-        const combatState = useCombatStore.getState()
-        if (combatState.combatActive) {
-          scene.setGameMode('combat')
+        const d = cast<{ success?: boolean }>(event.data)
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            finalizeStream(d)
+          })
           break
         }
-        if (combatState.encounterActive) {
-          scene.setGameMode('encounter')
-          break
-        }
-        const sceneState = useSceneStore.getState()
-        const nextMode: GameMode = sceneState.activeNpcId
-          ? sceneState.gameMode === 'private_chat' ? 'private_chat' : 'dialogue'
-          : 'explore'
-        scene.setGameMode(nextMode)
+        finalizeStream(d)
         break
       }
 
       case 'stream_error': {
         const d = cast<StreamErrorData>(event.data)
-        const detail = d.message || d.code || '流处理失败'
-        addErrorMessage(`错误：${detail}`)
-        stream.setStreaming(false)
-        options.unlock()
-        scene.setOpeningInProgress(false)
-        scene.setTransitioning(false)
+        if (useSceneStore.getState().openingInProgress) {
+          queueOpeningStep(async () => {
+            applyStreamError(d)
+          })
+          break
+        }
+        applyStreamError(d)
         break
       }
 
@@ -697,6 +827,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     dialogue.clearPendingStream()
     abortRef.current?.abort()
     abortRef.current = new AbortController()
+    openingQueueRef.current = Promise.resolve()
     stream.setStreaming(true)
     options.lock()
 
@@ -706,6 +837,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       handleEvent,
       () => { /* onDone：stream_end 事件会处理解锁 */ },
       (err) => {
+        openingQueueRef.current = Promise.resolve()
         const message = `连接错误：${err.message}`
         dialogue.clearPendingStream()
         dialogue.addMessage({ type: 'system', content: message })
@@ -758,6 +890,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
   const abort = useCallback(() => {
     abortRef.current?.abort()
+    openingQueueRef.current = Promise.resolve()
     dialogue.clearPendingStream()
     stream.setStreaming(false)
     options.unlock()

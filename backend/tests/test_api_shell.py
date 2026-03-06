@@ -3,10 +3,16 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 
 from fastapi.testclient import TestClient
+import pytest
 
 import app.main as api_main
+from app.agent_orchestration import OpeningSequence
+from app.deps import get_admin_coordinator
 from app.game_core import GameRuntime
 from app.game_core.adapters import NullPersistencePort, SaveStore
 from app.game_core.orchestration.models import SSEEvent
@@ -69,16 +75,16 @@ def _create_character(client: TestClient, session_id: str) -> dict[str, object]:
         json=_character_payload(),
     )
     assert response.status_code == 200
-    runtime = api_main.app.state.game_runtime
-    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    session = asyncio.run(_load_session(session_id))
     assert session is not None
     session.runtime.state.areas.update_npc_location("merchant", "counter")
-    asyncio.run(runtime.save_session(session))
+    asyncio.run(_save_session(session))
     return response.json()
 
 
 def _clear_opening_bootstrap(runtime: GameRuntime, session_id: str) -> None:
-    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    del runtime
+    session = asyncio.run(_load_session(session_id))
     assert session is not None
     session.runtime.state.quests.dynamic_quests = {}
     session.runtime.state.quests._dirty = True
@@ -87,7 +93,15 @@ def _clear_opening_bootstrap(runtime: GameRuntime, session_id: str) -> None:
     session.runtime.state.narrative_plan.quest_history = []
     session.runtime.state.narrative_plan.strategy_notes = ""
     session.runtime.state.narrative_plan._dirty = True
-    asyncio.run(runtime.save_session(session))
+    asyncio.run(_save_session(session))
+
+
+async def _load_session(session_id: str):
+    return await get_admin_coordinator().get_session("goblin_slayer", session_id)
+
+
+async def _save_session(session) -> None:
+    await get_admin_coordinator().save_session(session)
 
 
 def _event_payloads(stream_text: str, event_type: str) -> list[dict[str, object]]:
@@ -143,11 +157,14 @@ def test_session_create_resume_list_and_delete_flow(monkeypatch) -> None:
     assert listed.status_code == 200
     assert listed.json()[0]["session_id"] == session_id
     assert resumed.status_code == 200
-    assert resumed.json() == {
-        "world_id": "goblin_slayer",
-        "session_id": session_id,
-        "phase": "character_creation",
-    }
+    resumed_payload = resumed.json()
+    assert resumed_payload["world_id"] == "goblin_slayer"
+    assert resumed_payload["session_id"] == session_id
+    assert resumed_payload["phase"] == "character_creation"
+    assert resumed_payload["resume_narration"]
+    assert resumed_payload["scene"]["area_id"] == ""
+    assert resumed_payload["location_visual"]["background_key"] == ""
+    assert resumed_payload["player"]["character_name"] == ""
     assert missing_resume.status_code == 404
     assert missing_resume.json()["detail"]["code"] == "session_not_found"
     assert deleted.status_code == 204
@@ -187,7 +204,7 @@ def test_character_creation_options_and_character_flow(monkeypatch) -> None:
     assert before_panel.json()["phase"] == "character_creation"
     assert created.status_code == 200
     created_payload = created.json()
-    assert created_payload["phase"] == "active"
+    assert created_payload["phase"] == "opening_ready"
     assert created_payload["player"]["character_name"] == "调试者"
     assert created_payload["player"]["character_class"] == "fighter"
     assert created_payload["player"]["current_area"] == "guild_hall"
@@ -223,7 +240,7 @@ def test_inventory_map_and_quest_panels_after_character_creation(monkeypatch) ->
     assert "report_in" in quest_payload["milestone_states"]
     assert "dq_report_in" in quest_payload["dynamic_quests"]
 
-    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    session = asyncio.run(_load_session(session_id))
     assert session is not None
     assert session.runtime.state.narrative_plan.last_run_tick == 0
     assert session.runtime.state.narrative_plan.active_bulletins[-1]["title"] == "New Lead Posted"
@@ -238,14 +255,14 @@ def test_opening_stream_bootstraps_legacy_session_and_mentions_seeded_quest(monk
         session_id = _create_session(client)
         _create_character(client, session_id)
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.dynamic_quests = {}
         session.runtime.state.quests._dirty = True
         session.runtime.state.narrative_plan.active_bulletins = []
         session.runtime.state.narrative_plan.npc_directives = []
         session.runtime.state.narrative_plan._dirty = True
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
 
         opening = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
@@ -258,10 +275,11 @@ def test_opening_stream_bootstraps_legacy_session_and_mentions_seeded_quest(monk
     assert "Lead: Report In" in comment["content"]
     assert "report_in" not in comment["content"]
 
-    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    session = asyncio.run(_load_session(session_id))
     assert session is not None
     assert "dq_report_in" in session.runtime.state.quests.dynamic_quests
     assert session.runtime.state.narrative_plan.active_bulletins[-1]["title"] == "New Lead Posted"
+    assert session.phase == "active"
 
 
 def test_opening_stream_surfaces_bootstrap_hook_error(monkeypatch) -> None:
@@ -296,6 +314,158 @@ def test_opening_stream_surfaces_bootstrap_hook_error(monkeypatch) -> None:
     assert events[0]["data"]["hook"] == "narrative_planner_bootstrap"
     assert _sse_event(events, "scene_change") is not None
     assert _sse_event(events, "stream_end") is not None
+
+
+def test_opening_stream_prefers_agent_generated_opening_sequence(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_post_action_round(self, shared, result, apply_delta, event_sink=None):
+            del shared, result, apply_delta, event_sink
+            return []
+
+        async def generate_opening_sequence(self, session):
+            del session
+            return OpeningSequence(
+                narration_event=SSEEvent("gm_narration", {"content": "Agent opening narration."}),
+                comment_event=SSEEvent("gm_comment", {"content": "Agent opening comment.", "tone": "grim"}),
+                dialogue_options_event=SSEEvent(
+                    "dialogue_options",
+                    {
+                        "options": [
+                            {
+                                "id": "agent-look",
+                                "text": "观察四周",
+                                "label": "观察四周",
+                                "dispatch": {
+                                    "kind": "input",
+                                    "payload": {"text": "观察四周"},
+                                },
+                            }
+                        ],
+                    },
+                ),
+            )
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        opening = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+
+    assert opening.status_code == 200
+    events = _parse_sse(opening)
+    event_names = [event["event"] for event in events]
+    assert event_names[:6] == [
+        "scene_change",
+        "gm_narration",
+        "gm_comment",
+        "character_enter",
+        "status_update",
+        "dialogue_options",
+    ]
+    assert _sse_event(events, "gm_narration")["content"] == "Agent opening narration."
+    assert _sse_event(events, "gm_comment")["content"] == "Agent opening comment."
+    assert _sse_event(events, "dialogue_options")["options"][0]["id"] == "agent-look"
+
+
+def test_opening_stream_rejects_active_session_replay(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        first_opening = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+        replay = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+
+    assert first_opening.status_code == 200
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "opening_not_available"
+
+
+def test_opening_stream_stale_queued_request_fails_inside_lock(monkeypatch) -> None:
+    class SlowAgentOrchestration:
+        def __init__(self) -> None:
+            self.started = threading.Event()
+
+        async def run_post_action_round(self, shared, result, apply_delta, event_sink=None):
+            del shared, result, apply_delta, event_sink
+            return []
+
+        async def generate_opening_sequence(self, session):
+            del session
+            self.started.set()
+            await asyncio.sleep(0.05)
+            return OpeningSequence(
+                narration_event=SSEEvent("gm_narration", {"content": "Slow opening narration."}),
+                comment_event=None,
+                dialogue_options_event=SSEEvent(
+                    "dialogue_options",
+                    {"options": [{"id": "look", "text": "观察四周", "label": "观察四周"}]},
+                ),
+            )
+
+    agent = SlowAgentOrchestration()
+    runtime = _runtime(agent_orchestration=agent)
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+
+        def _post_opening():
+            return client.post(f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream")
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_first = executor.submit(_post_opening)
+            assert agent.started.wait(timeout=1.0)
+            time.sleep(0.01)
+            replay = client.post(f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream")
+            first = future_first.result(timeout=1.0)
+
+    assert first.status_code == 200
+    assert _sse_event(_parse_sse(first), "scene_change") is not None
+    assert replay.status_code == 200
+    replay_events = _parse_sse(replay)
+    assert replay_events[0]["event"] == "stream_error"
+    assert replay_events[0]["data"]["code"] == "opening_not_available"
+    assert replay_events[-1]["event"] == "stream_end"
+
+
+def test_resume_after_character_creation_returns_full_restore_payload(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        resumed = client.post(f"/api/game/goblin_slayer/sessions/{session_id}/resume")
+
+    assert resumed.status_code == 200
+    payload = resumed.json()
+    assert payload["phase"] == "opening_ready"
+    assert payload["player"]["character_name"] == "调试者"
+    assert payload["scene"]["area_id"] == "guild_hall"
+    assert payload["location_visual"]["background_key"] == "guild_hall/counter"
+    assert "merchant" in payload["location_visual"]["present_character_ids"]
+    assert payload["resume_narration"]
+    assert "report_in" not in payload["resume_narration"]
+
+
+def test_world_bootstrap_validates_before_caching() -> None:
+    runtime = GameRuntime(save_store=SaveStore(NullPersistencePort()))
+    world_data = copy.deepcopy(_shell_world_seed("goblin_slayer"))
+    world_data["characters"]["merchant"]["current_area"] = "missing_area"
+
+    with pytest.raises(ValueError, match="world validation failed"):
+        runtime.get_world("goblin_slayer", world_data=world_data)
 
 
 def _parse_sse(response) -> list[dict]:
@@ -498,6 +668,92 @@ def test_action_stream_summarizes_before_agent_reactions(monkeypatch) -> None:
     assert event_names.index("dice_roll") < event_names.index("action_result")
     assert event_names.index("action_result") < event_names.index("gm_narration")
     assert event_names.index("action_result") < event_names.index("npc_response")
+
+
+def test_action_stream_defers_dialogue_options_until_after_reactions(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_post_action_round(self, shared, result, apply_delta, event_sink=None):
+            del shared, result, apply_delta, event_sink
+            return [
+                SSEEvent(
+                    "dialogue_options",
+                    {
+                        "npc_id": "merchant",
+                        "options": [{"text": "继续交谈", "intent": "talk"}],
+                    },
+                ),
+                SSEEvent("gm_narration", {"content": "The moment hardens into a choice."}),
+                SSEEvent("npc_response", {"npc_id": "merchant", "content": "Well?", "type": "speech"}),
+            ]
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: 10)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "skill_check", "params": {"skill": "athletics", "dc": 13}},
+        )
+
+    assert streamed.status_code == 200
+    event_names = [event.get("event") for event in _parse_sse(streamed)]
+    assert event_names.index("action_result") < event_names.index("gm_narration")
+    assert event_names.index("gm_narration") < event_names.index("dialogue_options")
+    assert event_names.index("npc_response") < event_names.index("dialogue_options")
+
+
+def test_action_stream_keeps_summary_ahead_of_forced_dialogue_npc_reactions(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_post_action_round(self, shared, result, apply_delta, event_sink=None):
+            del shared, apply_delta
+            assert result.metadata["action_context"]["dialogue_npc_id"] == "merchant_tom"
+            events = [
+                SSEEvent(
+                    "npc_response",
+                    {
+                        "npc_id": "merchant_tom",
+                        "content": "让我看看你的手气。",
+                        "type": "speech",
+                    },
+                ),
+                SSEEvent(
+                    "dialogue_options",
+                    {
+                        "npc_id": "merchant_tom",
+                        "options": [{"text": "继续交谈", "intent": "talk"}],
+                    },
+                ),
+            ]
+            if event_sink is not None:
+                await event_sink(events[0])
+                await asyncio.sleep(0.01)
+                await event_sink(events[1])
+            return events
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: 10)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={
+                "action_type": "skill_check",
+                "params": {"skill": "athletics", "dc": 13},
+                "context": {"dialogue_npc_id": "merchant_tom"},
+            },
+        )
+
+    assert streamed.status_code == 200
+    event_names = [event.get("event") for event in _parse_sse(streamed)]
+    assert event_names.index("dice_roll") < event_names.index("action_result")
+    assert event_names.index("action_result") < event_names.index("npc_response")
+    assert event_names.index("npc_response") < event_names.index("dialogue_options")
 
 
 def test_input_stream_parses_text_commands(monkeypatch) -> None:
@@ -727,12 +983,12 @@ def test_interact_stream_executes_minimal_quest_board_flow(monkeypatch) -> None:
             json={"target_kind": "board", "target_id": "board", "intent": "browse"},
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.player.apply_state_change(
             StateChange("player", "set", "current_location", "board")
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
 
         empty_board = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
@@ -756,7 +1012,7 @@ def test_interact_stream_executes_minimal_quest_board_flow(monkeypatch) -> None:
                 "source": "test",
             }
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         seeded_board = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={"target_kind": "board", "target_id": "board", "intent": "browse"},
@@ -787,7 +1043,7 @@ def test_interact_stream_executes_minimal_quest_board_flow(monkeypatch) -> None:
                 "quest_id": "dq_report_in",
             },
         )
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.narrative_plan.add_bulletin(
             {
@@ -799,7 +1055,7 @@ def test_interact_stream_executes_minimal_quest_board_flow(monkeypatch) -> None:
                 "source": "test",
             }
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         missing_dynamic = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -905,12 +1161,12 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.player.apply_state_change(
             StateChange("player", "set", "current_location", "board")
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
 
         quest_not_listed = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
@@ -922,7 +1178,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.narrative_plan.add_bulletin(
             {
@@ -934,7 +1190,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
                 "source": "test",
             }
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         quest_not_found = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -945,7 +1201,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_report_in",
@@ -955,7 +1211,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
                 "summary": "Follow the new lead tied to report_in.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         invalid_complete = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -975,7 +1231,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_followup",
@@ -995,7 +1251,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
                 "source": "test",
             }
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         accepted = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1127,13 +1383,13 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.relations.modify_disposition("merchant", "trust", 7)
         session.runtime.state.relations.modify_disposition("merchant", "approval", 3)
         for impression in ("first", "second", "third", "fourth"):
             session.runtime.state.relations.add_impression("merchant", impression)
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         enriched_talk = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1330,7 +1586,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_report_in",
@@ -1340,7 +1596,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
                 "summary": "Follow the new lead tied to report_in.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         no_board_link = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1364,7 +1620,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
                 "source": "test",
             }
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         with_board_link = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1460,7 +1716,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_report_in",
@@ -1470,7 +1726,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
                 "summary": "Follow the new lead tied to report_in.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         no_board_link = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1495,7 +1751,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
             }
         )
         session.runtime.state.quests.advance_milestone("report_in", "ACTIVE")
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         with_board_link = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1596,7 +1852,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_report_in",
@@ -1606,7 +1862,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
                 "summary": "Follow the new lead tied to report_in.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         no_location = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1640,7 +1896,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
                 "source": "test",
             }
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         known_location = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1720,7 +1976,7 @@ def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> 
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_report_in",
@@ -1730,7 +1986,7 @@ def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> 
                 "summary": "Follow the new lead tied to report_in.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         no_requirements = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1750,7 +2006,7 @@ def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> 
                 "requirements": ["bring proof", "", "return alive"],
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         with_requirements = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1820,7 +2076,7 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
             },
         )
 
-        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        session = asyncio.run(_load_session(session_id))
         assert session is not None
         session.runtime.state.quests.add_dynamic_quest(
             "dq_report_in",
@@ -1830,7 +2086,7 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
                 "summary": "Follow the new lead tied to report_in.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         no_reward = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={
@@ -1856,7 +2112,7 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
                 "reward_summary": "25 gold and field supplies.",
             },
         )
-        asyncio.run(runtime.save_session(session))
+        asyncio.run(_save_session(session))
         with_reward = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
             json={

@@ -145,6 +145,19 @@ class AgenticExecutor:
             if not response.tool_calls:
                 final_text = (response.text or "").strip()
                 if role == "npc":
+                    is_passive = bool(
+                        (context.metadata or {}).get("is_passive", False)
+                    )
+                    if is_passive:
+                        return AgentResult(
+                            text="",
+                            tool_results=all_results,
+                            turns_used=turn + 1,
+                            metadata={
+                                "status": "completed",
+                                "finish_reason": "pass_turn",
+                            },
+                        )
                     return self._protocol_error_result(
                         role=role,
                         turns_used=turn + 1,

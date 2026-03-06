@@ -85,11 +85,9 @@ def test_game_runtime_registers_post_action_hook_when_agent_service_is_injected(
         )
     )
 
-    assert len(created.runtime.tick_coordinator.agent_round_hooks) == 1
-    assert created.runtime.tick_coordinator.agent_round_hooks[0].name == "post_action_agent_round"
+    assert created.runtime.pipeline._stage_b_runner is not None
     assert resumed is not None
-    assert len(resumed.runtime.tick_coordinator.agent_round_hooks) == 1
-    assert resumed.runtime.tick_coordinator.agent_round_hooks[0].name == "post_action_agent_round"
+    assert resumed.runtime.pipeline._stage_b_runner is not None
 
 
 def test_tick_coordinator_agent_hook_failure_is_non_fatal() -> None:
@@ -98,7 +96,7 @@ def test_tick_coordinator_agent_hook_failure_is_non_fatal() -> None:
     async def _failing_hook(shared, result, apply_delta, event_sink=None):
         raise RuntimeError("agent round broke")
 
-    runtime.tick_coordinator.set_agent_round_runner(_failing_hook)
+    runtime.pipeline.set_stage_b_runner(_failing_hook)
     collected: list[SSEEvent] = []
 
     async def _event_sink(event: SSEEvent) -> None:

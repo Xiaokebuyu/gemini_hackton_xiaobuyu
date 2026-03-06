@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from app.game_core.content import ContentRegistry, WorldInstance
+from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
 from app.game_core.narrative.instance_manager import InstanceManager
 from app.game_core.content.registries import (
     CharacterRegistry,
@@ -85,6 +86,7 @@ class DefaultRuntime:
     pipeline: PipelineOrchestrator
     tick_coordinator: TickCoordinator
     instance_manager: InstanceManager | None = None
+    companion_manager: CompanionRuntimeManager | None = None
 
 
 def _register_default_content_registries(world: WorldInstance) -> None:
@@ -106,6 +108,14 @@ def build_default_world(
     _register_default_content_registries(world)
     if world_data is not None:
         world.load_all(world_data)
+        issues = world.validate()
+        if issues:
+            formatted = []
+            for registry_name, registry_issues in issues.items():
+                for issue in registry_issues:
+                    formatted.append(f"{registry_name}: {issue}")
+            summary = "; ".join(formatted[:10])
+            raise ValueError(f"world validation failed for '{world_id}': {summary}")
     return world
 
 
@@ -160,12 +170,14 @@ def build_runtime_for_world(
     action_dispatcher = build_default_action_dispatcher()
     pipeline = PipelineOrchestrator(action_dispatcher=action_dispatcher)
     scene_bus = SceneBus(state.scene)
+    runtime_companion_manager = CompanionRuntimeManager()
     tick_coordinator = TickCoordinator(
         world=world,
         state=state,
         rules_engine=rules_engine,
         scene_bus=scene_bus,
         pipeline=pipeline,
+        companion_manager=runtime_companion_manager,
     )
     if osiris_evaluator_factory is not None:
         evaluator = osiris_evaluator_factory()
@@ -192,6 +204,7 @@ def build_runtime_for_world(
         pipeline=pipeline,
         tick_coordinator=tick_coordinator,
         instance_manager=instance_manager,
+        companion_manager=runtime_companion_manager,
     )
 
 
@@ -211,12 +224,14 @@ def build_restored_runtime_for_world(
     action_dispatcher = build_default_action_dispatcher()
     pipeline = PipelineOrchestrator(action_dispatcher=action_dispatcher)
     scene_bus = SceneBus(state.scene)
+    runtime_companion_manager = CompanionRuntimeManager()
     tick_coordinator = TickCoordinator(
         world=world,
         state=state,
         rules_engine=rules_engine,
         scene_bus=scene_bus,
         pipeline=pipeline,
+        companion_manager=runtime_companion_manager,
     )
     if osiris_evaluator_factory is not None:
         evaluator = osiris_evaluator_factory()
@@ -243,4 +258,5 @@ def build_restored_runtime_for_world(
         pipeline=pipeline,
         tick_coordinator=tick_coordinator,
         instance_manager=instance_manager,
+        companion_manager=runtime_companion_manager,
     )

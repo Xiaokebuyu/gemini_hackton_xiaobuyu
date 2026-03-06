@@ -31,6 +31,24 @@ export interface SessionLifecycleResponse {
   phase: string
 }
 
+export interface ResumeLocationVisual {
+  area_id: string
+  location_id: string | null
+  background_key: string
+  present_character_ids: string[]
+}
+
+export interface ResumeSessionResponse {
+  world_id: string
+  session_id: string
+  phase: string
+  player: Record<string, unknown>
+  scene: import('./game').LocationOverview
+  party: Record<string, unknown>
+  location_visual: ResumeLocationVisual
+  resume_narration: string
+}
+
 export interface CharacterOption {
   id: string
   name: string

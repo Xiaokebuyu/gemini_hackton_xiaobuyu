@@ -15,10 +15,11 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
   const [text, setText] = useState('')
   const { options, isLocked } = useOptionStore()
   const activeNpcId = useSceneStore((s) => s.activeNpcId)
+  const openingInProgress = useSceneStore((s) => s.openingInProgress)
 
   const handleSend = () => {
     const trimmed = text.trim()
-    if (!trimmed || isLocked) return
+    if (!trimmed || isLocked || openingInProgress) return
     audio.playClick()
     // 在对话上下文中，自由文字作为 NPC 对话发送
     if (activeNpcId) {
@@ -52,6 +53,8 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
       {/* 选项按钮列表 */}
       {isLocked ? (
         <div className="text-gray-500 text-sm py-1 px-1">思考中...</div>
+      ) : openingInProgress ? (
+        <div className="text-amber-200/80 text-sm py-1 px-1">开场演出中...</div>
       ) : options.length > 0 || activeNpcId ? (
         <div className="flex flex-wrap gap-1.5 mb-2 max-h-28 overflow-y-auto">
           {options.map((opt) => (
@@ -83,13 +86,21 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-          disabled={isLocked}
-          placeholder={isLocked ? '请等待...' : activeNpcId ? '输入你想说的话...' : '输入你想做的事...'}
+          disabled={isLocked || openingInProgress}
+          placeholder={
+            openingInProgress
+              ? '开场演出中...'
+              : isLocked
+                ? '请等待...'
+                : activeNpcId
+                  ? '输入你想说的话...'
+                  : '输入你想做的事...'
+          }
           className="flex-1 bg-gray-800/60 border border-gray-600/50 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-1.5 text-sm focus:border-amber-500/70 outline-none disabled:opacity-50"
         />
         <button
           onClick={handleSend}
-          disabled={isLocked || !text.trim()}
+          disabled={isLocked || openingInProgress || !text.trim()}
           className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white px-4 py-1.5 rounded-lg text-sm transition-colors"
         >
           发送

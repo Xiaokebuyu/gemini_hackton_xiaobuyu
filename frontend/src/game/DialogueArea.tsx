@@ -15,6 +15,7 @@ interface Props {
 
 export default function DialogueArea({ worldId, sessionId, sendInput, sendInteract, overviewHandlers }: Props) {
   const gameMode = useSceneStore((s) => s.gameMode)
+  const openingInProgress = useSceneStore((s) => s.openingInProgress)
   const privateChatBorder = gameMode === 'private_chat' ? 'border-t-2 border-purple-500/60' : ''
 
   return (
@@ -25,7 +26,7 @@ export default function DialogueArea({ worldId, sessionId, sendInput, sendIntera
       <div className="flex flex-col h-full px-3 pt-2 pb-2 gap-1 min-h-0">
         <DialogueHistory />
         <OptionPanel sendInput={sendInput} sendInteract={sendInteract} overviewHandlers={overviewHandlers} />
-        <QuickBar worldId={worldId} sessionId={sessionId} />
+        {!openingInProgress && <QuickBar worldId={worldId} sessionId={sessionId} />}
       </div>
     </div>
   )

@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import logging
 import os
+from pathlib import Path
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
@@ -29,8 +30,13 @@ from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import Command
 from app.game_core.state.slices import SceneSlice
+from app.world_data_loader import load_goblin_slayer_world_data
+from app.world_seed import _shell_world_seed
 
 logger = logging.getLogger(__name__)
+
+_GOBLIN_SLAYER_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "goblin_slayer" / "structured_new"
+_V2_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "goblin_slayer" / "v2"
 
 
 @dataclass(slots=True)
@@ -40,6 +46,7 @@ class ManagedSession:
     world_id: str
     session_id: str
     runtime: DefaultRuntime
+    phase: str = "character_creation"
 
 
 @dataclass(slots=True)
@@ -144,11 +151,19 @@ class GameRuntime:
         """Get one cached world, or build and cache it on first use."""
         if not force_reload and world_id in self._world_cache:
             return self._world_cache[world_id]
-        if world_data is None:
-            raise ValueError("world_data is required for uncached world")
-        world = build_default_world(world_id, world_data=world_data)
+        resolved_world_data = world_data if world_data is not None else self._load_world_data(world_id)
+        world = build_default_world(world_id, world_data=resolved_world_data)
         self._world_cache[world_id] = world
         return world
+
+    def ensure_world(
+        self,
+        world_id: str,
+        *,
+        force_reload: bool = False,
+    ) -> WorldInstance:
+        """Load one world from the canonical source if it is not already cached."""
+        return self.get_world(world_id, force_reload=force_reload)
 
     def has_world(self, world_id: str) -> bool:
         """Whether a world is already cached."""
@@ -200,15 +215,16 @@ class GameRuntime:
             instance_manager=self._instance_manager,
         )
         if self._agent_orchestration is not None:
-            runtime.tick_coordinator.set_agent_round_runner(
-                self._agent_orchestration.run_post_action_round
-            )
+            runner = getattr(self._agent_orchestration, "run_post_action_round", None)
+            if callable(runner):
+                runtime.pipeline.set_stage_b_runner(runner)
         resolved_session_id = session_id or self._new_session_id()
         await self._save_store.save_runtime(resolved_session_id, runtime)
         return ManagedSession(
             world_id=world_id,
             session_id=resolved_session_id,
             runtime=runtime,
+            phase="character_creation",
         )
 
     async def complete_character_creation(
@@ -312,11 +328,12 @@ class GameRuntime:
         self._apply_execute_result(session, location_result)
 
         session.runtime.state.areas.set_exploration(starting_area_id, "discovered")
+        session.phase = "opening_ready"
         await self.bootstrap_opening_planner(session)
         await self.save_session(session)
         return CharacterCreationResult(
             session=session,
-            phase="active",
+            phase=session.phase,
             player=session.runtime.state.player.snapshot(),
         )
 
@@ -329,7 +346,7 @@ class GameRuntime:
     ) -> ManagedSession | None:
         """Restore an existing session, or return None if no save exists."""
         world = self.get_world(world_id, world_data=world_data)
-        runtime = await self._save_store.load_runtime_for_world(
+        runtime, meta = await self._save_store.load_runtime_record_for_world(
             world, session_id,
             gm_narrator_factory=self._gm_narrator_factory,
             osiris_evaluator_factory=self._osiris_evaluator_factory,
@@ -339,20 +356,26 @@ class GameRuntime:
         if runtime is None:
             return None
         if self._agent_orchestration is not None:
-            runtime.tick_coordinator.set_agent_round_runner(
-                self._agent_orchestration.run_post_action_round
-            )
+            runner = getattr(self._agent_orchestration, "run_post_action_round", None)
+            if callable(runner):
+                runtime.pipeline.set_stage_b_runner(runner)
+        phase = str(meta.get("phase", "")).strip() or "character_creation"
         return ManagedSession(
             world_id=world_id,
             session_id=session_id,
             runtime=runtime,
+            phase=phase,
         )
 
     async def save_session(self, session: ManagedSession) -> SaveResult:
         """Persist one managed session through the configured save store."""
         if session.world_id != session.runtime.world.world_id:
             raise ValueError("managed session world_id does not match runtime world")
-        return await self._save_store.save_runtime(session.session_id, session.runtime)
+        return await self._save_store.save_runtime(
+            session.session_id,
+            session.runtime,
+            phase=session.phase,
+        )
 
     async def list_sessions(self, world_id: str) -> list[SavedSessionInfo]:
         """List saved sessions for one world."""
@@ -404,6 +427,16 @@ class GameRuntime:
 
     def _new_character_id(self) -> str:
         return f"pc_{uuid.uuid4().hex[:12]}"
+
+    def _load_world_data(self, world_id: str) -> dict[str, Any]:
+        if world_id == "goblin_slayer":
+            if (_V2_DATA_DIR / "characters.json").exists():
+                from app.game_data_loader_v2 import load_v2_world_data
+
+                return load_v2_world_data()
+            if _GOBLIN_SLAYER_DATA_DIR.exists():
+                return load_goblin_slayer_world_data()
+        return _shell_world_seed(world_id)
 
     def _apply_execute_result(
         self,
