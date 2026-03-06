@@ -43,8 +43,14 @@ export interface TextChunkData {
 }
 
 export interface DialogueOptionDispatch {
-  kind: 'navigate' | 'interact' | 'input'
+  kind: 'navigate' | 'interact' | 'input' | 'action' | 'local'
   payload: Record<string, unknown>
+}
+
+export interface DialogueOptionCheck {
+  skill?: string
+  type?: string
+  dc?: number
 }
 
 export interface DialogueOptionItem {
@@ -52,6 +58,12 @@ export interface DialogueOptionItem {
   text?: string
   label?: string
   icon?: string
+  intent?: string
+  action?: string
+  check?: DialogueOptionCheck | null
+  quest_id?: string
+  item_id?: string
+  count?: number
   dispatch?: DialogueOptionDispatch
 }
 
@@ -60,12 +72,21 @@ export interface DialogueOptionsData {
   options: DialogueOptionItem[]
 }
 
+export interface DialogueOptionsUnavailableData {
+  npc_id?: string | null
+  code: string
+  message: string
+  recoverable: boolean
+}
+
 export interface ActionResultData {
   success: boolean
   action_type: string
   time_cost: number
   errors: string[]
   metadata: Record<string, unknown>
+  narrative_hints?: string[]
+  rolls?: Array<Record<string, unknown>>
 }
 
 export interface SceneChangeData {
@@ -94,6 +115,18 @@ export interface RelationshipStageChangedData {
 export interface NpcWantsToChatData {
   npc_id: string
   npc_name?: string
+}
+
+export interface CompanionRecruitedData {
+  npc_id: string
+  reason: string
+  party_members: string[]
+}
+
+export interface CompanionDismissedData {
+  npc_id: string
+  reason: string
+  party_members: string[]
 }
 
 export interface StreamEndData {

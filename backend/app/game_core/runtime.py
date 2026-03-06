@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import logging
 import os
 import uuid
 from typing import TYPE_CHECKING, Any, Callable, Mapping
@@ -22,7 +23,14 @@ from app.game_core.bootstrap import (
     build_runtime_for_world,
 )
 from app.game_core.content import WorldInstance
+from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
+from app.game_core.orchestration.models import SSEEvent
+from app.game_core.orchestration.scene_bus import SceneBus
+from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import Command
+from app.game_core.state.slices import SceneSlice
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -304,6 +312,7 @@ class GameRuntime:
         self._apply_execute_result(session, location_result)
 
         session.runtime.state.areas.set_exploration(starting_area_id, "discovered")
+        await self.bootstrap_opening_planner(session)
         await self.save_session(session)
         return CharacterCreationResult(
             session=session,
@@ -409,6 +418,54 @@ class GameRuntime:
         delta = getattr(result, "delta", None)
         if delta is not None:
             session.runtime.state.apply(delta)
+
+    async def bootstrap_opening_planner(
+        self,
+        session: ManagedSession,
+        *,
+        persist: bool = False,
+    ) -> list[SSEEvent]:
+        """Seed opening quests without advancing the normal tick lifecycle."""
+        hook = self._find_narrative_planner_hook(session)
+        if hook is None:
+            return []
+        try:
+            result = await hook.bootstrap(self._build_bootstrap_context(session))
+        except Exception as exc:
+            logger.exception("hook failed: narrative_planner_bootstrap")
+            return [
+                SSEEvent(
+                    event_type="hook_error",
+                    payload={
+                        "hook": "narrative_planner_bootstrap",
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+            ]
+        if persist and int(result.metadata.get("applied_count", 0) or 0) > 0:
+            await self.save_session(session)
+        return list(result.sse_events)
+
+    @staticmethod
+    def _build_bootstrap_context(session: ManagedSession) -> SettlementContext:
+        return SettlementContext(
+            change_log=[],
+            state=session.runtime.state,
+            world=session.runtime.world,
+            scene_bus=SceneBus(SceneSlice()),
+            _rules_engine=session.runtime.rules_engine,
+            _apply_delta=session.runtime.state.apply,
+        )
+
+    @staticmethod
+    def _find_narrative_planner_hook(
+        session: ManagedSession,
+    ) -> NarrativePlannerHook | None:
+        for hook in session.runtime.tick_coordinator.settlement_hooks:
+            if isinstance(hook, NarrativePlannerHook):
+                return hook
+        return None
 
     def _resolve_starting_location_id(
         self,

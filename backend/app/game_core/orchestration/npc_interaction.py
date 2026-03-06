@@ -34,6 +34,67 @@ from app.game_core.state.slices.scene import SceneEntry
 
 logger = logging.getLogger(__name__)
 
+_DIALOGUE_BASE_DC: dict[str, int] = {
+    "persuasion": 12,
+    "deception": 13,
+    "intimidation": 14,
+    "performance": 12,
+    "insight": 12,
+    "perception": 12,
+    "investigation": 13,
+    "survival": 12,
+    "nature": 12,
+    "history": 12,
+    "arcana": 13,
+    "religion": 12,
+    "athletics": 12,
+    "acrobatics": 12,
+    "stealth": 13,
+}
+
+_DIALOGUE_STAGE_DC_MOD: dict[str, int] = {
+    "intimate": -3,
+    "close_friend": -2,
+    "friend": -1,
+    "acquaintance": 0,
+    "stranger": 1,
+    "cold": 2,
+    "hostile": 4,
+    "enemy": 6,
+}
+
+
+def _extract_suggest_options(result: AgentResult | None) -> list[dict[str, Any]] | None:
+    """Return validated suggest_options output from one GM result, if present."""
+    if result is None:
+        return None
+    for tool_result in result.tool_results:
+        metadata = tool_result.metadata if isinstance(tool_result.metadata, dict) else {}
+        if not tool_result.success or metadata.get("tool") != "suggest_options":
+            continue
+        options = metadata.get("options")
+        if isinstance(options, list) and options:
+            return options
+    return None
+
+
+def _resolve_dialogue_options(
+    world: WorldInstance,
+    state: StateContainer,
+    npc_id: str,
+    *,
+    agent_result: AgentResult | None = None,
+    options: list[dict[str, Any]] | None = None,
+    allow_static_fallback: bool = True,
+) -> list[dict[str, Any]]:
+    """Normalize dialogue options, optionally falling back to static options."""
+    resolved = options if options is not None else _extract_suggest_options(agent_result)
+    if resolved is None and allow_static_fallback:
+        resolved = _build_static_dialogue_options(world, state, npc_id)
+    if not resolved:
+        return []
+    return _finalize_dialogue_options(world, state, npc_id, resolved)
+
 
 # ------------------------------------------------------------------
 # Result model
@@ -56,6 +117,7 @@ class NpcInteractionResult:
     dialogue_options: list[dict[str, Any]] = field(default_factory=list)
     time_cost: float = 0.0          # §3.1: talk = 1/6 格
     error: str | None = None
+    error_reason: str | None = None
     graphize_candidates: list[WindowMessage] = field(default_factory=list)
 
 
@@ -176,7 +238,27 @@ class NpcInteractionCoordinator:
             logger.exception("NpcInteractionCoordinator: NPC agent failed: %s", npc_id)
             return NpcInteractionResult(success=False, npc_id=npc_id, error="agent_failed")
 
-        npc_speech = _extract_speech_text(npc_result) if npc_result else "(NPC said nothing)"
+        if (
+            npc_result is not None
+            and npc_result.metadata.get("status") == "protocol_error"
+        ):
+            reason = str(npc_result.metadata.get("reason") or "unknown_protocol_error")
+            logger.warning(
+                "NpcInteractionCoordinator: invalid NPC agent response npc=%s reason=%s tool_calls=%s text_present=%s",
+                npc_id,
+                reason,
+                npc_result.metadata.get("tool_call_names", []),
+                npc_result.metadata.get("text_present", False),
+            )
+            return NpcInteractionResult(
+                success=False,
+                npc_id=npc_id,
+                npc_result=npc_result,
+                error="invalid_agent_response",
+                error_reason=reason,
+            )
+
+        npc_speech = _extract_visible_reply_text(npc_result) if npc_result else ""
 
         # Update ContextWindow with this exchange and detect overflow.
         graphize_candidates: list[WindowMessage] = []
@@ -185,10 +267,12 @@ class NpcInteractionCoordinator:
                 role="user", content=player_message,
                 token_count=_approx_tokens(player_message), metadata={},
             ))
-            should2 = context_window.add_message(WindowMessage(
-                role="model", content=npc_speech,
-                token_count=_approx_tokens(npc_speech), metadata={},
-            ))
+            should2 = False
+            if npc_speech:
+                should2 = context_window.add_message(WindowMessage(
+                    role="model", content=npc_speech,
+                    token_count=_approx_tokens(npc_speech), metadata={},
+                ))
             if should1 or should2:
                 graphize_candidates = context_window.pop_oldest_for_graphize()
 
@@ -258,20 +342,12 @@ class NpcInteractionCoordinator:
                         )
 
         # ---- Step 5: Dialogue Options (LLM if GM called suggest_options) -
-        _lm_options: list[dict[str, Any]] | None = None
-        if gm_result:
-            for _tr in gm_result.tool_results:
-                if (
-                    _tr.success
-                    and isinstance(_tr.metadata, dict)
-                    and _tr.metadata.get("tool") == "suggest_options"
-                ):
-                    _opts = _tr.metadata.get("options")
-                    if isinstance(_opts, list) and _opts:
-                        _lm_options = _opts
-                        break
-        dialogue_options = _lm_options if _lm_options is not None else _build_static_dialogue_options(
-            self._world, self._state, npc_id,
+        dialogue_options = _resolve_dialogue_options(
+            self._world,
+            self._state,
+            npc_id,
+            agent_result=gm_result,
+            allow_static_fallback=True,
         )
 
         # ---- Step 6: Return ---------------------------------------
@@ -302,6 +378,18 @@ def _extract_speech_text(result: AgentResult) -> str:
         and tr.message
     ]
     return " ".join(parts) if parts else "(NPC said nothing)"
+
+
+def _extract_visible_reply_text(result: AgentResult) -> str:
+    """Extract the visible NPC reply that should be remembered in ContextWindow."""
+    parts = [
+        tr.message
+        for tr in result.tool_results
+        if tr.success
+        and tr.metadata.get("event_type") in {"speech", "refuse", "emote"}
+        and tr.message
+    ]
+    return " ".join(parts)
 
 
 def _should_teammate_respond(
@@ -399,3 +487,122 @@ def _build_static_dialogue_options(
         options.insert(1, {"text": "询问任务", "intent": "ask_quest"})
 
     return options
+
+
+def _finalize_dialogue_options(
+    world: WorldInstance,
+    state: StateContainer,
+    npc_id: str,
+    options: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize dialogue options and fill missing check DCs.
+
+    This keeps dialogue option mechanics in game_core instead of pushing
+    frontend/app-layer consumers to infer missing fields.
+    """
+    del world
+
+    normalized: list[dict[str, Any]] = []
+    for index, raw in enumerate(options):
+        if not isinstance(raw, Mapping):
+            continue
+
+        text = str(raw.get("text") or raw.get("label") or "").strip()
+        if not text:
+            continue
+
+        entry: dict[str, Any] = {
+            "id": raw.get("id") if raw.get("id") is not None else f"{npc_id}:{index}",
+            "text": text,
+        }
+
+        label = raw.get("label")
+        if isinstance(label, str) and label.strip():
+            entry["label"] = label.strip()
+
+        icon = raw.get("icon")
+        if isinstance(icon, str) and icon.strip():
+            entry["icon"] = icon.strip()
+
+        intent = raw.get("intent")
+        if isinstance(intent, str) and intent.strip():
+            entry["intent"] = intent.strip()
+
+        action = raw.get("action")
+        if isinstance(action, str) and action.strip():
+            entry["action"] = action.strip()
+
+        for key in ("quest_id", "item_id"):
+            value = raw.get(key)
+            if isinstance(value, str) and value.strip():
+                entry[key] = value.strip()
+
+        count = raw.get("count")
+        if isinstance(count, int) and count > 0:
+            entry["count"] = count
+
+        check = raw.get("check")
+        if isinstance(check, Mapping):
+            skill = str(check.get("skill") or check.get("type") or "").strip()
+            if skill:
+                dc = check.get("dc")
+                resolved_dc = dc if isinstance(dc, int) and dc >= 0 else _resolve_dialogue_check_dc(
+                    state,
+                    npc_id,
+                    skill,
+                )
+                entry["check"] = {
+                    "skill": skill,
+                    "dc": resolved_dc,
+                }
+
+        normalized.append(entry)
+
+    return normalized
+
+
+def _resolve_dialogue_check_dc(
+    state: StateContainer,
+    npc_id: str,
+    skill: str,
+) -> int:
+    """Fallback DC model for dialogue checks.
+
+    We do not yet have scene-authored per-line difficulty, so this uses the
+    current relation state as the mechanical modifier described in the design
+    notes: approval/trust/stage shift a skill's base DC and clamp to [5, 25].
+    """
+    base = _DIALOGUE_BASE_DC.get(skill, 12)
+    stage = "stranger"
+    approval = 0
+    trust = 0
+
+    if state.has_slice("relations"):
+        relation_stage = state.relations.get_stage(npc_id)
+        if isinstance(relation_stage, str) and relation_stage.strip():
+            stage = relation_stage.strip()
+        disposition = state.relations.get_disposition(npc_id)
+        if isinstance(disposition, Mapping):
+            approval = int(disposition.get("approval", 0))
+            trust = int(disposition.get("trust", 0))
+
+    if approval >= 60:
+        approval_mod = -2
+    elif approval >= 20:
+        approval_mod = -1
+    elif approval <= -60:
+        approval_mod = 3
+    elif approval <= -20:
+        approval_mod = 1
+    else:
+        approval_mod = 0
+
+    if trust >= 50:
+        trust_mod = -1
+    elif trust <= -20:
+        trust_mod = 1
+    else:
+        trust_mod = 0
+
+    stage_mod = _DIALOGUE_STAGE_DC_MOD.get(stage, 0)
+    return max(5, min(25, base + stage_mod + approval_mod + trust_mod))

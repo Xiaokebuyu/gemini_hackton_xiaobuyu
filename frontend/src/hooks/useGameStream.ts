@@ -21,6 +21,9 @@ import type {
   TeammateResponseData,
   TextChunkData,
   DialogueOptionsData,
+  DialogueOptionsUnavailableData,
+  CompanionRecruitedData,
+  CompanionDismissedData,
   ActionResultData,
   SceneChangeData,
   TimeAdvancedData,
@@ -153,6 +156,13 @@ function formatHookError(prefix: string, data: HookErrorData): string {
   return `${prefix}：${data.hook} - ${data.message}`
 }
 
+function formatCompanionMessage(action: 'join' | 'leave', npcId: string, reason?: string): string {
+  const suffix = reason?.trim() ? `（${reason.trim()}）` : ''
+  return action === 'join'
+    ? `${npcId} 加入了队伍${suffix}`
+    : `${npcId} 离开了队伍${suffix}`
+}
+
 interface SessionOverride {
   worldId?: string
   sessionId?: string
@@ -188,6 +198,17 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       const sceneState = useSceneStore.getState()
       const nextMode: GameMode = sceneState.gameMode === 'private_chat' ? 'private_chat' : 'dialogue'
       scene.setGameMode(nextMode)
+    }
+
+    const leaveDialogue = () => {
+      const sceneState = useSceneStore.getState()
+      const optionState = useOptionStore.getState()
+      scene.setActiveNpc(null)
+      scene.setGameMode('explore')
+      optionState.clearOptions()
+      if (sceneState.lastOverview) {
+        optionState.buildFromOverview(sceneState.lastOverview, overviewHandlers)
+      }
     }
 
     switch (event.event) {
@@ -275,6 +296,17 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
               void sendInput(item.dispatch.payload as unknown as TextInputRequest)
               return
             }
+            if (item.dispatch.kind === 'action') {
+              void sendAction(item.dispatch.payload as unknown as StructuredActionRequest)
+              return
+            }
+            if (item.dispatch.kind === 'local') {
+              const payload = item.dispatch.payload as Record<string, unknown>
+              if (payload.action === 'leave_dialogue') {
+                leaveDialogue()
+                return
+              }
+            }
           }
 
           const activeNpcId = useSceneStore.getState().activeNpcId
@@ -287,6 +319,18 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
             })
           }
         })
+        break
+      }
+
+
+      case 'dialogue_options_unavailable': {
+        const d = cast<DialogueOptionsUnavailableData>(event.data)
+        if (d.npc_id) {
+          scene.setActiveNpc(d.npc_id)
+          resolveDialogueMode()
+        }
+        options.clearOptions()
+        addErrorMessage(d.message || '下一轮对话选项生成失败')
         break
       }
 
@@ -492,6 +536,27 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'milestone_failed': {
         const d = cast<MilestoneFailedData>(event.data)
         useNotificationStore.getState().add(`里程碑失败：${d.milestone_id}`, 'error')
+        break
+      }
+
+
+      case 'companion_recruited': {
+        const d = cast<CompanionRecruitedData>(event.data)
+        const message = formatCompanionMessage('join', d.npc_id, d.reason)
+        addSystemMessage(message)
+        useNotificationStore.getState().add(message, 'success')
+        break
+      }
+
+      case 'companion_dismissed': {
+        const d = cast<CompanionDismissedData>(event.data)
+        const activeNpcId = useSceneStore.getState().activeNpcId
+        if (activeNpcId === d.npc_id) {
+          leaveDialogue()
+        }
+        const message = formatCompanionMessage('leave', d.npc_id, d.reason)
+        addSystemMessage(message)
+        useNotificationStore.getState().add(message, 'info')
         break
       }
 

@@ -209,6 +209,67 @@ class TestNarrativePlannerHook:
         assert result.metadata["planner_metadata"]["reason"] == "stable"
         assert len(context.state.quests.dynamic_quests) == 2
 
+    def test_bootstrap_seeds_first_available_milestone_without_advancing_bookkeeping(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={
+                "last_run_tick": 12,
+                "ticks_since_milestone_progress": 9,
+            },
+            quest_payload={
+                "dynamic_quests": {},
+            },
+            area_payload={"areas": {"forest": {}}},
+        )
+
+        result = asyncio.run(NarrativePlannerHook().bootstrap(context))
+
+        assert result.metadata["status"] == "updated"
+        assert result.metadata["reason"] == "bootstrap"
+        assert result.metadata["applied_kinds"] == [
+            "create_quest",
+            "publish_bulletin",
+            "direct_npc",
+        ]
+        assert context.state.quests.get_dynamic_quest("dq_ms_1") is not None
+        assert context.state.narrative_plan.active_bulletins[-1]["board_id"] == "board"
+        assert context.state.narrative_plan.npc_directives[-1]["npc_id"] == "guild_clerk"
+        assert context.state.narrative_plan.last_run_tick == 12
+        assert context.state.narrative_plan.escalation_level == 0
+        assert context.state.areas.list_temporary_sub_areas("forest") == []
+        assert result.sse_events == []
+
+    def test_bootstrap_noops_when_seeded_quest_already_exists(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={
+                "last_run_tick": 4,
+                "ticks_since_milestone_progress": 9,
+            },
+            quest_payload={
+                "dynamic_quests": {
+                    "dq_existing": {
+                        "status": "active",
+                        "title": "Existing",
+                        "summary": "In progress",
+                    },
+                    "dq_ms_1": {
+                        "status": "available",
+                        "title": "Lead: Ms 1",
+                        "summary": "Already seeded",
+                    },
+                },
+            },
+            area_payload={"areas": {"forest": {}}},
+        )
+
+        result = asyncio.run(NarrativePlannerHook().bootstrap(context))
+
+        assert result.metadata["status"] == "noop"
+        assert result.metadata["reason"] == "bootstrap"
+        assert result.metadata["applied_count"] == 0
+        assert result.metadata["planner_metadata"]["reason"] == "bootstrap_stable"
+        assert context.state.narrative_plan.last_run_tick == 4
+        assert context.state.areas.list_temporary_sub_areas("forest") == []
+
     def test_default_planner_stall_l1_publishes_hint(self) -> None:
         context = _make_context(
             narrative_plan_payload={

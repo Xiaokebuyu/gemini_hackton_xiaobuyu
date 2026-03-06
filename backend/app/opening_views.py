@@ -73,6 +73,22 @@ def build_opening_narration(session: ManagedSession) -> str:
 def build_opening_comment(session: ManagedSession) -> dict[str, Any]:
     """Build one short GM-style aside for the opening flow."""
 
+    seeded_quest = _first_opening_quest(session)
+    if seeded_quest is not None:
+        quest_title = str(seeded_quest.get("title", "")).strip() or "新的线索"
+        return {
+            "content": f"在你真正迈步之前，公会已经替你准备好了一条线索：「{quest_title}」。",
+            "tone": "grim",
+        }
+
+    bulletin = _first_opening_bulletin(session)
+    if bulletin is not None:
+        title = str(bulletin.get("title", "")).strip() or "一张新布告"
+        return {
+            "content": f"布告板上新贴出的那张纸还没凉透：「{title}」。",
+            "tone": "grim",
+        }
+
     overview = build_location_overview(session)
     has_npcs = any(isinstance(item, dict) for item in overview.get("present_npcs", []))
     if has_npcs:
@@ -83,6 +99,24 @@ def build_opening_comment(session: ManagedSession) -> dict[str, Any]:
         "content": content,
         "tone": "sarcastic",
     }
+
+
+def _first_opening_quest(session: ManagedSession) -> dict[str, Any] | None:
+    quests = session.runtime.state.quests.dynamic_quests
+    for quest in quests.values():
+        if not isinstance(quest, dict):
+            continue
+        status = str(quest.get("status", "")).strip().lower()
+        if status in {"available", "accepted", "active", "in_progress"}:
+            return dict(quest)
+    return None
+
+
+def _first_opening_bulletin(session: ManagedSession) -> dict[str, Any] | None:
+    for bulletin in session.runtime.state.narrative_plan.active_bulletins:
+        if isinstance(bulletin, dict):
+            return dict(bulletin)
+    return None
 
 
 def build_opening_character_enters(session: ManagedSession) -> list[dict[str, Any]]:

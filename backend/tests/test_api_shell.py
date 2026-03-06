@@ -9,13 +9,17 @@ from fastapi.testclient import TestClient
 import app.main as api_main
 from app.game_core import GameRuntime
 from app.game_core.adapters import NullPersistencePort, SaveStore
+from app.game_core.orchestration.models import SSEEvent
 from app.game_core.state import StateChange
 from app.world_seed import _shell_world_seed
 
 
-def _runtime() -> GameRuntime:
+def _runtime(agent_orchestration=None) -> GameRuntime:
     api_main.app.state.interaction_service = None
-    runtime = GameRuntime(save_store=SaveStore(NullPersistencePort()))
+    runtime = GameRuntime(
+        save_store=SaveStore(NullPersistencePort()),
+        agent_orchestration=agent_orchestration,
+    )
     world_data = copy.deepcopy(_shell_world_seed("goblin_slayer"))
     world_data["maps"]["guild_hall"]["connections"] = [
         {"target": "training_grounds", "travel_slots": 1, "blocked": False},
@@ -71,6 +75,19 @@ def _create_character(client: TestClient, session_id: str) -> dict[str, object]:
     session.runtime.state.areas.update_npc_location("merchant", "counter")
     asyncio.run(runtime.save_session(session))
     return response.json()
+
+
+def _clear_opening_bootstrap(runtime: GameRuntime, session_id: str) -> None:
+    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    assert session is not None
+    session.runtime.state.quests.dynamic_quests = {}
+    session.runtime.state.quests._dirty = True
+    session.runtime.state.narrative_plan.active_bulletins = []
+    session.runtime.state.narrative_plan.npc_directives = []
+    session.runtime.state.narrative_plan.quest_history = []
+    session.runtime.state.narrative_plan.strategy_notes = ""
+    session.runtime.state.narrative_plan._dirty = True
+    asyncio.run(runtime.save_session(session))
 
 
 def _event_payloads(stream_text: str, event_type: str) -> list[dict[str, object]]:
@@ -204,6 +221,81 @@ def test_inventory_map_and_quest_panels_after_character_creation(monkeypatch) ->
     assert quests.status_code == 200
     quest_payload = quests.json()
     assert "report_in" in quest_payload["milestone_states"]
+    assert "dq_report_in" in quest_payload["dynamic_quests"]
+
+    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    assert session is not None
+    assert session.runtime.state.narrative_plan.last_run_tick == 0
+    assert session.runtime.state.narrative_plan.active_bulletins[-1]["title"] == "New Lead Posted"
+    assert session.runtime.state.time.accumulated == 0.0
+
+
+def test_opening_stream_bootstraps_legacy_session_and_mentions_seeded_quest(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+
+        session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+        assert session is not None
+        session.runtime.state.quests.dynamic_quests = {}
+        session.runtime.state.quests._dirty = True
+        session.runtime.state.narrative_plan.active_bulletins = []
+        session.runtime.state.narrative_plan.npc_directives = []
+        session.runtime.state.narrative_plan._dirty = True
+        asyncio.run(runtime.save_session(session))
+
+        opening = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+
+    assert opening.status_code == 200
+    events = _parse_sse(opening)
+    comment = _sse_event(events, "gm_comment")
+    assert comment is not None
+    assert "Lead: Report In" in comment["content"]
+    assert "report_in" not in comment["content"]
+
+    session = asyncio.run(runtime.resume_session("goblin_slayer", session_id))
+    assert session is not None
+    assert "dq_report_in" in session.runtime.state.quests.dynamic_quests
+    assert session.runtime.state.narrative_plan.active_bulletins[-1]["title"] == "New Lead Posted"
+
+
+def test_opening_stream_surfaces_bootstrap_hook_error(monkeypatch) -> None:
+    runtime = _runtime()
+
+    async def _failing_bootstrap(session, *, persist=False):
+        del session, persist
+        return [
+            SSEEvent(
+                "hook_error",
+                {
+                    "hook": "narrative_planner_bootstrap",
+                    "error_type": "RuntimeError",
+                    "message": "bootstrap failed",
+                },
+            )
+        ]
+
+    monkeypatch.setattr(runtime, "bootstrap_opening_planner", _failing_bootstrap)
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        opening = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+
+    assert opening.status_code == 200
+    events = _parse_sse(opening)
+    assert events[0]["event"] == "hook_error"
+    assert events[0]["data"]["hook"] == "narrative_planner_bootstrap"
+    assert _sse_event(events, "scene_change") is not None
+    assert _sse_event(events, "stream_end") is not None
 
 
 def _parse_sse(response) -> list[dict]:
@@ -341,6 +433,71 @@ def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:
     assert invalid_request.json()["detail"]["code"] == "invalid_action_request"
     assert unknown_action.status_code == 400
     assert unknown_action.json()["detail"]["code"] == "unknown_action"
+
+
+def test_action_stream_emits_dice_roll_for_skill_checks(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: 10)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "skill_check", "params": {"skill": "athletics", "dc": 13}},
+        )
+
+    assert streamed.status_code == 200
+    events = _parse_sse(streamed)
+    dice_roll = _sse_event(events, "dice_roll")
+    assert dice_roll is not None
+    assert dice_roll["skill"] == "athletics"
+    assert dice_roll["result"] == 10
+    assert dice_roll["modifier"] == 5
+    assert dice_roll["total"] == 15
+    assert dice_roll["dc"] == 13
+    assert dice_roll["success"] is True
+
+    action_result = _sse_event(events, "action_result")
+    assert action_result is not None
+    assert action_result["rolls"][0]["purpose"] == "skill_check"
+    assert action_result["rolls"][0]["dice"] == "1d20"
+
+    event_names = [event.get("event") for event in events]
+    assert event_names.index("dice_roll") < event_names.index("action_result")
+
+
+def test_action_stream_summarizes_before_agent_reactions(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_post_action_round(self, shared, result, apply_delta, event_sink=None):
+            del shared, result, apply_delta
+            events = [
+                SSEEvent("gm_narration", {"content": "The moment hangs in the air."}),
+                SSEEvent("npc_response", {"npc_id": "merchant", "content": "Hmm.", "type": "speech"}),
+            ]
+            if event_sink is not None:
+                for event in events:
+                    await event_sink(event)
+            return events
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: 10)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "skill_check", "params": {"skill": "athletics", "dc": 13}},
+        )
+
+    assert streamed.status_code == 200
+    event_names = [event.get("event") for event in _parse_sse(streamed)]
+    assert event_names.index("dice_roll") < event_names.index("action_result")
+    assert event_names.index("action_result") < event_names.index("gm_narration")
+    assert event_names.index("action_result") < event_names.index("npc_response")
 
 
 def test_input_stream_parses_text_commands(monkeypatch) -> None:
@@ -563,6 +720,7 @@ def test_interact_stream_executes_minimal_quest_board_flow(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         board_not_present = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
@@ -735,6 +893,7 @@ def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         board_not_present = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
@@ -941,6 +1100,7 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         left = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
@@ -1039,6 +1199,7 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         left = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
@@ -1140,6 +1301,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         left = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
@@ -1269,6 +1431,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         left = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
@@ -1404,6 +1567,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         left = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
@@ -1544,6 +1708,7 @@ def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> 
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         missing = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
@@ -1643,6 +1808,7 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
     with TestClient(api_main.app) as client:
         session_id = _create_session(client)
         _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
 
         missing = client.post(
             f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",

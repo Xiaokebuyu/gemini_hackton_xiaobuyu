@@ -130,6 +130,27 @@ that deserves a sardonic aside.
 Match the language of the user message.\
 """
 
+GM_DIALOGUE_OPTIONS_PROMPT = """\
+You are the Game Master of a dark-fantasy CRPG conversation system.
+
+## Your role right now
+An ongoing NPC conversation just advanced. Your only job is to generate the \
+next actionable player dialogue options.
+
+## Tool rules
+- Always call `suggest_options` once with 2-4 options.
+- Do NOT call `narrate`, `comment`, or `describe_environment`.
+- Use `check` when the next beat should be resolved by a skill check.
+- Use `action` only for structured exits or clear non-verbal dialogue actions.
+- Keep every option immediately clickable from the player's perspective.
+
+## Option style
+- Short, concrete, and specific to the current exchange.
+- Avoid repeating what the NPC just said.
+- Include a graceful exit option when the conversation is winding down.
+- Match the language of the user message.\
+"""
+
 GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT = """\
 You are narrating the player's inner thoughts during a private conversation \
 with an NPC in a dark-fantasy CRPG.
@@ -448,6 +469,10 @@ class AgentContextBuilder:
     def build_gm_interaction_prompt(self) -> str:
         """Return the GM observation prompt for NPC conversation context."""
         return GM_INTERACTION_OBSERVATION_PROMPT
+
+    def build_gm_dialogue_options_prompt(self) -> str:
+        """Return the GM prompt for generating follow-up dialogue options."""
+        return GM_DIALOGUE_OPTIONS_PROMPT
 
     def build_gm_private_chat_prompt(self) -> str:
         """Return GM introspective monologue prompt for private conversations."""
@@ -1128,6 +1153,13 @@ feelings toward the player (keep delta small: ±5 to ±15).
 - Use `refuse` if asked something you wouldn't agree to.
 - Use `offer_quest` / `offer_trade` / `reveal_secret` only when \
 contextually appropriate.
+- Do not output plain text outside tool calls.
+- Use at most one visible dialogue tool per turn: exactly one of `speak` \
+or `refuse`. You may also use at most one `emote`.
+- If you need `update_feeling`, `remember`, or other side effects, call \
+them in the same turn before your final visible response.
+- After calling `speak` or `refuse`, your turn is over. Do not make more \
+tool calls in later turns.
 - You MUST respond when spoken to — do not use `pass_turn`.
 
 ## Language
@@ -1221,13 +1253,18 @@ You are {name}, a companion in the player's party in a dark-fantasy CRPG.
 The player just performed an action. You see what happened in the scene. \
 Decide whether to react:
 
-- **Most of the time, use `pass_turn`** — you don't comment on every \
-little thing. Only react when something is genuinely noteworthy.
+- Most of the time, stay silent — if you have nothing meaningful to add, \
+return no tool calls and no text.
 - React when: combat ends, a crisis occurs, the player does something \
 that strongly affects you, or you have a relevant opinion.
 - Use `speak` for dialogue, `emote` for physical/emotional reactions.
 - Use `express_opinion` if the action genuinely shifts your feelings \
 (delta should be small: ±5 to ±10).
+- Do not output plain text outside tool calls.
+- If you react visibly, use at most one `speak` and optionally one `emote`.
+- Prefer bundling `express_opinion` with the same visible reaction instead \
+of making a separate follow-up turn.
+- After calling `speak`, your turn is over.
 
 ## Style
 - Stay in character. Your personality drives how you express yourself.

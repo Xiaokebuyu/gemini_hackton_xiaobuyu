@@ -4,24 +4,35 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { getQuests } from '../../lib/api'
 import type { QuestPanelData } from '../../types/api'
 
-type QuestStatus = 'active' | 'available' | 'completed'
+type QuestStatus = 'active' | 'available' | 'completed' | 'closed'
 
 function questStatus(v: Record<string, unknown>): QuestStatus {
-  if (v.status === 'completed') return 'completed'
-  if (v.status === 'available') return 'available'
+  const status = String(v.status ?? '').toLowerCase()
+  if (status === 'completed') return 'completed'
+  if (status === 'failed' || status === 'retired') return 'closed'
+  if (status === 'available' || status === 'discovered') return 'available'
   return 'active'
+}
+
+function questSummary(v: Record<string, unknown>): string {
+  const summary = typeof v.summary === 'string' ? v.summary.trim() : ''
+  if (summary) return summary
+  const description = typeof v.description === 'string' ? v.description.trim() : ''
+  return description
 }
 
 const STATUS_ICONS: Record<QuestStatus, string> = {
   active: '⚔',
   available: '📋',
   completed: '✅',
+  closed: '✖',
 }
 
 const STATUS_LABELS: Record<QuestStatus, string> = {
   active: '进行中',
   available: '可接取',
   completed: '已完成',
+  closed: '已结束',
 }
 
 type MilestoneStatus = 'ACTIVE' | 'AVAILABLE' | 'COMPLETED' | 'LOCKED' | 'FAILED'
@@ -65,6 +76,7 @@ export default function QuestPanel() {
     active: [],
     available: [],
     completed: [],
+    closed: [],
   }
   if (data) {
     for (const [key, val] of Object.entries(data.dynamic_quests)) {
@@ -74,13 +86,11 @@ export default function QuestPanel() {
   }
 
   const milestones = data
-    ? Object.entries(data.milestone_states).filter(
-        ([, ms]) => {
-          const m = ms as Record<string, unknown>
-          const s = String(m.state ?? 'LOCKED').toUpperCase()
-          return s !== 'LOCKED'
-        },
-      ).map(([k, v]) => [k, v as Record<string, unknown>] as const)
+    ? Object.entries(data.milestone_states).filter(([, ms]) => {
+        const m = ms as Record<string, unknown>
+        const s = String(m.state ?? 'LOCKED').toUpperCase()
+        return s !== 'LOCKED'
+      }).map(([k, v]) => [k, v as Record<string, unknown>] as const)
     : []
 
   const chapters = data ? Object.entries(data.chapter_completion) : []
@@ -108,7 +118,6 @@ export default function QuestPanel() {
           <p className="p-5 text-gray-500 text-sm text-center">加载中…</p>
         ) : (
           <div className="p-5 space-y-4">
-            {/* 主线进度 */}
             {chapters.length > 0 && (
               <div>
                 <p className="text-gray-500 text-xs mb-1.5">── 主线进度 ──</p>
@@ -129,7 +138,6 @@ export default function QuestPanel() {
               </div>
             )}
 
-            {/* 里程碑 */}
             {milestones.length > 0 && (
               <div>
                 <p className="text-gray-500 text-xs mb-1.5">── 里程碑 ──</p>
@@ -153,24 +161,26 @@ export default function QuestPanel() {
               </div>
             )}
 
-            {/* 动态任务分组 */}
-            {(['active', 'available', 'completed'] as const).map((status) => {
+            {(['active', 'available', 'completed', 'closed'] as const).map((status) => {
               const quests = grouped[status]
               if (quests.length === 0) return null
               return (
                 <div key={status}>
                   <p className="text-gray-500 text-xs mb-1.5">── {STATUS_LABELS[status]} ──</p>
-                  {quests.map(([key, q]) => (
-                    <div key={key} className="mb-2">
-                      <p className="text-gray-200 text-sm">
-                        {STATUS_ICONS[status]}{' '}
-                        {typeof q.title === 'string' && q.title ? q.title : key}
-                      </p>
-                      {typeof q.description === 'string' && q.description && (
-                        <p className="text-gray-400 text-xs ml-5 mt-0.5">{q.description}</p>
-                      )}
-                    </div>
-                  ))}
+                  {quests.map(([key, q]) => {
+                    const summary = questSummary(q)
+                    return (
+                      <div key={key} className="mb-2">
+                        <p className="text-gray-200 text-sm">
+                          {STATUS_ICONS[status]}{' '}
+                          {typeof q.title === 'string' && q.title ? q.title : key}
+                        </p>
+                        {summary && (
+                          <p className="text-gray-400 text-xs ml-5 mt-0.5">{summary}</p>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )
             })}

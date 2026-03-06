@@ -74,6 +74,7 @@ export interface NavigateRequest {
 export interface StructuredActionRequest {
   action_type: string
   params?: Record<string, unknown>
+  context?: Record<string, unknown>
 }
 
 export interface PrivateChatRequest {

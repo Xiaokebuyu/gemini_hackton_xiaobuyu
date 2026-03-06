@@ -79,16 +79,85 @@ class CounterTool(AgentTool):
         )
 
 
+class ScriptedNarrativeTool(AgentTool):
+    """Test helper for NPC/teammate visible output and side-effect tools."""
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        roles: list[str],
+        event_type: str,
+        side_effect_key: str | None = None,
+    ) -> None:
+        self._name = name
+        self._roles = list(roles)
+        self._event_type = event_type
+        self._side_effect_key = side_effect_key
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return f"tool:{self._name}"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+        }
+
+    @property
+    def allowed_roles(self) -> list[str]:
+        return list(self._roles)
+
+    async def execute(self, params: dict[str, Any], context: AgentContext) -> ToolResult:
+        text = str(params.get("text", ""))
+        if self._side_effect_key is not None:
+            context.metadata.setdefault(self._side_effect_key, [])
+            context.metadata[self._side_effect_key].append(text)
+        return ToolResult(
+            success=True,
+            message=text,
+            metadata={"event_type": self._event_type},
+        )
+
+
 def _registry() -> RoleToolRegistry:
     reg = RoleToolRegistry()
     reg.register(EchoTool())
     reg.register(CounterTool())
+    reg.register(ScriptedNarrativeTool(
+        "speak",
+        roles=["npc", "teammate"],
+        event_type="speech",
+    ))
+    reg.register(ScriptedNarrativeTool(
+        "emote",
+        roles=["npc", "teammate"],
+        event_type="emote",
+    ))
+    reg.register(ScriptedNarrativeTool(
+        "refuse",
+        roles=["npc"],
+        event_type="refuse",
+    ))
+    reg.register(ScriptedNarrativeTool(
+        "remember",
+        roles=["npc"],
+        event_type="memory_written",
+        side_effect_key="remembered_notes",
+    ))
     return reg
 
 
 def _ctx(**overrides: Any) -> AgentContext:
+    role = str(overrides.pop("role", "gm"))
     return AgentContext(
-        role="gm",
+        role=role,
         world=WorldInstance("test"),
         state=StateContainer(),
         **overrides,
@@ -217,6 +286,118 @@ def test_run_agentic_parallel_tool_calls() -> None:
     assert result.tool_results[0].metadata["echoed"] == "first"
     assert result.tool_results[1].metadata["echoed"] == "second"
     assert result.tool_results[2].metadata["counter"] == 1
+
+
+def test_npc_visible_output_stops_multi_turn_loop() -> None:
+    """NPC/teammate turns stop after the first visible reply batch."""
+    llm = RecordingLlmProvider([
+        LlmResponse(
+            tool_calls=[{"name": "speak", "args": {"text": "Welcome."}}],
+            finish_reason="tool_calls",
+        ),
+        LlmResponse(
+            tool_calls=[{"name": "speak", "args": {"text": "This should not happen."}}],
+            finish_reason="tool_calls",
+        ),
+    ])
+    executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+
+    result = asyncio.run(executor.run_agentic("npc", _ctx(role="npc")))
+
+    assert result.turns_used == 1
+    assert len(llm.calls) == 1
+    assert [tr.message for tr in result.tool_results if tr.metadata.get("event_type") == "speech"] == [
+        "Welcome.",
+    ]
+    assert result.metadata["status"] == "completed"
+    assert result.metadata["finish_reason"] == "visible_output_emitted"
+
+
+def test_npc_side_effects_and_single_visible_reply_share_one_turn() -> None:
+    """NPC may batch side effects with one visible reply, then stop immediately."""
+    llm = RecordingLlmProvider([
+        LlmResponse(
+            tool_calls=[
+                {"name": "remember", "args": {"text": "player asked about the ledger"}},
+                {"name": "speak", "args": {"text": "The ledger stays locked."}},
+                {"name": "emote", "args": {"text": "*she taps the counter*"}},
+                {"name": "remember", "args": {"text": "player seemed suspicious"}},
+            ],
+            finish_reason="tool_calls",
+        ),
+    ])
+    executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+    ctx = _ctx(role="npc")
+
+    result = asyncio.run(executor.run_agentic("npc", ctx))
+
+    assert ctx.metadata["remembered_notes"] == [
+        "player asked about the ledger",
+        "player seemed suspicious",
+    ]
+    assert [
+        tr.message
+        for tr in result.tool_results
+        if tr.metadata.get("event_type") == "speech"
+    ] == [
+        "The ledger stays locked.",
+    ]
+    assert [tr.message for tr in result.tool_results if tr.metadata.get("event_type") == "emote"] == [
+        "*she taps the counter*",
+    ]
+    assert result.metadata["finish_reason"] == "visible_output_emitted"
+
+
+def test_npc_text_only_response_is_protocol_error() -> None:
+    """NPC text without a visible tool is a protocol violation."""
+    llm = RecordingLlmProvider([
+        LlmResponse(text="I should have used speak.", finish_reason="stop"),
+    ])
+    executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+
+    result = asyncio.run(executor.run_agentic("npc", _ctx(role="npc")))
+
+    assert result.text == ""
+    assert result.tool_results == []
+    assert result.metadata["status"] == "protocol_error"
+    assert result.metadata["reason"] == "text_without_tool"
+    assert result.metadata["text_present"] is True
+
+
+def test_npc_multiple_dialogue_tools_is_protocol_error() -> None:
+    """NPC cannot emit two dialogue tools in the same turn."""
+    llm = RecordingLlmProvider([
+        LlmResponse(
+            tool_calls=[
+                {"name": "speak", "args": {"text": "One."}},
+                {"name": "refuse", "args": {"text": "Two."}},
+            ],
+            finish_reason="tool_calls",
+        ),
+    ])
+    executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+
+    result = asyncio.run(executor.run_agentic("npc", _ctx(role="npc")))
+
+    assert result.text == ""
+    assert result.tool_results == []
+    assert result.metadata["status"] == "protocol_error"
+    assert result.metadata["reason"] == "multiple_dialogue_tools"
+
+
+def test_teammate_empty_response_is_pass_turn() -> None:
+    """Teammates may stay silent by returning no tool calls and no text."""
+    llm = RecordingLlmProvider([
+        LlmResponse(text="", finish_reason="stop"),
+    ])
+    executor = AgenticExecutor(tool_registry=_registry(), llm=llm)
+
+    result = asyncio.run(executor.run_agentic("teammate", _ctx(role="teammate")))
+
+    assert result.text == ""
+    assert result.tool_results == []
+    assert result.metadata["status"] == "completed"
+    assert result.metadata["finish_reason"] == "pass_turn"
 
 
 def test_build_declarations_from_tools() -> None:

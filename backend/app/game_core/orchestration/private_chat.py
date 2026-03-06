@@ -30,8 +30,8 @@ from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
 from app.game_core.narrative.models import AgentResult
 from app.game_core.orchestration.npc_interaction import (
-    _build_static_dialogue_options,
-    _extract_speech_text,
+    _extract_visible_reply_text,
+    _resolve_dialogue_options,
 )
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateContainer
@@ -84,6 +84,7 @@ class PrivateChatResult:
     dialogue_options: list[dict[str, Any]] = field(default_factory=list)
     time_cost: float = 0.0          # §7.4: private chat = 1/6 格
     error: str | None = None
+    error_reason: str | None = None
     graphize_candidates: list[WindowMessage] = field(default_factory=list)
     scene_id: str | None = None     # 私聊临时子地点 ID（Phase 2）
     scene_name: str = ""            # 子地点名称（供 SSE 使用）
@@ -218,7 +219,29 @@ class PrivateChatCoordinator:
             logger.exception("PrivateChatCoordinator: NPC agent failed: %s", npc_id)
             return PrivateChatResult(success=False, npc_id=npc_id, error="agent_failed")
 
-        npc_speech = _extract_speech_text(npc_result) if npc_result else "(NPC said nothing)"
+        if (
+            npc_result is not None
+            and npc_result.metadata.get("status") == "protocol_error"
+        ):
+            reason = str(npc_result.metadata.get("reason") or "unknown_protocol_error")
+            logger.warning(
+                "PrivateChatCoordinator: invalid NPC agent response npc=%s reason=%s tool_calls=%s text_present=%s",
+                npc_id,
+                reason,
+                npc_result.metadata.get("tool_call_names", []),
+                npc_result.metadata.get("text_present", False),
+            )
+            return PrivateChatResult(
+                success=False,
+                npc_id=npc_id,
+                npc_result=npc_result,
+                error="invalid_agent_response",
+                error_reason=reason,
+                scene_id=scene_id,
+                scene_name=scene_name,
+            )
+
+        npc_speech = _extract_visible_reply_text(npc_result) if npc_result else ""
 
         # Update ContextWindow with this exchange and detect overflow.
         graphize_candidates: list[WindowMessage] = []
@@ -227,10 +250,12 @@ class PrivateChatCoordinator:
                 role="user", content=player_message,
                 token_count=_approx_tokens(player_message), metadata={},
             ))
-            should2 = context_window.add_message(WindowMessage(
-                role="model", content=npc_speech,
-                token_count=_approx_tokens(npc_speech), metadata={},
-            ))
+            should2 = False
+            if npc_speech:
+                should2 = context_window.add_message(WindowMessage(
+                    role="model", content=npc_speech,
+                    token_count=_approx_tokens(npc_speech), metadata={},
+                ))
             if should1 or should2:
                 graphize_candidates = context_window.pop_oldest_for_graphize()
 
@@ -258,8 +283,9 @@ class PrivateChatCoordinator:
             logger.exception("PrivateChatCoordinator: GM introspection failed: %s", npc_id)
 
         # ---- Step 3: Dialogue Options (static; LLM-enhanced: N-6) -
-        dialogue_options = _build_static_dialogue_options(
+        dialogue_options = _resolve_dialogue_options(
             self._world, self._state, npc_id,
+            allow_static_fallback=True,
         )
 
         # ---- Step 4: Return ---------------------------------------

@@ -40,6 +40,42 @@ const SUB_LOCATION_TYPE_ICON: Record<string, string> = {
   discovery: '🔍',
 }
 
+const CHECK_LABELS: Record<string, string> = {
+  persuasion: '说服',
+  deception: '欺瞒',
+  intimidation: '威吓',
+  performance: '表演',
+  insight: '洞察',
+  perception: '感知',
+  investigation: '调查',
+  survival: '求生',
+  nature: '自然',
+  history: '历史',
+  arcana: '奥秘',
+  religion: '宗教',
+  athletics: '运动',
+  acrobatics: '杂技',
+  stealth: '潜行',
+}
+
+function formatCheckLabel(skill: string) {
+  return CHECK_LABELS[skill] ?? skill.replace(/_/g, ' ')
+}
+
+function formatDialogueOptionLabel(item: DialogueOptionItem): string {
+  const base = item.label ?? item.text ?? String(item.id ?? '').trim()
+  if (!base) return ''
+  if (base.startsWith('[')) return base
+
+  const check = item.check
+  const rawSkill = check?.skill ?? check?.type
+  if (!rawSkill) return base
+
+  const skill = formatCheckLabel(rawSkill)
+  const dc = typeof check?.dc === 'number' ? ` DC${check.dc}` : ''
+  return `[${skill}${dc}] ${base}`
+}
+
 export const useOptionStore = create<OptionState>((set) => ({
   options: [],
   isLocked: false,
@@ -51,7 +87,7 @@ export const useOptionStore = create<OptionState>((set) => ({
   setFromDialogueOptions: (items, onSelect) => {
     const opts = items
       .map<GameOption | null>((item) => {
-        const label = item.label ?? item.text ?? String(item.id ?? '').trim()
+        const label = formatDialogueOptionLabel(item)
         if (!label) return null
         return {
           id: String(item.id ?? label),

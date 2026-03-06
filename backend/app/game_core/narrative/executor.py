@@ -143,11 +143,41 @@ class AgenticExecutor:
             response = await self._llm.generate(system_prompt, history, declarations)
 
             if not response.tool_calls:
-                final_text = response.text
+                final_text = (response.text or "").strip()
+                if role == "npc":
+                    return self._protocol_error_result(
+                        role=role,
+                        turns_used=turn + 1,
+                        reason="text_without_tool" if final_text else "empty_response",
+                        tool_results=all_results,
+                        text=final_text,
+                    )
+                if role == "teammate":
+                    if final_text:
+                        return self._protocol_error_result(
+                            role=role,
+                            turns_used=turn + 1,
+                            reason="text_without_tool",
+                            tool_results=all_results,
+                            text=final_text,
+                        )
+                    return AgentResult(
+                        text="",
+                        tool_results=all_results,
+                        turns_used=turn + 1,
+                        metadata={
+                            "status": "completed",
+                            "finish_reason": "pass_turn",
+                        },
+                    )
                 # True streaming on the final text turn.
                 # TODO: optimize to single streaming call (currently double-calls LLM
                 # on final turn to get streaming output after detecting no tool_calls).
-                if text_chunk_sink is not None and hasattr(self._llm, "generate_stream"):
+                if (
+                    role == "gm"
+                    and text_chunk_sink is not None
+                    and hasattr(self._llm, "generate_stream")
+                ):
                     streamed = ""
                     async for chunk in self._llm.generate_stream(
                         system_prompt, history, [],
@@ -166,6 +196,17 @@ class AgenticExecutor:
                     },
                 )
 
+            protocol_reason = self._validate_turn_tool_calls(role, response.tool_calls)
+            if protocol_reason is not None:
+                return self._protocol_error_result(
+                    role=role,
+                    turns_used=turn + 1,
+                    reason=protocol_reason,
+                    tool_calls=response.tool_calls,
+                    tool_results=all_results,
+                    text=response.text,
+                )
+
             # Append model response to history
             history.append(self._model_turn(response))
 
@@ -181,11 +222,29 @@ class AgenticExecutor:
             )
             all_results.extend(turn_results)
 
+            if self._should_finish_after_turn(role, turn_results):
+                return AgentResult(
+                    text="",
+                    tool_results=all_results,
+                    turns_used=turn + 1,
+                    metadata={
+                        "status": "completed",
+                        "finish_reason": "visible_output_emitted",
+                    },
+                )
+
             # Append tool results to history
             history.append(
                 self._tool_response_turn(response.tool_calls, turn_results)
             )
 
+        if role == "npc" and not self._has_visible_output(role, all_results):
+            return self._protocol_error_result(
+                role=role,
+                turns_used=max_turns,
+                reason="max_turns_without_visible_output",
+                tool_results=all_results,
+            )
         return AgentResult(
             text="",
             tool_results=all_results,
@@ -389,4 +448,91 @@ class AgenticExecutor:
                 "status": status,
                 "tool_name": tool_name,
             },
+        )
+
+    @staticmethod
+    def _tool_call_names(tool_calls: list[Any]) -> list[str]:
+        names: list[str] = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping):
+                continue
+            name = str(tool_call.get("name", "")).strip()
+            if name:
+                names.append(name)
+        return names
+
+    @classmethod
+    def _validate_turn_tool_calls(
+        cls,
+        role: str,
+        tool_calls: list[Any],
+    ) -> str | None:
+        if role not in {"npc", "teammate"}:
+            return None
+        tool_names = cls._tool_call_names(tool_calls)
+        dialogue_tools = {"speak"}
+        if role == "npc":
+            dialogue_tools.add("refuse")
+        dialogue_count = sum(name in dialogue_tools for name in tool_names)
+        emote_count = sum(name == "emote" for name in tool_names)
+        if dialogue_count > 1:
+            return "multiple_dialogue_tools"
+        if emote_count > 1:
+            return "multiple_emotes"
+        return None
+
+    @classmethod
+    def _has_visible_output(
+        cls,
+        role: str,
+        results: list[ToolResult],
+    ) -> bool:
+        if role == "npc":
+            visible_event_types = {"speech", "refuse", "emote"}
+        elif role == "teammate":
+            visible_event_types = {"speech", "emote"}
+        else:
+            return False
+        return any(
+            result.success
+            and str(result.metadata.get("event_type", "")) in visible_event_types
+            for result in results
+        )
+
+    @classmethod
+    def _should_finish_after_turn(
+        cls,
+        role: str,
+        results: list[ToolResult],
+    ) -> bool:
+        if role not in {"npc", "teammate"}:
+            return False
+        return cls._has_visible_output(role, results)
+
+    @classmethod
+    def _protocol_error_result(
+        cls,
+        *,
+        role: str,
+        turns_used: int,
+        reason: str,
+        tool_calls: list[Any] | None = None,
+        tool_results: list[ToolResult] | None = None,
+        text: str = "",
+    ) -> AgentResult:
+        stripped = text.strip()
+        metadata: dict[str, Any] = {
+            "status": "protocol_error",
+            "reason": reason,
+            "role": role,
+            "tool_call_names": cls._tool_call_names(tool_calls or []),
+            "text_present": bool(stripped),
+        }
+        if stripped:
+            metadata["text_preview"] = stripped[:200]
+        return AgentResult(
+            text="",
+            tool_results=list(tool_results or []),
+            turns_used=turns_used,
+            metadata=metadata,
         )

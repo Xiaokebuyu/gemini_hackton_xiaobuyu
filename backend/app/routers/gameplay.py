@@ -46,6 +46,13 @@ from app.scene_views import build_location_overview, build_scene_change
 router = APIRouter()
 
 _SSE_HEADERS = {"Cache-Control": "no-cache"}
+_AGENT_REACTION_EVENTS = frozenset({
+    "gm_narration",
+    "gm_comment",
+    "npc_response",
+    "npc_emote",
+    "teammate_response",
+})
 
 
 @router.post("/api/game/{world_id}/sessions/{session_id}/navigate")
@@ -148,6 +155,7 @@ def _build_action_result_event(
             "errors": list(result.errors),
             "metadata": dict(result.metadata),
             "narrative_hints": list(result.narrative_hints),
+            "rolls": [_build_action_result_roll_payload(roll) for roll in result.rolls],
         },
     )
 
@@ -165,6 +173,123 @@ def _non_empty_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _modifier_total(roll: Any) -> int:
+    total = 0
+    for item in getattr(roll, "modifiers", []):
+        try:
+            total += int(item.get("value", 0))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return total
+
+
+def _build_action_result_roll_payload(roll: Any) -> dict[str, Any]:
+    return {
+        "purpose": str(getattr(roll, "purpose", "")),
+        "dice": str(getattr(roll, "dice", "")),
+        "result": _coerce_int(getattr(roll, "result", 0)),
+        "total": _coerce_int(getattr(roll, "total", 0)),
+        "critical": getattr(roll, "critical", None),
+        "modifiers": list(getattr(roll, "modifiers", [])),
+    }
+
+
+def _roll_descriptor(
+    *,
+    result: PipelineResult,
+    roll: Any,
+) -> tuple[str, int, bool] | None:
+    purpose = str(getattr(roll, "purpose", "")).strip()
+    metadata = result.metadata
+    if purpose == "skill_check":
+        return (
+            _non_empty_string(metadata.get("skill")) or "skill_check",
+            _coerce_int(metadata.get("dc")),
+            bool(metadata.get("passed", False)),
+        )
+    if purpose == "saving_throw":
+        return (
+            _non_empty_string(metadata.get("ability")) or "saving_throw",
+            _coerce_int(metadata.get("dc")),
+            bool(metadata.get("passed", False)),
+        )
+    if purpose == "contest_actor":
+        actor_total = _coerce_int(metadata.get("actor_total"))
+        target_total = _coerce_int(metadata.get("target_total"))
+        return (
+            _non_empty_string(metadata.get("actor_skill")) or "contest",
+            target_total,
+            actor_total > target_total,
+        )
+    if purpose == "contest_target":
+        actor_total = _coerce_int(metadata.get("actor_total"))
+        target_total = _coerce_int(metadata.get("target_total"))
+        return (
+            _non_empty_string(metadata.get("target_skill")) or "contest",
+            actor_total,
+            target_total > actor_total,
+        )
+    if purpose == "investigate":
+        found = metadata.get("status") == "discovered"
+        return (
+            _non_empty_string(metadata.get("skill")) or "investigate",
+            0,
+            found,
+        )
+    if purpose.startswith("discover_") or purpose.startswith("interact_"):
+        return (
+            _non_empty_string(metadata.get("skill")) or purpose,
+            _coerce_int(metadata.get("dc")),
+            bool(metadata.get("passed", False)),
+        )
+    return None
+
+
+def _build_dice_roll_event(
+    *,
+    result: PipelineResult,
+    roll: Any,
+    session: ManagedSession,
+) -> SSEEvent | None:
+    descriptor = _roll_descriptor(result=result, roll=roll)
+    if descriptor is None:
+        return None
+    skill, dc, success = descriptor
+    return SSEEvent(
+        "dice_roll",
+        {
+            "type": str(getattr(roll, "dice", "")),
+            "result": _coerce_int(getattr(roll, "result", 0)),
+            "modifier": _modifier_total(roll),
+            "total": _coerce_int(getattr(roll, "total", 0)),
+            "dc": dc,
+            "success": success,
+            "skill": skill,
+            "roller": "player",
+            "roller_name": session.runtime.state.player.character_name or "Player",
+        },
+    )
+
+
+async def _emit_roll_events(
+    queue: asyncio.Queue[SSEEvent | None],
+    *,
+    result: PipelineResult,
+    session: ManagedSession,
+) -> None:
+    for roll in result.rolls:
+        event = _build_dice_roll_event(result=result, roll=roll, session=session)
+        if event is not None:
+            await queue.put(event)
 
 
 def _get_hostile_payload(
@@ -363,6 +488,13 @@ def _build_stream_error_event(exc: Exception) -> SSEEvent:
     )
 
 
+def _split_action_stream_events(events: list[SSEEvent]) -> tuple[list[SSEEvent], list[SSEEvent]]:
+    for index, event in enumerate(events):
+        if event.event_type in _AGENT_REACTION_EVENTS:
+            return events[:index], events[index:]
+    return list(events), []
+
+
 async def _emit_terminal_error(
     queue: asyncio.Queue[SSEEvent | None], exc: Exception,
 ) -> None:
@@ -439,8 +571,14 @@ async def action_stream(
         raise _api_error(400, "unknown_action", f"unknown action: {action_type}")
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
-        result = await _execute_structured_action(session, request, event_sink=queue.put)
+        result = await _execute_structured_action(session, request)
+        before_summary, after_summary = _split_action_stream_events(result.sse_events)
+        for event in before_summary:
+            await queue.put(event)
+        await _emit_roll_events(queue, result=result, session=session)
         await queue.put(_build_action_result_event(result, request.action_type))
+        for event in after_summary:
+            await queue.put(event)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -490,9 +628,14 @@ async def input_stream(
         result = await _execute_structured_action(
             session,
             StructuredActionRequest(action_type=action_type, params=params),
-            event_sink=queue.put,
         )
+        before_summary, after_summary = _split_action_stream_events(result.sse_events)
+        for event in before_summary:
+            await queue.put(event)
+        await _emit_roll_events(queue, result=result, session=session)
         await queue.put(_build_action_result_event(result, action_type))
+        for event in after_summary:
+            await queue.put(event)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.success))
 
@@ -513,6 +656,13 @@ async def opening_stream(
         raise _api_error(409, "opening_not_available", "player has no current area")
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        bootstrap_events = await get_game_runtime().bootstrap_opening_planner(
+            session,
+            persist=True,
+        )
+        for event in bootstrap_events:
+            await queue.put(event)
+
         await queue.put(SSEEvent("scene_change", build_scene_change(session)))
 
         narration = build_opening_narration(session).strip()

@@ -18,6 +18,7 @@ from app.game_core.orchestration.npc_interaction import (
     NpcInteractionResult,
     _build_static_dialogue_options,
     _extract_speech_text,
+    _finalize_dialogue_options,
     _should_teammate_respond,
 )
 from app.game_core.rules.models import Command, ExecuteResult
@@ -127,6 +128,31 @@ def _noop_executor(command: Command) -> ExecuteResult:
     return ExecuteResult(success=True)
 
 
+def _npc_speak_response(text: str = "Hello.") -> dict[str, Any]:
+    return {
+        "tool_calls": [{"name": "speak", "args": {"text": text}}],
+        "finish_reason": "tool_calls",
+    }
+
+
+def _teammate_speak_response(text: str = "I have a thought.") -> dict[str, Any]:
+    return {
+        "tool_calls": [{"name": "speak", "args": {"text": text}}],
+        "finish_reason": "tool_calls",
+    }
+
+
+def _gm_pass_turn_response() -> dict[str, Any]:
+    return {
+        "tool_calls": [{"name": "pass_turn", "args": {}}],
+        "finish_reason": "tool_calls",
+    }
+
+
+def _stop_response(text: str = "") -> dict[str, Any]:
+    return {"text": text, "finish_reason": "stop"}
+
+
 def _build_coordinator(
     llm_responses: list[dict[str, Any]] | None = None,
     world: WorldInstance | None = None,
@@ -167,13 +193,10 @@ class TestNpcInteractionCoordinator:
     def test_full_flow_returns_success(self) -> None:
         coordinator, _ = _build_coordinator([
             # NPC: speak then stop
-            {"tool_calls": [{"name": "speak", "args": {"text": "Welcome!"}}],
-             "finish_reason": "tool_calls"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Welcome!"),
             # GM: pass_turn then stop
-            {"tool_calls": [{"name": "pass_turn", "args": {}}],
-             "finish_reason": "tool_calls"},
-            {"text": "", "finish_reason": "stop"},
+            _gm_pass_turn_response(),
+            _stop_response(),
         ])
         result = asyncio.run(coordinator.execute_interaction(
             npc_id="merchant_tom",
@@ -187,8 +210,8 @@ class TestNpcInteractionCoordinator:
 
     def test_time_cost_is_one_sixth(self) -> None:
         coordinator, _ = _build_coordinator([
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Hello."),
+            _stop_response(),
         ])
         result = asyncio.run(coordinator.execute_interaction(
             npc_id="merchant_tom",
@@ -203,8 +226,8 @@ class TestNpcInteractionCoordinator:
         state = _state_with_party(world)
         coordinator, llm = _build_coordinator(
             [
-                {"text": "", "finish_reason": "stop"},
-                {"text": "", "finish_reason": "stop"},
+                _npc_speak_response("Keep an eye on the west gate."),
+                _stop_response(),
             ],
             world=world,
             state=state,
@@ -241,8 +264,8 @@ class TestNpcInteractionCoordinator:
         state = _state_with_party(world)
         coordinator, _ = _build_coordinator(
             llm_responses=[
-                {"text": "", "finish_reason": "stop"},
-                {"text": "", "finish_reason": "stop"},
+                _npc_speak_response("Testing scene write acknowledged."),
+                _stop_response(),
             ],
             world=world, state=state,
         )
@@ -261,11 +284,8 @@ class TestNpcInteractionCoordinator:
 
     def test_npc_result_populated_on_success(self) -> None:
         coordinator, _ = _build_coordinator([
-            {"tool_calls": [{"name": "speak", "args": {"text": "Greetings!"}}],
-             "finish_reason": "tool_calls"},
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Greetings!"),
+            _stop_response(),
         ])
         result = asyncio.run(coordinator.execute_interaction(
             npc_id="merchant_tom",
@@ -275,10 +295,51 @@ class TestNpcInteractionCoordinator:
 
         assert result.npc_result is not None
 
+    def test_npc_interaction_emits_only_one_speech_per_player_turn(self) -> None:
+        world = _world_with_characters()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({
+            "character_name": "Hero",
+            "character_class": "warrior",
+            "current_area": "town",
+            "current_location": "market",
+        })
+        state.relations.restore({
+            "npc_dispositions": {
+                "merchant_tom": {"approval": 25, "trust": 15, "fear": 0, "romance": 0},
+            },
+            "relationship_stages": {"merchant_tom": "acquaintance"},
+        })
+        coordinator, llm = _build_coordinator(
+            [
+                _npc_speak_response("First reply."),
+                _stop_response(),
+            ],
+            world=world,
+            state=state,
+        )
+        result = asyncio.run(coordinator.execute_interaction(
+            npc_id="merchant_tom",
+            player_message="Tell me again.",
+            execute_command=_noop_executor,
+        ))
+
+        assert result.success is True
+        assert result.npc_result is not None
+        speeches = [
+            tr.message
+            for tr in result.npc_result.tool_results
+            if tr.success and tr.metadata.get("event_type") == "speech"
+        ]
+        assert speeches == ["First reply."]
+        assert result.npc_result.turns_used == 1
+        assert len(llm.calls) == 2  # NPC once + GM once
+
     def test_gm_observation_result_populated(self) -> None:
         coordinator, _ = _build_coordinator([
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Hello."),
+            _stop_response(),
         ])
         result = asyncio.run(coordinator.execute_interaction(
             npc_id="merchant_tom",
@@ -290,8 +351,8 @@ class TestNpcInteractionCoordinator:
 
     def test_dialogue_options_always_present(self) -> None:
         coordinator, _ = _build_coordinator([
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Hello."),
+            _stop_response(),
         ])
         result = asyncio.run(coordinator.execute_interaction(
             npc_id="merchant_tom",
@@ -300,6 +361,59 @@ class TestNpcInteractionCoordinator:
         ))
 
         assert len(result.dialogue_options) >= 2
+
+    def test_dialogue_options_use_gm_suggest_options_when_present(self) -> None:
+        world = _world_with_characters()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({
+            "character_name": "Hero",
+            "character_class": "warrior",
+            "current_area": "town",
+            "current_location": "market",
+        })
+        state.relations.restore({
+            "npc_dispositions": {
+                "merchant_tom": {"approval": 25, "trust": 15, "fear": 0, "romance": 0},
+            },
+            "relationship_stages": {"merchant_tom": "acquaintance"},
+        })
+
+        coordinator, _ = _build_coordinator(
+            llm_responses=[
+                _npc_speak_response("说货源之前，先说明你的来意。"),
+                {
+                    "tool_calls": [
+                        {
+                            "name": "suggest_options",
+                            "args": {
+                                "options": [
+                                    {"text": "追问那批货的来路", "action": "probe"},
+                                    {"text": "压低声音试探", "check": {"skill": "insight"}},
+                                ]
+                            },
+                        }
+                    ],
+                    "finish_reason": "tool_calls",
+                },
+                _stop_response(),
+            ],
+            world=world,
+            state=state,
+        )
+
+        result = asyncio.run(coordinator.execute_interaction(
+            npc_id="merchant_tom",
+            player_message="说说你的货源。",
+            execute_command=_noop_executor,
+        ))
+
+        assert [option["text"] for option in result.dialogue_options] == [
+            "追问那批货的来路",
+            "压低声音试探",
+        ]
+        assert result.dialogue_options[1]["check"]["skill"] == "insight"
+        assert isinstance(result.dialogue_options[1]["check"]["dc"], int)
 
     def test_no_teammate_reactions_without_party(self) -> None:
         """When party slice has no members, teammate_results is empty."""
@@ -311,8 +425,8 @@ class TestNpcInteractionCoordinator:
 
         coordinator, _ = _build_coordinator(
             llm_responses=[
-                {"text": "", "finish_reason": "stop"},
-                {"text": "", "finish_reason": "stop"},
+                _npc_speak_response("Hello."),
+                _stop_response(),
             ],
             world=world, state=state,
         )
@@ -323,6 +437,7 @@ class TestNpcInteractionCoordinator:
         ))
 
         assert result.teammate_results == {}
+        assert result.success is True
 
     def test_no_llm_returns_no_results_but_success(self) -> None:
         """With no LLM, executor degrades gracefully → coordinator still returns success=True."""
@@ -365,6 +480,21 @@ class TestNpcInteractionCoordinator:
         assert result.success is False
         assert result.error == "agent_failed"
 
+    def test_text_only_npc_response_is_reported_as_invalid_agent_response(self) -> None:
+        coordinator, _ = _build_coordinator([
+            _stop_response("I should have used speak."),
+        ])
+
+        result = asyncio.run(coordinator.execute_interaction(
+            npc_id="merchant_tom",
+            player_message="Hello",
+            execute_command=_noop_executor,
+        ))
+
+        assert result.success is False
+        assert result.error == "invalid_agent_response"
+        assert result.error_reason == "text_without_tool"
+
 
 # ------------------------------------------------------------------
 # TestTeammateInInteraction
@@ -403,9 +533,9 @@ class TestTeammateInInteraction:
 
         coordinator, llm = _build_coordinator(
             llm_responses=[
-                {"text": "", "finish_reason": "stop"},   # NPC
-                {"text": "", "finish_reason": "stop"},   # GM
-                {"text": "", "finish_reason": "stop"},   # Teammate (sure_responder)
+                _npc_speak_response("Hey."),
+                _stop_response(),
+                _teammate_speak_response("Let me weigh in."),
             ],
             world=world, state=state,
         )
@@ -417,6 +547,7 @@ class TestTeammateInInteraction:
                 execute_command=_noop_executor,
             ))
 
+        assert result.success is True
         assert "sure_responder" in result.teammate_results
 
     def test_teammate_never_reacts_when_tendency_is_zero(self) -> None:
@@ -546,6 +677,29 @@ class TestStaticDialogueOptions:
         options = _build_static_dialogue_options(world, state, "merchant_tom")
         intents = [o["intent"] for o in options]
         assert "browse" not in intents
+
+    def test_finalize_dialogue_options_fills_missing_check_dc(self) -> None:
+        world = self._world()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.relations.restore({
+            "npc_dispositions": {
+                "merchant_tom": {"approval": 25, "trust": 15, "fear": 0, "romance": 0},
+            },
+            "relationship_stages": {"merchant_tom": "acquaintance"},
+        })
+
+        options = _finalize_dialogue_options(
+            world,
+            state,
+            "merchant_tom",
+            [{"text": "让他通融", "check": {"skill": "persuasion"}}],
+        )
+
+        assert len(options) == 1
+        assert options[0]["check"]["skill"] == "persuasion"
+        assert isinstance(options[0]["check"]["dc"], int)
+        assert 5 <= options[0]["check"]["dc"] <= 25
 
 
 # ------------------------------------------------------------------

@@ -14,6 +14,7 @@ import DialogueArea from '../game/DialogueArea'
 import NotificationLayer from '../game/NotificationLayer'
 import PlayerHud from '../game/PlayerHud'
 import SceneTransitionOverlay from '../game/SceneTransitionOverlay'
+import DiceRollOverlay from '../game/combat/DiceRollOverlay'
 import type { OverviewHandlers } from '../stores/optionStore'
 import type { InteractRequest, NavigateRequest } from '../types/api'
 
@@ -262,6 +263,8 @@ export default function GamePage() {
 
       {/* Layer 3: 浮动通知 */}
       <NotificationLayer />
+
+      <DiceRollOverlay />
 
       {/* 懒加载层：遭遇/战斗/覆盖层/弹窗（Suspense fallback=null，组件缺失时静默） */}
       <Suspense fallback={null}>

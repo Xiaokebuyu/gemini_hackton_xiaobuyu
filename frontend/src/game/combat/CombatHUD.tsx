@@ -3,7 +3,6 @@ import MonsterCardRow from './MonsterCardRow'
 import PlayerCombatHUD from './PlayerCombatHUD'
 import CombatLog from './CombatLog'
 import CombatActionBar from './CombatActionBar'
-import DiceRollOverlay from './DiceRollOverlay'
 import DamageNumberLayer from './DamageNumberLayer'
 import CombatEndSummary from './CombatEndSummary'
 
@@ -21,7 +20,6 @@ export default function CombatHUD({ onCombatAction, onContinue }: Props) {
       <PlayerCombatHUD />
       <CombatLog />
       <CombatActionBar onAction={onCombatAction} />
-      <DiceRollOverlay />
       <DamageNumberLayer />
       {combatEndData && <CombatEndSummary onContinue={onContinue} />}
     </>

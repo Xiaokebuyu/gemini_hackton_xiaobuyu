@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import random
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
 
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, TeammateFull, _profile_get
 from app.game_core.narrative.context_window import ContextWindow, WindowMessage
@@ -21,6 +21,8 @@ from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.game_core.orchestration.npc_interaction import (
     NpcInteractionCoordinator,
     NpcInteractionResult,
+    _extract_visible_reply_text,
+    _resolve_dialogue_options,
     _should_teammate_respond,
 )
 from app.game_core.orchestration.private_chat import (
@@ -36,6 +38,8 @@ if TYPE_CHECKING:
     from app.game_core import ManagedSession
 
 logger = logging.getLogger(__name__)
+
+_DIALOGUE_FOLLOW_UP_ACTIONS = {"skill_check", "saving_throw", "contest", "investigate"}
 
 
 # ------------------------------------------------------------------
@@ -106,6 +110,18 @@ class AgentOrchestrationService:
             if result.error == "npc_not_found":
                 logger.warning("NPC not found in interaction: %s", npc_id)
                 return []
+            if result.error == "invalid_agent_response":
+                logger.warning(
+                    "NPC interaction returned invalid agent response: %s reason=%s",
+                    npc_id,
+                    result.error_reason or "unknown_protocol_error",
+                )
+                return [
+                    _npc_protocol_error_event(
+                        npc_id,
+                        result.error_reason or "unknown_protocol_error",
+                    )
+                ]
             logger.warning("NPC interaction agent failed: %s error=%s", npc_id, result.error)
             return [SSEEvent(
                 event_type="npc_error",
@@ -114,7 +130,10 @@ class AgentOrchestrationService:
 
         await self._write_episode(session, npc_id, result.graphize_candidates)
 
-        return _interaction_result_to_sse(result)
+        return _interaction_result_to_sse(
+            result,
+            action_dispatcher=session.runtime.action_dispatcher,
+        )
 
     # ---- Private 4-step chat (no GM/teammate observation) ----
 
@@ -153,6 +172,18 @@ class AgentOrchestrationService:
             if result.error == "npc_not_found":
                 logger.warning("NPC not found in private chat: %s", npc_id)
                 return []
+            if result.error == "invalid_agent_response":
+                logger.warning(
+                    "Private chat returned invalid agent response: %s reason=%s",
+                    npc_id,
+                    result.error_reason or "unknown_protocol_error",
+                )
+                return [
+                    _npc_protocol_error_event(
+                        npc_id,
+                        result.error_reason or "unknown_protocol_error",
+                    )
+                ]
             logger.warning("Private chat agent failed: %s error=%s", npc_id, result.error)
             return [SSEEvent(
                 event_type="npc_error",
@@ -161,7 +192,10 @@ class AgentOrchestrationService:
 
         await self._write_episode(session, npc_id, result.graphize_candidates)
 
-        return _private_chat_result_to_sse(result)
+        return _private_chat_result_to_sse(
+            result,
+            action_dispatcher=session.runtime.action_dispatcher,
+        )
 
     # ---- NPC dialogue (single-step, kept for backward compat) ----
 
@@ -236,16 +270,21 @@ class AgentOrchestrationService:
                 payload={"npc_id": npc_id, "error": "agent_failed"},
             )]
 
+        if _is_protocol_error(result):
+            _log_protocol_error(role="npc", character_id=npc_id, result=result)
+            return [_npc_protocol_error_event(npc_id, _protocol_reason(result))]
+
         # Update ContextWindow with this exchange.
         if context_window is not None:
             context_window.add_message(WindowMessage(
                 role="user", content=player_message,
                 token_count=_approx_tokens(player_message), metadata={},
             ))
-            if result.text:
+            visible_reply = _extract_visible_reply_text(result)
+            if visible_reply:
                 context_window.add_message(WindowMessage(
-                    role="model", content=result.text,
-                    token_count=_approx_tokens(result.text), metadata={},
+                    role="model", content=visible_reply,
+                    token_count=_approx_tokens(visible_reply), metadata={},
                 ))
 
         return _npc_result_to_sse(npc_id, result)
@@ -319,6 +358,13 @@ class AgentOrchestrationService:
         )
         for event in teammate_events:
             await _emit(event)
+
+        follow_up_options = await self._build_follow_up_dialogue_options_event(
+            shared,
+            result,
+        )
+        if follow_up_options is not None:
+            await _emit(follow_up_options)
 
         return collected
 
@@ -397,6 +443,85 @@ class AgentOrchestrationService:
 
         return _gm_result_to_sse(agent_result)
 
+    async def _build_follow_up_dialogue_options_event(
+        self,
+        shared: SharedContext,
+        result: PipelineResult,
+    ) -> SSEEvent | None:
+        if result.action_type not in _DIALOGUE_FOLLOW_UP_ACTIONS:
+            return None
+
+        action_context = result.metadata.get("action_context")
+        if not isinstance(action_context, Mapping):
+            return None
+
+        interaction_type = str(action_context.get("interaction_type") or "").strip()
+        if interaction_type and interaction_type != "dialogue_option":
+            return None
+
+        npc_id = str(action_context.get("dialogue_npc_id") or "").strip()
+        if not npc_id:
+            return _dialogue_options_unavailable_event(
+                None,
+                code="missing_dialogue_context",
+                message="当前对话上下文缺失，无法生成下一轮选项。",
+            )
+
+        builder = AgentContextBuilder(shared.world, shared.state)
+        context = builder.build_agent_context("gm")
+        user_message = json.dumps(
+            {
+                "action_type": result.action_type,
+                "success": result.success,
+                "npc_id": npc_id,
+                "time_cost": result.time_cost,
+                "narrative_hints": list(result.narrative_hints),
+                "action_context": dict(action_context),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+        try:
+            agent_result = await self._executor.run_agentic(
+                role="gm",
+                context=context,
+                system_prompt=builder.build_gm_dialogue_options_prompt(),
+                user_message=user_message,
+                max_turns=2,
+                context_layers=builder.build_gm_context(
+                    hints=list(result.narrative_hints),
+                ),
+            )
+        except Exception:
+            logger.exception("GM dialogue options Agent failed")
+            return _dialogue_options_unavailable_event(
+                npc_id,
+                code="agent_error",
+                message="对话继续了，但下一轮选项生成失败。",
+            )
+
+        options = _resolve_dialogue_options(
+            shared.world,
+            shared.state,
+            npc_id,
+            agent_result=agent_result,
+            allow_static_fallback=False,
+        )
+        if not options:
+            return _dialogue_options_unavailable_event(
+                npc_id,
+                code="empty_options",
+                message="对话继续了，但下一轮选项未生成，请改用自由输入或结束对话。",
+            )
+
+        return SSEEvent(
+            event_type="dialogue_options",
+            payload={
+                "npc_id": npc_id,
+                "options": _serialize_dialogue_options(npc_id, options),
+            },
+        )
+
     async def _generate_teammate_reactions(
         self,
         session: ManagedSession,
@@ -452,6 +577,14 @@ class AgentOrchestrationService:
                 )
             except Exception:
                 logger.exception("Teammate Agent failed: %s", member_id)
+                continue
+
+            if _is_protocol_error(agent_result):
+                _log_protocol_error(
+                    role="teammate",
+                    character_id=member_id,
+                    result=agent_result,
+                )
                 continue
 
             events.extend(_teammate_result_to_sse(member_id, agent_result))
@@ -518,6 +651,14 @@ class AgentOrchestrationService:
                 logger.exception("Teammate Agent failed: %s", member_id)
                 continue
 
+            if _is_protocol_error(agent_result):
+                _log_protocol_error(
+                    role="teammate",
+                    character_id=member_id,
+                    result=agent_result,
+                )
+                continue
+
             events.extend(_teammate_result_to_sse(member_id, agent_result))
             scene_entries = [
                 entry.snapshot()
@@ -536,7 +677,11 @@ class AgentOrchestrationService:
     ) -> list[SSEEvent]:
         state = shared.state
         world = shared.world
-        nearby_npc_ids = self._collect_nearby_npcs(shared)
+        forced_npc_id = _dialogue_npc_id_from_result(result)
+        nearby_npc_ids = self._collect_nearby_npcs(
+            shared,
+            focus_npc_id=forced_npc_id,
+        )
         if not nearby_npc_ids:
             return []
 
@@ -559,7 +704,11 @@ class AgentOrchestrationService:
         memory_writer = self._make_memory_writer_for_world(world)
 
         for npc_id in nearby_npc_ids:
-            if not _should_character_respond(world, npc_id, scene_entries=scene_entries):
+            if forced_npc_id != npc_id and not _should_character_respond(
+                world,
+                npc_id,
+                scene_entries=scene_entries,
+            ):
                 continue
             instance = await self._get_or_create_instance_for_world(world, state, npc_id)
             context_window = instance.context_window if instance is not None else None
@@ -607,6 +756,14 @@ class AgentOrchestrationService:
                 logger.exception("Nearby NPC reaction failed: %s", npc_id)
                 continue
 
+            if _is_protocol_error(agent_result):
+                _log_protocol_error(
+                    role="npc",
+                    character_id=npc_id,
+                    result=agent_result,
+                )
+                continue
+
             if context_window is not None:
                 context_window.add_message(
                     WindowMessage(
@@ -616,12 +773,13 @@ class AgentOrchestrationService:
                         metadata={"kind": "post_action_reaction"},
                     )
                 )
-                if agent_result.text:
+                visible_reply = _extract_visible_reply_text(agent_result)
+                if visible_reply:
                     context_window.add_message(
                         WindowMessage(
                             role="model",
-                            content=agent_result.text,
-                            token_count=_approx_tokens(agent_result.text),
+                            content=visible_reply,
+                            token_count=_approx_tokens(visible_reply),
                             metadata={"kind": "post_action_reaction"},
                         )
                     )
@@ -744,7 +902,12 @@ class AgentOrchestrationService:
 
         return _writer
 
-    def _collect_nearby_npcs(self, shared: SharedContext) -> list[str]:
+    def _collect_nearby_npcs(
+        self,
+        shared: SharedContext,
+        *,
+        focus_npc_id: str | None = None,
+    ) -> list[str]:
         state = shared.state
         if not state.has_slice("areas") or not state.has_slice("player"):
             return []
@@ -756,6 +919,12 @@ class AgentOrchestrationService:
         party_members: set[str] = set()
         if state.has_slice("party") and isinstance(state.party.members, dict):
             party_members = set(state.party.members.keys())
+        if focus_npc_id and focus_npc_id not in party_members:
+            focus_location = area_state.npc_locations.get(focus_npc_id)
+            if focus_location is not None and (
+                not current_location or focus_location in {None, current_location}
+            ):
+                return [focus_npc_id]
         nearby: list[str] = []
         for npc_id, location_id in area_state.npc_locations.items():
             if npc_id in party_members:
@@ -786,6 +955,44 @@ def _window_to_history(window: ContextWindow) -> list[dict[str, Any]]:
 def _approx_tokens(text: str) -> int:
     """Approximate token count (4 chars ≈ 1 token)."""
     return max(1, len(text) // 4)
+
+
+def _is_protocol_error(result: AgentResult | None) -> bool:
+    return bool(result is not None and result.metadata.get("status") == "protocol_error")
+
+
+def _protocol_reason(result: AgentResult | None) -> str:
+    if result is None:
+        return "unknown_protocol_error"
+    reason = result.metadata.get("reason")
+    return str(reason) if isinstance(reason, str) and reason else "unknown_protocol_error"
+
+
+def _log_protocol_error(
+    *,
+    role: str,
+    character_id: str,
+    result: AgentResult,
+) -> None:
+    logger.warning(
+        "Agent protocol violation role=%s character=%s reason=%s tool_calls=%s text_present=%s",
+        role,
+        character_id,
+        _protocol_reason(result),
+        result.metadata.get("tool_call_names", []),
+        result.metadata.get("text_present", False),
+    )
+
+
+def _npc_protocol_error_event(npc_id: str, reason: str) -> SSEEvent:
+    return SSEEvent(
+        event_type="npc_response_error",
+        payload={
+            "npc_id": npc_id,
+            "code": "invalid_agent_response",
+            "reason": reason,
+        },
+    )
 
 
 def _make_command_executor(session: ManagedSession):
@@ -971,7 +1178,125 @@ def _teammate_result_to_sse(
     return events
 
 
-def _private_chat_result_to_sse(result: PrivateChatResult) -> list[SSEEvent]:
+def _dialogue_npc_id_from_result(result: PipelineResult) -> str | None:
+    action_context = result.metadata.get("action_context")
+    if not isinstance(action_context, Mapping):
+        return None
+    npc_id = str(action_context.get("dialogue_npc_id") or "").strip()
+    return npc_id or None
+
+
+def _dialogue_options_unavailable_event(
+    npc_id: str | None,
+    *,
+    code: str,
+    message: str,
+) -> SSEEvent:
+    return SSEEvent(
+        event_type="dialogue_options_unavailable",
+        payload={
+            "npc_id": npc_id,
+            "code": code,
+            "message": message,
+            "recoverable": True,
+        },
+    )
+
+
+def _dialogue_option_dispatch(
+    npc_id: str,
+    option: dict[str, Any],
+    *,
+    action_dispatcher: Any = None,
+) -> dict[str, Any] | None:
+    check = option.get("check")
+    if isinstance(check, dict):
+        skill = str(check.get("skill") or "").strip()
+        dc = check.get("dc")
+        if skill and isinstance(dc, int):
+            return {
+                "kind": "action",
+                "payload": {
+                    "action_type": "skill_check",
+                    "params": {"skill": skill, "dc": dc},
+                    "context": {
+                        "dialogue_npc_id": npc_id,
+                        "interaction_type": "dialogue_option",
+                    },
+                },
+            }
+
+    action = str(option.get("action") or "").strip()
+    if action in {"leave", "farewell"}:
+        return {"kind": "local", "payload": {"action": "leave_dialogue"}}
+
+    intent = str(option.get("intent") or "").strip()
+    if intent == "browse":
+        return {
+            "kind": "interact",
+            "payload": {
+                "intent": "browse",
+                "target_kind": "npc",
+                "target_id": npc_id,
+            },
+        }
+    if intent == "farewell":
+        return {"kind": "local", "payload": {"action": "leave_dialogue"}}
+
+    item_id = str(option.get("item_id") or "").strip()
+    quest_id = str(option.get("quest_id") or "").strip()
+    count = option.get("count")
+    if intent in {"buy", "sell", "inspect_item"} and item_id:
+        payload: dict[str, Any] = {
+            "intent": intent,
+            "target_kind": "npc",
+            "target_id": npc_id,
+            "item_id": item_id,
+        }
+        if isinstance(count, int) and count > 0:
+            payload["count"] = count
+        return {"kind": "interact", "payload": payload}
+    if intent in {"ask_quest", "ask_progress", "ask_location", "ask_requirements", "ask_reward"} and quest_id:
+        return {
+            "kind": "interact",
+            "payload": {
+                "intent": intent,
+                "target_kind": "npc",
+                "target_id": npc_id,
+                "quest_id": quest_id,
+            },
+        }
+
+    return None
+
+
+def _serialize_dialogue_options(
+    npc_id: str,
+    options: list[dict[str, Any]],
+    *,
+    action_dispatcher: Any = None,
+) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for raw in options:
+        if not isinstance(raw, dict):
+            continue
+        entry = dict(raw)
+        dispatch = _dialogue_option_dispatch(
+            npc_id,
+            entry,
+            action_dispatcher=action_dispatcher,
+        )
+        if dispatch is not None:
+            entry["dispatch"] = dispatch
+        serialized.append(entry)
+    return serialized
+
+
+def _private_chat_result_to_sse(
+    result: PrivateChatResult,
+    *,
+    action_dispatcher: Any = None,
+) -> list[SSEEvent]:
     """Convert 4-step private chat result → ordered SSE events.
 
     Order: scene_change (optional) → NPC response → GM inner monologue
@@ -1004,12 +1329,23 @@ def _private_chat_result_to_sse(result: PrivateChatResult) -> list[SSEEvent]:
     if result.dialogue_options:
         events.append(SSEEvent(
             event_type="dialogue_options",
-            payload={"npc_id": result.npc_id, "options": result.dialogue_options},
+            payload={
+                "npc_id": result.npc_id,
+                "options": _serialize_dialogue_options(
+                    result.npc_id,
+                    result.dialogue_options,
+                    action_dispatcher=action_dispatcher,
+                ),
+            },
         ))
     return events
 
 
-def _interaction_result_to_sse(result: NpcInteractionResult) -> list[SSEEvent]:
+def _interaction_result_to_sse(
+    result: NpcInteractionResult,
+    *,
+    action_dispatcher: Any = None,
+) -> list[SSEEvent]:
     """Convert NpcInteractionResult (6-step pipeline) into ordered SSE events.
 
     Order: NPC response → GM observation → Teammate reactions → Dialogue options.
@@ -1032,7 +1368,14 @@ def _interaction_result_to_sse(result: NpcInteractionResult) -> list[SSEEvent]:
     if result.dialogue_options:
         events.append(SSEEvent(
             event_type="dialogue_options",
-            payload={"npc_id": result.npc_id, "options": result.dialogue_options},
+            payload={
+                "npc_id": result.npc_id,
+                "options": _serialize_dialogue_options(
+                    result.npc_id,
+                    result.dialogue_options,
+                    action_dispatcher=action_dispatcher,
+                ),
+            },
         ))
 
     return events

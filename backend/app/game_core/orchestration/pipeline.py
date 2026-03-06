@@ -120,6 +120,10 @@ class PipelineOrchestrator:
                 metadata={"status": "stub"},
             )
 
+        metadata = dict(ctx.execute_result.metadata)
+        if ctx.command is not None and isinstance(ctx.command.context, dict) and ctx.command.context:
+            metadata["action_context"] = dict(ctx.command.context)
+
         return PipelineResult(
             success=ctx.execute_result.success,
             commands=[ctx.command] if ctx.command is not None else [],
@@ -129,7 +133,7 @@ class PipelineOrchestrator:
             errors=list(ctx.execute_result.errors),
             narrative_hints=list(ctx.execute_result.narrative_hints),
             rolls=list(ctx.execute_result.rolls),
-            metadata={},
+            metadata=metadata,
         )
 
     def _hooks_for(self, extension_point: str) -> list[PipelineHook]:

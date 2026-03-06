@@ -181,6 +181,7 @@ class SkillCheckHandler(StaticCommandHandler):
             metadata={
                 "handler": "skill_check",
                 "command": cmd.type,
+                "skill": skill,
                 "passed": total >= dc,
                 "dc": dc,
                 "raw_roll": roll_result,
@@ -227,6 +228,7 @@ class SkillCheckHandler(StaticCommandHandler):
             metadata={
                 "handler": "skill_check",
                 "command": cmd.type,
+                "ability": ability,
                 "passed": total >= dc,
                 "dc": dc,
                 "raw_roll": roll_result,
@@ -297,6 +299,8 @@ class SkillCheckHandler(StaticCommandHandler):
             metadata={
                 "handler": "skill_check",
                 "command": cmd.type,
+                "actor_skill": actor_skill,
+                "target_skill": target_skill,
                 "winner": winner,
                 "actor_total": actor_total,
                 "target_total": target_total,

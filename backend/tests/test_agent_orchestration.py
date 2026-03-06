@@ -24,6 +24,7 @@ from app.game_core.content import WorldInstance
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.models import AgentResult, ToolResult
 from app.game_core.narrative.registry import RoleToolRegistry
+from app.game_core.orchestration.defaults import build_default_action_dispatcher
 from app.game_core.orchestration.models import PipelineResult
 from app.game_core.orchestration.shared_context import SharedContext
 from app.game_core.rules.models import Command
@@ -179,6 +180,24 @@ def _session_for_post_action_round() -> ManagedSession:
         session_id="test_post_action",
         runtime=runtime,
     )
+
+
+def _npc_speak_response(text: str = "Hello.") -> dict[str, Any]:
+    return {
+        "tool_calls": [{"name": "speak", "args": {"text": text}}],
+        "finish_reason": "tool_calls",
+    }
+
+
+def _gm_pass_turn_response() -> dict[str, Any]:
+    return {
+        "tool_calls": [{"name": "pass_turn", "args": {}}],
+        "finish_reason": "tool_calls",
+    }
+
+
+def _stop_response(text: str = "") -> dict[str, Any]:
+    return {"text": text, "tool_calls": [], "finish_reason": "stop"}
 
 
 def _build_service(
@@ -483,13 +502,7 @@ class TestNpcResponse:
     def test_generate_npc_response_calls_llm_with_npc_tools(self) -> None:
         # LLM returns a speak tool call, then stops
         service, llm = _build_service([
-            {
-                "tool_calls": [
-                    {"name": "speak", "args": {"text": "Welcome, friend!"}},
-                ],
-                "finish_reason": "tool_calls",
-            },
-            {"text": "", "tool_calls": [], "finish_reason": "stop"},
+            _npc_speak_response("Welcome, friend!"),
         ])
         session = _session_with_npc()
 
@@ -522,7 +535,7 @@ class TestNpcResponse:
 
     def test_generate_npc_response_writes_player_message_to_scene(self) -> None:
         service, _ = _build_service([
-            {"text": "", "tool_calls": [], "finish_reason": "stop"},
+            _npc_speak_response("Testing scene write acknowledged."),
         ])
         session = _session_with_npc()
 
@@ -538,16 +551,30 @@ class TestNpcResponse:
             for e in entries
         )
 
+    def test_generate_npc_response_text_only_returns_invalid_agent_response(self) -> None:
+        service, _ = _build_service([
+            _stop_response("I should have used speak."),
+        ])
+        session = _session_with_npc()
+
+        events = asyncio.run(service.generate_npc_response(
+            session=session,
+            npc_id="merchant_tom",
+            player_message="Hello",
+        ))
+
+        assert len(events) == 1
+        assert events[0].event_type == "npc_response_error"
+        assert events[0].payload["code"] == "invalid_agent_response"
+        assert events[0].payload["reason"] == "text_without_tool"
+
 
 class TestPostActionReactions:
     def test_gm_reaction_with_pass_produces_no_events(self) -> None:
         # LLM calls pass_turn
         service, _ = _build_service([
-            {
-                "tool_calls": [{"name": "pass_turn", "args": {}}],
-                "finish_reason": "tool_calls",
-            },
-            {"text": "", "tool_calls": [], "finish_reason": "stop"},
+            _gm_pass_turn_response(),
+            _stop_response(),
         ])
         session = _session_with_npc()
         pipeline_result = PipelineResult(
@@ -572,7 +599,7 @@ class TestPostActionReactions:
                 ],
                 "finish_reason": "tool_calls",
             },
-            {"text": "", "tool_calls": [], "finish_reason": "stop"},
+            _stop_response(),
         ])
         session = _session_with_npc()
         pipeline_result = PipelineResult(
@@ -592,7 +619,7 @@ class TestPostActionReactions:
     def test_no_teammates_produces_no_teammate_events(self) -> None:
         # GM does pass_turn, no teammates in party
         service, _ = _build_service([
-            {"text": "", "tool_calls": [], "finish_reason": "stop"},
+            _stop_response(),
         ])
         session = _session_with_npc()
         pipeline_result = PipelineResult(success=True, action_type="rest")
@@ -655,6 +682,65 @@ class TestPostActionReactions:
         assert any(entry["source"] == "GM" for entry in npc_scene)
         assert any(entry["content"] == "Merchant Tom eyes the movement." for entry in teammate_scene)
         assert any(entry["content"] == "Dust rolls across the market." for entry in teammate_scene)
+
+    def test_run_post_action_round_drops_protocol_error_reactions(self) -> None:
+        session = _session_for_post_action_round()
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+
+        class ProtocolErrorExecutor:
+            async def run_agentic(
+                self,
+                *,
+                role: str,
+                context: Any,
+                system_prompt: str,
+                user_message: str,
+                **_: Any,
+            ) -> AgentResult:
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                success=True,
+                                message="The square goes quiet for a beat.",
+                                metadata={"event_type": "gm_narration"},
+                            )
+                        ]
+                    )
+                return AgentResult(
+                    text="",
+                    tool_results=[],
+                    metadata={
+                        "status": "protocol_error",
+                        "reason": "text_without_tool",
+                        "tool_call_names": [],
+                        "text_present": True,
+                    },
+                )
+
+        service = AgentOrchestrationService(ProtocolErrorExecutor())  # type: ignore[arg-type]
+        pipeline_result = PipelineResult(
+            success=True,
+            action_type="move_area",
+            narrative_hints=["The player advances."],
+            time_cost=1 / 6,
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            events = asyncio.run(
+                service.run_post_action_round(
+                    shared,
+                    pipeline_result,
+                    session.runtime.tick_coordinator._apply_delta,
+                )
+            )
+
+        assert [event.event_type for event in events] == ["gm_narration"]
 
 
 class TestGracefulDegradation:
@@ -744,6 +830,249 @@ class TestInteractionResultToSSE:
         assert len(option_events) == 1
         assert option_events[0].payload["npc_id"] == "merchant_tom"
         assert len(option_events[0].payload["options"]) == 2
+
+    def test_dialogue_check_option_maps_to_action_dispatch(self) -> None:
+        from app.game_core.orchestration.npc_interaction import NpcInteractionResult
+
+        result = NpcInteractionResult(
+            success=True,
+            npc_id="merchant_tom",
+            dialogue_options=[
+                {"text": "安抚她", "check": {"skill": "persuasion", "dc": 12}},
+            ],
+        )
+
+        events = _interaction_result_to_sse(
+            result,
+            action_dispatcher=build_default_action_dispatcher(),
+        )
+
+        option_payload = [e for e in events if e.event_type == "dialogue_options"][0].payload["options"][0]
+        assert option_payload["dispatch"]["kind"] == "action"
+        assert option_payload["dispatch"]["payload"] == {
+            "action_type": "skill_check",
+            "params": {"skill": "persuasion", "dc": 12},
+            "context": {
+                "dialogue_npc_id": "merchant_tom",
+                "interaction_type": "dialogue_option",
+            },
+        }
+
+    def test_dialogue_context_forces_matching_npc_post_action_reaction(self) -> None:
+        world = build_default_world(
+            "test_world",
+            world_data={
+                "characters": {
+                    "merchant_tom": {
+                        "id": "merchant_tom",
+                        "name": "Merchant Tom",
+                        "personality": "A shrewd but fair merchant.",
+                        "tags": ["merchant"],
+                        "response_tendency": 1.0,
+                    },
+                    "guard_lee": {
+                        "id": "guard_lee",
+                        "name": "Guard Lee",
+                        "personality": "A watchful town guard.",
+                        "tags": ["guard"],
+                        "response_tendency": 1.0,
+                    },
+                },
+            },
+        )
+        runtime = build_runtime_for_world(world)
+        runtime.state.player.restore({
+            "character_name": "TestPlayer",
+            "character_class": "warrior",
+            "current_area": "town",
+            "current_location": "market",
+        })
+        runtime.state.areas.get_area("town").npc_locations["merchant_tom"] = "market"
+        runtime.state.areas.get_area("town").npc_locations["guard_lee"] = "market"
+        shared = SharedContext(
+            world=runtime.world,
+            state=runtime.state,
+            rules_engine=runtime.rules_engine,
+            scene_bus=runtime.scene_bus,
+        )
+
+        class TargetedNpcExecutor:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, Any]] = []
+
+            async def run_agentic(
+                self,
+                *,
+                role: str,
+                context: Any,
+                system_prompt: str = "",
+                **_: Any,
+            ) -> AgentResult:
+                character_id = context.metadata.get("character_id")
+                self.calls.append({
+                    "role": role,
+                    "character_id": character_id,
+                    "system_prompt": system_prompt,
+                })
+                if role == "gm":
+                    if "next actionable player dialogue options" in system_prompt:
+                        return AgentResult(
+                            tool_results=[
+                                ToolResult(
+                                    success=True,
+                                    message="2 options generated.",
+                                    metadata={
+                                        "tool": "suggest_options",
+                                        "options": [
+                                            {"text": "继续追问细节"},
+                                            {"text": "作势离开", "action": "leave"},
+                                        ],
+                                    },
+                                )
+                            ]
+                        )
+                    return AgentResult()
+                if role == "npc":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                success=True,
+                                message=f"{character_id} reacts",
+                                metadata={"event_type": "speech"},
+                            )
+                        ]
+                    )
+                return AgentResult()
+
+        executor = TargetedNpcExecutor()
+        service = AgentOrchestrationService(executor)  # type: ignore[arg-type]
+        result = PipelineResult(
+            success=True,
+            action_type="skill_check",
+            time_cost=1 / 6,
+            metadata={
+                "action_context": {
+                    "dialogue_npc_id": "merchant_tom",
+                    "interaction_type": "dialogue_option",
+                }
+            },
+        )
+
+        events = asyncio.run(
+            service.run_post_action_round(
+                shared,
+                result,
+                runtime.tick_coordinator._apply_delta,
+            )
+        )
+
+        npc_calls = [call for call in executor.calls if call["role"] == "npc"]
+        assert len(npc_calls) == 1
+        assert npc_calls[0]["character_id"] == "merchant_tom"
+        npc_events = [event for event in events if event.event_type == "npc_response"]
+        assert len(npc_events) == 1
+        assert npc_events[0].payload["npc_id"] == "merchant_tom"
+        option_events = [event for event in events if event.event_type == "dialogue_options"]
+        assert len(option_events) == 1
+        assert option_events[0].payload["npc_id"] == "merchant_tom"
+        assert option_events[0].payload["options"]
+        assert any("dispatch" in option for option in option_events[0].payload["options"])
+        unavailable_events = [
+            event for event in events if event.event_type == "dialogue_options_unavailable"
+        ]
+        assert unavailable_events == []
+
+    def test_dialogue_follow_up_emits_unavailable_when_agent_returns_no_options(self) -> None:
+        world = build_default_world(
+            "test_world",
+            world_data={
+                "characters": {
+                    "merchant_tom": {
+                        "id": "merchant_tom",
+                        "name": "Merchant Tom",
+                        "personality": "A shrewd but fair merchant.",
+                        "tags": ["merchant"],
+                        "response_tendency": 1.0,
+                    },
+                },
+            },
+        )
+        runtime = build_runtime_for_world(world)
+        runtime.state.player.restore({
+            "character_name": "TestPlayer",
+            "character_class": "warrior",
+            "current_area": "town",
+            "current_location": "market",
+        })
+        runtime.state.areas.get_area("town").npc_locations["merchant_tom"] = "market"
+        shared = SharedContext(
+            world=runtime.world,
+            state=runtime.state,
+            rules_engine=runtime.rules_engine,
+            scene_bus=runtime.scene_bus,
+        )
+
+        class NoOptionsExecutor:
+            async def run_agentic(self, *, role: str, context: Any, **_: Any) -> AgentResult:
+                if role == "npc":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                success=True,
+                                message="merchant_tom reacts",
+                                metadata={"event_type": "speech"},
+                            )
+                        ]
+                    )
+                return AgentResult()
+
+        service = AgentOrchestrationService(NoOptionsExecutor())  # type: ignore[arg-type]
+        result = PipelineResult(
+            success=True,
+            action_type="skill_check",
+            time_cost=1 / 6,
+            metadata={
+                "action_context": {
+                    "dialogue_npc_id": "merchant_tom",
+                    "interaction_type": "dialogue_option",
+                }
+            },
+        )
+
+        events = asyncio.run(
+            service.run_post_action_round(
+                shared,
+                result,
+                runtime.tick_coordinator._apply_delta,
+            )
+        )
+
+        option_events = [event for event in events if event.event_type == "dialogue_options"]
+        assert option_events == []
+        unavailable_events = [
+            event for event in events if event.event_type == "dialogue_options_unavailable"
+        ]
+        assert len(unavailable_events) == 1
+        assert unavailable_events[0].payload["npc_id"] == "merchant_tom"
+        assert unavailable_events[0].payload["code"] == "empty_options"
+        assert unavailable_events[0].payload["recoverable"] is True
+
+    def test_farewell_option_maps_to_local_dispatch(self) -> None:
+        from app.game_core.orchestration.npc_interaction import NpcInteractionResult
+
+        result = NpcInteractionResult(
+            success=True,
+            npc_id="merchant_tom",
+            dialogue_options=[
+                {"text": "告别", "intent": "farewell"},
+            ],
+        )
+
+        events = _interaction_result_to_sse(result)
+
+        option_payload = [e for e in events if e.event_type == "dialogue_options"][0].payload["options"][0]
+        assert option_payload["dispatch"]["kind"] == "local"
+        assert option_payload["dispatch"]["payload"] == {"action": "leave_dialogue"}
 
     def test_empty_result_produces_only_options(self) -> None:
         from app.game_core.orchestration.npc_interaction import NpcInteractionResult
@@ -838,14 +1167,8 @@ class TestInteractionResultToSSE:
 class TestRunNpcInteraction:
     def test_run_npc_interaction_produces_sse(self) -> None:
         service, llm = _build_service([
-            {
-                "tool_calls": [{"name": "speak", "args": {"text": "Hello traveler!"}}],
-                "finish_reason": "tool_calls",
-            },
-            {"text": "", "finish_reason": "stop"},
-            # GM
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Hello traveler!"),
+            _stop_response(),
         ])
         session = _session_with_npc()
 
@@ -874,8 +1197,8 @@ class TestRunNpcInteraction:
 
     def test_run_npc_interaction_always_has_dialogue_options(self) -> None:
         service, _ = _build_service([
-            {"text": "", "finish_reason": "stop"},
-            {"text": "", "finish_reason": "stop"},
+            _npc_speak_response("Hi."),
+            _stop_response(),
         ])
         session = _session_with_npc()
 
@@ -887,3 +1210,39 @@ class TestRunNpcInteraction:
 
         option_events = [e for e in events if e.event_type == "dialogue_options"]
         assert len(option_events) == 1
+
+    def test_run_npc_interaction_invalid_agent_response_maps_to_npc_response_error(self) -> None:
+        service, _ = _build_service([
+            _stop_response("I should have used speak."),
+        ])
+        session = _session_with_npc()
+
+        events = asyncio.run(service.run_npc_interaction(
+            session=session,
+            npc_id="merchant_tom",
+            player_message="Hello",
+        ))
+
+        assert len(events) == 1
+        assert events[0].event_type == "npc_response_error"
+        assert events[0].payload["code"] == "invalid_agent_response"
+        assert events[0].payload["reason"] == "text_without_tool"
+
+
+class TestRunPrivateChat:
+    def test_run_private_chat_invalid_agent_response_maps_to_npc_response_error(self) -> None:
+        service, _ = _build_service([
+            _stop_response("I should have used speak."),
+        ])
+        session = _session_with_npc()
+
+        events = asyncio.run(service.run_private_chat(
+            session=session,
+            npc_id="merchant_tom",
+            player_message="Can we speak in private?",
+        ))
+
+        assert len(events) == 1
+        assert events[0].event_type == "npc_response_error"
+        assert events[0].payload["code"] == "invalid_agent_response"
+        assert events[0].payload["reason"] == "text_without_tool"

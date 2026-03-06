@@ -113,6 +113,17 @@ def _noop_executor(command: Command) -> ExecuteResult:
     return ExecuteResult(success=True)
 
 
+def _npc_speak_response(text: str = "Hello.") -> dict[str, Any]:
+    return {
+        "tool_calls": [{"name": "speak", "args": {"text": text}}],
+        "finish_reason": "tool_calls",
+    }
+
+
+def _stop_response(text: str = "") -> dict[str, Any]:
+    return {"text": text, "finish_reason": "stop"}
+
+
 def _build_coordinator(
     llm_responses: list[dict[str, Any]] | None = None,
     world: WorldInstance | None = None,
@@ -220,7 +231,7 @@ class TestPrivateChatCoordinator:
         world = _world_with_characters()
         state = _state_with_relations(world)
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("当然，我们私下谈。")],
             world=world, state=state,
         )
 
@@ -240,7 +251,7 @@ class TestPrivateChatCoordinator:
         world = _world_with_characters()
         state = _state_with_relations(world)
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("没人会听见。")],
             world=world, state=state,
         )
 
@@ -287,7 +298,7 @@ class TestPrivateChatCoordinator:
     def test_result_has_no_gm_or_teammate_fields(self) -> None:
         """PrivateChatResult must not have gm_result or teammate_results."""
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("说吧。")],
         )
         result = asyncio.run(coordinator.execute(
             npc_id="merchant_tom",
@@ -302,7 +313,7 @@ class TestPrivateChatCoordinator:
     def test_dialogue_options_present(self) -> None:
         """Dialogue options must include at least 'talk' and 'farewell'."""
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("我在听。")],
         )
         result = asyncio.run(coordinator.execute(
             npc_id="merchant_tom",
@@ -317,7 +328,7 @@ class TestPrivateChatCoordinator:
     def test_context_window_updated_after_interaction(self) -> None:
         """Passing a ContextWindow → it should contain 2 new messages after execute."""
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("Testing window update acknowledged.")],
         )
         instance = NPCInstance(
             actor_id="merchant_tom",
@@ -337,7 +348,7 @@ class TestPrivateChatCoordinator:
     def test_overflow_populates_graphize_candidates(self) -> None:
         """Tiny max_tokens forces overflow → graphize_candidates non-empty."""
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("overflow acknowledged")],
         )
         # max_tokens=1 will overflow immediately
         instance = NPCInstance(
@@ -358,7 +369,7 @@ class TestPrivateChatCoordinator:
         world = _world_with_characters()
         state = _state_with_relations(world)
         coordinator, llm = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("The hidden cellar stays quiet.")],
             world=world,
             state=state,
         )
@@ -390,7 +401,7 @@ class TestPrivateChatCoordinator:
     def test_time_cost_is_one_sixth(self) -> None:
         """Private chat time cost must equal 1/6."""
         coordinator, _ = _build_coordinator(
-            llm_responses=[{"text": "", "finish_reason": "stop"}],
+            llm_responses=[_npc_speak_response("Quick answer.")],
         )
         result = asyncio.run(coordinator.execute(
             npc_id="merchant_tom",
@@ -399,6 +410,21 @@ class TestPrivateChatCoordinator:
         ))
 
         assert abs(result.time_cost - (1 / 6)) < 1e-9
+
+    def test_text_only_npc_response_is_invalid_agent_response(self) -> None:
+        coordinator, _ = _build_coordinator(
+            llm_responses=[_stop_response("I should have used speak.")],
+        )
+
+        result = asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Hello",
+            execute_command=_noop_executor,
+        ))
+
+        assert result.success is False
+        assert result.error == "invalid_agent_response"
+        assert result.error_reason == "text_without_tool"
 
 
 # ------------------------------------------------------------------

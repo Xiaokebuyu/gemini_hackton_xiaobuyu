@@ -47,6 +47,11 @@ class NarrativePlannerHook(NoOpSettlementHook):
     HOOK_PRIORITY = 35
     HOOK_NAME = "narrative_planner"
     FALLBACK_INTERVAL = 6
+    _BOOTSTRAP_DIRECTIVES = {
+        "create_quest",
+        "direct_npc",
+        "publish_bulletin",
+    }
 
     _TRIGGER_SLICES = {
         "flags",
@@ -75,6 +80,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         instance_manager: InstanceManager | None = None,
     ) -> None:
         self.planner = planner or NarrativePlanner()
+        self._bootstrap_planner = NarrativePlanner()
         self._instance_manager = instance_manager
 
     def should_skip(self, change_log: list[StateChange]) -> bool:
@@ -138,26 +144,18 @@ class NarrativePlannerHook(NoOpSettlementHook):
             )
 
         decision = self._normalize_decision(raw_decision)
-        requested_count = len(decision.directives)
-        applied_count = 0
-        skipped_unsupported_count = 0
-        skipped_invalid_count = 0
-        applied_kinds: list[str] = []
-
-        for raw_directive in decision.directives:
-            normalized = self._normalize_directive(raw_directive)
-            if normalized is None:
-                skipped_invalid_count += 1
-                continue
-            kind, payload = normalized
-            if kind not in self._SUPPORTED_DIRECTIVES:
-                skipped_unsupported_count += 1
-                continue
-            if not self._apply_directive(kind, payload, context, current_tick=current_tick):
-                skipped_invalid_count += 1
-                continue
-            applied_count += 1
-            applied_kinds.append(kind)
+        (
+            requested_count,
+            applied_count,
+            skipped_unsupported_count,
+            skipped_invalid_count,
+            applied_kinds,
+        ) = self._apply_normalized_decision(
+            decision,
+            context,
+            current_tick=current_tick,
+            allowed_directives=self._SUPPORTED_DIRECTIVES,
+        )
 
         milestone_progressed = any(
             change.slice == "quests" and change.path.startswith("milestone_states.")
@@ -233,6 +231,81 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "reason": reason,
                 "current_tick": current_tick,
                 "ticks_since_last_run": ticks_since_last_run,
+                "requested_count": requested_count,
+                "applied_count": applied_count,
+                "skipped_unsupported_count": skipped_unsupported_count,
+                "skipped_invalid_count": skipped_invalid_count,
+                "applied_kinds": applied_kinds,
+                "planner_metadata": dict(decision.metadata),
+            },
+        )
+
+    async def bootstrap(self, context: SettlementContext) -> HookResult:
+        """Seed opening quests without advancing normal planner bookkeeping."""
+        if not context.state.has_slice("narrative_plan"):
+            return HookResult(metadata=self._noop_metadata(reason="missing_slice"))
+        if not context.state.has_slice("quests"):
+            return HookResult(metadata=self._noop_metadata(reason="missing_slice"))
+        if not context.state.has_slice("time"):
+            return HookResult(metadata=self._noop_metadata(reason="missing_slice"))
+
+        current_tick = context.state.time.absolute_tick()
+        planner_context = self._build_planner_context(context, current_tick=current_tick)
+        try:
+            decision = self._bootstrap_decision(planner_context)
+        except Exception as exc:
+            logger.exception(
+                "hook failed: narrative_planner_bootstrap",
+                extra={
+                    "hook_name": "narrative_planner_bootstrap",
+                    "current_tick": current_tick,
+                },
+            )
+            return HookResult(
+                sse_events=[
+                    SSEEvent(
+                        event_type="hook_error",
+                        payload={
+                            "hook": "narrative_planner_bootstrap",
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
+                ],
+                metadata={
+                    "status": "planner_error",
+                    "evaluated": False,
+                    "reason": "bootstrap",
+                    "current_tick": current_tick,
+                    "requested_count": 0,
+                    "applied_count": 0,
+                    "skipped_unsupported_count": 0,
+                    "skipped_invalid_count": 0,
+                    "applied_kinds": [],
+                    "planner_metadata": {},
+                },
+            )
+
+        (
+            requested_count,
+            applied_count,
+            skipped_unsupported_count,
+            skipped_invalid_count,
+            applied_kinds,
+        ) = self._apply_normalized_decision(
+            decision,
+            context,
+            current_tick=current_tick,
+            allowed_directives=self._BOOTSTRAP_DIRECTIVES,
+        )
+        if applied_count > 0 and decision.strategy_notes:
+            context.state.narrative_plan.set_strategy(decision.strategy_notes)
+        return HookResult(
+            metadata={
+                "status": "updated" if applied_count > 0 else "noop",
+                "evaluated": True,
+                "reason": "bootstrap",
+                "current_tick": current_tick,
                 "requested_count": requested_count,
                 "applied_count": applied_count,
                 "skipped_unsupported_count": skipped_unsupported_count,
@@ -351,6 +424,56 @@ class NarrativePlannerHook(NoOpSettlementHook):
             },
             "target_milestone_detail": self._build_target_milestone_detail(context),
         }
+
+    def _bootstrap_decision(self, planner_context: dict[str, Any]) -> NarrativePlannerDecision:
+        normalized = self._bootstrap_planner._normalize_context(planner_context)
+        if normalized is None:
+            return self._normalize_decision(
+                self._bootstrap_planner._noop(current_tick=0, reason="invalid_context")
+            )
+        raw = self._bootstrap_planner._try_seed_quest(normalized)
+        if raw is None:
+            raw = self._bootstrap_planner._noop(
+                current_tick=normalized["current_tick"],
+                reason="bootstrap_stable",
+            )
+        return self._normalize_decision(raw)
+
+    def _apply_normalized_decision(
+        self,
+        decision: NarrativePlannerDecision,
+        context: SettlementContext,
+        *,
+        current_tick: int,
+        allowed_directives: set[str],
+    ) -> tuple[int, int, int, int, list[str]]:
+        requested_count = len(decision.directives)
+        applied_count = 0
+        skipped_unsupported_count = 0
+        skipped_invalid_count = 0
+        applied_kinds: list[str] = []
+
+        for raw_directive in decision.directives:
+            normalized = self._normalize_directive(raw_directive)
+            if normalized is None:
+                skipped_invalid_count += 1
+                continue
+            kind, payload = normalized
+            if kind not in allowed_directives:
+                skipped_unsupported_count += 1
+                continue
+            if not self._apply_directive(kind, payload, context, current_tick=current_tick):
+                skipped_invalid_count += 1
+                continue
+            applied_count += 1
+            applied_kinds.append(kind)
+        return (
+            requested_count,
+            applied_count,
+            skipped_unsupported_count,
+            skipped_invalid_count,
+            applied_kinds,
+        )
 
     def _build_target_milestone_detail(
         self, context: SettlementContext,

@@ -6,11 +6,18 @@ import type { InventoryItem, InventoryPanelData } from '../../types/api'
 
 const SLOT_LABELS: [string, string][] = [
   ['head', '头'],
-  ['body', '身'],
-  ['hands', '手'],
-  ['feet', '脚'],
-  ['main_hand', '主'],
-  ['off_hand', '副'],
+  ['chest', '胸'],
+  ['gloves', '手'],
+  ['boots', '脚'],
+  ['cloak', '披'],
+  ['amulet', '坠'],
+  ['ring_l', '戒L'],
+  ['ring_r', '戒R'],
+  ['main_hand', '主手'],
+  ['off_hand', '副手'],
+  ['ranged', '远程'],
+  ['ammo', '弹药'],
+  ['belt', '腰带'],
 ]
 
 function itemName(item: InventoryItem): string {
@@ -56,7 +63,6 @@ export default function InventoryPanel() {
           <div className="p-5 space-y-4">
             <p className="text-yellow-400 text-sm">💰 {data.gold}G</p>
 
-            {/* 装备槽 */}
             <div>
               <p className="text-gray-500 text-xs mb-1.5">── 已装备 ──</p>
               <div className="grid grid-cols-2 gap-1 text-sm">
@@ -74,7 +80,6 @@ export default function InventoryPanel() {
               </div>
             </div>
 
-            {/* 物品列表 */}
             {data.inventory.length > 0 && (
               <div>
                 <p className="text-gray-500 text-xs mb-1.5">── 背包物品 ──</p>
