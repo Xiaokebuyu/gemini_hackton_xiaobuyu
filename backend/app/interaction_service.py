@@ -18,8 +18,6 @@ from app.game_core.orchestration.models import PipelineResult
 from app.game_core.rules import Command
 from app.game_core.state import StateContainer
 from app.interaction_views import (
-    build_board_entries,
-    build_board_snapshot_payload,
     build_inspect_item_payload,
     build_quest_brief_payload,
     build_quest_location_payload,
@@ -54,7 +52,6 @@ class InteractionViewContext:
 
     current_area: str
     current_location: str | None
-    area_sub_locations: dict[str, list[str]]
     npc_positions: dict[str, tuple[str | None, str | None]]
     npc_names: dict[str, str]
     relationship_stages: dict[str, str]
@@ -63,7 +60,7 @@ class InteractionViewContext:
     shop_states: dict[str, dict[str, Any]]
     dynamic_quests: dict[str, dict[str, Any]]
     milestone_states: dict[str, Any]
-    active_bulletins: list[dict[str, Any]]
+    board_quest_metadata: dict[str, dict[str, Any]]
     player_gold: int
     player_inventory: list[dict[str, Any]]
     item_catalog: dict[str, dict[str, Any]]
@@ -89,19 +86,6 @@ def build_interaction_view_context(
     current_area = (player.current_area or "").strip()
     current_location_text = (player.current_location or "").strip()
     current_location = current_location_text or None
-
-    area_sub_locations: dict[str, list[str]] = {}
-    if world.has_registry("maps"):
-        for raw_area in world.maps.list_all():
-            area_id = raw_area.id.strip() if raw_area.id else ""
-            if not area_id:
-                continue
-            sub_location_ids: list[str] = []
-            for raw_key in raw_area.sub_locations.keys():
-                sub_location_id = str(raw_key).strip()
-                if sub_location_id:
-                    sub_location_ids.append(sub_location_id)
-            area_sub_locations[area_id] = sub_location_ids
 
     npc_positions: dict[str, tuple[str | None, str | None]] = {}
     for raw_area_id, area in state.areas.areas.items():
@@ -186,11 +170,6 @@ def build_interaction_view_context(
         if milestone_id.strip() and normalized_state:
             milestone_states[milestone_id.strip()] = normalized_state
 
-    active_bulletins = [
-        dict(item) for item in state.narrative_plan.active_bulletins
-        if isinstance(item, Mapping)
-    ]
-
     player_gold = player.gold
 
     player_inventory: list[dict[str, Any]] = []
@@ -214,10 +193,28 @@ def build_interaction_view_context(
                     continue
                 item_catalog[item_id] = _dataclasses.asdict(raw_item)
 
+    board_quest_metadata: dict[str, dict[str, Any]] = {}
+    if state.has_slice("areas"):
+        for area_state in state.areas.areas.values():
+            for raw_entries in area_state.board_bulletins.values():
+                if not isinstance(raw_entries, list):
+                    continue
+                for raw_entry in raw_entries:
+                    if not isinstance(raw_entry, Mapping):
+                        continue
+                    quest_id = str(raw_entry.get("quest_id", "")).strip()
+                    if not quest_id:
+                        continue
+                    raw_metadata = raw_entry.get("metadata")
+                    if isinstance(raw_metadata, Mapping):
+                        board_quest_metadata[quest_id] = {
+                            str(meta_key): meta_value
+                            for meta_key, meta_value in raw_metadata.items()
+                        }
+
     return InteractionViewContext(
         current_area=current_area,
         current_location=current_location,
-        area_sub_locations=area_sub_locations,
         npc_positions=npc_positions,
         npc_names=npc_names,
         relationship_stages=relationship_stages,
@@ -226,7 +223,7 @@ def build_interaction_view_context(
         shop_states=shop_states,
         dynamic_quests=dynamic_quests,
         milestone_states=milestone_states,
-        active_bulletins=active_bulletins,
+        board_quest_metadata=board_quest_metadata,
         player_gold=player_gold,
         player_inventory=player_inventory,
         item_catalog=item_catalog,
@@ -246,7 +243,6 @@ class InteractionService:
         self._execute_structured_action = execute_structured_action
         self._snapshot_builders = {
             "talk": ("talk_snapshot", _build_talk_snapshot),
-            "board": ("board_snapshot", _build_board_snapshot),
             "inspect_item": ("inspect_item", _build_inspect_item_snapshot),
             "quest_brief": ("quest_brief", _build_quest_brief_snapshot),
             "quest_progress": ("quest_progress", _build_quest_progress_snapshot),
@@ -259,7 +255,6 @@ class InteractionService:
         }
         self._post_snapshot_builders = {
             "shop": ("shop_snapshot", _build_shop_snapshot),
-            "board": ("board_snapshot", _build_board_snapshot),
             "talk": ("talk_snapshot", _build_talk_snapshot),
         }
 
@@ -289,28 +284,39 @@ class InteractionService:
         state = session.runtime.state
         world = session.runtime.world
         policy_ctx = build_interaction_policy_context(state, world)
-        presence_issue = validate_presence(policy_ctx, target_kind, target_id, intent)
-        if presence_issue is not None:
-            return InteractionExecutionResult(
-                success=False,
-                reason="interaction_rejected",
-                events=[_interaction_rejected_event(normalized_map, issue=presence_issue)],
+
+        # Party-level chat bypasses NPC presence / precondition checks
+        if target_kind != "party":
+            presence_issue = validate_presence(policy_ctx, target_kind, target_id, intent)
+            if presence_issue is not None:
+                return InteractionExecutionResult(
+                    success=False,
+                    reason="interaction_rejected",
+                    events=[_interaction_rejected_event(normalized_map, issue=presence_issue)],
+                )
+            precheck_issue = validate_preconditions(
+                policy_ctx, target_kind, target_id, intent, quest_id,
             )
-        precheck_issue = validate_preconditions(
-            policy_ctx, target_kind, target_id, intent, quest_id,
-        )
-        if precheck_issue is not None:
-            return InteractionExecutionResult(
-                success=False,
-                reason="interaction_rejected",
-                events=[_interaction_rejected_event(normalized_map, issue=precheck_issue)],
-            )
+            if precheck_issue is not None:
+                return InteractionExecutionResult(
+                    success=False,
+                    reason="interaction_rejected",
+                    events=[_interaction_rejected_event(normalized_map, issue=precheck_issue)],
+                )
 
         resolved_event = _interaction_resolved_event(normalized_map)
         execution = normalized_map.get("execution", {})
         execution_map = execution if isinstance(execution, Mapping) else {}
         execution_kind = _normalized_text(execution_map.get("kind"))
 
+        if execution_kind == "party_chat":
+            # Free chat with party — no pipeline execution needed.
+            # The streaming endpoint will handle agent orchestration.
+            return InteractionExecutionResult(
+                success=True,
+                reason="completed",
+                events=[resolved_event],
+            )
         if execution_kind == "snapshot":
             view_ctx = build_interaction_view_context(state, world)
             return self._execute_snapshot(view_ctx, normalized_map, execution_map, resolved_event)
@@ -548,13 +554,6 @@ def _build_shop_snapshot(
 ) -> dict[str, Any]:
     del quest_id, item_id
     return build_shop_snapshot_payload(context, target_id)
-
-
-def _build_board_snapshot(
-    context: InteractionViewContext, target_id: str, quest_id: str, item_id: str,
-) -> dict[str, Any]:
-    del quest_id, item_id
-    return build_board_snapshot_payload(context, target_id)
 
 
 def _build_quest_brief_snapshot(

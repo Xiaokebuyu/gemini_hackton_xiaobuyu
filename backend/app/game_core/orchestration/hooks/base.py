@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from app.game_core.orchestration.models import HookResult
 from app.game_core.orchestration.settlement import SettlementContext
@@ -26,8 +27,13 @@ class SettlementHook(ABC):
     async def execute(self, context: SettlementContext) -> HookResult:
         """Run hook logic."""
 
-    def should_skip(self, change_log: list[StateChange]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[StateChange],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
         del change_log
+        del action_log
         return False
 
 

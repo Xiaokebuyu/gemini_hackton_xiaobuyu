@@ -88,12 +88,35 @@ def _clear_opening_bootstrap(runtime: GameRuntime, session_id: str) -> None:
     assert session is not None
     session.runtime.state.quests.dynamic_quests = {}
     session.runtime.state.quests._dirty = True
-    session.runtime.state.narrative_plan.active_bulletins = []
     session.runtime.state.narrative_plan.npc_directives = []
     session.runtime.state.narrative_plan.quest_history = []
     session.runtime.state.narrative_plan.strategy_notes = ""
     session.runtime.state.narrative_plan._dirty = True
+    if session.runtime.state.has_slice("areas"):
+        for area_state in session.runtime.state.areas.areas.values():
+            area_state.board_bulletins = {}
+        session.runtime.state.areas._dirty = True
     asyncio.run(_save_session(session))
+
+
+def _latest_board_title(session) -> str | None:
+    player_area = session.runtime.state.player.current_area
+    if not player_area:
+        return None
+    if not session.runtime.state.has_slice("areas"):
+        return None
+    area_state = session.runtime.state.areas.areas.get(player_area)
+    if area_state is None:
+        return None
+    all_bulletins: list[dict] = []
+    for entries in area_state.board_bulletins.values():
+        for bulletin in entries:
+            if isinstance(bulletin, dict):
+                all_bulletins.append(bulletin)
+    if not all_bulletins:
+        return None
+    latest = all_bulletins[-1]
+    return str(latest.get("title", "") or "").strip() or None
 
 
 async def _load_session(session_id: str):
@@ -165,6 +188,9 @@ def test_session_create_resume_list_and_delete_flow(monkeypatch) -> None:
     assert resumed_payload["scene"]["area_id"] == ""
     assert resumed_payload["location_visual"]["background_key"] == ""
     assert resumed_payload["player"]["character_name"] == ""
+    assert "day" in resumed_payload["player"]
+    assert "slot" in resumed_payload["player"]
+    assert "period" in resumed_payload["player"]
     assert missing_resume.status_code == 404
     assert missing_resume.json()["detail"]["code"] == "session_not_found"
     assert deleted.status_code == 204
@@ -208,6 +234,9 @@ def test_character_creation_options_and_character_flow(monkeypatch) -> None:
     assert created_payload["player"]["character_name"] == "调试者"
     assert created_payload["player"]["character_class"] == "fighter"
     assert created_payload["player"]["current_area"] == "guild_hall"
+    assert "day" in created_payload["player"]
+    assert "slot" in created_payload["player"]
+    assert "period" in created_payload["player"]
     assert invalid.status_code == 400
     assert invalid.json()["detail"]["code"] == "invalid_character_creation"
 
@@ -243,7 +272,7 @@ def test_inventory_map_and_quest_panels_after_character_creation(monkeypatch) ->
     session = asyncio.run(_load_session(session_id))
     assert session is not None
     assert session.runtime.state.narrative_plan.last_run_tick == 0
-    assert session.runtime.state.narrative_plan.active_bulletins[-1]["title"] == "New Lead Posted"
+    assert _latest_board_title(session) == "New Lead Posted"
     assert session.runtime.state.time.accumulated == 0.0
 
 
@@ -259,7 +288,6 @@ def test_opening_stream_bootstraps_legacy_session_and_mentions_seeded_quest(monk
         assert session is not None
         session.runtime.state.quests.dynamic_quests = {}
         session.runtime.state.quests._dirty = True
-        session.runtime.state.narrative_plan.active_bulletins = []
         session.runtime.state.narrative_plan.npc_directives = []
         session.runtime.state.narrative_plan._dirty = True
         asyncio.run(_save_session(session))
@@ -278,7 +306,7 @@ def test_opening_stream_bootstraps_legacy_session_and_mentions_seeded_quest(monk
     session = asyncio.run(_load_session(session_id))
     assert session is not None
     assert "dq_report_in" in session.runtime.state.quests.dynamic_quests
-    assert session.runtime.state.narrative_plan.active_bulletins[-1]["title"] == "New Lead Posted"
+    assert _latest_board_title(session) == "New Lead Posted"
     assert session.phase == "active"
 
 
@@ -969,386 +997,6 @@ def test_interact_stream_executes_minimal_shop_flow(monkeypatch) -> None:
     assert "event: action_result" not in npc_not_present.text
 
 
-def test_interact_stream_executes_minimal_quest_board_flow(monkeypatch) -> None:
-    runtime = _runtime()
-    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
-
-    with TestClient(api_main.app) as client:
-        session_id = _create_session(client)
-        _create_character(client, session_id)
-        _clear_opening_bootstrap(runtime, session_id)
-
-        board_not_present = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={"target_kind": "board", "target_id": "board", "intent": "browse"},
-        )
-
-        session = asyncio.run(_load_session(session_id))
-        assert session is not None
-        session.runtime.state.player.apply_state_change(
-            StateChange("player", "set", "current_location", "board")
-        )
-        asyncio.run(_save_session(session))
-
-        empty_board = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={"target_kind": "board", "target_id": "board", "intent": "browse"},
-        )
-        session.runtime.state.quests.add_dynamic_quest(
-            "dq_report_in",
-            {
-                "status": "available",
-                "title": "Lead: Report In",
-                "summary": "Follow the new lead tied to report_in.",
-            },
-        )
-        session.runtime.state.narrative_plan.add_bulletin(
-            {
-                "board_id": "board",
-                "title": "New Lead Posted",
-                "content": "A fresh lead is available: Report In.",
-                "metadata": {"quest_id": "dq_report_in"},
-                "published_at_tick": 9,
-                "source": "test",
-            }
-        )
-        asyncio.run(_save_session(session))
-        seeded_board = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={"target_kind": "board", "target_id": "board", "intent": "browse"},
-        )
-        accept = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "quest_id": "dq_report_in",
-            },
-        )
-        missing_quest = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-            },
-        )
-        invalid_state = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "quest_id": "dq_report_in",
-            },
-        )
-        session = asyncio.run(_load_session(session_id))
-        assert session is not None
-        session.runtime.state.narrative_plan.add_bulletin(
-            {
-                "board_id": "board",
-                "title": "Detached Lead",
-                "content": "This lead has no runtime quest backing.",
-                "metadata": {"quest_id": "dq_detached"},
-                "published_at_tick": 11,
-                "source": "test",
-            }
-        )
-        asyncio.run(_save_session(session))
-        missing_dynamic = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "quest_id": "dq_detached",
-            },
-        )
-        quest_not_listed = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "quest_id": "dq_missing",
-            },
-        )
-        invalid_target_kind = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "campfire",
-                "target_id": "camp",
-                "intent": "browse",
-            },
-        )
-
-    assert board_not_present.status_code == 200
-    assert "event: interaction_rejected" in board_not_present.text
-    assert '\"code\":\"board_not_present\"' in board_not_present.text
-    assert "event: board_snapshot" not in board_not_present.text
-
-    assert empty_board.status_code == 200
-    assert "event: interaction_resolved" in empty_board.text
-    assert "event: board_snapshot" in empty_board.text
-    assert '\"target_kind\":\"board\"' in empty_board.text
-    assert '\"target_id\":\"board\"' in empty_board.text
-    assert '\"entries\":[]' in empty_board.text
-    assert "event: action_result" not in empty_board.text
-
-    assert seeded_board.status_code == 200
-    assert "event: interaction_resolved" in seeded_board.text
-    assert "event: board_snapshot" in seeded_board.text
-    assert '\"quest_id\":\"dq_report_in\"' in seeded_board.text
-    assert '\"quest_status\":\"available\"' in seeded_board.text
-    assert "event: action_result" not in seeded_board.text
-
-    assert accept.status_code == 200
-    assert "event: interaction_resolved" in accept.text
-    assert "event: action_result" in accept.text
-    assert '\"action_type\":\"advance_quest\"' in accept.text
-    assert "event: board_snapshot" in accept.text
-    assert '\"quest_id\":\"dq_report_in\"' in accept.text
-    assert '\"quest_status\":\"active\"' in accept.text
-    assert "event: stream_end" in accept.text
-
-    assert missing_quest.status_code == 200
-    assert "event: interaction_rejected" in missing_quest.text
-    assert '\"code\":\"missing_quest\"' in missing_quest.text
-    assert "event: interaction_resolved" not in missing_quest.text
-    assert "event: action_result" not in missing_quest.text
-
-    assert invalid_state.status_code == 200
-    assert "event: interaction_rejected" in invalid_state.text
-    assert '\"code\":\"interaction_failed\"' in invalid_state.text
-    assert "event: interaction_resolved" not in invalid_state.text
-    assert "event: action_result" not in invalid_state.text
-
-    assert missing_dynamic.status_code == 200
-    assert "event: interaction_rejected" in missing_dynamic.text
-    assert '\"code\":\"quest_not_found\"' in missing_dynamic.text
-    assert "event: interaction_resolved" not in missing_dynamic.text
-    assert "event: action_result" not in missing_dynamic.text
-
-    assert quest_not_listed.status_code == 200
-    assert "event: interaction_rejected" in quest_not_listed.text
-    assert '\"code\":\"quest_not_listed\"' in quest_not_listed.text
-    assert "event: interaction_resolved" not in quest_not_listed.text
-    assert "event: action_result" not in quest_not_listed.text
-
-    assert invalid_target_kind.status_code == 200
-    assert "event: interaction_rejected" in invalid_target_kind.text
-    assert '\"code\":\"invalid_target_kind\"' in invalid_target_kind.text
-    assert "event: action_result" not in invalid_target_kind.text
-
-
-def test_interact_stream_executes_board_lifecycle_flow(monkeypatch) -> None:
-    runtime = _runtime()
-    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
-
-    with TestClient(api_main.app) as client:
-        session_id = _create_session(client)
-        _create_character(client, session_id)
-        _clear_opening_bootstrap(runtime, session_id)
-
-        board_not_present = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "complete",
-                "quest_id": "dq_report_in",
-            },
-        )
-
-        session = asyncio.run(_load_session(session_id))
-        assert session is not None
-        session.runtime.state.player.apply_state_change(
-            StateChange("player", "set", "current_location", "board")
-        )
-        asyncio.run(_save_session(session))
-
-        quest_not_listed = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "complete",
-                "quest_id": "dq_report_in",
-            },
-        )
-
-        session = asyncio.run(_load_session(session_id))
-        assert session is not None
-        session.runtime.state.narrative_plan.add_bulletin(
-            {
-                "board_id": "board",
-                "title": "New Lead Posted",
-                "content": "A fresh lead is available: Report In.",
-                "metadata": {"quest_id": "dq_report_in"},
-                "published_at_tick": 9,
-                "source": "test",
-            }
-        )
-        asyncio.run(_save_session(session))
-        quest_not_found = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "complete",
-                "quest_id": "dq_report_in",
-            },
-        )
-
-        session = asyncio.run(_load_session(session_id))
-        assert session is not None
-        session.runtime.state.quests.add_dynamic_quest(
-            "dq_report_in",
-            {
-                "status": "available",
-                "title": "Lead: Report In",
-                "summary": "Follow the new lead tied to report_in.",
-            },
-        )
-        asyncio.run(_save_session(session))
-        invalid_complete = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "complete",
-                "quest_id": "dq_report_in",
-            },
-        )
-        retired_available = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "retire",
-                "quest_id": "dq_report_in",
-            },
-        )
-
-        session = asyncio.run(_load_session(session_id))
-        assert session is not None
-        session.runtime.state.quests.add_dynamic_quest(
-            "dq_followup",
-            {
-                "status": "available",
-                "title": "Lead: Follow Up",
-                "summary": "Close out the next lead.",
-            },
-        )
-        session.runtime.state.narrative_plan.add_bulletin(
-            {
-                "board_id": "board",
-                "title": "Follow Up Posted",
-                "content": "A second lead is available.",
-                "metadata": {"quest_id": "dq_followup"},
-                "published_at_tick": 10,
-                "source": "test",
-            }
-        )
-        asyncio.run(_save_session(session))
-        accepted = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "quest_id": "dq_followup",
-            },
-        )
-        completed = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "complete",
-                "quest_id": "dq_followup",
-            },
-        )
-        retire_completed = client.post(
-            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
-            json={
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "retire",
-                "quest_id": "dq_followup",
-            },
-        )
-
-    assert board_not_present.status_code == 200
-    assert "event: interaction_rejected" in board_not_present.text
-    assert '\"code\":\"board_not_present\"' in board_not_present.text
-    assert "event: interaction_resolved" not in board_not_present.text
-    assert "event: action_result" not in board_not_present.text
-
-    assert quest_not_listed.status_code == 200
-    assert "event: interaction_rejected" in quest_not_listed.text
-    assert '\"code\":\"quest_not_listed\"' in quest_not_listed.text
-    assert "event: interaction_resolved" not in quest_not_listed.text
-    assert "event: action_result" not in quest_not_listed.text
-
-    assert quest_not_found.status_code == 200
-    assert "event: interaction_rejected" in quest_not_found.text
-    assert '\"code\":\"quest_not_found\"' in quest_not_found.text
-    assert "event: interaction_resolved" not in quest_not_found.text
-    assert "event: action_result" not in quest_not_found.text
-
-    assert invalid_complete.status_code == 200
-    assert "event: interaction_rejected" in invalid_complete.text
-    assert '\"code\":\"interaction_failed\"' in invalid_complete.text
-    assert "invalid dynamic quest transition: available -> completed" in invalid_complete.text
-    assert "event: interaction_resolved" not in invalid_complete.text
-    assert "event: action_result" not in invalid_complete.text
-
-    assert retired_available.status_code == 200
-    assert "event: interaction_resolved" in retired_available.text
-    assert "event: action_result" in retired_available.text
-    assert "event: board_snapshot" in retired_available.text
-    retired_available_payloads = _event_payloads(retired_available.text, "board_snapshot")
-    assert len(retired_available_payloads) == 1
-    retired_available_entries = retired_available_payloads[0]["entries"]
-    assert any(
-        entry["quest_id"] == "dq_report_in" and entry["quest_status"] == "retired"
-        for entry in retired_available_entries
-    )
-
-    assert accepted.status_code == 200
-    assert "event: interaction_resolved" in accepted.text
-    assert "event: action_result" in accepted.text
-    assert '\"action_type\":\"advance_quest\"' in accepted.text
-    assert "event: board_snapshot" in accepted.text
-    accepted_payloads = _event_payloads(accepted.text, "board_snapshot")
-    assert len(accepted_payloads) == 1
-    assert any(
-        entry["quest_id"] == "dq_followup" and entry["quest_status"] == "active"
-        for entry in accepted_payloads[0]["entries"]
-    )
-
-    assert completed.status_code == 200
-    assert "event: interaction_resolved" in completed.text
-    assert "event: action_result" in completed.text
-    assert '\"action_type\":\"advance_quest\"' in completed.text
-    assert "event: board_snapshot" in completed.text
-    completed_payloads = _event_payloads(completed.text, "board_snapshot")
-    assert len(completed_payloads) == 1
-    assert any(
-        entry["quest_id"] == "dq_followup" and entry["quest_status"] == "completed"
-        for entry in completed_payloads[0]["entries"]
-    )
-
-    assert retire_completed.status_code == 200
-    assert "event: interaction_rejected" in retire_completed.text
-    assert '\"code\":\"interaction_failed\"' in retire_completed.text
-    assert "invalid dynamic quest transition: completed -> retired" in retire_completed.text
-    assert "event: interaction_resolved" not in retire_completed.text
-    assert "event: action_result" not in retire_completed.text
-
-
 def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
     runtime = _runtime()
     monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
@@ -1607,9 +1255,12 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
             },
         )
 
-        session.runtime.state.narrative_plan.add_bulletin(
+        session.runtime.state.areas.add_board_bulletin(
+            session.runtime.state.player.current_area,
+            "board",
             {
                 "board_id": "board",
+                "quest_id": "dq_report_in",
                 "title": "New Lead Posted",
                 "content": "A fresh lead is available: Report In.",
                 "metadata": {
@@ -1618,7 +1269,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
                 },
                 "published_at_tick": 9,
                 "source": "test",
-            }
+            },
         )
         asyncio.run(_save_session(session))
         with_board_link = client.post(
@@ -1663,9 +1314,6 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
     assert no_board_payloads[0]["target_id"] == "merchant"
     assert no_board_quest["quest_id"] == "dq_report_in"
     assert no_board_quest["status"] == "available"
-    assert no_board_quest["listed_on_board"] is False
-    assert no_board_quest["board_id"] is None
-    assert no_board_quest["board_title"] is None
 
     assert with_board_link.status_code == 200
     assert "event: interaction_resolved" in with_board_link.text
@@ -1674,9 +1322,6 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
     with_board_payloads = _event_payloads(with_board_link.text, "quest_brief")
     assert len(with_board_payloads) == 1
     with_board_quest = with_board_payloads[0]["quest"]
-    assert with_board_quest["listed_on_board"] is True
-    assert with_board_quest["board_id"] == "board"
-    assert with_board_quest["board_title"] == "New Lead Posted"
     assert with_board_quest["source_milestone"] == "report_in"
 
 
@@ -1737,9 +1382,12 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
             },
         )
 
-        session.runtime.state.narrative_plan.add_bulletin(
+        session.runtime.state.areas.add_board_bulletin(
+            session.runtime.state.player.current_area,
+            "board",
             {
                 "board_id": "board",
+                "quest_id": "dq_report_in",
                 "title": "New Lead Posted",
                 "content": "A fresh lead is available: Report In.",
                 "metadata": {
@@ -1748,7 +1396,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
                 },
                 "published_at_tick": 9,
                 "source": "test",
-            }
+            },
         )
         session.runtime.state.quests.advance_milestone("report_in", "ACTIVE")
         asyncio.run(_save_session(session))
@@ -1798,8 +1446,6 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
     assert no_board_quest["can_accept"] is True
     assert no_board_quest["is_active"] is False
     assert no_board_quest["is_closed"] is False
-    assert no_board_quest["listed_on_board"] is False
-    assert no_board_quest["board_id"] is None
     assert no_board_quest["source_milestone"] is None
     assert no_board_quest["source_milestone_state"] is None
 
@@ -1810,8 +1456,6 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
     with_board_payloads = _event_payloads(with_board_link.text, "quest_progress")
     assert len(with_board_payloads) == 1
     with_board_quest = with_board_payloads[0]["quest"]
-    assert with_board_quest["listed_on_board"] is True
-    assert with_board_quest["board_id"] == "board"
     assert with_board_quest["source_milestone"] == "report_in"
     assert with_board_quest["source_milestone_state"] == "ACTIVE"
 
@@ -1883,9 +1527,12 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
                 "location_id": "camp",
             },
         )
-        session.runtime.state.narrative_plan.add_bulletin(
+        session.runtime.state.areas.add_board_bulletin(
+            session.runtime.state.player.current_area,
+            "board",
             {
                 "board_id": "board",
+                "quest_id": "dq_report_in",
                 "title": "New Lead Posted",
                 "content": "A fresh lead is available: Report In.",
                 "metadata": {
@@ -1894,7 +1541,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
                 },
                 "published_at_tick": 9,
                 "source": "test",
-            }
+            },
         )
         asyncio.run(_save_session(session))
         known_location = client.post(
@@ -1941,7 +1588,6 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
     assert no_location_quest["location_known"] is False
     assert no_location_quest["area_id"] is None
     assert no_location_quest["location_id"] is None
-    assert no_location_quest["board_id"] is None
     assert no_location_quest["source_milestone"] is None
 
     assert known_location.status_code == 200
@@ -1953,7 +1599,6 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
     assert known_location_quest["location_known"] is True
     assert known_location_quest["area_id"] == "frontier"
     assert known_location_quest["location_id"] == "camp"
-    assert known_location_quest["board_id"] == "board"
     assert known_location_quest["source_milestone"] == "report_in"
 
 
@@ -2150,3 +1795,151 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
     assert with_reward_quest["gold"] == 25
     assert with_reward_quest["items"] == [{"item_id": "bandage", "count": 2}]
     assert with_reward_quest["reward_summary"] == "25 gold and field supplies."
+
+
+def test_action_stream_browse_board_full_chain_from_planner(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        opening = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+        entered_board = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={
+                "action_type": "enter_sub_location",
+                "params": {"location_id": "board"},
+            },
+        )
+        browse = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "browse_board", "params": {"board_id": "board"}},
+        )
+
+    assert opening.status_code == 200
+    assert _action_result_payload(entered_board)["success"] is True
+    browse_payload = _action_result_payload(browse)
+    assert browse_payload["success"] is True
+    browse_entries = browse_payload["metadata"].get("entries")
+    assert isinstance(browse_entries, list)
+    assert browse_entries
+    assert browse_entries[0].get("quest_id")
+
+    session = asyncio.run(_load_session(session_id))
+    assert session is not None
+    current_area = session.runtime.state.player.current_area
+    assert current_area is not None
+    board_bulletins = session.runtime.state.areas.get_board_bulletins(current_area, "board")
+    assert board_bulletins
+    assert board_bulletins[0].get("board_id") == "board"
+
+
+def test_action_stream_browse_board_accept_chain_updates_quest_status(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        opening = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/opening/stream",
+        )
+        entered_board = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={
+                "action_type": "enter_sub_location",
+                "params": {"location_id": "board"},
+            },
+        )
+        browse = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "browse_board", "params": {"board_id": "board"}},
+        )
+
+    assert opening.status_code == 200
+    assert _action_result_payload(entered_board)["success"] is True
+    assert _action_result_payload(browse)["success"] is True
+
+    session = asyncio.run(_load_session(session_id))
+    assert session is not None
+    current_area = session.runtime.state.player.current_area
+    assert current_area is not None
+    session_entries = session.runtime.state.areas.get_board_bulletins(current_area, "board")
+    assert session_entries
+    quest_id = str(session_entries[0].get("quest_id", ""))
+    assert quest_id
+
+    with TestClient(api_main.app) as client:
+        # Reuse session after planner-driven bootstrap, then complete accept chain.
+        accept = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={
+                "action_type": "board_accept_quest",
+                "params": {"board_id": "board", "quest_id": quest_id},
+            },
+        )
+
+    assert _action_result_payload(accept)["success"] is True
+    session = asyncio.run(_load_session(session_id))
+    assert session is not None
+    quest = session.runtime.state.quests.get_dynamic_quest(quest_id)
+    assert quest is not None
+    assert str(quest.get("status", "")).lower() == "active"
+
+
+def test_action_stream_browse_board_empty_board_has_no_entries(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
+        entered_board = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={
+                "action_type": "enter_sub_location",
+                "params": {"location_id": "board"},
+            },
+        )
+        empty_board = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "browse_board", "params": {"board_id": "board"}},
+        )
+
+    assert _action_result_payload(entered_board)["success"] is True
+    empty_payload = _action_result_payload(empty_board)
+    assert empty_payload["success"] is True
+    assert empty_payload["metadata"]["entries"] == []
+
+
+def test_action_stream_browse_board_rejects_when_not_in_guild_board(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
+        moved = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "move_area", "params": {"area_id": "training_grounds"}},
+        )
+        entered_yard = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "enter_sub_location", "params": {"location_id": "yard"}},
+        )
+        rejected = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "browse_board", "params": {"board_id": "board"}},
+        )
+
+    assert _action_result_payload(moved)["success"] is True
+    assert _action_result_payload(entered_yard)["success"] is True
+    reject_payload = _action_result_payload(rejected)
+    assert reject_payload["success"] is False
+    assert reject_payload["errors"]
+    assert any("board interactable not found" in str(error) for error in reject_payload["errors"])

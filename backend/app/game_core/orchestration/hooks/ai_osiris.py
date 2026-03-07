@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
+import time
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
+from app.game_core.orchestration.hooks.rest_phase import (
+    is_quiet_rest_slot,
+    resolve_rest_phase,
+)
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
@@ -15,6 +20,160 @@ from app.game_core.state import StateChange
 
 logger = logging.getLogger(__name__)
 
+
+class OsirisVisibleConsequenceRenderer:
+    """Render executed Osiris consequences into SceneBus system entries."""
+
+    _VISIBLE_COMMANDS: frozenset[str] = frozenset({
+        "create_rumor",
+        "adjust_danger",
+        "advance_quest",
+        "schedule_event",
+        "modify_completion",
+    })
+    _INVISIBLE_COMMANDS: frozenset[str] = frozenset({
+        "set_flag",
+        "modify_disposition",
+        "modify_approval",
+        "modify_location",
+        "add_knowledge",
+    })
+
+    @classmethod
+    def render_visible_entries(
+        cls,
+        context: SettlementContext,
+        executed_commands: list[Command],
+    ) -> list[dict[str, Any]]:
+        if not executed_commands:
+            return []
+
+        current_tick = context.state.time.absolute_tick() if context.state.has_slice("time") else 0.0
+        entries: list[dict[str, Any]] = []
+        for command in executed_commands:
+            command_type = str(command.type).strip().lower()
+            if not cls._is_visible_command(command_type):
+                continue
+
+            metadata = cls._build_metadata(command_type, command)
+            content = cls._build_content(command_type, command.params, metadata)
+            if not content:
+                continue
+
+            entries.append({
+                "source": "ai_osiris",
+                "content": content,
+                "visibility": "system",
+                "audience": None,
+                "tags": ["ai_osiris", "visible_consequence", command_type],
+                "timestamp": float(current_tick),
+                "metadata": metadata,
+            })
+        return entries
+
+    @classmethod
+    def _is_visible_command(cls, command_type: str) -> bool:
+        normalized = str(command_type).strip().lower()
+        if normalized in cls._INVISIBLE_COMMANDS:
+            return False
+        return normalized in cls._VISIBLE_COMMANDS
+
+    @classmethod
+    def _build_content(
+        cls,
+        command_type: str,
+        params: Mapping[str, Any],
+        metadata: Mapping[str, Any],
+    ) -> str:
+        reason = metadata.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return reason.strip()
+        if command_type == "create_rumor":
+            raw_rumor = params.get("rumor")
+            rumor_title = (
+                raw_rumor.get("title")
+                if isinstance(raw_rumor, Mapping)
+                else params.get("rumor_title")
+            )
+            if rumor_title is None:
+                rumor_title = params.get("text")
+            if rumor_title is None:
+                rumor_title = params.get("content")
+            rumor_desc = (
+                str(rumor_title).strip()
+                if rumor_title is not None
+                else "A rumor"
+            )
+            return f"{rumor_desc} has been recorded in world knowledge."
+        if command_type == "adjust_danger":
+            return "Environmental danger level changed."
+        if command_type == "advance_quest":
+            quest_id = params.get("quest_id") or params.get("id")
+            if quest_id is not None:
+                return f"Quest state changed: {str(quest_id).strip()}."
+            return "A quest state has changed."
+        if command_type == "schedule_event":
+            event_type = params.get("event_type")
+            if event_type is not None:
+                return f"World event scheduled: {str(event_type).strip()}."
+            return "A world event has been scheduled."
+        if command_type == "modify_completion":
+            chapter = params.get("chapter_id") or params.get("chapter")
+            if chapter is not None:
+                return f"Chapter progress changed: {str(chapter).strip()}."
+            return "Chapter progress has been updated."
+        return ""
+
+    @classmethod
+    def _build_metadata(
+        cls,
+        command_type: str,
+        command: Command,
+    ) -> dict[str, Any]:
+        raw_meta = {}
+        if isinstance(command.context, Mapping):
+            nested = command.context.get("osiris_meta")
+            if isinstance(nested, Mapping):
+                raw_meta = {str(key): value for key, value in nested.items()}
+        return {
+            "kind": "visible_consequence",
+            "command_type": command_type,
+            "reason": str(raw_meta.get("reason", "")).strip(),
+            "visibility_hint": str(raw_meta.get("visibility_hint", "visible")).strip() or "visible",
+            "confidence": str(raw_meta.get("confidence", "")).strip().lower(),
+            "refs": cls._build_refs(command_type, command.params),
+        }
+
+    @staticmethod
+    def _build_refs(command_type: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        refs: dict[str, Any] = {}
+        if command_type == "advance_quest":
+            quest_id = params.get("quest_id") or params.get("id")
+            if isinstance(quest_id, str) and quest_id.strip():
+                refs["quest_id"] = quest_id.strip()
+        elif command_type == "adjust_danger":
+            area_id = params.get("area_id")
+            if isinstance(area_id, str) and area_id.strip():
+                refs["area_id"] = area_id.strip()
+        elif command_type == "schedule_event":
+            event_id = params.get("event_id")
+            if isinstance(event_id, str) and event_id.strip():
+                refs["event_id"] = event_id.strip()
+            event_type = params.get("event_type")
+            if isinstance(event_type, str) and event_type.strip():
+                refs["event_type"] = event_type.strip()
+        elif command_type == "modify_completion":
+            chapter_id = params.get("chapter_id") or params.get("chapter")
+            if isinstance(chapter_id, str) and chapter_id.strip():
+                refs["chapter_id"] = chapter_id.strip()
+        elif command_type == "create_rumor":
+            rumor_id = params.get("rumor_id")
+            if isinstance(rumor_id, str) and rumor_id.strip():
+                refs["rumor_id"] = rumor_id.strip()
+            area_id = params.get("area_id")
+            if isinstance(area_id, str) and area_id.strip():
+                refs["area_id"] = area_id.strip()
+        return refs
 
 _ALLOWED_COMMAND_TYPES: tuple[str, ...] = (
     "set_flag",
@@ -29,8 +188,37 @@ _ALLOWED_COMMAND_TYPES: tuple[str, ...] = (
     "adjust_danger",
 )
 
-_MEANINGFUL_SLICES = frozenset(
-    {"player", "flags", "relations", "party", "quests", "areas", "events"}
+_TRIVIAL_ACTION_TYPES = frozenset(
+    {
+        "look_inventory",
+        "check_stats",
+        "check_quest_log",
+        "check_map",
+        "equip",
+        "unequip",
+        "save_game",
+        "load_game",
+    }
+)
+_TICK_KIND_TRAVEL = frozenset({"move_area", "enter_sub_location", "leave_sub_location"})
+_TICK_KIND_REST = frozenset({"rest_short", "rest_long", "night_watch", "set_camp"})
+_TICK_KIND_CONVERSATION = frozenset(
+    {"speak", "dialogue", "talk", "emote", "dialogue_turn", "private_chat_turn"}
+)
+_TICK_KIND_COMBAT = frozenset(
+    {
+        "attack",
+        "defend",
+        "disengage",
+        "dash",
+        "shove",
+        "flee",
+        "offhand_attack",
+        "stand_up",
+        "use_combat_item",
+        "saving_throw",
+        "contest",
+    }
 )
 
 _TARGET_PARAM_KEYS: tuple[str, ...] = (
@@ -62,6 +250,7 @@ _ACTION_VERBS: dict[str, str] = {
     # Rest
     "rest_short": "took short rest", "rest_long": "took long rest",
     "night_watch": "kept watch", "set_camp": "set up camp",
+    "dialogue_turn": "spoke with", "private_chat_turn": "spoke privately with",
     # Spellcasting
     "cast_spell": "cast", "prepare_spells": "prepared spells",
     "break_concentration": "broke concentration",
@@ -112,6 +301,8 @@ _ACTION_CATEGORY_TAGS: dict[str, list[str]] = {
     # Rest
     "rest_short": ["REST"], "rest_long": ["REST"],
     "night_watch": ["REST"], "set_camp": ["REST"],
+    "dialogue_turn": ["DIALOGUE", "NPC_INTERACTION"],
+    "private_chat_turn": ["DIALOGUE", "PRIVATE_CHAT"],
     # Spellcasting
     "cast_spell": ["SPELLCASTING"], "prepare_spells": ["SPELLCASTING"],
     "break_concentration": ["SPELLCASTING"],
@@ -146,6 +337,18 @@ class AIOsirisDecision:
 
 
 class AIOsirisEvaluator(Protocol):
+    async def evaluate(
+        self,
+        summary: dict[str, Any],
+        snapshot: dict[str, Any],
+        rules_context: dict[str, Any],
+    ) -> AIOsirisDecision | Mapping[str, Any]:
+        ...
+
+
+class AIOsirisProvider(AIOsirisEvaluator, Protocol):
+    """Structured provider boundary for P30 AI Osiris evaluation."""
+
     async def evaluate(
         self,
         summary: dict[str, Any],
@@ -278,19 +481,59 @@ class AIOsirisHook(NoOpSettlementHook):
     HOOK_NAME = "ai_osiris"
     MAX_CONSEQUENCES = 5
 
-    def __init__(self, evaluator: AIOsirisEvaluator | None = None) -> None:
+    def __init__(self, evaluator: AIOsirisProvider | None = None) -> None:
         self._evaluator = evaluator or BasicAIOsirisEvaluator()
 
-    def should_skip(self, change_log: list[StateChange]) -> bool:
-        return not self._has_meaningful_changes(change_log)
+    def should_skip(
+        self,
+        change_log: list[StateChange],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        if action_log is None:
+            return len(change_log) == 0
+        if not action_log:
+            return len(change_log) == 0
+        return all(self._is_trivial_zero_cost_action(action) for action in action_log)
+
+    @classmethod
+    def _is_trivial_zero_cost_action(cls, action: Any) -> bool:
+        if not isinstance(action, Mapping):
+            return False
+        action_type = str(action.get("type", "")).strip().lower()
+        if not action_type or action_type not in _TRIVIAL_ACTION_TYPES:
+            return False
+        return cls._coerce_float(action.get("time_cost")) == 0.0
+
+    @staticmethod
+    def _coerce_float(raw_value: Any) -> float | None:
+        if isinstance(raw_value, (int, float)):
+            return float(raw_value)
+        if isinstance(raw_value, str):
+            try:
+                return float(raw_value)
+            except ValueError:
+                return None
+        return None
 
     async def execute(self, context: SettlementContext) -> HookResult:
         summary = self._build_summary(context)
         snapshot = self._build_snapshot(context)
         rules_context = self._build_rules_context(context)
+        rest_phase = resolve_rest_phase(context)
+        quiet_rest_slot = is_quiet_rest_slot(context, rest_phase)
+        evaluate_started = time.perf_counter()
+        raw_consequence_count = 0
 
         try:
             raw_decision = await self._evaluator.evaluate(summary, snapshot, rules_context)
+            if isinstance(raw_decision, AIOsirisDecision):
+                raw_consequence_count = len(raw_decision.consequences)
+            elif isinstance(raw_decision, Mapping):
+                raw_consequence_count = len(
+                    raw_decision.get("consequences", [])
+                    if isinstance(raw_decision.get("consequences"), list)
+                    else []
+                )
         except Exception as exc:
             logger.exception(
                 "hook failed: ai_osiris",
@@ -309,14 +552,23 @@ class AIOsirisHook(NoOpSettlementHook):
                 metadata={
                     "status": "evaluator_error",
                     "evaluated": False,
+                    "provider_status": "failed",
+                    "provider_name": "unknown",
                     "decision_reasoning": "",
                     "requested_count": 0,
+                    "raw_consequence_count": raw_consequence_count,
                     "normalized_count": 0,
+                    "normalized_consequence_count": 0,
                     "executed_count": 0,
                     "failed_count": 0,
                     "truncated_count": 0,
                     "skipped_invalid_count": 0,
+                    "invalid_count": 0,
                     "allowed_command_enforced": True,
+                    "visible_change_count": 0,
+                    "visible_command_types": [],
+                    "visible_tags_count": 0,
+                    "evaluation_ms": (time.perf_counter() - evaluate_started) * 1000.0,
                     "command_results": [],
                     "summary": summary,
                     "snapshot_digest": self._snapshot_digest(snapshot),
@@ -326,12 +578,31 @@ class AIOsirisHook(NoOpSettlementHook):
 
         decision = self._normalize_decision(raw_decision)
         requested_count = len(decision.consequences)
+        if not raw_consequence_count:
+            raw_consequence_count = requested_count
+        if quiet_rest_slot:
+            decision = AIOsirisDecision(
+                consequences=[],
+                reasoning=decision.reasoning,
+                visible_change=False,
+                metadata={
+                    **dict(decision.metadata),
+                    "status": "quiet_rest_slot",
+                    "quiet_rest_slot": True,
+                    "suppressed_consequence_count": requested_count,
+                },
+            )
+            requested_count = 0
+            raw_consequence_count = 0
         commands: list[Command] = []
         skipped_invalid_count = 0
         truncated_count = 0
         for consequence in decision.consequences:
             command = self._normalize_consequence(consequence)
             if command is None:
+                skipped_invalid_count += 1
+                continue
+            if not self._passes_minimal_semantic_validation(command):
                 skipped_invalid_count += 1
                 continue
             if len(commands) >= self.MAX_CONSEQUENCES:
@@ -341,6 +612,7 @@ class AIOsirisHook(NoOpSettlementHook):
 
         command_results: list[dict[str, Any]] = []
         failed_count = 0
+        successful_commands: list[Command] = []
         for command in commands:
             result = context.execute_command(command)
             if not result.success:
@@ -354,9 +626,26 @@ class AIOsirisHook(NoOpSettlementHook):
                     "applied_change_count": applied_change_count,
                 }
             )
+            if result.success:
+                successful_commands.append(command)
+
+        visible_entries: list[dict[str, Any]] = []
+        if decision.visible_change:
+            visible_entries = OsirisVisibleConsequenceRenderer.render_visible_entries(
+                context,
+                successful_commands,
+            )
+            for entry in visible_entries:
+                context.scene_bus.add_entry(entry)
 
         executed_count = len(command_results)
         normalized_count = len(commands)
+        evaluation_ms = (time.perf_counter() - evaluate_started) * 1000.0
+        visible_command_types = [
+            str(entry["tags"][2])
+            for entry in visible_entries
+            if isinstance(entry.get("tags"), list) and len(entry["tags"]) >= 3
+        ]
         status = self._resolve_status(
             requested_count=requested_count,
             normalized_count=normalized_count,
@@ -384,41 +673,68 @@ class AIOsirisHook(NoOpSettlementHook):
                 "evaluated": True,
                 "decision_reasoning": decision.reasoning,
                 "visible_change": decision.visible_change,
+                "provider_status": decision.metadata.get("status", ""),
+                "provider_name": decision.metadata.get("provider", ""),
+                "provider_profile": decision.metadata.get("profile", ""),
+                "provider_model": decision.metadata.get("model", ""),
+                "provider_thinking_level": decision.metadata.get("thinking_level", ""),
+                "provider_latency_ms": decision.metadata.get("latency_ms"),
+                "provider_token_usage": decision.metadata.get("token_usage", {}),
                 "requested_count": requested_count,
+                "raw_consequence_count": raw_consequence_count,
+                "normalized_consequence_count": normalized_count,
                 "normalized_count": normalized_count,
                 "executed_count": executed_count,
                 "failed_count": failed_count,
+                "invalid_count": skipped_invalid_count,
                 "truncated_count": truncated_count,
                 "skipped_invalid_count": skipped_invalid_count,
                 "allowed_command_enforced": True,
                 "command_results": command_results,
+                "visible_change_count": len(visible_entries),
+                "visible_command_types": visible_command_types,
+                "visible_tags_count": len(visible_entries),
+                "evaluation_ms": evaluation_ms,
                 "summary": summary,
                 "snapshot_digest": self._snapshot_digest(snapshot),
                 "evaluator_metadata": dict(decision.metadata),
+                "quiet_rest_slot": quiet_rest_slot,
             },
         )
-
-    @staticmethod
-    def _has_meaningful_changes(change_log: list[StateChange]) -> bool:
-        return any(change.slice in _MEANINGFUL_SLICES for change in change_log)
 
     @classmethod
     def _build_summary(cls, context: SettlementContext) -> dict[str, Any]:
         state_changes = [cls._serialize_change(change) for change in context.change_log]
+        time_cost = cls._build_time_cost(context.action_log)
+        rest_phase = resolve_rest_phase(context)
+        rest_phase_snapshot = rest_phase.snapshot() if rest_phase is not None else None
+        if rest_phase_snapshot is not None:
+            rest_phase_snapshot["is_quiet_rest_slot"] = is_quiet_rest_slot(context, rest_phase)
         return {
             "time_slot": cls._build_time_slot(context),
             "location": cls._build_location(context),
-            "duration_minutes": 60,  # 1 settlement tick = 1 slot = 60 game minutes
+            "tick_kind": cls._build_tick_kind(context.action_log),
+            "time_cost": time_cost,
+            "duration_minutes": round(time_cost * 60, 2),
             "actions": cls._enrich_actions(context),
             "state_changes": state_changes,
             "change_count": len(state_changes),
             "changed_slices": cls._changed_slices(context.change_log),
+            "rest_phase": rest_phase_snapshot,
         }
 
     @classmethod
     def _build_snapshot(cls, context: SettlementContext) -> dict[str, Any]:
         location = cls._build_location(context)
-        nearby_npcs = cls._build_nearby_npcs(context, location["area_id"])
+        rest_phase = resolve_rest_phase(context)
+        rest_phase_snapshot = rest_phase.snapshot() if rest_phase is not None else None
+        if rest_phase_snapshot is not None:
+            rest_phase_snapshot["is_quiet_rest_slot"] = is_quiet_rest_slot(context, rest_phase)
+        nearby_npcs = cls._build_nearby_npcs(
+            context,
+            location["area_id"],
+            location.get("location_id"),
+        )
         faction_standings: dict[str, Any] = {}
         if context.state.has_slice("relations"):
             relation_snapshot = context.state.relations.snapshot()
@@ -442,16 +758,67 @@ class AIOsirisHook(NoOpSettlementHook):
             if isinstance(raw_completion, (int, float)):
                 chapter_completion = float(raw_completion)
 
+        pending_events: list[dict[str, Any]] = []
+        if context.state.has_slice("events"):
+            events_snapshot = context.state.events.snapshot()
+            raw_pending = events_snapshot.get("pending_events")
+            if isinstance(raw_pending, list):
+                for item in raw_pending:
+                    if isinstance(item, Mapping):
+                        pending_events.append(cls._normalize_mapping(item))
+
+        danger: dict[str, Any] = {}
+        current_area = location["area_id"]
+        if current_area and context.state.has_slice("areas"):
+            danger["area_id"] = current_area
+            danger["area_level"] = float(context.state.areas.get_danger(current_area))
+            danger["location_id"] = location.get("location_id")
+            danger["location_level"] = None
+            area_state = context.state.areas.areas.get(current_area)
+            if area_state is not None and isinstance(location.get("location_id"), str):
+                for raw_entry in area_state.temporary_sub_areas:
+                    if not isinstance(raw_entry, Mapping):
+                        continue
+                    if str(raw_entry.get("id", "")).strip() != str(location["location_id"]).strip():
+                        continue
+                    location_danger = raw_entry.get("threat_level")
+                    if location_danger is not None:
+                        danger["location_level"] = (
+                            str(location_danger).strip()
+                            if not isinstance(location_danger, (int, float))
+                            else float(location_danger)
+                        )
+                    break
+
+        active_dynamic_quests: list[dict[str, Any]] = []
+        if context.state.has_slice("quests"):
+            quest_snapshot = context.state.quests.snapshot()
+            raw_dynamic_quests = quest_snapshot.get("dynamic_quests")
+            if isinstance(raw_dynamic_quests, dict):
+                for quest in raw_dynamic_quests.values():
+                    if not isinstance(quest, Mapping):
+                        continue
+                    status = str(quest.get("status", "")).strip().lower()
+                    if status in {"retired", "completed", "failed"}:
+                        continue
+                    active_dynamic_quests.append(dict(quest))
+
         return {
             "player": cls._build_player(context),
             "party": cls._build_party(context),
             "nearby_npcs": nearby_npcs,
+            "scene_presence": cls._build_scene_presence(context, nearby_npcs),
             "faction_standings": faction_standings,
             "active_flags": active_flags,
             "current_chapter": current_chapter,
             "chapter_completion": chapter_completion,
             "time": cls._build_time_slot(context),
             "location": location,
+            "pending_events": pending_events,
+            "danger": danger,
+            "active_dynamic_quests": active_dynamic_quests,
+            "rest_phase": rest_phase_snapshot,
+            "recent_visible_system_entries": cls._build_recent_visible_system_entries(context),
         }
 
     @classmethod
@@ -538,6 +905,35 @@ class AIOsirisHook(NoOpSettlementHook):
         return result
 
     @classmethod
+    def _build_scene_presence(
+        cls,
+        context: SettlementContext,
+        nearby_npcs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        current_area = ""
+        current_location = None
+        player_id = ""
+        if context.state.has_slice("player"):
+            current_area = context.state.player.current_area
+            current_location = context.state.player.current_location
+            player_id = cls._coerce_string(context.state.player.character_id)
+        present_character_ids: list[str] = []
+        if player_id:
+            present_character_ids.append(player_id)
+        for npc in nearby_npcs:
+            if not isinstance(npc, Mapping):
+                continue
+            npc_id = npc.get("id")
+            if not isinstance(npc_id, str) or not npc_id or npc_id in present_character_ids:
+                continue
+            present_character_ids.append(npc_id)
+        return {
+            "area_id": current_area,
+            "location_id": current_location,
+            "present_character_ids": present_character_ids,
+        }
+
+    @classmethod
     def _build_rules_context(cls, context: SettlementContext) -> dict[str, Any]:
         world_lore: list[dict[str, Any]] = []
         if context.world.has_registry("lore"):
@@ -583,6 +979,10 @@ class AIOsirisHook(NoOpSettlementHook):
         return {
             "allowed_commands": list(_ALLOWED_COMMAND_TYPES),
             "command_source": "ai_osiris",
+            "command_schema": cls._build_command_schema(),
+            "trigger_condition_schema": cls._build_trigger_condition_schema(),
+            "visibility_rules": cls._build_visibility_rules(),
+            "semantic_constraints": cls._build_semantic_constraints(),
             "constraints": {
                 "modify_location_player_mode_forbidden": True,
                 "schedule_event_prefers_trigger_tick": True,
@@ -592,6 +992,104 @@ class AIOsirisHook(NoOpSettlementHook):
             "faction_rules": faction_rules,
             "tag_dimensions": tag_dimensions,
             "world_rules": world_rules,
+        }
+
+    @staticmethod
+    def _build_recent_visible_system_entries(
+        context: SettlementContext,
+    ) -> list[dict[str, Any]]:
+        scene_snapshot = context.scene_bus.snapshot()
+        raw_entries = scene_snapshot.get("entries", [])
+        if not isinstance(raw_entries, list):
+            return []
+        digest: list[dict[str, Any]] = []
+        for entry in raw_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            if str(entry.get("visibility", "")).strip().lower() != "system":
+                continue
+            source = str(entry.get("source", "")).strip()
+            if source.upper() == "ENGINE":
+                continue
+            tags = entry.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+            digest.append(
+                {
+                    "source": source,
+                    "content": str(entry.get("content", "")).strip(),
+                    "tags": [str(tag) for tag in tags if isinstance(tag, str)],
+                }
+            )
+        return digest[:5]
+
+    @classmethod
+    def _build_command_schema(cls) -> dict[str, Any]:
+        return {
+            "set_flag": {"required_params": ["key", "value"]},
+            "modify_disposition": {
+                "required_params": ["dimension", "delta"],
+                "target_keys": ["npc_id", "target"],
+            },
+            "modify_approval": {
+                "required_params": ["delta"],
+                "target_keys": ["character_id", "character"],
+            },
+            "advance_quest": {"required_params": ["quest_id", "to_state"]},
+            "schedule_event": {
+                "required_params": ["event_id"],
+                "one_of": ["trigger_condition", "trigger_tick"],
+            },
+            "create_rumor": {"one_of": ["text", "content"]},
+            "modify_location": {"required_params": ["area_id"]},
+            "add_knowledge": {
+                "target_keys": ["npc_id", "character_id"],
+                "one_of": ["impression", "knowledge"],
+            },
+            "modify_completion": {"required_params": ["chapter_id", "delta"]},
+            "adjust_danger": {"required_params": ["area_id", "delta"]},
+        }
+
+    @staticmethod
+    def _build_trigger_condition_schema() -> dict[str, Any]:
+        return {
+            "allowed_types": [
+                "absolute_tick",
+                "time_slots_elapsed",
+                "period_reached",
+                "location_entered",
+                "flag_set",
+            ]
+        }
+
+    @staticmethod
+    def _build_visibility_rules() -> dict[str, Any]:
+        return {
+            "visible_commands": [
+                "create_rumor",
+                "adjust_danger",
+                "advance_quest",
+                "schedule_event",
+                "modify_completion",
+            ],
+            "hidden_commands": [
+                "set_flag",
+                "modify_disposition",
+                "modify_approval",
+                "modify_location",
+                "add_knowledge",
+            ],
+        }
+
+    @staticmethod
+    def _build_semantic_constraints() -> dict[str, Any]:
+        return {
+            "modify_location_player_mode_forbidden": True,
+            "approval_targets_must_be_in_party": True,
+            "disposition_targets_must_exist": True,
+            "danger_delta_range": [-0.5, 0.5],
+            "approval_delta_range": [-50, 50],
+            "disposition_delta_range": [-50, 50],
         }
 
     @classmethod
@@ -648,6 +1146,19 @@ class AIOsirisHook(NoOpSettlementHook):
             if isinstance(raw_context, Mapping)
             else None
         )
+        extras: dict[str, Any] = {}
+        reason = raw_consequence.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            extras["reason"] = reason.strip()
+        visibility_hint = raw_consequence.get("visibility_hint")
+        if isinstance(visibility_hint, str) and visibility_hint.strip():
+            extras["visibility_hint"] = visibility_hint.strip().lower()
+        confidence = raw_consequence.get("confidence")
+        if isinstance(confidence, str) and confidence.strip():
+            extras["confidence"] = confidence.strip().lower()
+        if extras:
+            context = dict(context or {})
+            context["osiris_meta"] = extras
         return Command(
             type=command_type,
             params=params,
@@ -698,8 +1209,54 @@ class AIOsirisHook(NoOpSettlementHook):
             if witnesses:
                 enriched["witnessed_by"] = witnesses
 
+            enriched["visibility_scope"] = cls._resolve_visibility_scope(
+                action.get("type", ""),
+                witnesses,
+            )
+
             result.append(enriched)
         return result
+
+    @staticmethod
+    def _resolve_visibility_scope(action_type: str, witnesses: list[str]) -> str:
+        normalized = str(action_type).strip().lower()
+        if not witnesses:
+            return "private"
+        if normalized in {"look_inventory", "check_stats", "check_quest_log", "check_map"}:
+            return "private"
+        return "local"
+
+    @staticmethod
+    def _build_time_cost(action_log: list[dict[str, Any]]) -> float:
+        total = 0.0
+        for action in action_log:
+            if not isinstance(action, Mapping):
+                continue
+            raw_cost = action.get("time_cost")
+            cost = AIOsirisHook._coerce_float(raw_cost)
+            if cost is None:
+                continue
+            total += cost
+        return total
+
+    @classmethod
+    def _build_tick_kind(cls, action_log: list[dict[str, Any]]) -> str:
+        action_types = {
+            str(raw_action.get("type", "")).strip().lower()
+            for raw_action in action_log
+            if isinstance(raw_action, Mapping)
+        } - {""}
+        if not action_types:
+            return "normal"
+        if action_types & _TICK_KIND_TRAVEL:
+            return "travel"
+        if action_types & _TICK_KIND_REST:
+            return "rest"
+        if action_types & _TICK_KIND_CONVERSATION:
+            return "conversation"
+        if action_types & _TICK_KIND_COMBAT:
+            return "combat_resolution"
+        return "normal"
 
     @classmethod
     def _build_action_detail(
@@ -870,22 +1427,48 @@ class AIOsirisHook(NoOpSettlementHook):
         cls,
         context: SettlementContext,
         current_area: str,
+        current_location: str | None = None,
     ) -> list[dict[str, Any]]:
         if not current_area:
             return []
 
         seen_ids: set[str] = set()
         nearby: list[dict[str, Any]] = []
+        normalized_location = (
+            current_location.strip()
+            if isinstance(current_location, str)
+            else None
+        )
+
+        def is_scene_local(raw_location: str | None) -> bool:
+            if normalized_location is None:
+                return not raw_location
+            return raw_location == normalized_location
+
+        area_local: list[tuple[str, str | None]] = []
+        area_other: list[tuple[str, str | None]] = []
+        static_local: list[str] = []
+        static_other: list[str] = []
 
         # 1. 动态源：AreaSlice.npc_locations
         if context.state.has_slice("areas"):
             area_state = context.state.areas.areas.get(current_area)
             if area_state is not None:
                 for npc_id, location_id in area_state.npc_locations.items():
-                    seen_ids.add(npc_id)
-                    nearby.append(
-                        cls._build_npc_entry(context, npc_id, location_id=location_id)
+                    normalized_npc_location = (
+                        str(location_id).strip() if isinstance(location_id, str) else None
                     )
+                    if is_scene_local(normalized_npc_location):
+                        area_local.append((str(npc_id), normalized_npc_location))
+                    else:
+                        area_other.append((str(npc_id), normalized_npc_location))
+                    seen_ids.add(str(npc_id))
+
+        # 2. 动态源：Scene-local 优先，其次按其他动态来源补齐
+        for npc_id, location_id in area_local + area_other:
+            nearby.append(
+                cls._build_npc_entry(context, npc_id, location_id=location_id)
+            )
 
         # 2. 静态补源：CharacterRegistry 模板 area_id
         if context.world.has_registry("characters"):
@@ -898,8 +1481,18 @@ class AIOsirisHook(NoOpSettlementHook):
                 )
                 if area_id != current_area:
                     continue
-                seen_ids.add(char_id)
-                nearby.append(cls._build_npc_entry(context, char_id))
+
+                char_location = cls._coerce_non_empty_string(
+                    raw_char.location_id or raw_char.current_location
+                )
+                if is_scene_local(char_location):
+                    static_local.append(char_id)
+                else:
+                    static_other.append(char_id)
+
+        # 3. 静态源：Scene-local 优先，其次补齐其它同区 NPC
+        for char_id in static_local + static_other:
+            nearby.append(cls._build_npc_entry(context, char_id))
 
         return nearby
 
@@ -968,6 +1561,40 @@ class AIOsirisHook(NoOpSettlementHook):
             "has_player": snapshot.get("player") is not None,
             "has_party": snapshot.get("party") is not None,
         }
+
+    @classmethod
+    def _passes_minimal_semantic_validation(cls, command: Command) -> bool:
+        params = command.params
+        if command.type == "set_flag":
+            return "key" in params and "value" in params
+        if command.type == "modify_disposition":
+            return bool(params.get("dimension")) and "delta" in params and (
+                params.get("npc_id") or params.get("target")
+            )
+        if command.type == "modify_approval":
+            return "delta" in params and (
+                params.get("character_id") or params.get("character")
+            )
+        if command.type == "advance_quest":
+            return bool(params.get("quest_id")) and bool(params.get("to_state"))
+        if command.type == "schedule_event":
+            return bool(params.get("event_id")) and (
+                isinstance(params.get("trigger_condition"), Mapping)
+                or params.get("trigger_tick") is not None
+            )
+        if command.type == "create_rumor":
+            return bool(params.get("text") or params.get("content"))
+        if command.type == "modify_location":
+            return bool(params.get("area_id"))
+        if command.type == "add_knowledge":
+            return bool(params.get("npc_id") or params.get("character_id")) and bool(
+                params.get("impression") or params.get("knowledge")
+            )
+        if command.type == "modify_completion":
+            return bool(params.get("chapter_id")) and "delta" in params
+        if command.type == "adjust_danger":
+            return bool(params.get("area_id")) and "delta" in params
+        return True
 
     @staticmethod
     def _normalize_mapping(raw_value: Any) -> dict[str, Any]:

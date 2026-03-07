@@ -7,10 +7,33 @@ from app.game_core.orchestration.event_engine import (
     EventConditionDecision,
     EventConditionEvaluator,
     EventTransition,
+    run_inline_event_check,
 )
 from app.game_core.state import StateContainer
 from app.game_core.content import WorldInstance
-from app.game_core.state.slices import EventSlice, RelationSlice, TimeSlice
+from app.game_core.rules import RulesEngine
+from app.game_core.rules.handlers import WorldStateHandler
+from app.game_core.orchestration.scene_bus import SceneBus
+from app.game_core.state.slices import (
+    EventSlice,
+    FlagSlice,
+    QuestSlice,
+    RelationSlice,
+    SceneSlice,
+    TimeSlice,
+)
+
+
+def _build_rules_engine() -> RulesEngine:
+    engine = RulesEngine()
+    engine.register(WorldStateHandler())
+    return engine
+
+
+def _make_scene_state() -> SceneSlice:
+    scene = SceneSlice()
+    scene.restore({})
+    return scene
 
 
 def test_basic_evaluator_importable_from_event_engine() -> None:
@@ -167,3 +190,57 @@ class TestConditionCustom:
             StateContainer(), {"type": "custom", "key": "anything"}
         )
         assert met is False
+
+
+def test_complete_objective_command_marks_objective_and_completes_quest() -> None:
+    state = StateContainer()
+    state.register(QuestSlice())
+    state.register(EventSlice())
+    state.register(FlagSlice())
+    state.register(_make_scene_state())
+    state.quests.restore({
+        "dynamic_quests": {
+            "dq_obj": {
+                "status": "active",
+                "objectives": [
+                    {"type": "collect", "target": "crystal", "completed": False},
+                ],
+            },
+        },
+    })
+    state.flags.restore({"flags": {"ready": True}})
+    state.events.restore({
+        "active_events": {
+            "evt_obj_complete": {
+                "id": "evt_obj_complete",
+                "event_id": "evt_obj_complete",
+                "state": "locked",
+                "conditions": {"type": "flag_set", "key": "ready", "value": True},
+                "on_trigger": [{
+                    "type": "complete_objective",
+                    "params": {"quest_id": "dq_obj", "objective_index": 0},
+                }],
+            },
+        },
+    })
+
+    change_log: list = []
+    scene_bus = SceneBus(state.scene)
+
+    payloads = run_inline_event_check(
+        state=state,
+        world=WorldInstance("test_world"),
+        rules_engine=_build_rules_engine(),
+        apply_delta=state.apply,
+        change_log=change_log,
+        scene_bus=scene_bus,
+        label="test_obj_complete",
+    )
+
+    assert len(payloads) == 1
+    assert payloads[0]["event_id"] == "evt_obj_complete"
+    quest = state.quests.get_dynamic_quest("dq_obj")
+    assert quest is not None
+    assert quest["status"] == "completed"
+    assert isinstance(quest.get("objectives"), list)
+    assert quest["objectives"][0].get("completed") is True

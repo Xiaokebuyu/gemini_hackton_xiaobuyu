@@ -117,9 +117,11 @@ class TestNarrativePlanSliceValidation:
             "last_run_tick": 10,
             "behavior_window": [{"action": "explore"}],
             "npc_directives": [{"npc": "guard"}],
-            "active_bulletins": [],
             "quest_history": [],
             "play_style_tags": ["combat"],
+            "temporary_npcs": {
+                "temp_guard": {"name": "temp_guard"},
+            },
         })
         assert s.validate() == []
 
@@ -128,7 +130,10 @@ class TestNarrativePlanSliceValidation:
         s.chapter_completion = 1.5
         s.escalation_level = -1
         s.behavior_window = [{}] * 25
+        s.temporary_npcs = {"": {"name": "bad_key"}, "temp": "not_a_dict"}
         issues = s.validate()
         assert any("chapter_completion must be between" in msg for msg in issues)
         assert any("escalation_level must be an integer >= 0" in msg for msg in issues)
         assert any("behavior_window must not exceed 24" in msg for msg in issues)
+        assert any("temporary_npcs keys must be non-empty strings" in msg for msg in issues)
+        assert any("temporary_npcs[temp] must be a dict" in msg for msg in issues)

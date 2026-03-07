@@ -2,80 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any, Mapping, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.interaction_service import InteractionViewContext
-
-
-def find_linked_bulletin(
-    context: InteractionViewContext,
-    quest_id: str,
-) -> dict[str, Any] | None:
-    """Return the first active bulletin linked to one quest id."""
-
-    if not quest_id:
-        return None
-    for raw_entry in context.active_bulletins:
-        metadata = raw_entry.get("metadata", {})
-        metadata_map = metadata if isinstance(metadata, dict) else {}
-        if str(metadata_map.get("quest_id", "")).strip() == quest_id:
-            return dict(raw_entry)
-    return None
-
-
-def build_board_entries(
-    context: InteractionViewContext,
-    board_id: str,
-) -> list[dict[str, Any]]:
-    """Build normalized board entries for one board id."""
-
-    if not board_id:
-        return []
-    entries: list[dict[str, Any]] = []
-    for raw_entry in context.active_bulletins:
-        entry_board_id = str(raw_entry.get("board_id", "")).strip()
-        if entry_board_id != board_id:
-            continue
-        metadata = raw_entry.get("metadata", {})
-        metadata_map = metadata if isinstance(metadata, dict) else {}
-        quest_id = str(metadata_map.get("quest_id", "")).strip() or None
-        quest_status: str | None = None
-        if quest_id is not None:
-            dynamic_quest = context.dynamic_quests.get(quest_id, {})
-            if isinstance(dynamic_quest, dict):
-                status_text = str(dynamic_quest.get("status", "")).strip()
-                quest_status = status_text or None
-        published_at_tick = raw_entry.get("published_at_tick")
-        try:
-            normalized_tick = int(published_at_tick) if published_at_tick is not None else None
-        except (TypeError, ValueError):
-            normalized_tick = None
-        entries.append(
-            {
-                "board_id": entry_board_id,
-                "quest_id": quest_id,
-                "title": str(raw_entry.get("title", "")),
-                "content": str(raw_entry.get("content", "")),
-                "quest_status": quest_status,
-                "source": str(raw_entry.get("source", "")),
-                "published_at_tick": normalized_tick,
-            }
-        )
-    return entries
-
-
-def build_board_snapshot_payload(
-    context: InteractionViewContext,
-    board_id: str,
-) -> dict[str, Any]:
-    """Return the current quest-board view from bulletin and quest state."""
-
-    return {
-        "target_kind": "board",
-        "target_id": board_id,
-        "entries": build_board_entries(context, board_id),
-    }
 
 
 def build_shop_snapshot_payload(
@@ -133,6 +63,27 @@ def build_shop_snapshot_payload(
     }
 
 
+def _resolve_quest_source_milestone(
+    context: InteractionViewContext,
+    quest_id: str,
+    quest_map: Mapping[str, Any],
+) -> str | None:
+    raw_metadata = quest_map.get("metadata", {})
+    metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
+    source_milestone = str(metadata.get("source_milestone", "")).strip()
+    if source_milestone:
+        return source_milestone
+
+    target_milestone = str(quest_map.get("target_milestone", "")).strip()
+    if target_milestone:
+        return target_milestone
+
+    board_metadata = context.board_quest_metadata.get(quest_id, {})
+    if not isinstance(board_metadata, Mapping):
+        board_metadata = {}
+    return str(board_metadata.get("source_milestone", "")).strip() or None
+
+
 def build_talk_snapshot_payload(
     context: InteractionViewContext,
     npc_id: str,
@@ -182,11 +133,7 @@ def build_quest_brief_payload(
     """Return one read-only dynamic-quest brief for NPC ask_quest interactions."""
 
     quest_map = context.dynamic_quests.get(quest_id, {})
-    linked_bulletin = find_linked_bulletin(context, quest_id)
-    linked_metadata = {}
-    if isinstance(linked_bulletin, dict):
-        raw_metadata = linked_bulletin.get("metadata", {})
-        linked_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     return {
         "target_kind": "npc",
         "target_id": npc_id,
@@ -196,19 +143,7 @@ def build_quest_brief_payload(
             "status": str(quest_map.get("status", "")).strip(),
             "title": str(quest_map.get("title", "")),
             "summary": str(quest_map.get("summary", "")),
-            "listed_on_board": linked_bulletin is not None,
-            "board_id": (
-                str(linked_bulletin.get("board_id", "")).strip()
-                if isinstance(linked_bulletin, dict)
-                else None
-            ) or None,
-            "board_title": (
-                str(linked_bulletin.get("title", ""))
-                if isinstance(linked_bulletin, dict)
-                else None
-            ) or None,
-            "source_milestone": str(linked_metadata.get("source_milestone", "")).strip()
-            or None,
+            "source_milestone": source_milestone,
         },
     }
 
@@ -222,12 +157,7 @@ def build_quest_progress_payload(
 
     quest_map = context.dynamic_quests.get(quest_id, {})
     status = str(quest_map.get("status", "")).strip()
-    linked_bulletin = find_linked_bulletin(context, quest_id)
-    linked_metadata = {}
-    if isinstance(linked_bulletin, dict):
-        raw_metadata = linked_bulletin.get("metadata", {})
-        linked_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-    source_milestone = str(linked_metadata.get("source_milestone", "")).strip() or None
+    source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     source_milestone_state: str | None = None
     if source_milestone:
         resolved_state = context.milestone_states.get(source_milestone)
@@ -247,12 +177,6 @@ def build_quest_progress_payload(
             "can_accept": status == "available",
             "is_active": status == "active",
             "is_closed": status in {"completed", "failed", "retired"},
-            "listed_on_board": linked_bulletin is not None,
-            "board_id": (
-                str(linked_bulletin.get("board_id", "")).strip()
-                if isinstance(linked_bulletin, dict)
-                else None
-            ) or None,
             "source_milestone": source_milestone,
             "source_milestone_state": source_milestone_state,
         },
@@ -270,11 +194,7 @@ def build_quest_location_payload(
     status = str(quest_map.get("status", "")).strip()
     resolved_area_id = str(quest_map.get("area_id", "")).strip() or None
     resolved_location_id = str(quest_map.get("location_id", "")).strip() or None
-    linked_bulletin = find_linked_bulletin(context, quest_id)
-    linked_metadata = {}
-    if isinstance(linked_bulletin, dict):
-        raw_metadata = linked_bulletin.get("metadata", {})
-        linked_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     return {
         "target_kind": "npc",
         "target_id": npc_id,
@@ -285,13 +205,7 @@ def build_quest_location_payload(
             "location_known": bool(resolved_area_id or resolved_location_id),
             "area_id": resolved_area_id,
             "location_id": resolved_location_id,
-            "board_id": (
-                str(linked_bulletin.get("board_id", "")).strip()
-                if isinstance(linked_bulletin, dict)
-                else None
-            ) or None,
-            "source_milestone": str(linked_metadata.get("source_milestone", "")).strip()
-            or None,
+            "source_milestone": source_milestone,
         },
     }
 
@@ -311,11 +225,7 @@ def build_quest_requirements_payload(
         if isinstance(raw_requirements, list)
         else []
     )
-    linked_bulletin = find_linked_bulletin(context, quest_id)
-    linked_metadata = {}
-    if isinstance(linked_bulletin, dict):
-        raw_metadata = linked_bulletin.get("metadata", {})
-        linked_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     if status == "available":
         gating_reason: str | None = None
     elif status == "active":
@@ -335,8 +245,7 @@ def build_quest_requirements_payload(
             "requirements": requirements,
             "can_accept": status == "available",
             "gating_reason": gating_reason,
-            "source_milestone": str(linked_metadata.get("source_milestone", "")).strip()
-            or None,
+            "source_milestone": source_milestone,
         },
     }
 
@@ -350,6 +259,7 @@ def build_quest_reward_payload(
 
     quest_map = context.dynamic_quests.get(quest_id, {})
     status = str(quest_map.get("status", "")).strip()
+    source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     reward_gold = quest_map.get("reward_gold")
     try:
         gold = int(reward_gold) if reward_gold is not None and int(reward_gold) >= 0 else None
@@ -379,6 +289,7 @@ def build_quest_reward_payload(
             "quest_id": quest_id,
             "quest_kind": "dynamic",
             "status": status,
+            "source_milestone": source_milestone,
             "reward_known": bool(gold is not None or items or reward_summary is not None),
             "gold": gold,
             "items": items,

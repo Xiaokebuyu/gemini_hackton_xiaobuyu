@@ -13,7 +13,7 @@
   "class_resources": {},
   "concentration": null,
   "current_area": "frontier_town",
-  "current_location": "adventurer_guild",
+  "current_location": null,
   "equipment": {
     "ammo": null,
     "amulet": null,
@@ -32,7 +32,7 @@
   "gold": 15,
   "guild_rank": "porcelain",
   "guild_reputation": 0,
-  "hp": 10,
+  "hp": 11,
   "inventory": [],
   "known_spells": [],
   "level": 1,

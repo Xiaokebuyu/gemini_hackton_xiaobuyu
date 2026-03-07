@@ -1042,6 +1042,8 @@ class CombatHandler(StaticCommandHandler):
         """
         if flee_threshold <= 0.0 or hp_ratio > flee_threshold:
             return "attack"
+        if ai_personality == "cowardly":
+            return "flee"
         if ai_personality == "aggressive" and hp_ratio >= 0.1:
             return "attack"
         return "flee" if random.random() < flee_chance else "attack"

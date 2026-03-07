@@ -176,22 +176,53 @@ class AgenticNarrativePlanner:
     failure.
     """
 
-    _SYSTEM_PROMPT = """\
-You are the narrative planner for a dark-fantasy CRPG.
-Analyze the provided game state and output ONLY a JSON plan:
+    _SYSTEM_PROMPT = """You are a narrative planner AI for this RPG.
+You are NOT the GM and must never output narration.
 
+Output must be strict JSON only, no markdown.
 {
   "strategy_notes": "<brief reasoning>",
   "directives": [
-    {"kind": "escalate", "payload": {"delta": 1}},
-    ...
-  ]
+    {"kind": "...", "payload": {...}}
+  ],
+  "metadata": {}
 }
 
-Directive kinds: escalate / direct_npc / publish_bulletin / create_quest /
-                 adjust_pacing / retire_quest
-Max 3 directives. Empty directives list when story is stable.
-Output valid JSON only, no markdown fences."""
+Rules:
+1. Never invent identifiers. npc_id must come from Area NPCs, board_id must come from Quest boards.
+2. If no safe intervention exists, return an empty directives array.
+3. Max 3 directives.
+4. Never emit malformed JSON.
+
+7 Core Principles:
+1) Protect the narrative arc; avoid deviating from milestone progression.
+2) Blend interventions into nearby scene context.
+3) Respect pacing and escalate pressure gradually.
+4) Keep interventions progressive, not jumpy.
+5) Adapt to observed player style and recent behavior.
+6) Avoid repetitive actions that add no new progress.
+7) Keep every directive minimal and high signal.
+
+L0-L5 ladder:
+- L0: monitor only, no intervention.
+- L1: soft hinting (environmental nudge / light bulletin tone).
+- L2: targeted recommendation through relevant NPC.
+- L3: urgent guidance to accelerate stalled progress.
+- L4: hard pressure with world deterioration.
+- L5: final warning and strong escalation.
+
+All supported directive types (with payload fields):
+- escalate: {"kind":"escalate","payload":{"delta":1}}
+- direct_npc: {"kind":"direct_npc","payload":{"npc_id":"...","directive":{"kind":"...","...":...},"priority":"high|medium|low","expires_at_tick":123}}
+- publish_bulletin: {"kind":"publish_bulletin","payload":{"board_id":"...","area_id":"...","title":"...","content":"...","metadata":{"quest_id":"dq_x","source_milestone":"ms_x"},"notify_resident_npcs":false}}
+- create_quest: {"kind":"create_quest","payload":{"quest_id":"dq_x","title":"...","summary":"...","status":"available","metadata":{}}}
+- adjust_pacing: {"kind":"adjust_pacing","payload":{"frozen":true}}
+- retire_quest: {"kind":"retire_quest","payload":{"quest_id":"dq_x"}}
+- spawn_quest_npc: {"kind":"spawn_quest_npc","payload":{"npc_id":"temp_...", "area_id":"...", "location_id":"...", "role":"...", "description":"...", "dialogue_hook":"..."}}
+- plant_environmental: {"kind":"plant_environmental","payload":{"area_id":"...","dc":12,"description":"...","clue_id":"clue_x"}}
+- fill_area: {"kind":"fill_area","payload":{"area_id":"...","id":"fill_1","label":"...","description":"..."}}
+
+Always return strategy_notes including escalation intention and why the selected directives are safe."""
 
     def __init__(
         self,
@@ -287,6 +318,13 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
             f"location={location.get('location_id') or '(none)'}"
         ),
     ]
+    party = ctx.get("party", [])
+    if party:
+        party_parts = [str(member.get("id", "?")) for member in party if isinstance(member, dict)]
+        lines.append(f"Party members: {', '.join(party_parts)}")
+    style_tags = ctx.get("play_style_tags", [])
+    if style_tags:
+        lines.append(f"Play style: {', '.join(str(tag) for tag in style_tags)}")
     if area_cluster:
         lines.append(
             f"Area cluster: {area_cluster['area_id']} | "
@@ -303,8 +341,55 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
         lines.append(f"Recent planner runs (last {len(recent)}): " + " / ".join(behavior_parts))
 
     # ---- Part 4: 世界上下文 ----
+    area_npcs = ctx.get("area_npcs", [])
+    if area_npcs:
+        area_npc_list = ", ".join(str(npc_id) for npc_id in area_npcs)
+        lines.append(f"Area NPCs: {area_npc_list}")
+        lines.append(f"Allowed npc ids: {area_npc_list}")
+    area_boards = ctx.get("area_boards", [])
+    if area_boards:
+        board_parts = []
+        board_id_list: list[str] = []
+        for board in area_boards:
+            if not isinstance(board, dict):
+                continue
+            board_id = str(board.get("id", "")).strip()
+            if not board_id:
+                continue
+            board_id_list.append(board_id)
+            sub_location = str(board.get("sub_location", "")).strip()
+            if sub_location:
+                board_parts.append(f"{board_id}@{sub_location}")
+            else:
+                board_parts.append(board_id)
+        if board_parts:
+            lines.append("Quest boards: " + ", ".join(board_parts))
+            lines.append("Allowed board ids: " + ", ".join(board_id_list))
+
+    world_ctx = ctx.get("world_context", {})
+    if isinstance(world_ctx, dict):
+        area_description = world_ctx.get("area_description")
+        if area_description:
+            lines.append(f"Area description: {str(area_description)[:200]}")
+        factions = world_ctx.get("relevant_factions")
+        if isinstance(factions, list) and factions:
+            faction_names = [str(f.get("name")) for f in factions if isinstance(f, dict) and f.get("name")]
+            if faction_names:
+                lines.append("Factions: " + ", ".join(faction_names))
+        rules = world_ctx.get("world_rules")
+        if isinstance(rules, list) and rules:
+            rule_lines = [
+                f"{str(rule.get('title', ''))}: {str(rule.get('description', ''))[:80]}"
+                for rule in rules
+                if isinstance(rule, dict) and (rule.get("title") or rule.get("description"))
+            ]
+            if rule_lines:
+                lines.append("World rules:\n  " + "\n  ".join(rule_lines))
+
     changed_slices = ctx.get("changed_slices", [])
     change_count = ctx.get("change_count", 0)
+    scene = ctx.get("scene", {})
+    events = ctx.get("events", {})
     lines += [
         "",
         "## 世界上下文",
@@ -318,5 +403,28 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
             for c in recent_changes[-8:]
         ]
         lines.append("Recent changes:\n" + "\n".join(change_lines))
+    system_entries = scene.get("system_entries_digest", [])
+    if system_entries:
+        system_lines = [
+            f"  {entry.get('command_type') or 'system'}: "
+            f"{entry.get('reason') or entry.get('content') or '(no detail)'}"
+            for entry in system_entries[:4]
+        ]
+        lines.append("Osiris visible consequences:\n" + "\n".join(system_lines))
+    visible_command_types = scene.get("visible_command_types", [])
+    if visible_command_types:
+        lines.append(
+            "Osiris visible command types: "
+            + ", ".join(str(item) for item in visible_command_types)
+        )
+    pending_events = events.get("pending_events_digest", [])
+    if pending_events:
+        pending_lines = [
+            f"  {item.get('event_id') or '(pending)'} "
+            f"type={item.get('event_type') or 'generic'} "
+            f"trigger={item.get('trigger_condition')}"
+            for item in pending_events[:4]
+        ]
+        lines.append("Pending events:\n" + "\n".join(pending_lines))
 
     return "\n".join(lines)

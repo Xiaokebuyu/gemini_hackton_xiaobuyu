@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.game_core.rules.base import CommandHandler
 from app.game_core.rules.engine import RulesEngine
 from app.game_core.rules.handlers import (
+    BoardHandler,
     CombatHandler,
     ContainerHandler,
     CrimeHandler,
@@ -39,6 +40,7 @@ DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
     StatusEffectHandler,
     SpellHandler,
     DiscoveryHandler,
+    BoardHandler,
     InteractableHandler,
     HostileAreaHandler,
 )

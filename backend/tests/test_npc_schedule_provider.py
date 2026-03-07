@@ -73,23 +73,31 @@ def test_character_template_schedule_defaults_to_none() -> None:
 # ------------------------------------------------------------------
 
 
-def test_scheduled_destination_returns_override() -> None:
+def test_scheduled_destination_returns_sub_location() -> None:
+    """String schedule value → (None, location_id) — sub-location in home area."""
     char = {"id": "bartender", "schedule": {"dusk": "tavern"}}
-    dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town", "tavern"})
-    assert dest == "tavern"
+    dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town"})
+    assert dest == (None, "tavern")
 
 
-def test_scheduled_destination_returns_none_when_area_invalid() -> None:
-    """If scheduled area is not in valid_area_ids, treat as no schedule."""
-    char = {"id": "ghost", "schedule": {"dusk": "ruins"}}
-    dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town", "tavern"})
-    assert dest is None
+def test_scheduled_destination_returns_cross_area() -> None:
+    """Dict schedule value → (area_id, location_id) — cross-area move."""
+    char = {"id": "gs", "schedule": {"night": {"area": "farm", "location": "warehouse"}}}
+    dest = BasicNpcScheduleProvider._scheduled_destination(char, "night", {"town", "farm"})
+    assert dest == ("farm", "warehouse")
 
 
 def test_scheduled_destination_returns_none_when_no_schedule() -> None:
     char = {"id": "wanderer"}
     dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town"})
-    assert dest is None
+    assert dest == (None, None)
+
+
+def test_scheduled_destination_returns_none_for_missing_period() -> None:
+    """No entry for the requested period → (None, None)."""
+    char = {"id": "guard", "schedule": {"dawn": "barracks"}}
+    dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town"})
+    assert dest == (None, None)
 
 
 # ------------------------------------------------------------------
@@ -97,49 +105,53 @@ def test_scheduled_destination_returns_none_when_no_schedule() -> None:
 # ------------------------------------------------------------------
 
 
-def test_schedule_overrides_dusk_destination() -> None:
-    """NPC with schedule dusk→tavern should move to tavern, not town."""
+def test_schedule_moves_to_sub_location() -> None:
+    """NPC with schedule dusk→tavern moves within home area to that sub-location."""
     provider = _make_provider()
-    characters = [{"id": "bartender", "area_id": "market", "schedule": {"dusk": "tavern"}}]
+    characters = [{"id": "bartender", "area_id": "market", "schedule": {"dusk": "counter"}}]
     decision = provider.plan(_dusk_context(characters))
     assert decision.metadata.get("status") == "deterministic"
     moves = decision.moves
     assert len(moves) == 1
     move = moves[0] if isinstance(moves[0], dict) else vars(moves[0])
-    assert move["area_id"] == "tavern"
+    assert move["area_id"] == "market"
+    assert move["location_id"] == "counter"
 
 
-def test_no_schedule_uses_default_town_at_dusk() -> None:
-    """NPC without schedule still moves to town at dusk (backward compat)."""
+def test_no_schedule_is_noop() -> None:
+    """NPC without schedule does not move."""
     provider = _make_provider()
     characters = [{"id": "guard", "area_id": "barracks"}]
     decision = provider.plan(_dusk_context(characters))
-    assert decision.metadata.get("status") == "deterministic"
-    moves = decision.moves
-    assert len(moves) == 1
-    move = moves[0] if isinstance(moves[0], dict) else vars(moves[0])
-    assert move["area_id"] == "town"
+    assert decision.metadata.get("status") == "noop"
 
 
-def test_schedule_overrides_dawn_destination() -> None:
-    """NPC with schedule dawn→market should move to market at dawn."""
+def test_schedule_cross_area_move() -> None:
+    """NPC with dict schedule value moves across areas."""
     provider = _make_provider()
-    characters = [{"id": "trader", "area_id": "town", "schedule": {"dawn": "market"}}]
+    characters = [
+        {
+            "id": "farmer",
+            "area_id": "town",
+            "schedule": {"dawn": {"area": "market", "location": "stall"}},
+        }
+    ]
     decision = provider.plan(_dawn_context(characters))
     assert decision.metadata.get("status") == "deterministic"
     moves = decision.moves
     assert len(moves) == 1
     move = moves[0] if isinstance(moves[0], dict) else vars(moves[0])
     assert move["area_id"] == "market"
+    assert move["location_id"] == "stall"
 
 
-def test_schedule_invalid_area_falls_back_to_area_id() -> None:
-    """If scheduled area doesn't exist, fall back to area_id (home area)."""
+def test_already_at_destination_is_noop() -> None:
+    """NPC already at scheduled destination should not move."""
     provider = _make_provider()
-    characters = [{"id": "npc1", "area_id": "barracks", "schedule": {"dawn": "nonexistent"}}]
-    decision = provider.plan(_dawn_context(characters))
-    assert decision.metadata.get("status") == "deterministic"
-    moves = decision.moves
-    assert len(moves) == 1
-    move = moves[0] if isinstance(moves[0], dict) else vars(moves[0])
-    assert move["area_id"] == "barracks"
+    characters = [{"id": "bartender", "area_id": "tavern", "schedule": {"dusk": "counter"}}]
+    areas = {
+        "tavern": {"npc_locations": {"bartender": "counter"}},
+        "town": {"npc_locations": {}},
+    }
+    decision = provider.plan(_dusk_context(characters, areas=areas))
+    assert decision.metadata.get("status") == "noop"

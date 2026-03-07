@@ -324,6 +324,60 @@ class TestWorldStateHandler:
         assert result.success is False
         assert result.errors == ["unsupported trigger_condition.type: moon_phase"]
 
+    def test_schedule_event_accepts_period_reached_condition(self) -> None:
+        result = _execute(
+            Command(
+                type="schedule_event",
+                params={
+                    "event_id": "evt_period",
+                    "trigger_condition": {"type": "period_reached", "period": "day"},
+                },
+            ),
+            _make_state(),
+            _make_world(),
+        )
+
+        assert result.success is True
+        assert result.delta is not None
+        pending = result.delta.changes[0].value
+        assert pending["trigger_condition"] == {"type": "period_reached", "period": "day"}
+
+    def test_schedule_event_accepts_location_entered_condition(self) -> None:
+        result = _execute(
+            Command(
+                type="schedule_event",
+                params={
+                    "event_id": "evt_location",
+                    "trigger_condition": {"type": "location_entered", "area_id": "forest"},
+                },
+            ),
+            _make_state(),
+            _make_world(),
+        )
+
+        assert result.success is True
+        assert result.delta is not None
+        pending = result.delta.changes[0].value
+        assert pending["trigger_condition"] == {"type": "location_entered", "area_id": "forest"}
+
+    def test_schedule_event_accepts_flag_set_condition(self) -> None:
+        result = _execute(
+            Command(
+                type="schedule_event",
+                params={
+                    "event_id": "evt_flag",
+                    "trigger_condition": {"type": "flag_set", "key": "quest_started"},
+                },
+            ),
+            _make_state(),
+            _make_world(),
+        )
+
+        assert result.success is True
+        assert result.delta is not None
+        pending = result.delta.changes[0].value
+        assert pending["trigger_condition"] == {"type": "flag_set", "key": "quest_started"}
+
     def test_create_rumor_accepts_content_alias_and_adds_created_at(self) -> None:
         state = _make_state()
         result = _execute(

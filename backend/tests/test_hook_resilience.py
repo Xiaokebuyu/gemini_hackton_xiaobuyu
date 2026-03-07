@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
-from app.game_core.orchestration.models import HookResult, SSEEvent
+from app.game_core.orchestration.models import HookResult, PipelineResult, SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.orchestration.tick_coordinator import TickCoordinator
@@ -238,24 +239,77 @@ def test_event_sink_none_preserves_original_behavior() -> None:
 
 
 # ------------------------------------------------------------------
-# action_log 滑动窗口测试
+# action_log 结算窗口测试
 # ------------------------------------------------------------------
 
 
-def test_action_log_capped_at_max() -> None:
-    """action_log 超过 MAX_ACTION_LOG 条后应自动裁剪到上限。"""
-    from app.game_core.orchestration.tick_coordinator import MAX_ACTION_LOG
-    from app.game_core.orchestration.models import PipelineResult
-
+def test_action_log_consumes_one_tick_and_preserves_spillover() -> None:
     coordinator = _make_coordinator()
-    overflow = MAX_ACTION_LOG + 20
+    coordinator._append_pipeline_action(
+        PipelineResult(success=True, action_type="navigate", time_cost=0.75)
+    )
+    coordinator._append_pipeline_action(
+        PipelineResult(success=True, action_type="rest_long", time_cost=0.75)
+    )
 
-    # 直接调用 _record_action 模拟超量写入
-    for i in range(overflow):
-        fake_result = PipelineResult(success=True, action_type=f"move_{i}", time_cost=0.1)
-        coordinator._record_action(fake_result)
+    first_window = coordinator.action_log
+    assert [(entry["type"], entry["time_cost"]) for entry in first_window] == [
+        ("navigate", 0.75),
+        ("rest_long", 0.25),
+    ]
 
-    assert len(coordinator.action_log) == MAX_ACTION_LOG
-    # 保留的是最新的条目（尾部）
-    assert coordinator.action_log[-1]["type"] == f"move_{overflow - 1}"
-    assert coordinator.action_log[0]["type"] == f"move_{overflow - MAX_ACTION_LOG}"
+    coordinator._consume_pending_action_window()
+
+    second_window = coordinator.action_log
+    assert [(entry["type"], entry["time_cost"]) for entry in second_window] == [
+        ("rest_long", 0.5),
+    ]
+
+
+def test_consumed_action_log_does_not_leak_into_next_window() -> None:
+    coordinator = _make_coordinator()
+    coordinator._append_pipeline_action(
+        PipelineResult(success=True, action_type="navigate", time_cost=1.0)
+    )
+    coordinator._consume_pending_action_window()
+
+    coordinator._append_pipeline_action(
+        PipelineResult(success=True, action_type="skill_check", time_cost=1.0 / 6.0)
+    )
+
+    assert coordinator.action_log == [
+        {
+            "type": "skill_check",
+            "actor": "system",
+            "params": {},
+            "success": True,
+            "time_cost": 1.0 / 6.0,
+        }
+    ]
+
+
+def test_multi_tick_action_reuses_same_high_level_semantics_until_fully_consumed() -> None:
+    coordinator = _make_coordinator()
+    coordinator._append_pipeline_action(
+        PipelineResult(success=True, action_type="rest_long", time_cost=8.0 / 6.0)
+    )
+
+    first_window = coordinator.action_log
+    assert first_window == [
+        {
+            "type": "rest_long",
+            "actor": "system",
+            "params": {},
+            "success": True,
+            "time_cost": 1.0,
+        }
+    ]
+
+    coordinator._consume_pending_action_window()
+    second_window = coordinator.action_log
+    assert len(second_window) == 1
+    assert second_window[0]["type"] == "rest_long"
+    assert second_window[0]["actor"] == "system"
+    assert second_window[0]["params"] == {}
+    assert second_window[0]["success"] is True
+    assert second_window[0]["time_cost"] == pytest.approx(1.0 / 3.0)

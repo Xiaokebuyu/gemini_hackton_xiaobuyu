@@ -669,42 +669,45 @@ write_episode 实现（LLM 三元组提取）留 Phase 3b。
 
 ---
 
-## [D-N20] N-2 Phase B：PrivateChatTriggerHook（NPC 主动发起私聊）（2026-03-01）
+## [D-N20] N-2 Phase B：PrivateChatTriggerHook（NPC 主动发起私聊）（2026-03-07）
 
-**问题**：Phase A 完成了玩家主动发起的 4 步私聊管线，但 §7.4 的另一侧（NPC 根据 disposition 主动发起信号）缺失。
+**问题**：Phase A 完成了玩家主动发起的 4 步私聊管线，但 §7.4 的另一侧（NPC 根据 disposition 主动发起信号）缺失，且现有触发行为未按“只在场景可达 NPC、休息场景、非受限关系阶段、私聊中防重入、概率化”对齐。
 
-**目标**：在格结算时检测 NPC 的 romance/trust/stage 阈值，满足条件时推送 `npc_wants_to_chat` SSE 事件。冷静期（FlagSlice）防止同一 NPC 短时间内重复触发。
+**目标**：在结算时检测 NPC 的 romance/trust/stage 阈值，并按回归顺序触发私聊意图信号，避免异常触发。
 
-**触发条件**：romance ≥ 60 OR trust ≥ 50 OR stage == "intimate"（任一满足）
-**冷静期**：`absolute_tick + COOLDOWN_TICKS(=6)` 写入 FlagSlice，下次检查时比较
+#### 版本 1（2026-03-01）
 
-#### 新建 `app/game_core/orchestration/hooks/private_chat_trigger.py`（~170 行）
+- **触发条件**：romance ≥ 60 OR trust ≥ 50 OR stage == "intimate"（任一满足）
+- **冷静期**：`absolute_tick + COOLDOWN_TICKS(=6)` 写入 FlagSlice，下次检查时比较
 
-- `PrivateChatTriggerEvaluator` Protocol + `BasicPrivateChatTriggerEvaluator` + `NullPrivateChatTriggerEvaluator`
-- `PrivateChatTriggerHook(NoOpSettlementHook)`：HOOK_PRIORITY=75（NpcScheduleHook=60 之后）
-  - `execute()` 遍历 `relations.npc_dispositions`，逐 NPC 检查冷静期 + 阈值
-  - 触发时：set `private_chat_cooldown_{npc_id}` flag = current_tick + COOLDOWN_TICKS，emit SSEEvent
-  - 冷静期到期时：remove 旧 flag，允许重新触发
-  - FlagSlice/TimeSlice 不存在时各有 guard，安全降级
-- `_get_npc_name()` lazy import `_profile_get`（避免模块加载时循环依赖）
+#### 版本 2（2026-03-07 回正）
 
-#### 修改 `app/game_core/orchestration/hooks/__init__.py`（+2 行）
-- 新增 import + `__all__` export `PrivateChatTriggerHook`
+- **场景过滤**：仅扫描当前玩家区域内 `areas.npc_locations` 中 NPC + `party.members`（始终可达），避免跨场景误触发。
+- **阶段过滤**：`stranger` / `cold` / `hostile` / `nemesis` / `enemy` 直接跳过，不再触发。
+- **时机过滤**：只在 `SceneBus` 当前 tick 带 `REST/LONG_REST` 标签时检查。
+- **概率化**：满足条件后引入 Bernoulli 抑制，`romance=40%`、`trust=30%`、`intimate=60%`。
+- **私聊重入防护**：`player.current_location` 以 `_private_` 开头时直接跳过。
+- **阈值说明**：`TRUST_THRESHOLD` 保持 `50`，并在代码注释中对比 orchestration layer §3.2 与 NPC 规范不一致说明（仅记录，不改变逻辑）。
 
-#### 修改 `app/game_core/orchestration/defaults.py`（+2 行）
-- `DEFAULT_SETTLEMENT_HOOK_TYPES` tuple 在 `NpcScheduleHook` 之后插入 `PrivateChatTriggerHook`
+#### 模块更新
+
+- 更新 `app/game_core/orchestration/hooks/private_chat_trigger.py`
+- 保持 `PrivateChatTriggerHook` 在 `NpcScheduleHook` 后执行（priority 75）
+- `tests/test_private_chat_trigger.py`：补充场景/关系阶段/时机/概率化/防重入覆盖
+- 更新 `app/game_core/orchestration/hooks/__init__.py` + `app/game_core/orchestration/defaults.py` 注册（沿用原 D-N20 变更）
 
 **设计决策**：
-- 冷静期用 `TimeSlice.absolute_tick()` = `(day-1)*24+slot` 作为单调计数器，无需额外状态
-- Hook 直接 mutation FlagSlice（与 NpcScheduleHook 直接修改 AreaSlice 的模式一致）
-- Phase C（阈值参数化、LLM 生成开场白、NPC 主动发起完整对话流）留后续
+- 冷静期仍用 `TimeSlice.absolute_tick()` = `(day-1)*24+slot`，无须新建时钟状态
+- 依旧采用直接 `FlagSlice` mutation（与现有 hooks 风格一致）
+- Trust 阈值保持 50（与 Phase B 现有实现一致），优先以系统回归一致性为准
+- 阶段过滤与概率化均保持 Hook 端完成，降低下游复杂度
 
-**测试**：新建 `tests/test_private_chat_trigger.py`（19 个测试）：
+**测试**：`tests/test_private_chat_trigger.py`（27 个测试）：
 - `TestBasicPrivateChatTriggerEvaluator`（5）：romance/trust/intimate 各触发 + 无触发 + 优先级
 - `TestNullEvaluator`（1）：从不触发
-- `TestPrivateChatTriggerHook`（13）：no_relations / 各阈值触发 / 冷静期活跃/过期 / 冷静期写入值 / 多 NPC / name 从 registry / name 回退 id / null evaluator / metadata / 无 FlagSlice 降级
+- `TestPrivateChatTriggerHook`（21）：场景过滤 / 非可达过滤 / 休息时机 / 关系阶段 / 概率抑制 / 私聊重入跳过 + 既有阈值、冷静期、metadata、Name 回退、无 FlagSlice 降级等
 
-**测试基线**：714 passed（+19，零回归）
+**测试基线**：预计可达 727（已补齐 D-N20 Phase B 回正用例，需执行回归）
 
 ---
 
@@ -1132,3 +1135,33 @@ Phase 7（CompanionManager 招募/离队）从未实现，RelationshipHook 的 c
 - `test_kill_count_different_monster_types`: 不同怪物分开计数
 
 CompanionManager 单元测试已在 `test_round5_companion.py` 中完备（21 个），无需新增。
+
+---
+
+## [D-N13] board_id 动态解析与发布目标统一（2026-03-07）
+
+### 背景
+
+- 早期 `NarrativePlanner` 在发布任务公告时硬编码 `board_id="board"`，与地图内真实可配置 `quest_source` ID 不一致。
+- 同期旧链路也存在 `NarrativePlanSlice` 持有公告内容的遗留认知，导致 BoardHandler 与 AreaSlice 读取口径不统一。
+
+### 决策
+
+1. 在 `NarrativePlanner` 的上下文归一化中携带当前 `location` 与 `maps`。
+2. 新增 `_resolve_quest_board()` 动态解析器：
+  - 优先从 `MapRegistry` 的当前 `area_id` 下所有 `sub_location.interactables` 找带有 `quest_source` tag 的交互物；
+  - 动态解析 `board_id` 作为 `publish_bulletin` 指令入参。
+3. 如果缺失可解析目标，`_try_seed_quest()` 返回 `stable` 并带 `reason="quest_board_unresolved"`，避免抛错误中断。
+4. `publish_bulletin` 指令执行链统一写入 `AreaSlice` 的 `board_bulletins`（见 D-S07），不再在 `NarrativePlanSlice` 持久化公告。
+
+### 变更与验收
+
+- 文件：`app/game_core/planning/planner.py`  
+- 文件：`app/game_core/planning/models.py`（发布指令 payload）
+- 文件：`app/game_core/orchestration/hooks/narrative_planner.py`（执行阶段消费 `area_id`）
+- 文件：`tests/test_narrative_executor.py`
+- 文件：`tests/test_narrative_planner_hook.py`
+
+### 收益
+
+- `action/stream` 下 `browse_board` 的 `board_id` 不再受固定字符串影响，能随地图配置切换。

@@ -17,25 +17,44 @@ Decision record: D-N20 (narrative.md)
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+import random
+from typing import TYPE_CHECKING, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
+from app.game_core.orchestration.hooks.rest_phase import resolve_rest_phase
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 
 if TYPE_CHECKING:
     from app.game_core.content import WorldInstance
+    from app.game_core.orchestration.scene_bus import SceneBus
 
 logger = logging.getLogger(__name__)
+
 
 # ------------------------------------------------------------------
 # Trigger thresholds (§7.4)
 # ------------------------------------------------------------------
 
 ROMANCE_THRESHOLD: int = 60
+# TRUST_THRESHOLD is intentionally kept at 50 to align with Phase B orchestration
+# guidance (orchestration layer §3.2). NPC spec §7.1 currently states trust > 60,
+# so this mismatch is documented here for follow-up spec sync.
 TRUST_THRESHOLD: int = 50
 INTIMATE_STAGE: str = "intimate"
-COOLDOWN_TICKS: int = 6     # ~1/4 game day (absolute_tick units)
+COOLDOWN_TICKS: int = 6  # ~1/4 game day (absolute_tick units)
+_NON_CHAT_STAGES: frozenset[str] = frozenset({
+    "stranger",
+    "cold",
+    "hostile",
+    "nemesis",
+    "enemy",
+})
+_TRIGGER_CHANCE: dict[str, float] = {
+    "romance": 0.40,   # romance 触发情境
+    "trust": 0.30,     # trust 驱动
+    "intimate": 0.60,  # intimate 更容易触发
+}
 
 
 # ------------------------------------------------------------------
@@ -90,6 +109,41 @@ class NullPrivateChatTriggerEvaluator:
         return False, ""
 
 
+def _collect_reachable_npcs(context: SettlementContext) -> set[str]:
+    """Return NPC ids reachable by player at current tick."""
+    if not (context.state.has_slice("player") and context.state.has_slice("areas")):
+        return set()
+
+    player_area = context.state.player.current_area
+    if not player_area:
+        return set()
+
+    area_snap = context.state.areas.snapshot()
+    area_data = area_snap.get("areas", {}).get(player_area, {})
+    npc_locations = area_data.get("npc_locations")
+    if not isinstance(npc_locations, dict):
+        return set()
+
+    reachable_npc_ids = set(npc_locations.keys())
+    if context.state.has_slice("party"):
+        reachable_npc_ids.update(context.state.party.get_members().keys())
+    return reachable_npc_ids
+
+
+def _is_rest_tick(scene_bus: SceneBus) -> bool:
+    """Return True when current tick is a rest/campfire moment."""
+    bus_snap = scene_bus.snapshot()
+    for entry in bus_snap.get("entries", []):
+        if not isinstance(entry, dict) or entry.get("source") != "ENGINE":
+            continue
+        tags = entry.get("tags", [])
+        if not isinstance(tags, list):
+            continue
+        if "REST" in tags or "LONG_REST" in tags:
+            return True
+    return False
+
+
 # ------------------------------------------------------------------
 # Hook
 # ------------------------------------------------------------------
@@ -119,6 +173,23 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
         if not context.state.has_slice("relations"):
             return HookResult(metadata={"skipped": "no_relations"})
 
+        if context.state.has_slice("player"):
+            current_loc = context.state.player.current_location
+            if current_loc and current_loc.startswith("_private_"):
+                return HookResult(metadata={"skipped": "already_in_private_chat"})
+        else:
+            return HookResult(metadata={"skipped": "no_player_slice"})
+
+        rest_phase = resolve_rest_phase(context)
+        if rest_phase is None:
+            return HookResult(metadata={"skipped": "not_rest_tick"})
+        if rest_phase.rest_action_type == "rest_long" and not rest_phase.is_final_rest_slot:
+            return HookResult(metadata={"skipped": "not_final_rest_slot"})
+
+        reachable_npc_ids = _collect_reachable_npcs(context)
+        if not reachable_npc_ids:
+            return HookResult(metadata={"skipped": "no_reachable_npcs"})
+
         current_tick: int = (
             context.state.time.absolute_tick()
             if context.state.has_slice("time") else 0
@@ -133,6 +204,9 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
         sse_events: list[SSEEvent] = []
 
         for npc_id, dispositions in dispositions_map.items():
+            if npc_id not in reachable_npc_ids:
+                continue
+
             cooldown_key = f"private_chat_cooldown_{npc_id}"
 
             # Cooldown check
@@ -144,13 +218,20 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
                 if context.state.flags.has(cooldown_key):
                     context.state.flags.remove(cooldown_key)
 
-            stage = stages_map.get(npc_id, "stranger")
+            stage = stages_map.get(npc_id, "acquaintance")
+            if stage in _NON_CHAT_STAGES:
+                continue
+
             should_trigger, reason = self._evaluator.should_initiate(
                 npc_id,
                 dict(dispositions) if not isinstance(dispositions, dict) else dispositions,
                 stage,
             )
             if not should_trigger:
+                continue
+
+            chance = _TRIGGER_CHANCE.get(reason, 0.30)
+            if random.random() > chance:
                 continue
 
             # Set cooldown flag (direct mutation — same pattern as NpcScheduleHook)

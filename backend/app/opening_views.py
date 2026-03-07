@@ -113,9 +113,18 @@ def _first_opening_quest(session: ManagedSession) -> dict[str, Any] | None:
 
 
 def _first_opening_bulletin(session: ManagedSession) -> dict[str, Any] | None:
-    for bulletin in session.runtime.state.narrative_plan.active_bulletins:
-        if isinstance(bulletin, dict):
-            return dict(bulletin)
+    area_id = session.runtime.state.player.current_area
+    if not area_id:
+        return None
+    if not session.runtime.state.has_slice("areas"):
+        return None
+    area_state = session.runtime.state.areas.areas.get(area_id)
+    if area_state is None:
+        return None
+    for entries in area_state.board_bulletins.values():
+        for bulletin in entries:
+            if isinstance(bulletin, dict):
+                return dict(bulletin)
     return None
 
 

@@ -111,41 +111,6 @@ def test_interaction_service_rejects_presence_before_resolving() -> None:
     assert result.events[0].payload["code"] == "npc_not_present"
 
 
-def test_interaction_service_rejects_board_precheck_before_resolving() -> None:
-    runtime, session = _interaction_session(location_id="board")
-    service = _service(runtime)
-
-    result = asyncio.run(
-        service.execute(
-            session,
-            {
-                "status": "resolved",
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "item_id": None,
-                "quest_id": "dq_report_in",
-                "count": 1,
-                "execution": {
-                    "kind": "pipeline_action",
-                    "action_type": "advance_quest",
-                    "params": {
-                        "quest_id": "dq_report_in",
-                        "to_state": "active",
-                        "quest_kind": "dynamic",
-                    },
-                    "post_snapshot": "board",
-                },
-            },
-        )
-    )
-
-    assert result.success is False
-    assert result.reason == "interaction_rejected"
-    assert [event.event_type for event in result.events] == ["interaction_rejected"]
-    assert result.events[0].payload["code"] == "quest_not_listed"
-
-
 def test_interaction_service_executes_talk_snapshot() -> None:
     runtime, session = _interaction_session()
     service = _service(runtime)
@@ -239,66 +204,6 @@ def test_interaction_service_executes_shop_refresh() -> None:
         "shop_snapshot",
     ]
     assert any(item["item_id"] == "bandage" for item in result.events[1].payload["stock"])
-
-
-def test_interaction_service_executes_pipeline_action_and_post_snapshot() -> None:
-    runtime, session = _interaction_session(location_id="board")
-    session.runtime.state.narrative_plan.add_bulletin(
-        {
-            "board_id": "board",
-            "title": "New Lead Posted",
-            "content": "A fresh lead is available: Report In.",
-            "metadata": {"quest_id": "dq_report_in"},
-            "published_at_tick": 9,
-            "source": "test",
-        }
-    )
-    session.runtime.state.quests.add_dynamic_quest(
-        "dq_report_in",
-        {
-            "status": "available",
-            "title": "Lead: Report In",
-            "summary": "Follow the new lead tied to report_in.",
-        },
-    )
-    service = _service(runtime)
-
-    result = asyncio.run(
-        service.execute(
-            session,
-            {
-                "status": "resolved",
-                "target_kind": "board",
-                "target_id": "board",
-                "intent": "accept",
-                "item_id": None,
-                "quest_id": "dq_report_in",
-                "count": 1,
-                "execution": {
-                    "kind": "pipeline_action",
-                    "action_type": "advance_quest",
-                    "params": {
-                        "quest_id": "dq_report_in",
-                        "to_state": "active",
-                        "quest_kind": "dynamic",
-                    },
-                    "post_snapshot": "board",
-                },
-            },
-        )
-    )
-
-    assert result.success is True
-    assert result.events[0].event_type == "interaction_resolved"
-    assert result.events[1].event_type == "action_result"
-    assert result.events[-1].event_type == "board_snapshot"
-    matching_entries = [
-        entry
-        for entry in result.events[-1].payload["entries"]
-        if entry["quest_id"] == "dq_report_in"
-    ]
-    assert matching_entries
-    assert matching_entries[0]["quest_status"] == "active"
 
 
 def test_interaction_service_handles_pipeline_failure() -> None:

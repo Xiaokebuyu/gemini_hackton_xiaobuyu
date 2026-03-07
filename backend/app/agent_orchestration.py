@@ -22,6 +22,7 @@ from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.game_core.orchestration.npc_interaction import (
     NpcInteractionCoordinator,
     NpcInteractionResult,
+    RoundMessage,
     _extract_visible_reply_text,
     _resolve_dialogue_options,
     _should_teammate_respond,
@@ -121,6 +122,7 @@ class AgentOrchestrationService:
             state=session.runtime.state,
             memory_retriever=self._memory_retriever,
             memory_writer=self._make_memory_writer(session),
+            companion_manager=getattr(session.runtime, "companion_manager", None),
         )
         try:
             result = await coordinator.execute_interaction(
@@ -162,10 +164,50 @@ class AgentOrchestrationService:
 
         await self._write_episode(session, npc_id, result.graphize_candidates)
 
+        # Write round record into each participating teammate's ContextWindow
+        _write_teammate_context_windows(session, result)
+
         return _interaction_result_to_sse(
             result,
             action_dispatcher=session.runtime.action_dispatcher,
         )
+
+    # ---- Free chat with party (no NPC target) ----
+
+    async def run_free_chat(
+        self,
+        session: ManagedSession,
+        player_message: str,
+    ) -> list[SSEEvent]:
+        """Free party chat — teammate evaluation only, no NPC/GM.
+
+        Delegates to NpcInteractionCoordinator.execute_free_chat which runs
+        only Steps 4-5 of the interaction pipeline (serialized teammate
+        evaluation + generic dialogue options).
+        """
+        coordinator = NpcInteractionCoordinator(
+            executor=self._executor,
+            world=session.runtime.world,
+            state=session.runtime.state,
+            memory_retriever=self._memory_retriever,
+            companion_manager=getattr(session.runtime, "companion_manager", None),
+        )
+        try:
+            result = await coordinator.execute_free_chat(
+                player_message=player_message,
+                execute_command=_make_command_executor(session),
+            )
+        except Exception:
+            logger.exception("Free chat pipeline failed")
+            return [SSEEvent(
+                event_type="stream_error",
+                payload={"error": "free_chat_failed"},
+            )]
+
+        # Write round record into each participating teammate's ContextWindow
+        _write_teammate_context_windows(session, result)
+
+        return _free_chat_result_to_sse(result)
 
     # ---- Private 4-step chat (no GM/teammate observation) ----
 
@@ -1163,6 +1205,84 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _format_round_for_window(round_messages: list[RoundMessage]) -> str:
+    """Format round messages into a readable string for ContextWindow storage."""
+    lines: list[str] = []
+    for msg in round_messages:
+        prefix = f"[{msg.speaker_role}:{msg.speaker_id}]"
+        if msg.event_type == "emote":
+            lines.append(f"{prefix} *{msg.content}*")
+        else:
+            lines.append(f"{prefix} {msg.content}")
+    return "\n".join(lines)
+
+
+def _extract_member_speech(
+    ordered_responses: list[tuple[str, AgentResult]],
+    member_id: str,
+) -> str:
+    """Extract the concatenated speech/emote text of a specific member."""
+    parts: list[str] = []
+    for mid, result in ordered_responses:
+        if mid != member_id:
+            continue
+        for tr in result.tool_results:
+            if not tr.success or not tr.message:
+                continue
+            evt = tr.metadata.get("event_type", "") if isinstance(tr.metadata, dict) else ""
+            if evt in ("speech", "emote"):
+                parts.append(tr.message)
+    return " ".join(parts)
+
+
+def _write_teammate_context_windows(
+    session: ManagedSession,
+    result: NpcInteractionResult,
+) -> None:
+    """Write the round record into each participating teammate's ContextWindow.
+
+    After a group dialogue (NPC interaction or free chat), each teammate who
+    participated gets:
+      - A 'user' message containing the full round transcript
+      - A 'model' message containing their own speech/emotes (if any)
+    """
+    if not result.round_messages or not result.ordered_responses:
+        return
+
+    companion_mgr = getattr(session.runtime, "companion_manager", None)
+    if companion_mgr is None:
+        return
+
+    # Deduplicate member IDs while preserving order
+    seen: set[str] = set()
+    participating_member_ids: list[str] = []
+    for mid, _res in result.ordered_responses:
+        if mid not in seen:
+            seen.add(mid)
+            participating_member_ids.append(mid)
+
+    round_text = _format_round_for_window(result.round_messages)
+
+    for member_id in participating_member_ids:
+        instance = companion_mgr.get_or_create(member_id)
+
+        # User message: full round context
+        instance.context_window.add_message(WindowMessage(
+            role="user",
+            content=round_text,
+            token_count=_approx_tokens(round_text),
+        ))
+
+        # Model message: this teammate's own speech (if any)
+        own_speech = _extract_member_speech(result.ordered_responses, member_id)
+        if own_speech:
+            instance.context_window.add_message(WindowMessage(
+                role="model",
+                content=own_speech,
+                token_count=_approx_tokens(own_speech),
+            ))
+
+
 def _is_protocol_error(result: AgentResult | None) -> bool:
     return bool(result is not None and result.metadata.get("status") == "protocol_error")
 
@@ -1748,9 +1868,14 @@ def _interaction_result_to_sse(
     if result.gm_result is not None:
         events.extend(_gm_result_to_sse(result.gm_result))
 
-    # Step 4: Teammate reactions
-    for member_id, tm_result in result.teammate_results.items():
-        events.extend(_teammate_result_to_sse(member_id, tm_result))
+    # Step 4: Teammate reactions (ordered)
+    if result.ordered_responses:
+        for member_id, tm_result in result.ordered_responses:
+            events.extend(_teammate_result_to_sse(member_id, tm_result))
+    else:
+        # Fallback for compatibility
+        for member_id, tm_result in result.teammate_results.items():
+            events.extend(_teammate_result_to_sse(member_id, tm_result))
 
     # Step 5: Dialogue options
     if result.dialogue_options:
@@ -1765,5 +1890,22 @@ def _interaction_result_to_sse(
                 ),
             },
         ))
+
+    return events
+
+
+def _free_chat_result_to_sse(result: NpcInteractionResult) -> list[SSEEvent]:
+    """Convert a free-chat NpcInteractionResult into SSE events.
+
+    Free chat has no NPC/GM steps — only teammate reactions.
+    """
+    events: list[SSEEvent] = []
+
+    if result.ordered_responses:
+        for member_id, tm_result in result.ordered_responses:
+            events.extend(_teammate_result_to_sse(member_id, tm_result))
+    else:
+        for member_id, tm_result in result.teammate_results.items():
+            events.extend(_teammate_result_to_sse(member_id, tm_result))
 
     return events

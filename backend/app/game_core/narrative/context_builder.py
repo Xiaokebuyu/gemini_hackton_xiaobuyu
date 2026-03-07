@@ -251,6 +251,34 @@ topic shifts to something you care about, or the player clearly needs support.
 Match the language of the user message.\
 """
 
+TEAMMATE_GROUP_PROMPT_TEMPLATE = """\
+You are {name}, a companion in the player's party in a dark-fantasy CRPG.
+
+## Your character
+{personality}
+
+## Your relationship with the player
+- Approval: {approval} (range -100 to +100)
+- Trust: {trust} (range -100 to +100)
+
+## Current situation
+You are in a group conversation{npc_clause}. \
+You can see what everyone has said so far in the user message.
+
+## Guidelines
+- Speak only when you have something meaningful to add — most of the time, use `pass_turn`.
+- React when: the topic directly concerns you, someone addresses you, or you strongly disagree/agree.
+- Use `speak` for dialogue (1-2 sentences max), `emote` for reactions.
+- Use `express_opinion` if the conversation meaningfully shifts your feelings (delta: +/-5 to +/-10).
+- Don't repeat what others have already said.
+
+## Style
+- Stay in character. Brief and natural.
+
+## Language
+Match the language of the conversation.\
+"""
+
 
 # ------------------------------------------------------------------
 # Relationship behaviour guides
@@ -428,9 +456,7 @@ class AgentContextBuilder:
 
         Returns None if the NPC profile is not found in the registry.
         """
-        if not self._world.has_registry("characters"):
-            return None
-        profile = self._world.characters.get(npc_id)
+        profile = self._resolve_npc_profile(npc_id)
         if profile is None:
             return None
         layers = await self.build_npc_context(npc_id, memory_retriever=memory_retriever)
@@ -466,9 +492,7 @@ class AgentContextBuilder:
             is_private: If True, inject private-chat context block and lower
                 secrets trust threshold by 20.
         """
-        if not self._world.has_registry("characters"):
-            return None
-        profile = self._world.characters.get(npc_id)
+        profile = self._resolve_npc_profile(npc_id)
         if profile is None:
             return None
         layers = await self.build_npc_context(npc_id, memory_retriever=memory_retriever)
@@ -548,8 +572,22 @@ class AgentContextBuilder:
         context["l7_engine_result"]["opening"] = True
         return context
 
-    async def build_teammate_interaction_prompt(self, char_id: str) -> str | None:
+    async def build_teammate_interaction_prompt(
+        self,
+        char_id: str,
+        *,
+        group_mode: bool = False,
+        npc_id: str | None = None,
+    ) -> str | None:
         """Build teammate observation prompt for NPC conversation context.
+
+        Args:
+            char_id: The teammate character ID.
+            group_mode: If True, use the group dialogue template that shows
+                cumulative conversation context instead of the simple
+                observer template.
+            npc_id: When in group_mode, used to build a contextual
+                ``npc_clause`` (e.g. " with <NPC name>").
 
         Returns None if the character profile is not found.
         """
@@ -565,6 +603,24 @@ class AgentContextBuilder:
         personality = _str_or(_profile_get(profile, "personality"), "A loyal companion.")
         approval = self_disposition.get("approval", 0)
         trust = self_disposition.get("trust", 0)
+
+        if group_mode:
+            # Build npc_clause: " with <NPC name>" or empty
+            npc_clause = ""
+            if npc_id and self._world.has_registry("characters"):
+                npc_profile = self._world.characters.get(npc_id)
+                if npc_profile is not None:
+                    npc_name = _str_or(_profile_get(npc_profile, "name"), "")
+                    if npc_name:
+                        npc_clause = f" with {npc_name}"
+            return TEAMMATE_GROUP_PROMPT_TEMPLATE.format(
+                name=name,
+                personality=personality,
+                approval=approval,
+                trust=trust,
+                npc_clause=npc_clause,
+            )
+
         return TEAMMATE_INTERACTION_PROMPT_TEMPLATE.format(
             name=name,
             personality=personality,
@@ -637,6 +693,18 @@ class AgentContextBuilder:
             return "", None
         player = self._state.player
         return player.current_area, player.current_location
+
+    def _resolve_npc_profile(self, npc_id: str) -> Any | None:
+        npc_id = npc_id.strip()
+        if not npc_id:
+            return None
+        if self._world.has_registry("characters"):
+            profile = self._world.characters.get(npc_id)
+            if profile is not None:
+                return profile
+        if self._state.has_slice("narrative_plan"):
+            return self._state.narrative_plan.get_temporary_npc(npc_id)
+        return None
 
     def _get_area_state(self, area_id: str) -> dict[str, Any] | None:
         if not area_id or not self._state.has_slice("areas"):
@@ -1093,6 +1161,7 @@ def _build_npc_prompt_text(
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
     personality = _str_or(_profile_get(npc_profile, "personality"), "")
     dialogue_style = _str_or(_profile_get(npc_profile, "dialogue_style"), "")
+    dialogue_hook = _str_or(_profile_get(npc_profile, "dialogue_hook"), "")
     tags = _profile_get(npc_profile, "tags", [])
     tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else ""
 
@@ -1119,6 +1188,9 @@ def _build_npc_prompt_text(
         else "- (No previous memories of this player)"
     )
     personality_block = personality if personality else "A character in this world."
+    dialogue_hook_block = (
+        f"\n\n## Dialogue hook\n{dialogue_hook}" if dialogue_hook else ""
+    )
     style_block = f"\n\n## Your dialogue style\n{dialogue_style}" if dialogue_style else ""
     tags_block = f"\nTraits: {tags_str}" if tags_str else ""
 
@@ -1244,7 +1316,7 @@ def _build_npc_prompt_text(
 You are {name}, an NPC in a dark-fantasy CRPG world.
 
 ## Your character
-{personality_block}{tags_block}{style_block}{backstory_block}{speech_pattern_block}{identity_block}
+{personality_block}{dialogue_hook_block}{tags_block}{style_block}{backstory_block}{speech_pattern_block}{identity_block}
 
 ## Current relationship with the player
 - Relationship stage: {stage}

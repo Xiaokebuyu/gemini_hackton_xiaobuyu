@@ -1,35 +1,226 @@
 {
-  "active_bulletins": [
-    {
-      "board_id": "board",
-      "content": "A fresh lead is available: Ms Familiar Banter.",
-      "metadata": {
-        "quest_id": "dq_ms_familiar_banter",
-        "source_milestone": "ms_familiar_banter"
-      },
-      "published_at_tick": 8,
-      "source": "narrative_planner",
-      "title": "New Lead Posted"
-    }
-  ],
   "behavior_window": [
+    {
+      "action_type": "move_area",
+      "location": null,
+      "tick": 12
+    },
     {
       "changed_slices": [
         "relations",
+        "player"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 12
+    },
+    {
+      "changed_slices": [
         "player",
+        "areas",
+        "events",
+        "flags"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 13
+    },
+    {
+      "changed_slices": [
+        "player",
+        "flags",
+        "areas"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 14
+    },
+    {
+      "changed_slices": [
+        "player",
+        "areas",
+        "flags",
         "events"
       ],
       "directive_count": 3,
       "reason": "trigger",
-      "tick": 8
+      "tick": 15
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "outer_cloisters",
+      "tick": 16
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "clue_goblin_organization",
+      "tick": 16
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "sacrificial_altar",
+      "tick": 16
+    },
+    {
+      "changed_slices": [
+        "player",
+        "areas",
+        "flags",
+        "events"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 16
+    },
+    {
+      "action_type": "move_area",
+      "location": null,
+      "tick": 17
+    },
+    {
+      "changed_slices": [
+        "player",
+        "events",
+        "areas",
+        "relations"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 17
+    },
+    {
+      "changed_slices": [
+        "player"
+      ],
+      "directive_count": 0,
+      "reason": "trigger",
+      "tick": 18
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "events",
+        "areas",
+        "flags"
+      ],
+      "directive_count": 1,
+      "reason": "trigger",
+      "tick": 19
+    },
+    {
+      "changed_slices": [
+        "player",
+        "flags",
+        "areas",
+        "events"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 20
+    },
+    {
+      "action_type": "set_camp",
+      "location": null,
+      "tick": 21
+    },
+    {
+      "action_type": "rest_long",
+      "location": null,
+      "tick": 21
+    },
+    {
+      "changed_slices": [
+        "areas",
+        "player"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 21
+    },
+    {
+      "changed_slices": [
+        "player",
+        "areas",
+        "flags",
+        "events"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 22
+    },
+    {
+      "changed_slices": [
+        "player",
+        "areas",
+        "flags"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 23
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "areas",
+        "flags",
+        "events"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 24
+    },
+    {
+      "changed_slices": [
+        "player",
+        "flags",
+        "areas"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 25
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "flags"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 26
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "flags",
+        "areas"
+      ],
+      "directive_count": 1,
+      "reason": "trigger",
+      "tick": 27
+    },
+    {
+      "changed_slices": [
+        "player",
+        "areas",
+        "flags",
+        "events",
+        "relations"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 28
     }
   ],
   "chapter_completion": 0.0,
   "current_chapter": "",
   "current_target_milestone": null,
-  "escalation_level": 1,
-  "last_run_tick": 8,
-  "next_scheduled_tick": null,
+  "escalation_level": 5,
+  "last_run_tick": 28,
+  "next_scheduled_tick": 24,
   "npc_directives": [
     {
       "consumed": false,
@@ -47,16 +238,105 @@
     },
     {
       "consumed": false,
-      "directive": {},
-      "expires_at_tick": 32,
-      "issued_at_tick": 8,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_familiar_banter",
+          "source_milestone": "ms_familiar_banter"
+        },
+        "notice": "Urgent Gathering",
+        "quest_id": "dq_ms_familiar_banter",
+        "source_milestone": "ms_familiar_banter"
+      },
+      "expires_at_tick": 47,
+      "issued_at_tick": 23,
       "linked_quest_id": null,
       "npc_id": "guild_girl",
       "priority": "medium",
       "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_familiar_banter",
+          "source_milestone": "ms_familiar_banter"
+        },
+        "notice": "Urgent Gathering",
+        "quest_id": "dq_ms_familiar_banter",
+        "source_milestone": "ms_familiar_banter"
+      },
+      "expires_at_tick": 47,
+      "issued_at_tick": 23,
+      "linked_quest_id": null,
+      "npc_id": "goblin_slayer",
+      "priority": "medium",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "goal": "Trigger ms_familiar_banter by sharing concerns about the upcoming dawn",
+        "kind": "talk",
+        "target": "player",
+        "topic": "the growing unease of the night and the nightmares"
+      },
+      "expires_at_tick": 28,
+      "issued_at_tick": 25,
+      "linked_quest_id": null,
+      "npc_id": "priestess",
+      "priority": "high",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "kind": "initiate_dialogue",
+        "text": "你刚才在做噩梦吗？你的脸色看起来很糟糕...如果地母神的慈悲能让你稍微安心一点的话...",
+        "topic": "player_nightmare"
+      },
+      "expires_at_tick": 28,
+      "issued_at_tick": 26,
+      "linked_quest_id": null,
+      "npc_id": "priestess",
+      "priority": "high",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "clue_id": "ms_familiar_banter",
+        "kind": "initiate_dialogue",
+        "text": "你看起来面色苍白...是因为刚才那个噩梦吗？如果不介意的话，可以跟我聊聊。",
+        "topic": "nightmare_concern"
+      },
+      "expires_at_tick": 28,
+      "issued_at_tick": 27,
+      "linked_quest_id": null,
+      "npc_id": "priestess",
+      "priority": "high",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "context": "witnessed_pc_nightmare",
+        "kind": "initiate_dialogue",
+        "milestone_target": "ms_familiar_banter",
+        "tone": "concerned"
+      },
+      "expires_at_tick": 29,
+      "issued_at_tick": 28,
+      "linked_quest_id": null,
+      "npc_id": "priestess",
+      "priority": "high",
+      "source": "narrative_planner"
     }
   ],
-  "pacing_frozen": false,
+  "pacing_frozen": true,
   "play_style_tags": [],
   "quest_history": [
     {
@@ -65,6 +345,7 @@
       "tick": 8
     }
   ],
-  "strategy_notes": "The player has built rapport with the Guild Girl and rumors of their talent are spreading. It is time to transition from the introductory phase to active character interaction. I will trigger the familiar banter quest and increase the world escalation to reflect the player's rising profile.",
-  "ticks_since_milestone_progress": 8
+  "strategy_notes": "The game state is at Escalation L5 and stalled for 27 ticks. An ambush event is scheduled for tick 29. To prevent the narrative from breaking or the player from being overwhelmed without context, we must force the 'ms_familiar_banter' milestone immediately at tick 28. Priestess is directed to initiate a high-priority conversation using the 'witnessed_pc_nightmare' context, providing a moment of character depth before the combat encounter. This is a final attempt to secure the milestone before the ambush occurs.",
+  "temporary_npcs": {},
+  "ticks_since_milestone_progress": 28
 }

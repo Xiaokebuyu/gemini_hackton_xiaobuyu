@@ -53,45 +53,74 @@ class NarrativePlanner:
         quest_id = f"dq_{milestone_id}"
         if quest_id in ctx["dynamic_quest_ids"]:
             return None
+        board_entry = self._get_default_board_entry(ctx)
+        board_id = board_entry["board_id"] if board_entry is not None else None
+        area_id = board_entry["area_id"] if board_entry is not None else None
+        if area_id is None and isinstance(ctx.get("location"), Mapping):
+            area_id = self._normalize_string(ctx["location"].get("area_id"))
         current_tick = ctx["current_tick"]
         milestone_label = self._milestone_label(milestone_id)
-        return {
-            "directives": [
-                {
-                    "kind": "create_quest",
-                    "payload": {
+        directives: list[dict[str, Any]] = [
+            {
+                "kind": "create_quest",
+                "payload": {
+                    "quest_id": quest_id,
+                    "title": f"Lead: {milestone_label}",
+                    "summary": f"Follow the new lead tied to {milestone_id}.",
+                    "status": "available",
+                    "objectives": [],
+                    "rewards": {},
+                    "delivery_method": "board" if board_id is not None else "system",
+                    "expiry_ticks": None,
+                    "on_expire": "ignore",
+                    "generated_by_escalation": 0,
+                    "planner_reasoning": f"Seeded from {milestone_id} availability.",
+                    "metadata": {
+                        "source_milestone": milestone_id,
+                        "urgency": "medium",
+                    },
+                },
+            },
+        ]
+        if board_id is not None:
+            publish_payload: dict[str, Any] = {
+                "board_id": board_id,
+                "title": "New Lead Posted",
+                "content": f"A fresh lead is available: {milestone_label}.",
+                "tags": ["quest", "planner"],
+                "urgency": "medium",
+                "posted_by": "narrative_planner",
+                "metadata": {
+                    "quest_id": quest_id,
+                    "source_milestone": milestone_id,
+                },
+            }
+            if area_id is not None:
+                publish_payload["area_id"] = area_id
+            if board_entry is not None:
+                publish_payload["location"] = {
+                    "area_id": board_entry.get("area_id", ""),
+                    "sub_location": board_entry.get("sub_location", ""),
+                }
+            directives.append({
+                "kind": "publish_bulletin",
+                "payload": publish_payload,
+            })
+        default_npc = self._pick_npc(ctx, ctx.get("target_milestone_detail"))
+        if default_npc is not None:
+            directives.append({
+                "kind": "direct_npc",
+                "payload": {
+                    "npc_id": default_npc,
+                    "directive": {
+                        "kind": "present_quest",
                         "quest_id": quest_id,
-                        "title": f"Lead: {milestone_label}",
-                        "summary": f"Follow the new lead tied to {milestone_id}.",
-                        "status": "available",
-                        "metadata": {"source_milestone": milestone_id},
+                        "source_milestone": milestone_id,
                     },
                 },
-                {
-                    "kind": "publish_bulletin",
-                    "payload": {
-                        "board_id": "board",
-                        "title": "New Lead Posted",
-                        "content": f"A fresh lead is available: {milestone_label}.",
-                        "tags": ["quest", "planner"],
-                        "metadata": {
-                            "quest_id": quest_id,
-                            "source_milestone": milestone_id,
-                        },
-                    },
-                },
-                {
-                    "kind": "direct_npc",
-                    "payload": {
-                        "npc_id": "guild_clerk",
-                        "directive": {
-                            "kind": "present_quest",
-                            "quest_id": quest_id,
-                            "source_milestone": milestone_id,
-                        },
-                    },
-                },
-            ],
+            })
+        return {
+            "directives": directives,
             "strategy_notes": f"Guide the player toward {milestone_id}.",
             "next_scheduled_tick": current_tick + 6,
             "metadata": {
@@ -99,7 +128,7 @@ class NarrativePlanner:
                 "provider": "default_planner",
                 "seeded_milestone": milestone_id,
                 "quest_id": quest_id,
-                "directive_count": 3,
+                "directive_count": len(directives),
             },
         }
 
@@ -180,14 +209,32 @@ class NarrativePlanner:
         target_detail: dict[str, Any] = ctx.get("target_milestone_detail") or {}
 
         if level == 1:
-            return self._l1_hint(current_tick, milestone_id, milestone_label)
+            board_info = self._resolve_quest_board(ctx)
+            return self._l1_hint(
+                current_tick,
+                milestone_id,
+                milestone_label,
+                ctx=ctx,
+                board_info=board_info,
+            )
         if level == 2:
-            return self._l2_recommend(current_tick, milestone_id, milestone_label, target_detail)
+            return self._l2_recommend(
+                current_tick,
+                milestone_id,
+                milestone_label,
+                ctx,
+                target_detail,
+            )
         if level == 3:
             quest_exists = quest_id in ctx["dynamic_quest_ids"]
             return self._l3_urgent(
-                current_tick, milestone_id, milestone_label,
-                quest_id, quest_exists, target_detail,
+                current_tick,
+                milestone_id,
+                milestone_label,
+                quest_id,
+                quest_exists,
+                ctx,
+                target_detail,
             )
         if level == 4:
             area_cluster = ctx.get("area_cluster")
@@ -197,17 +244,59 @@ class NarrativePlanner:
         return self._l5_final_warning(current_tick, milestone_id)
 
     def _l1_hint(
-        self, tick: int, milestone_id: str, label: str,
+        self,
+        tick: int,
+        milestone_id: str,
+        label: str,
+        ctx: dict[str, Any] | None = None,
+        board_info: tuple[str, str] | None = None,
     ) -> dict[str, Any]:
+        if board_info is None:
+            if ctx is not None:
+                board_info = self._get_default_board(ctx)
+            if board_info is None:
+                return {
+                    "directives": [
+                        {"kind": "escalate", "payload": {"delta": 1}},
+                    ],
+                    "strategy_notes": f"L1 hint: subtly guide toward {milestone_id}.",
+                    "next_scheduled_tick": tick + 3,
+                    "metadata": {
+                        "status": "escalation_l1",
+                        "provider": "default_planner",
+                        "target_milestone": milestone_id,
+                        "directive_count": 1,
+                    },
+                }
+            _, fallback_board = board_info
+            board_id = fallback_board
+        else:
+            board_id = board_info[1]
+        if not board_id:
+            return {
+                "directives": [
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                ],
+                "strategy_notes": f"L1 hint: subtly guide toward {milestone_id}.",
+                "next_scheduled_tick": tick + 3,
+                "metadata": {
+                    "status": "escalation_l1",
+                    "provider": "default_planner",
+                    "target_milestone": milestone_id,
+                    "directive_count": 1,
+                },
+            }
         return {
             "directives": [
                 {
                     "kind": "publish_bulletin",
                     "payload": {
-                        "board_id": "board",
+                        "board_id": board_id,
                         "title": f"Notice: {label}",
                         "content": f"Rumors about {label} are spreading.",
                         "tags": ["hint", "planner"],
+                        "urgency": "low",
+                        "posted_by": "narrative_planner",
                         "metadata": {"source_milestone": milestone_id},
                     },
                 },
@@ -228,10 +317,24 @@ class NarrativePlanner:
         tick: int,
         milestone_id: str,
         label: str,
+        ctx: dict[str, Any] | None = None,
         target_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        involved = (target_detail or {}).get("involved_npcs", [])
-        npc_id = involved[0] if involved else "guild_clerk"
+        npc_id = self._pick_npc(ctx or {}, target_detail or {})
+        if npc_id is None:
+            return {
+                "directives": [
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                ],
+                "strategy_notes": f"L2 recommend: no available NPC for {milestone_id}.",
+                "next_scheduled_tick": tick + 3,
+                "metadata": {
+                    "status": "escalation_l2",
+                    "provider": "default_planner",
+                    "target_milestone": milestone_id,
+                    "directive_count": 1,
+                },
+            }
         return {
             "directives": [
                 {
@@ -265,11 +368,11 @@ class NarrativePlanner:
         label: str,
         quest_id: str,
         quest_exists: bool,
+        ctx: dict[str, Any] | None = None,
         target_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         detail = target_detail or {}
-        involved = detail.get("involved_npcs", [])
-        npc_id = involved[0] if involved else "guild_clerk"
+        npc_id = self._pick_npc(ctx or {}, target_detail or {})
         key_elements: list[str] = detail.get("key_elements", [])
         involved_locations: list[str] = detail.get("involved_locations", [])
         narrative_context: str = detail.get("narrative_context", "")
@@ -290,30 +393,45 @@ class NarrativePlanner:
                     "title": f"Urgent: {label}",
                     "summary": summary,
                     "status": "available",
+                    "objectives": [
+                        {"kind": "key_element", "value": value}
+                        for value in key_elements
+                    ],
+                    "rewards": {},
+                    "delivery_method": "board",
+                    "expiry_ticks": 12,
+                    "on_expire": "escalate",
+                    "generated_by_escalation": 3,
+                    "planner_reasoning": f"L3 urgent escalation for {milestone_id}.",
                     "metadata": {
                         "source_milestone": milestone_id,
                         "urgency": "high",
+                        "generated_by_escalation": 3,
                         "key_elements": key_elements,
                         "involved_locations": involved_locations,
                     },
                 },
             })
-        directives.append({
-            "kind": "direct_npc",
-            "payload": {
-                "npc_id": npc_id,
-                "directive": {
-                    "kind": "present_quest",
-                    "quest_id": quest_id,
-                    "milestone_id": milestone_id,
-                    "urgency": "high",
+        if npc_id is not None:
+            directives.append({
+                "kind": "direct_npc",
+                "payload": {
+                    "npc_id": npc_id,
+                    "directive": {
+                        "kind": "present_quest",
+                        "quest_id": quest_id,
+                        "milestone_id": milestone_id,
+                        "urgency": "high",
+                    },
                 },
-            },
-        })
+            })
         directives.append({"kind": "escalate", "payload": {"delta": 1}})
+        strategy_notes = f"L3 urgent: milestone {milestone_id} requires escalation."
+        if npc_id is not None:
+            strategy_notes = f"L3 urgent: NPC {npc_id} presses player toward {milestone_id}."
         return {
             "directives": directives,
-            "strategy_notes": f"L3 urgent: NPC {npc_id} presses player toward {milestone_id}.",
+            "strategy_notes": strategy_notes,
             "next_scheduled_tick": tick + 3,
             "metadata": {
                 "status": "escalation_l3",
@@ -377,6 +495,13 @@ class NarrativePlanner:
     # ------------------------------------------------------------------
 
     def _try_area_fill(self, ctx: dict[str, Any]) -> dict[str, Any] | None:
+        if (
+            ctx.get("available_milestones")
+            or ctx.get("active_milestones")
+            or not ctx.get("dynamic_quest_ids")
+        ):
+            return None
+
         area = ctx.get("area_cluster")
         if area is None or not area.get("has_capacity"):
             return None
@@ -440,6 +565,11 @@ class NarrativePlanner:
 
         return {
             "current_tick": self._coerce_int(context.get("current_tick"), 0),
+            "location": context.get("location") if isinstance(context.get("location"), Mapping) else {},
+            "maps": context.get("maps"),
+            "area_boards": self._normalize_area_boards(context.get("area_boards")),
+            "default_board_id": self._normalize_default_board_id(context.get("area_boards")),
+            "area_npcs": self._normalize_strings(context.get("area_npcs")),
             "available_milestones": self._normalize_strings(
                 quests.get("available_milestones", [])
             ),
@@ -467,6 +597,162 @@ class NarrativePlanner:
             ),
             "target_milestone_detail": dict(context.get("target_milestone_detail") or {}),
         }
+
+    @staticmethod
+    def _normalize_interactable_tags(raw_tags: Any) -> list[str]:
+        if not isinstance(raw_tags, list):
+            return []
+        return [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+
+    @classmethod
+    def _normalize_area_boards(cls, raw: Any) -> list[dict[str, str]]:
+        if not isinstance(raw, list):
+            return []
+        result: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            raw_board_id = cls._normalize_string(item.get("id"))
+            if raw_board_id is None:
+                continue
+            raw_sub_location = str(item.get("sub_location", "")).strip()
+            result.append({
+                "id": raw_board_id,
+                "sub_location": raw_sub_location,
+            })
+        return result
+
+    @classmethod
+    def _normalize_default_board_id(cls, area_boards: Any) -> str | None:
+        boards = cls._normalize_area_boards(area_boards)
+        first_board = boards[0] if boards else None
+        if first_board is None:
+            return None
+        return first_board.get("id")
+
+    @staticmethod
+    def _pick_npc(ctx: Mapping[str, Any], target_detail: Mapping[str, Any] | None = None) -> str | None:
+        target_detail = target_detail or {}
+        involved_raw = target_detail.get("involved_npcs")
+        if isinstance(involved_raw, list):
+            involved = [str(item) for item in involved_raw if str(item).strip()]
+        else:
+            involved = []
+        area_npcs = []
+        raw_area_npcs = ctx.get("area_npcs", [])
+        if isinstance(raw_area_npcs, list):
+            area_npcs = [str(item) for item in raw_area_npcs if str(item).strip()]
+
+        for npc in involved:
+            if not str(npc).strip():
+                continue
+            if npc in area_npcs:
+                return str(npc).strip()
+        if involved:
+            return str(involved[0]).strip()
+        if area_npcs:
+            return str(area_npcs[0]).strip()
+        return None
+
+    @classmethod
+    def _get_default_board(cls, ctx: Mapping[str, Any]) -> tuple[str, str] | None:
+        board_entry = cls._get_default_board_entry(ctx)
+        if board_entry is None:
+            return None
+        return board_entry["area_id"], board_entry["board_id"]
+
+    @classmethod
+    def _get_default_board_entry(cls, ctx: Mapping[str, Any]) -> dict[str, str] | None:
+        board_id = cls._normalize_string(ctx.get("default_board_id"))
+        location = ctx.get("location")
+        area_id = cls._normalize_string(location.get("area_id")) if isinstance(location, Mapping) else ""
+        area_boards = ctx.get("area_boards")
+        if board_id is not None:
+            if isinstance(area_boards, list):
+                for item in area_boards:
+                    if not isinstance(item, Mapping):
+                        continue
+                    candidate_id = cls._normalize_string(item.get("id"))
+                    if candidate_id != board_id:
+                        continue
+                    raw_sub_location = cls._normalize_string(item.get("sub_location"))
+                    return {
+                        "area_id": area_id or "",
+                        "board_id": board_id,
+                        "sub_location": raw_sub_location or "",
+                    }
+            return {"area_id": area_id or "", "board_id": board_id, "sub_location": ""}
+
+        if isinstance(area_boards, list):
+            for item in area_boards:
+                if not isinstance(item, Mapping):
+                    continue
+                candidate_id = cls._normalize_string(item.get("id"))
+                if candidate_id is None:
+                    continue
+                raw_sub_location = cls._normalize_string(item.get("sub_location"))
+                return {
+                    "area_id": area_id or "",
+                    "board_id": candidate_id,
+                    "sub_location": raw_sub_location or "",
+                }
+
+        resolved = cls._resolve_quest_board(ctx)
+        if resolved is None:
+            return None
+        area_id, board_id = resolved
+        return {
+            "area_id": area_id,
+            "board_id": board_id,
+            "sub_location": "",
+        }
+
+    @classmethod
+    def _resolve_quest_board(
+        cls,
+        ctx: Mapping[str, Any],
+    ) -> tuple[str, str] | None:
+        raw_maps = ctx.get("maps")
+        if raw_maps is None:
+            return None
+        location = ctx.get("location", {})
+        if not isinstance(location, Mapping):
+            return None
+        area_id = cls._normalize_string(location.get("area_id"))
+        if area_id is None:
+            return None
+        if not hasattr(raw_maps, "get"):
+            return None
+        area_template = raw_maps.get(area_id)
+        if area_template is None:
+            return None
+
+        if isinstance(area_template, Mapping):
+            raw_sub_locations = area_template.get("sub_locations")
+        else:
+            raw_sub_locations = getattr(area_template, "sub_locations", None)
+        if not isinstance(raw_sub_locations, Mapping):
+            return None
+
+        for raw_sub_location in raw_sub_locations.values():
+            if isinstance(raw_sub_location, Mapping):
+                interactables = raw_sub_location.get("interactables")
+            else:
+                interactables = getattr(raw_sub_location, "interactables", None)
+            if not isinstance(interactables, list):
+                continue
+            for raw_interactable in interactables:
+                if isinstance(raw_interactable, Mapping):
+                    tags = cls._normalize_interactable_tags(raw_interactable.get("tags", []))
+                    board_id = str(raw_interactable.get("id", "")).strip()
+                else:
+                    tags = cls._normalize_interactable_tags(getattr(raw_interactable, "tags", []))
+                    board_id = str(getattr(raw_interactable, "id", "")).strip()
+                if "quest_source" not in tags:
+                    continue
+                if board_id:
+                    return area_id, board_id
+        return None
 
     @staticmethod
     def _normalize_area_cluster(raw: Any) -> dict[str, Any] | None:

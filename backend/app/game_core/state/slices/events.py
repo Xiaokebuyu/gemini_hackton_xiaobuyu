@@ -115,6 +115,7 @@ class EventSlice(StateSlice):
         self,
         current_time: Mapping[str, Any],
         current_flags: dict[str, Any] | None = None,
+        current_area: str | None = None,
         current_location: str | None = None,
     ) -> list[dict[str, Any]]:
         """Evaluate pending events and return those whose trigger conditions are met.
@@ -125,7 +126,14 @@ class EventSlice(StateSlice):
         due: list[dict[str, Any]] = []
         remaining: list[dict[str, Any]] = []
         for event in self.pending_events:
-            if self._is_condition_met(event, current_abs, current_flags, current_location):
+            if self._is_condition_met(
+                event,
+                current_abs,
+                current_time,
+                current_flags,
+                current_area,
+                current_location,
+            ):
                 due.append(dict(event))
             else:
                 remaining.append(event)
@@ -138,7 +146,9 @@ class EventSlice(StateSlice):
     def _is_condition_met(
         event: Mapping[str, Any],
         current_abs: int,
+        current_time: Mapping[str, Any],
         current_flags: dict[str, Any] | None,
+        current_area: str | None,
         current_location: str | None,
     ) -> bool:
         condition = event.get("trigger_condition")
@@ -159,6 +169,29 @@ class EventSlice(StateSlice):
                 return False
             created_abs = _absolute_tick(created_at)
             return created_abs + count <= current_abs
+        if condition_type == "period_reached":
+            period = condition.get("period")
+            return isinstance(period, str) and period.strip() == str(current_time.get("period", "")).strip()
+        if condition_type == "location_entered":
+            area_id = condition.get("area_id")
+            location_id = condition.get("location_id")
+            if area_id is None and location_id is None:
+                return False
+            area_ok = True
+            if area_id is not None:
+                area_ok = isinstance(area_id, str) and area_id.strip() == (current_area or "")
+            location_ok = True
+            if location_id is not None:
+                location_ok = isinstance(location_id, str) and location_id.strip() == (current_location or "")
+            return area_ok and location_ok
+        if condition_type == "flag_set":
+            if current_flags is None:
+                return False
+            key = condition.get("key") or condition.get("flag_key")
+            if not isinstance(key, str) or not key.strip():
+                return False
+            expected = condition.get("value", True)
+            return current_flags.get(key.strip()) == expected
         return False
 
     def trigger(self, event_id: str) -> None:

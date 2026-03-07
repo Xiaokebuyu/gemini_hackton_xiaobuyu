@@ -12,6 +12,7 @@ import { useOverlayStore } from '../stores/overlayStore'
 import { useStreamStore } from '../stores/streamStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePlayerStore } from '../stores/playerStore'
+import { usePartyStore } from '../stores/partyStore'
 import type {
   CharacterEnterData,
   GmCommentData,
@@ -53,6 +54,11 @@ import type {
   QuestLocationData,
   QuestRequirementsData,
   QuestRewardData,
+  CampfireDialogueData,
+  EventStateChangedData,
+  HiddenObjectRevealedData,
+  TrapDetectedData,
+  GenericErrorEventData,
 } from '../types/sse'
 import type { GameMode, GameOption, LocationOverview } from '../types/game'
 import type {
@@ -81,10 +87,16 @@ function formatActionSuccess(actionType: string): string {
     drop: '物品丢弃',
     rest_short: '休息完成',
     rest_long: '长休完成',
+    set_camp: '扎营完成',
+    night_watch: '值守完成',
     enter: '进入成功',
     surprise_attack: '突袭成功',
     sneak_through: '潜行通过',
     retreat: '已撤退',
+    browse_board: '查看委托板',
+    board_accept_quest: '接受委托',
+    board_complete_quest: '完成委托',
+    board_retire_quest: '撤销委托',
   }
   return labels[actionType] ?? '操作成功'
 }
@@ -154,6 +166,38 @@ function formatNpcError(prefix: string, data: NpcErrorData): string {
 
 function formatHookError(prefix: string, data: HookErrorData): string {
   return `${prefix}：${data.hook} - ${data.message}`
+}
+
+function formatPeriod(period: string): string {
+  const periodMap: Record<string, string> = {
+    dawn: '黎明',
+    morning: '清晨',
+    noon: '正午',
+    afternoon: '午后',
+    dusk: '黄昏',
+    evening: '傍晚',
+    night: '深夜',
+    midnight: '午夜',
+  }
+  return periodMap[period] ?? period
+}
+
+function formatTimeAdvancedMessage(data: TimeAdvancedData): string {
+  const period = formatPeriod(data.period)
+  return `第 ${data.day} 天 · 第 ${data.slot} 格 · ${period}`
+}
+
+function formatEventStateChangedMessage(data: EventStateChangedData): string {
+  const title = data.title?.trim()
+  if (title) {
+    return `${title}：${data.from_state} → ${data.to_state}`
+  }
+  return `世界事件状态变化：${data.to_state}`
+}
+
+function formatGenericError(prefix: string, data: GenericErrorEventData): string {
+  const detail = (data.message ?? data.error ?? data.code ?? 'unknown_error').toString().trim() || 'unknown_error'
+  return `${prefix}：${detail}`
 }
 
 function formatCompanionMessage(action: 'join' | 'leave', npcId: string, reason?: string): string {
@@ -314,6 +358,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       if (!useOptionStore.getState().hasDialogueOptions && !sceneState.activeNpcId) {
         options.buildFromOverview(d, overviewHandlers)
       }
+      usePartyStore.getState().enrichFromPresentNpcs(d.present_npcs)
     }
 
     const applyStatusUpdate = (d: StatusUpdateData) => {
@@ -487,10 +532,6 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         overlay.open('shop', event.data)
         break
 
-      case 'board_snapshot':
-        overlay.open('board', event.data)
-        break
-
       case 'talk_snapshot': {
         const d = cast<TalkSnapshotData>(event.data)
         const npcId = d.profile?.npc_id ?? d.target_id
@@ -561,6 +602,11 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         const d = cast<ActionResultData>(event.data)
         const notif = useNotificationStore.getState()
         if (d.success) {
+          // browse_board: 打开公告板面板
+          if (d.action_type === 'browse_board' && d.metadata?.entries) {
+            overlay.open('board', d.metadata)
+            break
+          }
           notif.add(formatActionSuccess(d.action_type), 'success')
           audio.playChime()
           if (d.action_type === 'retreat' || d.action_type === 'sneak_through') {
@@ -619,13 +665,8 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       case 'time_advanced': {
         const d = cast<TimeAdvancedData>(event.data)
-        const periodMap: Record<string, string> = {
-          dawn: '黎明', morning: '清晨', noon: '正午',
-          afternoon: '午后', dusk: '黄昏', evening: '傍晚',
-          night: '深夜', midnight: '午夜',
-        }
-        const period = periodMap[d.period] ?? d.period
-        addSystemMessage(`── ${period}降临 ──`)
+        usePlayerStore.getState().updateFromStatus(d as unknown as Record<string, unknown>)
+        addSystemMessage(formatTimeAdvancedMessage(d))
         break
       }
 
@@ -642,9 +683,39 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         break
       }
 
+      case 'discovery_found':
       case 'discovery_reveal': {
         const d = cast<DiscoveryRevealData>(event.data)
         addSystemMessage(`发现了${d.name}！`)
+        break
+      }
+
+      case 'hidden_object_revealed': {
+        const d = cast<HiddenObjectRevealedData>(event.data)
+        const name = d.name?.trim() || d.interactable_id
+        addSystemMessage(`发现隐藏物：${name}`)
+        break
+      }
+
+      case 'trap_detected': {
+        const d = cast<TrapDetectedData>(event.data)
+        addSystemMessage(`察觉到陷阱：${d.interactable_id}`)
+        break
+      }
+
+      case 'campfire_dialogue': {
+        const d = cast<CampfireDialogueData>(event.data)
+        dialogue.resolveStreamMessage({
+          type: 'teammate',
+          speaker: d.teammate_id,
+          content: d.content,
+        })
+        break
+      }
+
+      case 'event_state_changed': {
+        const d = cast<EventStateChangedData>(event.data)
+        addSystemMessage(formatEventStateChangedMessage(d))
         break
       }
 
@@ -688,11 +759,41 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       }
 
 
+      case 'ai_osiris_applied':
+      case 'narrative_plan_updated':
+      case 'npc_schedule_updated':
+      case 'status_effects_ticked':
+      case 'combat_effects_ticked':
+      case 'dynamic_quest_expired':
+      case 'dynamic_sub_areas_expired':
+        break
+
+      case 'ai_osiris_error':
+      case 'event_condition_error':
+      case 'narrative_planner_error':
+      case 'npc_schedule_error':
+      case 'gm_narration_error':
+      case 'encounter_error': {
+        const d = cast<GenericErrorEventData>(event.data)
+        const prefixMap: Record<string, string> = {
+          ai_osiris_error: '奥西里斯异常',
+          event_condition_error: '事件条件异常',
+          narrative_planner_error: '叙事规划异常',
+          npc_schedule_error: 'NPC日程异常',
+          gm_narration_error: 'GM叙事异常',
+          encounter_error: '遭遇异常',
+        }
+        addErrorMessage(formatGenericError(prefixMap[event.event] ?? '系统异常', d))
+        break
+      }
+
       case 'companion_recruited': {
         const d = cast<CompanionRecruitedData>(event.data)
         const message = formatCompanionMessage('join', d.npc_id, d.reason)
         addSystemMessage(message)
         useNotificationStore.getState().add(message, 'success')
+        usePartyStore.getState().addMember(d.npc_id)
+        usePartyStore.getState().syncMembers(d.party_members)
         break
       }
 
@@ -705,6 +806,8 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         const message = formatCompanionMessage('leave', d.npc_id, d.reason)
         addSystemMessage(message)
         useNotificationStore.getState().add(message, 'info')
+        usePartyStore.getState().removeMember(d.npc_id)
+        usePartyStore.getState().syncMembers(d.party_members)
         break
       }
 
@@ -908,6 +1011,11 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     startStream(urls.encounterAction(worldId, sessionId), { choice, sub_area_id: subAreaId })
   }, [worldId, sessionId, startStream])
 
+  const sendCompanionDismiss = useCallback((npcId: string) => {
+    if (!worldId || !sessionId) return
+    startStream(urls.companionDismiss(worldId, sessionId), { npc_id: npcId })
+  }, [worldId, sessionId, startStream])
+
   const sendOpening = useCallback(() => {
     if (!worldId || !sessionId) return
     startStream(urls.opening(worldId, sessionId), {})
@@ -920,6 +1028,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     sendInput,
     sendPrivateChat,
     abort,
+    sendCompanionDismiss,
     sendCombatAction,
     sendEncounterAction,
     sendOpening,

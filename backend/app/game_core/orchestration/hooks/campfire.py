@@ -6,6 +6,7 @@ import random
 from typing import Any
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
+from app.game_core.orchestration.hooks.rest_phase import resolve_rest_phase
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 
@@ -77,7 +78,12 @@ class CampfireHook(NoOpSettlementHook):
     HOOK_NAME = "campfire"
 
     async def execute(self, context: SettlementContext) -> HookResult:
-        if not _is_long_rest(context):
+        rest_phase = resolve_rest_phase(context)
+        if rest_phase is None:
+            return HookResult()
+        if rest_phase.rest_action_type != "rest_long":
+            return HookResult()
+        if not rest_phase.is_final_rest_slot:
             return HookResult()
         if not context.state.has_slice("party"):
             return HookResult()
@@ -132,6 +138,9 @@ class CampfireHook(NoOpSettlementHook):
 
 def _is_long_rest(context: SettlementContext) -> bool:
     """Return True if a long rest occurred this tick."""
+    rest_phase = resolve_rest_phase(context)
+    if rest_phase is not None:
+        return rest_phase.rest_action_type == "rest_long"
     for entry in context.scene_bus.snapshot().get("entries", []):
         if isinstance(entry, dict) and "LONG_REST" in entry.get("tags", []):
             return True

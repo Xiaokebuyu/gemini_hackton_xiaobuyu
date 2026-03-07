@@ -35,8 +35,13 @@ class EventConditionHook(NoOpSettlementHook):
     def __init__(self, evaluator: EventConditionEvaluator | None = None) -> None:
         self._evaluator = evaluator or BasicEventConditionEvaluator()
 
-    def should_skip(self, change_log: list[Any]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
         del change_log
+        del action_log
         return False
 
     async def execute(self, context: SettlementContext) -> HookResult:
@@ -292,6 +297,9 @@ class EventConditionHook(NoOpSettlementHook):
                 "to_state": transition.to_state,
                 "reason": reason,
             }
+            title = EventConditionHook._event_display_title(updated_event)
+            if title is not None:
+                summary["title"] = title
             applied.append(summary)
             sse_events.append(
                 SSEEvent(
@@ -301,6 +309,17 @@ class EventConditionHook(NoOpSettlementHook):
             )
 
         return applied, sse_events, skipped_invalid_transition_count
+
+    @staticmethod
+    def _event_display_title(event: Mapping[str, Any]) -> str | None:
+        for key in ("title", "name", "label"):
+            raw = event.get(key)
+            if raw is None:
+                continue
+            normalized = str(raw).strip()
+            if normalized:
+                return normalized
+        return None
 
     @staticmethod
     def _execute_commands(
@@ -336,4 +355,3 @@ class EventConditionHook(NoOpSettlementHook):
         if failed_count > 0:
             return "partial_failure"
         return "applied"
-

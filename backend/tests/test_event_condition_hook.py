@@ -148,6 +148,7 @@ class TestEventConditionHook:
                 "active_events": {
                     "evt_flag": {
                         "status": "locked",
+                        "title": "启程信号",
                         "conditions": {"type": "flag_set", "key": "quest_started"},
                     }
                 }
@@ -164,6 +165,7 @@ class TestEventConditionHook:
         assert result.metadata["transitioned_count"] == 1
         assert result.sse_events[0].event_type == "event_state_changed"
         assert result.sse_events[0].payload["to_state"] == "available"
+        assert result.sse_events[0].payload["title"] == "启程信号"
 
     def test_triggered_event_without_conditions_transitions_to_active(self) -> None:
         context = _make_context()

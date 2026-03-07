@@ -169,22 +169,52 @@ class FastAPIInputPort:
             "count": count,
         }
 
+        if target_kind is None and target_id is None:
+            if intent == "chat":
+                # Free chat with party — no NPC target required
+                return self._resolved_action(
+                    target_kind="party",
+                    target_id="party",
+                    intent="chat",
+                    item_id=None,
+                    quest_id=None,
+                    count=1,
+                    execution={"kind": "party_chat"},
+                )
+            return self._rejected_action(
+                **base,
+                code="missing_target",
+                message="target_kind and target_id are required",
+            )
         if target_kind is None or target_id is None:
             return self._rejected_action(
                 **base,
                 code="missing_target",
                 message="target_kind and target_id are required",
             )
-        if target_kind not in {"npc", "board"}:
+        if target_kind == "party":
+            if intent == "chat":
+                return self._resolved_action(
+                    target_kind="party",
+                    target_id=str(target_id),
+                    intent="chat",
+                    item_id=None,
+                    quest_id=None,
+                    count=1,
+                    execution={"kind": "party_chat"},
+                )
+            return self._rejected_action(
+                **base,
+                code="invalid_intent",
+                message="party target_kind only supports chat intent",
+            )
+        if target_kind != "npc":
             return self._rejected_action(
                 **base,
                 code="invalid_target_kind",
-                message="target_kind must be npc or board",
+                message="target_kind must be npc",
             )
-
-        if target_kind == "npc":
-            return self._normalize_npc_interaction(base)
-        return self._normalize_board_interaction(base)
+        return self._normalize_npc_interaction(base)
 
     def _normalize_npc_interaction(self, base: Mapping[str, Any]) -> dict[str, Any]:
         target_id = str(base["target_id"])
@@ -325,60 +355,6 @@ class FastAPIInputPort:
             },
         )
 
-    def _normalize_board_interaction(self, base: Mapping[str, Any]) -> dict[str, Any]:
-        target_id = str(base["target_id"])
-        intent = str(base["intent"])
-        quest_id = base.get("quest_id")
-        if intent not in {"browse", "accept", "complete", "retire"}:
-            return self._rejected_action(
-                **base,
-                code="invalid_intent",
-                message="board intent must be browse, accept, complete, or retire",
-            )
-        if intent == "browse":
-            return self._resolved_action(
-                target_kind="board",
-                target_id=target_id,
-                intent="browse",
-                item_id=None,
-                quest_id=None,
-                count=1,
-                execution={"kind": "snapshot", "snapshot_type": "board"},
-            )
-        if quest_id is None:
-            board_messages = {
-                "accept": "quest_id is required for board accept",
-                "complete": "quest_id is required for board complete",
-                "retire": "quest_id is required for board retire",
-            }
-            return self._rejected_action(
-                **base,
-                code="missing_quest",
-                message=board_messages.get(intent, "quest_id is required for board accept"),
-            )
-        target_states = {
-            "accept": "active",
-            "complete": "completed",
-            "retire": "retired",
-        }
-        return self._resolved_action(
-            target_kind="board",
-            target_id=target_id,
-            intent=intent,
-            item_id=None,
-            quest_id=str(quest_id),
-            count=1,
-            execution={
-                "kind": "pipeline_action",
-                "action_type": "advance_quest",
-                "params": {
-                    "quest_id": str(quest_id),
-                    "to_state": target_states[intent],
-                    "quest_kind": "dynamic",
-                },
-                "post_snapshot": "board",
-            },
-        )
 
     @staticmethod
     def _normalized_kind(value: Any) -> str | None:

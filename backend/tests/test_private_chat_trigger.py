@@ -7,20 +7,30 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from app.game_core.content import WorldInstance
 from app.game_core.content.registries import CharacterRegistry
+from app.game_core.orchestration import hooks
 from app.game_core.orchestration.hooks.private_chat_trigger import (
     COOLDOWN_TICKS,
     BasicPrivateChatTriggerEvaluator,
     NullPrivateChatTriggerEvaluator,
     PrivateChatTriggerHook,
 )
-from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
 from app.game_core.state import StateContainer
-from app.game_core.state.slices import FlagSlice, RelationSlice, TimeSlice
 from app.game_core.state.slices import SceneSlice
+from app.game_core.state.slices import (
+    AreaSlice,
+    FlagSlice,
+    PartySlice,
+    PlayerSlice,
+    RelationSlice,
+    TimeSlice,
+)
+from app.game_core.orchestration.scene_bus import SceneBus
 
 
 # ------------------------------------------------------------------
@@ -47,15 +57,71 @@ def _make_context(
     flag_data: dict[str, object] | None = None,
     current_day: int = 1,
     current_slot: int = 8,
+    accumulated: float = 0.0,
     include_relations: bool = True,
     include_flags: bool = True,
     include_time: bool = True,
+    include_player: bool = True,
+    include_area: bool = True,
+    include_party: bool = True,
+    area_id: str = "test_area",
+    current_area: str = "test_area",
+    player_location: str | None = "campfire",
+    area_npc_locations: dict[str, str | None] | None = None,
+    party_members: dict[str, dict[str, object]] | None = None,
+    include_scene_tags: bool = True,
+    scene_tags: list[str] | None = None,
+    action_log: list[dict[str, object]] | None = None,
     world: WorldInstance | None = None,
 ) -> SettlementContext:
+    effective_scene_tags = ["REST", "LONG_REST"] if scene_tags is None else scene_tags
+    effective_action_log = list(action_log or [])
+    if not effective_action_log and include_scene_tags and "LONG_REST" in effective_scene_tags:
+        effective_action_log = [{"type": "rest_long", "time_cost": 1.0}]
+        if accumulated == 0.0:
+            accumulated = 1.0
+
     state = StateContainer()
     scene_slice = SceneSlice()
-    scene_slice.restore({})
+    entries: list[dict[str, object]] = []
+    if include_scene_tags:
+        entries.append({
+            "source": "ENGINE",
+            "content": "[test_hook]",
+            "visibility": "system",
+            "tags": effective_scene_tags,
+        })
+    scene_slice.restore({"entries": entries, "state_changes": []})
     state.register(scene_slice)
+
+    if include_player:
+        player = PlayerSlice()
+        player.restore({
+            "current_area": current_area,
+            "current_location": player_location,
+        })
+        state.register(player)
+
+    if include_area:
+        if area_npc_locations is None:
+            if dispositions:
+                area_npc_locations = {npc_id: "npc_area_spot" for npc_id in dispositions}
+            else:
+                area_npc_locations = {}
+        area = AreaSlice()
+        area.restore({
+            "areas": {
+                area_id: {
+                    "npc_locations": area_npc_locations,
+                },
+            },
+        })
+        state.register(area)
+
+    if include_party:
+        party = PartySlice()
+        party.restore({"members": party_members or {}})
+        state.register(party)
 
     if include_relations:
         rel = RelationSlice()
@@ -72,7 +138,11 @@ def _make_context(
 
     if include_time:
         time_slice = TimeSlice()
-        time_slice.restore({"day": current_day, "slot": current_slot})
+        time_slice.restore({
+            "day": current_day,
+            "slot": current_slot,
+            "accumulated": accumulated,
+        })
         state.register(time_slice)
 
     if world is None:
@@ -85,11 +155,20 @@ def _make_context(
         scene_bus=SceneBus(scene_slice),
         _rules_engine=RulesEngine(),
         _apply_delta=lambda delta: None,
+        action_log=effective_action_log,
     )
 
 
 def _hook(evaluator=None) -> PrivateChatTriggerHook:
     return PrivateChatTriggerHook(evaluator=evaluator)
+
+
+def _force_random(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
+    monkeypatch.setattr(
+        hooks.private_chat_trigger.random,
+        "random",
+        lambda: value,
+    )
 
 
 # ------------------------------------------------------------------
@@ -173,8 +252,9 @@ class TestPrivateChatTriggerHook:
         assert result.sse_events == []
         assert result.metadata.get("skipped") == "no_relations"
 
-    def test_npc_romance_above_threshold_emits_event(self) -> None:
+    def test_npc_romance_above_threshold_emits_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """NPC with romance=65 → 'npc_wants_to_chat' SSE event."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"merchant_tom": {"romance": 65}},
         )
@@ -185,8 +265,9 @@ class TestPrivateChatTriggerHook:
         assert evt.payload["npc_id"] == "merchant_tom"
         assert evt.payload["reason"] == "romance"
 
-    def test_npc_trust_above_threshold_emits_event(self) -> None:
+    def test_npc_trust_above_threshold_emits_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """NPC with trust=55 (romance below) → SSE event with reason='trust'."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"npc_1": {"romance": 10, "trust": 55}},
         )
@@ -203,9 +284,10 @@ class TestPrivateChatTriggerHook:
         result = asyncio.run(_hook().execute(ctx))
         assert result.sse_events == []
 
-    def test_cooldown_active_suppresses_event(self) -> None:
+    def test_cooldown_active_suppresses_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Flag cooldown_until > current_tick → event suppressed."""
         # current absolute_tick = (1-1)*24 + 8 = 8; set cooldown_until = 20 (future)
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"npc_1": {"romance": 70}},
             flag_data={"private_chat_cooldown_npc_1": 20},
@@ -215,9 +297,10 @@ class TestPrivateChatTriggerHook:
         result = asyncio.run(_hook().execute(ctx))
         assert result.sse_events == []
 
-    def test_cooldown_expired_allows_retrigger(self) -> None:
+    def test_cooldown_expired_allows_retrigger(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Expired cooldown (current_tick >= stored) → event emitted, stale flag cleared."""
         # current absolute_tick = 8; stored = 5 (expired)
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"npc_1": {"romance": 70}},
             flag_data={"private_chat_cooldown_npc_1": 5},
@@ -231,8 +314,9 @@ class TestPrivateChatTriggerHook:
         assert new_val is not None
         assert new_val > 8  # current_tick + COOLDOWN_TICKS
 
-    def test_cooldown_set_after_trigger(self) -> None:
+    def test_cooldown_set_after_trigger(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """After trigger, FlagSlice contains cooldown = current_tick + COOLDOWN_TICKS."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"npc_1": {"romance": 70}},
             current_day=1,
@@ -242,8 +326,9 @@ class TestPrivateChatTriggerHook:
         expected = 8 + COOLDOWN_TICKS
         assert ctx.state.flags.get("private_chat_cooldown_npc_1") == expected
 
-    def test_multiple_npcs_multiple_events(self) -> None:
+    def test_multiple_npcs_multiple_events(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Two NPCs both above threshold (no cooldown) → two SSE events."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={
                 "npc_a": {"romance": 70},
@@ -255,8 +340,9 @@ class TestPrivateChatTriggerHook:
         triggered_ids = {e.payload["npc_id"] for e in result.sse_events}
         assert triggered_ids == {"npc_a", "npc_b"}
 
-    def test_npc_name_populated_from_registry(self) -> None:
+    def test_npc_name_populated_from_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """npc_name in SSE payload comes from characters registry."""
+        _force_random(monkeypatch, 0.0)
         world = _world_with_npc("merchant_tom", "Merchant Tom")
         ctx = _make_context(
             dispositions={"merchant_tom": {"romance": 65}},
@@ -266,8 +352,9 @@ class TestPrivateChatTriggerHook:
         assert len(result.sse_events) == 1
         assert result.sse_events[0].payload["npc_name"] == "Merchant Tom"
 
-    def test_npc_name_falls_back_to_id_when_no_registry(self) -> None:
+    def test_npc_name_falls_back_to_id_when_no_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No characters registry → npc_name falls back to npc_id."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"unknown_npc": {"romance": 70}},
             world=_world_empty(),
@@ -285,8 +372,9 @@ class TestPrivateChatTriggerHook:
         result = asyncio.run(_hook(NullPrivateChatTriggerEvaluator()).execute(ctx))
         assert result.sse_events == []
 
-    def test_metadata_contains_triggered_count(self) -> None:
+    def test_metadata_contains_triggered_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HookResult.metadata['triggered'] reflects number of emitted events."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={
                 "npc_a": {"romance": 70},
@@ -296,11 +384,108 @@ class TestPrivateChatTriggerHook:
         result = asyncio.run(_hook().execute(ctx))
         assert result.metadata["triggered"] == 2
 
-    def test_no_flags_slice_still_triggers(self) -> None:
+    def test_no_flags_slice_still_triggers(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without FlagSlice, cooldown is skipped but trigger still fires."""
+        _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={"npc_1": {"romance": 70}},
             include_flags=False,
         )
         result = asyncio.run(_hook().execute(ctx))
         assert len(result.sse_events) == 1
+
+    def test_not_rest_tick_is_skipped(self) -> None:
+        """Hook only runs on REST/LONG_REST engine tags."""
+        ctx = _make_context(
+            dispositions={"npc_1": {"romance": 70}},
+            scene_tags=["NAVIGATION"],
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+        assert result.metadata.get("skipped") == "not_rest_tick"
+
+    def test_player_in_private_location_is_skipped(self) -> None:
+        """Private location prefix '_private_' prevents triggers."""
+        ctx = _make_context(
+            dispositions={"npc_1": {"romance": 70}},
+            player_location="_private_merchant_room",
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+        assert result.metadata.get("skipped") == "already_in_private_chat"
+
+    def test_npc_scene_filter_only_reachable_npcs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only NPCs in current area locations or party are considered."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={
+                "npc_local": {"romance": 70},
+                "npc_remote": {"romance": 70},
+                "npc_party": {"trust": 70},
+            },
+            area_npc_locations={"npc_local": "inn_bench"},
+            party_members={"npc_party": {"role": "ally"}},
+            scene_tags=["REST", "LONG_REST"],
+            player_location="campfire",
+            area_id="inn",
+            current_area="inn",
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        triggered_ids = {event.payload["npc_id"] for event in result.sse_events}
+        assert triggered_ids == {"npc_local", "npc_party"}
+
+    def test_stage_pre_filter_blocks_non_chatable_stage(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """stranger/cold/hostile/nemesis/enemy should bypass evaluator."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_enemy": {"romance": 90}},
+            stages={"npc_enemy": "enemy"},
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+
+    def test_trigger_roll_blocked_when_high_for_romance(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Romance-based roll uses ROMANCE chance and may suppress trigger."""
+        _force_random(monkeypatch, 0.99)
+        ctx = _make_context(dispositions={"npc_1": {"romance": 90}})
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+
+    def test_trigger_roll_allows_when_low_for_intimate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Intimate stage uses intimate chance, allowing deterministic roll pass."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_1": {}},
+            stages={"npc_1": "intimate"},
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert len(result.sse_events) == 1
+        assert result.sse_events[0].payload["reason"] == "intimate"
+
+    def test_skip_if_player_slice_missing(self) -> None:
+        """Missing player slice fails with explicit skip metadata."""
+        ctx = _make_context(include_player=False, include_area=False)
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+        assert result.metadata.get("skipped") == "no_player_slice"
+
+    def test_skip_if_no_reachable_npcs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No matching area/party NPCs means no trigger even with data."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_remote": {"trust": 70}},
+            area_npc_locations={"npc_other": "barn"},
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+
+    def test_mid_rest_slot_is_skipped_until_final_slot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_1": {"romance": 70}},
+            accumulated=4.0,
+            action_log=[{"type": "rest_long", "time_cost": 1.0}],
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+        assert result.metadata.get("skipped") == "not_final_rest_slot"

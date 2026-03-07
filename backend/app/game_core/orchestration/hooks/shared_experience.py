@@ -39,7 +39,11 @@ class SharedExperienceHook(NoOpSettlementHook):
         self, context: SettlementContext
     ) -> dict[str, Any] | None:
         """Detect the most significant experience in this tick."""
-        action_types = {a.get("type") for a in context.action_log}
+        action_types = {
+            str(a.get("type", "")).strip().lower()
+            for a in context.action_log
+            if isinstance(a, dict)
+        }
 
         day = (
             context.state.time.snapshot().get("day", 1)
@@ -129,6 +133,8 @@ class SharedExperienceHook(NoOpSettlementHook):
         if (
             "talk" in action_types
             or "speak" in action_types
+            or "dialogue_turn" in action_types
+            or "private_chat_turn" in action_types
             or any(a in bus_tags for a in ("DIALOGUE", "NPC_INTERACTION"))
         ):
             return _build_experience(

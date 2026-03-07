@@ -179,6 +179,25 @@ def _non_empty_string(value: Any) -> str | None:
     return normalized or None
 
 
+def _build_dialogue_turn_record(
+    *,
+    kind: str,
+    npc_id: str,
+    intent: str | None = None,
+) -> dict[str, Any]:
+    params: dict[str, Any] = {"npc_id": npc_id}
+    normalized_intent = _non_empty_string(intent)
+    if normalized_intent is not None:
+        params["intent"] = normalized_intent
+    return {
+        "type": kind,
+        "actor": "player",
+        "params": params,
+        "success": True,
+        "source": "external_turn",
+    }
+
+
 def _coerce_int(value: Any) -> int:
     try:
         return int(value)
@@ -751,6 +770,13 @@ async def interact_stream(
             and request.message
             and request.intent in ("talk", "greet", "ask", "chat")
         )
+        should_call_free_chat = (
+            agent_svc is not None
+            and not should_call_npc
+            and interaction_result.success
+            and request.message
+            and request.intent in ("chat",)
+        )
         if should_call_npc:
             async def _text_chunk_sink_interact(chunk: str) -> None:
                 await queue.put(SSEEvent("text_chunk", {"text": chunk}))
@@ -775,6 +801,38 @@ async def interact_stream(
                     session,
                     time_cost=1 / 6,
                     event_sink=queue.put,
+                    turn_action_record=_build_dialogue_turn_record(
+                        kind="dialogue_turn",
+                        npc_id=npc_id,
+                        intent=request.intent,
+                    ),
+                )
+        elif should_call_free_chat:
+            free_chat_events = await agent_svc.run_free_chat(
+                session=session,
+                player_message=request.message,
+            )
+            for evt in free_chat_events:
+                await queue.put(evt)
+            chat_succeeded = not any(
+                evt.event_type in ("npc_error", "stream_error")
+                for evt in free_chat_events
+            )
+            stream_success = stream_success and chat_succeeded
+            if not chat_succeeded:
+                stream_reason = "free_chat_failed"
+            if chat_succeeded and free_chat_events:
+                await _finalize_dialogue_turn(
+                    session,
+                    time_cost=1 / 6,
+                    event_sink=queue.put,
+                    turn_action_record={
+                        "type": "free_chat_turn",
+                        "actor": "player",
+                        "params": {},
+                        "success": True,
+                        "source": "external_turn",
+                    },
                 )
 
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
@@ -827,6 +885,11 @@ async def private_chat_stream(
                 session,
                 time_cost=1 / 6,
                 event_sink=queue.put,
+                turn_action_record=_build_dialogue_turn_record(
+                    kind="private_chat_turn",
+                    npc_id=request.npc_id,
+                    intent="private_chat",
+                ),
             )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         reason = "completed" if chat_succeeded else "failed"

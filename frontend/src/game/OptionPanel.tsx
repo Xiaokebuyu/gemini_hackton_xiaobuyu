@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useOptionStore } from '../stores/optionStore'
 import { useSceneStore } from '../stores/sceneStore'
+import { usePartyStore } from '../stores/partyStore'
 import { audio } from '../lib/audio'
 import type { TextInputRequest, InteractRequest } from '../types/api'
 import type { OverviewHandlers } from '../stores/optionStore'
@@ -16,6 +17,7 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
   const { options, isLocked } = useOptionStore()
   const activeNpcId = useSceneStore((s) => s.activeNpcId)
   const openingInProgress = useSceneStore((s) => s.openingInProgress)
+  const hasParty = usePartyStore((s) => Object.keys(s.members).length > 0)
 
   const handleSend = () => {
     const trimmed = text.trim()
@@ -29,6 +31,8 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
         target_id: activeNpcId,
         message: trimmed,
       })
+    } else if (hasParty) {
+      sendInteract({ intent: 'chat', message: trimmed })
     } else {
       sendInput({ text: trimmed })
     }
@@ -94,7 +98,9 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
                 ? '请等待...'
                 : activeNpcId
                   ? '输入你想说的话...'
-                  : '输入你想做的事...'
+                  : hasParty
+                    ? '和队友聊聊天...'
+                    : '输入你想做的事...'
           }
           className="flex-1 bg-gray-800/60 border border-gray-600/50 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-1.5 text-sm focus:border-amber-500/70 outline-none disabled:opacity-50"
         />

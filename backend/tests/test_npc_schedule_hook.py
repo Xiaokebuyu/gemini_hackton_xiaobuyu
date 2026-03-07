@@ -66,11 +66,23 @@ def _make_world(
                     "id": "npc_alpha",
                     "name": "Alpha",
                     "area_id": "forest",
+                    "schedule": {
+                        "dawn": "camp",
+                        "day": "hut",
+                        "dusk": {"area": "town", "location": "square"},
+                        "night": {"area": "town", "location": "inn"},
+                    },
                 },
                 "npc_beta": {
                     "id": "npc_beta",
                     "name": "Beta",
                     "current_area": "town",
+                    "schedule": {
+                        "dawn": "inn",
+                        "day": "square",
+                        "dusk": "square",
+                        "night": "inn",
+                    },
                 },
                 "companion_1": {
                     "id": "companion_1",
@@ -189,18 +201,12 @@ class TestNpcScheduleHook:
         assert result.metadata["evaluated"] is True
         assert result.metadata["candidate_count"] == 2
         assert result.metadata["moved_npc_count"] == 2
-        assert result.metadata["updated_area_count"] == 1
-        assert result.metadata["provider_metadata"] == {
-            "status": "deterministic",
-            "provider": "default_provider",
-            "branch": "to_town",
-            "planned_move_count": 2,
-            "truncated_by_default_limit": False,
-        }
+        assert result.metadata["provider_metadata"]["status"] == "deterministic"
+        assert result.metadata["provider_metadata"]["branch"] == "schedule"
         assert context.state.areas.find_npc_area("npc_alpha") == "town"
+        assert context.state.areas.get_area("town").npc_locations["npc_alpha"] == "square"
         assert context.state.areas.find_npc_area("npc_beta") == "town"
-        assert context.state.areas.get_area("town").npc_locations["npc_alpha"] is None
-        assert context.state.areas.get_area("town").npc_locations["npc_beta"] is None
+        assert context.state.areas.get_area("town").npc_locations["npc_beta"] == "square"
         assert result.sse_events[0].event_type == "npc_schedule_updated"
         assert context.scene_bus.snapshot()["entries"] == []
 
@@ -213,28 +219,23 @@ class TestNpcScheduleHook:
         result = asyncio.run(NpcScheduleHook().execute(context))
 
         assert result.metadata["status"] == "applied"
-        assert result.metadata["provider_metadata"] == {
-            "status": "deterministic",
-            "provider": "default_provider",
-            "branch": "to_home",
-            "planned_move_count": 2,
-            "truncated_by_default_limit": False,
-        }
+        assert result.metadata["provider_metadata"]["status"] == "deterministic"
+        assert result.metadata["provider_metadata"]["branch"] == "schedule"
+        # npc_alpha dawn schedule → forest/camp
         assert context.state.areas.find_npc_area("npc_alpha") == "forest"
+        assert context.state.areas.get_area("forest").npc_locations["npc_alpha"] == "camp"
+        # npc_beta dawn schedule → town/inn
         assert context.state.areas.find_npc_area("npc_beta") == "town"
+        assert context.state.areas.get_area("town").npc_locations["npc_beta"] == "inn"
 
-    def test_default_provider_is_noop_when_town_is_unavailable(self) -> None:
+    def test_default_provider_is_noop_when_target_area_unavailable(self) -> None:
         context = _make_context(slot=17)
         del context.state.areas.areas["town"]
 
         result = asyncio.run(NpcScheduleHook().execute(context))
 
-        assert result.metadata["status"] == "noop"
-        assert result.metadata["provider_metadata"] == {
-            "status": "noop",
-            "provider": "default_provider",
-            "reason": "stable",
-        }
+        # npc_alpha dusk schedule points to town (removed) → move rejected by _normalize_move
+        # npc_beta current_area=town (removed from state) → no valid target
         assert result.metadata["moved_npc_count"] == 0
 
     def test_valid_move_updates_area_and_emits_sse(self) -> None:

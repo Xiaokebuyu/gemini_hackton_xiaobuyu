@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 
 logger = logging.getLogger(__name__)
 
-MAX_ACTION_LOG = 100  # 每个 session 保留的最近动作条数上限（防止无界增长污染 LLM 上下文）
-
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.companion_runtime import CompanionRuntimeManager, TickRecord
+from app.game_core.orchestration.companion_manager import CompanionManager
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
+from app.game_core.orchestration.hooks.rest_phase import build_rest_phase
 from app.game_core.orchestration.pipeline import AfterEngineCallback, PipelineOrchestrator
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
@@ -26,6 +26,8 @@ from app.game_core.orchestration.event_engine import run_inline_event_check
 _SEMANTIC_TAGS: dict[str, list[str]] = {
     "rest_long":     ["REST", "LONG_REST"],
     "rest_short":    ["REST", "SHORT_REST"],
+    "dialogue_turn": ["DIALOGUE", "NPC_INTERACTION"],
+    "private_chat_turn": ["DIALOGUE", "PRIVATE_CHAT"],
     "start_combat":  ["COMBAT"],
     "end_combat":    ["COMBAT_END"],
     "navigate":      ["NAVIGATION"],
@@ -53,8 +55,13 @@ class TickCoordinator:
         self.pipeline = pipeline or PipelineOrchestrator()
         self.companion_manager = companion_manager
         self.change_log: list[StateChange] = []
-        self.action_log: list[dict[str, Any]] = []
+        self._pending_action_records: list[dict[str, Any]] = []
         self.settlement_hooks: list[SettlementHook] = []
+
+    @property
+    def action_log(self) -> list[dict[str, Any]]:
+        """Current settlement-window action semantics exposed to hooks/tests."""
+        return self._peek_pending_action_window()
 
     def register_settlement_hook(self, hook: SettlementHook) -> None:
         self.settlement_hooks.append(hook)
@@ -82,9 +89,28 @@ class TickCoordinator:
             event_sink=event_sink,
             after_engine=after_engine,
         )
-        self._record_action(result)
-        self._emit_action_tags(result)    # Phase 0
+        appended = self._append_pipeline_action(result)
+        if appended is not None:
+            self._emit_action_tags_for_record(appended)
+        if (
+            self.state.has_slice("narrative_plan")
+            and result.action_type != "noop"
+            and self.state.has_slice("time")
+        ):
+            location = (
+                self.state.player.current_location
+                if self.state.has_slice("player")
+                else None
+            )
+            self.state.narrative_plan.record_behavior(
+                {
+                    "tick": self.state.time.absolute_tick(),
+                    "action_type": result.action_type,
+                    "location": location,
+                }
+            )
         self._dispatch_companion_events(result)   # Phase C3
+        self._sync_party_to_player()
         self.accumulate(result.time_cost)
         while self.check_settlement():
             before_accumulated = self.state.time.accumulated
@@ -96,6 +122,7 @@ class TickCoordinator:
                 and self.state.time.accumulated >= before_accumulated
             ):
                 raise RuntimeError("settlement made no progress")
+            self._consume_pending_action_window()
         return result
 
     def accumulate(self, time_cost: float) -> None:
@@ -116,6 +143,11 @@ class TickCoordinator:
     ) -> list[SSEEvent]:
         """Run settlement hooks. Returns collected SSE events."""
         collected_events: list[SSEEvent] = []
+        action_log = self._peek_pending_action_window()
+        rest_phase = build_rest_phase(
+            action_log=action_log,
+            current_time=self.state.time if self.state.has_slice("time") else None,
+        )
         context = SettlementContext(
             change_log=self.change_log,
             state=self.state,
@@ -123,11 +155,12 @@ class TickCoordinator:
             scene_bus=self.scene_bus,
             _rules_engine=self.rules_engine,
             _apply_delta=self._apply_delta,
-            action_log=list(self.action_log),
+            action_log=action_log,
+            rest_phase=rest_phase,
             companion_manager=self.companion_manager,
         )
         for hook in self.settlement_hooks:
-            if hook.should_skip(self.change_log):
+            if hook.should_skip(self.change_log, action_log=context.action_log):
                 continue
             hook_name = getattr(hook, "HOOK_NAME", type(hook).__name__)
             try:
@@ -182,6 +215,7 @@ class TickCoordinator:
         self,
         time_cost: float,
         event_sink: Callable[[SSEEvent], Awaitable[None]] | None = None,
+        turn_action_record: Mapping[str, Any] | None = None,
     ) -> list[SSEEvent]:
         """Finalize one non-pipeline turn by consuming time and settlement.
 
@@ -203,6 +237,11 @@ class TickCoordinator:
             collected_events.append(event)
             if event_sink is not None:
                 await event_sink(event)
+        if turn_action_record is not None:
+            appended = self._append_external_action(turn_action_record, time_cost=time_cost)
+            if appended is not None:
+                self._emit_action_tags_for_record(appended)
+        self._sync_party_to_player()
         self.accumulate(time_cost)
         while self.check_settlement():
             before_accumulated = self.state.time.accumulated
@@ -214,6 +253,7 @@ class TickCoordinator:
                 and self.state.time.accumulated >= before_accumulated
             ):
                 raise RuntimeError("settlement made no progress")
+            self._consume_pending_action_window()
         return collected_events
 
     def export_dirty(self) -> dict[str, dict[str, Any]]:
@@ -224,23 +264,38 @@ class TickCoordinator:
         """
         return self.state.export_dirty()
 
-    def _emit_action_tags(self, result: PipelineResult) -> None:
+    def _emit_action_tags_for_record(self, action_record: Mapping[str, Any]) -> None:
         """Write semantic ENGINE tags to SceneBus for downstream hook consumption.
 
         Phase 0 prerequisite for Phase 3 (SharedExperience) and Phase 4 (Teammate).
         """
-        tags = _SEMANTIC_TAGS.get(result.action_type, [])
+        action_type = str(action_record.get("type", "")).strip()
+        tags = _SEMANTIC_TAGS.get(action_type, [])
         if not tags:
             return
-        content = f"[{result.action_type}]"
-        if result.narrative_hints:
-            content = f"{content} {result.narrative_hints[0]}"
+        content = f"[{action_type}]"
+        raw_hints = action_record.get("narrative_hints", [])
+        if isinstance(raw_hints, list) and raw_hints:
+            first_hint = raw_hints[0]
+            if isinstance(first_hint, str) and first_hint:
+                content = f"{content} {first_hint}"
         self.scene_bus.add_entry({
             "source": "ENGINE",
             "content": content,
             "visibility": "system",
             "tags": tags,
         })
+
+    def _emit_action_tags(self, result: PipelineResult) -> None:
+        """Backward-compatible wrapper used by existing tests/helpers."""
+        action_record = self._public_action_record(
+            {
+                "type": result.action_type,
+                "time_cost": result.time_cost,
+                "narrative_hints": list(result.narrative_hints),
+            }
+        )
+        self._emit_action_tags_for_record(action_record)
 
     def _dispatch_companion_events(self, result: PipelineResult) -> None:
         """C3: Dispatch one structured tick observation to active companions."""
@@ -300,9 +355,16 @@ class TickCoordinator:
         )
         self.companion_manager.dispatch_tick(record)
 
-    def _record_action(self, result: PipelineResult) -> None:
-        if result.action_type == "noop":
+    def _sync_party_to_player(self) -> None:
+        """Sync all party members to the player's current position after each action."""
+        if not self.state.has_slice("party") or not self.state.party.members:
             return
+        mgr = CompanionManager(self.world, self.state)
+        mgr.sync_to_player()
+
+    def _append_pipeline_action(self, result: PipelineResult) -> dict[str, Any] | None:
+        if result.action_type == "noop":
+            return None
         command = result.commands[0] if result.commands else None
         record: dict[str, Any] = {
             "type": result.action_type,
@@ -311,11 +373,127 @@ class TickCoordinator:
             "success": result.success,
             "time_cost": result.time_cost,
         }
+        self._inject_action_metadata(record, result.metadata)
         if result.narrative_hints:
             record["narrative_hints"] = list(result.narrative_hints)
-        self.action_log.append(record)
-        if len(self.action_log) > MAX_ACTION_LOG:
-            self.action_log = self.action_log[-MAX_ACTION_LOG:]
+        self._append_pending_action_record(record)
+        return self._public_action_record(record)
+
+    def _append_external_action(
+        self,
+        raw_record: Mapping[str, Any],
+        *,
+        time_cost: float,
+    ) -> dict[str, Any] | None:
+        action_type = str(raw_record.get("type", "")).strip()
+        if not action_type:
+            return None
+        params = raw_record.get("params", {})
+        record: dict[str, Any] = {
+            "type": action_type,
+            "actor": str(raw_record.get("actor", "player")),
+            "params": dict(params) if isinstance(params, Mapping) else {},
+            "success": bool(raw_record.get("success", True)),
+            "time_cost": float(raw_record.get("time_cost", time_cost)),
+            "source": str(raw_record.get("source", "external_turn")),
+        }
+        self._inject_action_metadata(record, raw_record.get("metadata"))
+        raw_hints = raw_record.get("narrative_hints", [])
+        if isinstance(raw_hints, list):
+            record["narrative_hints"] = [hint for hint in raw_hints if isinstance(hint, str)]
+        self._append_pending_action_record(record)
+        return self._public_action_record(record)
+
+    @staticmethod
+    def _inject_action_metadata(
+        record: dict[str, Any],
+        raw_metadata: Any,
+    ) -> None:
+        if not isinstance(raw_metadata, Mapping):
+            return
+        camp_type = raw_metadata.get("camp_type")
+        if isinstance(camp_type, str) and camp_type.strip():
+            record["camp_type"] = camp_type.strip()
+        night_watch_required = raw_metadata.get("night_watch_required")
+        if isinstance(night_watch_required, bool):
+            record["night_watch_required"] = night_watch_required
+        status = raw_metadata.get("status")
+        if isinstance(status, str) and status.strip():
+            record["status"] = status.strip()
+
+    def _append_pending_action_record(self, record: Mapping[str, Any]) -> None:
+        normalized = self._public_action_record(record)
+        normalized["_remaining_time_cost"] = max(
+            0.0,
+            self._coerce_time_cost(normalized.get("time_cost")),
+        )
+        self._pending_action_records.append(normalized)
+
+    def _peek_pending_action_window(self) -> list[dict[str, Any]]:
+        if not self._pending_action_records:
+            return []
+        remaining = 1.0
+        snapshot: list[dict[str, Any]] = []
+        for raw_record in self._pending_action_records:
+            record = self._public_action_record(raw_record)
+            action_cost = self._coerce_time_cost(raw_record.get("_remaining_time_cost"))
+            if action_cost <= 0.0:
+                snapshot.append(record)
+                continue
+            contributed = min(action_cost, remaining)
+            record["time_cost"] = contributed
+            snapshot.append(record)
+            remaining -= contributed
+            if remaining <= 0.0:
+                break
+        return snapshot
+
+    def _consume_pending_action_window(self) -> None:
+        if not self._pending_action_records:
+            return
+        remaining = 1.0
+        next_pending: list[dict[str, Any]] = []
+        for raw_record in self._pending_action_records:
+            record = dict(raw_record)
+            action_cost = self._coerce_time_cost(record.get("_remaining_time_cost"))
+            if action_cost <= 0.0:
+                if remaining > 0.0:
+                    continue
+                next_pending.append(record)
+                continue
+            if remaining <= 0.0:
+                next_pending.append(record)
+                continue
+            if action_cost <= remaining:
+                remaining -= action_cost
+                continue
+            record["_remaining_time_cost"] = action_cost - remaining
+            remaining = 0.0
+            next_pending.append(record)
+        self._pending_action_records = next_pending
+
+    @staticmethod
+    def _coerce_time_cost(value: Any) -> float:
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def _public_action_record(record: Mapping[str, Any]) -> dict[str, Any]:
+        public = {str(key): value for key, value in record.items() if not str(key).startswith("_")}
+        params = public.get("params", {})
+        public["params"] = dict(params) if isinstance(params, Mapping) else {}
+        raw_hints = public.get("narrative_hints", [])
+        if isinstance(raw_hints, list):
+            hints = [hint for hint in raw_hints if isinstance(hint, str)]
+            if hints:
+                public["narrative_hints"] = hints
+            else:
+                public.pop("narrative_hints", None)
+        else:
+            public.pop("narrative_hints", None)
+        return public
 
     def _apply_delta(self, delta: StateDelta | None) -> None:
         if delta is None:

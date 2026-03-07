@@ -178,11 +178,6 @@ export interface ShopSnapshotData {
   player_sellable_items: Array<{ item_id: string; name: string; count: number; base_price: number }>
 }
 
-export interface BoardSnapshotData {
-  target_id: string
-  entries: Array<{ board_id: string; quest_id: string | null; title: string; content: string; quest_status: string | null }>
-}
-
 export interface TalkSnapshotData {
   target_id: string
   profile?: {
@@ -197,6 +192,39 @@ export interface DiscoveryRevealData {
   description?: string
 }
 
+export interface CampfireDialogueData {
+  teammate_id: string
+  content: string
+  memory_type?: string
+  memory_summary?: string
+}
+
+export interface EventStateChangedData {
+  event_id: string
+  from_state: string
+  to_state: string
+  reason: string
+  source?: string
+  title?: string
+}
+
+export interface HiddenObjectRevealedData {
+  area_id: string
+  interactable_id: string
+  name: string
+}
+
+export interface TrapDetectedData {
+  area_id: string
+  interactable_id: string
+}
+
+export interface GenericErrorEventData {
+  message?: string
+  error?: string
+  code?: string
+}
+
 export interface QuestBriefData {
   target_kind: string
   target_id: string
@@ -205,9 +233,6 @@ export interface QuestBriefData {
     status: string
     title: string
     summary: string
-    listed_on_board: boolean
-    board_id?: string | null
-    board_title?: string | null
     source_milestone?: string | null
   }
 }
@@ -223,8 +248,6 @@ export interface QuestProgressData {
     can_accept: boolean
     is_active: boolean
     is_closed: boolean
-    listed_on_board: boolean
-    board_id?: string | null
     source_milestone?: string | null
     source_milestone_state?: string | null
   }
@@ -239,7 +262,6 @@ export interface QuestLocationData {
     location_known: boolean
     area_id?: string | null
     location_id?: string | null
-    board_id?: string | null
     source_milestone?: string | null
   }
 }

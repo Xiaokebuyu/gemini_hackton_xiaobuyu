@@ -59,6 +59,7 @@ class TestParseLlmResponse:
                 "name": "submit_consequences",
                 "args": {
                     "reasoning": "Player stole from merchant.",
+                    "visible_change": True,
                     "consequences": [
                         {
                             "type": "modify_disposition",
@@ -73,12 +74,15 @@ class TestParseLlmResponse:
                 },
             }],
             finish_reason="tool_calls",
+            metadata={"provider": "gemini", "profile": "osiris", "thinking_level": "medium"},
         )
 
         decision = _parse_llm_response(response)
 
         assert decision.metadata["status"] == "llm"
         assert decision.metadata["source"] == "tool_call"
+        assert decision.visible_change is True
+        assert decision.metadata["profile"] == "osiris"
         assert decision.reasoning == "Player stole from merchant."
         assert len(decision.consequences) == 2
         assert decision.consequences[0]["type"] == "modify_disposition"
@@ -90,6 +94,7 @@ class TestParseLlmResponse:
                 "name": "submit_consequences",
                 "args": {
                     "reasoning": "Nothing noteworthy happened.",
+                    "visible_change": False,
                     "consequences": [],
                 },
             }],
@@ -101,10 +106,11 @@ class TestParseLlmResponse:
         assert decision.metadata["status"] == "llm"
         assert decision.consequences == []
         assert decision.reasoning == "Nothing noteworthy happened."
+        assert decision.visible_change is False
 
     def test_text_json_fallback(self) -> None:
         response = LlmResponse(
-            text='{"reasoning": "fallback", "consequences": [{"type": "set_flag", "params": {"key": "x", "value": 1}}]}',
+            text='{"reasoning": "fallback", "visible_change": true, "consequences": [{"type": "set_flag", "params": {"key": "x", "value": 1}}]}',
         )
 
         decision = _parse_llm_response(response)
@@ -113,6 +119,7 @@ class TestParseLlmResponse:
         assert decision.metadata["source"] == "text_json"
         assert len(decision.consequences) == 1
         assert decision.reasoning == "fallback"
+        assert decision.visible_change is True
 
     def test_unparseable_response(self) -> None:
         response = LlmResponse(text="I cannot help with that.")
@@ -140,9 +147,10 @@ class TestAgenticAIOsirisEvaluator:
         llm = RecordingLlm(LlmResponse(
             tool_calls=[{
                 "name": "submit_consequences",
-                "args": {"reasoning": "ok", "consequences": []},
+                "args": {"reasoning": "ok", "visible_change": False, "consequences": []},
             }],
             finish_reason="tool_calls",
+            metadata={"provider": "gemini", "profile": "osiris", "thinking_level": "medium"},
         ))
         evaluator = AgenticAIOsirisEvaluator(llm=llm)
 
@@ -164,6 +172,9 @@ class TestAgenticAIOsirisEvaluator:
         assert "world_state_snapshot" in text
         assert "rules_context" in text
         assert decision.consequences == []
+        assert decision.metadata["profile"] == "osiris"
+        assert decision.metadata["thinking_level"] == "medium"
+        assert decision.metadata["latency_ms"] >= 0.0
 
     def test_evaluate_extracts_consequences(self) -> None:
         llm = RecordingLlm(LlmResponse(
@@ -171,6 +182,7 @@ class TestAgenticAIOsirisEvaluator:
                 "name": "submit_consequences",
                 "args": {
                     "reasoning": "Theft detected by companion.",
+                    "visible_change": True,
                     "consequences": [
                         {
                             "type": "modify_approval",
@@ -191,6 +203,7 @@ class TestAgenticAIOsirisEvaluator:
         assert len(decision.consequences) == 1
         assert decision.consequences[0]["type"] == "modify_approval"
         assert decision.metadata["status"] == "llm"
+        assert decision.visible_change is True
 
     def test_evaluate_handles_llm_exception(self) -> None:
         evaluator = AgenticAIOsirisEvaluator(llm=ExplodingLlm())

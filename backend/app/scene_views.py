@@ -27,6 +27,10 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
 
     # ── present_npcs ──────────────────────────────────────────────────────────
 
+    party_member_ids: set[str] = set()
+    if session.runtime.state.has_slice("party"):
+        party_member_ids = set(session.runtime.state.party.members.keys())
+
     present_npcs: list[dict[str, Any]] = []
     if area_state is not None:
         for raw_npc_id, raw_loc in area_state.npc_locations.items():
@@ -90,10 +94,13 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
                 str(relations.relationship_stages.get(npc_id, "")).strip() or None
             )
 
+            is_companion = npc_id in party_member_ids
+
             present_npcs.append({
                 "character_id": npc_id,
                 "name": npc_name,
-                "role": role,
+                "role": "companion" if is_companion else role,
+                "is_companion": is_companion,
                 "disposition_hint": disposition_hint,
                 "has_shop": has_shop,
                 "relationship_stage": relationship_stage,
@@ -187,6 +194,7 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
                     "requires_check": requires_check,
                     "container_status": container_status,
                     "trapped_hint": trapped_hint,
+                    "tags": list(getattr(iact, "tags", [])),
                 })
 
     # ── exits ─────────────────────────────────────────────────────────────────

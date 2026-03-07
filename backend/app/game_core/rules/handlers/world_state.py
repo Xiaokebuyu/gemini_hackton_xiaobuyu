@@ -282,8 +282,8 @@ class WorldStateHandler(StaticCommandHandler):
         if event_id is None:
             return ValidationResult(ok=False, reason="event_id must be a non-empty string")
 
-        trigger_tick, reason = self._resolve_trigger_tick(cmd.params, state)
-        if trigger_tick is None:
+        reason = self._validate_trigger_condition(cmd.params, state)
+        if reason is not None:
             return ValidationResult(ok=False, reason=reason or "invalid trigger condition")
 
         if "event_type" in cmd.params:
@@ -302,7 +302,7 @@ class WorldStateHandler(StaticCommandHandler):
         if not isinstance(metadata, Mapping):
             return ValidationResult(ok=False, reason="metadata must be a dict")
 
-        del event_id, trigger_tick
+        del event_id
         return ValidationResult(ok=True)
 
     def _validate_create_rumor(
@@ -741,6 +741,57 @@ class WorldStateHandler(StaticCommandHandler):
         if current_state == to_state:
             return True
         return to_state in cls._DYNAMIC_TRANSITIONS.get(current_state, set())
+
+    @classmethod
+    def _validate_trigger_condition(
+        cls,
+        params: Mapping[str, Any],
+        state: StateContainer,
+    ) -> str | None:
+        direct_tick = coerce_int(params.get("trigger_tick"))
+        if direct_tick is not None:
+            if direct_tick < 0:
+                return "trigger_tick must be a non-negative integer"
+            return None
+        if "trigger_tick" in params:
+            return "trigger_tick must be a non-negative integer"
+
+        raw_condition = params.get("trigger_condition")
+        if not isinstance(raw_condition, Mapping):
+            return "trigger_tick or trigger_condition is required"
+
+        condition_type = cls._get_optional_non_empty_string(raw_condition.get("type"))
+        if condition_type is None:
+            return "trigger_condition.type must be a non-empty string"
+        if condition_type == "absolute_tick":
+            tick = coerce_int(raw_condition.get("tick"))
+            if tick is None or tick < 0:
+                return "trigger_condition.tick must be a non-negative integer"
+            return None
+        if condition_type == "time_slots_elapsed":
+            count = coerce_int(raw_condition.get("count"))
+            if count is None or count < 0:
+                return "trigger_condition.count must be a non-negative integer"
+            if not state.has_slice("time"):
+                return "time slice is required for time_slots_elapsed"
+            return None
+        if condition_type == "period_reached":
+            period = cls._get_optional_non_empty_string(raw_condition.get("period"))
+            if period is None:
+                return "trigger_condition.period must be a non-empty string"
+            return None
+        if condition_type == "location_entered":
+            area_id = cls._get_optional_non_empty_string(raw_condition.get("area_id"))
+            location_id = cls._get_optional_non_empty_string(raw_condition.get("location_id"))
+            if area_id is None and location_id is None:
+                return "trigger_condition.location_entered requires area_id or location_id"
+            return None
+        if condition_type == "flag_set":
+            key = cls._get_optional_non_empty_string(raw_condition.get("key"))
+            if key is None:
+                return "trigger_condition.key must be a non-empty string"
+            return None
+        return f"unsupported trigger_condition.type: {condition_type}"
 
     @classmethod
     def _resolve_trigger_tick(

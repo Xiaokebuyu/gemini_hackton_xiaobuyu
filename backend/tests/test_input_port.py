@@ -147,88 +147,7 @@ def test_fastapi_input_port_normalizes_talk_and_rejects_invalid_npc_intent() -> 
     }
 
 
-def test_fastapi_input_port_normalizes_board_lifecycle_actions() -> None:
-    assert _parse_action(
-        {
-            "target_kind": "board",
-            "target_id": "board",
-            "intent": "accept",
-            "quest_id": "dq_report_in",
-        }
-    ) == {
-        "status": "resolved",
-        "target_kind": "board",
-        "target_id": "board",
-        "intent": "accept",
-        "item_id": None,
-        "quest_id": "dq_report_in",
-        "count": 1,
-        "execution": {
-            "kind": "pipeline_action",
-            "action_type": "advance_quest",
-            "params": {
-                "quest_id": "dq_report_in",
-                "to_state": "active",
-                "quest_kind": "dynamic",
-            },
-            "post_snapshot": "board",
-        },
-    }
-    assert _parse_action(
-        {
-            "target_kind": "board",
-            "target_id": "board",
-            "intent": "complete",
-            "quest_id": "dq_report_in",
-        }
-    ) == {
-        "status": "resolved",
-        "target_kind": "board",
-        "target_id": "board",
-        "intent": "complete",
-        "item_id": None,
-        "quest_id": "dq_report_in",
-        "count": 1,
-        "execution": {
-            "kind": "pipeline_action",
-            "action_type": "advance_quest",
-            "params": {
-                "quest_id": "dq_report_in",
-                "to_state": "completed",
-                "quest_kind": "dynamic",
-            },
-            "post_snapshot": "board",
-        },
-    }
-    assert _parse_action(
-        {
-            "target_kind": "board",
-            "target_id": "board",
-            "intent": "retire",
-            "quest_id": "dq_report_in",
-        }
-    ) == {
-        "status": "resolved",
-        "target_kind": "board",
-        "target_id": "board",
-        "intent": "retire",
-        "item_id": None,
-        "quest_id": "dq_report_in",
-        "count": 1,
-        "execution": {
-            "kind": "pipeline_action",
-            "action_type": "advance_quest",
-            "params": {
-                "quest_id": "dq_report_in",
-                "to_state": "retired",
-                "quest_kind": "dynamic",
-            },
-            "post_snapshot": "board",
-        },
-    }
-
-
-def test_fastapi_input_port_rejects_missing_board_quest_ids() -> None:
+def test_fastapi_input_port_rejects_board_kind_for_action_stream() -> None:
     assert _parse_action(
         {
             "target_kind": "board",
@@ -243,42 +162,8 @@ def test_fastapi_input_port_rejects_missing_board_quest_ids() -> None:
         "item_id": None,
         "quest_id": None,
         "count": 1,
-        "code": "missing_quest",
-        "message": "quest_id is required for board accept",
-    }
-    assert _parse_action(
-        {
-            "target_kind": "board",
-            "target_id": "board",
-            "intent": "complete",
-        }
-    ) == {
-        "status": "rejected",
-        "target_kind": "board",
-        "target_id": "board",
-        "intent": "complete",
-        "item_id": None,
-        "quest_id": None,
-        "count": 1,
-        "code": "missing_quest",
-        "message": "quest_id is required for board complete",
-    }
-    assert _parse_action(
-        {
-            "target_kind": "board",
-            "target_id": "board",
-            "intent": "retire",
-        }
-    ) == {
-        "status": "rejected",
-        "target_kind": "board",
-        "target_id": "board",
-        "intent": "retire",
-        "item_id": None,
-        "quest_id": None,
-        "count": 1,
-        "code": "missing_quest",
-        "message": "quest_id is required for board retire",
+        "code": "invalid_target_kind",
+        "message": "target_kind must be npc",
     }
 
 
@@ -353,5 +238,5 @@ def test_fastapi_input_port_still_rejects_basic_shape_errors() -> None:
         "quest_id": None,
         "count": 1,
         "code": "invalid_target_kind",
-        "message": "target_kind must be npc or board",
+        "message": "target_kind must be npc",
     }

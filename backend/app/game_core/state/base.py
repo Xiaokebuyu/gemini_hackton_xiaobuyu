@@ -377,6 +377,7 @@ class StateContainer:
                     "temporary_sub_areas": [],
                     "discovered_items": [],
                     "npc_locations": npc_locations,
+                    "board_bulletins": {},
                     "container_states": {},
                     "hostile_tracking": {},
                     "permanent_hostile_slots": {},

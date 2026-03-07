@@ -21,10 +21,16 @@ class GeminiLlmAdapter:
         self,
         model: str = "gemini-3-flash-preview",
         temperature: float = 1.0,
+        *,
+        thinking_level: str | types.ThinkingLevel = "low",
+        profile_name: str = "default",
     ) -> None:
         self._client = genai.Client()
         self._model = model
         self._temperature = temperature
+        self._thinking_level = self._normalize_thinking_level(thinking_level)
+        self._thinking_level_name = self._thinking_level.name.lower()
+        self._profile_name = profile_name
 
     async def generate(
         self,
@@ -47,7 +53,7 @@ class GeminiLlmAdapter:
             tools=[gemini_tools] if gemini_tools else None,
             temperature=self._temperature,
             thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.LOW,
+                thinking_level=self._thinking_level,
             ),
         )
 
@@ -79,7 +85,7 @@ class GeminiLlmAdapter:
                 function_calling_config=types.FunctionCallingConfig(mode="NONE"),
             ),
             thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel.LOW,
+                thinking_level=self._thinking_level,
             ),
         )
         async for chunk in await self._client.aio.models.generate_content_stream(
@@ -127,8 +133,7 @@ class GeminiLlmAdapter:
         """Tool declaration already in JSON-schema format — pass through."""
         return d
 
-    @staticmethod
-    def _parse_response(response: Any) -> LlmResponse:
+    def _parse_response(self, response: Any) -> LlmResponse:
         """Parse Gemini response into abstract LlmResponse."""
         text_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
@@ -159,9 +164,49 @@ class GeminiLlmAdapter:
                     raw_model_parts.append(raw_part)
 
         finish = "tool_calls" if tool_calls else "stop"
+        metadata = {
+            "provider": "gemini",
+            "profile": self._profile_name,
+            "model": self._model,
+            "thinking_level": self._thinking_level_name,
+            "temperature": self._temperature,
+        }
+        usage_metadata = getattr(response, "usage_metadata", None)
+        token_usage: dict[str, int] = {}
+        if usage_metadata is not None:
+            for field_name in (
+                "prompt_token_count",
+                "candidates_token_count",
+                "tool_use_prompt_token_count",
+                "thoughts_token_count",
+                "total_token_count",
+            ):
+                raw_value = getattr(usage_metadata, field_name, None)
+                if raw_value is None:
+                    continue
+                try:
+                    token_usage[field_name] = int(raw_value)
+                except (TypeError, ValueError):
+                    continue
+        if token_usage:
+            metadata["token_usage"] = token_usage
         return LlmResponse(
             text="\n".join(text_parts),
             tool_calls=tool_calls,
             finish_reason=finish,
+            metadata=metadata,
             raw_model_parts=raw_model_parts if raw_model_parts else None,
         )
+
+    @staticmethod
+    def _normalize_thinking_level(
+        raw: str | types.ThinkingLevel,
+    ) -> types.ThinkingLevel:
+        if isinstance(raw, types.ThinkingLevel):
+            return raw
+        normalized = str(raw).strip().lower()
+        if normalized == "medium":
+            return types.ThinkingLevel.MEDIUM
+        if normalized == "high":
+            return types.ThinkingLevel.HIGH
+        return types.ThinkingLevel.LOW

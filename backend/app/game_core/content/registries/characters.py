@@ -73,7 +73,7 @@ class CharacterTemplate:
     location_id: str = ""
     current_location: str = ""
     tags: list[str] = field(default_factory=list)
-    schedule: dict[str, str] | None = None
+    schedule: dict[str, Any] | None = None
     character_class: str = ""
     class_id: str = ""
     faction: str = ""
@@ -273,10 +273,15 @@ class CharacterRegistry(ContentRegistry):
 
         # -- Schedule --
         raw_schedule = raw.get("schedule")
-        schedule: dict[str, str] | None = (
-            {str(k): str(v) for k, v in raw_schedule.items()}
-            if isinstance(raw_schedule, Mapping) else None
-        )
+        schedule: dict[str, Any] | None = None
+        if isinstance(raw_schedule, Mapping):
+            schedule = {}
+            for k, v in raw_schedule.items():
+                if isinstance(v, Mapping):
+                    schedule[str(k)] = dict(v)
+                else:
+                    schedule[str(k)] = str(v)
+
 
         return CharacterTemplate(
             id=str(raw_id or char_id),

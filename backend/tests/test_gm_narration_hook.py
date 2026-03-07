@@ -41,11 +41,14 @@ def _make_context(
     include_scene: bool = True,
     include_state_changes: bool = True,
     scene_change_slice: str = "flags",
+    scene_entries: list[dict[str, object]] | None = None,
+    action_log: list[dict[str, object]] | None = None,
+    accumulated: float = 0.0,
 ) -> SettlementContext:
     state = StateContainer()
 
     time_slice = TimeSlice()
-    time_slice.restore({"day": 1, "slot": 9})
+    time_slice.restore({"day": 1, "slot": 9, "accumulated": accumulated})
     state.register(time_slice)
 
     player = PlayerSlice()
@@ -67,6 +70,8 @@ def _make_context(
                     "value": True,
                 }
             )
+        for entry in scene_entries or []:
+            scene_bus.add_entry(dict(entry))
     else:
         orphan_scene = SceneSlice()
         orphan_scene.restore({})
@@ -82,6 +87,7 @@ def _make_context(
         scene_bus=scene_bus,
         _rules_engine=RulesEngine(),
         _apply_delta=lambda delta: None,
+        action_log=list(action_log or []),
     )
 
 
@@ -89,7 +95,7 @@ class TestGmNarrationHook:
     def test_should_skip_depends_on_change_log(self) -> None:
         hook = GmNarrationHook()
 
-        assert hook.should_skip([]) is True
+        assert hook.should_skip([]) is False
         assert hook.should_skip([StateChange("flags", "set", "flags.x", True)]) is False
 
     def test_missing_scene_or_empty_scene_changes_returns_noop(self) -> None:
@@ -121,7 +127,69 @@ class TestGmNarrationHook:
         }
         assert entries[0]["source"] == "gm"
         assert entries[0]["visibility"] == "public"
-        assert result.sse_events[0].event_type == "gm_narration_added"
+        assert [event.event_type for event in result.sse_events] == [
+            "gm_narration",
+            "gm_narration_added",
+        ]
+        assert result.sse_events[0].payload["content"] == entries[0]["content"]
+
+    def test_system_entries_keep_hook_active_without_state_changes(self) -> None:
+        context = _make_context(
+            include_state_changes=False,
+            scene_entries=[
+                {
+                    "source": "ai_osiris",
+                    "content": "A rumor of wolves spreads through camp.",
+                    "visibility": "system",
+                    "tags": ["ai_osiris", "visible_consequence", "create_rumor"],
+                    "timestamp": 9.0,
+                }
+            ],
+        )
+
+        result = asyncio.run(GmNarrationHook().execute(context))
+
+        entries = context.scene_bus.snapshot()["entries"]
+        public_entries = [entry for entry in entries if entry["source"] == "gm"]
+        assert result.metadata["status"] == "applied"
+        assert len(public_entries) == 1
+        assert public_entries[0]["content"] == "A rumor of wolves spreads through camp."
+
+    def test_system_entries_take_priority_over_generic_templates(self) -> None:
+        context = _make_context(
+            scene_change_slice="player",
+            scene_entries=[
+                {
+                    "source": "ai_osiris",
+                    "content": "Chapter progress changed: chapter_1.",
+                    "visibility": "system",
+                    "tags": ["ai_osiris", "visible_consequence", "modify_completion"],
+                    "timestamp": 9.0,
+                }
+            ],
+        )
+
+        result = asyncio.run(GmNarrationHook().execute(context))
+
+        entries = context.scene_bus.snapshot()["entries"]
+        public_entries = [entry for entry in entries if entry["source"] == "gm"]
+        assert result.metadata["status"] == "applied"
+        assert len(public_entries) == 1
+        assert public_entries[0]["content"] == "Chapter progress changed: chapter_1."
+
+    def test_quiet_long_rest_slot_does_not_emit_generic_narration(self) -> None:
+        context = _make_context(
+            change_log=[StateChange("time", "set", "slot", 10)],
+            scene_change_slice="time",
+            action_log=[{"type": "rest_long", "time_cost": 1.0}],
+            accumulated=4.0,
+        )
+
+        result = asyncio.run(GmNarrationHook().execute(context))
+
+        assert result.metadata["status"] == "noop"
+        assert result.metadata["reason"] == "quiet_rest_slot"
+        assert result.sse_events == []
 
     def test_default_narrator_uses_player_template_when_player_changes(self) -> None:
         context = _make_context(scene_change_slice="player")
@@ -164,6 +232,7 @@ class TestGmNarrationHook:
 
         entries = context.scene_bus.snapshot()["entries"]
         assert narrator.calls[0]["summary"]["change_count"] == 1
+        assert narrator.calls[0]["summary"]["system_entries"] == []
         assert narrator.calls[0]["summary"]["location"] == {
             "area_id": "forest",
             "location_id": "camp",
@@ -175,7 +244,11 @@ class TestGmNarrationHook:
         assert result.metadata["narrator_metadata"] == {"mode": "template"}
         assert entries[0]["source"] == "gm"
         assert entries[0]["content"] == "The wind shifts through the trees."
-        assert result.sse_events[0].event_type == "gm_narration_added"
+        assert [event.event_type for event in result.sse_events] == [
+            "gm_narration",
+            "gm_narration_added",
+        ]
+        assert result.sse_events[0].payload["content"] == entries[0]["content"]
 
     def test_private_entry_requires_audience(self) -> None:
         narrator = RecordingNarrator(
@@ -198,6 +271,7 @@ class TestGmNarrationHook:
         assert result.metadata["private_entry_count"] == 1
         assert entries[0]["visibility"] == "private"
         assert entries[0]["audience"] == ["player_1"]
+        assert [event.event_type for event in result.sse_events] == ["gm_narration_added"]
 
     def test_invalid_entries_are_skipped_and_output_is_truncated(self) -> None:
         narrator = RecordingNarrator(
@@ -223,6 +297,12 @@ class TestGmNarrationHook:
         assert result.metadata["skipped_invalid_count"] == 2
         assert [entry["content"] for entry in entries] == ["One", "Two", "Three"]
         assert entries[1]["visibility"] == "public"
+        assert [event.event_type for event in result.sse_events] == [
+            "gm_narration",
+            "gm_narration",
+            "gm_narration",
+            "gm_narration_added",
+        ]
 
     def test_narrator_error_returns_sse_without_writing_entries(self, caplog) -> None:
         context = _make_context()

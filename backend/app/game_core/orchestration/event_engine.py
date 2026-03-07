@@ -35,6 +35,7 @@ _ALLOWED_COMMAND_TYPES: tuple[str, ...] = (
     "add_knowledge",
     "modify_completion",
     "adjust_danger",
+    "complete_objective",
 )
 
 _SUPPORTED_STATES = frozenset(
@@ -230,6 +231,8 @@ class BasicEventConditionEvaluator:
         if condition_type == "flag_set":
             return self._check_flag_set(state, params), 0
         if condition_type == "location_entered":
+            return self._check_location_entered(state, params), 0
+        if condition_type == "location_visited":
             return self._check_location_entered(state, params), 0
         if condition_type == "period_reached":
             return self._check_period_reached(state, params), 0
@@ -581,6 +584,7 @@ def run_inline_event_check(
         )
         change_log.append(change)
         scene_bus.record_state_change(change)
+        event_title = _event_display_title(event_snapshot)
         payloads.append(
             {
                 "event_id": transition.event_id,
@@ -588,12 +592,16 @@ def run_inline_event_check(
                 "to_state": transition.to_state,
                 "reason": transition.reason,
                 "source": label,
+                **({"title": event_title} if event_title is not None else {}),
             },
         )
 
     for raw_command in decision.commands:
         command = _coerce_event_command(raw_command)
         if command is None:
+            continue
+        if command.type == "complete_objective":
+            _apply_complete_objective(state, command)
             continue
         try:
             result = rules_engine.execute(command, state, world)
@@ -603,6 +611,17 @@ def run_inline_event_check(
             apply_delta(result.delta)
 
     return payloads
+
+
+def _event_display_title(event_snapshot: Mapping[str, Any]) -> str | None:
+    for key in ("title", "name", "label"):
+        raw = event_snapshot.get(key)
+        if raw is None:
+            continue
+        normalized = str(raw).strip()
+        if normalized:
+            return normalized
+    return None
 
 
 def _coerce_event_command(raw: Any) -> Command | None:
@@ -625,3 +644,58 @@ def _coerce_event_command(raw: Any) -> Command | None:
         else None
     )
     return Command(type=command_type, params=params, source="system", context=context)
+
+
+def _apply_complete_objective(state: StateContainer, command: Command) -> None:
+    if not state.has_slice("quests"):
+        return
+    if not isinstance(command.params, Mapping):
+        return
+
+    quest_id = _coerce_non_empty_string(command.params.get("quest_id"))
+    if quest_id is None:
+        return
+
+    objective_index = _coerce_int(command.params.get("objective_index"))
+    if objective_index is None or objective_index < 0:
+        return
+
+    raw_quest = state.quests.dynamic_quests.get(quest_id)
+    if not isinstance(raw_quest, dict):
+        return
+
+    raw_objectives = raw_quest.get("objectives")
+    if not isinstance(raw_objectives, list):
+        return
+    if objective_index >= len(raw_objectives):
+        return
+    if not isinstance(raw_objectives[objective_index], Mapping):
+        return
+
+    objectives = [
+        dict(item) if isinstance(item, Mapping) else {} for item in raw_objectives
+    ]
+    if not (0 <= objective_index < len(objectives)):
+        return
+
+    objectives[objective_index]["completed"] = True
+    updated_quest = dict(raw_quest)
+    updated_quest["objectives"] = objectives
+
+    has_required_objective = False
+    all_required_done = True
+    for obj in objectives:
+        if not isinstance(obj, Mapping):
+            continue
+        if bool(obj.get("optional")):
+            continue
+        has_required_objective = True
+        if not bool(obj.get("completed")):
+            all_required_done = False
+            break
+
+    if has_required_objective and all_required_done:
+        updated_quest["status"] = "completed"
+
+    state.quests.dynamic_quests[quest_id] = updated_quest
+    state.quests._dirty = True

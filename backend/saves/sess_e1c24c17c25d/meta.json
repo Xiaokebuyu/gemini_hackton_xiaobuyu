@@ -1,16 +1,16 @@
 {
   "character_name": "xiaobuyu",
   "created_at": 1772820697.601832,
-  "game_day": 1,
-  "game_slot": 9,
-  "last_played": 1772821767.0986192,
+  "game_day": 2,
+  "game_slot": 5,
+  "last_played": 1772886603.7240407,
   "phase": "active",
-  "saved_at": 1772821767.0986192,
+  "saved_at": 1772886603.7240407,
   "session_id": "sess_e1c24c17c25d",
   "summary": {
-    "day": 1,
+    "day": 2,
     "level": 1,
-    "location": "冒险者公会",
+    "location": "边境小镇",
     "play_time_hours": null,
     "player_class": "战士",
     "player_name": "xiaobuyu"

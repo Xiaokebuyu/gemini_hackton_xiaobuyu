@@ -17,7 +17,6 @@ class NarrativePlanSlice(StateSlice):
         self.current_target_milestone: str | None = None
         self.chapter_completion = 0.0
         self.npc_directives: list[dict[str, Any]] = []
-        self.active_bulletins: list[dict[str, Any]] = []
         self.quest_history: list[dict[str, Any]] = []
         self.escalation_level = 0
         self.ticks_since_milestone_progress = 0
@@ -27,6 +26,7 @@ class NarrativePlanSlice(StateSlice):
         self.pacing_frozen = False
         self.play_style_tags: list[str] = []
         self.behavior_window: list[dict[str, Any]] = []
+        self.temporary_npcs: dict[str, dict[str, Any]] = {}
 
     def restore(self, payload: Mapping[str, Any]) -> None:
         self.current_chapter = str(payload.get("current_chapter", ""))
@@ -35,10 +35,6 @@ class NarrativePlanSlice(StateSlice):
         self.chapter_completion = float(payload.get("chapter_completion", 0.0))
         self.npc_directives = [
             dict(item) for item in payload.get("npc_directives", [])
-            if isinstance(item, Mapping)
-        ]
-        self.active_bulletins = [
-            dict(item) for item in payload.get("active_bulletins", [])
             if isinstance(item, Mapping)
         ]
         self.quest_history = [
@@ -57,6 +53,12 @@ class NarrativePlanSlice(StateSlice):
         self.play_style_tags = [
             str(item) for item in payload.get("play_style_tags", [])
         ]
+        raw_temporary_npcs = payload.get("temporary_npcs")
+        self.temporary_npcs = {}
+        if isinstance(raw_temporary_npcs, Mapping):
+            for npc_id, raw_profile in raw_temporary_npcs.items():
+                if isinstance(npc_id, str) and isinstance(raw_profile, Mapping):
+                    self.temporary_npcs[npc_id] = dict(raw_profile)
         self.behavior_window = [
             dict(item) for item in payload.get("behavior_window", [])
             if isinstance(item, Mapping)
@@ -72,7 +74,6 @@ class NarrativePlanSlice(StateSlice):
             "current_target_milestone": self.current_target_milestone,
             "chapter_completion": self.chapter_completion,
             "npc_directives": [dict(item) for item in self.npc_directives],
-            "active_bulletins": [dict(item) for item in self.active_bulletins],
             "quest_history": [dict(item) for item in self.quest_history],
             "escalation_level": self.escalation_level,
             "ticks_since_milestone_progress": self.ticks_since_milestone_progress,
@@ -81,6 +82,10 @@ class NarrativePlanSlice(StateSlice):
             "next_scheduled_tick": self.next_scheduled_tick,
             "pacing_frozen": self.pacing_frozen,
             "play_style_tags": list(self.play_style_tags),
+            "temporary_npcs": {
+                npc_id: dict(profile)
+                for npc_id, profile in self.temporary_npcs.items()
+            },
             "behavior_window": [dict(item) for item in self.behavior_window],
         }
 
@@ -88,6 +93,21 @@ class NarrativePlanSlice(StateSlice):
         self.behavior_window.append(dict(entry))
         self.behavior_window = self.behavior_window[-24:]
         self._dirty = True
+
+    def add_temporary_npc(self, npc_id: str, profile: dict[str, Any]) -> None:
+        npc_id = str(npc_id)
+        self.temporary_npcs[npc_id] = dict(profile)
+        self._dirty = True
+
+    def remove_temporary_npc(self, npc_id: str) -> None:
+        raw_id = str(npc_id)
+        if raw_id in self.temporary_npcs:
+            self.temporary_npcs.pop(raw_id, None)
+            self._dirty = True
+
+    def get_temporary_npc(self, npc_id: str) -> dict[str, Any] | None:
+        profile = self.temporary_npcs.get(str(npc_id))
+        return dict(profile) if isinstance(profile, Mapping) else None
 
     def set_target_milestone(self, milestone_id: str | None) -> None:
         self.current_target_milestone = milestone_id
@@ -98,10 +118,6 @@ class NarrativePlanSlice(StateSlice):
         self.npc_directives.append(stored)
         self._dirty = True
         return stored
-
-    def add_bulletin(self, bulletin: dict[str, Any]) -> None:
-        self.active_bulletins.append(dict(bulletin))
-        self._dirty = True
 
     def add_history(self, summary: dict[str, Any]) -> None:
         self.quest_history.append(dict(summary))
@@ -159,7 +175,7 @@ class NarrativePlanSlice(StateSlice):
             for i, entry in enumerate(self.behavior_window):
                 if not isinstance(entry, dict):
                     issues.append(f"behavior_window[{i}] must be a dict")
-        for field_name in ("npc_directives", "active_bulletins", "quest_history"):
+        for field_name in ("npc_directives", "quest_history"):
             field_value = getattr(self, field_name)
             if not isinstance(field_value, list):
                 issues.append(f"{field_name} must be a list")
@@ -169,14 +185,19 @@ class NarrativePlanSlice(StateSlice):
                         issues.append(f"{field_name}[{i}] must be a dict")
         if not isinstance(self.play_style_tags, list):
             issues.append("play_style_tags must be a list")
+        if not isinstance(self.temporary_npcs, dict):
+            issues.append("temporary_npcs must be a dict")
+        else:
+            for npc_id, profile in self.temporary_npcs.items():
+                if not isinstance(npc_id, str) or not npc_id:
+                    issues.append("temporary_npcs keys must be non-empty strings")
+                if not isinstance(profile, Mapping):
+                    issues.append(f"temporary_npcs[{npc_id}] must be a dict")
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
         if change.path == "npc_directives" and isinstance(change.value, Mapping):
             self.add_directive(dict(change.value))
-            return
-        if change.path == "active_bulletins" and isinstance(change.value, Mapping):
-            self.add_bulletin(dict(change.value))
             return
         if change.path == "quest_history" and isinstance(change.value, Mapping):
             self.add_history(dict(change.value))
@@ -203,6 +224,14 @@ class NarrativePlanSlice(StateSlice):
             return
         if change.path == "play_style_tags" and isinstance(change.value, list):
             self.play_style_tags = [str(item) for item in change.value]
+            self._dirty = True
+            return
+        if change.path == "temporary_npcs" and isinstance(change.value, Mapping):
+            self.temporary_npcs = {
+                str(npc_id): dict(profile)
+                for npc_id, profile in change.value.items()
+                if isinstance(npc_id, str) and isinstance(profile, Mapping)
+            }
             self._dirty = True
             return
         if change.operation in {"set", "modify"} and change.path in self._SIMPLE_FIELDS:

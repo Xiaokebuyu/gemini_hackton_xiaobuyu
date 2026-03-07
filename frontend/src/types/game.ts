@@ -3,7 +3,8 @@
 export interface PresentNpc {
   character_id: string
   name: string
-  role: 'main' | 'secondary' | 'passerby'
+  role: 'main' | 'secondary' | 'passerby' | 'companion'
+  is_companion?: boolean
   disposition_hint: 'friendly' | 'neutral' | 'wary' | 'hostile'
   has_shop: boolean
   relationship_stage: string | null
@@ -29,6 +30,7 @@ export interface Interactable {
   requires_check: boolean
   container_status: string | null
   trapped_hint: boolean
+  tags?: string[]
 }
 
 export interface Exit {
@@ -80,4 +82,5 @@ export interface PortraitSlot {
   position: 'left' | 'center' | 'right'
   characterId: string
   isActive: boolean
+  isCompanion?: boolean
 }

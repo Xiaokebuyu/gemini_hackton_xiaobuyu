@@ -28,7 +28,18 @@ def _shell_world_seed(world_id: str) -> dict[str, Any]:
                 "base_danger": 0.1,
                 "sub_locations": {
                     "counter": {"id": "counter", "name": "Front Counter"},
-                    "board": {"id": "board", "name": "Quest Board"},
+                    "board": {
+                        "id": "board",
+                        "name": "Quest Board",
+                        "interactables": [
+                            {
+                                "id": "board",
+                                "name": "Quest Board",
+                                "type": "inspect",
+                                "tags": ["quest_source"],
+                            }
+                        ],
+                    },
                 },
             },
             "training_grounds": {

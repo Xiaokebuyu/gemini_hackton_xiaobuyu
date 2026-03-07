@@ -241,6 +241,7 @@ class TestPassivePerceptionHook:
         assert result.metadata["status"] == "applied"
         assert "hidden_cache" in result.metadata["discoveries_found"]
         assert state.areas.is_discovery_found("forest", "hidden_cache")
+        assert result.sse_events[0].event_type == "discovery_reveal"
 
     def test_misses_when_passive_below_dc(self) -> None:
         # WIS 10 → passive=10; dc=15 → should miss
@@ -265,6 +266,7 @@ class TestPassivePerceptionHook:
         result = asyncio.run(self._hook.execute(ctx))
         assert result.metadata["status"] == "applied"
         assert "secret_lever" in result.metadata["interactables_revealed"]
+        assert result.sse_events[0].event_type == "hidden_object_revealed"
 
     def test_detects_trap_by_detect_dc(self) -> None:
         # WIS 14 → passive=12; trap detect_dc=12 → detect
@@ -278,6 +280,7 @@ class TestPassivePerceptionHook:
         assert result.metadata["status"] == "applied"
         assert "trapped_chest" in result.metadata["traps_detected"]
         assert state.areas.is_trap_detected("dungeon", "trapped_chest")
+        assert result.sse_events[0].event_type == "trap_detected"
 
     def test_skips_already_found_discovery(self) -> None:
         world = self._world_with_discovery(disc_dc=1)  # dc=1 always passes

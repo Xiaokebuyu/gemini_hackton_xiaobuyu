@@ -17,6 +17,7 @@ class SceneEntry:
     audience: list[str] | None = None
     tags: list[str] = field(default_factory=list)
     timestamp: float = 0.0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -26,6 +27,7 @@ class SceneEntry:
             "audience": list(self.audience) if self.audience is not None else None,
             "tags": list(self.tags),
             "timestamp": self.timestamp,
+            "metadata": dict(self.metadata),
         }
 
 
@@ -184,6 +186,7 @@ class SceneSlice(StateSlice):
                 audience=list(raw.audience) if raw.audience is not None else None,
                 tags=list(raw.tags),
                 timestamp=raw.timestamp,
+                metadata=dict(raw.metadata),
             )
         if not isinstance(raw, Mapping):
             raise ValueError(f"invalid scene entry: {raw!r}")
@@ -191,6 +194,10 @@ class SceneSlice(StateSlice):
         parsed_audience = None
         if audience is not None:
             parsed_audience = [str(item) for item in audience]
+        metadata = raw.get("metadata", {})
+        parsed_metadata: dict[str, Any] = {}
+        if isinstance(metadata, Mapping):
+            parsed_metadata = {str(key): value for key, value in metadata.items()}
         return SceneEntry(
             source=str(raw.get("source", "")),
             content=str(raw.get("content", "")),
@@ -198,6 +205,7 @@ class SceneSlice(StateSlice):
             audience=parsed_audience,
             tags=[str(tag) for tag in raw.get("tags", [])],
             timestamp=float(raw.get("timestamp", 0.0)),
+            metadata=parsed_metadata,
         )
 
     @classmethod

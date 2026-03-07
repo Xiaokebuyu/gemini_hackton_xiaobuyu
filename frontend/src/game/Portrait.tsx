@@ -36,9 +36,11 @@ export default function Portrait({ slot, worldId, sessionId }: Props) {
     ? 'opacity-100 scale-100'
     : 'opacity-100 scale-95'
 
+  const companionRing = slot.isCompanion ? 'ring-2 ring-emerald-500/60' : ''
+
   return (
     <div
-      className={`w-28 h-56 md:w-36 md:h-72 rounded-t-lg overflow-hidden transition-all duration-300 ${activeClass}`}
+      className={`relative w-28 h-56 md:w-36 md:h-72 rounded-t-lg overflow-hidden transition-all duration-300 ${activeClass} ${companionRing}`}
     >
       {isLoading ? (
         /* Loading shimmer */
@@ -62,6 +64,11 @@ export default function Portrait({ slot, worldId, sessionId }: Props) {
               {characterId}
             </span>
           </div>
+        </div>
+      )}
+      {slot.isCompanion && (
+        <div className="absolute top-1 right-1 bg-emerald-600/80 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+          队友
         </div>
       )}
     </div>

@@ -85,6 +85,22 @@ def build_resume_location_visual(session: ManagedSession) -> dict[str, Any]:
     }
 
 
+def build_player_runtime_payload(session: ManagedSession) -> dict[str, Any]:
+    """Build the player payload used by character/resume hydration routes.
+
+    The player slice does not own time state, but the frontend HUD needs a
+    one-shot hydrate source for day/slot/period instead of waiting for later
+    SSE updates.
+    """
+
+    payload = session.runtime.state.player.snapshot()
+    if session.runtime.state.has_slice("time"):
+        payload["day"] = int(session.runtime.state.time.day)
+        payload["slot"] = int(session.runtime.state.time.slot)
+        payload["period"] = str(session.runtime.state.time.period)
+    return payload
+
+
 def _first_active_quest_title(session: ManagedSession) -> str:
     quests = session.runtime.state.quests.dynamic_quests
     for quest in quests.values():

@@ -18,6 +18,7 @@ from app.deps import (
     get_game_runtime,
 )
 from app.game_core import CharacterCreationSpec
+from app.resume_views import build_player_runtime_payload
 
 router = APIRouter()
 
@@ -79,7 +80,7 @@ async def complete_character_creation(
         await coordinator.save_session(session)
         return CharacterPanelResponse(
             phase=result.phase,
-            player=dict(result.player),
+            player=build_player_runtime_payload(session),
         )
 
 
@@ -96,5 +97,5 @@ async def get_character_panel(
     session = await _load_session_or_404(world_id, session_id)
     return CharacterPanelResponse(
         phase=_session_phase(session),
-        player=session.runtime.state.player.snapshot(),
+        player=build_player_runtime_payload(session),
     )

@@ -9,9 +9,10 @@ export type OverlayType =
   | 'map'
   | 'quests'
   | 'shop'
-  | 'board'
   | 'item_detail'
+  | 'board'
   | 'chat_invite'
+  | 'party'
 
 interface OverlayState {
   current: OverlayType

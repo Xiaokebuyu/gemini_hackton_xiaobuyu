@@ -1,6 +1,6 @@
 """Concrete state slices for the new game-core kernel."""
 
-from app.game_core.state.slices.area import AreaSlice, AreaState
+from app.game_core.state.slices.area import AreaSlice, AreaState, BulletinEntry
 from app.game_core.state.slices.events import EventSlice
 from app.game_core.state.slices.flags import FlagSlice
 from app.game_core.state.slices.narrative_plan import NarrativePlanSlice
@@ -14,6 +14,7 @@ from app.game_core.state.slices.time import TimeSlice
 __all__ = [
     "AreaSlice",
     "AreaState",
+    "BulletinEntry",
     "EventSlice",
     "FlagSlice",
     "ItemStack",

@@ -69,11 +69,16 @@ def _build_game_runtime() -> GameRuntime:
 
     osiris_evaluator_factory = None
     if llm_provider is not None:
-        llm = llm_provider
-
         def _build_osiris() -> Any:
-            from app.evaluators import AgenticAIOsirisEvaluator
-            return AgenticAIOsirisEvaluator(llm=llm)
+            from app.evaluators import GeminiAIOsirisProvider
+            from app.llm_gemini import GeminiLlmAdapter
+
+            osiris_llm = GeminiLlmAdapter(
+                temperature=0.2,
+                thinking_level="medium",
+                profile_name="osiris",
+            )
+            return GeminiAIOsirisProvider(llm=osiris_llm)
 
         osiris_evaluator_factory = _build_osiris
 
@@ -288,12 +293,14 @@ async def _finalize_dialogue_turn(
     *,
     time_cost: float,
     event_sink: Callable[[SSEEvent], Any] | None = None,
+    turn_action_record: Mapping[str, Any] | None = None,
 ) -> list[SSEEvent]:
     """Finalize one dialogue/private-chat turn through TickCoordinator."""
 
     settlement_events = await session.runtime.tick_coordinator.finalize_external_turn(
         time_cost=time_cost,
         event_sink=event_sink,
+        turn_action_record=turn_action_record,
     )
     await get_admin_coordinator().save_session(session)
     return settlement_events

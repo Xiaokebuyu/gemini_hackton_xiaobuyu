@@ -7,6 +7,10 @@ import logging
 from typing import Any, Mapping, Protocol
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
+from app.game_core.orchestration.hooks.rest_phase import (
+    has_player_perceivable_rest_signals,
+    resolve_rest_phase,
+)
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.state.slices import SceneEntry
@@ -44,6 +48,7 @@ class TemplateGmNarrator:
     """Deterministic template narrator for the default runtime."""
 
     _TEMPLATES: dict[str, str] = {
+        "system": "The world registers the shift, whether you appreciate the omen or not.",
         "quests": "A fresh lead shifts the rhythm of the day.",
         "areas_player": "You reposition as the local situation subtly changes.",
         "areas": "The area around you settles into a new state.",
@@ -61,6 +66,38 @@ class TemplateGmNarrator:
             return GmNarrationDecision(
                 metadata={"status": "noop", "reason": "invalid_summary"}
             )
+
+        system_entries = self._normalize_entries(summary.get("system_entries", []))
+        if system_entries:
+            entry_contents: list[str] = []
+            for entry in system_entries[:2]:
+                content = entry.get("content", "")
+                if not isinstance(content, str):
+                    content = ""
+                metadata = entry.get("metadata", {})
+                reason = ""
+                if isinstance(metadata, Mapping):
+                    raw_reason = metadata.get("reason", "")
+                    if isinstance(raw_reason, str):
+                        reason = raw_reason
+                normalized = content.strip() or reason.strip()
+                if normalized:
+                    entry_contents.append(normalized)
+            if entry_contents:
+                combined = " ".join(entry_contents)
+                return GmNarrationDecision(
+                    entries=[
+                        {
+                            "content": combined,
+                            "visibility": "public",
+                            "tags": ["gm_narration", "system_followup"],
+                        }
+                    ],
+                    metadata={
+                        "status": "templated",
+                        "template_key": "system",
+                    },
+                )
 
         change_count = self._coerce_int(summary.get("change_count"), 0)
         if change_count <= 0:
@@ -112,6 +149,12 @@ class TemplateGmNarrator:
         return normalized
 
     @staticmethod
+    def _normalize_entries(raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        return [dict(item) for item in raw if isinstance(item, Mapping)]
+
+    @staticmethod
     def _template_key(changed_slices: list[str]) -> str:
         changed_set = set(changed_slices)
         if "quests" in changed_set:
@@ -132,8 +175,14 @@ class GmNarrationHook(NoOpSettlementHook):
     def __init__(self, narrator: GmNarrator | None = None) -> None:
         self._narrator = narrator or TemplateGmNarrator()
 
-    def should_skip(self, change_log: list[Any]) -> bool:
-        return len(change_log) == 0
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del change_log
+        del action_log
+        return False
 
     async def execute(self, context: SettlementContext) -> HookResult:
         if not context.state.has_slice("scene"):
@@ -141,7 +190,11 @@ class GmNarrationHook(NoOpSettlementHook):
 
         scene_snapshot = context.scene_bus.snapshot()
         state_changes = scene_snapshot.get("state_changes", [])
-        if not isinstance(state_changes, list) or not state_changes:
+        system_entries = self._extract_system_entries(scene_snapshot)
+        rest_phase = resolve_rest_phase(context)
+        if rest_phase is not None and not has_player_perceivable_rest_signals(context, rest_phase):
+            return HookResult(metadata=self._noop_metadata(reason="quiet_rest_slot"))
+        if (not isinstance(state_changes, list) or not state_changes) and not system_entries:
             return HookResult(metadata=self._noop_metadata())
 
         summary = self._build_summary(context, scene_snapshot)
@@ -204,6 +257,15 @@ class GmNarrationHook(NoOpSettlementHook):
         status = "applied" if generated_entries else "noop"
         sse_events: list[SSEEvent] = []
         if generated_entries:
+            for entry in generated_entries:
+                if entry["visibility"] != "public":
+                    continue
+                sse_events.append(
+                    SSEEvent(
+                        event_type="gm_narration",
+                        payload={"content": entry["content"]},
+                    )
+                )
             sse_events.append(
                 SSEEvent(
                     event_type="gm_narration_added",
@@ -236,6 +298,7 @@ class GmNarrationHook(NoOpSettlementHook):
         context: SettlementContext,
         scene_snapshot: dict[str, Any],
     ) -> dict[str, Any]:
+        rest_phase = resolve_rest_phase(context)
         state_changes = scene_snapshot.get("state_changes", [])
         changed_slices: list[str] = []
         seen: set[str] = set()
@@ -271,8 +334,24 @@ class GmNarrationHook(NoOpSettlementHook):
             "change_count": len(state_changes) if isinstance(state_changes, list) else 0,
             "changed_slices": changed_slices,
             "state_changes": list(state_changes) if isinstance(state_changes, list) else [],
+            "system_entries": GmNarrationHook._extract_system_entries(scene_snapshot),
             "existing_entry_count": len(scene_snapshot.get("entries", [])),
+            "rest_phase": rest_phase.snapshot() if rest_phase is not None else None,
         }
+
+    @staticmethod
+    def _extract_system_entries(scene_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_entries = scene_snapshot.get("entries", [])
+        if not isinstance(raw_entries, list):
+            return []
+        entries: list[dict[str, Any]] = []
+        for entry in raw_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            if str(entry.get("visibility", "")).strip().lower() != "system":
+                continue
+            entries.append(dict(entry))
+        return entries
 
     @classmethod
     def _normalize_decision(cls, raw: Any) -> GmNarrationDecision:
@@ -355,10 +434,11 @@ class GmNarrationHook(NoOpSettlementHook):
         }
 
     @staticmethod
-    def _noop_metadata() -> dict[str, Any]:
+    def _noop_metadata(reason: str = "noop") -> dict[str, Any]:
         return {
             "status": "noop",
             "evaluated": False,
+            "reason": reason,
             "input_change_count": 0,
             "generated_entry_count": 0,
             "public_entry_count": 0,

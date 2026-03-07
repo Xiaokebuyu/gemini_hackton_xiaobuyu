@@ -40,7 +40,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
         ? nestedPlayer
         : payload
     ) as Record<string, unknown>
-    set({
+    set((state) => ({
       name: String(player.character_name ?? player.name ?? ''),
       characterClass: String(player.character_class ?? ''),
       level: Number(player.level ?? 1),
@@ -49,7 +49,10 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       gold: Number(player.gold ?? 0),
       area: String(player.current_area ?? ''),
       location: player.current_location != null ? String(player.current_location) : null,
-    })
+      day: Number(player.day ?? state.day),
+      slot: Number(player.slot ?? state.slot),
+      period: String(player.period ?? state.period),
+    }))
   },
 
   updateFromStatus: (data) =>

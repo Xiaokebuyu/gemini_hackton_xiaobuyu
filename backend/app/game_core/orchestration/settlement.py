@@ -23,6 +23,7 @@ class SettlementContext:
     _rules_engine: RulesEngine = field(repr=False)
     _apply_delta: Callable[[StateDelta | None], None] = field(repr=False)
     action_log: list[dict[str, Any]] = field(default_factory=list)
+    rest_phase: Any | None = None
     companion_manager: Any | None = None
 
     def execute_command(self, cmd: Command) -> ExecuteResult:

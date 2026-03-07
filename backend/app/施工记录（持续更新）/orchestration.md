@@ -1012,3 +1012,31 @@ P1 文档假设 EventCondition 在 NarrativePlanner 之前运行，但实际恰�
 - `TestMilestoneFailedSSE`（4）：FAILED 触发 SSE、failure_fallback 文本、None→空串、COMPLETED 不触发
 
 **基线**：1279 → 1291 passed（+8 新增，其余增量来自数据补全使原有测试解除阻断）
+
+---
+
+## D-P4a：任务入口对齐收尾（2026-03-07）
+
+### 目标
+
+- 完成任务板入口对齐后，确认 action 管线与交互层清理闭环。
+- 统一 BoardHandler 命令接入与旧交互路径下线。
+
+### 决策与改动
+
+- BoardHandler 正式承载 4 个命令：
+  - `browse_board`
+  - `board_accept_quest`
+  - `board_complete_quest`
+  - `board_retire_quest`
+- `app/game_core/orchestration/defaults.py`：`DEFAULT_ACTION_COMMAND_TYPES` 注册 4 个 action 命令。
+- `test_api_shell` 覆盖 `/action/stream` 下的 board 链路：  
+  - planner 发布 → `AreaSlice.board_bulletins` 持久化 → `browse_board` 返回 entries  
+  - `browse_board` + `board_accept_quest` 完整链路  
+  - 空公告板返回空列表  
+  - 非目标 sub_location 下验证失败
+- 同步清理旧交互路径残留：
+  - 移除 `/interact` 里对 board 快照/校验的入口依赖
+- 关联文档与日志更新同步：
+  - `app/施工记录（持续更新）/state_layer.md`
+  - `app/施工记录（持续更新）/narrative.md`

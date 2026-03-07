@@ -24,7 +24,11 @@ from app.deps import (
 )
 from app.game_core import ManagedSession
 from app.game_core.runtime import SavedSessionInfo
-from app.resume_views import build_resume_location_visual, build_resume_narration
+from app.resume_views import (
+    build_player_runtime_payload,
+    build_resume_location_visual,
+    build_resume_narration,
+)
 from app.scene_views import build_location_overview
 from app.world_seed import WORLD_CATALOG
 
@@ -51,7 +55,7 @@ def _resume_response(session: ManagedSession) -> ResumeSessionResponse:
         world_id=session.world_id,
         session_id=session.session_id,
         phase=_session_phase(session),
-        player=session.runtime.state.player.snapshot(),
+        player=build_player_runtime_payload(session),
         scene=build_location_overview(session),
         party=dict(party_snapshot) if isinstance(party_snapshot, dict) else {},
         location_visual=ResumeLocationVisualResponse(

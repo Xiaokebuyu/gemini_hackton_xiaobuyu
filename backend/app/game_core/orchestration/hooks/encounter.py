@@ -266,7 +266,12 @@ class EncounterHook(NoOpSettlementHook):
     def __init__(self, detector: EncounterDetector | None = None) -> None:
         self._detector = detector or BasicEncounterDetector()
 
-    def should_skip(self, change_log: list[Any]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del action_log
         for change in change_log:
             slice_name = getattr(change, "slice", getattr(change, "slice_name", ""))
             if slice_name != "player":

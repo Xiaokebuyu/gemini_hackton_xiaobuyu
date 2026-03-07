@@ -47,8 +47,6 @@ class NullNpcScheduleProvider:
 class BasicNpcScheduleProvider:
     """Deterministic default NPC schedule provider for the runtime skeleton."""
 
-    _MOVE_LIMIT = 2
-
     def plan(self, context: dict[str, Any]) -> NpcScheduleDecision:
         if not isinstance(context, Mapping):
             return self._noop(reason="invalid_context")
@@ -62,134 +60,97 @@ class BasicNpcScheduleProvider:
         raw_characters = context.get("characters", [])
         characters = raw_characters if isinstance(raw_characters, list) else []
         placements = self._placements(areas)
-
         valid_areas: set[str] = set(areas.keys())
 
-        if next_period in {"dusk", "night"}:
-            if "town" not in areas:
-                return self._noop(reason="stable")
-            moves, truncated = self._moves_to_town(characters, placements, next_period, valid_areas)
-            if not moves:
-                return self._noop(reason="stable")
-            return NpcScheduleDecision(
-                moves=moves,
-                metadata={
-                    "status": "deterministic",
-                    "provider": "default_provider",
-                    "branch": "to_town",
-                    "planned_move_count": len(moves),
-                    "truncated_by_default_limit": truncated,
-                },
-            )
+        if not next_period:
+            return self._noop(reason="stable")
 
-        if next_period in {"dawn", "day"}:
-            moves, truncated = self._moves_to_home(characters, areas, placements, next_period, valid_areas)
-            if not moves:
-                return self._noop(reason="stable")
-            return NpcScheduleDecision(
-                moves=moves,
-                metadata={
-                    "status": "deterministic",
-                    "provider": "default_provider",
-                    "branch": "to_home",
-                    "planned_move_count": len(moves),
-                    "truncated_by_default_limit": truncated,
-                },
-            )
+        moves = self._collect_moves(
+            characters, areas, placements, next_period, valid_areas
+        )
+        if not moves:
+            return self._noop(reason="stable")
+        return NpcScheduleDecision(
+            moves=moves,
+            metadata={
+                "status": "deterministic",
+                "provider": "default_provider",
+                "branch": "schedule",
+                "planned_move_count": len(moves),
+            },
+        )
 
-        return self._noop(reason="stable")
-
-    def _moves_to_town(
-        self,
-        characters: list[Any],
-        placements: dict[str, tuple[str, str | None]],
-        next_period: str,
-        valid_areas: set[str],
-    ) -> tuple[list[dict[str, Any]], bool]:
-        moves: list[dict[str, Any]] = []
-        truncated = False
-        for character in self._sorted_characters(characters):
-            character_id = self._normalize_string(character.get("id"))
-            if character_id is None:
-                continue
-            destination = self._scheduled_destination(character, next_period, valid_areas) or "town"
-            existing = placements.get(character_id)
-            placed_in_state = existing is not None
-            current_area = existing[0] if existing is not None else None
-            current_location = existing[1] if existing is not None else None
-            if (
-                not placed_in_state
-                or current_area != destination
-                or (current_area == destination and current_location is not None)
-            ):
-                if len(moves) >= self._MOVE_LIMIT:
-                    truncated = True
-                    break
-                moves.append(
-                    {
-                        "character_id": character_id,
-                        "area_id": destination,
-                        "location_id": None,
-                    }
-                )
-        return moves, truncated
-
-    def _moves_to_home(
+    def _collect_moves(
         self,
         characters: list[Any],
         areas: Mapping[str, Any],
         placements: dict[str, tuple[str, str | None]],
         next_period: str,
         valid_areas: set[str],
-    ) -> tuple[list[dict[str, Any]], bool]:
+    ) -> list[dict[str, Any]]:
         moves: list[dict[str, Any]] = []
-        truncated = False
         for character in self._sorted_characters(characters):
             character_id = self._normalize_string(character.get("id"))
             if character_id is None:
                 continue
-            home_area = self._scheduled_destination(character, next_period, valid_areas)
-            if home_area is None:
-                home_area = self._normalize_string(character.get("area_id"))
-            if home_area is None:
-                home_area = self._normalize_string(character.get("current_area"))
-            if home_area is None or home_area not in areas:
-                continue
-            existing = placements.get(character_id)
-            placed_in_state = existing is not None
-            current_area = existing[0] if existing is not None else None
-            current_location = existing[1] if existing is not None else None
-            if (
-                not placed_in_state
-                or current_area != home_area
-                or (current_area == home_area and current_location is not None)
-            ):
-                if len(moves) >= self._MOVE_LIMIT:
-                    truncated = True
-                    break
-                moves.append(
-                    {
-                        "character_id": character_id,
-                        "area_id": home_area,
-                        "location_id": None,
-                    }
+            sched_area, sched_loc = self._scheduled_destination(
+                character, next_period, valid_areas
+            )
+            if sched_area is None and sched_loc is None:
+                continue  # no schedule entry → don't move
+
+            # determine target area
+            if sched_area is not None:
+                target_area = sched_area
+            else:
+                target_area = (
+                    self._normalize_string(character.get("area_id"))
+                    or self._normalize_string(character.get("current_area"))
                 )
-        return moves, truncated
+            if target_area is None or target_area not in valid_areas:
+                continue
+
+            # check if already at destination
+            existing = placements.get(character_id)
+            current_area = existing[0] if existing is not None else None
+            current_loc = existing[1] if existing is not None else None
+            if current_area == target_area and current_loc == sched_loc:
+                continue
+
+            moves.append(
+                {
+                    "character_id": character_id,
+                    "area_id": target_area,
+                    "location_id": sched_loc,
+                }
+            )
+        return moves
 
     @staticmethod
     def _scheduled_destination(
         char_data: Any,
         next_period: str,
         valid_area_ids: set[str],
-    ) -> str | None:
-        """Return the per-character schedule override for next_period, or None."""
+    ) -> tuple[str | None, str | None]:
+        """Return (area_id, location_id) from per-character schedule, or (None, None)."""
         sched = char_data.get("schedule") if isinstance(char_data, dict) else None
         if not isinstance(sched, dict):
-            return None
+            return (None, None)
         dest = sched.get(next_period)
-        if isinstance(dest, str) and dest.strip() and dest.strip() in valid_area_ids:
-            return dest.strip()
-        return None
+        if isinstance(dest, str):
+            stripped = dest.strip()
+            if stripped:
+                return (None, stripped)  # sub-location in home area
+            return (None, None)
+        if isinstance(dest, Mapping):
+            raw_area = dest.get("area")
+            raw_loc = dest.get("location")
+            area = raw_area.strip() if isinstance(raw_area, str) and raw_area.strip() else None
+            loc = raw_loc.strip() if isinstance(raw_loc, str) and raw_loc.strip() else None
+            if area or loc:
+                return (area, loc)
+            return (None, None)
+        return (None, None)
 
     @classmethod
     def _placements(
@@ -258,7 +219,12 @@ class NpcScheduleHook(NoOpSettlementHook):
     def __init__(self, provider: NpcScheduleProvider | None = None) -> None:
         self._provider = provider or BasicNpcScheduleProvider()
 
-    def should_skip(self, change_log: list[Any]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del action_log
         del change_log
         return False
 

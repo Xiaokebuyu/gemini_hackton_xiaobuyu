@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 from app.game_core.content import ContentRegistry, WorldInstance
 from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
 from app.game_core.narrative.instance_manager import InstanceManager
+from app.game_core.planning import DynamicSubAreaManager
 from app.game_core.content.registries import (
     CharacterRegistry,
     ClassRegistry,
@@ -179,6 +180,7 @@ def build_runtime_for_world(
         pipeline=pipeline,
         companion_manager=runtime_companion_manager,
     )
+    sub_area_manager = DynamicSubAreaManager(state.areas)
     if osiris_evaluator_factory is not None:
         evaluator = osiris_evaluator_factory()
         tick_coordinator.register_settlement_hook(
@@ -192,7 +194,11 @@ def build_runtime_for_world(
     if narrative_planner_factory is not None:
         planner = narrative_planner_factory()
         tick_coordinator.register_settlement_hook(
-            NarrativePlannerHook(planner=planner, instance_manager=instance_manager)
+            NarrativePlannerHook(
+                planner=planner,
+                instance_manager=instance_manager,
+                sub_area_manager=sub_area_manager,
+            )
         )
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
@@ -233,6 +239,7 @@ def build_restored_runtime_for_world(
         pipeline=pipeline,
         companion_manager=runtime_companion_manager,
     )
+    sub_area_manager = DynamicSubAreaManager(state.areas)
     if osiris_evaluator_factory is not None:
         evaluator = osiris_evaluator_factory()
         tick_coordinator.register_settlement_hook(
@@ -246,7 +253,11 @@ def build_restored_runtime_for_world(
     if narrative_planner_factory is not None:
         planner = narrative_planner_factory()
         tick_coordinator.register_settlement_hook(
-            NarrativePlannerHook(planner=planner, instance_manager=instance_manager)
+            NarrativePlannerHook(
+                planner=planner,
+                instance_manager=instance_manager,
+                sub_area_manager=sub_area_manager,
+            )
         )
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.instance_manager import InstanceManager
+from app.game_core.content.registries.maps import MapRegistry
+from app.game_core.content.registries.factions import FactionRegistry
+from app.game_core.content.registries.lore import LoreRegistry
 from app.game_core.orchestration.hooks.narrative_planner import (
     NarrativePlannerDecision,
     NarrativePlannerHook,
@@ -17,13 +21,16 @@ from app.game_core.planning.models import (
     CreateQuestPlan,
     FillAreaPlan,
     PlantEnvironmentalPlan,
+    DirectNpcPlan,
     SpawnQuestNpcPlan,
 )
 from app.game_core.rules import RulesEngine
 from app.game_core.state import StateChange, StateContainer, StateDelta
 from app.game_core.state.slices import (
     AreaSlice,
+    EventSlice,
     NarrativePlanSlice,
+    PartySlice,
     PlayerSlice,
     QuestSlice,
     SceneSlice,
@@ -55,6 +62,27 @@ def _make_context(
     area_payload: dict[str, object] | None = None,
 ) -> SettlementContext:
     world = WorldInstance("test_world")
+    maps = MapRegistry()
+    maps.load({
+        "forest": {
+            "id": "forest",
+            "sub_locations": {
+                "quest_hub": {
+                    "id": "quest_hub",
+                    "name": "Quest Hub",
+                    "interactables": [
+                        {
+                            "id": "board",
+                            "name": "Quest Board",
+                            "type": "inspect",
+                            "tags": ["quest_source"],
+                        }
+                    ],
+                }
+            },
+        }
+    })
+    world.register(maps)
     state = StateContainer()
 
     time_slice = TimeSlice()
@@ -92,10 +120,15 @@ def _make_context(
     )
     state.register(narrative_plan)
 
-    if area_payload is not None:
-        areas = AreaSlice()
-        areas.restore(area_payload)
-        state.register(areas)
+    if area_payload is None:
+        area_payload = {"areas": {"forest": {}}}
+    areas = AreaSlice()
+    areas.restore(area_payload)
+    state.register(areas)
+
+    events = EventSlice()
+    events.restore({})
+    state.register(events)
 
     scene_slice = SceneSlice()
     scene_slice.restore({})
@@ -120,6 +153,21 @@ def _make_context(
         _rules_engine=RulesEngine(),
         _apply_delta=_apply_delta,
     )
+
+
+def _latest_board_bulletin(context: SettlementContext) -> dict[str, Any] | None:
+    area_id = str(context.state.player.current_area or "").strip()
+    if not area_id:
+        return None
+    area_state = context.state.areas.areas.get(area_id)
+    if area_state is None:
+        return None
+    all_entries: list[dict[str, Any]] = []
+    for entries in area_state.board_bulletins.values():
+        all_entries.extend(
+            [dict(entry) for entry in entries if isinstance(entry, dict)]
+        )
+    return all_entries[-1] if all_entries else None
 
 
 class TestNarrativePlannerHook:
@@ -159,6 +207,28 @@ class TestNarrativePlannerHook:
         assert result.metadata["reason"] == "cooldown"
         assert result.metadata["evaluated"] is False
 
+    def test_quiet_long_rest_slot_short_circuits_without_planner_call(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {
+                        "kind": "create_quest",
+                        "payload": {"quest_id": "dq_should_not_exist"},
+                    }
+                ]
+            )
+        )
+        context = _make_context(change_log=[])
+        context.action_log = [{"type": "rest_long", "time_cost": 1.0}]
+        context.state.time.accumulated = 4.0
+        context.state.time._dirty = True
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        assert planner.calls == []
+        assert result.metadata["status"] == "noop"
+        assert result.metadata["reason"] == "quiet_rest_slot"
+
     def test_default_planner_evaluates_on_fallback_and_updates_bookkeeping(self) -> None:
         context = _make_context(narrative_plan_payload={"last_run_tick": 3})
 
@@ -167,16 +237,16 @@ class TestNarrativePlannerHook:
         assert result.metadata["status"] == "updated"
         assert result.metadata["evaluated"] is True
         assert result.metadata["reason"] == "fallback"
-        assert result.metadata["requested_count"] == 3
-        assert result.metadata["applied_count"] == 3
+        assert result.metadata["requested_count"] == 2
+        assert result.metadata["applied_count"] == 2
         assert result.metadata["applied_kinds"] == [
             "create_quest",
             "publish_bulletin",
-            "direct_npc",
         ]
         assert context.state.quests.get_dynamic_quest("dq_ms_1") is not None
-        assert context.state.narrative_plan.active_bulletins[-1]["board_id"] == "board"
-        assert context.state.narrative_plan.npc_directives[-1]["npc_id"] == "guild_clerk"
+        bulletin = _latest_board_bulletin(context)
+        assert bulletin is not None
+        assert bulletin["board_id"] == "board"
         assert context.state.narrative_plan.last_run_tick == 9
         assert context.state.narrative_plan.behavior_window[-1]["reason"] == "fallback"
         assert result.sse_events[0].event_type == "narrative_plan_updated"
@@ -228,11 +298,11 @@ class TestNarrativePlannerHook:
         assert result.metadata["applied_kinds"] == [
             "create_quest",
             "publish_bulletin",
-            "direct_npc",
         ]
         assert context.state.quests.get_dynamic_quest("dq_ms_1") is not None
-        assert context.state.narrative_plan.active_bulletins[-1]["board_id"] == "board"
-        assert context.state.narrative_plan.npc_directives[-1]["npc_id"] == "guild_clerk"
+        bulletin = _latest_board_bulletin(context)
+        assert bulletin is not None
+        assert bulletin["board_id"] == "board"
         assert context.state.narrative_plan.last_run_tick == 12
         assert context.state.narrative_plan.escalation_level == 0
         assert context.state.areas.list_temporary_sub_areas("forest") == []
@@ -361,6 +431,134 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.quest_history[-1]["kind"] == "create_quest"
         assert result.sse_events[0].event_type == "narrative_plan_updated"
 
+    def test_create_quest_stores_dynamic_fields(self) -> None:
+        planner = RecordingPlanner(
+            {
+                "directives": [
+                    {
+                        "kind": "create_quest",
+                        "payload": {
+                            "quest_id": "dq_ext",
+                            "title": "Shattered Signal",
+                            "summary": "A long-forgotten transmission.",
+                            "metadata": {
+                                "source_milestone": "ms_ext",
+                                "urgency": "high",
+                                "generated_by_escalation": 4,
+                                "planner_reasoning": "critical_path",
+                                "planner_notes": "unused",
+                            },
+                            "objectives": [
+                                {"type": "collect", "target": "signal_stone"},
+                                {"type": "report", "target": "watchtower"},
+                            ],
+                            "rewards": {"xp": 120, "item": "signal_core"},
+                            "delivery_method": "board",
+                            "expiry_ticks": 12,
+                            "on_expire": "escalate",
+                        },
+                    },
+                ]
+            }
+        )
+        context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        created = context.state.quests.get_dynamic_quest("dq_ext")
+        assert result.metadata["applied_count"] == 1
+        assert result.metadata["applied_kinds"] == ["create_quest"]
+        assert created is not None
+        assert created["target_milestone"] == "ms_ext"
+        assert created["urgency"] == "high"
+        assert created["objectives"] == [
+            {"type": "collect", "target": "signal_stone"},
+            {"type": "report", "target": "watchtower"},
+        ]
+        assert created["rewards"] == {"xp": 120, "item": "signal_core"}
+        assert created["delivery_method"] == "board"
+        assert created["expiry_ticks"] == 12
+        assert created["on_expire"] == "escalate"
+        assert created["generated_by_escalation"] == 4
+        assert created["planner_reasoning"] == "critical_path"
+
+    def test_create_quest_defaults_dynamic_fields(self) -> None:
+        planner = RecordingPlanner(
+            {
+                "directives": [
+                    {
+                        "kind": "create_quest",
+                        "payload": {
+                            "quest_id": "dq_default",
+                            "title": "Default Quest",
+                            "summary": "Default payload path.",
+                        },
+                    }
+                ]
+            }
+        )
+        context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        created = context.state.quests.get_dynamic_quest("dq_default")
+        assert result.metadata["applied_kinds"] == ["create_quest"]
+        assert created is not None
+        assert created["objectives"] == []
+        assert created["rewards"] == {}
+        assert created["delivery_method"] == "board"
+        assert created["expiry_ticks"] is None
+        assert created["on_expire"] == "ignore"
+        assert created["generated_by_escalation"] == 0
+        assert created["planner_reasoning"] == ""
+        assert created.get("target_milestone") is None
+
+    def test_create_quest_creates_objective_events(self) -> None:
+        planner = RecordingPlanner(
+            {
+                "directives": [
+                    {
+                        "kind": "create_quest",
+                        "payload": {
+                            "quest_id": "dq_dynamic_obj",
+                            "title": "Objective Quest",
+                            "summary": "Collect clues and reach site.",
+                            "objectives": [
+                                {"type": "collect", "target": "signal_stone"},
+                                {"type": "reach_location", "target": "ruins"},
+                                {
+                                    "type": "kill",
+                                    "target": {"monster_type": "goblin", "count": 2},
+                                    "optional": True,
+                                },
+                            ],
+                        },
+                    },
+                ]
+            }
+        )
+        context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        assert result.metadata["applied_count"] == 1
+        assert result.metadata["applied_kinds"] == ["create_quest"]
+        event_0 = context.state.events.get_event("dq_dq_dynamic_obj_obj_0")
+        event_1 = context.state.events.get_event("dq_dq_dynamic_obj_obj_1")
+        event_2 = context.state.events.get_event("dq_dq_dynamic_obj_obj_2")
+        assert event_0 is not None
+        assert event_1 is not None
+        assert event_2 is None
+        assert event_0["conditions"][0]["type"] == "item_obtained"
+        assert event_0["conditions"][0]["params"] == {"item_id": "signal_stone"}
+        assert event_1["conditions"][0]["type"] == "location_visited"
+        assert event_1["conditions"][0]["params"] == {"area_id": "ruins"}
+        assert event_1["on_trigger"][0]["type"] == "complete_objective"
+        assert event_1["on_trigger"][0]["params"] == {
+            "quest_id": "dq_dynamic_obj",
+            "objective_index": 1,
+        }
+
     def test_supported_directives_update_runtime_slices(self) -> None:
         planner = RecordingPlanner(
             {
@@ -391,13 +589,183 @@ class TestNarrativePlannerHook:
 
         assert result.metadata["applied_count"] == 5
         assert context.state.narrative_plan.npc_directives[-1]["npc_id"] == "npc_guard"
-        assert context.state.narrative_plan.active_bulletins[-1]["board_id"] == "board_1"
+        bulletin = _latest_board_bulletin(context)
+        assert bulletin is not None
+        assert bulletin["board_id"] == "board_1"
         assert context.state.narrative_plan.escalation_level == 2
         assert context.state.narrative_plan.pacing_frozen is True
         assert context.state.narrative_plan.strategy_notes == "push the tension"
         assert context.state.narrative_plan.next_scheduled_tick == 12
         assert context.state.quests.get_dynamic_quest("dq_existing")["status"] == "retired"
         assert context.state.narrative_plan.quest_history[-1]["kind"] == "retire_quest"
+
+    def test_publish_bulletin_notifies_resident_npcs(self) -> None:
+        maps = MapRegistry()
+        maps.load({
+            "forest": {
+                "id": "forest",
+                "sub_locations": {
+                    "quest_hub": {
+                        "id": "quest_hub",
+                        "name": "Quest Hub",
+                        "interactables": [
+                            {
+                                "id": "board_1",
+                                "name": "Quest Board",
+                                "type": "inspect",
+                                "tags": ["quest_source"],
+                            }
+                        ],
+                        "resident_npcs": ["npc_guard", "npc_scout"],
+                    }
+                },
+            }
+        })
+        world = WorldInstance("test_world_bulletin")
+        world.register(maps)
+        context = _make_context(change_log=[StateChange("player", "set", "current_area", "forest")])
+        context.world = world
+        planner = RecordingPlanner(
+            {
+                "strategy_notes": "board now active",
+                "directives": [
+                    {
+                        "kind": "publish_bulletin",
+                        "payload": {
+                            "board_id": "board_1",
+                            "title": "Wanted",
+                            "content": "Bandits nearby",
+                            "notify_resident_npcs": True,
+                        },
+                    }
+                ],
+            }
+        )
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        assert result.metadata["applied_kinds"] == ["publish_bulletin"]
+        assert len(context.state.narrative_plan.npc_directives) == 2
+        npc_ids = {entry["npc_id"] for entry in context.state.narrative_plan.npc_directives}
+        assert npc_ids == {"npc_guard", "npc_scout"}
+        latest = _latest_board_bulletin(context)
+        assert latest is not None
+        assert latest["board_id"] == "board_1"
+
+    def test_dynamic_quest_without_expiry_ticks_keeps_running(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={"last_run_tick": 0},
+            quest_payload={
+                "milestone_states": {},
+                "dynamic_quests": {
+                    "dq_timed": {
+                        "status": "active",
+                        "created_at_tick": 4,
+                        "title": "Timed Quest",
+                        "summary": "No expiry settings",
+                    },
+                },
+            },
+        )
+        context.state.player.current_area = "void"
+        result = asyncio.run(
+            NarrativePlannerHook().execute(context),
+        )
+        assert result.metadata["applied_count"] == 0
+        quest = context.state.quests.get_dynamic_quest("dq_timed")
+        assert quest is not None
+        assert quest["status"] == "active"
+        assert not any(event.event_type == "dynamic_quest_expired" for event in result.sse_events)
+        assert context.state.narrative_plan.quest_history == []
+
+    def test_dynamic_quest_expiry_marks_ignored(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={"last_run_tick": 0},
+            quest_payload={
+                "milestone_states": {},
+                "dynamic_quests": {
+                    "dq_timed": {
+                        "status": "active",
+                        "created_at_tick": 4,
+                        "expiry_ticks": 3,
+                        "title": "Timed Quest",
+                        "summary": "Expires now",
+                        "on_expire": "ignore",
+                    },
+                },
+            },
+        )
+        context.state.player.current_area = "void"
+        result = asyncio.run(NarrativePlannerHook().execute(context))
+
+        assert any(
+            event.event_type == "dynamic_quest_expired"
+            and event.payload["quest_id"] == "dq_timed"
+            and event.payload["on_expire"] == "ignore"
+            for event in result.sse_events
+        )
+        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "expired"
+        assert context.state.narrative_plan.quest_history[-1]["kind"] == "dynamic_quest_expired"
+        assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "ignore"
+
+    def test_dynamic_quest_expiry_escalates_and_retire(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={"last_run_tick": 0},
+            quest_payload={
+                "milestone_states": {},
+                "dynamic_quests": {
+                    "dq_timed": {
+                        "status": "active",
+                        "created_at_tick": 4,
+                        "expiry_ticks": 3,
+                        "title": "Timed Quest",
+                        "summary": "Need escalate",
+                        "on_expire": "escalate",
+                    },
+                },
+            },
+        )
+        context.state.player.current_area = "void"
+        result = asyncio.run(NarrativePlannerHook().execute(context))
+
+        assert context.state.narrative_plan.escalation_level == 1
+        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "retired"
+        assert any(
+            event.event_type == "dynamic_quest_expired"
+            and event.payload["quest_id"] == "dq_timed"
+            and event.payload["on_expire"] == "escalate"
+            for event in result.sse_events
+        )
+        assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "escalate"
+
+    def test_dynamic_quest_expiry_retire(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={"last_run_tick": 0},
+            quest_payload={
+                "milestone_states": {},
+                "dynamic_quests": {
+                    "dq_timed": {
+                        "status": "active",
+                        "created_at_tick": 4,
+                        "expiry_ticks": 3,
+                        "title": "Timed Quest",
+                        "summary": "Need retire",
+                        "on_expire": "retire",
+                    },
+                },
+            },
+        )
+        context.state.player.current_area = "void"
+        result = asyncio.run(NarrativePlannerHook().execute(context))
+
+        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "retired"
+        assert any(
+            event.event_type == "dynamic_quest_expired"
+            and event.payload["quest_id"] == "dq_timed"
+            and event.payload["on_expire"] == "retire"
+            for event in result.sse_events
+        )
+        assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "retire"
 
     def test_direct_npc_hot_injects_into_active_instance(self) -> None:
         planner = RecordingPlanner(
@@ -516,7 +884,108 @@ class TestNarrativePlannerHook:
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_invalid_count"] == 1
 
-    def test_plant_environmental_creates_search_target(self) -> None:
+    def test_spawn_quest_npc_generates_temp_id_and_stores_profile(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {
+                        "kind": "spawn_quest_npc",
+                        "payload": {
+                            "area_id": "forest",
+                            "location_id": "quest_hub",
+                            "name": "Rook",
+                            "appearance": "Shadowed figure",
+                            "personality": "quiet",
+                            "role": "informant",
+                            "description": "A shadow waits near the board.",
+                            "dialogue_hook": "ask for help",
+                            "tags": ["informant", "mystery"],
+                            "linked_quest_id": "dq_report_in",
+                            "despawn_in_ticks": 4,
+                        },
+                    }
+                ]
+            )
+        )
+        context = _make_context(
+            change_log=[StateChange("flags", "set", "flags.x", True)],
+            area_payload={"areas": {"forest": {}}},
+            quest_payload={"milestone_states": {}},
+        )
+        context.state.player.current_area = "void"
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        assert result.metadata["applied_count"] == 1
+        assert result.metadata["applied_kinds"] == ["spawn_quest_npc"]
+        area = context.state.areas.areas["forest"]
+        npc_ids = [npc_id for npc_id in area.npc_locations.keys()]
+        assert len(npc_ids) == 1
+        npc_id = npc_ids[0]
+        assert npc_id.startswith("temp_npc_9")
+        assert npc_id in area.npc_locations
+        assert area.npc_locations[npc_id] == "quest_hub"
+        assert context.state.narrative_plan.npc_directives[-1]["npc_id"] == npc_id
+        assert context.state.narrative_plan.npc_directives[-1]["directive"]["kind"] == "spawn_quest_npc"
+        assert context.state.narrative_plan.npc_directives[-1]["directive"]["personality"] == "quiet"
+        assert context.state.narrative_plan.npc_directives[-1]["directive"]["dialogue_hook"] == "ask for help"
+        temp_profile = context.state.narrative_plan.get_temporary_npc(npc_id)
+        assert temp_profile is not None
+        assert temp_profile["name"] == "Rook"
+        assert temp_profile["personality"] == "quiet"
+        assert temp_profile["dialogue_hook"] == "ask for help"
+        assert temp_profile["tags"] == ["informant", "mystery"]
+        assert temp_profile["despawn_tick"] == 13
+
+        spawn_record = context.state.narrative_plan.quest_history[-1]
+        assert spawn_record["kind"] == "spawn_quest_npc"
+        assert spawn_record["npc_id"] == npc_id
+        assert spawn_record["name"] == "Rook"
+        assert spawn_record["appearance"] == "Shadowed figure"
+        assert spawn_record["personality"] == "quiet"
+        assert spawn_record["dialogue_hook"] == "ask for help"
+        assert spawn_record["tags"] == ["informant", "mystery"]
+        assert spawn_record["linked_quest_id"] == "dq_report_in"
+        assert spawn_record["despawn_tick"] == 13
+
+    def test_spawn_quest_npc_despawns_when_history_tick_reached(self) -> None:
+        context = _make_context(
+            change_log=[StateChange("flags", "set", "flags.x", True)],
+            quest_payload={"milestone_states": {}},
+            area_payload={
+                "areas": {
+                    "forest": {
+                        "npc_locations": {
+                            "temp_npc_9": "quest_hub",
+                        }
+                    }
+                }
+            },
+        )
+        context.state.narrative_plan.add_temporary_npc(
+            "temp_npc_9",
+            {
+                "name": "Temp Guard",
+                "personality": "strict",
+                "dialogue_hook": "Watch your step",
+                "despawn_tick": 9,
+            },
+        )
+        context.state.player.current_area = "void"
+        context.state.narrative_plan.add_history(
+            {
+                "kind": "spawn_quest_npc",
+                "npc_id": "temp_npc_9",
+                "despawn_tick": 9,
+            }
+        )
+        result = asyncio.run(NarrativePlannerHook().execute(context))
+
+        assert result.metadata["applied_count"] == 0
+        assert "temp_npc_9" not in context.state.areas.areas["forest"].npc_locations
+        assert context.state.narrative_plan.get_temporary_npc("temp_npc_9") is None
+
+    def test_plant_environmental_creates_temporary_sub_area(self) -> None:
         planner = RecordingPlanner(
             NarrativePlannerDecision(
                 directives=[
@@ -536,9 +1005,12 @@ class TestNarrativePlannerHook:
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["plant_environmental"]
-        area = context.state.areas.areas["forest"]
-        assert "blood_trail" in area.properties.get("search_targets", {})
-        assert area.properties["search_targets"]["blood_trail"]["dc"] == 14
+        sub_areas = context.state.areas.list_temporary_sub_areas("forest")
+        assert len(sub_areas) == 1
+        assert sub_areas[0]["id"] == "blood_trail"
+        assert sub_areas[0]["type"] == "discovery"
+        assert sub_areas[0]["tier"] == "temporary"
+        assert sub_areas[0]["discovery_dc"] == 14
 
     def test_fill_area_creates_sub_area_with_capacity_check(self) -> None:
         planner = RecordingPlanner(
@@ -558,9 +1030,112 @@ class TestNarrativePlannerHook:
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["fill_area"]
         sub_areas = context.state.areas.list_temporary_sub_areas("forest")
-        assert len(sub_areas) >= 1
+        assert len(sub_areas) == 1
         assert sub_areas[0]["id"] == "grove_1"
         assert sub_areas[0]["label"] == "Hidden Grove"
+        assert sub_areas[0]["type"] == "visit"
+        assert sub_areas[0]["tier"] == "permanent"
+        assert sub_areas[0]["expiry"] == -1
+
+    def test_plant_environmental_delegates_to_sub_area_manager(self) -> None:
+        class CapturingManager:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def create(self, area_id: str, spec: dict[str, object]) -> dict[str, object] | None:
+                self.calls.append((area_id, spec))
+                return {
+                    "id": spec.get("id", "default"),
+                    "label": spec.get("label", ""),
+                    "description": spec.get("description", ""),
+                    "type": spec.get("type", "discovery"),
+                    "tier": spec.get("tier", "temporary"),
+                    "discovery_mode": spec.get("discovery_mode", "check"),
+                    "discovery_dc": spec.get("discovery_dc", 12),
+                    "hostile_config": None,
+                    "interactables": [],
+                    "resident_npcs": [],
+                    "linked_quest_id": spec.get("linked_quest_id"),
+                    "linked_milestone": spec.get("linked_milestone"),
+                    "source": spec.get("source"),
+                    "created_at_tick": spec.get("created_at_tick", 0),
+                    "expiry": spec.get("expiry_ticks", 12),
+                    "status": "active",
+                }
+
+        manager = CapturingManager()
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    PlantEnvironmentalPlan(
+                        "forest",
+                        {
+                            "clue_id": "blood_trail",
+                            "dc": 14,
+                            "description": "Dried blood",
+                        },
+                    )
+                ]
+            )
+        )
+        context = _make_context(
+            change_log=[StateChange("flags", "set", "flags.x", True)],
+            area_payload={"areas": {"forest": {}}},
+        )
+
+        result = asyncio.run(
+            NarrativePlannerHook(planner=planner, sub_area_manager=manager).execute(context)
+        )
+
+        assert result.metadata["applied_count"] == 1
+        assert len(manager.calls) == 1
+        assert manager.calls[0][0] == "forest"
+        assert manager.calls[0][1]["id"] == "blood_trail"
+
+    def test_fill_area_delegates_to_sub_area_manager(self) -> None:
+        class CapturingManager:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            def create(self, area_id: str, spec: dict[str, object]) -> dict[str, object] | None:
+                self.calls.append((area_id, spec))
+                return {
+                    "id": spec["id"],
+                    "label": spec.get("label", ""),
+                    "description": spec.get("description", ""),
+                    "type": spec.get("type", "visit"),
+                    "tier": spec.get("tier", "permanent"),
+                    "discovery_mode": spec.get("discovery_mode", ""),
+                    "discovery_dc": spec.get("discovery_dc", 0),
+                    "hostile_config": None,
+                    "interactables": [],
+                    "resident_npcs": [],
+                    "linked_quest_id": None,
+                    "linked_milestone": None,
+                    "source": spec.get("source"),
+                    "created_at_tick": spec.get("created_at_tick", 0),
+                    "expiry": spec.get("expiry_ticks", -1),
+                    "status": "active",
+                }
+
+        manager = CapturingManager()
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[FillAreaPlan("forest", {"label": "Hidden Grove", "id": "grove_1"})]
+            )
+        )
+        context = _make_context(
+            change_log=[StateChange("flags", "set", "flags.x", True)],
+            area_payload={"areas": {"forest": {}}},
+        )
+        result = asyncio.run(
+            NarrativePlannerHook(planner=planner, sub_area_manager=manager).execute(context)
+        )
+
+        assert result.metadata["applied_count"] == 1
+        assert len(manager.calls) == 1
+        assert manager.calls[0][0] == "forest"
+        assert manager.calls[0][1]["id"] == "grove_1"
 
     def test_escalation_l2_directs_npc(self) -> None:
         context = _make_context(
@@ -575,6 +1150,7 @@ class TestNarrativePlannerHook:
                     "dq_ms_a": {"status": "active", "title": "Lead", "summary": "ok"},
                 },
             },
+            area_payload={"areas": {"forest": {"npc_locations": {"sailor": True}}}},
         )
 
         result = asyncio.run(NarrativePlannerHook().execute(context))
@@ -596,6 +1172,7 @@ class TestNarrativePlannerHook:
                 "milestone_states": {"ms_a": {"state": "ACTIVE"}},
                 "dynamic_quests": {},
             },
+            area_payload={"areas": {"forest": {"npc_locations": {"sailor": True}}}},
         )
 
         result = asyncio.run(NarrativePlannerHook().execute(context))
@@ -739,6 +1316,239 @@ class TestP36MilestoneDetail:
         result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
         assert result["target_milestone_detail"] == {}
 
+    def test_build_planner_context_includes_osiris_scene_and_pending_event_digest(self) -> None:
+        context = _make_context()
+        context.scene_bus.add_entry(
+            {
+                "source": "ai_osiris",
+                "content": "The guild starts whispering about the player.",
+                "visibility": "system",
+                "tags": ["ai_osiris", "visible_consequence", "create_rumor"],
+                "metadata": {
+                    "kind": "visible_consequence",
+                    "command_type": "create_rumor",
+                    "reason": "The guild starts whispering about the player.",
+                    "visibility_hint": "visible",
+                    "confidence": "high",
+                    "refs": {"rumor_id": "rumor_1"},
+                },
+            }
+        )
+        context.state.events.restore(
+            {
+                "pending_events": [
+                    {
+                        "event_id": "evt_retaliation",
+                        "event_type": "retaliation",
+                        "trigger_condition": {"type": "time_slots_elapsed", "count": 2},
+                        "source": "ai_osiris",
+                    }
+                ]
+            }
+        )
+
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+
+        scene = result["scene"]
+        assert scene["visible_command_types"] == ["create_rumor"]
+        assert scene["system_entries_digest"] == [
+            {
+                "source": "ai_osiris",
+                "content": "The guild starts whispering about the player.",
+                "tags": ["ai_osiris", "visible_consequence", "create_rumor"],
+                "command_type": "create_rumor",
+                "reason": "The guild starts whispering about the player.",
+                "visibility_hint": "visible",
+                "confidence": "high",
+                "refs": {"rumor_id": "rumor_1"},
+            }
+        ]
+        assert result["events"]["pending_events_digest"] == [
+            {
+                "event_id": "evt_retaliation",
+                "event_type": "retaliation",
+                "source": "ai_osiris",
+                "trigger_condition": {"type": "time_slots_elapsed", "count": 2},
+            }
+        ]
+
+    def test_build_planner_context_includes_live_area_context(self) -> None:
+        context = _make_context(
+            narrative_plan_payload={"play_style_tags": ["DIALOGUE_HEAVY", "EXPLORER"]},
+            area_payload={"areas": {"forest": {"npc_locations": {"guild_girl": None, "merchant": None}}}},
+        )
+        party = PartySlice()
+        party.restore({"members": {"ally_zhang": {"name": "Zhang"}}})
+        context.state.register(party)
+
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=3)
+
+        assert result["area_npcs"] == ["guild_girl", "merchant"]
+        assert result["area_boards"] == [{"id": "board", "sub_location": "quest_hub"}]
+        assert result["party"] == [{"id": "ally_zhang"}]
+        assert result["play_style_tags"] == ["DIALOGUE_HEAVY", "EXPLORER"]
+
+    def test_build_planner_context_without_maps_registry_area_boards_empty(self) -> None:
+        context = _make_context(
+            area_payload={"areas": {"forest": {"npc_locations": {"guild_girl": None}}}},
+        )
+        context.world = WorldInstance("test_world_without_maps")
+
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=4)
+
+        assert result["area_npcs"] == ["guild_girl"]
+        assert result["area_boards"] == []
+
+    def test_build_planner_context_includes_world_context(self) -> None:
+        world = WorldInstance("test_world_with_context")
+        maps = MapRegistry()
+        maps.load({
+            "forest": {
+                "id": "forest",
+                "name": "Enchanted Forest",
+                "description": "A dim forest with whispering trees.",
+                "sub_locations": {},
+            }
+        })
+        world.register(maps)
+
+        factions = FactionRegistry()
+        factions.load({
+            "faction_merchant_guild": {
+                "id": "faction_merchant_guild",
+                "name": "Merchant Guild",
+                "influence_areas": ["forest"],
+            },
+            "faction_outsiders": {
+                "id": "faction_outsiders",
+                "name": "Outsiders",
+                "influence_areas": ["town_square"],
+            },
+        })
+        world.register(factions)
+
+        lore = LoreRegistry()
+        lore.load({
+            "rules": {
+                "r_area_restricted": {
+                    "id": "r_area_restricted",
+                    "title": "Forbidden Zone",
+                    "description": "No loud magic in this area.",
+                    "scope": "area",
+                    "scope_id": "forest",
+                    "priority": 10,
+                },
+                "r_chapter_hint": {
+                    "id": "r_chapter_hint",
+                    "title": "Chapter Focus",
+                    "description": "Follow the chapter cue closely.",
+                    "scope": "chapter",
+                    "scope_id": "chapter_1",
+                    "priority": 5,
+                },
+                "r_other": {
+                    "id": "r_other",
+                    "title": "Town Order",
+                    "description": "Stay away from crowds.",
+                    "scope": "area",
+                    "scope_id": "town_square",
+                    "priority": 3,
+                },
+            }
+        })
+        world.register(lore)
+
+        context = self._context_with_world(
+            _make_context(
+                narrative_plan_payload={"current_chapter": "chapter_1"},
+                quest_payload={"milestone_states": {}},
+            ),
+            world,
+        )
+
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=12)
+        world_context = result["world_context"]
+
+        assert world_context["area_description"] == "A dim forest with whispering trees."
+        assert world_context["relevant_factions"] == [
+            {"id": "faction_merchant_guild", "name": "Merchant Guild"},
+        ]
+        assert world_context["world_rules"][0] == {
+            "id": "r_area_restricted",
+            "title": "Forbidden Zone",
+            "description": "No loud magic in this area.",
+        }
+
+    def test_build_planner_context_world_context_empty_without_registries(self) -> None:
+        context = _make_context()
+        context.world = WorldInstance("test_world_without_registries")
+
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=5)
+
+        assert result["world_context"] == {}
+
+    def test_derive_play_style_tags(self) -> None:
+        hook = NarrativePlannerHook()
+        dialogue_window = [{"action_type": "dialogue"} for _ in range(10)]
+        mixed_window = dialogue_window + [{"action_type": "combat"} for _ in range(6)]
+        assert hook._derive_play_style_tags(mixed_window) == [
+            "DIALOGUE_HEAVY",
+            "COMBAT_FOCUSED",
+        ]
+        assert hook._derive_play_style_tags([{"action_type": "dialogue"}] * 5) == []
+
+    def test_execute_updates_play_style_tags_from_behavior_window(self) -> None:
+        context = _make_context(
+            change_log=[StateChange("flags", "set", "flags.behavior_window_trigger", True)],
+            quest_payload={"milestone_states": {}},
+        )
+        for i in range(10):
+            context.state.narrative_plan.record_behavior(
+                {"tick": i, "action_type": "dialogue"},
+            )
+
+        result = asyncio.run(NarrativePlannerHook().execute(context))
+
+        assert result.metadata["status"] == "updated"
+        assert context.state.narrative_plan.play_style_tags == ["DIALOGUE_HEAVY"]
+
+    def test_direct_npc_empty_directive_plan_is_skipped(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    DirectNpcPlan("npc_guard", {}),
+                ]
+            )
+        )
+        context = _make_context(
+            change_log=[StateChange("flags", "set", "flags.x", True)],
+        )
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        assert result.metadata["applied_count"] == 0
+        assert result.metadata["skipped_invalid_count"] == 1
+        assert context.state.narrative_plan.npc_directives == []
+
+    def test_direct_npc_none_directive_payload_is_skipped(self) -> None:
+        planner = RecordingPlanner(
+            {
+                "directives": [
+                    {
+                        "kind": "direct_npc",
+                        "payload": {"npc_id": "npc_guard", "directive": None},
+                    }
+                ]
+            }
+        )
+        context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
+
+        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+
+        assert result.metadata["applied_count"] == 0
+        assert result.metadata["skipped_invalid_count"] == 1
+        assert context.state.narrative_plan.npc_directives == []
+
     def test_l2_uses_involved_npc_from_milestone(self) -> None:
         """L2 escalation 使用 milestone involved_npcs[0] 而非硬编码 guild_clerk。"""
         world = self._world_with_milestone("ms_a", involved_npcs=["sheriff_dane"])
@@ -764,8 +1574,8 @@ class TestP36MilestoneDetail:
         strategy = context.state.narrative_plan.strategy_notes
         assert "sheriff_dane" in strategy
 
-    def test_l2_falls_back_to_guild_clerk_without_involved_npcs(self) -> None:
-        """involved_npcs 为空 → fallback to guild_clerk（原有行为）。"""
+    def test_l2_no_directive_when_no_npc_available(self) -> None:
+        """involved_npcs 为空且附近无 NPC 时不下达 direct_npc。"""
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
@@ -781,7 +1591,8 @@ class TestP36MilestoneDetail:
         )
         asyncio.run(NarrativePlannerHook().execute(context))
         strategy = context.state.narrative_plan.strategy_notes
-        assert "guild_clerk" in strategy
+        assert "L2 recommend" in strategy
+        assert "no available NPC" in strategy
 
     def test_l3_create_quest_metadata_includes_key_elements(self) -> None:
         """L3 urgency 生成的动态任务 metadata 包含 key_elements，summary 使用 narrative_context。"""

@@ -77,6 +77,15 @@ class CompanionManager:
             "class_id": getattr(profile, "class_id", ""),
             "recruited_tick": tick,
         })
+
+        # Sync companion location to player's current position
+        if self._state.has_slice("areas") and self._state.has_slice("player"):
+            player_area = self._state.player.current_area
+            if player_area:
+                self._state.areas.move_npc(
+                    npc_id, player_area, self._state.player.current_location
+                )
+
         return RecruitResult(True, "recruited")
 
     def dismiss(self, npc_id: str) -> RecruitResult:
@@ -87,6 +96,35 @@ class CompanionManager:
             return RecruitResult(False, "not_member")
         self._state.party.remove_member(npc_id)
         return RecruitResult(True, "dismissed")
+
+    def sync_to_player(self) -> list[str]:
+        """Sync all party members to the player's current position.
+
+        Returns list of member IDs that were actually moved.
+        """
+        if (
+            not self._state.has_slice("party")
+            or not self._state.has_slice("areas")
+            or not self._state.has_slice("player")
+        ):
+            return []
+
+        player_area = self._state.player.current_area
+        player_loc = self._state.player.current_location
+        if not player_area:
+            return []
+
+        moved: list[str] = []
+        for member_id in self._state.party.members:
+            current_area = self._state.areas.find_npc_area(member_id)
+            if current_area == player_area:
+                area_state = self._state.areas.get_area(player_area)
+                if area_state.npc_locations.get(member_id) == player_loc:
+                    continue
+            self._state.areas.move_npc(member_id, player_area, player_loc)
+            moved.append(member_id)
+
+        return moved
 
     def force_leave(self, npc_id: str, reason: str = "") -> RecruitResult:
         """NPC-initiated departure due to relationship deterioration.

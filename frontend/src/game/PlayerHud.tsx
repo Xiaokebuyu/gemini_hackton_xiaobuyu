@@ -20,6 +20,7 @@ export default function PlayerHud() {
     maxHp,
     gold,
     day,
+    slot,
     period,
   } = usePlayerStore()
 
@@ -38,6 +39,7 @@ export default function PlayerHud() {
         <span>HP {hp}/{maxHp}</span>
         <span>{gold}G</span>
         <span>第 {day} 天</span>
+        <span>第 {slot} 格</span>
         <span>{PERIOD_LABELS[period] ?? period}</span>
       </div>
     </div>

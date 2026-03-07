@@ -260,3 +260,30 @@ private → 按 audience 列表精确控制
 **关键设计决策**：
 - `is_trap_detected` 读 `container_states`（trap 信息跟随容器状态），不读 `interactable_states`
 - `validate()` 只做 is dict 检查，内部结构不做强校验（与 `container_states` 保持同等粒度）
+
+---
+
+## [D-S07] AreaSlice 与任务公告存储统一（2026-03-07）
+
+**背景**：任务看板公告从 `NarrativePlanSlice` 向 `AreaSlice` 迁移，需要补齐状态层读写契约。
+
+### 本轮决策
+
+- `AreaSlice` 引入 `AreaState.board_bulletins` 与 `board_bulletins: dict[str, list[dict[str, Any]]]`，按 `area_id` + `board_id` 分桶。
+- 扩展 `snapshot()/restore()/validate()/apply_state_change()`，把 `board_bulletins` 纳入持久化与变更链路。
+- 发布端约定统一：
+  - `publish_bulletin` 只向 `AreaSlice` 写入公告；
+  - `NarrativePlanSlice` 不再承接任务公告持久化职责。
+- 提供最小 CRUD 读取接口：
+  - `add_board_bulletin/get_board_bulletins/remove_board_bulletin/get_board_ids`
+- 校验规则：
+  - `board_bulletins` 的 value 仅允许 dict/list 结构；
+  - 每条公告要求 `quest_id`、`board_id`、`title` 基础字段可序列化；
+  - `remove_board_bulletin` 支持按 `quest_id` 去重和幂等返回。
+
+### 变更与验收
+
+- 文件：`app/game_core/state/slices/area.py`
+- 文件：`app/game_core/planning/planner.py`（`publish_bulletin` 改向 `AreaSlice`）
+- 文件：`tests/test_area_slice_board_bulletins.py`
+- 文件：`tests/test_api_shell.py`（本轮新增 4 条端到端链路用例）

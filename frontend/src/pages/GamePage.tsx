@@ -8,6 +8,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useSceneStore } from '../stores/sceneStore'
 import { useOverlayStore } from '../stores/overlayStore'
 import { useOptionStore } from '../stores/optionStore'
+import { usePartyStore } from '../stores/partyStore'
 import { useGameStream } from '../hooks/useGameStream'
 import SceneBackground from '../game/SceneBackground'
 import PortraitLayer from '../game/PortraitLayer'
@@ -17,7 +18,7 @@ import PlayerHud from '../game/PlayerHud'
 import SceneTransitionOverlay from '../game/SceneTransitionOverlay'
 import DiceRollOverlay from '../game/combat/DiceRollOverlay'
 import type { OverviewHandlers } from '../stores/optionStore'
-import type { InteractRequest, NavigateRequest } from '../types/api'
+import type { InteractRequest, NavigateRequest, StructuredActionRequest } from '../types/api'
 
 // 懒加载：覆盖层 + 战斗层（按需分包，减小初始 bundle）
 const LogOverlay        = lazy(() => import('../game/overlays/LogOverlay'))
@@ -27,9 +28,10 @@ const MapPanel          = lazy(() => import('../game/overlays/MapPanel'))
 const QuestPanel        = lazy(() => import('../game/overlays/QuestPanel'))
 const InventoryPanel    = lazy(() => import('../game/overlays/InventoryPanel'))
 const ShopOverlay       = lazy(() => import('../game/overlays/ShopOverlay'))
-const BoardOverlay      = lazy(() => import('../game/overlays/BoardOverlay'))
 const ItemDetailOverlay = lazy(() => import('../game/overlays/ItemDetailOverlay'))
+const PartyPanel        = lazy(() => import('../game/overlays/PartyPanel'))
 const ChatInviteModal   = lazy(() => import('../game/overlays/ChatInviteModal'))
+const BoardOverlay      = lazy(() => import('../game/overlays/BoardOverlay'))
 const CombatLayer       = lazy(() => import('../game/combat/CombatLayer'))
 const EncounterPanel    = lazy(() => import('../game/combat/EncounterPanel'))
 
@@ -60,9 +62,11 @@ export default function GamePage() {
   const sendRef = useRef<{
     sendInteract: (req: InteractRequest) => void
     sendNavigate: (req: NavigateRequest) => void
+    sendAction: (req: StructuredActionRequest) => void
   }>({
     sendInteract: () => {},
     sendNavigate: () => {},
+    sendAction: () => {},
   })
   const sendOpeningRef = useRef<() => void>(() => {})
   const openingRequestRef = useRef<string | null>(null)
@@ -81,15 +85,44 @@ export default function GamePage() {
       }),
     onMoveTo: (areaId) =>
       sendRef.current.sendNavigate({ action: 'move_area', area_id: areaId }),
+    onBrowseBoard: (boardId) =>
+      sendRef.current.sendAction({
+        action_type: 'browse_board',
+        params: { board_id: boardId },
+      }),
     onLeaveSubLocation: () =>
       sendRef.current.sendNavigate({ action: 'leave_sub_location' }),
+    onRestShort: () =>
+      sendRef.current.sendAction({ action_type: 'rest_short', params: {} }),
+    onRestLong: () =>
+      sendRef.current.sendAction({ action_type: 'rest_long', params: {} }),
+    onSetCamp: () => {
+      const { currentArea, currentLocation } = useSceneStore.getState()
+      if (!currentArea) return
+      sendRef.current.sendAction({
+        action_type: 'set_camp',
+        params: currentLocation
+          ? { area_id: currentArea, location_id: currentLocation }
+          : { area_id: currentArea },
+      })
+    },
+    onNightWatch: () => {
+      const { currentArea } = useSceneStore.getState()
+      if (!currentArea) return
+      sendRef.current.sendAction({
+        action_type: 'night_watch',
+        params: { area_id: currentArea },
+      })
+    },
   }).current
 
   const {
     sendInteract,
     sendNavigate,
+    sendAction,
     sendInput,
     sendPrivateChat,
+    sendCompanionDismiss,
     sendCombatAction,
     sendEncounterAction,
     sendOpening,
@@ -101,6 +134,7 @@ export default function GamePage() {
   // 每次 render 同步 ref（sendInteract/sendNavigate 是稳定 useCallback）
   sendRef.current.sendInteract = sendInteract
   sendRef.current.sendNavigate = sendNavigate
+  sendRef.current.sendAction = sendAction
 
   useEffect(() => {
     sendOpeningRef.current = sendOpening
@@ -162,6 +196,10 @@ export default function GamePage() {
       dialogueStore.resetMessages()
       updatePlayer({ phase: bootstrap.phase, player: bootstrap.player })
       setPhase(bootstrap.phase)
+      if (bootstrap.party?.members) {
+        usePartyStore.getState().initFromSnapshot(bootstrap.party)
+      }
+      usePartyStore.getState().enrichFromPresentNpcs(bootstrap.scene.present_npcs)
       if (bootstrap.phase === 'opening_ready') {
         startOpeningFlow()
         return () => {
@@ -273,10 +311,12 @@ export default function GamePage() {
         return <InventoryPanel />
       case 'shop':
         return <ShopOverlay sendInteract={sendInteract} />
-      case 'board':
-        return <BoardOverlay sendInteract={sendInteract} />
       case 'item_detail':
         return <ItemDetailOverlay />
+      case 'board':
+        return <BoardOverlay sendAction={sendAction} />
+      case 'party':
+        return <PartyPanel sendCompanionDismiss={sendCompanionDismiss} />
       default:
         return null
     }

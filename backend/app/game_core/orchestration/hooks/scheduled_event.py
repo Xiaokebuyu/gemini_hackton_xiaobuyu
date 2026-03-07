@@ -20,7 +20,23 @@ class ScheduledEventHook(NoOpSettlementHook):
             return HookResult()
 
         current_time = context.state.time.get_current_time()
-        due_events = context.state.events.check_triggers(current_time)
+        current_flags = None
+        if context.state.has_slice("flags"):
+            flags_snapshot = context.state.flags.snapshot()
+            raw_flags = flags_snapshot.get("flags")
+            if isinstance(raw_flags, Mapping):
+                current_flags = {str(key): value for key, value in raw_flags.items()}
+        current_area = None
+        current_location = None
+        if context.state.has_slice("player"):
+            current_area = context.state.player.current_area
+            current_location = context.state.player.current_location
+        due_events = context.state.events.check_triggers(
+            current_time,
+            current_flags=current_flags,
+            current_area=current_area,
+            current_location=current_location,
+        )
         if not due_events:
             return HookResult(
                 metadata={"status": "noop", "triggered_count": 0},

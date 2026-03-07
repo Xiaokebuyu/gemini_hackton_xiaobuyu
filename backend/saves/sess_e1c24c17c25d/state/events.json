@@ -1,6 +1,157 @@
 {
-  "active_events": {},
-  "pending_events": [],
+  "active_events": {
+    "ambush_check_dawn": {
+      "event_id": "ambush_check_dawn",
+      "event_type": "generic",
+      "id": "ambush_check_dawn",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 28,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 2,
+        "period": "night",
+        "slot": 4
+      }
+    },
+    "goblin_ambush_check": {
+      "event_id": "goblin_ambush_check",
+      "event_type": "generic",
+      "id": "goblin_ambush_check",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 17,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 17
+      }
+    },
+    "goblin_scout_sighting": {
+      "event_id": "goblin_scout_sighting",
+      "event_type": "generic",
+      "id": "goblin_scout_sighting",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 19,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "dusk",
+        "slot": 19
+      }
+    },
+    "guild_report_check": {
+      "event_id": "guild_report_check",
+      "event_type": "generic",
+      "id": "guild_report_check",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 21,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "night",
+        "slot": 21
+      }
+    },
+    "night_ambush_check": {
+      "event_id": "night_ambush_check",
+      "event_type": "generic",
+      "id": "night_ambush_check",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 24,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "night",
+        "slot": 24
+      }
+    },
+    "ruins_ambush_check": {
+      "event_id": "ruins_ambush_check",
+      "event_type": "generic",
+      "id": "ruins_ambush_check",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 16,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 16
+      }
+    },
+    "ruins_scout_ambush_check": {
+      "event_id": "ruins_scout_ambush_check",
+      "event_type": "generic",
+      "id": "ruins_scout_ambush_check",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 15,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 15
+      }
+    }
+  },
+  "pending_events": [
+    {
+      "created_at": {
+        "day": 2,
+        "period": "night",
+        "slot": 4
+      },
+      "event_id": "ambush_at_dawn_check",
+      "event_type": "generic",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "trigger_condition": {
+        "tick": 29,
+        "type": "absolute_tick"
+      }
+    }
+  ],
   "rumors": [
     {
       "area_id": null,
@@ -17,6 +168,86 @@
       "spread_to": [],
       "tags": [],
       "text": "A new porcelain-rank adventurer named xiaobuyu showed remarkable wit and insight at the counter today. Even the Silver-rank veterans took notice."
+    },
+    {
+      "area_id": null,
+      "content": "冒险者公会里开始流传关于一个白瓷级新人（玩家）总是缠着柜台小姐闲聊的传闻，有些资深冒险者对此感到不屑。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 10
+      },
+      "metadata": {},
+      "rumor_id": "rumor_fa3431a1352c",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "冒险者公会里开始流传关于一个白瓷级新人（玩家）总是缠着柜台小姐闲聊的传闻，有些资深冒险者对此感到不屑。"
+    },
+    {
+      "area_id": null,
+      "content": "A lone Porcelain-ranked fighter was spotted heading into the ancient ruins. Local veterans at the guild are placing bets on whether they'll return before nightfall.",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 13
+      },
+      "metadata": {},
+      "rumor_id": "rumor_442f9cc7cd90",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "A lone Porcelain-ranked fighter was spotted heading into the ancient ruins. Local veterans at the guild are placing bets on whether they'll return before nightfall."
+    },
+    {
+      "area_id": null,
+      "content": "A porcelain-rank adventurer has returned with news of a Tier 2 goblin nest near the ancient ruins. The guild is buzzing with talk of a potential breeding chamber.",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 17
+      },
+      "metadata": {},
+      "rumor_id": "rumor_c7e0d4cf48be",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "A porcelain-rank adventurer has returned with news of a Tier 2 goblin nest near the ancient ruins. The guild is buzzing with talk of a potential breeding chamber."
+    },
+    {
+      "area_id": null,
+      "content": "A Porcelain-rank adventurer has returned alive from the ancient ruins, despite reports of heavy goblin activity.",
+      "created_at": {
+        "day": 1,
+        "period": "dusk",
+        "slot": 19
+      },
+      "metadata": {},
+      "rumor_id": "rumor_19e3e4bad2b1",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "A Porcelain-rank adventurer has returned alive from the ancient ruins, despite reports of heavy goblin activity."
+    },
+    {
+      "area_id": null,
+      "content": "有传言称，在小镇附近的森林里发现了哥布林斥候的踪迹，似乎是在追踪某位冒险者。",
+      "created_at": {
+        "day": 1,
+        "period": "night",
+        "slot": 20
+      },
+      "metadata": {},
+      "rumor_id": "rumor_1ba35ac3cf6a",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "有传言称，在小镇附近的森林里发现了哥布林斥候的踪迹，似乎是在追踪某位冒险者。"
     }
   ]
 }

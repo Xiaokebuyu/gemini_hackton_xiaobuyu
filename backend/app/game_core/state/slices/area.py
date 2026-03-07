@@ -11,6 +11,16 @@ from app.game_core.state.delta import StateChange
 
 
 @dataclass(slots=True)
+class BulletinEntry:
+    board_id: str
+    quest_id: str = ""
+    title: str = ""
+    content: str = ""
+    published_at_tick: int = 0
+    source: str = "narrative_planner"
+
+
+@dataclass(slots=True)
 class AreaState:
     exploration: str = "undiscovered"
     danger_level: float = 1.0
@@ -21,6 +31,7 @@ class AreaState:
     npc_locations: dict[str, str | None] = field(default_factory=dict)
     container_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     interactable_states: dict[str, dict[str, Any]] = field(default_factory=dict)
+    board_bulletins: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     hostile_tracking: dict[str, dict[str, Any]] = field(default_factory=dict)
     permanent_hostile_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -33,6 +44,10 @@ class AreaState:
             "temporary_sub_areas": [dict(item) for item in self.temporary_sub_areas],
             "discovered_items": sorted(self.discovered_items),
             "npc_locations": dict(self.npc_locations),
+            "board_bulletins": {
+                board_id: [dict(entry) for entry in entries]
+                for board_id, entries in self.board_bulletins.items()
+            },
             "container_states": deepcopy(self.container_states),
             "interactable_states": deepcopy(self.interactable_states),
             "hostile_tracking": {
@@ -77,8 +92,51 @@ class AreaSlice(StateSlice):
     def get_area(self, area_id: str) -> AreaState:
         return self.areas.setdefault(area_id, AreaState())
 
+    def _ensure_area(self, area_id: str) -> AreaState:
+        return self.get_area(area_id)
+
     def get_danger(self, area_id: str) -> float:
         return self.get_area(area_id).danger_level
+
+    def add_board_bulletin(
+        self,
+        area_id: str,
+        board_id: str,
+        entry: dict[str, Any],
+    ) -> None:
+        """Append one bulletin entry to a board in the specified area."""
+        board_id = board_id.strip()
+        if not board_id:
+            return
+        area = self._ensure_area(area_id)
+        board_entries = area.board_bulletins.setdefault(board_id, [])
+        board_entries.append(dict(entry))
+        self._dirty = True
+
+    def get_board_bulletins(self, area_id: str, board_id: str) -> list[dict[str, Any]]:
+        """Return a defensive copy of board bulletins for a specific board."""
+        area_state = self.areas.get(area_id)
+        if area_state is None:
+            return []
+        entries = area_state.board_bulletins.get(board_id, [])
+        if not isinstance(entries, list):
+            return []
+        return [dict(entry) for entry in entries if isinstance(entry, Mapping)]
+
+    def remove_board_bulletin(self, area_id: str, board_id: str, quest_id: str) -> bool:
+        """Remove the matching bulletin by quest_id from an area's board."""
+        area_state = self.areas.get(area_id)
+        if area_state is None:
+            return False
+        entries = area_state.board_bulletins.get(board_id)
+        if not isinstance(entries, list):
+            return False
+        for index, entry in enumerate(entries):
+            if str(entry.get("quest_id", "")).strip() == quest_id.strip():
+                entries.pop(index)
+                self._dirty = True
+                return True
+        return False
 
     def is_discovered(self, area_id: str) -> bool:
         return self.get_area(area_id).exploration != "undiscovered"
@@ -579,6 +637,18 @@ class AreaSlice(StateSlice):
                 issues.append(f"area '{area_id}' danger_level must be >= 0")
             if not isinstance(area.npc_locations, dict):
                 issues.append(f"area '{area_id}' npc_locations must be a dict")
+            if not isinstance(area.board_bulletins, dict):
+                issues.append(f"area '{area_id}' board_bulletins must be a dict")
+            else:
+                for board_id, entries in area.board_bulletins.items():
+                    if not isinstance(board_id, str):
+                        issues.append(
+                            f"area '{area_id}' board_bulletins key must be a string"
+                        )
+                    if not isinstance(entries, list):
+                        issues.append(
+                            f"area '{area_id}' board_bulletins '{board_id}' must be a list"
+                        )
             if not isinstance(area.container_states, dict):
                 issues.append(f"area '{area_id}' container_states must be a dict")
             if not isinstance(area.interactable_states, dict):
@@ -683,6 +753,19 @@ class AreaSlice(StateSlice):
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
+        if change.path.startswith("board_bulletins."):
+            if change.operation != "append":
+                raise ValueError("board_bulletins only supports append operation")
+            if not isinstance(change.value, Mapping):
+                raise ValueError("bulletin entry must be a mapping")
+            _, board_id = change.path.split(".", 1)
+            area_id = str(change.value.get("area_id", "")).strip()
+            if not area_id:
+                raise ValueError("bulletin must include area_id")
+            payload = dict(change.value)
+            payload.pop("area_id", None)
+            self.add_board_bulletin(area_id, board_id, payload)
+            return
         if change.path.startswith("hostile_tracking."):
             if change.operation not in {"set", "modify"}:
                 raise ValueError(
@@ -773,6 +856,10 @@ class AreaSlice(StateSlice):
                 npc_locations=dict(raw.npc_locations),
                 container_states={k: dict(v) for k, v in raw.container_states.items()},
                 interactable_states={k: dict(v) for k, v in raw.interactable_states.items()},
+                board_bulletins={
+                    str(key): [dict(entry) for entry in entries if isinstance(entry, Mapping)]
+                    for key, entries in raw.board_bulletins.items()
+                },
                 hostile_tracking={
                     k: AreaSlice._copy_hostile_payload(v)
                     for k, v in raw.hostile_tracking.items()
@@ -808,6 +895,9 @@ class AreaSlice(StateSlice):
                 for key, value in raw.get("interactable_states", {}).items()
                 if isinstance(value, Mapping)
             },
+            board_bulletins=AreaSlice._coerce_board_bulletins(
+                raw.get("board_bulletins", {})
+            ),
             hostile_tracking={
                 str(key): AreaSlice._normalize_hostile_payload(value)
                 for key, value in raw.get("hostile_tracking", {}).items()
@@ -821,6 +911,19 @@ class AreaSlice(StateSlice):
                 for key, value in raw.get("permanent_hostile_slots", {}).items()
             },
         )
+
+    @staticmethod
+    def _coerce_board_bulletins(raw_board_bulletins: Any) -> dict[str, list[dict[str, Any]]]:
+        board_bulletins: dict[str, list[dict[str, Any]]] = {}
+        if not isinstance(raw_board_bulletins, Mapping):
+            return board_bulletins
+        for board_id, entries in raw_board_bulletins.items():
+            if not isinstance(entries, list):
+                continue
+            board_bulletins[str(board_id)] = [
+                dict(entry) for entry in entries if isinstance(entry, Mapping)
+            ]
+        return board_bulletins
 
     def copy_hostile_state(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return self._copy_hostile_payload(payload)

@@ -23,7 +23,12 @@ class PassivePerceptionHook(NoOpSettlementHook):
     HOOK_PRIORITY = 45
     HOOK_NAME = "passive_perception"
 
-    def should_skip(self, change_log: list[Any]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del action_log
         for change in change_log:
             slice_name = getattr(change, "slice", getattr(change, "slice_name", ""))
             if slice_name == "player" and getattr(change, "path", "") in {
@@ -67,7 +72,7 @@ class PassivePerceptionHook(NoOpSettlementHook):
                         context.state.areas.mark_discovery(area_id, disc.id)
                         discoveries_found.append(disc.id)
                         sse_events.append(SSEEvent(
-                            event_type="discovery_found",
+                            event_type="discovery_reveal",
                             payload={
                                 "area_id": area_id,
                                 "discovery_id": disc.id,

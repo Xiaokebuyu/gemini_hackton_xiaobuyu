@@ -20,21 +20,21 @@
     },
     "goblin_slayer": {
       "approval": 0,
-      "fear": 5,
+      "fear": 7,
       "romance": 0,
-      "trust": 10
+      "trust": 19
     },
     "guild_girl": {
-      "approval": 19,
+      "approval": 34,
       "fear": 0,
-      "romance": 50,
-      "trust": 33
+      "romance": 53,
+      "trust": 58
     },
     "high_elf_archer": {
       "approval": 10,
       "fear": 0,
       "romance": 5,
-      "trust": 25
+      "trust": 27
     },
     "lizard_priest": {
       "approval": 15,
@@ -43,13 +43,21 @@
       "trust": 40
     },
     "priestess": {
-      "approval": 20,
-      "fear": 0,
-      "romance": 10,
-      "trust": 30
+      "approval": 24,
+      "fear": 10,
+      "romance": 17,
+      "trust": 41
     }
   },
-  "npc_impressions": {},
+  "npc_impressions": {
+    "goblin_slayer": [
+      "The player has confirmed a Tier 2 goblin nest at the ancient ruins."
+    ],
+    "priestess": [
+      "玩家与柜台小姐关系匪浅",
+      "The player is resonating with the sacrificial altar's dark energy."
+    ]
+  },
   "relationship_stages": {
     "cow_girl": "acquaintance",
     "dwarf_shaman": "acquaintance",

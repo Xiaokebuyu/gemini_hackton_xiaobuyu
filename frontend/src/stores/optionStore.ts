@@ -19,8 +19,13 @@ export interface OverviewHandlers {
   onTalkToNpc: (npcId: string, npcName: string) => void
   onEnterSubLocation: (locationId: string) => void
   onInteractWith: (interactableId: string, interactableName: string) => void
+  onBrowseBoard: (boardId: string, boardName: string) => void
   onMoveTo: (areaId: string) => void
   onLeaveSubLocation: () => void
+  onRestShort: () => void
+  onRestLong: () => void
+  onSetCamp: () => void
+  onNightWatch: () => void
 }
 
 const NPC_ICON: Record<string, string> = {
@@ -106,10 +111,12 @@ export const useOptionStore = create<OptionState>((set) => ({
 
     // NPC 交互
     for (const npc of overview.present_npcs) {
+      const isCompanion = npc.is_companion ?? npc.role === 'companion'
+      const roleIcon = NPC_ICON[npc.role] ?? '👤'
       opts.push({
         id: `talk-${npc.character_id}`,
-        label: `和${npc.name}说话`,
-        icon: NPC_ICON[npc.role] ?? '👤',
+        label: isCompanion ? `与${npc.name}交谈` : `和${npc.name}说话`,
+        icon: isCompanion ? '⚔' : roleIcon,
         action: () => handlers.onTalkToNpc(npc.character_id, npc.name),
       })
     }
@@ -127,13 +134,44 @@ export const useOptionStore = create<OptionState>((set) => ({
 
     // 可交互物
     for (const iact of overview.interactables) {
+      const isBoard = Array.isArray(iact.tags) && iact.tags.includes('quest_source')
       opts.push({
         id: `interact-${iact.id}`,
-        label: iact.name,
-        icon: '📋',
-        action: () => handlers.onInteractWith(iact.id, iact.name),
+        label: isBoard ? `查看${iact.name}` : iact.name,
+        icon: isBoard ? '📜' : '📋',
+        action: isBoard
+          ? () => handlers.onBrowseBoard(iact.id, iact.name)
+          : () => handlers.onInteractWith(iact.id, iact.name),
       })
     }
+
+    // 休息 / 扎营动作
+    opts.push(
+      {
+        id: 'rest-short',
+        label: '短休',
+        icon: '🛏️',
+        action: () => handlers.onRestShort(),
+      },
+      {
+        id: 'rest-long',
+        label: '长休',
+        icon: '🌙',
+        action: () => handlers.onRestLong(),
+      },
+      {
+        id: 'set-camp',
+        label: '扎营',
+        icon: '⛺',
+        action: () => handlers.onSetCamp(),
+      },
+      {
+        id: 'night-watch',
+        label: '值守',
+        icon: '👁️',
+        action: () => handlers.onNightWatch(),
+      },
+    )
 
     // 如果在子地点内，显示"离开"
     if (overview.location_id) {

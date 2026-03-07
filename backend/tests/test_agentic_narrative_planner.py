@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from app.game_core.planning.planner import NarrativePlanner
-from app.narrators import AgenticNarrativePlanner
+from app.narrators import AgenticNarrativePlanner, _format_planner_context
 
 
 # ------------------------------------------------------------------
@@ -130,3 +130,78 @@ def test_deterministic_planner_is_now_async() -> None:
     assert "directives" in result
     assert "metadata" in result
     assert result["metadata"]["provider"] == "default_planner"
+
+
+def test_format_planner_context_includes_party_and_area_context() -> None:
+    ctx = {
+        "narrative_plan": {
+            "current_chapter": "ch1",
+            "escalation_level": 2,
+            "ticks_since_milestone_progress": 5,
+            "pacing_frozen": False,
+            "current_target_milestone": "ms_1",
+            "behavior_window": [],
+        },
+        "quests": {
+            "dynamic_quests": {"dq_intro": {"status": "active"}},
+        },
+        "time": {"day": 3, "slot": 2, "period": "afternoon"},
+        "current_tick": 50,
+        "location": {"area_id": "forest", "location_id": "quest_hub"},
+        "changed_slices": ["quests", "player"],
+        "change_count": 2,
+        "scene": {
+            "system_entries_digest": [
+                {
+                    "command_type": "create_rumor",
+                    "reason": "market whispers",
+                }
+            ],
+            "visible_command_types": ["create_rumor"],
+        },
+        "events": {"pending_events_digest": []},
+        "area_npcs": ["guild_girl", "merchant"],
+        "area_boards": [
+            {"id": "quest_board", "sub_location": "adventurer_guild"},
+        ],
+        "party": [{"id": "companion_lee"}, {"id": "companion_lin"}],
+        "play_style_tags": ["DIALOGUE_HEAVY", "TRADER"],
+        "world_context": {
+            "area_description": "A dim forest filled with ancient stones.",
+            "relevant_factions": [{"id": "f_guild", "name": "Merchant Guild"}],
+            "world_rules": [
+                {
+                    "id": "r1",
+                    "title": "Night Curfew",
+                    "description": "No shouting during the night shift.",
+                }
+            ],
+        },
+    }
+
+    result = _format_planner_context(ctx)
+
+    assert "Party members: companion_lee, companion_lin" in result
+    assert "Play style: DIALOGUE_HEAVY, TRADER" in result
+    assert "Area NPCs: guild_girl, merchant" in result
+    assert "Allowed npc ids: guild_girl, merchant" in result
+    assert "Quest boards: quest_board@adventurer_guild" in result
+    assert "Allowed board ids: quest_board" in result
+    assert "Area description: A dim forest filled with ancient stones." in result
+    assert "Factions: Merchant Guild" in result
+    assert "World rules:\n  Night Curfew: No shouting during the night shift." in result
+
+
+def test_system_prompt_contains_full_phase3_requirements() -> None:
+    prompt = AgenticNarrativePlanner._SYSTEM_PROMPT
+    assert "You are a narrative planner AI for this RPG." in prompt
+    assert "You are NOT the GM" in prompt
+    assert "7 Core Principles" in prompt
+    assert "L0-L5 ladder" in prompt
+    assert "spawn_quest_npc" in prompt
+    assert "plant_environmental" in prompt
+    assert "fill_area" in prompt
+    assert "Output must be strict JSON only" in prompt
+    assert "npc_id must come from Area NPCs" in prompt
+    assert "board_id must come from Quest boards" in prompt
+    assert "Max 3 directives" in prompt

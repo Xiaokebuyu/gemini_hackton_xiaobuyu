@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping
 
 from app.game_core.content import WorldInstance
+from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, _profile_get
 from app.game_core.narrative.context_window import ContextWindow, WindowMessage
 from app.game_core.narrative.executor import AgenticExecutor
@@ -33,6 +34,16 @@ from app.game_core.state import StateContainer
 from app.game_core.state.slices.scene import SceneEntry
 
 logger = logging.getLogger(__name__)
+
+@dataclass(slots=True)
+class RoundMessage:
+    """A single message in a multi-round group dialogue."""
+
+    speaker_id: str
+    speaker_role: str   # "player" | "npc" | "teammate"
+    content: str
+    event_type: str     # "speech" | "emote"
+
 
 _DIALOGUE_BASE_DC: dict[str, int] = {
     "persuasion": 12,
@@ -114,6 +125,8 @@ class NpcInteractionResult:
     npc_result: AgentResult | None = None
     gm_result: AgentResult | None = None
     teammate_results: dict[str, AgentResult] = field(default_factory=dict)
+    ordered_responses: list[tuple[str, AgentResult]] = field(default_factory=list)
+    round_messages: list[RoundMessage] = field(default_factory=list)
     dialogue_options: list[dict[str, Any]] = field(default_factory=list)
     time_cost: float = 0.0          # §3.1: talk = 1/6 格
     error: str | None = None
@@ -141,12 +154,14 @@ class NpcInteractionCoordinator:
         *,
         memory_retriever: MemoryRetriever | None = None,
         memory_writer: Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = None,
+        companion_manager: CompanionRuntimeManager | None = None,
     ) -> None:
         self._executor = executor
         self._world = world
         self._state = state
         self._memory_retriever = memory_retriever
         self._memory_writer = memory_writer
+        self._companion_manager = companion_manager
 
     async def execute_interaction(
         self,
@@ -303,43 +318,101 @@ class NpcInteractionCoordinator:
         except Exception:
             logger.exception("NpcInteractionCoordinator: GM observation failed")
 
-        # ---- Step 4: Teammate Reactions ---------------------------
+        # ---- Step 4: Teammate Reactions (serialized multi-round) ----
         teammate_results: dict[str, AgentResult] = {}
+        ordered_teammate_responses: list[tuple[str, AgentResult]] = []
+        round_messages: list[RoundMessage] = [
+            RoundMessage("player", "player", player_message, "speech"),
+        ]
+        if npc_speech:
+            round_messages.append(RoundMessage(npc_id, "npc", npc_speech, "speech"))
+
         if self._state.has_slice("party"):
             members = self._state.party.members
             if isinstance(members, dict) and members:
-                # Collect scene entries for teammate probability adjustment (Phase 4)
+                # Collect scene entries for teammate probability adjustment
                 scene_entries: list[dict[str, Any]] = []
                 if self._state.has_slice("scene"):
                     snap = self._state.scene.snapshot()
                     scene_entries = [
                         dict(e) for e in snap.get("entries", []) if isinstance(e, dict)
                     ]
-                for member_id in members:
-                    if not _should_teammate_respond(self._world, member_id, scene_entries=scene_entries):
-                        continue
-                    tm_prompt = await builder.build_teammate_interaction_prompt(member_id)
-                    if tm_prompt is None:
-                        continue
-                    # build_teammate_context() has no retriever here → no IO cost (N-7 Phase 2)
-                    tm_layers = await builder.build_teammate_context(member_id)
-                    tm_context = builder.build_agent_context(
-                        "teammate", member_id, execute_command=execute_command,
-                    )
-                    try:
-                        tm_result = await self._executor.run_agentic(
-                            role="teammate",
-                            context=tm_context,
-                            system_prompt=tm_prompt,
-                            user_message=observation_msg,
-                            max_turns=2,
-                            context_layers=tm_layers,
+
+                reply_counts: dict[str, int] = {}
+                participant_ids = list(members.keys())
+
+                while True:
+                    anyone_spoke = False
+                    for member_id in participant_ids:
+                        if reply_counts.get(member_id, 0) >= MAX_REPLIES_PER_PARTICIPANT:
+                            continue
+                        if not _should_teammate_respond(
+                            self._world, member_id, scene_entries=scene_entries,
+                        ):
+                            continue
+
+                        tm_prompt = await builder.build_teammate_interaction_prompt(
+                            member_id, group_mode=True, npc_id=npc_id,
                         )
-                        teammate_results[member_id] = tm_result
-                    except Exception:
-                        logger.exception(
-                            "NpcInteractionCoordinator: Teammate failed: %s", member_id,
+                        if tm_prompt is None:
+                            continue
+                        tm_layers = await builder.build_teammate_context(member_id)
+                        tm_context = builder.build_agent_context(
+                            "teammate", member_id, execute_command=execute_command,
                         )
+
+                        cumulative_msg = _build_group_observation(round_messages)
+
+                        # Retrieve conversation history for this teammate
+                        tm_history: list[dict[str, Any]] | None = None
+                        if self._companion_manager is not None:
+                            companion_inst = self._companion_manager.get_or_create(member_id)
+                            tm_history = _window_to_history(companion_inst.context_window)
+
+                        try:
+                            tm_result = await self._executor.run_agentic(
+                                role="teammate",
+                                context=tm_context,
+                                system_prompt=tm_prompt,
+                                user_message=cumulative_msg,
+                                conversation_history=tm_history,
+                                max_turns=2,
+                                context_layers=tm_layers,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "NpcInteractionCoordinator: Teammate failed: %s",
+                                member_id,
+                            )
+                            continue
+
+                        ordered_teammate_responses.append((member_id, tm_result))
+
+                        # Extract visible output and append to round record
+                        for tr in tm_result.tool_results:
+                            if not tr.success:
+                                continue
+                            evt = (
+                                tr.metadata.get("event_type", "")
+                                if isinstance(tr.metadata, dict) else ""
+                            )
+                            if evt == "speech" and tr.message:
+                                round_messages.append(
+                                    RoundMessage(member_id, "teammate", tr.message, "speech"),
+                                )
+                                reply_counts[member_id] = reply_counts.get(member_id, 0) + 1
+                                anyone_spoke = True
+                            elif evt == "emote" and tr.message:
+                                round_messages.append(
+                                    RoundMessage(member_id, "teammate", tr.message, "emote"),
+                                )
+
+                    if not anyone_spoke:
+                        break
+
+        # Back-fill compat dict (last result per teammate)
+        for mid, tres in ordered_teammate_responses:
+            teammate_results[mid] = tres
 
         # ---- Step 5: Dialogue Options (LLM if GM called suggest_options) -
         dialogue_options = _resolve_dialogue_options(
@@ -357,15 +430,157 @@ class NpcInteractionCoordinator:
             npc_result=npc_result,
             gm_result=gm_result,
             teammate_results=teammate_results,
+            ordered_responses=ordered_teammate_responses,
+            round_messages=round_messages,
             dialogue_options=dialogue_options,
             time_cost=1 / 6,
             graphize_candidates=graphize_candidates,
+        )
+
+    async def execute_free_chat(
+        self,
+        player_message: str,
+        execute_command: Callable[[Command], ExecuteResult],
+    ) -> NpcInteractionResult:
+        """Run party free-chat — teammate evaluation only, no NPC/GM.
+
+        Skips Steps 1-3 of the full pipeline and runs only:
+          Step 4: Serialized multi-round teammate evaluation
+          Step 5: Generic dialogue options (no NPC-specific options)
+
+        Returns NpcInteractionResult with npc_id="" and no npc_result/gm_result.
+        """
+        builder = AgentContextBuilder(self._world, self._state)
+
+        if self._state.has_slice("scene"):
+            self._state.scene.add_entry(SceneEntry(
+                source="player",
+                content=player_message,
+                visibility="public",
+                tags=["speech"],
+            ))
+
+        # ---- Step 4: Teammate Reactions (serialized multi-round) ----
+        teammate_results: dict[str, AgentResult] = {}
+        ordered_teammate_responses: list[tuple[str, AgentResult]] = []
+        round_messages: list[RoundMessage] = [
+            RoundMessage("player", "player", player_message, "speech"),
+        ]
+
+        if self._state.has_slice("party"):
+            members = self._state.party.members
+            if isinstance(members, dict) and members:
+                scene_entries: list[dict[str, Any]] = []
+                if self._state.has_slice("scene"):
+                    snap = self._state.scene.snapshot()
+                    scene_entries = [
+                        dict(e) for e in snap.get("entries", []) if isinstance(e, dict)
+                    ]
+
+                reply_counts: dict[str, int] = {}
+                participant_ids = list(members.keys())
+
+                while True:
+                    anyone_spoke = False
+                    for member_id in participant_ids:
+                        if reply_counts.get(member_id, 0) >= MAX_REPLIES_PER_PARTICIPANT:
+                            continue
+                        if not _should_teammate_respond(
+                            self._world, member_id, scene_entries=scene_entries,
+                        ):
+                            continue
+
+                        tm_prompt = await builder.build_teammate_interaction_prompt(
+                            member_id, group_mode=True, npc_id=None,
+                        )
+                        if tm_prompt is None:
+                            continue
+                        tm_layers = await builder.build_teammate_context(member_id)
+                        tm_context = builder.build_agent_context(
+                            "teammate", member_id, execute_command=execute_command,
+                        )
+
+                        cumulative_msg = _build_group_observation(round_messages)
+
+                        # Retrieve conversation history for this teammate
+                        tm_history: list[dict[str, Any]] | None = None
+                        if self._companion_manager is not None:
+                            companion_inst = self._companion_manager.get_or_create(member_id)
+                            tm_history = _window_to_history(companion_inst.context_window)
+
+                        try:
+                            tm_result = await self._executor.run_agentic(
+                                role="teammate",
+                                context=tm_context,
+                                system_prompt=tm_prompt,
+                                user_message=cumulative_msg,
+                                conversation_history=tm_history,
+                                max_turns=2,
+                                context_layers=tm_layers,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "NpcInteractionCoordinator: Teammate failed in free chat: %s",
+                                member_id,
+                            )
+                            continue
+
+                        ordered_teammate_responses.append((member_id, tm_result))
+
+                        for tr in tm_result.tool_results:
+                            if not tr.success:
+                                continue
+                            evt = (
+                                tr.metadata.get("event_type", "")
+                                if isinstance(tr.metadata, dict) else ""
+                            )
+                            if evt == "speech" and tr.message:
+                                round_messages.append(
+                                    RoundMessage(member_id, "teammate", tr.message, "speech"),
+                                )
+                                reply_counts[member_id] = reply_counts.get(member_id, 0) + 1
+                                anyone_spoke = True
+                            elif evt == "emote" and tr.message:
+                                round_messages.append(
+                                    RoundMessage(member_id, "teammate", tr.message, "emote"),
+                                )
+
+                    if not anyone_spoke:
+                        break
+
+        # Back-fill compat dict
+        for mid, tres in ordered_teammate_responses:
+            teammate_results[mid] = tres
+
+        return NpcInteractionResult(
+            success=True,
+            npc_id="",
+            teammate_results=teammate_results,
+            ordered_responses=ordered_teammate_responses,
+            round_messages=round_messages,
+            dialogue_options=[],
+            time_cost=1 / 6,
         )
 
 
 # ------------------------------------------------------------------
 # Pure helpers
 # ------------------------------------------------------------------
+
+
+MAX_REPLIES_PER_PARTICIPANT = 2
+
+
+def _build_group_observation(round_messages: list[RoundMessage]) -> str:
+    """Build cumulative observation for the next participant."""
+    return json.dumps({
+        "interaction_type": "group_dialogue",
+        "messages": [
+            {"speaker": m.speaker_id, "role": m.speaker_role,
+             "content": m.content, "type": m.event_type}
+            for m in round_messages
+        ],
+    }, ensure_ascii=False)
 
 
 def _extract_speech_text(result: AgentResult) -> str:

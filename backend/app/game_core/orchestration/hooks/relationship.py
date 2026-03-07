@@ -92,7 +92,12 @@ class RelationshipHook(NoOpSettlementHook):
 
     _TRIGGER_SLICES: frozenset[str] = frozenset({"relations", "party"})
 
-    def should_skip(self, change_log: list[Any]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del action_log
         return not any(
             getattr(change, "slice", "") in self._TRIGGER_SLICES
             for change in change_log

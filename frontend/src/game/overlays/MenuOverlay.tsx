@@ -30,6 +30,7 @@ export default function MenuOverlay() {
   const menuItems = [
     { label: '继续游戏', action: overlay.close, style: 'text-gray-200' },
     { label: '📊 角色面板', action: () => overlay.open('character'), style: 'text-gray-400' },
+    { label: '👥 队伍', action: () => overlay.open('party'), style: 'text-gray-400' },
     { label: '🎒 背包', action: () => overlay.open('inventory'), style: 'text-gray-400' },
     { label: '🗺 地图', action: () => overlay.open('map'), style: 'text-gray-400' },
     { label: '📜 任务日志', action: () => overlay.open('quests'), style: 'text-gray-400' },

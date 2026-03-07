@@ -39,8 +39,13 @@ class MilestoneUnlockHook(NoOpSettlementHook):
     HOOK_PRIORITY = 55
     HOOK_NAME = "milestone_unlock"
 
-    def should_skip(self, change_log: list[StateChange]) -> bool:
+    def should_skip(
+        self,
+        change_log: list[StateChange],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
         del change_log
+        del action_log
         # Always run: milestone completions from EventConditionHook bypass change_log.
         return False
 

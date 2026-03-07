@@ -18,7 +18,7 @@ from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
 from app.game_core.state import StateContainer
-from app.game_core.state.slices import SceneSlice
+from app.game_core.state.slices import SceneSlice, TimeSlice
 from app.game_core.state.slices.party import PartySlice
 from app.game_core.state.slices.relations import RelationSlice
 from app.game_core.narrative.companion_runtime import TickRecord
@@ -52,6 +52,7 @@ def _make_context(
     *,
     action_log: list | None = None,
     engine_tags: list[str] | None = None,
+    accumulated: float = 0.0,
     members: dict | None = None,
     stages: dict | None = None,
     dispositions: dict | None = None,
@@ -60,18 +61,31 @@ def _make_context(
     with_party: bool = True,
     with_relations: bool = True,
 ) -> SettlementContext:
+    effective_tags = engine_tags or []
+    effective_action_log = list(action_log or [])
+    if not effective_action_log and "LONG_REST" in effective_tags:
+        effective_action_log = [{"type": "rest_long", "time_cost": 1.0}]
+        if accumulated == 0.0:
+            accumulated = 1.0
+
     state = StateContainer()
     scene_sl = SceneSlice()
     scene_sl.restore({})
     state.register(scene_sl)
     scene_bus = SceneBus(scene_sl)
+    time_slice = TimeSlice()
+    if effective_action_log and any(isinstance(item, dict) and item.get("type") == "rest_long" for item in effective_action_log):
+        time_slice.restore({"day": 1, "slot": 22, "accumulated": accumulated or 1.0})
+    else:
+        time_slice.restore({"day": 1, "slot": 22, "accumulated": accumulated})
+    state.register(time_slice)
 
     if engine_tags:
         scene_bus.add_entry({
             "source": "ENGINE",
             "content": "[test]",
             "visibility": "system",
-            "tags": engine_tags,
+            "tags": effective_tags,
         })
 
     if with_relations:
@@ -101,7 +115,7 @@ def _make_context(
         scene_bus=scene_bus,
         _rules_engine=RulesEngine(),
         _apply_delta=lambda d: None,
-        action_log=action_log or [],
+        action_log=effective_action_log,
         companion_manager=companion_manager,
     )
 
@@ -362,3 +376,19 @@ def test_execute_uses_companion_events_when_shared_experiences_empty() -> None:
     payload = result.sse_events[0].payload
     assert payload["memory_type"] == "exploration"
     assert "ancient ruins" in payload["memory_summary"]
+
+
+def test_execute_skips_mid_rest_slots() -> None:
+    ctx = _make_context(
+        action_log=[{"type": "rest_long", "time_cost": 1.0}],
+        accumulated=4.0,
+        engine_tags=["LONG_REST", "COMBAT_END"],
+        stages={"hero": "acquaintance"},
+        dispositions={"hero": {"approval": 10}},
+        experiences=[
+            {"type": "combat", "day": 1, "participants": ["hero"],
+             "summary": "Day 1 combat at forest"},
+        ],
+    )
+    result = asyncio.run(CampfireHook().execute(ctx))
+    assert not result.sse_events

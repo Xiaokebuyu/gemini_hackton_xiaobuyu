@@ -307,6 +307,47 @@ class TestPromptBuilders:
         builder = _builder()
         assert asyncio.run(builder.build_npc_system_prompt("nonexistent")) is None
 
+    def test_build_npc_system_prompt_uses_temporary_npc_profile(self) -> None:
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        state.narrative_plan.add_temporary_npc(
+            "temp_messenger",
+            {
+                "name": "Temp Messenger",
+                "personality": "calm and direct.",
+                "dialogue_hook": "I can guide you through the gate.",
+                "tags": ["temporary"],
+            },
+        )
+        builder = AgentContextBuilder(world, state)
+        prompt = asyncio.run(builder.build_npc_system_prompt("temp_messenger"))
+
+        assert prompt is not None
+        assert "Temp Messenger" in prompt
+        assert "calm and direct" in prompt
+        assert "## Dialogue hook" in prompt
+        assert "I can guide you through the gate." in prompt
+
+    def test_build_npc_full_context_uses_temporary_npc_profile(self) -> None:
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        state.narrative_plan.add_temporary_npc(
+            "temp_guide",
+            {
+                "name": "Temp Guide",
+                "personality": "old and patient.",
+                "dialogue_hook": "Follow the old trail.",
+                "tags": ["quest_giver"],
+            },
+        )
+        builder = AgentContextBuilder(world, state)
+        npc_full = asyncio.run(builder.build_npc_full_context("temp_guide"))
+
+        assert npc_full is not None
+        assert "Temp Guide" in npc_full.system_prompt
+        assert "old and patient" in npc_full.system_prompt
+        assert "Follow the old trail." in npc_full.system_prompt
+
     def test_build_teammate_system_prompt_integrates_disposition(self) -> None:
         world = _world_with_characters()
         state = _state_with_relations(world)

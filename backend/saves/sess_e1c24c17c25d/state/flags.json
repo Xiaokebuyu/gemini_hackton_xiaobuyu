@@ -1,6 +1,25 @@
 {
   "flags": {
+    "altar_influence_detected": true,
+    "altar_mark_latent": true,
+    "altar_resonance_established": true,
+    "altar_sleep_disturbance_risk": true,
+    "altar_whispers_detected": true,
+    "at_sacrificial_altar": true,
+    "camp_tension_high": true,
+    "enemies_near_perimeter": true,
+    "goblin_nest_tier_confirmed": 2,
+    "guild_girl_protection_priority": true,
+    "guild_girl_social_focus": true,
+    "is_being_tracked": true,
+    "party_alert_level_high": true,
     "private_chat_cooldown_cow_girl": 15,
-    "talked_to_guild_girl": true
+    "rest_interrupted_by_nightmare": true,
+    "ruins_entry_detected": true,
+    "talked_to_guild_girl": true,
+    "talked_to_priestess": true,
+    "threat_shadowing_town": true,
+    "visited_ancient_ruins_p13": true,
+    "witnessed_pc_nightmare": true
   }
 }

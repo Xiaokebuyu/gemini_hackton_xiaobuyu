@@ -31,6 +31,18 @@ export interface SessionLifecycleResponse {
   phase: string
 }
 
+export interface PartyMemberData {
+  name: string
+  class_id: string
+  recruited_tick: number
+}
+
+export interface PartySnapshot {
+  members: Record<string, PartyMemberData>
+  companion_approval: Record<string, number>
+  shared_experiences: unknown[]
+}
+
 export interface ResumeLocationVisual {
   area_id: string
   location_id: string | null
@@ -44,7 +56,7 @@ export interface ResumeSessionResponse {
   phase: string
   player: Record<string, unknown>
   scene: import('./game').LocationOverview
-  party: Record<string, unknown>
+  party: PartySnapshot
   location_visual: ResumeLocationVisual
   resume_narration: string
 }

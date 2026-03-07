@@ -6,22 +6,28 @@ const POSITION_MAP: Array<'left' | 'center' | 'right'> = ['center', 'left', 'rig
 const POSITIONS_2: Array<'left' | 'right'> = ['left', 'right']
 
 function buildPortraits(npcs: PresentNpc[]): PortraitSlot[] {
-  const capped = npcs.slice(0, 3)
+  // Companion 排序靠前
+  const sorted = [...npcs].sort((a, b) =>
+    (a.is_companion ? 0 : 1) - (b.is_companion ? 0 : 1)
+  )
+  const capped = sorted.slice(0, 3)
   if (capped.length === 0) return []
   if (capped.length === 1) {
-    return [{ position: 'center', characterId: capped[0].character_id, isActive: false }]
+    return [{ position: 'center', characterId: capped[0].character_id, isActive: false, isCompanion: capped[0].is_companion ?? false }]
   }
   if (capped.length === 2) {
     return POSITIONS_2.map((pos, i) => ({
       position: pos,
       characterId: capped[i].character_id,
       isActive: false,
+      isCompanion: capped[i].is_companion ?? false,
     }))
   }
   return capped.map((npc, i) => ({
     position: POSITION_MAP[i],
     characterId: npc.character_id,
     isActive: false,
+    isCompanion: npc.is_companion ?? false,
   }))
 }
 
@@ -106,7 +112,7 @@ export const useSceneStore = create<SceneState>((set) => ({
   addOpeningPortrait: (characterId, position) =>
     set((s) => {
       const next = s.portraits.filter((p) => p.characterId !== characterId && p.position !== position)
-      next.push({ position, characterId, isActive: false })
+      next.push({ position, characterId, isActive: false, isCompanion: false })
       return { portraits: next }
     }),
 

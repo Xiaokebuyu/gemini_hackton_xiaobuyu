@@ -104,3 +104,25 @@
 | `tests/test_agent_orchestration.py` | +8 测试 |
 
 测试基线：541 → 571 passed（+30）
+
+---
+
+## [D-I03] 任务看板交互路径收口到 action 管线（2026-03-07）
+
+**背景**：P9 任务入口对齐后，`board` 相关交互不应再走独立的旧 interact 快照/校验逻辑。
+
+### 收口决策
+
+- `board` 浏览与接取统一走 `BoardHandler` + `ActionDispatcher`（`/action/stream`）。
+- `BoardHandler` 负责：
+  - 在 `current_area/current_location` 上校验 `board_id` 可达性；
+  - 输出 `browse_board` 的 `entries`；
+  - 将 `board_accept_quest` 等指令转为 `QuestSlice` 状态变更。
+- 交互层/适配层相关旧路径清理：
+  - 移除 `interact` 体系中与看板直接绑定的规范化与校验代码；
+  - `board` 读取统一由 `AreaSlice` 侧数据提供，不再在 `interaction_service/interaction_views` 维护。
+
+### 验收
+
+- `tests/test_board_handler.py`：静态命令 + 返回结构 + 验证分支
+- `tests/test_api_shell.py`：端到端 `/action/stream` 链路新增 4 条
