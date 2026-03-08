@@ -83,3 +83,6 @@ backend/data/
 # Node dependencies
 node_modules/
 frontend/node_modules/
+
+# TypeScript incremental build metadata
+*.tsbuildinfo
