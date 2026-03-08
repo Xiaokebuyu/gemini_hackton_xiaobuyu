@@ -56,12 +56,12 @@ class TestSSEPresentationPort:
 
     def test_publish_raw(self) -> None:
         port = SSEPresentationPort()
-        port.publish_raw("action_result", {"success": True, "action_type": "move_area"})
+        port.publish_raw("action_result", {"executed": True, "action_type": "move_area"})
         chunks = port.drain()
         assert len(chunks) == 1
         event_type, payload = _parse_sse_chunk(chunks[0])
         assert event_type == "action_result"
-        assert payload["success"] is True
+        assert payload["executed"] is True
         assert payload["action_type"] == "move_area"
 
     def test_publish_many(self) -> None:

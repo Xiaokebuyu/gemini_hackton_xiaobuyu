@@ -1,0 +1,97 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": []
+    },
+    "cow_girl_farm": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "cow_girl": "main_house",
+        "goblin_slayer": "gs_warehouse"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "board_bulletins": {
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "A fresh lead is available: Ms Familiar Banter.",
+            "published_at_tick": 8,
+            "quest_id": "dq_ms_familiar_banter",
+            "source": "narrative_planner",
+            "title": "New Lead Posted"
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 1.03,
+      "discovered_items": [],
+      "exploration": "discovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "goblin_slayer": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "priestess": "mother_earth_temple"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    },
+    "water_capital": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "dwarf_shaman": "steam_bath",
+        "high_elf_archer": "steam_bath",
+        "lizard_priest": "temple_of_law"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

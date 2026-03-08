@@ -33,7 +33,7 @@ class TestE2EGameSession:
                 result = await runtime.tick_coordinator.process(
                     {"action_type": "set_flag", "params": {"key": f"flag_{i}", "value": True}}
                 )
-                assert result.success is True
+                assert result.executed is True
 
         asyncio.run(_run())
 
@@ -82,7 +82,7 @@ class TestE2EGameSession:
                 result = await runtime.tick_coordinator.process(
                     {"action_type": "set_flag", "params": {"key": f"quest_{i}_done", "value": True}}
                 )
-                assert result.success is True
+                assert result.executed is True
 
             for i in range(5):
                 assert runtime.state.flags.flags.get(f"quest_{i}_done") is True

@@ -81,13 +81,15 @@ class TestHostileAreaHandler:
             Command(type="enter_hostile", params={"sub_area_id": "hostile_1"}),
             state, None,
         )
-        assert result.success is True
+        assert result.executed is True
         assert len(result.rolls) == 1
         roll = result.rolls[0]
         assert roll.purpose == "stealth"
         meta = result.metadata
         assert meta["sub_area_id"] == "hostile_1"
-        assert "success" in meta
+        assert "passed" in meta
+        assert meta["outcome"]["category"] == "binary_action"
+        assert meta["outcome"]["passed"] is meta["passed"]
         assert "roll" in meta
         assert "dc" in meta
         assert "modifier" in meta
@@ -114,7 +116,7 @@ class TestHostileAreaHandler:
             state, None,
         )
         meta = result.metadata
-        if meta["success"]:
+        if meta["passed"]:
             actions = {opt["action"] for opt in meta.get("options", [])}
             assert "surprise_attack" in actions
         else:
@@ -131,5 +133,5 @@ class TestHostileAreaHandler:
             state, None,
         )
         meta = result.metadata
-        if not meta["success"]:
+        if not meta["passed"]:
             assert meta["surprise_state"] in ("none", "enemy_surprise")

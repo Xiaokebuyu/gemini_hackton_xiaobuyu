@@ -18,7 +18,7 @@ export interface DiceRollEntry {
   modifier: number
   total: number
   dc: number
-  success: boolean
+  passed: boolean
   skill: string
   roller: string
   roller_name: string

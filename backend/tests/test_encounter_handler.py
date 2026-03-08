@@ -108,7 +108,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "checked"
         assert result.metadata["triggered"] is False
@@ -125,7 +125,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "triggered"
         assert result.metadata["triggered"] is True
         assert result.metadata["sub_area_id"] == "_encounter_forest_9"
@@ -155,7 +155,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["triggered"] is True
         assert result.metadata["sub_area_id"] == "forced_encounter"
 
@@ -175,7 +175,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["template_id"] == "forest_patrol"
         _apply(result, state)
         hostile = state.areas.get_hostile_state(result.metadata["sub_area_id"])
@@ -196,7 +196,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["template_id must be a non-empty string"]
 
     def test_encounter_check_rejects_invalid_period(self) -> None:
@@ -209,7 +209,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["unsupported period: noon"]
 
     def test_clear_hostile_is_idempotent_noop_when_missing(self) -> None:
@@ -219,7 +219,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "noop"
         assert result.metadata["cleared"] is False
@@ -243,7 +243,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cleared"
         _apply(result, state)
         hostile = state.areas.get_hostile_state("hostile_1")
@@ -280,7 +280,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         hostile = state.areas.get_hostile_state("hostile_1")
         assert hostile is not None
@@ -308,7 +308,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "generated"
         assert result.metadata["processed_monster_count"] == 1
         assert result.metadata["unknown_monster_count"] == 1
@@ -333,7 +333,7 @@ class TestEncounterHandler:
             _make_world(include_monsters=False),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "empty"
         assert result.metadata["unknown_monster_count"] == 1
@@ -345,7 +345,7 @@ class TestEncounterHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["player slice is required"]
 
 

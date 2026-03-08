@@ -78,7 +78,7 @@ class PrivateChatResult:
     distinct from third-party GM observation.
     """
 
-    success: bool
+    completed: bool
     npc_id: str
     npc_result: AgentResult | None = None
     dialogue_options: list[dict[str, Any]] = field(default_factory=list)
@@ -160,7 +160,7 @@ class PrivateChatCoordinator:
         if npc_full is None:
             logger.warning("PrivateChatCoordinator: NPC not found: %s", npc_id)
             return PrivateChatResult(
-                success=False, npc_id=npc_id, error="npc_not_found",
+                completed=False, npc_id=npc_id, error="npc_not_found",
             )
         system_prompt = npc_full.system_prompt
         npc_layers = npc_full.layers
@@ -217,7 +217,7 @@ class PrivateChatCoordinator:
             )
         except Exception:
             logger.exception("PrivateChatCoordinator: NPC agent failed: %s", npc_id)
-            return PrivateChatResult(success=False, npc_id=npc_id, error="agent_failed")
+            return PrivateChatResult(completed=False, npc_id=npc_id, error="agent_failed")
 
         if (
             npc_result is not None
@@ -232,7 +232,7 @@ class PrivateChatCoordinator:
                 npc_result.metadata.get("text_present", False),
             )
             return PrivateChatResult(
-                success=False,
+                completed=False,
                 npc_id=npc_id,
                 npc_result=npc_result,
                 error="invalid_agent_response",
@@ -290,7 +290,7 @@ class PrivateChatCoordinator:
 
         # ---- Step 4: Return ---------------------------------------
         return PrivateChatResult(
-            success=True,
+            completed=True,
             npc_id=npc_id,
             npc_result=npc_result,
             dialogue_options=dialogue_options,

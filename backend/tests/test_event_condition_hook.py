@@ -275,7 +275,7 @@ class TestEventConditionHook:
         assert result.metadata["status"] == "applied"
         assert result.metadata["executed_count"] == 1
         assert result.metadata["skipped_invalid_command_count"] == 1
-        assert result.metadata["command_results"][0]["success"] is True
+        assert result.metadata["command_results"][0]["executed"] is True
 
     def test_failed_command_does_not_stop_later_commands(self) -> None:
         context = _make_context()
@@ -300,8 +300,8 @@ class TestEventConditionHook:
         assert result.metadata["status"] == "partial_failure"
         assert result.metadata["executed_count"] == 2
         assert result.metadata["failed_count"] == 1
-        assert result.metadata["command_results"][0]["success"] is False
-        assert result.metadata["command_results"][1]["success"] is True
+        assert result.metadata["command_results"][0]["executed"] is False
+        assert result.metadata["command_results"][1]["executed"] is True
         assert context.state.flags.get("after_failure") is True
 
     def test_invalid_transition_is_skipped(self) -> None:

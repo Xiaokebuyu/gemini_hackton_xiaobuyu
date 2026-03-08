@@ -805,40 +805,47 @@ class PasserbyPool:
 ### 10.2 招募与离队
 
 ```python
+class CompanionHandler(CommandHandler):
+    """队友管理命令处理器。"""
+
+    command_types = [
+        "recruit_companion",
+        "dismiss_companion",
+        "force_leave_companion",
+    ]
+
+    def validate(self, cmd: Command, state: StateContainer, world: WorldInstance):
+        """校验招募/离队前置条件。"""
+
+    def compute(self, cmd: Command, state: StateContainer, world: WorldInstance):
+        """返回 PartySlice + AreaSlice 的 StateDelta。"""
+
+
 class CompanionManager:
-    """队友管理器。"""
+    """队友跟随同步器。"""
 
-    MAX_PARTY_SIZE = 4  # 最多 4 个队友 + 玩家 = 5 人
-
-    async def recruit(self, npc_id: str, state: StateContainer) -> bool:
-        """招募队友。
-        前置条件：
-        - NPC 关系阶段 >= acquaintance
-        - NPC 有 RECRUITABLE tag
-        - 队伍未满
-        - NPC 同意（approval > 0 且无敌对关系）
-
-        效果：
-        - PartySlice.add_member(npc_id)  # 受控例外 C: 队伍管理（建议未来升级为 Command）
-        - NPC 位置锁定为跟随玩家
-        - NPC 日程暂停（在队期间不走日程）
-        - NPC 实例标记为队友（不参与 LRU）
-        """
-
-    async def dismiss(self, npc_id: str, state: StateContainer):
-        """让队友离队。
-        效果：
-        - PartySlice.remove_member(npc_id)
-        - NPC 恢复日程
-        - NPC 返回默认位置（按当前时段）
-        - approval 可能小幅变化（取决于理由和关系深度）
-        """
-
-    async def force_leave(self, npc_id: str, state: StateContainer, reason: str):
-        """队友主动离队（关系恶化、个人原因）。
-        触发条件：approval < -30 或 特定叙事事件
-        """
+    def sync_to_player(self, state: StateContainer):
+        """导航后把所有在队成员同步到玩家当前位置。"""
 ```
+
+> 注释（实现追记，非固定更新，2026-03）
+> 以下内容用于记录当前实现状态，不属于稳定规范正文；后续实现变化时按需更新，不要求每次代码变动都同步修订本条。
+>
+> - `recruit_companion / dismiss_companion / force_leave_companion` 已接入 ❷ RulesEngine。
+> - `CompanionHandler` 是招募/离队规则与 `StateDelta` 的唯一真相源。
+> - `CompanionManager` 仅保留 `sync_to_player()` 等编排层跟随同步职责。
+> - NPC / 队友对话层已经接入：
+>   - NPC `join_party`
+>   - 队友 `leave_party`
+> - 这些工具不会直接改 `PartySlice`，而是构造 companion commands 回到 ❷ 执行。
+> - 当前场景 UI 不再维护前端硬编码招募名单；是否可招募由内容层 `recruitable` tag 决定，并通过 `location_overview.present_npcs[].recruitable` 暴露给前端。
+> - 当前实现采用 curated recruitable 名单：
+>   - `priestess`
+>   - `high_elf_archer`
+>   - `dwarf_shaman`
+>   - `lizard_priest`
+>   - `guild_girl`
+>   - `cow_girl`
 
 ### 10.3 队伍行为
 
@@ -875,6 +882,14 @@ def should_respond(self, teammate: CharacterTemplate, scene: SceneSlice) -> bool
 
     return random.random() < clamp(base_chance, 0.05, 0.95)
 ```
+
+> **实现偏差（2026-03-07）**：实际实现为**序列化多轮对话模型**，非上述单轮独立决策。
+> 见 `orchestration/npc_interaction.py` Step 4。核心差异：
+> - 队友在 `while True` 循环中依次评估，每人看到之前所有人的发言（`_build_group_observation()`）
+> - 每人最多回复 `MAX_REPLIES_PER_PARTICIPANT = 2` 次，一轮中无人发言时循环收敛退出
+> - `RoundMessage` dataclass 记录每条发言（speaker_id, speaker_role, content, event_type）
+> - 对话结束后各队友的 ContextWindow 写入完整对话记录
+> - 另有 `execute_free_chat()` 方法支持无 NPC 的队伍自由聊天（仅执行 Step 4-5）
 
 ### 10.4 共同经历系统
 
@@ -1113,15 +1128,19 @@ graphs/{world_id}/
 
 ### A. 负面关系跃迁
 
-原始设计定义了 cold→hostile→enemy 阶段存在但未指定跃迁条件。实现中 `RelationshipHook` 基于 approval + trust 双维度阈值判定渐进跃迁。进入 hostile/enemy 时自动调用 `CompanionManager.force_leave()`。
+原始设计定义了 cold→hostile→enemy 阶段存在但未指定跃迁条件。实现中 `RelationshipHook` 基于 approval + trust 双维度阈值判定渐进跃迁。进入 hostile/enemy 时自动执行 `Command(type="force_leave_companion")`。
 
-### B. CompanionManager 公共 API
+### B. Companion Commands / 同步职责
 
-`orchestration/companion_manager.py`，独立编排组件（非 Hook）：
+规则层（❷）：
 
-- `recruit(npc_id) -> RecruitResult` — 前置检查 tag / 关系阶段 / 队伍容量
-- `dismiss(npc_id) -> RecruitResult` — 从队伍移除
-- `force_leave(npc_id, reason) -> RecruitResult` — NPC 主动离队，由 RelationshipHook 调用
+- `recruit_companion(npc_id)` — 前置检查 tag / 关系阶段 / 队伍容量，返回 Party + Area delta
+- `dismiss_companion(npc_id, reason?)` — 从队伍移除，默认 `reason="dismissed"`
+- `force_leave_companion(npc_id, reason)` — NPC 主动离队，由 RelationshipHook 调用
+
+编排层（L2）：
+
+- `CompanionManager.sync_to_player()` — 导航/恢复后同步队友到玩家位置
 
 **HTTP 端点**：`POST .../companion/recruit`、`POST .../companion/dismiss`（streaming SSE）
 

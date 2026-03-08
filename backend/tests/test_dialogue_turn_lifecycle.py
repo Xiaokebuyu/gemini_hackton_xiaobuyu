@@ -72,7 +72,7 @@ def test_finalize_external_turn_exposes_dialogue_turn_to_settlement_hooks() -> N
                 "type": "dialogue_turn",
                 "actor": "player",
                 "params": {"npc_id": "guild_girl", "intent": "talk"},
-                "success": True,
+                "executed": True,
             },
         )
     )
@@ -82,7 +82,7 @@ def test_finalize_external_turn_exposes_dialogue_turn_to_settlement_hooks() -> N
             "type": "dialogue_turn",
             "actor": "player",
             "params": {"npc_id": "guild_girl", "intent": "talk"},
-            "success": True,
+            "executed": True,
             "time_cost": 1 / 6,
             "source": "external_turn",
         }
@@ -109,7 +109,7 @@ def test_finalize_external_turn_exposes_private_chat_turn_to_settlement_hooks() 
                 "type": "private_chat_turn",
                 "actor": "player",
                 "params": {"npc_id": "cow_girl", "intent": "private_chat"},
-                "success": True,
+                "executed": True,
             },
         )
     )
@@ -119,7 +119,7 @@ def test_finalize_external_turn_exposes_private_chat_turn_to_settlement_hooks() 
             "type": "private_chat_turn",
             "actor": "player",
             "params": {"npc_id": "cow_girl", "intent": "private_chat"},
-            "success": True,
+            "executed": True,
             "time_cost": 1 / 6,
             "source": "external_turn",
         }

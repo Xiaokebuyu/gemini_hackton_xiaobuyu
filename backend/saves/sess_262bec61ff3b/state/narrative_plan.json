@@ -1,0 +1,43 @@
+{
+  "behavior_window": [
+    {
+      "action_type": "enter_sub_location",
+      "location": "adventurer_guild",
+      "tick": 8
+    }
+  ],
+  "chapter_completion": 0.0,
+  "current_chapter": "",
+  "current_target_milestone": null,
+  "escalation_level": 0,
+  "last_run_tick": 0,
+  "next_scheduled_tick": null,
+  "npc_directives": [
+    {
+      "consumed": false,
+      "directive": {
+        "kind": "present_quest",
+        "quest_id": "dq_ms_familiar_banter",
+        "source_milestone": "ms_familiar_banter"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "guild_girl",
+      "priority": "medium",
+      "source": "narrative_planner"
+    }
+  ],
+  "pacing_frozen": false,
+  "play_style_tags": [],
+  "quest_history": [
+    {
+      "kind": "create_quest",
+      "quest_id": "dq_ms_familiar_banter",
+      "tick": 8
+    }
+  ],
+  "strategy_notes": "Guide the player toward ms_familiar_banter.",
+  "temporary_npcs": {},
+  "ticks_since_milestone_progress": 0
+}

@@ -41,7 +41,7 @@ class InteractionOutputEvent:
 class InteractionExecutionResult:
     """Application-layer output consumed by the HTTP route shell."""
 
-    success: bool
+    completed: bool
     reason: str
     events: list[InteractionOutputEvent]
 
@@ -269,7 +269,7 @@ class InteractionService:
         status = _normalized_text(normalized_map.get("status"))
         if status != "resolved":
             return InteractionExecutionResult(
-                success=False,
+                completed=False,
                 reason="interaction_rejected",
                 events=[_interaction_rejected_event(normalized_map)],
             )
@@ -290,7 +290,7 @@ class InteractionService:
             presence_issue = validate_presence(policy_ctx, target_kind, target_id, intent)
             if presence_issue is not None:
                 return InteractionExecutionResult(
-                    success=False,
+                    completed=False,
                     reason="interaction_rejected",
                     events=[_interaction_rejected_event(normalized_map, issue=presence_issue)],
                 )
@@ -299,7 +299,7 @@ class InteractionService:
             )
             if precheck_issue is not None:
                 return InteractionExecutionResult(
-                    success=False,
+                    completed=False,
                     reason="interaction_rejected",
                     events=[_interaction_rejected_event(normalized_map, issue=precheck_issue)],
                 )
@@ -313,7 +313,7 @@ class InteractionService:
             # Free chat with party — no pipeline execution needed.
             # The streaming endpoint will handle agent orchestration.
             return InteractionExecutionResult(
-                success=True,
+                completed=True,
                 reason="completed",
                 events=[resolved_event],
             )
@@ -334,7 +334,7 @@ class InteractionService:
                 resolved_event,
             )
         return InteractionExecutionResult(
-            success=False,
+            completed=False,
             reason="interaction_rejected",
             events=[
                 resolved_event,
@@ -353,7 +353,7 @@ class InteractionService:
         builder_entry = self._snapshot_builders.get(snapshot_type)
         if builder_entry is None:
             return InteractionExecutionResult(
-                success=False,
+                completed=False,
                 reason="interaction_rejected",
                 events=[
                     resolved_event,
@@ -374,7 +374,7 @@ class InteractionService:
         )
         payload = builder(context, target_id, quest_id, item_id)
         return InteractionExecutionResult(
-            success=True,
+            completed=True,
             reason="completed",
             events=[resolved_event, InteractionOutputEvent(event_type, payload)],
         )
@@ -392,9 +392,9 @@ class InteractionService:
             source="system",
         )
         result = await self._execute_structured_action(session, request)
-        if not result.success:
+        if not result.executed:
             return InteractionExecutionResult(
-                success=False,
+                completed=False,
                 reason="interaction_rejected",
                 events=[
                     resolved_event,
@@ -406,7 +406,7 @@ class InteractionService:
             )
         refreshed_context = build_interaction_view_context(session.runtime.state, session.runtime.world)
         return InteractionExecutionResult(
-            success=True,
+            completed=True,
             reason="completed",
             events=[
                 resolved_event,
@@ -429,9 +429,9 @@ class InteractionService:
         params_map = dict(params) if isinstance(params, Mapping) else {}
         request = _PipelineActionRequest(action_type=action_type, params=params_map)
         result = await self._execute_structured_action(session, request)
-        if not result.success:
+        if not result.executed:
             return InteractionExecutionResult(
-                success=False,
+                completed=False,
                 reason="interaction_rejected",
                 events=[
                     resolved_event,
@@ -466,7 +466,7 @@ class InteractionService:
             )
 
         return InteractionExecutionResult(
-            success=True,
+            completed=True,
             reason="completed",
             events=events,
         )
@@ -526,15 +526,17 @@ def _action_result_event(
     action_type: str,
     result: PipelineResult,
 ) -> InteractionOutputEvent:
+    outcome = result.metadata.get("outcome")
     return InteractionOutputEvent(
         "action_result",
         {
-            "success": result.success,
+            "executed": result.executed,
             "action_type": action_type,
             "time_cost": result.time_cost,
             "errors": list(result.errors),
             "metadata": dict(result.metadata),
             "narrative_hints": list(result.narrative_hints),
+            "outcome": dict(outcome) if isinstance(outcome, Mapping) else None,
         },
     )
 

@@ -463,6 +463,17 @@ class TestPurePromptFormatters:
         assert "You just witnessed a player action. You are NOT being spoken to directly." in prompt
         assert "MUST respond when spoken to" not in prompt
 
+    def test_npc_prompt_mentions_join_party_tool_for_clear_invites(self) -> None:
+        prompt = _build_npc_prompt_text(
+            npc_profile={"name": "Tom"},
+            disposition={"approval": 25, "trust": 20},
+            stage="acquaintance",
+            impressions=[],
+        )
+
+        assert "join_party" in prompt
+        assert "Do not verbally agree to join the party unless you also call `join_party`." in prompt
+
     def test_teammate_prompt_text_includes_personality(self) -> None:
         prompt = _build_teammate_prompt_text(
             profile={"name": "Aria", "personality": "A brave paladin."},
@@ -472,6 +483,7 @@ class TestPurePromptFormatters:
         assert "brave paladin" in prompt
         assert "50" in prompt
         assert "60" in prompt
+        assert "leave_party" in prompt
 
 
 # ------------------------------------------------------------------
@@ -874,7 +886,7 @@ class TestTeammateFull:
             TickRecord(
                 tick=1,
                 action_type="navigate",
-                success=True,
+                executed=True,
                 summary="Scouted the northern ridge.",
                 tags=["NAVIGATION"],
                 involved_npcs=["paladin_aria"],

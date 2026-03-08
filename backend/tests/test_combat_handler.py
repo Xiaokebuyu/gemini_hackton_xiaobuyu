@@ -193,7 +193,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "started"
         assert result.metadata["sub_area_id"] == "_combat_forest_9"
         _apply(result, state)
@@ -228,7 +228,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         hostile = state.areas.get_hostile_state("ambush")
         assert hostile is not None
@@ -259,7 +259,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         hostile = state.areas.get_hostile_state("ambush")
         assert hostile is not None
@@ -276,7 +276,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["start_combat is restricted to engine/system"]
 
     def test_defend_disengage_and_dash_update_player_flags(self) -> None:
@@ -306,7 +306,7 @@ class TestCombatHandler:
         state = _active_combat_state(blocking=True, proficiency_bonus=1)
 
         failed = engine.execute(Command(type="flee"), state, _make_world())
-        assert failed.success is True
+        assert failed.executed is True
         assert failed.delta is None
         assert failed.metadata["status"] == "failed"
 
@@ -323,7 +323,7 @@ class TestCombatHandler:
         )
 
         succeeded = engine.execute(Command(type="flee"), state, _make_world())
-        assert succeeded.success is True
+        assert succeeded.executed is True
         assert succeeded.metadata["status"] == "fled"
         _apply(succeeded, state)
         hostile = state.areas.get_hostile_state("combat_1")
@@ -340,7 +340,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "used"
         _apply(result, state)
         assert state.player.hp == 11
@@ -355,7 +355,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "no_effect"
 
@@ -378,7 +378,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "hit"
         assert result.metadata["damage"] == 3
         assert result.metadata["attack_total"] == 13
@@ -414,7 +414,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "hit"
         assert result.metadata["target_defeated"] is True
         assert result.metadata["combat_active"] is False
@@ -448,7 +448,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         assert result.metadata["status"] == "miss"
         assert result.metadata["damage"] == 0
@@ -478,7 +478,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "hit"
         assert result.metadata["damage"] == 1
         _apply(result, state)
@@ -505,7 +505,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "shoved"
         assert result.metadata["passed"] is True
         assert result.metadata["blocking"] is False
@@ -537,7 +537,7 @@ class TestCombatHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         assert result.metadata["status"] == "resisted"
         assert result.metadata["passed"] is False
@@ -560,7 +560,7 @@ class TestCombatHandler:
             _active_combat_state(),
             world,
         )
-        assert missing_target.success is False
+        assert missing_target.executed is False
         assert missing_target.errors == ["unknown combat target: ogre"]
 
         defeated_target = engine.execute(
@@ -568,7 +568,7 @@ class TestCombatHandler:
             _active_combat_state(participant_hp=0, participant_alive=False),
             world,
         )
-        assert defeated_target.success is False
+        assert defeated_target.executed is False
         assert defeated_target.errors == ["target is not alive: goblin"]
 
         no_combat = engine.execute(
@@ -576,7 +576,7 @@ class TestCombatHandler:
             _make_state(),
             world,
         )
-        assert no_combat.success is False
+        assert no_combat.executed is False
         assert no_combat.errors == ["active combat sub_area_id is required"]
 
     def test_stand_up_removes_prone(self) -> None:
@@ -590,7 +590,7 @@ class TestCombatHandler:
             state,
             _make_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "stood_up"
         assert result.metadata["removed_count"] == 1
         assert result.delta is not None
@@ -608,7 +608,7 @@ class TestCombatHandler:
             state,
             _make_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "not_prone"
 
@@ -755,7 +755,7 @@ class TestEffectPipelineIntegration:
         result = _make_engine().execute(
             Command(type="attack", params={"target": "test_monster"}), state, world
         )
-        assert result.success is True
+        assert result.executed is True
         state.apply(result.delta)
         assert state.player.hp == 12  # monster missed because stored ac=15
 
@@ -980,7 +980,7 @@ class TestEffectPipelineIntegration:
         monster_resp = result.metadata["monster_responses"]
         assert len(monster_resp) > 0
         # Monster attack did NOT hit (player_ac=100), but the roll count confirms advantage was used
-        assert result.success is True
+        assert result.executed is True
 
 
 class TestMonsterAI:
@@ -1099,7 +1099,7 @@ class TestMonsterAI:
         result = _make_engine().execute(
             Command(type="attack", params={"target": "test_monster"}), state, world
         )
-        assert result.success is True
+        assert result.executed is True
         monster_resp = result.metadata["monster_responses"]
         assert len(monster_resp) == 1
         assert monster_resp[0]["action"] == "stunned"

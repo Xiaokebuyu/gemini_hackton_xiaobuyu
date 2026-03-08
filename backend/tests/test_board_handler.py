@@ -168,7 +168,7 @@ def test_browse_board_success_returns_filtered_entries_with_status() -> None:
     world = _make_world()
     result = _execute(Command(type="browse_board", params={"board_id": "quest_board"}), state, world)
 
-    assert result.success is True
+    assert result.executed is True
     assert result.time_cost == 1 / 6
     assert result.delta is None
     assert result.metadata["board_id"] == "quest_board"
@@ -196,7 +196,7 @@ def test_board_accept_quest_success_marks_dynamic_quest_active() -> None:
         world,
     )
 
-    assert result.success is True
+    assert result.executed is True
     assert result.time_cost == 1 / 6
     assert result.metadata["quest_id"] == "q_available"
     assert result.delta is not None
@@ -230,8 +230,8 @@ def test_board_accept_quest_rejects_completed_or_active() -> None:
         world,
     )
 
-    assert result_active.success is False
-    assert result_done.success is False
+    assert result_active.executed is False
+    assert result_done.executed is False
     assert any("cannot be accepted" in err for err in result_active.errors)
     assert any("cannot be accepted" in err for err in result_done.errors)
 
@@ -248,7 +248,7 @@ def test_browse_board_empty_board_returns_empty_entries() -> None:
         world,
     )
 
-    assert result.success is True
+    assert result.executed is True
     assert result.metadata["entries"] == []
 
 
@@ -269,7 +269,7 @@ def test_board_accept_quest_rejects_missing_quest_in_board() -> None:
         world,
     )
 
-    assert result.success is False
+    assert result.executed is False
     assert any("not found on board" in err for err in result.errors)
 
 
@@ -285,7 +285,7 @@ def test_board_complete_quest_success_marks_completed() -> None:
         world,
     )
 
-    assert result.success is True
+    assert result.executed is True
     assert result.time_cost == 1 / 6
     state.apply(result.delta)
     assert state.quests.dynamic_quests["q_active"]["status"] == "completed"
@@ -303,7 +303,7 @@ def test_board_complete_quest_rejects_non_active() -> None:
         world,
     )
 
-    assert result.success is False
+    assert result.executed is False
     assert any("cannot be completed" in err for err in result.errors)
 
 
@@ -319,7 +319,7 @@ def test_board_retire_quest_success_marks_retired() -> None:
         world,
     )
 
-    assert result.success is True
+    assert result.executed is True
     assert result.time_cost == 1 / 6
     state.apply(result.delta)
     assert state.quests.dynamic_quests["q_active"]["status"] == "retired"
@@ -341,5 +341,5 @@ def test_board_commands_only_affect_quests_on_board() -> None:
         world,
     )
 
-    assert result.success is False
+    assert result.executed is False
     assert any("not found on board" in err for err in result.errors)

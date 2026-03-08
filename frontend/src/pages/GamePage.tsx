@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { audio } from '../lib/audio'
-import { getCharacter, getScene } from '../lib/api'
+import { getCharacter, resumeSession } from '../lib/api'
 import { useDialogueStore } from '../stores/dialogueStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -120,8 +120,8 @@ export default function GamePage() {
     sendInteract,
     sendNavigate,
     sendAction,
-    sendInput,
     sendPrivateChat,
+    sendCompanionRecruit,
     sendCompanionDismiss,
     sendCombatAction,
     sendEncounterAction,
@@ -242,17 +242,24 @@ export default function GamePage() {
       }
     }
 
-    Promise.all([getScene(worldId, sessionId), loadCharacter])
-      .then(([overview, panel]) => {
-        if (cancelled) {
-          return
-        }
-        if (panel.phase === 'opening_ready') {
+    resumeSession(worldId, sessionId)
+      .then((res) => {
+        if (cancelled) return
+        if (res.phase === 'opening_ready') {
           startOpeningFlow()
           return
         }
+        updatePlayer({ phase: res.phase, player: res.player })
+        setPhase(res.phase)
+        if (res.party?.members) {
+          usePartyStore.getState().initFromSnapshot(res.party)
+        }
+        usePartyStore.getState().enrichFromPresentNpcs(res.scene.present_npcs)
         dialogueStore.resetMessages()
-        hydrateOverview(overview)
+        hydrateOverview(res.scene)
+        if (res.resume_narration?.trim()) {
+          dialogueStore.addMessage({ type: 'gm', content: res.resume_narration.trim() })
+        }
       })
       .catch((err: Error) => {
         if (!cancelled) {
@@ -316,7 +323,12 @@ export default function GamePage() {
       case 'board':
         return <BoardOverlay sendAction={sendAction} />
       case 'party':
-        return <PartyPanel sendCompanionDismiss={sendCompanionDismiss} />
+        return (
+          <PartyPanel
+            sendCompanionRecruit={sendCompanionRecruit}
+            sendCompanionDismiss={sendCompanionDismiss}
+          />
+        )
       default:
         return null
     }
@@ -338,7 +350,6 @@ export default function GamePage() {
         <DialogueArea
           worldId={worldId!}
           sessionId={sessionId!}
-          sendInput={sendInput}
           sendInteract={sendInteract}
           overviewHandlers={overviewHandlers}
         />

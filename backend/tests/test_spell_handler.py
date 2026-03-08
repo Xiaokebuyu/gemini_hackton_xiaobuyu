@@ -275,7 +275,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "broken"
         _apply(result, state)
         assert state.player.concentration is None
@@ -288,7 +288,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "noop"
 
@@ -302,7 +302,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "prepared"
         assert result.metadata["max_prepared"] == 6
 
@@ -316,7 +316,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "not_applicable"
 
@@ -330,7 +330,7 @@ class TestSpellHandler:
             _make_world(include_classes=False),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "prepared_fallback"
         assert result.metadata["used_fallback_limit"] is True
 
@@ -343,7 +343,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["consumed_slot"] is True
         _apply(result, state)
@@ -363,7 +363,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert len(result.rolls) == 2
         _apply(result, state)
         assert state.player.hp == 10
@@ -392,7 +392,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["broke_previous_concentration"] is True
         assert result.metadata["concentration"] is True
         _apply(result, state)
@@ -433,7 +433,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "broken"
         assert result.metadata["removed_effect_count"] == 1
         _apply(result, state)
@@ -454,7 +454,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "unsupported_effect"
         assert state.player.spell_slots[1]["current"] == 2
@@ -468,7 +468,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "unsupported_effect"
         assert state.player.spell_slots[1]["current"] == 2
@@ -482,7 +482,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["target_mode"] == "combat"
         assert result.metadata["damage_total"] == 5
@@ -502,7 +502,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["target_defeated"] is True
         assert result.metadata["combat_cleared"] is True
         _apply(result, state)
@@ -530,7 +530,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert len(result.rolls) == 2
         assert result.metadata["damage_total"] == 5
         _apply(result, state)
@@ -546,7 +546,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["target_mode"] == "combat"
         assert result.metadata["concentration"] is True
@@ -593,7 +593,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["broke_previous_concentration"] is True
         _apply(result, state)
         hostile = state.areas.get_hostile_state("combat_1")
@@ -616,7 +616,7 @@ class TestSpellHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         assert result.metadata["status"] == "cast"
         # arc_bolt 固定 5 点伤害，goblin 被命中
@@ -633,7 +633,7 @@ class TestSpellHandler:
             _make_state(),
             world,
         )
-        assert no_combat.success is True
+        assert no_combat.executed is True
         assert no_combat.delta is None
         assert no_combat.metadata["status"] == "unsupported_target"
 
@@ -642,7 +642,7 @@ class TestSpellHandler:
             _active_combat_state(),
             world,
         )
-        assert missing_target.success is True
+        assert missing_target.executed is True
         assert missing_target.delta is None
         assert missing_target.metadata["status"] == "unsupported_target"
 
@@ -651,7 +651,7 @@ class TestSpellHandler:
             _active_combat_state(participant_hp=0, participant_alive=False),
             world,
         )
-        assert dead_target.success is True
+        assert dead_target.executed is True
         assert dead_target.delta is None
         assert dead_target.metadata["status"] == "unsupported_target"
 
@@ -814,7 +814,7 @@ class TestSpellDcAndSavingThrows:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["damage_total"] == 7  # 4 + 3
         _apply(result, state)
@@ -839,7 +839,7 @@ class TestSpellDcAndSavingThrows:
             world,
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["damage_total"] == 8
         assert result.metadata["save_dc"] == 13
@@ -864,7 +864,7 @@ class TestSpellDcAndSavingThrows:
             world,
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["damage_total"] == 5  # max(1, 10 // 2)
         save_roll = result.metadata["save_rolls"][0]
@@ -885,7 +885,7 @@ class TestSpellDcAndSavingThrows:
             world,
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "cast"
         assert result.metadata["damage_total"] == 0
         assert result.metadata["target_hp"] == 7   # HP 不变

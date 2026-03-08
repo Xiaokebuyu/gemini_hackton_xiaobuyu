@@ -164,7 +164,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         assert state.relations.npc_dispositions["npc_guard"]["trust"] == 10
 
@@ -178,7 +178,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["delta must be between -50 and 50"]
 
     def test_modify_approval_accepts_character_alias(self) -> None:
@@ -192,7 +192,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         assert state.party.companion_approval["companion_1"] == 5
 
@@ -206,7 +206,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["character not in party: npc_guard"]
 
     def test_advance_quest_allows_valid_milestone_transition(self) -> None:
@@ -220,7 +220,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         milestone = state.quests.get_milestone("ms_1")
         assert milestone is not None
@@ -237,7 +237,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["invalid milestone transition: COMPLETED -> ACTIVE"]
 
     def test_advance_quest_allows_dynamic_transition(self) -> None:
@@ -251,7 +251,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         assert state.quests.dynamic_quests["dyn_1"]["status"] == "completed"
 
@@ -265,7 +265,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["invalid dynamic quest transition: completed -> active"]
 
     def test_schedule_event_accepts_absolute_trigger_condition(self) -> None:
@@ -281,7 +281,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         pending = result.delta.changes[0].value
         assert pending["trigger_condition"] == {"type": "absolute_tick", "tick": 42}
@@ -301,7 +301,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         pending = result.delta.changes[0].value
         # Condition is preserved as-is (not pre-computed to tick)
@@ -321,7 +321,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["unsupported trigger_condition.type: moon_phase"]
 
     def test_schedule_event_accepts_period_reached_condition(self) -> None:
@@ -337,7 +337,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         pending = result.delta.changes[0].value
         assert pending["trigger_condition"] == {"type": "period_reached", "period": "day"}
@@ -355,7 +355,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         pending = result.delta.changes[0].value
         assert pending["trigger_condition"] == {"type": "location_entered", "area_id": "forest"}
@@ -373,7 +373,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         pending = result.delta.changes[0].value
         assert pending["trigger_condition"] == {"type": "flag_set", "key": "quest_started"}
@@ -394,7 +394,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is not None
         rumor = result.delta.changes[0].value
         assert rumor["text"] == "Watch the tree line"
@@ -412,7 +412,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["spread_to target not found: unknown_target"]
 
     def test_modify_location_allows_engine_player_location_updates(self) -> None:
@@ -427,7 +427,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         assert state.player.current_area == "forest"
         assert state.player.current_location == "camp"
@@ -443,7 +443,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["ai_osiris cannot modify player location directly"]
 
     def test_modify_location_area_property_mode_updates_area_slice(self) -> None:
@@ -458,7 +458,7 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         _apply(result, state)
         assert state.areas.get_area("forest").properties["weather"] == "rain"
 
@@ -480,8 +480,8 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert success_result.success is True
-        assert error_result.success is False
+        assert success_result.executed is True
+        assert error_result.executed is False
         assert error_result.errors == ["delta must be between -0.2 and 0.5"]
 
     def test_adjust_danger_enforces_bounds(self) -> None:
@@ -503,8 +503,8 @@ class TestWorldStateHandler:
             _make_world(),
         )
 
-        assert success_result.success is True
+        assert success_result.executed is True
         _apply(success_result, state)
         assert state.areas.get_danger("forest") == 1.5
-        assert error_result.success is False
+        assert error_result.executed is False
         assert error_result.errors == ["delta must be between -0.5 and 0.5"]

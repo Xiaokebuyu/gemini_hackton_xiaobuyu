@@ -7,6 +7,7 @@ from app.game_core.rules.engine import RulesEngine
 from app.game_core.rules.handlers import (
     BoardHandler,
     CombatHandler,
+    CompanionHandler,
     ContainerHandler,
     CrimeHandler,
     DiscoveryHandler,
@@ -26,6 +27,7 @@ from app.game_core.rules.handlers import (
 
 
 DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
+    CompanionHandler,
     CombatHandler,
     SkillCheckHandler,
     NavigationHandler,

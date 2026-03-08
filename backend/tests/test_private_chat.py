@@ -114,7 +114,7 @@ def _state_with_relations(world: WorldInstance) -> StateContainer:
 
 
 def _noop_executor(command: Command) -> ExecuteResult:
-    return ExecuteResult(success=True)
+    return ExecuteResult(executed=True)
 
 
 def _npc_speak_response(text: str = "Hello.") -> dict[str, Any]:
@@ -150,10 +150,10 @@ def _build_coordinator(
 def _make_private_result(
     npc_result: AgentResult | None = None,
     dialogue_options: list[dict[str, Any]] | None = None,
-    success: bool = True,
+    completed: bool = True,
 ) -> PrivateChatResult:
     return PrivateChatResult(
-        success=success,
+        completed=completed,
         npc_id="merchant_tom",
         npc_result=npc_result,
         dialogue_options=dialogue_options or [
@@ -171,7 +171,7 @@ def _make_private_result(
 
 class TestPrivateChatCoordinator:
     def test_returns_failure_when_npc_not_found(self) -> None:
-        """World has no characters registry → success=False, error='npc_not_found'."""
+        """World has no characters registry → completed=False, error='npc_not_found'."""
         world = build_default_world("empty_world", world_data={})
         runtime = build_runtime_for_world(world)
         state = runtime.state
@@ -189,12 +189,12 @@ class TestPrivateChatCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is False
+        assert result.completed is False
         assert result.error == "npc_not_found"
         assert result.npc_result is None
 
     def test_npc_found_no_llm_returns_result(self) -> None:
-        """No LLM provider → executor degrades gracefully → coordinator returns success=True."""
+        """No LLM provider → executor degrades gracefully → coordinator completes."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         registry = RoleToolRegistry()
@@ -208,11 +208,11 @@ class TestPrivateChatCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         assert result.npc_id == "merchant_tom"
 
     def test_npc_agent_exception_returns_agent_failed(self) -> None:
-        """LLM throws → coordinator returns success=False, error='agent_failed'."""
+        """LLM throws → coordinator returns completed=False, error='agent_failed'."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         registry = RoleToolRegistry()
@@ -226,7 +226,7 @@ class TestPrivateChatCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is False
+        assert result.completed is False
         assert result.error == "agent_failed"
         assert result.npc_id == "merchant_tom"
 
@@ -397,7 +397,7 @@ class TestPrivateChatCoordinator:
             instance=instance,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         assert directive["consumed"] is True
         assert instance.directive_queue == []
         assert "hidden_cellar" in llm.calls[0]["system_prompt"]
@@ -426,7 +426,7 @@ class TestPrivateChatCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is False
+        assert result.completed is False
         assert result.error == "invalid_agent_response"
         assert result.error_reason == "text_without_tool"
 
@@ -442,7 +442,7 @@ class TestPrivateChatResultToSSE:
         npc_result = AgentResult(
             tool_results=[
                 ToolResult(
-                    success=True,
+                    ok=True,
                     message="Of course, traveller.",
                     metadata={"event_type": "speech"},
                 ),
@@ -460,12 +460,77 @@ class TestPrivateChatResultToSSE:
         event_types = [e.event_type for e in events]
         assert "dialogue_options" in event_types
 
+    def test_private_talk_option_dispatch_uses_private_scope(self) -> None:
+        result = _make_private_result(
+            dialogue_options=[{"text": "继续交谈", "intent": "talk"}],
+        )
+
+        events = _private_chat_result_to_sse(result)
+
+        option_payload = [e for e in events if e.event_type == "dialogue_options"][0].payload["options"][0]
+        assert option_payload["dispatch"]["kind"] == "interact"
+        assert option_payload["dispatch"]["payload"] == {
+            "scope": "private",
+            "intent": "talk",
+            "target_kind": "npc",
+            "target_id": "merchant_tom",
+            "message": "继续交谈",
+        }
+
+    def test_private_checked_option_dispatch_uses_private_scope(self) -> None:
+        result = _make_private_result(
+            dialogue_options=[
+                {
+                    "text": "[说服 DC12] 再追问一次",
+                    "intent": "talk",
+                    "check": {"skill": "persuasion", "dc": 12},
+                },
+            ],
+        )
+
+        events = _private_chat_result_to_sse(result)
+
+        option_payload = [e for e in events if e.event_type == "dialogue_options"][0].payload["options"][0]
+        assert option_payload["dispatch"]["kind"] == "interact"
+        assert option_payload["dispatch"]["payload"] == {
+            "scope": "private",
+            "intent": "talk",
+            "target_kind": "npc",
+            "target_id": "merchant_tom",
+            "message": "[说服 DC12] 再追问一次",
+            "check_skill": "persuasion",
+            "check_dc": 12,
+        }
+
+    def test_private_browse_option_does_not_generate_dispatch(self) -> None:
+        result = _make_private_result(
+            dialogue_options=[{"text": "查看商品", "intent": "browse"}],
+        )
+
+        events = _private_chat_result_to_sse(result)
+
+        option_payload = [e for e in events if e.event_type == "dialogue_options"][0].payload["options"][0]
+        assert "dispatch" not in option_payload
+
+    def test_private_farewell_option_stays_local(self) -> None:
+        result = _make_private_result(
+            dialogue_options=[{"text": "告别", "intent": "farewell"}],
+        )
+
+        events = _private_chat_result_to_sse(result)
+
+        option_payload = [e for e in events if e.event_type == "dialogue_options"][0].payload["options"][0]
+        assert option_payload["dispatch"] == {
+            "kind": "local",
+            "payload": {"action": "leave_dialogue"},
+        }
+
     def test_no_gm_or_teammate_events_in_output(self) -> None:
         """Output must not contain gm_narration or teammate_response events."""
         npc_result = AgentResult(
             tool_results=[
                 ToolResult(
-                    success=True,
+                    ok=True,
                     message="Hello.",
                     metadata={"event_type": "speech"},
                 ),
@@ -477,10 +542,32 @@ class TestPrivateChatResultToSSE:
         assert "gm_narration" not in event_types
         assert "teammate_response" not in event_types
 
+    def test_gm_comment_is_kept_as_introspective_output(self) -> None:
+        result = _make_private_result(
+            npc_result=None,
+        )
+        result.gm_result = AgentResult(
+            tool_results=[
+                ToolResult(
+                    ok=True,
+                    message="你意识到她比柜台后的微笑更疲惫。",
+                    metadata={"event_type": "gm_comment"},
+                ),
+            ],
+        )
+
+        events = _private_chat_result_to_sse(result)
+
+        gm_event = [event for event in events if event.event_type == "gm_comment"][0]
+        assert gm_event.payload == {
+            "content": "你意识到她比柜台后的微笑更疲惫。",
+            "tone": "introspective",
+        }
+
     def test_empty_dialogue_options_no_options_event(self) -> None:
         """Empty dialogue_options → no dialogue_options SSE event emitted."""
         result = PrivateChatResult(
-            success=True,
+            completed=True,
             npc_id="merchant_tom",
             dialogue_options=[],
         )
@@ -491,7 +578,7 @@ class TestPrivateChatResultToSSE:
     def test_none_npc_result_no_npc_event(self) -> None:
         """npc_result=None → no npc_response event (NPC stayed silent)."""
         result = PrivateChatResult(
-            success=True,
+            completed=True,
             npc_id="merchant_tom",
             npc_result=None,
             dialogue_options=[{"text": "继续交谈", "intent": "talk"}],

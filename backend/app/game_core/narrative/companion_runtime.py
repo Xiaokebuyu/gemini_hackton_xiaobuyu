@@ -16,7 +16,7 @@ class TickRecord:
 
     tick: int
     action_type: str
-    success: bool
+    executed: bool
     summary: str
     tags: list[str] = field(default_factory=list)
     involved_npcs: list[str] = field(default_factory=list)

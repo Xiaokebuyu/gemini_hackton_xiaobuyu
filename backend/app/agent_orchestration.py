@@ -31,6 +31,7 @@ from app.game_core.orchestration.private_chat import (
     PrivateChatCoordinator,
     PrivateChatResult,
 )
+from app.game_core.orchestration.presence import get_area_npcs, is_colocated
 from app.game_core.orchestration.shared_context import SharedContext
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateDelta
@@ -108,6 +109,7 @@ class AgentOrchestrationService:
         player_message: str,
         intent: str = "talk",
         text_chunk_sink: Callable[[str], Awaitable[None]] | None = None,
+        check_result: dict[str, Any] | None = None,
     ) -> list[SSEEvent]:
         """Full 6-step NPC interaction pipeline → SSE events.
 
@@ -132,6 +134,7 @@ class AgentOrchestrationService:
                 intent=intent,
                 instance=instance,
                 text_chunk_sink=text_chunk_sink,
+                check_result=check_result,
             )
         except Exception:
             logger.exception("NPC interaction pipeline failed: %s", npc_id)
@@ -140,7 +143,7 @@ class AgentOrchestrationService:
                 payload={"npc_id": npc_id, "error": "interaction_failed"},
             )]
 
-        if not result.success:
+        if not result.completed:
             if result.error == "npc_not_found":
                 logger.warning("NPC not found in interaction: %s", npc_id)
                 return []
@@ -167,12 +170,68 @@ class AgentOrchestrationService:
         # Write round record into each participating teammate's ContextWindow
         _write_teammate_context_windows(session, result)
 
-        return _interaction_result_to_sse(
+        events = _interaction_result_to_sse(
             result,
             action_dispatcher=session.runtime.action_dispatcher,
         )
+        if not _has_gm_comment_event(events):
+            fallback = SSEEvent(
+                event_type="gm_comment",
+                payload={"content": "你把话抛了出去，仿佛先开口本身就算半场胜利。"},
+            )
+            events = _insert_event_before(
+                events,
+                fallback,
+                before_event_types={"teammate_response", "dialogue_options"},
+            )
+        return events
 
     # ---- Free chat with party (no NPC target) ----
+
+    async def run_public_utterance(
+        self,
+        session: ManagedSession,
+        player_message: str,
+        intent: str = "talk",
+        text_chunk_sink: Callable[[str], Awaitable[None]] | None = None,
+        check_result: dict[str, Any] | None = None,
+    ) -> list[SSEEvent]:
+        """Public untargeted speech — GM + teammate reactions, no focused NPC."""
+
+        del text_chunk_sink  # Public untargeted speech currently has no streamed speaker.
+        coordinator = NpcInteractionCoordinator(
+            executor=self._executor,
+            world=session.runtime.world,
+            state=session.runtime.state,
+            memory_retriever=self._memory_retriever,
+            companion_manager=getattr(session.runtime, "companion_manager", None),
+        )
+        try:
+            result = await coordinator.execute_public_utterance(
+                player_message=player_message,
+                execute_command=_make_command_executor(session),
+                intent=intent,
+                check_result=check_result,
+            )
+        except Exception:
+            logger.exception("Public utterance pipeline failed")
+            return [SSEEvent(
+                event_type="stream_error",
+                payload={"error": "public_utterance_failed"},
+            )]
+
+        _write_teammate_context_windows(session, result)
+        events = _public_utterance_result_to_sse(result)
+        if not _has_gm_comment_event(events):
+            events = _insert_event_before(
+                events,
+                SSEEvent(
+                    event_type="gm_comment",
+                    payload={"content": "你的话落进空气里，而空气通常比措辞更诚实。"},
+                ),
+                before_event_types={"teammate_response"},
+            )
+        return events
 
     async def run_free_chat(
         self,
@@ -207,7 +266,15 @@ class AgentOrchestrationService:
         # Write round record into each participating teammate's ContextWindow
         _write_teammate_context_windows(session, result)
 
-        return _free_chat_result_to_sse(result)
+        events = _free_chat_result_to_sse(result)
+        comment_event = await self._build_party_comment_event(
+            session,
+            player_message,
+            result,
+        )
+        if comment_event is not None:
+            events.append(comment_event)
+        return events
 
     # ---- Private 4-step chat (no GM/teammate observation) ----
 
@@ -242,7 +309,7 @@ class AgentOrchestrationService:
                 payload={"npc_id": npc_id, "error": "private_chat_failed"},
             )]
 
-        if not result.success:
+        if not result.completed:
             if result.error == "npc_not_found":
                 logger.warning("NPC not found in private chat: %s", npc_id)
                 return []
@@ -266,9 +333,68 @@ class AgentOrchestrationService:
 
         await self._write_episode(session, npc_id, result.graphize_candidates)
 
-        return _private_chat_result_to_sse(
+        events = _private_chat_result_to_sse(
             result,
             action_dispatcher=session.runtime.action_dispatcher,
+        )
+        if not _has_gm_comment_event(events):
+            events = _insert_event_before(
+                events,
+                SSEEvent(
+                    event_type="gm_comment",
+                    payload={
+                        "content": "你听见心里那点回声，比嘴上那句话更先承认了分量。",
+                        "tone": "introspective",
+                    },
+                ),
+                before_event_types={"dialogue_options"},
+            )
+        return events
+
+    async def _build_party_comment_event(
+        self,
+        session: ManagedSession,
+        player_message: str,
+        result: NpcInteractionResult,
+    ) -> SSEEvent | None:
+        """Return one short GM comment for explicit party chat."""
+        builder = AgentContextBuilder(session.runtime.world, session.runtime.state)
+        gm_context = builder.build_agent_context("gm")
+        visible_replies = _visible_teammate_reply_summaries(result)
+        observation = json.dumps(
+            {
+                "interaction_type": "party_chat",
+                "player_message": player_message,
+                "audience_member_ids": list(result.audience_member_ids),
+                "party_silent": not visible_replies,
+                "teammate_replies": visible_replies,
+            },
+            ensure_ascii=False,
+        )
+        try:
+            gm_result = await self._executor.run_agentic(
+                role="gm",
+                context=gm_context,
+                system_prompt=builder.build_gm_party_chat_prompt(),
+                user_message=observation,
+                max_turns=1,
+                context_layers=builder.build_gm_context(),
+            )
+        except Exception:
+            logger.exception("GM party chat comment generation failed")
+            gm_result = None
+
+        comment_event = _first_gm_comment_event(gm_result)
+        if comment_event is not None:
+            return comment_event
+        if visible_replies:
+            return SSEEvent(
+                event_type="gm_comment",
+                payload={"content": "队伍总算把气氛接住了，虽然接法离体面还差一点。"},
+            )
+        return SSEEvent(
+            event_type="gm_comment",
+            payload={"content": "你的战术讨论收获颇丰：一阵足以切开的沉默。"},
         )
 
     async def generate_opening_sequence(
@@ -424,7 +550,7 @@ class AgentOrchestrationService:
         event_sink: Callable[[SSEEvent], Awaitable[None]] | None = None,
     ) -> list[SSEEvent]:
         """Run the main-flow agent round after one successful engine action."""
-        if not result.success:
+        if not result.executed:
             return []
 
         collected: list[SSEEvent] = []
@@ -494,12 +620,7 @@ class AgentOrchestrationService:
         gm_layers = builder.build_gm_context(hints=list(result.narrative_hints))
 
         user_message = json.dumps(
-            {
-                "action_type": result.action_type,
-                "success": result.success,
-                "narrative_hints": list(result.narrative_hints),
-                "time_cost": result.time_cost,
-            },
+            _result_decision_payload(result),
             ensure_ascii=False,
             default=str,
         )
@@ -530,12 +651,7 @@ class AgentOrchestrationService:
         context = builder.build_agent_context("gm")
         gm_layers = builder.build_gm_context(hints=list(result.narrative_hints))
         user_message = json.dumps(
-            {
-                "action_type": result.action_type,
-                "success": result.success,
-                "narrative_hints": list(result.narrative_hints),
-                "time_cost": result.time_cost,
-            },
+            _result_decision_payload(result),
             ensure_ascii=False,
             default=str,
         )
@@ -584,11 +700,8 @@ class AgentOrchestrationService:
         context = builder.build_agent_context("gm")
         user_message = json.dumps(
             {
-                "action_type": result.action_type,
-                "success": result.success,
+                **_result_decision_payload(result),
                 "npc_id": npc_id,
-                "time_cost": result.time_cost,
-                "narrative_hints": list(result.narrative_hints),
                 "action_context": dict(action_context),
             },
             ensure_ascii=False,
@@ -659,11 +772,7 @@ class AgentOrchestrationService:
             companion_manager.sync_members(member_ids, current_tick=current_tick)
 
         user_message = json.dumps(
-            {
-                "action_type": result.action_type,
-                "success": result.success,
-                "narrative_hints": list(result.narrative_hints),
-            },
+            _result_decision_payload(result),
             ensure_ascii=False,
             default=str,
         )
@@ -769,19 +878,12 @@ class AgentOrchestrationService:
             companion_manager.sync_members(member_ids, current_tick=current_tick)
 
         user_message = json.dumps(
-            {
-                "action_type": result.action_type,
-                "success": result.success,
-                "narrative_hints": list(result.narrative_hints),
-            },
+            _result_decision_payload(result),
             ensure_ascii=False,
             default=str,
         )
         builder = AgentContextBuilder(world, state)
-        scene_entries = [
-            entry.snapshot()
-            for entry in shared.scene_bus.get_for_role("gm")
-        ]
+        scene_entries = _decision_scene_entries(shared.scene_bus)
 
         for member_id in member_ids:
             if not _should_teammate_respond(world, member_id, scene_entries=scene_entries):
@@ -858,10 +960,7 @@ class AgentOrchestrationService:
                         "tags": [event.event_type, "passive_reaction"],
                     })
             events.extend(teammate_events)
-            scene_entries = [
-                entry.snapshot()
-                for entry in shared.scene_bus.get_for_role("gm")
-            ]
+            scene_entries = _decision_scene_entries(shared.scene_bus)
 
         return events
 
@@ -894,18 +993,12 @@ class AgentOrchestrationService:
                     if result.narrative_hints
                     else f"The player performed: {result.action_type}"
                 ),
-                "action_type": result.action_type,
-                "success": result.success,
-                "narrative_hints": list(result.narrative_hints),
-                "time_cost": result.time_cost,
+                **_result_decision_payload(result),
             },
             ensure_ascii=False,
             default=str,
         )
-        scene_entries = [
-            entry.snapshot()
-            for entry in shared.scene_bus.get_for_role("gm")
-        ]
+        scene_entries = _decision_scene_entries(shared.scene_bus)
         events: list[SSEEvent] = []
         memory_writer = self._make_memory_writer_for_world(world)
 
@@ -1004,10 +1097,7 @@ class AgentOrchestrationService:
                         "tags": [event.event_type, "passive_reaction"],
                     })
             events.extend(npc_events)
-            scene_entries = [
-                entry.snapshot()
-                for entry in shared.scene_bus.get_for_role("gm")
-            ]
+            scene_entries = _decision_scene_entries(shared.scene_bus)
 
         return events
 
@@ -1160,24 +1250,22 @@ class AgentOrchestrationService:
         if not state.has_slice("areas") or not state.has_slice("player"):
             return []
         current_area = state.player.current_area
-        if not current_area or current_area not in state.areas.areas:
+        if not current_area:
             return []
         current_location = state.player.current_location
-        area_state = state.areas.areas[current_area]
         party_members: set[str] = set()
         if state.has_slice("party") and isinstance(state.party.members, dict):
             party_members = set(state.party.members.keys())
+        area_npcs = get_area_npcs(state, shared.world, current_area)
         if focus_npc_id and focus_npc_id not in party_members:
-            focus_location = area_state.npc_locations.get(focus_npc_id)
-            if focus_location is not None and (
-                not current_location or focus_location in {None, current_location}
-            ):
+            focus_location = area_npcs.get(focus_npc_id)
+            if focus_location is not None and is_colocated(focus_location, current_location):
                 return [focus_npc_id]
         nearby: list[str] = []
-        for npc_id, location_id in area_state.npc_locations.items():
+        for npc_id, location_id in area_npcs.items():
             if npc_id in party_members:
                 continue
-            if current_location and location_id not in {None, current_location}:
+            if not is_colocated(location_id, current_location):
                 continue
             nearby.append(npc_id)
         return nearby[:3]
@@ -1227,7 +1315,7 @@ def _extract_member_speech(
         if mid != member_id:
             continue
         for tr in result.tool_results:
-            if not tr.success or not tr.message:
+            if not tr.ok or not tr.message:
                 continue
             evt = tr.metadata.get("event_type", "") if isinstance(tr.metadata, dict) else ""
             if evt in ("speech", "emote"):
@@ -1239,34 +1327,37 @@ def _write_teammate_context_windows(
     session: ManagedSession,
     result: NpcInteractionResult,
 ) -> None:
-    """Write the round record into each participating teammate's ContextWindow.
-
-    After a group dialogue (NPC interaction or free chat), each teammate who
-    participated gets:
-      - A 'user' message containing the full round transcript
-      - A 'model' message containing their own speech/emotes (if any)
-    """
-    if not result.round_messages or not result.ordered_responses:
+    """Write the round record into each audience teammate's ContextWindow."""
+    if not result.round_messages:
         return
 
     companion_mgr = getattr(session.runtime, "companion_manager", None)
     if companion_mgr is None:
         return
 
-    # Deduplicate member IDs while preserving order
+    # Deduplicate audience IDs while preserving order.
     seen: set[str] = set()
-    participating_member_ids: list[str] = []
+    recipient_ids: list[str] = []
+    for member_id in result.audience_member_ids:
+        if member_id in seen:
+            continue
+        seen.add(member_id)
+        recipient_ids.append(member_id)
     for mid, _res in result.ordered_responses:
         if mid not in seen:
             seen.add(mid)
-            participating_member_ids.append(mid)
+            recipient_ids.append(mid)
+
+    if not recipient_ids:
+        return
 
     round_text = _format_round_for_window(result.round_messages)
 
-    for member_id in participating_member_ids:
+    for member_id in recipient_ids:
         instance = companion_mgr.get_or_create(member_id)
 
-        # User message: full round context
+        # User message: the full round transcript is visible even if the
+        # teammate chooses to stay silent.
         instance.context_window.add_message(WindowMessage(
             role="user",
             content=round_text,
@@ -1353,7 +1444,7 @@ def _make_shared_command_executor(
 
     def _executor(command: Command) -> ExecuteResult:
         result = shared.rules_engine.execute(command, shared.state, shared.world)
-        if result.success and result.delta is not None:
+        if result.executed and result.delta is not None:
             apply_delta(result.delta)
         return result
 
@@ -1385,7 +1476,7 @@ def _should_character_respond(
             if not isinstance(entry, dict):
                 continue
             all_tags.update(entry.get("tags", []))
-            if str(entry.get("source", "")) == char_id:
+            if str(entry.get("source", "")).startswith(f"NPC:{char_id}"):
                 recent_speaks += 1
         if "COMBAT_END" in all_tags:
             tendency += 0.2
@@ -1398,6 +1489,30 @@ def _should_character_respond(
     return random.random() < max(0.05, min(0.95, tendency))
 
 
+def _decision_scene_entries(scene_bus: Any) -> list[dict[str, Any]]:
+    """Internal decision view: public/system entries, excluding private secrets."""
+    snapshot = scene_bus.snapshot() if scene_bus is not None else {}
+    visible: list[dict[str, Any]] = []
+    for raw_entry in snapshot.get("entries", []):
+        if not isinstance(raw_entry, dict):
+            continue
+        if str(raw_entry.get("visibility", "public")) == "private":
+            continue
+        visible.append(dict(raw_entry))
+    return visible
+
+
+def _result_decision_payload(result: PipelineResult) -> dict[str, Any]:
+    outcome = result.metadata.get("outcome")
+    return {
+        "action_type": result.action_type,
+        "executed": result.executed,
+        "outcome": dict(outcome) if isinstance(outcome, dict) else None,
+        "narrative_hints": list(result.narrative_hints),
+        "time_cost": result.time_cost,
+    }
+
+
 # ------------------------------------------------------------------
 # Result → SSE converters
 # ------------------------------------------------------------------
@@ -1408,7 +1523,7 @@ def _npc_result_to_sse(npc_id: str, result: AgentResult) -> list[SSEEvent]:
     events: list[SSEEvent] = []
 
     for tr in result.tool_results:
-        if not tr.success:
+        if not tr.ok:
             continue
         event_type = tr.metadata.get("event_type", "")
 
@@ -1439,6 +1554,15 @@ def _npc_result_to_sse(npc_id: str, result: AgentResult) -> list[SSEEvent]:
                     "type": "refuse",
                 },
             ))
+        elif event_type == "companion_recruited":
+            events.append(SSEEvent(
+                event_type="companion_recruited",
+                payload={
+                    "npc_id": tr.metadata.get("npc_id", npc_id),
+                    "reason": "recruited",
+                    "party_members": tr.metadata.get("party_members", []),
+                },
+            ))
         # Command-based tools (update_feeling, remember, etc.) execute
         # via execute_command callback — no separate SSE needed.
 
@@ -1450,7 +1574,7 @@ def _gm_result_to_sse(result: AgentResult) -> list[SSEEvent]:
     events: list[SSEEvent] = []
 
     for tr in result.tool_results:
-        if not tr.success:
+        if not tr.ok:
             continue
         event_type = tr.metadata.get("event_type", "")
 
@@ -1460,9 +1584,13 @@ def _gm_result_to_sse(result: AgentResult) -> list[SSEEvent]:
                 payload={"content": tr.message},
             ))
         elif event_type == "gm_comment" and tr.message:
+            payload = {"content": tr.message}
+            tone = tr.metadata.get("tone")
+            if isinstance(tone, str) and tone.strip():
+                payload["tone"] = tone.strip()
             events.append(SSEEvent(
                 event_type="gm_comment",
-                payload={"content": tr.message},
+                payload=payload,
             ))
         # pass_turn produces no event
 
@@ -1476,7 +1604,7 @@ def _teammate_result_to_sse(
     events: list[SSEEvent] = []
 
     for tr in result.tool_results:
-        if not tr.success:
+        if not tr.ok:
             continue
         event_type = tr.metadata.get("event_type", "")
 
@@ -1496,6 +1624,15 @@ def _teammate_result_to_sse(
                     "character_id": member_id,
                     "action": tr.message,
                     "type": "emote",
+                },
+            ))
+        elif event_type == "companion_dismissed":
+            events.append(SSEEvent(
+                event_type="companion_dismissed",
+                payload={
+                    "npc_id": tr.metadata.get("npc_id", member_id),
+                    "reason": tr.metadata.get("reason", "voluntary"),
+                    "party_members": tr.metadata.get("party_members", []),
                 },
             ))
         # express_opinion, suggest_tactic, etc. — commands executed via
@@ -1534,7 +1671,7 @@ def _extract_suggest_options_from_result(result: AgentResult | None) -> list[dic
         return None
     for tool_result in result.tool_results:
         metadata = tool_result.metadata if isinstance(tool_result.metadata, dict) else {}
-        if not tool_result.success or metadata.get("tool") != "suggest_options":
+        if not tool_result.ok or metadata.get("tool") != "suggest_options":
             continue
         options = metadata.get("options")
         if isinstance(options, list) and options:
@@ -1546,22 +1683,30 @@ def _dialogue_option_dispatch(
     npc_id: str,
     option: dict[str, Any],
     *,
+    scope: str = "public",
     action_dispatcher: Any = None,
 ) -> dict[str, Any] | None:
+    player_message = str(option.get("message") or option.get("text") or "").strip()
     check = option.get("check")
     if isinstance(check, dict):
         skill = str(check.get("skill") or "").strip()
         dc = check.get("dc")
-        if skill and isinstance(dc, int):
+        intent = str(option.get("intent") or "").strip() or "talk"
+        if skill and isinstance(dc, int) and player_message:
             return {
-                "kind": "action",
+                "kind": "interact",
                 "payload": {
-                    "action_type": "skill_check",
-                    "params": {"skill": skill, "dc": dc},
-                    "context": {
-                        "dialogue_npc_id": npc_id,
-                        "interaction_type": "dialogue_option",
-                    },
+                    "scope": "private" if scope == "private" else "public",
+                    "intent": (
+                        "talk"
+                        if scope == "private"
+                        else intent if intent in {"talk", "greet", "ask", "chat"} else "talk"
+                    ),
+                    "target_kind": "npc",
+                    "target_id": npc_id,
+                    "message": player_message,
+                    "check_skill": skill,
+                    "check_dc": dc,
                 },
             }
 
@@ -1570,6 +1715,21 @@ def _dialogue_option_dispatch(
         return {"kind": "local", "payload": {"action": "leave_dialogue"}}
 
     intent = str(option.get("intent") or "").strip()
+    if intent == "farewell":
+        return {"kind": "local", "payload": {"action": "leave_dialogue"}}
+    if scope == "private" and intent == "browse":
+        return None
+    if scope == "private" and player_message:
+        return {
+            "kind": "interact",
+            "payload": {
+                "scope": "private",
+                "intent": "talk",
+                "target_kind": "npc",
+                "target_id": npc_id,
+                "message": player_message,
+            },
+        }
     if intent == "browse":
         return {
             "kind": "interact",
@@ -1579,13 +1739,22 @@ def _dialogue_option_dispatch(
                 "target_id": npc_id,
             },
         }
-    if intent == "farewell":
-        return {"kind": "local", "payload": {"action": "leave_dialogue"}}
+    if intent in {"talk", "greet", "ask", "chat"} and player_message:
+        return {
+            "kind": "interact",
+            "payload": {
+                "scope": scope if scope in {"public", "private"} else "public",
+                "intent": intent,
+                "target_kind": "npc",
+                "target_id": npc_id,
+                "message": player_message,
+            },
+        }
 
     item_id = str(option.get("item_id") or "").strip()
     quest_id = str(option.get("quest_id") or "").strip()
     count = option.get("count")
-    if intent in {"buy", "sell", "inspect_item"} and item_id:
+    if scope != "private" and intent in {"buy", "sell", "inspect_item"} and item_id:
         payload: dict[str, Any] = {
             "intent": intent,
             "target_kind": "npc",
@@ -1595,7 +1764,11 @@ def _dialogue_option_dispatch(
         if isinstance(count, int) and count > 0:
             payload["count"] = count
         return {"kind": "interact", "payload": payload}
-    if intent in {"ask_quest", "ask_progress", "ask_location", "ask_requirements", "ask_reward"} and quest_id:
+    if (
+        scope != "private"
+        and intent in {"ask_quest", "ask_progress", "ask_location", "ask_requirements", "ask_reward"}
+        and quest_id
+    ):
         return {
             "kind": "interact",
             "payload": {
@@ -1613,6 +1786,7 @@ def _serialize_dialogue_options(
     npc_id: str,
     options: list[dict[str, Any]],
     *,
+    scope: str = "public",
     action_dispatcher: Any = None,
 ) -> list[dict[str, Any]]:
     serialized: list[dict[str, Any]] = []
@@ -1623,6 +1797,7 @@ def _serialize_dialogue_options(
         dispatch = _dialogue_option_dispatch(
             npc_id,
             entry,
+            scope=scope,
             action_dispatcher=action_dispatcher,
         )
         if dispatch is not None:
@@ -1635,25 +1810,41 @@ def _opening_option_dispatch(
     session: ManagedSession,
     option: dict[str, Any],
 ) -> dict[str, Any] | None:
+    overview = build_location_overview(session)
+    current_location_id = str(overview.get("location_id") or "").strip()
+    implied_npc_id = _opening_option_npc_id(option, overview)
+    starter_message = str(option.get("message") or "").strip() or "你好。"
     check = option.get("check")
     if isinstance(check, dict):
         skill = str(check.get("skill") or "").strip()
         dc = check.get("dc")
         if skill and isinstance(dc, int):
+            if implied_npc_id is not None and starter_message:
+                return {
+                    "kind": "interact",
+                    "payload": {
+                        "scope": "public",
+                        "intent": "talk",
+                        "target_kind": "npc",
+                        "target_id": implied_npc_id,
+                        "message": starter_message,
+                        "check_skill": skill,
+                        "check_dc": dc,
+                    },
+                }
+            context: dict[str, Any] = {
+                "interaction_type": "opening_option",
+            }
             return {
                 "kind": "action",
                 "payload": {
                     "action_type": "skill_check",
                     "params": {"skill": skill, "dc": dc},
-                    "context": {
-                        "interaction_type": "opening_option",
-                    },
+                    "context": context,
                 },
             }
 
     action = str(option.get("action") or "").strip()
-    overview = build_location_overview(session)
-    current_location_id = str(overview.get("location_id") or "").strip()
 
     if action == "talk_first_npc":
         present_npcs = [
@@ -1661,13 +1852,15 @@ def _opening_option_dispatch(
             if isinstance(item, dict) and str(item.get("character_id", "")).strip()
         ]
         if present_npcs:
-            npc_id = str(present_npcs[0].get("character_id", "")).strip()
+            npc_id = implied_npc_id or str(present_npcs[0].get("character_id", "")).strip()
             return {
                 "kind": "interact",
                 "payload": {
+                    "scope": "public",
                     "intent": "talk",
                     "target_kind": "npc",
                     "target_id": npc_id,
+                    "message": starter_message,
                 },
             }
 
@@ -1710,10 +1903,26 @@ def _opening_option_dispatch(
         return {
             "kind": "input",
             "payload": {
-                "text": str(option.get("text") or "观察四周").strip() or "观察四周",
+                "text": str(option.get("message") or option.get("text") or "观察四周").strip() or "观察四周",
             },
         }
 
+    return None
+
+
+def _opening_option_npc_id(
+    option: dict[str, Any],
+    overview: dict[str, Any],
+) -> str | None:
+    explicit = str(option.get("npc_id") or "").strip()
+    if explicit:
+        return explicit
+    present_npcs = [
+        item for item in overview.get("present_npcs", [])
+        if isinstance(item, dict) and str(item.get("character_id", "")).strip()
+    ]
+    if len(present_npcs) == 1:
+        return str(present_npcs[0].get("character_id", "")).strip() or None
     return None
 
 
@@ -1829,7 +2038,7 @@ def _private_chat_result_to_sse(
     # GM inner monologue (player's inner voice, not third-party narration)
     if result.gm_result is not None:
         for tr in result.gm_result.tool_results:
-            if tr.success and tr.metadata.get("event_type") == "gm_comment" and tr.message:
+            if tr.ok and tr.metadata.get("event_type") == "gm_comment" and tr.message:
                 events.append(SSEEvent(
                     event_type="gm_comment",
                     payload={"content": tr.message, "tone": "introspective"},
@@ -1842,6 +2051,7 @@ def _private_chat_result_to_sse(
                 "options": _serialize_dialogue_options(
                     result.npc_id,
                     result.dialogue_options,
+                    scope="private",
                     action_dispatcher=action_dispatcher,
                 ),
             },
@@ -1886,11 +2096,27 @@ def _interaction_result_to_sse(
                 "options": _serialize_dialogue_options(
                     result.npc_id,
                     result.dialogue_options,
+                    scope="public",
                     action_dispatcher=action_dispatcher,
                 ),
             },
         ))
 
+    return events
+
+
+def _public_utterance_result_to_sse(result: NpcInteractionResult) -> list[SSEEvent]:
+    """Convert a public untargeted utterance result into SSE events."""
+
+    events: list[SSEEvent] = []
+    if result.gm_result is not None:
+        events.extend(_gm_result_to_sse(result.gm_result))
+    if result.ordered_responses:
+        for member_id, tm_result in result.ordered_responses:
+            events.extend(_teammate_result_to_sse(member_id, tm_result))
+    else:
+        for member_id, tm_result in result.teammate_results.items():
+            events.extend(_teammate_result_to_sse(member_id, tm_result))
     return events
 
 
@@ -1909,3 +2135,54 @@ def _free_chat_result_to_sse(result: NpcInteractionResult) -> list[SSEEvent]:
             events.extend(_teammate_result_to_sse(member_id, tm_result))
 
     return events
+
+
+def _visible_teammate_reply_summaries(result: NpcInteractionResult) -> list[dict[str, str]]:
+    visible_event_types = {"speech", "emote"}
+    ordered_results = result.ordered_responses or list(result.teammate_results.items())
+    replies: list[dict[str, str]] = []
+    for member_id, agent_result in ordered_results:
+        for tool_result in agent_result.tool_results:
+            metadata = tool_result.metadata if isinstance(tool_result.metadata, dict) else {}
+            event_type = str(metadata.get("event_type") or "")
+            if (
+                tool_result.ok
+                and tool_result.message
+                and event_type in visible_event_types
+            ):
+                replies.append({
+                    "character_id": member_id,
+                    "type": event_type,
+                    "content": tool_result.message,
+                })
+    return replies
+
+
+def _has_gm_comment_event(events: list[SSEEvent]) -> bool:
+    return any(event.event_type == "gm_comment" for event in events)
+
+
+def _insert_event_before(
+    events: list[SSEEvent],
+    event: SSEEvent,
+    *,
+    before_event_types: set[str],
+) -> list[SSEEvent]:
+    for index, existing in enumerate(events):
+        if existing.event_type in before_event_types:
+            return [*events[:index], event, *events[index:]]
+    return [*events, event]
+
+
+def _first_gm_comment_event(result: AgentResult | None) -> SSEEvent | None:
+    if result is None:
+        return None
+    for tr in result.tool_results:
+        metadata = tr.metadata if isinstance(tr.metadata, dict) else {}
+        if tr.ok and metadata.get("event_type") == "gm_comment" and tr.message:
+            payload = {"content": tr.message}
+            tone = metadata.get("tone")
+            if isinstance(tone, str) and tone.strip():
+                payload["tone"] = tone.strip()
+            return SSEEvent(event_type="gm_comment", payload=payload)
+    return None

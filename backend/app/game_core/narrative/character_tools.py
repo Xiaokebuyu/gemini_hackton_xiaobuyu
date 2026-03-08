@@ -67,7 +67,7 @@ class _CharacterTool(AgentTool):
 
     def _no_character_id(self) -> ToolResult:
         return ToolResult(
-            success=False,
+            ok=False,
             message="character_id required in context.metadata.",
             metadata={"status": "missing_character_id"},
         )
@@ -113,14 +113,14 @@ class SpeakTool(_CharacterTool):
         text = self._require_text(params, "text")
         if not text:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="text is required.",
                 metadata={"status": "invalid_params"},
             )
 
         self._add_scene_entry(context, character_id, text, tags=["speech"])
         return ToolResult(
-            success=True,
+            ok=True,
             message=text,
             metadata={
                 "status": "ok",
@@ -173,14 +173,14 @@ class EmoteTool(_CharacterTool):
         action = self._require_text(params, "action")
         if not action:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="action is required.",
                 metadata={"status": "invalid_params"},
             )
 
         self._add_scene_entry(context, character_id, action, tags=["emote"])
         return ToolResult(
-            success=True,
+            ok=True,
             message=action,
             metadata={
                 "status": "ok",
@@ -238,7 +238,7 @@ class UpdateFeelingTool(_CharacterTool):
         dimension = params.get("dimension", "")
         if not isinstance(dimension, str) or dimension not in _DISPOSITION_DIMENSIONS:
             return ToolResult(
-                success=False,
+                ok=False,
                 message=f"dimension must be one of {sorted(_DISPOSITION_DIMENSIONS)}.",
                 metadata={"status": "invalid_params"},
             )
@@ -246,14 +246,14 @@ class UpdateFeelingTool(_CharacterTool):
         delta = params.get("delta", 0)
         if not isinstance(delta, (int, float)) or isinstance(delta, bool):
             return ToolResult(
-                success=False,
+                ok=False,
                 message="delta must be an integer.",
                 metadata={"status": "invalid_params"},
             )
         delta = int(delta)
         if not -50 <= delta <= 50:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="delta must be in [-50, 50].",
                 metadata={"status": "invalid_params"},
             )
@@ -264,14 +264,14 @@ class UpdateFeelingTool(_CharacterTool):
             source="ai_osiris",
         )
         result = context.run_command(command)
-        if not result.success:
+        if not result.executed:
             return ToolResult(
-                success=False,
+                ok=False,
                 message=result.errors[0] if result.errors else "command failed",
                 metadata={"status": "command_failed"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"{dimension} changed by {delta}.",
             commands=[command],
             metadata={"status": "ok", "dimension": dimension, "delta": delta},
@@ -321,7 +321,7 @@ class RememberTool(_CharacterTool):
         knowledge = self._require_text(params, "knowledge")
         if not knowledge:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="knowledge is required.",
                 metadata={"status": "invalid_params"},
             )
@@ -329,7 +329,7 @@ class RememberTool(_CharacterTool):
         writer = context.metadata.get("memory_writer")
         if not callable(writer):
             return ToolResult(
-                success=False,
+                ok=False,
                 message="memory writer unavailable.",
                 metadata={"status": "memory_unavailable"},
             )
@@ -341,7 +341,7 @@ class RememberTool(_CharacterTool):
             )
         except Exception:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="memory write failed.",
                 metadata={"status": "memory_write_failed"},
             )
@@ -349,7 +349,7 @@ class RememberTool(_CharacterTool):
         if isinstance(write_result, dict):
             metadata.update({str(k): v for k, v in write_result.items()})
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"Remembered: {knowledge}",
             metadata=metadata,
         )
@@ -398,7 +398,7 @@ class OfferQuestTool(_CharacterTool):
         quest_id = self._require_text(params, "quest_id")
         if not quest_id:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="quest_id is required.",
                 metadata={"status": "invalid_params"},
             )
@@ -413,14 +413,14 @@ class OfferQuestTool(_CharacterTool):
             source="npc",
         )
         result = context.run_command(command)
-        if not result.success:
+        if not result.executed:
             return ToolResult(
-                success=False,
+                ok=False,
                 message=result.errors[0] if result.errors else "command failed",
                 metadata={"status": "command_failed"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"Quest {quest_id} offered.",
             commands=[command],
             metadata={"status": "ok", "quest_id": quest_id},
@@ -469,7 +469,7 @@ class OfferTradeTool(_CharacterTool):
             )
 
         return ToolResult(
-            success=True,
+            ok=True,
             message="Merchandise displayed." if shop_data else "No merchandise available.",
             metadata={
                 "status": "ok",
@@ -523,14 +523,14 @@ class RefuseTool(_CharacterTool):
         reason = self._require_text(params, "reason")
         if not reason:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="reason is required.",
                 metadata={"status": "invalid_params"},
             )
 
         self._add_scene_entry(context, character_id, reason, tags=["refuse"])
         return ToolResult(
-            success=True,
+            ok=True,
             message=reason,
             metadata={
                 "status": "ok",
@@ -587,7 +587,7 @@ class RevealSecretTool(_CharacterTool):
         secret = self._require_text(params, "secret")
         if not secret:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="secret is required.",
                 metadata={"status": "invalid_params"},
             )
@@ -607,7 +607,7 @@ class RevealSecretTool(_CharacterTool):
             current_trust = dispositions.get("trust", 0)
             if current_trust < trust_required:
                 return ToolResult(
-                    success=False,
+                    ok=False,
                     message="Trust is not high enough to reveal this secret.",
                     metadata={
                         "status": "trust_insufficient",
@@ -633,14 +633,14 @@ class RevealSecretTool(_CharacterTool):
         result = context.run_command(command)
 
         return ToolResult(
-            success=True,
+            ok=True,
             message=secret,
-            commands=[command] if result.success else [],
+            commands=[command] if result.executed else [],
             metadata={
                 "status": "ok",
                 "event_type": "secret_reveal",
                 "character_id": character_id,
-                "knowledge_recorded": result.success,
+                "knowledge_recorded": result.executed,
             },
         )
 
@@ -692,14 +692,14 @@ class ExpressOpinionTool(_CharacterTool):
         delta = params.get("delta", 0)
         if not isinstance(delta, (int, float)) or isinstance(delta, bool):
             return ToolResult(
-                success=False,
+                ok=False,
                 message="delta must be an integer.",
                 metadata={"status": "invalid_params"},
             )
         delta = int(delta)
         if not -50 <= delta <= 50:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="delta must be in [-50, 50].",
                 metadata={"status": "invalid_params"},
             )
@@ -707,7 +707,7 @@ class ExpressOpinionTool(_CharacterTool):
         reason = self._require_text(params, "reason")
         if not reason:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="reason is required.",
                 metadata={"status": "invalid_params"},
             )
@@ -718,17 +718,158 @@ class ExpressOpinionTool(_CharacterTool):
             source="ai_osiris",
         )
         result = context.run_command(command)
-        if not result.success:
+        if not result.executed:
             return ToolResult(
-                success=False,
+                ok=False,
                 message=result.errors[0] if result.errors else "command failed",
                 metadata={"status": "command_failed"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"Opinion expressed: {reason} (approval {'+' if delta >= 0 else ''}{delta}).",
             commands=[command],
             metadata={"status": "ok", "delta": delta, "reason": reason},
+        )
+
+
+# ------------------------------------------------------------------
+# NPC: join_party
+# ------------------------------------------------------------------
+
+
+class JoinPartyTool(_CharacterTool):
+    """Request to join the player's party. Recruitable NPCs only."""
+
+    @property
+    def name(self) -> str:
+        return "join_party"
+
+    @property
+    def description(self) -> str:
+        return "Join the player's party as a companion."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    @property
+    def allowed_roles(self) -> list[str]:
+        return ["npc"]
+
+    @property
+    def applicable_traits(self) -> list[str]:
+        return ["recruitable"]
+
+    async def execute(
+        self, params: dict[str, Any], context: AgentContext,
+    ) -> ToolResult:
+        character_id = self._get_character_id(context)
+        if not character_id:
+            return self._no_character_id()
+
+        command = Command(
+            type="recruit_companion",
+            params={"npc_id": character_id},
+            source="npc",
+        )
+        result = context.run_command(command)
+        if not result.executed:
+            return ToolResult(
+                ok=False,
+                message=result.errors[0] if result.errors else "command failed",
+                metadata={
+                    "status": (
+                        result.errors[0]
+                        if result.errors else "command_failed"
+                    )
+                },
+            )
+        metadata = dict(result.metadata)
+
+        return ToolResult(
+            ok=True,
+            message=f"{character_id} joined the party.",
+            commands=[command],
+            metadata={
+                "status": metadata.get("status", "ok"),
+                "event_type": metadata.get("event_type", "companion_recruited"),
+                "npc_id": metadata.get("npc_id", character_id),
+                "reason": metadata.get("reason", "recruited"),
+                "party_members": metadata.get("party_members", []),
+            },
+        )
+
+
+# ------------------------------------------------------------------
+# Teammate: leave_party
+# ------------------------------------------------------------------
+
+
+class LeavePartyTool(_CharacterTool):
+    """Leave the player's party voluntarily."""
+
+    @property
+    def name(self) -> str:
+        return "leave_party"
+
+    @property
+    def description(self) -> str:
+        return "Leave the player's party."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why the companion is leaving.",
+                },
+            },
+        }
+
+    @property
+    def allowed_roles(self) -> list[str]:
+        return ["teammate"]
+
+    async def execute(
+        self, params: dict[str, Any], context: AgentContext,
+    ) -> ToolResult:
+        character_id = self._get_character_id(context)
+        if not character_id:
+            return self._no_character_id()
+
+        reason = self._require_text(params, "reason") or "voluntary"
+        command = Command(
+            type="dismiss_companion",
+            params={"npc_id": character_id, "reason": reason},
+            source="teammate",
+        )
+        result = context.run_command(command)
+        if not result.executed:
+            return ToolResult(
+                ok=False,
+                message=result.errors[0] if result.errors else "command failed",
+                metadata={
+                    "status": (
+                        result.errors[0]
+                        if result.errors else "command_failed"
+                    )
+                },
+            )
+        metadata = dict(result.metadata)
+
+        return ToolResult(
+            ok=True,
+            message=f"{character_id} left the party: {reason}",
+            commands=[command],
+            metadata={
+                "status": metadata.get("status", "ok"),
+                "event_type": metadata.get("event_type", "companion_dismissed"),
+                "npc_id": metadata.get("npc_id", character_id),
+                "reason": metadata.get("reason", reason),
+                "party_members": metadata.get("party_members", []),
+            },
         )
 
 
@@ -771,12 +912,12 @@ class SuggestTacticTool(_CharacterTool):
         tactic = self._require_text(params, "tactic")
         if not tactic:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="tactic is required.",
                 metadata={"status": "invalid_params"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=tactic,
             metadata={"status": "ok", "event_type": "suggest_tactic"},
         )
@@ -825,7 +966,7 @@ class ShareMemoryTool(_CharacterTool):
         topic = self._require_text(params, "topic")
         if not topic:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="topic is required.",
                 metadata={"status": "invalid_params"},
             )
@@ -835,7 +976,7 @@ class ShareMemoryTool(_CharacterTool):
             memories = context.state.relations.get_impressions(character_id)
 
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"Recalling memories about: {topic}",
             metadata={
                 "status": "ok",
@@ -886,12 +1027,12 @@ class RequestActionTool(_CharacterTool):
         request = self._require_text(params, "request")
         if not request:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="request is required.",
                 metadata={"status": "invalid_params"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=request,
             metadata={"status": "ok", "event_type": "request_action"},
         )
@@ -910,6 +1051,7 @@ _NPC_TOOLS: list[type[_CharacterTool]] = [
     OfferTradeTool,
     RefuseTool,
     RevealSecretTool,
+    JoinPartyTool,
 ]
 
 _TEAMMATE_TOOLS: list[type[_CharacterTool]] = [
@@ -919,6 +1061,7 @@ _TEAMMATE_TOOLS: list[type[_CharacterTool]] = [
     SuggestTacticTool,
     ShareMemoryTool,
     RequestActionTool,
+    LeavePartyTool,
 ]
 
 

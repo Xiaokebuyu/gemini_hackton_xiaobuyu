@@ -112,7 +112,7 @@ def test_tick_coordinator_agent_hook_failure_is_non_fatal() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.executed is True
     assert runtime.state.flags.get("agent_round_survived") is True
     assert any(event.event_type == "agent_hook_error" for event in result.sse_events)
     assert any(event.event_type == "agent_hook_error" for event in collected)

@@ -31,10 +31,10 @@
       "trust": 58
     },
     "high_elf_archer": {
-      "approval": 10,
+      "approval": 48,
       "fear": 0,
-      "romance": 5,
-      "trust": 27
+      "romance": 20,
+      "trust": 30
     },
     "lizard_priest": {
       "approval": 15,
@@ -43,27 +43,33 @@
       "trust": 40
     },
     "priestess": {
-      "approval": 24,
+      "approval": 46,
       "fear": 10,
-      "romance": 17,
-      "trust": 41
+      "romance": 28,
+      "trust": 74
     }
   },
   "npc_impressions": {
     "goblin_slayer": [
       "The player has confirmed a Tier 2 goblin nest at the ancient ruins."
     ],
+    "high_elf_archer": [
+      "一个虽然等级尚低，但非常有毅力且谈吐有趣的年轻人。"
+    ],
     "priestess": [
       "玩家与柜台小姐关系匪浅",
-      "The player is resonating with the sacrificial altar's dark energy."
+      "The player is resonating with the sacrificial altar's dark energy.",
+      "玩家身上带有某种不详的祭坛烙印，可能与近期的噩梦有关。",
+      "The player's Altar Mark is not just a physical scar but a spiritual burden that requires her constant guidance."
     ]
   },
   "relationship_stages": {
     "cow_girl": "acquaintance",
     "dwarf_shaman": "acquaintance",
     "guild_girl": "acquaintance",
+    "high_elf_archer": "acquaintance",
     "lizard_priest": "acquaintance",
-    "priestess": "acquaintance"
+    "priestess": "friend"
   },
   "shop_states": {}
 }

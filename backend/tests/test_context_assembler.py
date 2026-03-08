@@ -301,7 +301,7 @@ class TestL7EngineResult:
         shared = _make_shared()
         l7 = ContextAssembler().assemble(shared)["l7_engine_result"]
         assert l7 == {
-            "success": None,
+            "executed": None,
             "narrative_hints": [],
             "rolls": [],
             "time_cost": 0.0,

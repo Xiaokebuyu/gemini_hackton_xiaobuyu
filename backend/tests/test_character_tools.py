@@ -41,7 +41,7 @@ def _recording_executor() -> tuple[
 
     def execute(cmd: Command) -> ExecuteResult:
         log.append(cmd)
-        return ExecuteResult(success=True)
+        return ExecuteResult(executed=True)
 
     return log, execute
 
@@ -96,7 +96,7 @@ def test_speak_writes_scene_entry() -> None:
     context = _ctx(character_id="npc_bob")
     result = asyncio.run(SpeakTool().execute({"text": "Hello there!"}, context))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.message == "Hello there!"
     assert result.metadata["event_type"] == "speech"
     assert result.metadata["character_id"] == "npc_bob"
@@ -112,7 +112,7 @@ def test_speak_fails_without_character_id() -> None:
     context = _ctx(character_id="")
     result = asyncio.run(SpeakTool().execute({"text": "Hi"}, context))
 
-    assert result.success is False
+    assert result.ok is False
     assert result.metadata["status"] == "missing_character_id"
 
 
@@ -125,7 +125,7 @@ def test_emote_writes_scene_entry() -> None:
     context = _ctx(character_id="npc_bob")
     result = asyncio.run(EmoteTool().execute({"action": "sighs deeply"}, context))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["event_type"] == "emote"
 
     entries = context.state.scene.entries
@@ -145,7 +145,7 @@ def test_refuse_writes_scene_entry() -> None:
         RefuseTool().execute({"reason": "You lack the authority."}, context)
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["event_type"] == "refuse"
 
     entries = context.state.scene.entries
@@ -169,7 +169,7 @@ def test_update_feeling_constructs_disposition_command() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["dimension"] == "trust"
     assert result.metadata["delta"] == 10
     assert len(log) == 1
@@ -187,7 +187,7 @@ def test_update_feeling_rejects_invalid_dimension() -> None:
             {"dimension": "rage", "delta": 5}, context,
         )
     )
-    assert result.success is False
+    assert result.ok is False
     assert result.metadata["status"] == "invalid_params"
 
 
@@ -220,7 +220,7 @@ def test_remember_writes_actor_memory() -> None:
         RememberTool().execute({"knowledge": "Player helped me once."}, context)
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert log == []
     assert len(calls) == 1
     assert calls[0]["actor_id"] == "npc_alice"
@@ -241,7 +241,7 @@ def test_offer_quest_constructs_advance_quest() -> None:
         OfferQuestTool().execute({"quest_id": "find_artifact"}, context)
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["quest_id"] == "find_artifact"
     assert len(log) == 1
     assert log[0].type == "advance_quest"
@@ -269,7 +269,7 @@ def test_reveal_secret_checks_trust_threshold() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.ok is False
     assert result.metadata["status"] == "trust_insufficient"
     assert result.metadata["current_trust"] == 30
     assert result.metadata["required"] == 60
@@ -294,7 +294,7 @@ def test_reveal_secret_writes_scene_and_command() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["event_type"] == "secret_reveal"
     assert result.metadata["knowledge_recorded"] is True
 
@@ -329,7 +329,7 @@ def test_express_opinion_constructs_approval_command() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["delta"] == -15
     assert result.metadata["reason"] == "Disapproves of cruelty."
     assert len(log) == 1
@@ -356,7 +356,7 @@ def test_offer_trade_returns_shop_data() -> None:
 
     result = asyncio.run(OfferTradeTool().execute({}, context))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["event_type"] == "offer_trade"
     assert result.metadata["shop"]["inventory"] == ["potion", "sword"]
     assert result.metadata["shop"]["gold"] == 500
@@ -368,7 +368,7 @@ def test_suggest_tactic_returns_text() -> None:
         SuggestTacticTool().execute({"tactic": "Flank from the left."}, context)
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.message == "Flank from the left."
     assert result.metadata["event_type"] == "suggest_tactic"
 
@@ -392,7 +392,7 @@ def test_share_memory_returns_impressions() -> None:
         ShareMemoryTool().execute({"topic": "goblins"}, context)
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["event_type"] == "share_memory"
     assert result.metadata["topic"] == "goblins"
     assert len(result.metadata["memories"]) == 2
@@ -406,7 +406,7 @@ def test_request_action_returns_text() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.message == "Please heal me."
     assert result.metadata["event_type"] == "request_action"
 
@@ -416,29 +416,31 @@ def test_request_action_returns_text() -> None:
 # ------------------------------------------------------------------
 
 
-def test_register_npc_tools_registers_eight() -> None:
+def test_register_npc_tools_registers_nine() -> None:
     registry = RoleToolRegistry()
     register_npc_tools(registry)
 
     tools = registry.get_tools_for("npc")
     names = {t.name for t in tools}
-    assert len(names) == 8
+    assert len(names) == 9
     assert names == {
         "speak", "emote",
         "update_feeling", "remember", "offer_quest",
         "offer_trade", "refuse", "reveal_secret",
+        "join_party",
     }
 
 
-def test_register_teammate_tools_registers_six() -> None:
+def test_register_teammate_tools_registers_seven() -> None:
     registry = RoleToolRegistry()
     register_teammate_tools(registry)
 
     tools = registry.get_tools_for("teammate")
     names = {t.name for t in tools}
-    assert len(names) == 6
+    assert len(names) == 7
     assert names == {
         "speak", "emote",
         "express_opinion", "suggest_tactic",
         "share_memory", "request_action",
+        "leave_party",
     }

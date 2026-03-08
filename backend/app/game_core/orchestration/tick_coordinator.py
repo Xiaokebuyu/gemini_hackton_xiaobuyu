@@ -27,6 +27,9 @@ _SEMANTIC_TAGS: dict[str, list[str]] = {
     "rest_long":     ["REST", "LONG_REST"],
     "rest_short":    ["REST", "SHORT_REST"],
     "dialogue_turn": ["DIALOGUE", "NPC_INTERACTION"],
+    "public_utterance_turn": ["DIALOGUE", "PUBLIC_UTTERANCE"],
+    "party_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
+    "free_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
     "private_chat_turn": ["DIALOGUE", "PRIVATE_CHAT"],
     "start_combat":  ["COMBAT"],
     "end_combat":    ["COMBAT_END"],
@@ -208,7 +211,7 @@ class TickCoordinator:
         directly through the rules engine. Their deltas still need to enter
         TickCoordinator's change_log so settlement hooks can observe them.
         """
-        if result.success and result.delta is not None:
+        if result.executed and result.delta is not None:
             self._apply_delta(result.delta)
 
     async def finalize_external_turn(
@@ -301,7 +304,7 @@ class TickCoordinator:
         """C3: Dispatch one structured tick observation to active companions."""
         if self.companion_manager is None:
             return
-        if not result.success:
+        if not result.executed:
             return
         if result.action_type == "noop":
             return
@@ -346,7 +349,7 @@ class TickCoordinator:
         record = TickRecord(
             tick=tick,
             action_type=result.action_type,
-            success=result.success,
+            executed=result.executed,
             summary=summary,
             tags=list(dict.fromkeys(tags)),
             involved_npcs=involved,
@@ -359,7 +362,7 @@ class TickCoordinator:
         """Sync all party members to the player's current position after each action."""
         if not self.state.has_slice("party") or not self.state.party.members:
             return
-        mgr = CompanionManager(self.world, self.state)
+        mgr = CompanionManager(self.state)
         mgr.sync_to_player()
 
     def _append_pipeline_action(self, result: PipelineResult) -> dict[str, Any] | None:
@@ -370,7 +373,7 @@ class TickCoordinator:
             "type": result.action_type,
             "actor": command.source if command else "system",
             "params": dict(command.params) if command else {},
-            "success": result.success,
+            "executed": result.executed,
             "time_cost": result.time_cost,
         }
         self._inject_action_metadata(record, result.metadata)
@@ -393,7 +396,7 @@ class TickCoordinator:
             "type": action_type,
             "actor": str(raw_record.get("actor", "player")),
             "params": dict(params) if isinstance(params, Mapping) else {},
-            "success": bool(raw_record.get("success", True)),
+            "executed": bool(raw_record.get("executed", True)),
             "time_cost": float(raw_record.get("time_cost", time_cost)),
             "source": str(raw_record.get("source", "external_turn")),
         }
@@ -420,6 +423,12 @@ class TickCoordinator:
         status = raw_metadata.get("status")
         if isinstance(status, str) and status.strip():
             record["status"] = status.strip()
+        executed = raw_metadata.get("executed")
+        if isinstance(executed, bool):
+            record["executed"] = executed
+        outcome = raw_metadata.get("outcome")
+        if isinstance(outcome, Mapping):
+            record["outcome"] = dict(outcome)
 
     def _append_pending_action_record(self, record: Mapping[str, Any]) -> None:
         normalized = self._public_action_record(record)

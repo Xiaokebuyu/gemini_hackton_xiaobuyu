@@ -38,6 +38,7 @@ export interface TeammateResponseData {
   character_id: string
   content?: string
   action?: string
+  type?: 'speech' | 'emote'
 }
 
 export interface TextChunkData {
@@ -82,7 +83,17 @@ export interface DialogueOptionsUnavailableData {
 }
 
 export interface ActionResultData {
-  success: boolean
+  executed: boolean
+  outcome?: {
+    category: 'check' | 'contest' | 'binary_action'
+    passed?: boolean
+    winner?: string
+    margin?: number
+    detected?: boolean
+    ambush?: boolean
+    recovery_multiplier?: number
+    surprise_state?: string
+  } | null
   action_type: string
   time_cost: number
   errors: string[]
@@ -105,6 +116,13 @@ export interface TimeAdvancedData {
   slot: number
   period: string
   description?: string
+  rest_info?: {
+    rest_type: string
+    slot_index: number
+    total_slots: number
+    is_quiet: boolean
+    is_final: boolean
+  } | null
 }
 
 export interface RelationshipStageChangedData {
@@ -133,7 +151,7 @@ export interface CompanionDismissedData {
 
 export interface StreamEndData {
   reason: string
-  success: boolean
+  completed: boolean
 }
 
 export interface StreamErrorData {
@@ -308,7 +326,7 @@ export interface EncounterSpottedData {
 }
 
 export interface StealthResultData {
-  success: boolean
+  passed: boolean
   roll: number
   dc: number
   modifier: number
@@ -325,7 +343,7 @@ export interface DiceRollData {
   modifier: number
   total: number
   dc: number
-  success: boolean
+  passed: boolean
   skill: string
   roller: string
   roller_name: string

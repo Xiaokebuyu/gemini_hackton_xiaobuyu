@@ -7,6 +7,7 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
   const cursor = showCursor ? (
     <span className="inline-block w-0.5 h-4 bg-amber-400 animate-pulse ml-0.5 align-middle" />
   ) : null
+  const isIntrospective = msg.type === 'gm_comment' && msg.tone === 'introspective'
 
   switch (msg.type) {
     case 'gm':
@@ -21,7 +22,11 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
     case 'gm_comment':
       return (
         <div className="py-1">
-          <p className="italic text-gray-400/90 text-sm leading-relaxed">
+          <p className={
+            isIntrospective
+              ? 'font-serif italic text-amber-100/80 leading-relaxed tracking-[0.01em]'
+              : 'italic text-gray-400/90 text-sm leading-relaxed'
+          }>
             {msg.content}{cursor}
           </p>
         </div>
@@ -50,6 +55,14 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
         <div className="py-0.5 pl-3">
           <span className="text-green-400 text-sm font-medium mr-2">{msg.speaker}</span>
           <span className="text-gray-300 text-sm">{msg.content}</span>
+        </div>
+      )
+
+    case 'teammate_emote':
+      return (
+        <div className="py-0.5 pl-3">
+          <span className="text-green-300 text-sm italic mr-2">{msg.speaker}</span>
+          <span className="text-green-100/75 italic text-sm">*{msg.content}*</span>
         </div>
       )
 

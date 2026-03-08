@@ -368,7 +368,7 @@ class EncounterHook(NoOpSettlementHook):
         encounter_result = dict(result.metadata)
         status = "checked"
         sse_events: list[SSEEvent] = []
-        if not result.success:
+        if not result.executed:
             status = "command_failed"
         else:
             if bool(encounter_result.get("triggered")):

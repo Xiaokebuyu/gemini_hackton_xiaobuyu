@@ -28,7 +28,7 @@ class SettlementContext:
 
     def execute_command(self, cmd: Command) -> ExecuteResult:
         result = self._rules_engine.execute(cmd, self.state, self.world)
-        if result.success and result.delta is not None:
+        if result.executed and result.delta is not None:
             self._apply_delta(result.delta)
         return result
 

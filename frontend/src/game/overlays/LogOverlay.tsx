@@ -7,6 +7,17 @@ function LogMessage({ msg }: { msg: DialogueEntry }) {
     case 'gm':
       return <p className="italic text-amber-200/80 leading-relaxed py-0.5">{msg.content}</p>
 
+    case 'gm_comment':
+      return (
+        <p className={
+          msg.tone === 'introspective'
+            ? 'font-serif italic text-amber-100/80 leading-relaxed py-0.5 tracking-[0.01em]'
+            : 'italic text-gray-400/90 text-sm leading-relaxed py-0.5'
+        }>
+          {msg.content}
+        </p>
+      )
+
     case 'npc':
       return (
         <p className="py-0.5">
@@ -28,6 +39,14 @@ function LogMessage({ msg }: { msg: DialogueEntry }) {
         <p className="py-0.5 pl-3 text-sm">
           <span className="text-green-400 mr-1">{msg.speaker}</span>
           <span className="text-gray-300">{msg.content}</span>
+        </p>
+      )
+
+    case 'teammate_emote':
+      return (
+        <p className="py-0.5 pl-3">
+          <span className="text-green-300 text-sm italic mr-1">{msg.speaker}</span>
+          <span className="text-green-100/75 italic text-sm">*{msg.content}*</span>
         </p>
       )
 

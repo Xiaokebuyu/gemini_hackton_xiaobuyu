@@ -32,6 +32,7 @@ from app.deps import (
     get_interaction_service,
 )
 from app.game_core import ManagedSession
+from app.game_core.result_semantics import outcome_passed
 from app.game_core.adapters.presentation import format_sse_event
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.game_core.rules.models import Command
@@ -43,6 +44,12 @@ from app.opening_views import (
     build_opening_status_snapshot,
 )
 from app.scene_views import build_location_overview, build_scene_change
+from app.utterance_orchestration import (
+    UtteranceOrchestrator,
+    UtteranceRequest,
+    UtteranceTarget,
+    build_utterance_request,
+)
 
 router = APIRouter()
 
@@ -66,7 +73,7 @@ async def navigate(
 
     Parameter validation raises HTTP 4xx before the stream starts so clients
     get proper error codes for malformed requests. Execution failures (unknown
-    area, blocked path) surface as action_result with success=False inside the
+    area, blocked path) surface as action_result with executed=False inside the
     stream.
     """
     action = request.action.strip()
@@ -98,7 +105,7 @@ async def navigate(
         before_location = session.runtime.state.player.current_location
         result = await _execute_structured_action(session, structured_request)
         await queue.put(_build_action_result_event(result, action))
-        if result.success:
+        if result.executed:
             if action == "leave_sub_location":
                 previous_location = _non_empty_string(before_location)
                 if previous_location is not None:
@@ -106,16 +113,16 @@ async def navigate(
             await queue.put(SSEEvent("scene_change", build_scene_change(session)))
         for event in result.sse_events:
             await queue.put(event)
-        if result.success:
+        if result.executed:
             if action == "enter_sub_location":
                 await queue.put(SSEEvent("location_overview", build_location_overview(session)))
                 location_id = _non_empty_string(params.get("location_id"))
                 if location_id is not None:
                     await _emit_hostile_entry_events(queue, session, sub_area_id=location_id)
-                await queue.put(_build_stream_end_event("completed", result.success))
+                await queue.put(_build_stream_end_event("completed", result.executed))
                 return
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(_build_stream_end_event("completed", result.success))
+        await queue.put(_build_stream_end_event("completed", result.executed))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
@@ -150,10 +157,12 @@ def _build_action_result_event(
     result: PipelineResult, action_type: str,
 ) -> SSEEvent:
     """Summarise one PipelineResult as an SSE envelope event."""
+    outcome = _result_outcome(result)
     return SSEEvent(
         event_type="action_result",
         payload={
-            "success": result.success,
+            "executed": _result_executed(result),
+            "outcome": outcome,
             "action_type": action_type,
             "time_cost": result.time_cost,
             "errors": list(result.errors),
@@ -164,11 +173,28 @@ def _build_action_result_event(
     )
 
 
-def _build_stream_end_event(reason: str, success: bool) -> SSEEvent:
+def _build_companion_result_event(result: PipelineResult) -> SSEEvent | None:
+    event_type = _non_empty_string(result.metadata.get("event_type"))
+    if event_type not in {"companion_recruited", "companion_dismissed"}:
+        return None
+    npc_id = _non_empty_string(result.metadata.get("npc_id"))
+    if npc_id is None:
+        return None
+    return SSEEvent(
+        event_type=event_type,
+        payload={
+            "npc_id": npc_id,
+            "reason": _non_empty_string(result.metadata.get("reason")) or "",
+            "party_members": list(result.metadata.get("party_members", [])),
+        },
+    )
+
+
+def _build_stream_end_event(reason: str, completed: bool) -> SSEEvent:
     """Build a stream-termination signal."""
     return SSEEvent(
         event_type="stream_end",
-        payload={"reason": reason, "success": success},
+        payload={"reason": reason, "completed": completed},
     )
 
 
@@ -179,21 +205,39 @@ def _non_empty_string(value: Any) -> str | None:
     return normalized or None
 
 
+def _result_executed(result: PipelineResult) -> bool:
+    return result.executed
+
+
+def _result_outcome(result: PipelineResult) -> dict[str, Any] | None:
+    outcome = result.metadata.get("outcome")
+    if not isinstance(outcome, Mapping):
+        return None
+    return dict(outcome)
+
+
 def _build_dialogue_turn_record(
     *,
     kind: str,
-    npc_id: str,
+    npc_id: str | None = None,
     intent: str | None = None,
+    scope: str | None = None,
 ) -> dict[str, Any]:
-    params: dict[str, Any] = {"npc_id": npc_id}
+    params: dict[str, Any] = {}
+    normalized_npc_id = _non_empty_string(npc_id)
+    if normalized_npc_id is not None:
+        params["npc_id"] = normalized_npc_id
     normalized_intent = _non_empty_string(intent)
     if normalized_intent is not None:
         params["intent"] = normalized_intent
+    normalized_scope = _non_empty_string(scope)
+    if normalized_scope is not None:
+        params["scope"] = normalized_scope
     return {
         "type": kind,
         "actor": "player",
         "params": params,
-        "success": True,
+        "executed": True,
         "source": "external_turn",
     }
 
@@ -233,36 +277,41 @@ def _roll_descriptor(
 ) -> tuple[str, int, bool] | None:
     purpose = str(getattr(roll, "purpose", "")).strip()
     metadata = result.metadata
+    outcome = _result_outcome(result)
     if purpose == "skill_check":
         return (
             _non_empty_string(metadata.get("skill")) or "skill_check",
             _coerce_int(metadata.get("dc")),
-            bool(metadata.get("passed", False)),
+            outcome_passed(outcome) if outcome is not None else bool(metadata.get("passed", False)),
         )
     if purpose == "saving_throw":
         return (
             _non_empty_string(metadata.get("ability")) or "saving_throw",
             _coerce_int(metadata.get("dc")),
-            bool(metadata.get("passed", False)),
+            outcome_passed(outcome) if outcome is not None else bool(metadata.get("passed", False)),
         )
     if purpose == "contest_actor":
         actor_total = _coerce_int(metadata.get("actor_total"))
         target_total = _coerce_int(metadata.get("target_total"))
+        winner = str((outcome or {}).get("winner") or metadata.get("winner") or "").strip()
         return (
             _non_empty_string(metadata.get("actor_skill")) or "contest",
             target_total,
-            actor_total > target_total,
+            winner == "actor" if winner else actor_total > target_total,
         )
     if purpose == "contest_target":
         actor_total = _coerce_int(metadata.get("actor_total"))
         target_total = _coerce_int(metadata.get("target_total"))
+        winner = str((outcome or {}).get("winner") or metadata.get("winner") or "").strip()
         return (
             _non_empty_string(metadata.get("target_skill")) or "contest",
             actor_total,
-            target_total > actor_total,
+            winner == "target" if winner else target_total > actor_total,
         )
     if purpose == "investigate":
-        found = metadata.get("status") == "discovered"
+        found = outcome_passed(outcome)
+        if found is None:
+            found = metadata.get("status") == "discovered"
         return (
             _non_empty_string(metadata.get("skill")) or "investigate",
             0,
@@ -272,7 +321,7 @@ def _roll_descriptor(
         return (
             _non_empty_string(metadata.get("skill")) or purpose,
             _coerce_int(metadata.get("dc")),
-            bool(metadata.get("passed", False)),
+            outcome_passed(outcome) if outcome is not None else bool(metadata.get("passed", False)),
         )
     return None
 
@@ -286,7 +335,7 @@ def _build_dice_roll_event(
     descriptor = _roll_descriptor(result=result, roll=roll)
     if descriptor is None:
         return None
-    skill, dc, success = descriptor
+    skill, dc, passed = descriptor
     return SSEEvent(
         "dice_roll",
         {
@@ -295,7 +344,7 @@ def _build_dice_roll_event(
             "modifier": _modifier_total(roll),
             "total": _coerce_int(getattr(roll, "total", 0)),
             "dc": dc,
-            "success": success,
+            "passed": passed,
             "skill": skill,
             "roller": "player",
             "roller_name": session.runtime.state.player.character_name or "Player",
@@ -357,10 +406,14 @@ async def _emit_hostile_entry_events(
             source="system",
         ),
     )
-    if not result.success:
+    if not result.executed:
         return
 
     stealth_meta = dict(result.metadata)
+    stealth_outcome = _result_outcome(result)
+    stealth_passed = outcome_passed(stealth_outcome)
+    if stealth_passed is None:
+        stealth_passed = bool(stealth_meta.get("passed", False))
     for roll in result.rolls:
         modifier = 0
         for item in roll.modifiers:
@@ -377,7 +430,7 @@ async def _emit_hostile_entry_events(
                     "modifier": modifier,
                     "total": roll.total,
                     "dc": int(stealth_meta.get("dc", 0)),
-                    "success": bool(stealth_meta.get("success", False)),
+                    "passed": stealth_passed,
                     "skill": "stealth",
                     "roller": "player",
                     "roller_name": session.runtime.state.player.character_name or "Player",
@@ -389,7 +442,7 @@ async def _emit_hostile_entry_events(
         SSEEvent(
             "stealth_result",
             {
-                "success": bool(stealth_meta.get("success", False)),
+                "passed": stealth_passed,
                 "roll": int(stealth_meta.get("roll", 0)),
                 "dc": int(stealth_meta.get("dc", 0)),
                 "modifier": int(stealth_meta.get("modifier", 0)),
@@ -402,7 +455,7 @@ async def _emit_hostile_entry_events(
         )
     )
 
-    if bool(stealth_meta.get("success", False)):
+    if stealth_passed:
         return
 
     start_result = await _execute_command(
@@ -416,7 +469,7 @@ async def _emit_hostile_entry_events(
             source="system",
         ),
     )
-    if not start_result.success:
+    if not start_result.executed:
         return
 
     combat_payload = _get_hostile_payload(session, sub_area_id)
@@ -598,7 +651,7 @@ async def action_stream(
             after_engine=_after_engine,
         )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(_build_stream_end_event("completed", result.success))
+        await queue.put(_build_stream_end_event("completed", result.executed))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
@@ -654,7 +707,7 @@ async def input_stream(
             after_engine=_after_engine,
         )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(_build_stream_end_event("completed", result.success))
+        await queue.put(_build_stream_end_event("completed", result.executed))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
@@ -748,11 +801,44 @@ async def interact_stream(
     """Execute one minimal target-aware interaction and stream the result."""
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        utterance = build_utterance_request(request.model_dump())
+        if utterance is not None:
+            async def _text_chunk_sink_utterance(chunk: str) -> None:
+                await queue.put(SSEEvent("text_chunk", {"text": chunk}))
+
+            utterance_result = await UtteranceOrchestrator(
+                get_agent_orchestration(),
+            ).execute(
+                session,
+                utterance,
+                text_chunk_sink=_text_chunk_sink_utterance,
+            )
+            for event in utterance_result.events:
+                await queue.put(event)
+            if utterance_result.completed and utterance_result.turn_kind is not None:
+                await _finalize_dialogue_turn(
+                    session,
+                    time_cost=utterance_result.time_cost,
+                    event_sink=queue.put,
+                    turn_action_record=_build_dialogue_turn_record(
+                        kind=utterance_result.turn_kind,
+                        npc_id=utterance_result.turn_npc_id,
+                        intent=utterance.intent,
+                        scope=utterance_result.turn_scope,
+                    ),
+                )
+            await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+            await queue.put(SSEEvent("stream_end", {
+                "reason": utterance_result.reason,
+                "completed": utterance_result.completed,
+            }))
+            return
+
         normalized = await get_input_port().process_action(
             {"channel": "interaction", "payload": request.model_dump()},
         )
         interaction_result = await get_interaction_service().execute(session, normalized)
-        stream_success = interaction_result.success
+        stream_completed = interaction_result.completed
         stream_reason = interaction_result.reason
         for event in interaction_result.events:
             event_type = getattr(event, "event_type", None)
@@ -760,12 +846,66 @@ async def interact_stream(
             if event_type is not None and payload is not None:
                 await queue.put(SSEEvent(str(event_type), dict(payload)))
 
+        # ── Skill check execution (dialogue option with check) ──
+        check_result: dict[str, Any] | None = None
+        if request.check_skill and request.check_dc:
+            check_cmd = Command(
+                type="skill_check",
+                params={"skill": request.check_skill, "dc": request.check_dc},
+                source="player",
+            )
+            exec_result = session.runtime.rules_engine.execute(
+                check_cmd, session.runtime.state, session.runtime.world,
+            )
+            session.runtime.tick_coordinator.apply_external_result(exec_result)
+
+            if exec_result.rolls:
+                roll = exec_result.rolls[0]
+                check_pipeline_result = PipelineResult(
+                    executed=exec_result.executed,
+                    action_type="skill_check",
+                    time_cost=exec_result.time_cost,
+                    errors=list(exec_result.errors),
+                    narrative_hints=list(exec_result.narrative_hints),
+                    rolls=list(exec_result.rolls),
+                    metadata=dict(exec_result.metadata),
+                )
+                dice_event = _build_dice_roll_event(
+                    result=check_pipeline_result,
+                    roll=roll,
+                    session=session,
+                )
+                if dice_event is not None:
+                    outcome = _result_outcome(check_pipeline_result)
+                    passed = outcome_passed(outcome)
+                    dice_event.payload.update({
+                        "roll": roll.result,
+                        "passed": passed if passed is not None else bool(exec_result.metadata.get("passed", False)),
+                        "narrative_hints": list(exec_result.narrative_hints),
+                    })
+                    await queue.put(dice_event)
+
+            outcome = check_pipeline_result.metadata.get("outcome") if exec_result.rolls else exec_result.metadata.get("outcome")
+            passed = outcome_passed(outcome) if isinstance(outcome, Mapping) else None
+            check_result = {
+                "skill": request.check_skill,
+                "dc": request.check_dc,
+                "passed": passed if passed is not None else bool(exec_result.metadata.get("passed", False)),
+                "total": exec_result.rolls[0].total if exec_result.rolls else 0,
+                "narrative_hints": list(exec_result.narrative_hints),
+                "outcome": dict(outcome) if isinstance(outcome, Mapping) else None,
+            }
+            if not bool(exec_result.executed):
+                stream_completed = False
+                stream_reason = exec_result.errors[0] if exec_result.errors else "check_execution_failed"
+
         # Full 6-step NPC interaction (Steps 2-6)
         agent_svc = get_agent_orchestration()
         npc_id = (request.target_id or request.npc_id or "").strip()
         should_call_npc = (
             agent_svc is not None
-            and interaction_result.success
+            and interaction_result.completed
+            and stream_completed
             and npc_id
             and request.message
             and request.intent in ("talk", "greet", "ask", "chat")
@@ -773,7 +913,7 @@ async def interact_stream(
         should_call_free_chat = (
             agent_svc is not None
             and not should_call_npc
-            and interaction_result.success
+            and interaction_result.completed
             and request.message
             and request.intent in ("chat",)
         )
@@ -786,6 +926,7 @@ async def interact_stream(
                 player_message=request.message,
                 intent=request.intent or "talk",
                 text_chunk_sink=_text_chunk_sink_interact,
+                check_result=check_result,
             )
             for evt in npc_events:
                 await queue.put(evt)
@@ -793,7 +934,7 @@ async def interact_stream(
                 evt.event_type in ("npc_error", "npc_response_error")
                 for evt in npc_events
             )
-            stream_success = stream_success and dialogue_succeeded
+            stream_completed = stream_completed and dialogue_succeeded
             if not dialogue_succeeded:
                 stream_reason = "dialogue_failed"
             if dialogue_succeeded and npc_events:
@@ -818,7 +959,7 @@ async def interact_stream(
                 evt.event_type in ("npc_error", "stream_error")
                 for evt in free_chat_events
             )
-            stream_success = stream_success and chat_succeeded
+            stream_completed = stream_completed and chat_succeeded
             if not chat_succeeded:
                 stream_reason = "free_chat_failed"
             if chat_succeeded and free_chat_events:
@@ -830,7 +971,7 @@ async def interact_stream(
                         "type": "free_chat_turn",
                         "actor": "player",
                         "params": {},
-                        "success": True,
+                        "executed": True,
                         "source": "external_turn",
                     },
                 )
@@ -838,7 +979,7 @@ async def interact_stream(
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(SSEEvent("stream_end", {
             "reason": stream_reason,
-            "success": stream_success,
+            "completed": stream_completed,
         }))
 
     return await _stream_with_lock(world_id, session_id, _execute)
@@ -853,47 +994,41 @@ async def private_chat_stream(
     """Initiate a private conversation with an NPC (no GM/teammate observation)."""
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
-        agent_svc = get_agent_orchestration()
-        if agent_svc is None:
-            await queue.put(SSEEvent("stream_error", {"code": "no_llm"}))
-            await queue.put(SSEEvent("stream_end", {"reason": "no_llm", "success": False}))
-            return
-
         async def _text_chunk_sink_private(chunk: str) -> None:
             await queue.put(SSEEvent("text_chunk", {"text": chunk}))
 
-        events = await agent_svc.run_private_chat(
+        utterance = UtteranceRequest(
+            text=request.message,
+            scope="private",
+            intent="talk",
+            focus_target=UtteranceTarget(kind="npc", id=request.npc_id),
+        )
+        result = await UtteranceOrchestrator(
+            get_agent_orchestration(),
+        ).execute(
             session=session,
-            npc_id=request.npc_id,
-            player_message=request.message,
             text_chunk_sink=_text_chunk_sink_private,
+            utterance=utterance,
         )
-        if not events:
-            # run_private_chat returns [] only when NPC is not found.
-            await queue.put(SSEEvent("npc_error", {
-                "npc_id": request.npc_id, "code": "npc_not_found",
-            }))
-            await queue.put(SSEEvent("stream_end", {"reason": "npc_not_found", "success": False}))
-            return
-        for evt in events:
+        for evt in result.events:
             await queue.put(evt)
-        chat_succeeded = not any(
-            e.event_type in ("npc_error", "stream_error") for e in events
-        )
-        if chat_succeeded:
+        if result.completed and result.turn_kind is not None:
             await _finalize_dialogue_turn(
                 session,
-                time_cost=1 / 6,
+                time_cost=result.time_cost,
                 event_sink=queue.put,
                 turn_action_record=_build_dialogue_turn_record(
-                    kind="private_chat_turn",
-                    npc_id=request.npc_id,
+                    kind=result.turn_kind,
+                    npc_id=result.turn_npc_id,
                     intent="private_chat",
+                    scope=result.turn_scope,
                 ),
             )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        reason = "completed" if chat_succeeded else "failed"
-        await queue.put(SSEEvent("stream_end", {"reason": reason, "success": chat_succeeded}))
+        await queue.put(SSEEvent("stream_end", {
+            "reason": result.reason,
+            "completed": result.completed,
+        }))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
@@ -912,25 +1047,26 @@ async def companion_recruit(
     """Recruit an NPC as a companion and stream the result."""
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
-        from app.game_core.orchestration.companion_manager import CompanionManager
-
-        state = session.runtime.state
-        mgr = CompanionManager(session.runtime.world, state)
-        result = mgr.recruit(request.npc_id)
-
-        if result.success:
-            members = list((state.party.members or {}).keys()) if state.has_slice("party") else []
-            await queue.put(SSEEvent("companion_recruited", {
-                "npc_id": request.npc_id,
-                "reason": result.reason,
-                "party_members": members,
-            }))
-            await get_admin_coordinator().save_session(session)
+        result = await _execute_command(
+            session,
+            Command(
+                type="recruit_companion",
+                params={"npc_id": request.npc_id},
+                source="player",
+            ),
+        )
+        await queue.put(_build_action_result_event(result, "recruit_companion"))
+        companion_event = _build_companion_result_event(result)
+        if companion_event is not None:
+            await queue.put(companion_event)
+        for event in result.sse_events:
+            await queue.put(event)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(_build_stream_end_event(
-            result.reason if not result.success else "completed",
-            result.success,
-        ))
+        reason = (
+            result.errors[0]
+            if result.errors else ("completed" if result.executed else "failed")
+        )
+        await queue.put(_build_stream_end_event(reason, result.executed))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
@@ -944,25 +1080,26 @@ async def companion_dismiss(
     """Dismiss a companion and stream the result."""
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
-        from app.game_core.orchestration.companion_manager import CompanionManager
-
-        state = session.runtime.state
-        mgr = CompanionManager(session.runtime.world, state)
-        result = mgr.dismiss(request.npc_id)
-
-        if result.success:
-            members = list((state.party.members or {}).keys()) if state.has_slice("party") else []
-            await queue.put(SSEEvent("companion_dismissed", {
-                "npc_id": request.npc_id,
-                "reason": result.reason,
-                "party_members": members,
-            }))
-            await get_admin_coordinator().save_session(session)
+        result = await _execute_command(
+            session,
+            Command(
+                type="dismiss_companion",
+                params={"npc_id": request.npc_id},
+                source="player",
+            ),
+        )
+        await queue.put(_build_action_result_event(result, "dismiss_companion"))
+        companion_event = _build_companion_result_event(result)
+        if companion_event is not None:
+            await queue.put(companion_event)
+        for event in result.sse_events:
+            await queue.put(event)
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(_build_stream_end_event(
-            result.reason if not result.success else "completed",
-            result.success,
-        ))
+        reason = (
+            result.errors[0]
+            if result.errors else ("completed" if result.executed else "failed")
+        )
+        await queue.put(_build_stream_end_event(reason, result.executed))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 

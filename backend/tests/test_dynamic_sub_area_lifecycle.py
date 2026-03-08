@@ -74,7 +74,7 @@ def test_navigation_accepts_dynamic_sub_area():
     cmd = Command(type="enter_sub_location", params={"location_id": "camp_dynamic"})
     result = handler.compute(cmd, state, world)
 
-    assert result.success
+    assert result.executed
     assert result.metadata.get("to_location") == "camp_dynamic"
 
 
@@ -86,7 +86,7 @@ def test_navigation_rejects_unknown_sub_area():
     cmd = Command(type="enter_sub_location", params={"location_id": "nonexistent"})
     result = handler.compute(cmd, state, world)
 
-    assert not result.success
+    assert not result.executed
     assert "unknown sub-location" in (result.errors[0] if result.errors else "")
 
 
@@ -100,7 +100,7 @@ def test_navigation_static_takes_priority_over_dynamic():
     cmd = Command(type="enter_sub_location", params={"location_id": "inn"})
     result = handler.compute(cmd, state, world)
 
-    assert result.success
+    assert result.executed
 
 
 # ------------------------------------------------------------------

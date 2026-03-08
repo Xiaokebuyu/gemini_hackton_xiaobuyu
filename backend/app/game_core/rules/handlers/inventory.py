@@ -333,7 +333,7 @@ class InventoryHandler(StaticCommandHandler):
         heal_amount = resolve_item_heal_amount(item_template)
         if heal_amount is None:
             return ExecuteResult(
-                success=True,
+                executed=True,
                 delta=None,
                 metadata={
                     "handler": "inventory",

@@ -607,7 +607,7 @@ def run_inline_event_check(
             result = rules_engine.execute(command, state, world)
         except Exception:
             continue
-        if result.success and result.delta is not None:
+        if result.executed and result.delta is not None:
             apply_delta(result.delta)
 
     return payloads

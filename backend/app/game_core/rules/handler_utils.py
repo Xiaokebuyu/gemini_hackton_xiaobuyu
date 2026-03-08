@@ -209,7 +209,7 @@ def handler_success(
     else:
         delta = StateDelta(changes=changes, reason=command_type, metadata=payload)
     return ExecuteResult(
-        success=True,
+        executed=True,
         delta=delta,
         time_cost=time_cost,
         rolls=rolls or [],
@@ -228,7 +228,7 @@ def handler_success_no_delta(
 ) -> ExecuteResult:
     """Build a successful ExecuteResult with no state delta."""
     return ExecuteResult(
-        success=True,
+        executed=True,
         delta=None,
         time_cost=time_cost,
         rolls=rolls or [],
@@ -244,7 +244,7 @@ def handler_failure(
 ) -> ExecuteResult:
     """Build a failed ExecuteResult."""
     return ExecuteResult(
-        success=False,
+        executed=False,
         errors=errors,
         metadata={"handler": handler_name, "command": command_type},
     )

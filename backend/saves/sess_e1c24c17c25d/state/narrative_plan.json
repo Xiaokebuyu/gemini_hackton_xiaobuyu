@@ -1,144 +1,6 @@
 {
   "behavior_window": [
     {
-      "action_type": "move_area",
-      "location": null,
-      "tick": 12
-    },
-    {
-      "changed_slices": [
-        "relations",
-        "player"
-      ],
-      "directive_count": 3,
-      "reason": "trigger",
-      "tick": 12
-    },
-    {
-      "changed_slices": [
-        "player",
-        "areas",
-        "events",
-        "flags"
-      ],
-      "directive_count": 2,
-      "reason": "trigger",
-      "tick": 13
-    },
-    {
-      "changed_slices": [
-        "player",
-        "flags",
-        "areas"
-      ],
-      "directive_count": 3,
-      "reason": "trigger",
-      "tick": 14
-    },
-    {
-      "changed_slices": [
-        "player",
-        "areas",
-        "flags",
-        "events"
-      ],
-      "directive_count": 3,
-      "reason": "trigger",
-      "tick": 15
-    },
-    {
-      "action_type": "enter_sub_location",
-      "location": "outer_cloisters",
-      "tick": 16
-    },
-    {
-      "action_type": "enter_sub_location",
-      "location": "clue_goblin_organization",
-      "tick": 16
-    },
-    {
-      "action_type": "enter_sub_location",
-      "location": "sacrificial_altar",
-      "tick": 16
-    },
-    {
-      "changed_slices": [
-        "player",
-        "areas",
-        "flags",
-        "events"
-      ],
-      "directive_count": 3,
-      "reason": "trigger",
-      "tick": 16
-    },
-    {
-      "action_type": "move_area",
-      "location": null,
-      "tick": 17
-    },
-    {
-      "changed_slices": [
-        "player",
-        "events",
-        "areas",
-        "relations"
-      ],
-      "directive_count": 2,
-      "reason": "trigger",
-      "tick": 17
-    },
-    {
-      "changed_slices": [
-        "player"
-      ],
-      "directive_count": 0,
-      "reason": "trigger",
-      "tick": 18
-    },
-    {
-      "changed_slices": [
-        "player",
-        "relations",
-        "events",
-        "areas",
-        "flags"
-      ],
-      "directive_count": 1,
-      "reason": "trigger",
-      "tick": 19
-    },
-    {
-      "changed_slices": [
-        "player",
-        "flags",
-        "areas",
-        "events"
-      ],
-      "directive_count": 2,
-      "reason": "trigger",
-      "tick": 20
-    },
-    {
-      "action_type": "set_camp",
-      "location": null,
-      "tick": 21
-    },
-    {
-      "action_type": "rest_long",
-      "location": null,
-      "tick": 21
-    },
-    {
-      "changed_slices": [
-        "areas",
-        "player"
-      ],
-      "directive_count": 2,
-      "reason": "trigger",
-      "tick": 21
-    },
-    {
       "changed_slices": [
         "player",
         "areas",
@@ -213,79 +75,186 @@
       "directive_count": 2,
       "reason": "trigger",
       "tick": 28
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "adventurer_guild",
+      "tick": 29
+    },
+    {
+      "action_type": "browse_board",
+      "location": "adventurer_guild",
+      "tick": 29
+    },
+    {
+      "action_type": "board_accept_quest",
+      "location": "adventurer_guild",
+      "tick": 29
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "mother_earth_temple",
+      "tick": 29
+    },
+    {
+      "changed_slices": [
+        "player",
+        "quests",
+        "relations",
+        "flags",
+        "events"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 29
+    },
+    {
+      "action_type": "skill_check",
+      "location": "mother_earth_temple",
+      "tick": 30
+    },
+    {
+      "changed_slices": [
+        "relations",
+        "party",
+        "areas",
+        "player",
+        "flags",
+        "events"
+      ],
+      "directive_count": 1,
+      "reason": "trigger",
+      "tick": 30
+    },
+    {
+      "action_type": "skill_check",
+      "location": "mother_earth_temple",
+      "tick": 31
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "adventurer_guild",
+      "tick": 31
+    },
+    {
+      "changed_slices": [
+        "player"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 31
+    },
+    {
+      "action_type": "recruit_companion",
+      "location": "adventurer_guild",
+      "tick": 32
+    },
+    {
+      "changed_slices": [
+        "relations",
+        "party",
+        "player",
+        "flags",
+        "events"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 32
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "tavern",
+      "tick": 33
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "adventurer_guild",
+      "tick": 33
+    },
+    {
+      "action_type": "enter_sub_location",
+      "location": "tavern",
+      "tick": 33
+    },
+    {
+      "changed_slices": [
+        "player",
+        "events",
+        "flags"
+      ],
+      "directive_count": 2,
+      "reason": "trigger",
+      "tick": 33
+    },
+    {
+      "changed_slices": [
+        "party",
+        "player"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 34
     }
   ],
   "chapter_completion": 0.0,
   "current_chapter": "",
   "current_target_milestone": null,
   "escalation_level": 5,
-  "last_run_tick": 28,
+  "last_run_tick": 34,
   "next_scheduled_tick": 24,
   "npc_directives": [
     {
       "consumed": false,
       "directive": {
-        "kind": "present_quest",
-        "quest_id": "dq_ms_familiar_banter",
-        "source_milestone": "ms_familiar_banter"
+        "context": "Priestess notices the player's distress and the pulsing mark on the altar, connecting it to the nightmare they just shared.",
+        "kind": "initiate_dialogue",
+        "tone": "compassionate_but_urgent",
+        "topic": "the_altar_mark_and_nightmare"
       },
-      "expires_at_tick": 32,
-      "issued_at_tick": 8,
+      "expires_at_tick": 35,
+      "issued_at_tick": 30,
       "linked_quest_id": null,
-      "npc_id": "guild_clerk",
-      "priority": "medium",
+      "npc_id": "priestess",
+      "priority": "high",
       "source": "narrative_planner"
     },
     {
       "consumed": false,
       "directive": {
-        "board_id": "quest_board",
-        "kind": "bulletin_awareness",
-        "metadata": {
-          "quest_id": "dq_ms_familiar_banter",
-          "source_milestone": "ms_familiar_banter"
-        },
-        "notice": "Urgent Gathering",
-        "quest_id": "dq_ms_familiar_banter",
-        "source_milestone": "ms_familiar_banter"
+        "goal": "trigger milestone ms_familiar_banter",
+        "kind": "initiate_dialogue",
+        "topic": "reflecting on the nightmare and the temple altar mark"
       },
-      "expires_at_tick": 47,
-      "issued_at_tick": 23,
+      "expires_at_tick": 35,
+      "issued_at_tick": 31,
       "linked_quest_id": null,
-      "npc_id": "guild_girl",
-      "priority": "medium",
+      "npc_id": "priestess",
+      "priority": "high",
       "source": "narrative_planner"
     },
     {
       "consumed": false,
       "directive": {
-        "board_id": "quest_board",
-        "kind": "bulletin_awareness",
-        "metadata": {
-          "quest_id": "dq_ms_familiar_banter",
-          "source_milestone": "ms_familiar_banter"
-        },
-        "notice": "Urgent Gathering",
-        "quest_id": "dq_ms_familiar_banter",
-        "source_milestone": "ms_familiar_banter"
+        "content": "Look at all the veterans here... It makes me realize how much we've grown since we first met. What do you think is the most important thing for a party to stay together?",
+        "kind": "talk"
       },
-      "expires_at_tick": 47,
-      "issued_at_tick": 23,
+      "expires_at_tick": 40,
+      "issued_at_tick": 32,
       "linked_quest_id": null,
-      "npc_id": "goblin_slayer",
-      "priority": "medium",
+      "npc_id": "priestess",
+      "priority": "high",
       "source": "narrative_planner"
     },
     {
       "consumed": false,
       "directive": {
-        "goal": "Trigger ms_familiar_banter by sharing concerns about the upcoming dawn",
-        "kind": "talk",
+        "content": "Even in times like these, we should appreciate this moment of peace together. Don't you think the tea here has a unique warmth?",
+        "kind": "initiate_dialogue",
         "target": "player",
-        "topic": "the growing unease of the night and the nightmares"
+        "topic": "reflecting on recent teamwork and sharing a light moment"
       },
-      "expires_at_tick": 28,
-      "issued_at_tick": 25,
+      "expires_at_tick": 40,
+      "issued_at_tick": 33,
       "linked_quest_id": null,
       "npc_id": "priestess",
       "priority": "high",
@@ -294,42 +263,12 @@
     {
       "consumed": false,
       "directive": {
-        "kind": "initiate_dialogue",
-        "text": "你刚才在做噩梦吗？你的脸色看起来很糟糕...如果地母神的慈悲能让你稍微安心一点的话...",
-        "topic": "player_nightmare"
+        "context": "Observing the heavy silence at the table, the priestess decides to lighten the mood by mentioning the high elf archer's peculiar taste in tavern snacks.",
+        "kind": "social_initiation",
+        "topic": "shared_meal_habits"
       },
-      "expires_at_tick": 28,
-      "issued_at_tick": 26,
-      "linked_quest_id": null,
-      "npc_id": "priestess",
-      "priority": "high",
-      "source": "narrative_planner"
-    },
-    {
-      "consumed": false,
-      "directive": {
-        "clue_id": "ms_familiar_banter",
-        "kind": "initiate_dialogue",
-        "text": "你看起来面色苍白...是因为刚才那个噩梦吗？如果不介意的话，可以跟我聊聊。",
-        "topic": "nightmare_concern"
-      },
-      "expires_at_tick": 28,
-      "issued_at_tick": 27,
-      "linked_quest_id": null,
-      "npc_id": "priestess",
-      "priority": "high",
-      "source": "narrative_planner"
-    },
-    {
-      "consumed": false,
-      "directive": {
-        "context": "witnessed_pc_nightmare",
-        "kind": "initiate_dialogue",
-        "milestone_target": "ms_familiar_banter",
-        "tone": "concerned"
-      },
-      "expires_at_tick": 29,
-      "issued_at_tick": 28,
+      "expires_at_tick": 40,
+      "issued_at_tick": 34,
       "linked_quest_id": null,
       "npc_id": "priestess",
       "priority": "high",
@@ -345,7 +284,7 @@
       "tick": 8
     }
   ],
-  "strategy_notes": "The game state is at Escalation L5 and stalled for 27 ticks. An ambush event is scheduled for tick 29. To prevent the narrative from breaking or the player from being overwhelmed without context, we must force the 'ms_familiar_banter' milestone immediately at tick 28. Priestess is directed to initiate a high-priority conversation using the 'witnessed_pc_nightmare' context, providing a moment of character depth before the combat encounter. This is a final attempt to secure the milestone before the ambush occurs.",
+  "strategy_notes": "The narrative has stalled for 33 ticks at Escalation L5 with 0% completion on 'ms_familiar_banter'. The party is currently in the tavern but interaction is not progressing. I am using a Direct NPC directive for the 'priestess' to initiate a conversation, leveraging her high approval rating (20 cumulative) to force a breakthrough. I am also planting an environmental clue (a specific drink/meal) to provide a low-stakes conversational anchor. Pacing remains frozen to prevent time-skipping without interaction.",
   "temporary_npcs": {},
-  "ticks_since_milestone_progress": 28
+  "ticks_since_milestone_progress": 34
 }

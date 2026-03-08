@@ -1,0 +1,19 @@
+{
+  "character_name": "休息测试",
+  "created_at": 1772881069.8937325,
+  "game_day": 1,
+  "game_slot": 16,
+  "last_played": 1772881069.9219646,
+  "phase": "active",
+  "saved_at": 1772881069.9219646,
+  "session_id": "sess_e604f664d8c1",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "休息测试"
+  },
+  "world_id": "goblin_slayer"
+}

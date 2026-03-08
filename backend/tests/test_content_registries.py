@@ -3081,7 +3081,7 @@ def test_growth_resolves_feature_typed_traits():
         "ability_scores": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
     })
     result = engine.execute(cmd, state, world)
-    assert result.success is True, result.errors
+    assert result.executed is True, result.errors
     state.apply(result.delta)
     class_features = state.player.class_features
     assert "versatile" in class_features

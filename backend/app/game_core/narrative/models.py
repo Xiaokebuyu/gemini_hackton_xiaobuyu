@@ -12,14 +12,14 @@ from app.game_core.rules.models import Command
 class ToolResult:
     """Result returned by one agent tool invocation."""
 
-    success: bool
+    ok: bool
     message: str = ""
     commands: list[Command] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def noop(cls, message: str = "no-op") -> "ToolResult":
-        return cls(success=True, message=message, metadata={"status": "noop"})
+        return cls(ok=True, message=message, metadata={"status": "noop"})
 
 
 @dataclass(slots=True)

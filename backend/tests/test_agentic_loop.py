@@ -55,7 +55,7 @@ class EchoTool(AgentTool):
     async def execute(self, params: dict[str, Any], context: AgentContext) -> ToolResult:
         text = params.get("text", "")
         return ToolResult(
-            success=True,
+            ok=True,
             message=text,
             metadata={"event_type": "echo", "echoed": text},
         )
@@ -73,7 +73,7 @@ class CounterTool(AgentTool):
         context.metadata.setdefault("counter", 0)
         context.metadata["counter"] += 1
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"counter={context.metadata['counter']}",
             metadata={"counter": context.metadata["counter"]},
         )
@@ -120,7 +120,7 @@ class ScriptedNarrativeTool(AgentTool):
             context.metadata.setdefault(self._side_effect_key, [])
             context.metadata[self._side_effect_key].append(text)
         return ToolResult(
-            success=True,
+            ok=True,
             message=text,
             metadata={"event_type": self._event_type},
         )
@@ -211,7 +211,7 @@ def test_run_agentic_single_turn_tool_call() -> None:
     assert result.text == "Done echoing."
     assert result.turns_used == 2
     assert len(result.tool_results) == 1
-    assert result.tool_results[0].success is True
+    assert result.tool_results[0].ok is True
     assert result.tool_results[0].metadata["echoed"] == "hello"
     assert result.metadata["status"] == "completed"
 
@@ -463,7 +463,7 @@ def test_tool_response_fed_back_to_history() -> None:
     fr_part = history[2]["parts"][0]
     assert "function_response" in fr_part
     assert fr_part["function_response"]["name"] == "echo"
-    assert fr_part["function_response"]["response"]["success"] is True
+    assert fr_part["function_response"]["response"]["ok"] is True
     assert fr_part["function_response"]["response"]["echoed"] == "ping"
 
 

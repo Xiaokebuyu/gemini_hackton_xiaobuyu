@@ -13,6 +13,8 @@ from unittest.mock import MagicMock
 
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.companion_manager import CompanionManager
+from app.game_core.rules import Command, RulesEngine
+from app.game_core.rules.handlers import CompanionHandler
 from app.game_core.state import StateContainer
 from app.game_core.state.slices import AreaSlice, PartySlice, SceneSlice
 from app.game_core.state.slices.player import PlayerSlice
@@ -121,6 +123,15 @@ def _make_state(
     return state
 
 
+def _execute(state: StateContainer, world: WorldInstance, command: Command):
+    engine = RulesEngine()
+    engine.register(CompanionHandler())
+    result = engine.execute(command, state, world)
+    if result.executed and result.delta is not None:
+        state.apply(result.delta)
+    return result
+
+
 # ------------------------------------------------------------------
 # 1. recruit() syncs companion to player area
 # ------------------------------------------------------------------
@@ -139,10 +150,13 @@ def test_recruit_places_companion_at_player_area() -> None:
         npc_dispositions={"npc1": {"approval": 20}},
         relationship_stages={"npc1": "acquaintance"},
     )
-    mgr = CompanionManager(world, state)
-    result = mgr.recruit("npc1")
+    result = _execute(
+        state,
+        world,
+        Command(type="recruit_companion", params={"npc_id": "npc1"}),
+    )
 
-    assert result.success is True
+    assert result.executed is True
     # Companion should be at player's area
     assert state.areas.find_npc_area("npc1") == "town"
 
@@ -160,10 +174,13 @@ def test_recruit_places_companion_at_player_sub_location() -> None:
         npc_dispositions={"npc1": {"approval": 20}},
         relationship_stages={"npc1": "acquaintance"},
     )
-    mgr = CompanionManager(world, state)
-    result = mgr.recruit("npc1")
+    result = _execute(
+        state,
+        world,
+        Command(type="recruit_companion", params={"npc_id": "npc1"}),
+    )
 
-    assert result.success is True
+    assert result.executed is True
     assert state.areas.find_npc_area("npc1") == "town"
     area_state = state.areas.get_area("town")
     assert area_state.npc_locations.get("npc1") == "square"
@@ -186,7 +203,7 @@ def test_sync_to_player_moves_companions_after_navigation() -> None:
         },
         party_members={"npc1": {"name": "npc1"}},
     )
-    mgr = CompanionManager(world, state)
+    mgr = CompanionManager(state)
     moved = mgr.sync_to_player()
 
     assert moved == ["npc1"]
@@ -206,7 +223,7 @@ def test_sync_to_player_skips_already_correct_position() -> None:
         },
         party_members={"npc1": {"name": "npc1"}},
     )
-    mgr = CompanionManager(world, state)
+    mgr = CompanionManager(state)
     moved = mgr.sync_to_player()
 
     assert moved == []
@@ -224,7 +241,7 @@ def test_sync_to_player_no_party_members_returns_empty() -> None:
         player_location="square",
         party_members={},
     )
-    mgr = CompanionManager(world, state)
+    mgr = CompanionManager(state)
     moved = mgr.sync_to_player()
 
     assert moved == []
@@ -241,7 +258,7 @@ def test_sync_to_player_moves_companion_in_same_area_different_location() -> Non
         },
         party_members={"npc1": {"name": "npc1"}},
     )
-    mgr = CompanionManager(world, state)
+    mgr = CompanionManager(state)
     moved = mgr.sync_to_player()
 
     assert moved == ["npc1"]
@@ -265,10 +282,13 @@ def test_dismiss_leaves_companion_in_area() -> None:
         },
         party_members={"npc1": {"name": "npc1"}},
     )
-    mgr = CompanionManager(world, state)
-    result = mgr.dismiss("npc1")
+    result = _execute(
+        state,
+        world,
+        Command(type="dismiss_companion", params={"npc_id": "npc1"}),
+    )
 
-    assert result.success is True
+    assert result.executed is True
     # NPC should still be present in the area
     assert state.areas.find_npc_area("npc1") == "town"
     area_state = state.areas.get_area("town")
@@ -286,10 +306,15 @@ def test_dismissed_companion_not_moved_by_sync() -> None:
         },
         party_members={"npc1": {"name": "npc1"}},
     )
-    mgr = CompanionManager(world, state)
+    mgr = CompanionManager(state)
 
     # Dismiss first
-    mgr.dismiss("npc1")
+    result = _execute(
+        state,
+        world,
+        Command(type="dismiss_companion", params={"npc_id": "npc1"}),
+    )
+    assert result.executed is True
     assert "npc1" not in state.party.members
 
     # Now sync — npc1 is no longer a member, should not be moved

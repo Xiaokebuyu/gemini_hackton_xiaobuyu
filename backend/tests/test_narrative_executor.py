@@ -42,7 +42,7 @@ class DummyTool(AgentTool):
     async def execute(self, params: dict[str, Any], context: AgentContext) -> ToolResult:
         self.calls.append({"params": dict(params), "role": context.role})
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"ran:{self._marker}",
             metadata={"status": "ok", "marker": self._marker},
         )
@@ -116,13 +116,13 @@ def test_agentic_executor_handles_invalid_calls_and_executes_known_tools() -> No
     )
 
     assert len(results) == 4
-    assert results[0].success is False
+    assert results[0].ok is False
     assert results[0].metadata == {"status": "invalid_params", "tool_name": ""}
-    assert results[1].success is False
+    assert results[1].ok is False
     assert results[1].metadata == {"status": "unknown_tool", "tool_name": ""}
-    assert results[2].success is False
+    assert results[2].ok is False
     assert results[2].metadata == {"status": "invalid_params", "tool_name": "alpha"}
-    assert results[3].success is True
+    assert results[3].ok is True
     assert results[3].metadata["marker"] == "alpha"
     assert alpha.calls == [{"params": {"x": 1}, "role": "gm"}]
 

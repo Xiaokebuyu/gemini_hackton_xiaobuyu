@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.game_core.result_semantics import normalize_outcome
 from app.game_core.rules.models import Command, DiceRoll
 from app.game_core.state import StateDelta
 
@@ -41,7 +42,7 @@ class StructuredAction:
 class PipelineResult:
     """Output of one pipeline pass."""
 
-    success: bool
+    executed: bool
     response_text: str = ""
     commands: list[Command] = field(default_factory=list)
     delta: StateDelta | None = None
@@ -53,6 +54,15 @@ class PipelineResult:
     sse_events: list[SSEEvent] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+        self.metadata.setdefault("executed", self.executed)
+        command_type = self.action_type or str(self.metadata.get("command") or "")
+        outcome = normalize_outcome(command_type, self.metadata)
+        if outcome is not None:
+            self.metadata["outcome"] = outcome
+
     @classmethod
     def noop(cls) -> "PipelineResult":
-        return cls(success=True, metadata={"status": "stub"})
+        return cls(executed=True, metadata={"status": "stub"})

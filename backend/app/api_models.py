@@ -165,7 +165,7 @@ class PlayerLocationBody(BaseModel):
 class ActionExecutionResponse(BaseModel):
     """Structured action execution result for JSON endpoints."""
 
-    success: bool
+    executed: bool
     action_type: str
     time_cost: float
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -199,6 +199,7 @@ class TextInputRequest(BaseModel):
 class InteractRequest(BaseModel):
     """Request body for the interaction stream."""
 
+    scope: str | None = None
     target_kind: str | None = None
     target_id: str | None = None
     npc_id: str | None = None
@@ -207,6 +208,8 @@ class InteractRequest(BaseModel):
     quest_id: str | None = None
     count: int = 1
     message: str | None = None
+    check_skill: str | None = None
+    check_dc: int | None = None
 
 
 class PrivateChatRequest(BaseModel):

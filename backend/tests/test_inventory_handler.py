@@ -87,7 +87,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "picked_up"
         _apply(result, state)
         assert state.player.inventory[0].count == 3
@@ -101,7 +101,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "dropped"
         _apply(result, state)
         assert state.player.inventory == []
@@ -113,7 +113,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["not enough items: potion"]
 
     def test_equip_sets_slot_and_reports_previous_item(self) -> None:
@@ -127,7 +127,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["previous_item_id"] == "dagger"
         assert result.metadata["status"] == "equipped"
         _apply(result, state)
@@ -141,7 +141,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "noop"
         assert result.metadata["removed_item_id"] is None
@@ -157,7 +157,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0 / 6.0
         assert result.metadata["status"] == "consumed"
         assert result.metadata["hp_delta"] == 4
@@ -176,7 +176,7 @@ class TestInventoryHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "no_effect"
         assert result.metadata["hp_delta"] == 0
@@ -192,7 +192,7 @@ class TestInventoryHandler:
             state,
             _make_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "consumed"
         assert result.metadata["remaining"] == 1
         _apply(result, state)
@@ -208,7 +208,7 @@ class TestInventoryHandler:
             state,
             _make_world(),
         )
-        assert result.success is False
+        assert result.executed is False
         assert "insufficient resource" in result.errors[0]
 
     def test_consume_resource_missing_key(self) -> None:
@@ -218,7 +218,7 @@ class TestInventoryHandler:
             state,
             _make_world(),
         )
-        assert result.success is False
+        assert result.executed is False
         assert "unknown resource" in result.errors[0]
 
     def test_consume_resource_default_amount(self) -> None:
@@ -231,7 +231,7 @@ class TestInventoryHandler:
             state,
             _make_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["amount"] == 1
         assert result.metadata["remaining"] == 1
 
@@ -309,7 +309,7 @@ class TestInventoryHandlerEquipFA:
             state,
             _make_typed_world(),
         )
-        assert result.success is False
+        assert result.executed is False
         assert "cannot be equipped in slot" in (result.errors[0] if result.errors else "")
 
     def test_equip_shield_only_allows_off_hand(self) -> None:
@@ -322,7 +322,7 @@ class TestInventoryHandlerEquipFA:
             state,
             _make_typed_world(),
         )
-        assert result.success is False
+        assert result.executed is False
         assert "cannot be equipped in slot" in (result.errors[0] if result.errors else "")
 
     def test_equip_armor_updates_ac(self) -> None:
@@ -337,7 +337,7 @@ class TestInventoryHandlerEquipFA:
             state,
             _make_typed_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "equipped"
         assert result.metadata["ac"] == 13
         _apply(result, state)
@@ -355,7 +355,7 @@ class TestInventoryHandlerEquipFA:
             state,
             _make_typed_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["ac"] == 14  # 10 + 4
         _apply(result, state)
         assert state.player.ac == 14
@@ -374,7 +374,7 @@ class TestInventoryHandlerEquipFA:
             state,
             _make_typed_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["ac"] == 15  # 13 (leather) + 2 (buckler)
         _apply(result, state)
         assert state.player.ac == 15
@@ -391,7 +391,7 @@ class TestInventoryHandlerEquipFA:
             state,
             _make_typed_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "unequipped"
         assert result.metadata["ac"] == 11  # unarmored: 10 + 1
         _apply(result, state)

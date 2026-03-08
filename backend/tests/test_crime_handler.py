@@ -104,7 +104,7 @@ class TestCrimeHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "stolen"
         assert result.metadata["passed"] is True
         _apply(result, state)
@@ -132,7 +132,7 @@ class TestCrimeHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "detected"
         assert result.metadata["detected"] is True
@@ -144,7 +144,7 @@ class TestCrimeHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["NPC theft unsupported in MVP"]
 
     def test_lockpick_unlocks_locked_container(self) -> None:
@@ -155,7 +155,7 @@ class TestCrimeHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "unlocked"
         _apply(result, state)
         container_state = state.areas.get_container_state("forest", "crate")
@@ -170,7 +170,7 @@ class TestCrimeHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "failed"
         assert result.metadata["passed"] is False

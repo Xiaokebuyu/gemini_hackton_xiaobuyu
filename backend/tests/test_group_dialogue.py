@@ -31,6 +31,7 @@ from app.game_core.orchestration.npc_interaction import (
     NpcInteractionResult,
     RoundMessage,
     _build_group_observation,
+    _should_teammate_respond,
 )
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateContainer
@@ -123,7 +124,7 @@ def _stop(text: str = "") -> dict[str, Any]:
 
 
 def _noop_exec(command: Command) -> ExecuteResult:
-    return ExecuteResult(success=True)
+    return ExecuteResult(executed=True)
 
 
 def _make_world(
@@ -247,7 +248,7 @@ class TestSerializedEvaluation:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
 
         # Find the LLM call for tm_b (should be the 4th call: NPC, GM, tm_a, tm_b)
         # The user_message in tm_b's call should contain tm_a's speech
@@ -295,7 +296,7 @@ class TestSerializedEvaluation:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         speakers = [m.speaker_id for m in result.round_messages]
         assert "player" in speakers
         assert "merchant" in speakers
@@ -340,7 +341,7 @@ class TestReplyLimit:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         # tm_a should have exactly 2 speech messages in round_messages
         tm_a_speeches = [
             m for m in result.round_messages
@@ -379,7 +380,7 @@ class TestReplyLimit:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         tm_a_speeches = [
             m for m in result.round_messages
             if m.speaker_id == "tm_a" and m.event_type == "speech"
@@ -426,7 +427,7 @@ class TestNaturalConvergence:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         # No teammate speech in round_messages — only player + NPC
         tm_speeches = [
             m for m in result.round_messages
@@ -454,7 +455,7 @@ class TestNaturalConvergence:
             execute_command=_noop_exec,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         assert result.ordered_responses == []
         assert result.teammate_results == {}
         # round_messages: player + NPC only
@@ -488,7 +489,7 @@ class TestNaturalConvergence:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         emotes = [
             m for m in result.round_messages
             if m.speaker_id == "tm_a" and m.event_type == "emote"
@@ -534,7 +535,7 @@ class TestFreeChatNoNpc:
                 execute_command=_noop_exec,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         assert result.npc_id == ""
         assert result.npc_result is None
         assert result.gm_result is None
@@ -570,7 +571,7 @@ class TestFreeChatNoNpc:
         assert npc_msgs == []
 
     def test_free_chat_no_party_returns_empty(self) -> None:
-        """Free chat with no party members returns success with no responses."""
+        """Free chat with no party members completes with no responses."""
         world = _make_world()
         state = _make_state(world, members={})
         coordinator, _ = _build_coordinator(
@@ -584,13 +585,57 @@ class TestFreeChatNoNpc:
             execute_command=_noop_exec,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         assert result.ordered_responses == []
         assert len(result.round_messages) == 1  # Only player
 
 
 # ------------------------------------------------------------------
-# 5. ordered_responses and NpcInteractionResult structure
+# 5. Public utterance — GM + teammates, no focused NPC
+# ------------------------------------------------------------------
+
+
+class TestPublicUtterance:
+    def test_public_utterance_has_gm_but_no_npc(self) -> None:
+        """Untargeted public utterance runs GM + teammates without a focused NPC."""
+        import app.game_core.orchestration.npc_interaction as _npc_mod
+
+        world = _make_world()
+        state = _make_state(world, members={"tm_a": {"role": "warrior"}})
+        coordinator, _ = _build_coordinator(
+            llm_responses=[
+                _gm_pass(),
+                _stop(),
+                _tm_speak("我听到了。"),
+                _tm_pass(),
+                _stop(),
+            ],
+            world=world,
+            state=state,
+        )
+
+        with patch.object(_npc_mod.random, "random", return_value=0.0):
+            result = asyncio.run(coordinator.execute_public_utterance(
+                player_message="大家先别急。",
+                execute_command=_noop_exec,
+            ))
+
+        assert result.completed is True
+        assert result.npc_id == ""
+        assert result.npc_result is None
+        assert result.gm_result is not None
+        assert result.audience_member_ids == ["tm_a"]
+        assert result.ordered_responses[0][0] == "tm_a"
+        assert result.round_messages[0] == RoundMessage(
+            speaker_id="player",
+            speaker_role="player",
+            content="大家先别急。",
+            event_type="speech",
+        )
+
+
+# ------------------------------------------------------------------
+# 6. ordered_responses and NpcInteractionResult structure
 # ------------------------------------------------------------------
 
 
@@ -745,7 +790,7 @@ class TestRoundMessage:
 
 
 # ------------------------------------------------------------------
-# 8. ContextWindow writing (_write_teammate_context_windows)
+# 9. ContextWindow writing (_write_teammate_context_windows)
 # ------------------------------------------------------------------
 
 
@@ -770,10 +815,10 @@ class TestContextWindowWriting:
 
         ordered = [
             ("tm_a", AgentResult(tool_results=[
-                ToolResult(success=True, message="A says hi", metadata={"event_type": "speech"}),
+                ToolResult(ok=True, message="A says hi", metadata={"event_type": "speech"}),
             ])),
             ("tm_b", AgentResult(tool_results=[
-                ToolResult(success=True, message="B says bye", metadata={"event_type": "speech"}),
+                ToolResult(ok=True, message="B says bye", metadata={"event_type": "speech"}),
             ])),
         ]
         assert _extract_member_speech(ordered, "tm_a") == "A says hi"
@@ -786,8 +831,8 @@ class TestContextWindowWriting:
 
         ordered = [
             ("tm_a", AgentResult(tool_results=[
-                ToolResult(success=True, message="Hello", metadata={"event_type": "speech"}),
-                ToolResult(success=True, message="*waves*", metadata={"event_type": "emote"}),
+                ToolResult(ok=True, message="Hello", metadata={"event_type": "speech"}),
+                ToolResult(ok=True, message="*waves*", metadata={"event_type": "emote"}),
             ])),
         ]
         result = _extract_member_speech(ordered, "tm_a")
@@ -809,7 +854,7 @@ class TestContextWindowWriting:
 
         # Build a result with round_messages and ordered_responses
         result = NpcInteractionResult(
-            success=True,
+            completed=True,
             npc_id="merchant",
             round_messages=[
                 RoundMessage("player", "player", "Hi", "speech"),
@@ -818,10 +863,10 @@ class TestContextWindowWriting:
             ],
             ordered_responses=[
                 ("tm_a", AgentResult(tool_results=[
-                    ToolResult(success=True, message="Hi back", metadata={"event_type": "speech"}),
+                    ToolResult(ok=True, message="Hi back", metadata={"event_type": "speech"}),
                 ])),
                 ("tm_b", AgentResult(tool_results=[
-                    ToolResult(success=True, message="", metadata={"event_type": "pass"}),
+                    ToolResult(ok=True, message="", metadata={"event_type": "pass"}),
                 ])),
             ],
         )
@@ -848,7 +893,7 @@ class TestContextWindowWriting:
         assert len(tm_b_model) == 0  # no speech
 
     def test_write_skipped_when_no_ordered_responses(self) -> None:
-        """If ordered_responses is empty, nothing is written."""
+        """No audience and no responses → nothing is written."""
         from app.agent_orchestration import _write_teammate_context_windows
 
         comp_mgr = CompanionRuntimeManager()
@@ -858,7 +903,7 @@ class TestContextWindowWriting:
         session_mock.runtime = runtime_mock
 
         result = NpcInteractionResult(
-            success=True,
+            completed=True,
             npc_id="merchant",
             round_messages=[
                 RoundMessage("player", "player", "Hi", "speech"),
@@ -871,9 +916,118 @@ class TestContextWindowWriting:
         # No instances should have been created
         assert len(comp_mgr._pool) == 0
 
+    def test_write_receipts_for_silent_audience_members(self) -> None:
+        """Audience teammates receive the transcript even when nobody speaks."""
+        from app.agent_orchestration import _write_teammate_context_windows
+
+        comp_mgr = CompanionRuntimeManager()
+        runtime_mock = MagicMock()
+        runtime_mock.companion_manager = comp_mgr
+        session_mock = MagicMock()
+        session_mock.runtime = runtime_mock
+
+        result = NpcInteractionResult(
+            completed=True,
+            npc_id="",
+            audience_member_ids=["tm_a", "tm_b"],
+            round_messages=[
+                RoundMessage("player", "player", "先别出声。", "speech"),
+            ],
+            ordered_responses=[],
+        )
+
+        _write_teammate_context_windows(session_mock, result)
+
+        tm_a_msgs = comp_mgr.get_or_create("tm_a").context_window.messages
+        tm_b_msgs = comp_mgr.get_or_create("tm_b").context_window.messages
+        assert [msg.role for msg in tm_a_msgs] == ["user"]
+        assert [msg.role for msg in tm_b_msgs] == ["user"]
+        assert "先别出声。" in tm_a_msgs[0].content
+        assert "先别出声。" in tm_b_msgs[0].content
+
+
+class TestTeammateResponseProbability:
+    def test_relationship_stage_and_scores_raise_dialogue_response_chance(self) -> None:
+        import app.game_core.orchestration.npc_interaction as _npc_mod
+
+        world = _make_world(
+            ("tm_friend", {
+                "id": "tm_friend",
+                "name": "Teammate Friend",
+                "personality": "Warm and outspoken.",
+                "response_tendency": 0.3,
+            }),
+            ("tm_hostile", {
+                "id": "tm_hostile",
+                "name": "Teammate Hostile",
+                "personality": "Cold and dismissive.",
+                "response_tendency": 0.3,
+            }),
+        )
+        state = _make_state(
+            world,
+            members={
+                "tm_friend": {"role": "ally"},
+                "tm_hostile": {"role": "ally"},
+            },
+        )
+        state.relations.set_relationship_stage("tm_friend", "close_friend")
+        state.relations.set_relationship_stage("tm_hostile", "hostile")
+        state.relations.npc_dispositions["tm_friend"] = {
+            "approval": 70,
+            "trust": 70,
+            "fear": 0,
+            "romance": 0,
+        }
+        state.relations.npc_dispositions["tm_hostile"] = {
+            "approval": -70,
+            "trust": -70,
+            "fear": 0,
+            "romance": 0,
+        }
+
+        with patch.object(_npc_mod.random, "random", return_value=0.45):
+            assert _should_teammate_respond(
+                world,
+                "tm_friend",
+                state=state,
+            ) is True
+            assert _should_teammate_respond(
+                world,
+                "tm_hostile",
+                state=state,
+            ) is False
+
+    def test_explicit_party_bonus_applies_on_same_character(self) -> None:
+        import app.game_core.orchestration.npc_interaction as _npc_mod
+
+        world = _make_world()
+        state = _make_state(world, members={"tm_a": {"role": "warrior"}})
+        state.relations.set_relationship_stage("tm_a", "acquaintance")
+        state.relations.npc_dispositions["tm_a"] = {
+            "approval": 0,
+            "trust": 0,
+            "fear": 0,
+            "romance": 0,
+        }
+
+        with patch.object(_npc_mod.random, "random", return_value=0.36):
+            assert _should_teammate_respond(
+                world,
+                "tm_a",
+                state=state,
+                explicit_party=False,
+            ) is False
+            assert _should_teammate_respond(
+                world,
+                "tm_a",
+                state=state,
+                explicit_party=True,
+            ) is True
+
 
 # ------------------------------------------------------------------
-# 9. SSE conversion uses ordered_responses
+# 10. SSE conversion uses ordered_responses
 # ------------------------------------------------------------------
 
 
@@ -883,17 +1037,17 @@ class TestSseConversion:
         from app.agent_orchestration import _interaction_result_to_sse
 
         result = NpcInteractionResult(
-            success=True,
+            completed=True,
             npc_id="merchant",
             npc_result=AgentResult(tool_results=[
-                ToolResult(success=True, message="Hello!", metadata={"event_type": "speech"}),
+                ToolResult(ok=True, message="Hello!", metadata={"event_type": "speech"}),
             ]),
             ordered_responses=[
                 ("tm_a", AgentResult(tool_results=[
-                    ToolResult(success=True, message="A here", metadata={"event_type": "speech"}),
+                    ToolResult(ok=True, message="A here", metadata={"event_type": "speech"}),
                 ])),
                 ("tm_b", AgentResult(tool_results=[
-                    ToolResult(success=True, message="B here", metadata={"event_type": "speech"}),
+                    ToolResult(ok=True, message="B here", metadata={"event_type": "speech"}),
                 ])),
             ],
         )
@@ -915,11 +1069,11 @@ class TestSseConversion:
         from app.agent_orchestration import _free_chat_result_to_sse
 
         result = NpcInteractionResult(
-            success=True,
+            completed=True,
             npc_id="",
             ordered_responses=[
                 ("tm_a", AgentResult(tool_results=[
-                    ToolResult(success=True, message="Hi!", metadata={"event_type": "speech"}),
+                    ToolResult(ok=True, message="Hi!", metadata={"event_type": "speech"}),
                 ])),
             ],
         )
@@ -937,12 +1091,12 @@ class TestSseConversion:
         from app.agent_orchestration import _interaction_result_to_sse
 
         result = NpcInteractionResult(
-            success=True,
+            completed=True,
             npc_id="merchant",
             ordered_responses=[],  # empty
             teammate_results={
                 "tm_a": AgentResult(tool_results=[
-                    ToolResult(success=True, message="Fallback", metadata={"event_type": "speech"}),
+                    ToolResult(ok=True, message="Fallback", metadata={"event_type": "speech"}),
                 ]),
             },
         )

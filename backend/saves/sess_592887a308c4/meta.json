@@ -1,0 +1,19 @@
+{
+  "character_name": "联调者3",
+  "created_at": 1772877502.1569166,
+  "game_day": 1,
+  "game_slot": 16,
+  "last_played": 1772877657.5032656,
+  "phase": "active",
+  "saved_at": 1772877657.5032656,
+  "session_id": "sess_592887a308c4",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "联调者3"
+  },
+  "world_id": "goblin_slayer"
+}

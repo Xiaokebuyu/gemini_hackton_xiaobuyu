@@ -36,7 +36,17 @@ logger = logging.getLogger(__name__)
 _TICK_KIND_TRAVEL = frozenset({"move_area", "enter_sub_location", "leave_sub_location"})
 _TICK_KIND_REST = frozenset({"rest_short", "rest_long", "night_watch", "set_camp"})
 _TICK_KIND_CONVERSATION = frozenset(
-    {"speak", "dialogue", "talk", "emote", "dialogue_turn", "private_chat_turn"}
+    {
+        "speak",
+        "dialogue",
+        "talk",
+        "emote",
+        "dialogue_turn",
+        "public_utterance_turn",
+        "party_chat_turn",
+        "free_chat_turn",
+        "private_chat_turn",
+    }
 )
 _TICK_KIND_COMBAT = frozenset(
     {
@@ -1137,7 +1147,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "despawn_tick": despawn_tick,
             })
             context.state.narrative_plan.add_temporary_npc(npc_id, npc_profile)
-            context.state.areas.move_npc(npc_id, area_id, location_id)
+            context.state.areas.move_npc(npc_id, area_id, location_id, source="planner")
             context.record_change(StateChange(slice="areas", operation="set", path=f"npc_location.{npc_id}", value=area_id))
             context.state.narrative_plan.add_directive({
                 "npc_id": npc_id,

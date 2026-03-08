@@ -1,40 +1,56 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useOptionStore } from '../stores/optionStore'
 import { useSceneStore } from '../stores/sceneStore'
 import { usePartyStore } from '../stores/partyStore'
 import { audio } from '../lib/audio'
-import type { TextInputRequest, InteractRequest } from '../types/api'
+import type { InteractRequest } from '../types/api'
 import type { OverviewHandlers } from '../stores/optionStore'
 
 interface Props {
-  sendInput: (req: TextInputRequest) => void
   sendInteract: (req: InteractRequest) => void
   overviewHandlers: OverviewHandlers
 }
 
-export default function OptionPanel({ sendInput, sendInteract, overviewHandlers }: Props) {
+export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
   const [text, setText] = useState('')
+  const [channelScope, setChannelScope] = useState<'public' | 'party'>('public')
   const { options, isLocked } = useOptionStore()
   const activeNpcId = useSceneStore((s) => s.activeNpcId)
+  const gameMode = useSceneStore((s) => s.gameMode)
   const openingInProgress = useSceneStore((s) => s.openingInProgress)
   const hasParty = usePartyStore((s) => Object.keys(s.members).length > 0)
+  const isPrivateMode = gameMode === 'private_chat' && !!activeNpcId
+
+  useEffect(() => {
+    if (!hasParty || activeNpcId || gameMode === 'private_chat') {
+      setChannelScope('public')
+    }
+  }, [hasParty, activeNpcId, gameMode])
 
   const handleSend = () => {
     const trimmed = text.trim()
     if (!trimmed || isLocked || openingInProgress) return
     audio.playClick()
-    // 在对话上下文中，自由文字作为 NPC 对话发送
-    if (activeNpcId) {
+    if (isPrivateMode && activeNpcId) {
       sendInteract({
+        scope: 'private',
         intent: 'talk',
         target_kind: 'npc',
         target_id: activeNpcId,
         message: trimmed,
       })
-    } else if (hasParty) {
-      sendInteract({ intent: 'chat', message: trimmed })
+    } else if (activeNpcId) {
+      sendInteract({
+        scope: 'public',
+        intent: 'talk',
+        target_kind: 'npc',
+        target_id: activeNpcId,
+        message: trimmed,
+      })
+    } else if (channelScope === 'party' && hasParty) {
+      sendInteract({ scope: 'party', intent: 'chat', message: trimmed })
     } else {
-      sendInput({ text: trimmed })
+      sendInteract({ scope: 'public', intent: 'talk', message: trimmed })
     }
     setText('')
   }
@@ -85,6 +101,30 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
 
       {/* 自由输入框 */}
       <div className="flex gap-2">
+        {hasParty && !activeNpcId && gameMode !== 'private_chat' && (
+          <div className="flex gap-1">
+            <button
+              onClick={() => { audio.playClick(); setChannelScope('public') }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${
+                channelScope === 'public'
+                  ? 'bg-amber-600/90 border-amber-500 text-white'
+                  : 'bg-gray-800/60 border-gray-600/50 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              公开
+            </button>
+            <button
+              onClick={() => { audio.playClick(); setChannelScope('party') }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${
+                channelScope === 'party'
+                  ? 'bg-amber-600/90 border-amber-500 text-white'
+                  : 'bg-gray-800/60 border-gray-600/50 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              队友
+            </button>
+          </div>
+        )}
         <input
           type="text"
           value={text}
@@ -96,11 +136,13 @@ export default function OptionPanel({ sendInput, sendInteract, overviewHandlers 
               ? '开场演出中...'
               : isLocked
                 ? '请等待...'
-                : activeNpcId
+                : isPrivateMode
+                  ? '悄悄对TA说...'
+                  : activeNpcId
                   ? '输入你想说的话...'
-                  : hasParty
-                    ? '和队友聊聊天...'
-                    : '输入你想做的事...'
+                  : channelScope === 'party' && hasParty
+                    ? '只让队友听见...'
+                    : '对周围的人说点什么...'
           }
           className="flex-1 bg-gray-800/60 border border-gray-600/50 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-1.5 text-sm focus:border-amber-500/70 outline-none disabled:opacity-50"
         />

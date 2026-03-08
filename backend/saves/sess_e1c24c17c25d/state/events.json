@@ -1,5 +1,24 @@
 {
   "active_events": {
+    "ambush_at_dawn_check": {
+      "event_id": "ambush_at_dawn_check",
+      "event_type": "generic",
+      "id": "ambush_at_dawn_check",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 29,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 2,
+        "period": "dawn",
+        "slot": 5
+      }
+    },
     "ambush_check_dawn": {
       "event_id": "ambush_check_dawn",
       "event_type": "generic",
@@ -134,24 +153,7 @@
       }
     }
   },
-  "pending_events": [
-    {
-      "created_at": {
-        "day": 2,
-        "period": "night",
-        "slot": 4
-      },
-      "event_id": "ambush_at_dawn_check",
-      "event_type": "generic",
-      "metadata": {},
-      "payload": {},
-      "source": "ai_osiris",
-      "trigger_condition": {
-        "tick": 29,
-        "type": "absolute_tick"
-      }
-    }
-  ],
+  "pending_events": [],
   "rumors": [
     {
       "area_id": null,
@@ -248,6 +250,70 @@
       "spread_to": [],
       "tags": [],
       "text": "有传言称，在小镇附近的森林里发现了哥布林斥候的踪迹，似乎是在追踪某位冒险者。"
+    },
+    {
+      "area_id": null,
+      "content": "有人看到那个白瓷等级的新人在神殿里神色不安，似乎被什么不干净的东西缠上了。",
+      "created_at": {
+        "day": 2,
+        "period": "dawn",
+        "slot": 5
+      },
+      "metadata": {},
+      "rumor_id": "rumor_d2013052416c",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "有人看到那个白瓷等级的新人在神殿里神色不安，似乎被什么不干净的东西缠上了。"
+    },
+    {
+      "area_id": null,
+      "content": "A porcelain-rank adventurer has recruited a priestess from the Mother Earth Temple under the watchful eyes of silver-rank legends.",
+      "created_at": {
+        "day": 2,
+        "period": "dawn",
+        "slot": 6
+      },
+      "metadata": {},
+      "rumor_id": "rumor_1d85727cca09",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "A porcelain-rank adventurer has recruited a priestess from the Mother Earth Temple under the watchful eyes of silver-rank legends."
+    },
+    {
+      "area_id": null,
+      "content": "据说公会里有个白瓷等级的新人，居然缠着那位高傲的妖精弓手聊了一个小时，而且对方居然没把他射成刺猬。",
+      "created_at": {
+        "day": 2,
+        "period": "day",
+        "slot": 8
+      },
+      "metadata": {},
+      "rumor_id": "rumor_7af813e01345",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "据说公会里有个白瓷等级的新人，居然缠着那位高傲的妖精弓手聊了一个小时，而且对方居然没把他射成刺猬。"
+    },
+    {
+      "area_id": null,
+      "content": "有人看到边境镇的‘名人’们在酒馆集结，似乎在讨论某种不详的印记。",
+      "created_at": {
+        "day": 2,
+        "period": "day",
+        "slot": 9
+      },
+      "metadata": {},
+      "rumor_id": "rumor_ed7db5eef402",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "有人看到边境镇的‘名人’们在酒馆集结，似乎在讨论某种不详的印记。"
     }
   ]
 }

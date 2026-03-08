@@ -121,7 +121,10 @@ class PipelineOrchestrator:
         # Fill L7 with engine result summary
         if ctx.execute_result is not None:
             ctx.assembled_context["l7_engine_result"] = {
-                "success": ctx.execute_result.success,
+                "executed": ctx.execute_result.executed,
+                "outcome": dict(ctx.execute_result.metadata.get("outcome", {}))
+                if isinstance(ctx.execute_result.metadata.get("outcome"), dict)
+                else None,
                 "narrative_hints": list(ctx.execute_result.narrative_hints),
                 "rolls": [
                     {
@@ -142,7 +145,7 @@ class PipelineOrchestrator:
 
         if ctx.execute_result is None:
             return PipelineResult(
-                success=True,
+                executed=True,
                 metadata={"status": "stub"},
             )
 
@@ -151,7 +154,7 @@ class PipelineOrchestrator:
             metadata["action_context"] = dict(ctx.command.context)
 
         result = PipelineResult(
-            success=ctx.execute_result.success,
+            executed=ctx.execute_result.executed,
             commands=[ctx.command] if ctx.command is not None else [],
             delta=ctx.execute_result.delta,
             time_cost=ctx.execute_result.time_cost,
@@ -162,11 +165,11 @@ class PipelineOrchestrator:
             metadata=metadata,
         )
 
-        if result.success and apply_delta is not None and result.delta is not None:
+        if result.executed and apply_delta is not None and result.delta is not None:
             apply_delta(result.delta)
 
         deferred_event_payloads: list[dict[str, Any]] = []
-        if result.success:
+        if result.executed:
             deferred_event_payloads.extend(await self._run_event_stage(
                 shared,
                 apply_delta=apply_delta,
@@ -181,7 +184,7 @@ class PipelineOrchestrator:
             await after_engine(result)
 
         deferred_tail_events: list[SSEEvent] = []
-        if result.success and self._stage_b_runner is not None and apply_delta is not None:
+        if result.executed and self._stage_b_runner is not None and apply_delta is not None:
             immediate_events, deferred_tail_events = await self._run_stage_b(
                 shared,
                 result,
@@ -190,7 +193,7 @@ class PipelineOrchestrator:
             )
             result.sse_events.extend(immediate_events)
 
-        if result.success:
+        if result.executed:
             deferred_event_payloads.extend(await self._run_event_stage(
                 shared,
                 apply_delta=apply_delta,

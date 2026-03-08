@@ -22,7 +22,7 @@ class StatusEffectHook(NoOpSettlementHook):
             )
 
         result = context.execute_command(Command(type="tick_effects", source="system"))
-        if not result.success:
+        if not result.executed:
             return HookResult(
                 metadata={
                     "status": "error",
@@ -52,7 +52,7 @@ class StatusEffectHook(NoOpSettlementHook):
             combat_result = context.execute_command(
                 Command(type="tick_combat_effects", source="system")
             )
-            if combat_result.success:
+            if combat_result.executed:
                 combat_meta = dict(combat_result.metadata)
                 if self._has_combat_changes(combat_meta):
                     changed = True

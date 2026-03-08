@@ -88,7 +88,7 @@ class MilestoneUnlockHook(NoOpSettlementHook):
                     source="system",
                 )
                 result = context.execute_command(cmd)
-                if result.success:
+                if result.executed:
                     unlocked.append(next_id)
                     logger.debug(
                         "MilestoneUnlockHook: unlocked %s (prerequisite %s completed)",

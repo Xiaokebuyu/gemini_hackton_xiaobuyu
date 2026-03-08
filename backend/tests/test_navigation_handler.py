@@ -74,7 +74,7 @@ class TestNavigationHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0
         assert result.metadata["from_area"] == "town"
         assert result.metadata["to_area"] == "forest"
@@ -89,7 +89,7 @@ class TestNavigationHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["from area mismatch: expected town, got cave"]
 
     def test_enter_sub_location_accepts_location_alias(self) -> None:
@@ -100,7 +100,7 @@ class TestNavigationHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0 / 6.0
         assert result.metadata["area_id"] == "forest"
         _apply(result, state)
@@ -113,7 +113,7 @@ class TestNavigationHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["current area is required before entering a sub-location"]
 
     def test_leave_sub_location_succeeds_when_inside_one(self) -> None:
@@ -124,7 +124,7 @@ class TestNavigationHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0 / 12.0
         _apply(result, state)
         assert state.player.current_location is None
@@ -136,5 +136,5 @@ class TestNavigationHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["player is not currently in a sub-location"]

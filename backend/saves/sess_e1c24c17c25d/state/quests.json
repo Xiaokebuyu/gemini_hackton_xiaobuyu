@@ -10,7 +10,7 @@
       },
       "quest_id": "dq_ms_familiar_banter",
       "source": "narrative_planner",
-      "status": "available",
+      "status": "active",
       "summary": "Follow the new lead tied to ms_familiar_banter.",
       "title": "Lead: Ms Familiar Banter"
     }

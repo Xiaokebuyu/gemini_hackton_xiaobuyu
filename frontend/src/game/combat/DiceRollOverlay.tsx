@@ -45,9 +45,9 @@ export default function DiceRollOverlay() {
 
   if (!entry) return null
 
-  const { type, result, modifier, total, dc, success, skill, roller_name } = entry
+  const { type, result, modifier, total, dc, passed, skill, roller_name } = entry
   const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`
-  const outcomeLabel = success ? '检定成功' : '检定失败'
+  const outcomeLabel = passed ? '检定成功' : '检定失败'
 
   return (
     <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
@@ -69,14 +69,14 @@ export default function DiceRollOverlay() {
         <div className="text-center space-y-1">
           <div className="text-white text-2xl font-bold">
             {result} <span className="text-gray-400 text-lg">{modStr}</span>
-            {' '}= <span className={success ? 'text-green-400' : 'text-red-400'}>{total}</span>
+            {' '}= <span className={passed ? 'text-green-400' : 'text-red-400'}>{total}</span>
           </div>
           {dc > 0 && (
             <div className="text-gray-400 text-sm">vs DC {dc}</div>
           )}
         </div>
 
-        <div className={`text-center mt-3 text-sm font-semibold ${success ? 'text-green-400' : 'text-red-400'}`}>
+        <div className={`text-center mt-3 text-sm font-semibold ${passed ? 'text-green-400' : 'text-red-400'}`}>
           {outcomeLabel}
         </div>
       </div>

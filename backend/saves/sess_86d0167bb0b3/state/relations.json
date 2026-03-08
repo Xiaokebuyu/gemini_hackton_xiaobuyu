@@ -1,0 +1,75 @@
+{
+  "faction_standings": {
+    "adventurer_guild": 0,
+    "earth_mother_church": 0,
+    "frontier_merchants": 0,
+    "kingdom": 0
+  },
+  "npc_dispositions": {
+    "cow_girl": {
+      "approval": 50,
+      "fear": 0,
+      "romance": 70,
+      "trust": 80
+    },
+    "dwarf_shaman": {
+      "approval": 24,
+      "fear": 0,
+      "romance": 0,
+      "trust": 30
+    },
+    "goblin_slayer": {
+      "approval": 0,
+      "fear": 5,
+      "romance": 0,
+      "trust": 10
+    },
+    "guild_girl": {
+      "approval": 10,
+      "fear": 0,
+      "romance": 50,
+      "trust": 24
+    },
+    "high_elf_archer": {
+      "approval": 2,
+      "fear": 0,
+      "romance": 5,
+      "trust": 25
+    },
+    "lizard_priest": {
+      "approval": 15,
+      "fear": 0,
+      "romance": 0,
+      "trust": 40
+    },
+    "priestess": {
+      "approval": 20,
+      "fear": 0,
+      "romance": 10,
+      "trust": 30
+    }
+  },
+  "npc_impressions": {
+    "goblin_slayer": [
+      "一名在公会大厅内休息的白瓷级战士。",
+      "一个在白天、且有白银级冒险者在场时仍能安然入睡的白瓷级新人。",
+      "一个在公会大厅也能睡着的奇怪新人。",
+      "一个在公会大厅毫无防备睡觉的奇怪新人。",
+      "在公会大厅熟睡的古怪白瓷新人"
+    ],
+    "guild_girl": [
+      "A rookie who lacks a proper place to stay or is strangely bold.",
+      "这名白瓷等级冒险者似乎把公会大厅当成了免费旅店。"
+    ],
+    "high_elf_archer": [
+      "一个在嘈杂的公会大厅也能安然入睡的新人，胆色（或者说神经）还算不错。"
+    ]
+  },
+  "relationship_stages": {
+    "cow_girl": "acquaintance",
+    "dwarf_shaman": "acquaintance",
+    "lizard_priest": "acquaintance",
+    "priestess": "acquaintance"
+  },
+  "shop_states": {}
+}

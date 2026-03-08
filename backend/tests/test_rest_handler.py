@@ -109,7 +109,7 @@ class TestRestHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0
         assert result.metadata["status"] == "short_rest"
         assert result.metadata["healed"] == 5
@@ -136,7 +136,7 @@ class TestRestHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "long_rest"
         assert result.metadata["camp_type"] == "safe"
         assert result.metadata["night_watch_required"] is False
@@ -160,7 +160,7 @@ class TestRestHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "skipped_safe_camp"
         assert result.metadata["ambush"] is False
@@ -183,7 +183,7 @@ class TestRestHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "checked"
         assert result.metadata["dc"] == 15
         assert result.metadata["passive_total"] == 11
@@ -199,7 +199,7 @@ class TestRestHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0 / 6.0
         assert result.metadata["status"] == "camp_set"
         _apply(result, state)

@@ -68,7 +68,7 @@ def test_describe_environment_gathers_area_info() -> None:
     )
     result = asyncio.run(DescribeEnvironmentTool().execute({}, ctx))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["status"] == "ok"
     ref = result.metadata["reference"]
     assert ref["area"]["area_id"] == "tavern"
@@ -83,7 +83,7 @@ def test_describe_environment_gathers_area_info() -> None:
 def test_describe_environment_no_area() -> None:
     result = asyncio.run(DescribeEnvironmentTool().execute({}, _context()))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["status"] == "no_area"
     assert "No current area" in result.message
 
@@ -97,7 +97,7 @@ def test_narrate_returns_text_with_event_type() -> None:
     text = "The fire crackles in the hearth."
     result = asyncio.run(NarrateTool().execute({"text": text}, _context()))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.message == text
     assert result.metadata["event_type"] == "gm_narration"
 
@@ -105,7 +105,7 @@ def test_narrate_returns_text_with_event_type() -> None:
 def test_narrate_rejects_empty_text() -> None:
     for bad in ["", "   ", 42, None]:
         result = asyncio.run(NarrateTool().execute({"text": bad}, _context()))
-        assert result.success is False
+        assert result.ok is False
         assert result.metadata["status"] == "invalid_params"
 
 
@@ -118,7 +118,7 @@ def test_comment_returns_text_with_event_type() -> None:
     text = "Brilliant strategy — if the goal was to die."
     result = asyncio.run(CommentTool().execute({"text": text}, _context()))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.message == text
     assert result.metadata["event_type"] == "gm_comment"
 
@@ -131,7 +131,7 @@ def test_comment_returns_text_with_event_type() -> None:
 def test_pass_turn_returns_empty() -> None:
     result = asyncio.run(PassTurnTool().execute({}, _context()))
 
-    assert result.success is True
+    assert result.ok is True
     assert result.message == ""
     assert result.metadata["event_type"] == "pass"
 
@@ -153,7 +153,7 @@ def test_suggest_options_validates_and_filters() -> None:
         SuggestOptionsTool().execute({"options": raw_options}, _context())
     )
 
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata["status"] == "ok"
     assert result.metadata["event_type"] == "dialogue_options"
     opts = result.metadata["options"]
@@ -168,7 +168,7 @@ def test_suggest_options_rejects_all_invalid() -> None:
             {"options": [{"text": "no intent"}, 42]}, _context(),
         )
     )
-    assert result.success is False
+    assert result.ok is False
     assert result.metadata["status"] == "invalid_params"
 
 

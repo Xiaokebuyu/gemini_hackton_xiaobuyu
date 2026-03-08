@@ -91,8 +91,8 @@ def test_batch_execute_accumulates_delta() -> None:
 
     assert len(results) == 2
     add_xp_result, level_up_result = results
-    assert add_xp_result.success, f"add_xp failed: {add_xp_result.errors}"
-    assert level_up_result.success, (
+    assert add_xp_result.executed, f"add_xp failed: {add_xp_result.errors}"
+    assert level_up_result.executed, (
         "level_up should succeed after add_xp applied its delta; "
         f"errors: {level_up_result.errors}"
     )
@@ -116,7 +116,7 @@ def test_batch_execute_second_command_fails_without_prior_delta() -> None:
         state,
         world,
     )
-    assert not result.success, "level_up should fail when XP is insufficient"
+    assert not result.executed, "level_up should fail when XP is insufficient"
 
 
 def test_batch_execute_failed_command_does_not_accumulate() -> None:
@@ -133,8 +133,8 @@ def test_batch_execute_failed_command_does_not_accumulate() -> None:
     ]
     results = engine.batch_execute(commands, state, world)
 
-    assert not results[0].success, "first add_xp (amount=0) should fail"
-    assert results[1].success, "second add_xp should still execute and succeed"
+    assert not results[0].executed, "first add_xp (amount=0) should fail"
+    assert results[1].executed, "second add_xp should still execute and succeed"
     assert state.player.xp == 500
 
 
@@ -214,7 +214,7 @@ def test_navigation_execute_uses_travel_slots() -> None:
         state,
         world,
     )
-    assert result_forest.success
+    assert result_forest.executed
     assert result_forest.time_cost == 1.0  # ceil(30/60)=1
 
     # castle: 2小时 → 2 slots
@@ -224,7 +224,7 @@ def test_navigation_execute_uses_travel_slots() -> None:
         state2,
         world,
     )
-    assert result_castle.success
+    assert result_castle.executed
     assert result_castle.time_cost == 2.0  # ceil(120/60)=2
 
 
@@ -319,7 +319,7 @@ def test_growth_level_up_initializes_class_resources() -> None:
     )
     result = results[0]
 
-    assert result.success, f"level_up failed: {result.errors}"
+    assert result.executed, f"level_up failed: {result.errors}"
     assert state.player.level == 2
 
     # action_surge unlocks at level 2 → should now be initialized
@@ -368,7 +368,7 @@ def test_growth_level_up_increments_resource_max() -> None:
     )
     result = results[0]
 
-    assert result.success, f"level_up failed: {result.errors}"
+    assert result.executed, f"level_up failed: {result.errors}"
     assert state.player.level == 17
 
     action_surge = state.player.get_resource("action_surge")
@@ -415,7 +415,7 @@ def test_growth_level_up_no_resource_change_at_max() -> None:
     )
     result = results[0]
 
-    assert result.success
+    assert result.executed
     # action_surge max is still 1 at level 3 (next tier is level 17)
     action_surge = state.player.get_resource("action_surge")
     assert action_surge["max"] == 1  # unchanged
@@ -565,7 +565,7 @@ def test_monster_counterattacks_after_player_attack() -> None:
 
     result = _attack_goblin(state, world)
 
-    assert result.success, f"attack failed: {result.errors}"
+    assert result.executed, f"attack failed: {result.errors}"
     responses = result.metadata.get("monster_responses", [])
     assert len(responses) == 1
     assert responses[0]["monster_id"] == "goblin"
@@ -580,7 +580,7 @@ def test_player_takes_damage_from_monster_counterattack() -> None:
 
     result = _attack_goblin(state, world)
 
-    assert result.success
+    assert result.executed
     assert state.player.hp < initial_player_hp, (
         f"Player HP should decrease after monster hit; was {initial_player_hp}, now {state.player.hp}"
     )
@@ -593,7 +593,7 @@ def test_dead_monsters_do_not_counterattack() -> None:
 
     result = _attack_goblin(state, world)
 
-    assert result.success
+    assert result.executed
     assert result.metadata.get("combat_cleared") is True
     # 怪物已死亡，不应有反击
     responses = result.metadata.get("monster_responses", [])
@@ -608,7 +608,7 @@ def test_xp_awarded_when_combat_cleared() -> None:
 
     result = _attack_goblin(state, world)
 
-    assert result.success
+    assert result.executed
     assert result.metadata.get("combat_cleared") is True
     assert result.metadata.get("xp_awarded") == 25
     assert state.player.xp == 25
@@ -630,7 +630,7 @@ def test_monster_flees_when_hp_below_threshold() -> None:
     # 玩家以 always_hit=False 攻击（结果不重要，怪物回合仍会执行）
     result = _attack_goblin(state, world, always_hit=False)
 
-    assert result.success
+    assert result.executed
     responses = result.metadata.get("monster_responses", [])
     assert len(responses) == 1
     assert responses[0]["action"] == "flee"
@@ -643,7 +643,7 @@ def test_combat_cleared_no_monster_response() -> None:
 
     result = _attack_goblin(state, world)
 
-    assert result.success
+    assert result.executed
     assert result.metadata["combat_cleared"] is True
     responses = result.metadata.get("monster_responses", [])
     assert responses == []

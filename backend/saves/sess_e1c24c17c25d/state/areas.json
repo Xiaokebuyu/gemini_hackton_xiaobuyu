@@ -9,6 +9,7 @@
       "hostile_tracking": {},
       "interactable_states": {},
       "npc_locations": {},
+      "npc_presence_sources": {},
       "permanent_hostile_slots": {
         "ancient_ruins": {
           "active_ids": [],
@@ -129,8 +130,11 @@
       "hostile_tracking": {},
       "interactable_states": {},
       "npc_locations": {
-        "cow_girl": null,
+        "cow_girl": "farm_field",
         "goblin_slayer": "gs_warehouse"
+      },
+      "npc_presence_sources": {
+        "cow_girl": "schedule"
       },
       "permanent_hostile_slots": {},
       "properties": {},
@@ -161,10 +165,18 @@
       "hostile_tracking": {},
       "interactable_states": {},
       "npc_locations": {
-        "dwarf_shaman": null,
+        "dwarf_shaman": "adventurer_guild",
         "goblin_slayer": "adventurer_guild",
         "guild_girl": "adventurer_guild",
-        "priestess": "mother_earth_temple"
+        "high_elf_archer": "tavern",
+        "lizard_priest": "mother_earth_temple",
+        "priestess": "tavern"
+      },
+      "npc_presence_sources": {
+        "dwarf_shaman": "schedule",
+        "high_elf_archer": "companion",
+        "lizard_priest": "schedule",
+        "priestess": "companion"
       },
       "permanent_hostile_slots": {
         "frontier_town": {
@@ -192,7 +204,7 @@
           "description": "The muddy ground near the town entrance shows fresh, small footprints—too small for a human, and far too many to be a child's.",
           "discovery_dc": 10,
           "discovery_mode": "check",
-          "expiry": 5,
+          "expiry": 1,
           "hostile_config": null,
           "id": "goblin_scout_tracks",
           "interactables": [],
@@ -211,11 +223,68 @@
           "description": "The flickering torchlight casts long, dancing shadows that seem to move independently, amplifying the sense of being watched.",
           "discovery_dc": 10,
           "discovery_mode": "check",
-          "expiry": 8,
+          "expiry": 4,
           "hostile_config": null,
           "id": "clue_impending_ambush",
           "interactables": [],
           "label": "The flickering torchlight casts long, dancing shadows that seem to move independently, amplifying the sense of being watched.",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        },
+        {
+          "created_at_tick": 31,
+          "description": "公会柜台旁散落着一份沾有干涸血迹的破旧地图，标注着城镇外的森之洞窟。",
+          "discovery_dc": 10,
+          "discovery_mode": "check",
+          "expiry": 8,
+          "hostile_config": null,
+          "id": "clue_goblin_map",
+          "interactables": [],
+          "label": "公会柜台旁散落着一份沾有干涸血迹的破旧地图，标注着城镇外的森之洞窟。",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        },
+        {
+          "created_at_tick": 33,
+          "description": "The tavern owner brings over a large platter of 'adventurer's stew' and a round of drinks, a gift from a merchant who recognized the party.",
+          "discovery_dc": 5,
+          "discovery_mode": "check",
+          "expiry": 10,
+          "hostile_config": null,
+          "id": "clue_shared_meal",
+          "interactables": [],
+          "label": "The tavern owner brings over a large platter of 'adventurer's stew' and a round of drinks, a gift from a merchant who recognized the party.",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        },
+        {
+          "created_at_tick": 34,
+          "description": "A steaming platter of forest-berry tart and spiced ale has just been placed on the table, the aroma strongly reminding the High Elf Archer of home.",
+          "discovery_dc": 10,
+          "discovery_mode": "check",
+          "expiry": 11,
+          "hostile_config": null,
+          "id": "clue_nostalgic_meal",
+          "interactables": [],
+          "label": "A steaming platter of forest-berry tart and spiced ale has just been placed on the table, the aroma strongly reminding the High Elf Archer of home.",
           "linked_milestone": null,
           "linked_quest_id": null,
           "resident_npcs": [],
@@ -235,10 +304,8 @@
       "exploration": "undiscovered",
       "hostile_tracking": {},
       "interactable_states": {},
-      "npc_locations": {
-        "high_elf_archer": "steam_bath",
-        "lizard_priest": "temple_of_law"
-      },
+      "npc_locations": {},
+      "npc_presence_sources": {},
       "permanent_hostile_slots": {},
       "properties": {},
       "tags": [

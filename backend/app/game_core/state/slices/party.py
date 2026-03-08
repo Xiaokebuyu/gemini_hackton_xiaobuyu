@@ -113,12 +113,14 @@ class PartySlice(StateSlice):
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
-        if change.path.startswith("members.") and isinstance(change.value, Mapping):
+        if change.path.startswith("members."):
             _, character_id = change.path.split(".", 1)
             if change.operation == "remove":
                 self.remove_member(character_id)
-            else:
+            elif isinstance(change.value, Mapping):
                 self.add_member(character_id, dict(change.value))
+            else:
+                raise ValueError("party member payload must be a mapping")
             return
         if change.path.startswith("companion_approval."):
             _, character_id = change.path.split(".", 1)

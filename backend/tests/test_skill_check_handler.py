@@ -76,9 +76,15 @@ class TestSkillCheckHandler:
             WorldInstance("test_world"),
         )
 
-        assert result.success is True
+        assert result.executed is True
+        assert result.executed is True
         assert result.time_cost == pytest.approx(1.0 / 6.0)
         assert result.metadata["passed"] is True
+        assert result.metadata["outcome"] == {
+            "category": "check",
+            "passed": True,
+            "margin": 1,
+        }
         assert result.metadata["total"] == 14
         assert result.delta is None
 
@@ -95,8 +101,13 @@ class TestSkillCheckHandler:
             WorldInstance("test_world"),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["passed"] is False
+        assert result.metadata["outcome"] == {
+            "category": "check",
+            "passed": False,
+            "margin": -3,
+        }
         assert result.metadata["total"] == 9
         assert result.errors == []
 
@@ -171,7 +182,7 @@ class TestSkillCheckHandler:
             WorldInstance("test_world"),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 0.0
         assert result.metadata["passed"] is True
         assert result.metadata["total"] == 13
@@ -198,8 +209,14 @@ class TestSkillCheckHandler:
             WorldInstance("test_world"),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["winner"] == "actor"
+        assert result.metadata["outcome"] == {
+            "category": "contest",
+            "winner": "actor",
+            "passed": True,
+            "margin": 5,
+        }
         assert result.metadata["actor_total"] == 14
         assert result.metadata["target_total"] == 9
         assert len(result.rolls) == 2
@@ -220,7 +237,7 @@ class TestSkillCheckHandler:
             WorldInstance("test_world"),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["target_bonus is required for non-player targets"]
 
     @pytest.mark.parametrize(
@@ -287,7 +304,7 @@ class TestInvestigate:
             state,
             WorldInstance("test_world"),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "discovered"
         assert "hidden_chest" in result.metadata["found"]
         assert result.delta is not None
@@ -306,7 +323,7 @@ class TestInvestigate:
             state,
             WorldInstance("test_world"),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "found_nothing"
         assert result.delta is None
 
@@ -318,7 +335,7 @@ class TestInvestigate:
             state,
             WorldInstance("test_world"),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "nothing_to_find"
         assert result.delta is None
 
@@ -333,7 +350,7 @@ class TestInvestigate:
             state,
             WorldInstance("test_world"),
         )
-        assert result.success is True
+        assert result.executed is True
 
 
 class TestAutoDisadvantage:

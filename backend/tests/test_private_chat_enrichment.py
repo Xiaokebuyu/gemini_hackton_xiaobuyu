@@ -155,7 +155,7 @@ def test_private_chat_result_has_scene_id_field() -> None:
 
 
 def test_private_chat_result_scene_id_default_none() -> None:
-    r = PrivateChatResult(success=True, npc_id="npc1")
+    r = PrivateChatResult(completed=True, npc_id="npc1")
     assert r.scene_id is None
     assert r.scene_name == ""
     assert r.gm_result is None

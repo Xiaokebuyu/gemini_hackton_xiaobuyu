@@ -5,10 +5,12 @@ export interface PresentNpc {
   name: string
   role: 'main' | 'secondary' | 'passerby' | 'companion'
   is_companion?: boolean
+  recruitable?: boolean
   disposition_hint: 'friendly' | 'neutral' | 'wary' | 'hostile'
   has_shop: boolean
   relationship_stage: string | null
   tags: string[]
+  presence_source?: 'resident' | 'schedule' | 'planner' | 'companion' | 'event'
 }
 
 export interface SubLocation {
@@ -57,6 +59,7 @@ export type MessageType =
   | 'npc'
   | 'emote'
   | 'teammate'
+  | 'teammate_emote'
   | 'system'
   | 'player'
   | 'stream'
@@ -67,6 +70,7 @@ export interface DialogueEntry {
   speaker?: string        // character_id
   speakerName?: string    // 显示名称
   content: string
+  tone?: string
   timestamp: number
 }
 

@@ -246,7 +246,7 @@ def test_select_memory_includes_companion_recent_events() -> None:
         TickRecord(
             tick=1,
             action_type="navigate",
-            success=True,
+            executed=True,
             summary="Crossed the old bridge.",
             tags=["NAVIGATION"],
             involved_npcs=[],
@@ -355,7 +355,7 @@ def test_execute_uses_companion_events_when_shared_experiences_empty() -> None:
             TickRecord(
                 tick=5,
                 action_type="navigate",
-                success=True,
+                executed=True,
                 summary="We walked through ancient ruins.",
                 tags=["NAVIGATION"],
                 involved_npcs=[],

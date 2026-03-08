@@ -60,12 +60,12 @@ def _combat_with_effects(
 
 
 def test_tick_combat_no_combats():
-    """No hostile_tracking → success with 0 combats processed."""
+    """No hostile_tracking → executed with 0 combats processed."""
     state = _make_state()
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     assert result.metadata["combats_processed"] == 0
     assert result.metadata["participants_ticked"] == 0
 
@@ -88,7 +88,7 @@ def test_tick_combat_decrements_duration():
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     assert result.metadata["participants_ticked"] == 1
     # Verify the state change was generated
     assert result.delta is not None
@@ -118,7 +118,7 @@ def test_tick_combat_expires_effect():
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     assert result.metadata["effects_expired"] == 1
     updated_hostile = result.delta.changes[0].value
     effects = updated_hostile["participants"][0]["active_effects"]
@@ -143,7 +143,7 @@ def test_tick_combat_periodic_damage():
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     assert result.metadata["total_hp_delta"] == -3
     updated_hostile = result.delta.changes[0].value
     assert updated_hostile["participants"][0]["hp"] == 7
@@ -167,7 +167,7 @@ def test_tick_combat_periodic_heal():
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     updated_hostile = result.delta.changes[0].value
     assert updated_hostile["participants"][0]["hp"] == 10  # capped at max_hp
 
@@ -190,7 +190,7 @@ def test_tick_combat_kills_participant():
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     updated_hostile = result.delta.changes[0].value
     participant = updated_hostile["participants"][0]
     assert participant["hp"] == 0
@@ -218,7 +218,7 @@ def test_tick_combat_skips_cleared():
     cmd = Command(type="tick_combat_effects", source="system")
     result = handler.compute(cmd, state, _make_world())
 
-    assert result.success
+    assert result.executed
     assert result.metadata["combats_processed"] == 0
     assert result.metadata["participants_ticked"] == 0
 

@@ -1,0 +1,10 @@
+{
+  "companion_approval": {},
+  "members": {
+    "high_elf_archer": {
+      "joined_at": "manual",
+      "npc_id": "high_elf_archer"
+    }
+  },
+  "shared_experiences": []
+}

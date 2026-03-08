@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.game_core import ManagedSession
+from app.game_core.orchestration.presence import get_area_npc_sources, get_area_npcs, is_colocated
 
 
 def build_location_overview(session: ManagedSession) -> dict[str, Any]:
@@ -32,80 +33,72 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
         party_member_ids = set(session.runtime.state.party.members.keys())
 
     present_npcs: list[dict[str, Any]] = []
-    if area_state is not None:
-        for raw_npc_id, raw_loc in area_state.npc_locations.items():
-            npc_id = str(raw_npc_id).strip()
-            if not npc_id:
-                continue
+    area_npcs = get_area_npcs(session.runtime.state, session.runtime.world, current_area_id)
+    npc_sources = get_area_npc_sources(session.runtime.state, current_area_id)
+    for npc_id, npc_sub_loc in area_npcs.items():
+        # Filter by current player position
+        if not is_colocated(npc_sub_loc, current_location_id):
+            continue
 
-            # Filter by current player position
-            npc_loc_str = str(raw_loc).strip() if isinstance(raw_loc, str) else ""
-            if current_location_id is None:
-                # Player at area main scene → only NPCs with no specific sub-location
-                if npc_loc_str:
-                    continue
-            else:
-                # Player inside a sub-location → only NPCs in the same sub-location
-                if npc_loc_str != current_location_id:
-                    continue
+        npc_template = None
+        if session.runtime.world.has_registry("characters"):
+            npc_template = session.runtime.world.characters.get(npc_id)
 
-            npc_template = None
-            if session.runtime.world.has_registry("characters"):
-                npc_template = session.runtime.world.characters.get(npc_id)
-
-            npc_name = npc_id
-            npc_tags: list[str] = []
-            has_shop = False
-            if npc_template is not None:
-                npc_name = npc_template.name.strip() or npc_id
-                npc_tags = [str(t).strip() for t in npc_template.tags if str(t).strip()]
-                has_shop = (
-                    npc_template.shop is not None
-                    or npc_template.shop_inventory is not None
-                )
-
-            # role from tags
-            if "main" in npc_tags:
-                role = "main"
-            elif "passerby" in npc_tags:
-                role = "passerby"
-            else:
-                role = "secondary"
-
-            # disposition_hint from numeric values
-            raw_disp = relations.npc_dispositions.get(npc_id, {})
-            disp = raw_disp if isinstance(raw_disp, dict) else {}
-            try:
-                approval = int(disp.get("approval", 0))
-            except (TypeError, ValueError):
-                approval = 0
-            try:
-                fear = int(disp.get("fear", 0))
-            except (TypeError, ValueError):
-                fear = 0
-            if approval >= 50:
-                disposition_hint = "friendly"
-            elif fear >= 30:
-                disposition_hint = "wary"
-            else:
-                disposition_hint = "neutral"
-
-            relationship_stage = (
-                str(relations.relationship_stages.get(npc_id, "")).strip() or None
+        npc_name = npc_id
+        npc_tags: list[str] = []
+        has_shop = False
+        if npc_template is not None:
+            npc_name = npc_template.name.strip() or npc_id
+            npc_tags = [str(t).strip() for t in npc_template.tags if str(t).strip()]
+            has_shop = (
+                npc_template.shop is not None
+                or npc_template.shop_inventory is not None
             )
 
-            is_companion = npc_id in party_member_ids
+        # role from tags
+        if "main" in npc_tags:
+            role = "main"
+        elif "passerby" in npc_tags:
+            role = "passerby"
+        else:
+            role = "secondary"
 
-            present_npcs.append({
-                "character_id": npc_id,
-                "name": npc_name,
-                "role": "companion" if is_companion else role,
-                "is_companion": is_companion,
-                "disposition_hint": disposition_hint,
-                "has_shop": has_shop,
-                "relationship_stage": relationship_stage,
-                "tags": npc_tags,
-            })
+        # disposition_hint from numeric values
+        raw_disp = relations.npc_dispositions.get(npc_id, {})
+        disp = raw_disp if isinstance(raw_disp, dict) else {}
+        try:
+            approval = int(disp.get("approval", 0))
+        except (TypeError, ValueError):
+            approval = 0
+        try:
+            fear = int(disp.get("fear", 0))
+        except (TypeError, ValueError):
+            fear = 0
+        if approval >= 50:
+            disposition_hint = "friendly"
+        elif fear >= 30:
+            disposition_hint = "wary"
+        else:
+            disposition_hint = "neutral"
+
+        relationship_stage = (
+            str(relations.relationship_stages.get(npc_id, "")).strip() or None
+        )
+
+        is_companion = npc_id in party_member_ids
+
+        present_npcs.append({
+            "character_id": npc_id,
+            "name": npc_name,
+            "role": "companion" if is_companion else role,
+            "is_companion": is_companion,
+            "recruitable": "recruitable" in npc_tags,
+            "disposition_hint": disposition_hint,
+            "has_shop": has_shop,
+            "relationship_stage": relationship_stage,
+            "tags": npc_tags,
+            "presence_source": npc_sources.get(npc_id, "resident"),
+        })
 
     # ── sub_locations ─────────────────────────────────────────────────────────
 

@@ -103,7 +103,7 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "opened"
         assert result.metadata["gold"] == 3
@@ -126,7 +126,7 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "locked"
         assert result.metadata["trap_triggered"] is True
         assert result.metadata["trap_damage"] == 3
@@ -152,7 +152,7 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "trap_detected"
 
@@ -171,7 +171,7 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "opened"
         _apply(result, state)
         assert state.areas.get_container_state("forest", "crate")["opened"] is True
@@ -198,7 +198,7 @@ class TestContainerHandler:
             }
         )
 
-        success = _make_engine().execute(
+        disarm_result = _make_engine().execute(
             Command(type="disarm_trap", params={"container_id": "crate"}),
             success_state,
             _make_world(),
@@ -209,12 +209,12 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert success.success is True
-        assert success.metadata["status"] == "disarmed"
-        _apply(success, success_state)
+        assert disarm_result.executed is True
+        assert disarm_result.metadata["status"] == "disarmed"
+        _apply(disarm_result, success_state)
         assert success_state.areas.get_container_state("forest", "crate")["trap_status"] == "disarmed"
 
-        assert failure.success is True
+        assert failure.executed is True
         assert failure.metadata["status"] == "trap_triggered"
         _apply(failure, failure_state)
         assert failure_state.player.hp == 8
@@ -238,7 +238,7 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "taken"
         _apply(result, state)
         assert state.player.get_item_count("gem") == 1
@@ -263,7 +263,7 @@ class TestContainerHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "looted"
         assert result.metadata["gold"] == 7
         _apply(result, state)
@@ -321,7 +321,7 @@ class TestInteractObject:
             state,
             _make_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "examined"
         assert result.metadata["object_id"] == "bulletin_board"
         assert result.metadata["description"] == "A weathered wooden board covered in notices."
@@ -334,7 +334,7 @@ class TestInteractObject:
             state,
             _make_world(),
         )
-        assert result.success is False
+        assert result.executed is False
         assert "object not found" in result.errors[0]
 
     def test_interact_object_requires_check(self) -> None:
@@ -354,7 +354,7 @@ class TestInteractObject:
             state,
             _make_world(),
         )
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "examined"
         assert result.metadata["requires_check"] is True
         assert result.metadata["check_skill"] == "athletics"

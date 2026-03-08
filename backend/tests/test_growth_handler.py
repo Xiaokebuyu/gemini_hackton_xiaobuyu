@@ -159,7 +159,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "created"
         _apply(result, state)
         assert state.player.character_id == "pc_1"
@@ -176,7 +176,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["new_xp"] == 1000
         assert result.metadata["current_level"] == 1
         assert result.metadata["available_level"] == 2
@@ -193,7 +193,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["from_level"] == 1
         assert result.metadata["to_level"] == 2
         assert result.metadata["hp_gain"] == 7
@@ -212,7 +212,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["target level exceeds available level: 3 > 2"]
 
     def test_apply_asi_updates_stat_at_valid_level(self) -> None:
@@ -223,7 +223,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["from_value"] == 12
         assert result.metadata["to_value"] == 14
         _apply(result, state)
@@ -236,7 +236,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["ASI can only be applied at levels 4/8/12/16/19"]
 
     def test_choose_subclass_rejects_when_level_too_low(self) -> None:
@@ -246,7 +246,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["subclass requires level 6"]
 
     def test_choose_subclass_sets_subclass_and_adds_features(self) -> None:
@@ -257,7 +257,7 @@ class TestGrowthHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "chosen"
         assert result.metadata["added_features"] == [
             "Improved Critical",

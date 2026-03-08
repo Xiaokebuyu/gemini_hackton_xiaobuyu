@@ -22,6 +22,7 @@ import type {
   TeammateResponseData,
   TextChunkData,
   DialogueOptionsData,
+  DialogueOptionItem,
   DialogueOptionsUnavailableData,
   CompanionRecruitedData,
   CompanionDismissedData,
@@ -101,8 +102,37 @@ function formatActionSuccess(actionType: string): string {
   return labels[actionType] ?? '操作成功'
 }
 
+function actionExecuted(data: ActionResultData): boolean {
+  return data.executed
+}
+
+function actionOutcomePassed(data: ActionResultData): boolean | null {
+  const outcome = data.outcome
+  if (!outcome) return null
+  if (typeof outcome.passed === 'boolean') return outcome.passed
+  if (typeof outcome.winner === 'string') return outcome.winner === 'actor'
+  return null
+}
+
 function questName(title: string | undefined, questId: string): string {
   return title?.trim() || questId
+}
+
+function canFallbackPrivateDialogue(item: DialogueOptionItem): boolean {
+  const intent = String(item.intent ?? '').trim()
+  if (item.check?.skill && typeof item.check?.dc === 'number') return true
+  if (!intent) return true
+  return [
+    'talk',
+    'greet',
+    'ask',
+    'chat',
+    'ask_quest',
+    'ask_progress',
+    'ask_location',
+    'ask_requirements',
+    'ask_reward',
+  ].includes(intent)
 }
 
 function formatQuestBriefMessage(data: QuestBriefData): string {
@@ -282,6 +312,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     const revealOpeningMessage = async (
       type: 'gm' | 'gm_comment',
       content: string,
+      tone?: string,
     ) => {
       const trimmed = content.trim()
       if (!trimmed) return
@@ -290,7 +321,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         dialogue.appendStreamChunk(chunk)
         await sleep(OPENING_TEXT_STEP_MS)
       }
-      dialogue.resolveStreamMessage({ type, content: trimmed })
+      dialogue.resolveStreamMessage({ type, content: trimmed, tone })
       await sleep(OPENING_TEXT_HOLD_MS)
     }
 
@@ -328,13 +359,23 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         }
 
         const activeNpcId = useSceneStore.getState().activeNpcId
+        const gameMode = useSceneStore.getState().gameMode
+        if (gameMode === 'private_chat' && !canFallbackPrivateDialogue(item)) {
+          return
+        }
         if (activeNpcId && label) {
-          void sendInteract({
+          const payload: InteractRequest = {
+            scope: gameMode === 'private_chat' ? 'private' : 'public',
             intent: 'talk',
             target_kind: 'npc',
             target_id: activeNpcId,
             message: label,
-          })
+          }
+          if (item.check?.skill && item.check?.dc) {
+            payload.check_skill = item.check.skill
+            payload.check_dc = item.check.dc
+          }
+          void sendInteract(payload)
         }
       })
     }
@@ -380,14 +421,14 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       }
     }
 
-    const finalizeStream = (d: { success?: boolean }) => {
+    const finalizeStream = (d: { completed?: boolean }) => {
       const wasOpening = useSceneStore.getState().openingInProgress
       dialogue.clearPendingStream()
       stream.setStreaming(false)
       options.unlock()
       scene.setOpeningInProgress(false)
       scene.setTransitioning(false)
-      if (wasOpening && d.success !== false && worldId && sessionId) {
+      if (wasOpening && d.completed !== false && worldId && sessionId) {
         useSessionStore.getState().setSession(worldId, sessionId, 'active')
       }
       const combatState = useCombatStore.getState()
@@ -437,11 +478,11 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         if (d.content) {
           if (useSceneStore.getState().openingInProgress) {
             queueOpeningStep(async () => {
-              await revealOpeningMessage('gm_comment', d.content)
+              await revealOpeningMessage('gm_comment', d.content, d.tone)
             })
             break
           }
-          dialogue.resolveStreamMessage({ type: 'gm_comment', content: d.content })
+          dialogue.resolveStreamMessage({ type: 'gm_comment', content: d.content, tone: d.tone })
         }
         break
       }
@@ -475,7 +516,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'teammate_response': {
         const d = cast<TeammateResponseData>(event.data)
         dialogue.resolveStreamMessage({
-          type: 'teammate',
+          type: d.type === 'emote' ? 'teammate_emote' : 'teammate',
           speaker: d.character_id,
           content: d.content ?? d.action ?? '',
         })
@@ -601,7 +642,9 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'action_result': {
         const d = cast<ActionResultData>(event.data)
         const notif = useNotificationStore.getState()
-        if (d.success) {
+        const executed = actionExecuted(d)
+        const passed = actionOutcomePassed(d)
+        if (executed && passed !== false) {
           // browse_board: 打开公告板面板
           if (d.action_type === 'browse_board' && d.metadata?.entries) {
             overlay.open('board', d.metadata)
@@ -612,7 +655,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
           if (d.action_type === 'retreat' || d.action_type === 'sneak_through') {
             combat.resetCombat()
           }
-        } else if (d.errors.length > 0) {
+        } else if (!executed && d.errors.length > 0) {
           const message = `操作失败：${d.errors[0]}`
           dialogue.addMessage({ type: 'system', content: message })
           notif.add(message, 'error')
@@ -666,7 +709,15 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'time_advanced': {
         const d = cast<TimeAdvancedData>(event.data)
         usePlayerStore.getState().updateFromStatus(d as unknown as Record<string, unknown>)
-        addSystemMessage(formatTimeAdvancedMessage(d))
+
+        if (d.rest_info) {
+          // 休息中：只在最后一个 slot 显示总结，安静中间 slot 静默更新 HUD
+          if (d.rest_info.is_final) {
+            addSystemMessage(`长休完成（${d.rest_info.total_slots} 小时）`)
+          }
+        } else {
+          addSystemMessage(formatTimeAdvancedMessage(d))
+        }
         break
       }
 
@@ -792,7 +843,8 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         const message = formatCompanionMessage('join', d.npc_id, d.reason)
         addSystemMessage(message)
         useNotificationStore.getState().add(message, 'success')
-        usePartyStore.getState().addMember(d.npc_id)
+        const npcName = useSceneStore.getState().presentNpcs.find((npc) => npc.character_id === d.npc_id)?.name
+        usePartyStore.getState().addMember(d.npc_id, npcName)
         usePartyStore.getState().syncMembers(d.party_members)
         break
       }
@@ -894,7 +946,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       // ── 流控制 ───────────────────────────────────────────────────────────
       case 'stream_end': {
-        const d = cast<{ success?: boolean }>(event.data)
+        const d = cast<{ completed?: boolean }>(event.data)
         if (useSceneStore.getState().openingInProgress) {
           queueOpeningStep(async () => {
             finalizeStream(d)
@@ -959,11 +1011,26 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
   const sendInteract = useCallback((req: InteractRequest) => {
     if (!worldId || !sessionId) return
-    if (req.message) {
-      dialogue.addMessage({ type: 'player', content: req.message })
+    const message = req.message?.trim() ?? ''
+    if (req.scope === 'private') {
+      const npcId = req.target_id ?? req.npc_id
+      if (!npcId) return
+      if (message) {
+        dialogue.addMessage({ type: 'player', content: message })
+      }
+      scene.setActiveNpc(npcId)
+      scene.setGameMode('private_chat')
+      startStream(urls.privateChat(worldId, sessionId), {
+        npc_id: npcId,
+        message: req.message ?? '',
+      })
+      return
+    }
+    if (message) {
+      dialogue.addMessage({ type: 'player', content: message })
     }
     startStream(urls.interact(worldId, sessionId), req)
-  }, [worldId, sessionId, dialogue, startStream])
+  }, [worldId, sessionId, dialogue, scene, startStream])
 
   const sendNavigate = useCallback((req: NavigateRequest) => {
     if (!worldId || !sessionId) return
@@ -982,14 +1049,15 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
   }, [worldId, sessionId, dialogue, startStream])
 
   const sendPrivateChat = useCallback((req: PrivateChatRequest) => {
-    if (!worldId || !sessionId) return
-    scene.setActiveNpc(req.npc_id)
-    scene.setGameMode('private_chat')
-    if (req.message.trim()) {
-      dialogue.addMessage({ type: 'player', content: req.message })
-    }
-    startStream(urls.privateChat(worldId, sessionId), req)
-  }, [worldId, sessionId, dialogue, scene, startStream])
+    void sendInteract({
+      scope: 'private',
+      intent: 'talk',
+      target_kind: 'npc',
+      target_id: req.npc_id,
+      npc_id: req.npc_id,
+      message: req.message,
+    })
+  }, [sendInteract])
 
   const abort = useCallback(() => {
     abortRef.current?.abort()
@@ -1011,6 +1079,11 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     startStream(urls.encounterAction(worldId, sessionId), { choice, sub_area_id: subAreaId })
   }, [worldId, sessionId, startStream])
 
+  const sendCompanionRecruit = useCallback((npcId: string) => {
+    if (!worldId || !sessionId) return
+    startStream(urls.companionRecruit(worldId, sessionId), { npc_id: npcId })
+  }, [worldId, sessionId, startStream])
+
   const sendCompanionDismiss = useCallback((npcId: string) => {
     if (!worldId || !sessionId) return
     startStream(urls.companionDismiss(worldId, sessionId), { npc_id: npcId })
@@ -1028,6 +1101,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     sendInput,
     sendPrivateChat,
     abort,
+    sendCompanionRecruit,
     sendCompanionDismiss,
     sendCombatAction,
     sendEncounterAction,

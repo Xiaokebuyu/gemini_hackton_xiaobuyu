@@ -331,7 +331,7 @@ class NpcScheduleHook(NoOpSettlementHook):
             accepted_characters.add(normalized_move.character_id)
             npc_id = normalized_move.character_id
             target_area = normalized_move.area_id or ""
-            context.state.areas.move_npc(npc_id, target_area, normalized_move.location_id)
+            context.state.areas.move_npc(npc_id, target_area, normalized_move.location_id, source="schedule")
             context.record_change(StateChange(slice="areas", operation="set", path=f"npc_location.{npc_id}", value=target_area))
             moved_npc_ids.append(npc_id)
             updated_areas.add(normalized_move.area_id or "")

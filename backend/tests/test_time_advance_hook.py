@@ -99,6 +99,7 @@ class TestTimeAdvanceHook:
             "crossed_day": False,
             "period_changed": True,
             "shops_refreshed": 0,
+            "rest_info": None,
         }
 
     def test_advance_reports_day_rollover(self) -> None:

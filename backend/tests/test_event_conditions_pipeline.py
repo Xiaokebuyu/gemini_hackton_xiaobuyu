@@ -170,7 +170,7 @@ def test_pipeline_event_check_fires_after_engine_delta() -> None:
         {"action_type": "set_flag", "params": {"key": "trigger_flag", "value": True}},
     ))
 
-    assert result.success is True
+    assert result.executed is True
     assert any(e.event_type == "event_state_changed" for e in result.sse_events)
     assert state.events.get_event("evt_a6")["state"] == "available"
 
@@ -232,7 +232,7 @@ def test_pipeline_after_engine_callback_runs_before_stage_b_and_defers_a6_visibi
         after_engine=_after_engine,
     ))
 
-    assert result.success is True
+    assert result.executed is True
     assert state.events.get_event("evt_boundary")["state"] == "available"
     assert order.index("action_result") < order.index("stage_b_started")
     assert order.index("gm_narration") < order.index("event_state_changed")
@@ -256,7 +256,7 @@ def test_no_event_when_action_failed() -> None:
     state = _prepare_state("evt_failed")
     coordinator, _ = _build_coordinator(state)
 
-    # Empty params → validation failure → success=False → no event stage
+    # Empty params → validation failure → executed=False → no event stage
     result = asyncio.run(coordinator.process(
         Command(type="set_flag", params={}, source="player"),
     ))

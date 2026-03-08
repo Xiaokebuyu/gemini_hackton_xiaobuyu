@@ -12,7 +12,7 @@ export default function StealthResultPanel({ onEncounterAction }: Props) {
 
   if (!stealthResultData || !encounterData) return null
 
-  const { success, roll, dc, modifier, narrative, options } = stealthResultData
+  const { passed, roll, dc, modifier, narrative, options } = stealthResultData
   const modStr = modifier >= 0 ? `+${modifier}` : `${modifier}`
   const total = roll + modifier
 
@@ -25,11 +25,11 @@ export default function StealthResultPanel({ onEncounterAction }: Props) {
           {roll}{' '}
           <span className="text-gray-400 text-base">{modStr}</span>
           {' '}={' '}
-          <span className={success ? 'text-green-400' : 'text-red-400'}>{total}</span>
+          <span className={passed ? 'text-green-400' : 'text-red-400'}>{total}</span>
         </div>
         <div className="text-gray-400 text-sm mt-1">vs DC {dc}</div>
-        <div className={`mt-2 font-semibold ${success ? 'text-green-400' : 'text-red-400'}`}>
-          {success ? '✓ 潜行成功' : '✗ 潜行失败'}
+        <div className={`mt-2 font-semibold ${passed ? 'text-green-400' : 'text-red-400'}`}>
+          {passed ? '✓ 潜行成功' : '✗ 潜行失败'}
         </div>
       </div>
 
@@ -39,7 +39,7 @@ export default function StealthResultPanel({ onEncounterAction }: Props) {
       )}
 
       {/* 选项 */}
-      {success && options.length > 0 && (
+      {passed && options.length > 0 && (
         <div className="space-y-2">
           {options.map((opt) => (
             <button
@@ -60,7 +60,7 @@ export default function StealthResultPanel({ onEncounterAction }: Props) {
         </div>
       )}
 
-      {!success && (
+      {!passed && (
         <p className="text-center text-red-400 text-sm animate-pulse">
           ⚠️ 战斗即将开始...
         </p>

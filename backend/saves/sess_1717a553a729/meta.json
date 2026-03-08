@@ -1,0 +1,19 @@
+{
+  "character_name": "实机验证者",
+  "created_at": 1772973594.982051,
+  "game_day": 1,
+  "game_slot": 8,
+  "last_played": 1772973594.9919903,
+  "phase": "opening_ready",
+  "saved_at": 1772973594.9919903,
+  "session_id": "sess_1717a553a729",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "实机验证者"
+  },
+  "world_id": "goblin_slayer"
+}

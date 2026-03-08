@@ -73,7 +73,7 @@ class RulesEngine:
         results: list[ExecuteResult] = []
         for command in commands:
             result = self.execute(command, state, world)
-            if result.success and result.delta is not None:
+            if result.executed and result.delta is not None:
                 state.apply(result.delta)  # accumulate: each command sees prior changes
             results.append(result)
         return results

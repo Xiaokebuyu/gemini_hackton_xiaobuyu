@@ -41,6 +41,29 @@
 
 ## 决策记录
 
+### [D-P11-presence-source] AreaState.npc_presence_sources — NPC 位置来源标记
+
+**日期**：2026-03-07
+
+**改动范围**：
+
+- `AreaState` 新增并行字典 `npc_presence_sources: dict[str, str]`（default_factory=dict）
+- `AreaState.snapshot()` 序列化该字段
+- `AreaSlice.move_npc()` 新增 `source: str = "resident"` 参数；移动时同步清除旧 area 的 source 条目并写入新 area
+- `AreaSlice._coerce_area_state()` 两条路径（AreaState branch / Mapping branch）均补全 backward compat 解析（缺失时默认空 dict）
+- `companion_manager.py`：`recruit()` 和 `sync_to_player()` 传 `source="companion"`
+- `npc_schedule.py`：`move_npc` 调用传 `source="schedule"`
+- `narrative_planner.py`：`_handle_spawn_quest_npc()` 传 `source="planner"`
+- `presence.py`：新增 `get_area_npc_sources(state, area_id) -> dict[str, str]`（独立函数，不改 get_area_npcs 签名）
+- `scene_views.py`：`build_location_overview()` 调用 `get_area_npc_sources()` 并在 `present_npcs` 每条目加 `"presence_source"` 字段
+- `frontend/src/types/game.ts`：`PresentNpc` 接口新增 `presence_source?: 'resident' | 'schedule' | 'planner' | 'companion' | 'event'`
+
+**设计决策**：不改 `get_area_npcs()` 返回类型（避免级联影响），改为新增独立函数 `get_area_npc_sources()`，消费者按需查询。CharacterRegistry 静态 fallback NPC 无 runtime source 记录，消费者用 `sources.get(npc_id, "resident")` 默认为 "resident"。
+
+**测试**：`tests/test_presence_source.py`，14 个测试（move/snapshot/restore/backward-compat/get_area_npc_sources/companion_manager）。
+
+---
+
 ### [D-O01] SettlementContext 收窄 Hook 访问面
 
 Hook 不直接持有 RulesEngine 引用。通过 `execute_command(cmd)` 调用引擎。
@@ -149,6 +172,25 @@ PipelineOrchestrator 在 engine 执行后将 ExecuteResult 摘要写入 L7（nar
 - 同步标出 `crossed_day` 与 `period_changed`
 
 这样上层不需要再根据缺省字段猜测时间是否真的推进。
+
+### [D-O10b] TimeAdvanceHook 添加 rest_info 字段（Block E）
+
+长休期间 8 个 tick 逐条刷屏问题修复。
+
+**后端**（`time_advance.py`）：
+- 推进时检测 `context.rest_phase`，若为 `RestPhaseInfo` 实例则构建 `rest_info` dict
+- `rest_info` 包含：`rest_type / slot_index / total_slots / is_quiet / is_final`
+- 非休息 tick 时 `rest_info=None`，不影响现有行为
+- import `RestPhaseInfo, is_quiet_rest_slot` 移到文件顶部（同层模块，无延迟 import）
+
+**前端**（`sse.ts` + `useGameStream.ts`）：
+- `TimeAdvancedData` 新增可选 `rest_info` 字段（含类型定义）
+- `time_advanced` handler：HUD 更新（`updateFromStatus`）始终执行；有 `rest_info` 时只在最终 slot 显示总结消息，中间安静 slot 静默；无 `rest_info` 时行为同前
+
+**测试**（`tests/test_time_advance_rest_info.py`，3 个测试）：
+- 普通 tick → `rest_info` 为 None
+- 休息中间 slot → `rest_info` 含正确字段
+- 最终 slot → `is_final=True`
 
 ### [D-O11] EventConditionHook 先落地为 P50 的最小事件状态机
 
@@ -1040,3 +1082,53 @@ P1 文档假设 EventCondition 在 NarrativePlanner 之前运行，但实际恰�
 - 关联文档与日志更新同步：
   - `app/施工记录（持续更新）/state_layer.md`
   - `app/施工记录（持续更新）/narrative.md`
+
+### [D-P11-C] Block C：Session Resume Party→Area Sync（2026-03-07）
+
+**问题**：`resume_session()` 恢复会话后不调用 `CompanionManager.sync_to_player()`，队友留在存档时的旧位置直到玩家执行第一个动作才同步。
+
+**修改**：
+- `app/game_core/runtime.py`：在 `resume_session()` 中，`set_stage_b_runner` 之后、构造 `ManagedSession` 之前，延迟 import 并调用 `CompanionManager(runtime.world, runtime.state).sync_to_player()`。
+- 延迟 import 与计划描述一致，避免模块级循环依赖。
+
+**新增测试**（`tests/test_resume_party_sync.py`，2 个）：
+1. `test_resume_syncs_companion_to_player_area`：队友存档时在 area_A，恢复后玩家在 area_B → 验证队友已同步到 area_B。
+2. `test_resume_without_companions_is_noop`：无队友时 resume 正常完成（回归测试）。
+
+**注意**：测试中通过 `StateDelta` 设置 `player.current_area`（而非直接赋值），确保 PlayerSlice 被标记为 dirty，从而在 save/load 循环中正确持久化。
+
+### [D-P11-A] Block A：NPC Presence 单一真相源（2026-03-07）
+
+**问题**：NPC 在场判断分散在两处，存在语义偏差：
+
+| 维度 | `scene_views.py` | `interaction.py` |
+|------|-------------------|-------------------|
+| 数据源 | 仅当前 area 的 `npc_locations` | 所有 area + CharacterRegistry 回退 |
+| 回退 | 无 | 有（CharacterTemplate.area_id） |
+| 位置匹配 | 内联 | 内联（同逻辑不同写法） |
+
+**风险**：NPC 通过 CharacterRegistry 回退通过了 interaction 验证，但 scene_views 不显示 → 玩家能和"不可见"的 NPC 对话。
+
+**修改**：
+
+**新文件 `app/game_core/orchestration/presence.py`**（两个纯函数）：
+- `get_area_npcs(state, world, area_id) -> dict[str, str | None]`：返回指定 area 内所有 NPC 及其 sub-location，主源为 AreaSlice，回退为 CharacterRegistry
+- `is_colocated(npc_location, player_location) -> bool`：判断同一 sub-location，空字符串视为 None
+
+**`app/scene_views.py`**（`build_location_overview()`）：
+- 用 `get_area_npcs()` 替换手动遍历 `area_state.npc_locations`
+- 用 `is_colocated()` 替换内联位置匹配
+- scene_views 现在也获得了 CharacterRegistry 回退能力，与 interaction 一致
+
+**`app/game_core/orchestration/interaction.py`**（`build_interaction_policy_context()` + `_validate_npc_presence()`）：
+- 收集所有需要扫描的 area_id（AreaSlice + CharacterRegistry 声明区域）
+- 用 `get_area_npcs()` 循环替换原先的两重嵌套循环（AreaSlice 主源 + CharacterRegistry 回退）
+- 独立的名称收集循环保持不变（仅 names dict，不再兼顾 positions）
+- `_validate_npc_presence()` 最后的 is_colocated 替换内联双分支判断
+
+**新增测试**（`tests/test_presence_helpers.py`，13 个）：
+- `get_area_npcs` 6 个：AreaSlice 主源、CharacterRegistry 回退、跨 area 过滤、空区域、AreaSlice 优先、`current_area` 字段回退
+- `is_colocated` 6 个：双 None、相同 location、不同 location、空字符串等价、单侧 None
+- 集成测试 1 个：scene_views 和 interaction 对同一 NPC 可见性一致
+
+**测试基线**：1543 passed（含 1 个预存 flaky test_flee_chance_zero_never_flees）

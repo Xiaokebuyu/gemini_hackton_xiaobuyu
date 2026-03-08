@@ -166,7 +166,7 @@ class SkillCheckHandler(StaticCommandHandler):
         modifier = state.player.get_skill_bonus(skill)
         total = roll_result + modifier
         return ExecuteResult(
-            success=True,
+            executed=True,
             rolls=[
                 build_dice_roll(
                     purpose="skill_check",
@@ -214,7 +214,7 @@ class SkillCheckHandler(StaticCommandHandler):
             modifier += state.player.proficiency_bonus
         total = roll_result + modifier
         return ExecuteResult(
-            success=True,
+            executed=True,
             rolls=[
                 build_dice_roll(
                     purpose="saving_throw",
@@ -275,7 +275,7 @@ class SkillCheckHandler(StaticCommandHandler):
             winner = "tie"
 
         return ExecuteResult(
-            success=True,
+            executed=True,
             rolls=[
                 build_dice_roll(
                     purpose="contest_actor",
@@ -433,6 +433,7 @@ class SkillCheckHandler(StaticCommandHandler):
                     "status": "discovered",
                     "area_id": area_id,
                     "skill": skill,
+                    "passed": True,
                     "found": found,
                     "raw_roll": roll_result,
                     "all_rolls": list(all_rolls),
@@ -451,6 +452,7 @@ class SkillCheckHandler(StaticCommandHandler):
                 "status": "found_nothing",
                 "area_id": area_id,
                 "skill": skill,
+                "passed": False,
                 "raw_roll": roll_result,
                 "all_rolls": list(all_rolls),
                 "modifier": modifier,

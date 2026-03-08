@@ -1,0 +1,239 @@
+"""Companion command handler."""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from app.game_core.content import WorldInstance
+from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.handler_utils import get_non_empty_string
+from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
+from app.game_core.state import StateChange, StateContainer, StateDelta
+
+
+class CompanionHandler(StaticCommandHandler):
+    """Rules-layer companion recruit / dismiss handler."""
+
+    COMMAND_TYPES = (
+        "recruit_companion",
+        "dismiss_companion",
+        "force_leave_companion",
+    )
+
+    MAX_PARTY_SIZE = 4
+
+    def validate(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ValidationResult:
+        if cmd.type == "recruit_companion":
+            return self._validate_recruit(cmd, state, world)
+        if cmd.type == "dismiss_companion":
+            return self._validate_dismiss(cmd, state)
+        if cmd.type == "force_leave_companion":
+            return self._validate_force_leave(cmd, state)
+        return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
+
+    def compute(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ExecuteResult:
+        if cmd.type == "recruit_companion":
+            return self._compute_recruit(cmd, state, world)
+        if cmd.type == "dismiss_companion":
+            return self._compute_dismiss(cmd, state)
+        if cmd.type == "force_leave_companion":
+            return self._compute_force_leave(cmd, state)
+        return ExecuteResult.error(f"unsupported command: {cmd.type}")
+
+    def _validate_recruit(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ValidationResult:
+        npc_id = self._require_npc_id(cmd.params)
+        if npc_id is None:
+            return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+        if not state.has_slice("party"):
+            return ValidationResult(ok=False, reason="no_party_slice")
+        if not world.has_registry("characters"):
+            return ValidationResult(ok=False, reason="no_character_registry")
+
+        profile = world.characters.get(npc_id)
+        if profile is None:
+            return ValidationResult(ok=False, reason="npc_not_found")
+
+        tags = [str(tag).strip().lower() for tag in getattr(profile, "tags", [])]
+        if "recruitable" not in tags:
+            return ValidationResult(ok=False, reason="not_recruitable")
+
+        members = state.party.members
+        if not isinstance(members, dict):
+            return ValidationResult(ok=False, reason="no_party_slice")
+        if npc_id in members:
+            return ValidationResult(ok=False, reason="already_member")
+        if len(members) >= self.MAX_PARTY_SIZE:
+            return ValidationResult(ok=False, reason="party_full")
+
+        if state.has_slice("relations"):
+            stage = state.relations.get_stage(npc_id) or "stranger"
+            if stage == "stranger":
+                return ValidationResult(ok=False, reason="stranger")
+            disposition = state.relations.get_disposition(npc_id)
+            if (
+                isinstance(disposition, dict)
+                and int(disposition.get("approval", 0)) <= 0
+            ):
+                return ValidationResult(ok=False, reason="npc_refuses")
+
+        return ValidationResult(ok=True)
+
+    def _validate_dismiss(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        npc_id = self._require_npc_id(cmd.params)
+        if npc_id is None:
+            return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+        if not state.has_slice("party"):
+            return ValidationResult(ok=False, reason="no_party_slice")
+        if npc_id not in (state.party.members or {}):
+            return ValidationResult(ok=False, reason="not_member")
+        return ValidationResult(ok=True)
+
+    def _validate_force_leave(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        reason = get_non_empty_string(cmd.params, "reason")
+        if reason is None:
+            return ValidationResult(ok=False, reason="reason must be a non-empty string")
+        return self._validate_dismiss(cmd, state)
+
+    def _compute_recruit(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ExecuteResult:
+        npc_id = self._require_npc_id(cmd.params) or ""
+        profile = world.characters.get(npc_id) if world.has_registry("characters") else None
+        tick = state.time.absolute_tick() if state.has_slice("time") else 0
+        member_payload = {
+            "name": getattr(profile, "name", npc_id),
+            "class_id": getattr(profile, "class_id", ""),
+            "recruited_tick": tick,
+        }
+
+        changes = [
+            StateChange(
+                slice="party",
+                operation="set",
+                path=f"members.{npc_id}",
+                value=member_payload,
+            ),
+        ]
+        if state.has_slice("player") and state.has_slice("areas"):
+            player_area = state.player.current_area
+            if player_area:
+                changes.append(
+                    StateChange(
+                        slice="areas",
+                        operation="set",
+                        path=f"npc_presence.{npc_id}",
+                        value={
+                            "area_id": player_area,
+                            "location_id": state.player.current_location,
+                            "source": "companion",
+                        },
+                    )
+                )
+
+        party_members = list((state.party.members or {}).keys())
+        if npc_id not in party_members:
+            party_members.append(npc_id)
+
+        return self._success(
+            cmd,
+            changes=changes,
+            event_type="companion_recruited",
+            npc_id=npc_id,
+            reason="recruited",
+            party_members=party_members,
+        )
+
+    def _compute_dismiss(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        npc_id = self._require_npc_id(cmd.params) or ""
+        reason = get_non_empty_string(cmd.params, "reason") or "dismissed"
+        party_members = [
+            member_id
+            for member_id in (state.party.members or {}).keys()
+            if member_id != npc_id
+        ]
+        return self._success(
+            cmd,
+            changes=[
+                StateChange(
+                    slice="party",
+                    operation="remove",
+                    path=f"members.{npc_id}",
+                    value=None,
+                )
+            ],
+            event_type="companion_dismissed",
+            npc_id=npc_id,
+            reason=reason,
+            party_members=party_members,
+        )
+
+    def _compute_force_leave(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        return self._compute_dismiss(cmd, state)
+
+    def _success(
+        self,
+        cmd: Command,
+        *,
+        changes: list[StateChange],
+        event_type: str,
+        npc_id: str,
+        reason: str,
+        party_members: list[str],
+    ) -> ExecuteResult:
+        metadata = {
+            "handler": "companion",
+            "command": cmd.type,
+            "status": "ok",
+            "event_type": event_type,
+            "npc_id": npc_id,
+            "reason": reason,
+            "party_members": list(party_members),
+        }
+        return ExecuteResult(
+            executed=True,
+            delta=StateDelta(
+                changes=changes,
+                reason=cmd.type,
+                metadata=metadata,
+            ),
+            time_cost=0.0,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _require_npc_id(params: Mapping[str, Any]) -> str | None:
+        return get_non_empty_string(params, "npc_id")

@@ -9,6 +9,7 @@ from app.game_core.orchestration.hooks.relationship import RelationshipHook
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.handlers import CompanionHandler
 from app.game_core.state import StateChange, StateContainer
 from app.game_core.state.slices import SceneSlice
 from app.game_core.state.slices.party import PartySlice
@@ -23,10 +24,12 @@ def _make_context(
     change_log: list | None = None,
 ) -> SettlementContext:
     state = StateContainer()
+    recorded_changes = change_log if change_log is not None else []
 
     scene_slice = SceneSlice()
     scene_slice.restore({})
     state.register(scene_slice)
+    scene_bus = SceneBus(scene_slice)
 
     relations_slice = RelationSlice()
     relations_slice.restore({
@@ -47,29 +50,53 @@ def _make_context(
         })
         state.register(party_slice)
 
+    engine = RulesEngine()
+    engine.register(CompanionHandler())
+
+    def _apply_delta(delta) -> None:
+        if delta is None:
+            return
+        state.apply(delta)
+        recorded_changes.extend(delta.changes)
+        for change in delta.changes:
+            scene_bus.record_state_change(change)
+
     return SettlementContext(
-        change_log=change_log if change_log is not None else [],
+        change_log=recorded_changes,
         state=state,
         world=WorldInstance("test_world"),
-        scene_bus=SceneBus(scene_slice),
-        _rules_engine=RulesEngine(),
-        _apply_delta=lambda delta: None,
+        scene_bus=scene_bus,
+        _rules_engine=engine,
+        _apply_delta=_apply_delta,
     )
 
 
 def _make_context_no_relations(change_log: list | None = None) -> SettlementContext:
     """Context with no RelationSlice registered."""
     state = StateContainer()
+    recorded_changes = change_log or []
     scene_slice = SceneSlice()
     scene_slice.restore({})
     state.register(scene_slice)
+    scene_bus = SceneBus(scene_slice)
+    engine = RulesEngine()
+    engine.register(CompanionHandler())
+
+    def _apply_delta(delta) -> None:
+        if delta is None:
+            return
+        state.apply(delta)
+        recorded_changes.extend(delta.changes)
+        for change in delta.changes:
+            scene_bus.record_state_change(change)
+
     return SettlementContext(
-        change_log=change_log or [],
+        change_log=recorded_changes,
         state=state,
         world=WorldInstance("test_world"),
-        scene_bus=SceneBus(scene_slice),
-        _rules_engine=RulesEngine(),
-        _apply_delta=lambda delta: None,
+        scene_bus=scene_bus,
+        _rules_engine=engine,
+        _apply_delta=_apply_delta,
     )
 
 

@@ -696,7 +696,7 @@ class WorldStateHandler(StaticCommandHandler):
 
     def _success(self, cmd: Command, *changes: StateChange) -> ExecuteResult:
         return ExecuteResult(
-            success=True,
+            executed=True,
             delta=StateDelta(
                 changes=list(changes),
                 reason=cmd.type,

@@ -330,13 +330,13 @@ class EventConditionHook(NoOpSettlementHook):
         failed_count = 0
         for command in commands:
             result = context.execute_command(command)
-            if not result.success:
+            if not result.executed:
                 failed_count += 1
             applied_change_count = len(result.delta.changes) if result.delta is not None else 0
             results.append(
                 {
                     "command_type": command.type,
-                    "success": result.success,
+                    "executed": result.executed,
                     "errors": list(result.errors),
                     "applied_change_count": applied_change_count,
                 }

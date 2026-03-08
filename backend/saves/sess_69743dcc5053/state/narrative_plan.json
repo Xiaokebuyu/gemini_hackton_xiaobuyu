@@ -1,0 +1,115 @@
+{
+  "behavior_window": [
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "events",
+        "flags",
+        "areas"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 8
+    },
+    {
+      "changed_slices": [
+        "player",
+        "events"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 9
+    },
+    {
+      "changed_slices": [
+        "player"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 10
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "flags"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 11
+    },
+    {
+      "changed_slices": [
+        "player"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 12
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "events",
+        "flags"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 13
+    },
+    {
+      "changed_slices": [
+        "player"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 14
+    },
+    {
+      "changed_slices": [
+        "player",
+        "relations",
+        "events",
+        "flags",
+        "areas"
+      ],
+      "directive_count": 3,
+      "reason": "trigger",
+      "tick": 15
+    }
+  ],
+  "chapter_completion": 0.0,
+  "current_chapter": "",
+  "current_target_milestone": null,
+  "escalation_level": 9,
+  "last_run_tick": 15,
+  "next_scheduled_tick": null,
+  "npc_directives": [
+    {
+      "consumed": false,
+      "directive": {
+        "kind": "present_quest",
+        "quest_id": "dq_ms_familiar_banter",
+        "source_milestone": "ms_familiar_banter"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "guild_clerk",
+      "priority": "medium",
+      "source": "narrative_planner"
+    }
+  ],
+  "pacing_frozen": false,
+  "play_style_tags": [],
+  "quest_history": [
+    {
+      "kind": "create_quest",
+      "quest_id": "dq_ms_familiar_banter",
+      "tick": 8
+    }
+  ],
+  "strategy_notes": "Narrative has been stalled for 15 ticks. Forcing progression by elevating tension to trigger environmental reactions and explicitly assigning the 'familiar banter' quest through the Priestess to break the player's idling at the guild.",
+  "ticks_since_milestone_progress": 15
+}

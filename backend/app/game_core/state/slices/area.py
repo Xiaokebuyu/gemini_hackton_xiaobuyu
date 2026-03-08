@@ -29,6 +29,7 @@ class AreaState:
     temporary_sub_areas: list[dict[str, Any]] = field(default_factory=list)
     discovered_items: set[str] = field(default_factory=set)
     npc_locations: dict[str, str | None] = field(default_factory=dict)
+    npc_presence_sources: dict[str, str] = field(default_factory=dict)
     container_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     interactable_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     board_bulletins: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
@@ -44,6 +45,7 @@ class AreaState:
             "temporary_sub_areas": [dict(item) for item in self.temporary_sub_areas],
             "discovered_items": sorted(self.discovered_items),
             "npc_locations": dict(self.npc_locations),
+            "npc_presence_sources": dict(self.npc_presence_sources),
             "board_bulletins": {
                 board_id: [dict(entry) for entry in entries]
                 for board_id, entries in self.board_bulletins.items()
@@ -522,12 +524,15 @@ class AreaSlice(StateSlice):
         character_id: str,
         area_id: str,
         location_id: str | None,
+        source: str = "resident",
     ) -> None:
         for area in self.areas.values():
             area.npc_locations.pop(character_id, None)
+            area.npc_presence_sources.pop(character_id, None)
 
         target_area = self.get_area(area_id)
         target_area.npc_locations[character_id] = location_id
+        target_area.npc_presence_sources[character_id] = source
         self._dirty = True
 
     # ── 6. Temporary sub-areas ───────────────────────────────────────────────
@@ -753,6 +758,25 @@ class AreaSlice(StateSlice):
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
+        if change.path.startswith("npc_presence."):
+            if change.operation not in {"set", "modify"}:
+                raise ValueError(
+                    f"unsupported npc presence state change: {change.operation} {change.path}"
+                )
+            if not isinstance(change.value, Mapping):
+                raise ValueError("npc presence payload must be a mapping")
+            _, character_id = change.path.split(".", 1)
+            area_id = self._coerce_non_empty_string(change.value.get("area_id"))
+            if area_id is None:
+                raise ValueError("npc presence payload must include area_id")
+            location_id = change.value.get("location_id")
+            normalized_location = (
+                self._coerce_non_empty_string(location_id)
+                if location_id is not None else None
+            )
+            source = self._coerce_non_empty_string(change.value.get("source")) or "resident"
+            self.move_npc(character_id, area_id, normalized_location, source=source)
+            return
         if change.path.startswith("board_bulletins."):
             if change.operation != "append":
                 raise ValueError("board_bulletins only supports append operation")
@@ -854,6 +878,7 @@ class AreaSlice(StateSlice):
                 temporary_sub_areas=[dict(item) for item in raw.temporary_sub_areas],
                 discovered_items=set(raw.discovered_items),
                 npc_locations=dict(raw.npc_locations),
+                npc_presence_sources=dict(raw.npc_presence_sources),
                 container_states={k: dict(v) for k, v in raw.container_states.items()},
                 interactable_states={k: dict(v) for k, v in raw.interactable_states.items()},
                 board_bulletins={
@@ -885,6 +910,10 @@ class AreaSlice(StateSlice):
             npc_locations={
                 str(key): (str(value) if value is not None else None)
                 for key, value in raw.get("npc_locations", {}).items()
+            },
+            npc_presence_sources={
+                str(key): str(value)
+                for key, value in raw.get("npc_presence_sources", {}).items()
             },
             container_states={
                 str(key): dict(value)

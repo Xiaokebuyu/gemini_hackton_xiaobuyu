@@ -246,10 +246,10 @@ def test_event_sink_none_preserves_original_behavior() -> None:
 def test_action_log_consumes_one_tick_and_preserves_spillover() -> None:
     coordinator = _make_coordinator()
     coordinator._append_pipeline_action(
-        PipelineResult(success=True, action_type="navigate", time_cost=0.75)
+        PipelineResult(executed=True, action_type="navigate", time_cost=0.75)
     )
     coordinator._append_pipeline_action(
-        PipelineResult(success=True, action_type="rest_long", time_cost=0.75)
+        PipelineResult(executed=True, action_type="rest_long", time_cost=0.75)
     )
 
     first_window = coordinator.action_log
@@ -269,12 +269,12 @@ def test_action_log_consumes_one_tick_and_preserves_spillover() -> None:
 def test_consumed_action_log_does_not_leak_into_next_window() -> None:
     coordinator = _make_coordinator()
     coordinator._append_pipeline_action(
-        PipelineResult(success=True, action_type="navigate", time_cost=1.0)
+        PipelineResult(executed=True, action_type="navigate", time_cost=1.0)
     )
     coordinator._consume_pending_action_window()
 
     coordinator._append_pipeline_action(
-        PipelineResult(success=True, action_type="skill_check", time_cost=1.0 / 6.0)
+        PipelineResult(executed=True, action_type="skill_check", time_cost=1.0 / 6.0)
     )
 
     assert coordinator.action_log == [
@@ -282,7 +282,7 @@ def test_consumed_action_log_does_not_leak_into_next_window() -> None:
             "type": "skill_check",
             "actor": "system",
             "params": {},
-            "success": True,
+            "executed": True,
             "time_cost": 1.0 / 6.0,
         }
     ]
@@ -291,7 +291,7 @@ def test_consumed_action_log_does_not_leak_into_next_window() -> None:
 def test_multi_tick_action_reuses_same_high_level_semantics_until_fully_consumed() -> None:
     coordinator = _make_coordinator()
     coordinator._append_pipeline_action(
-        PipelineResult(success=True, action_type="rest_long", time_cost=8.0 / 6.0)
+        PipelineResult(executed=True, action_type="rest_long", time_cost=8.0 / 6.0)
     )
 
     first_window = coordinator.action_log
@@ -300,7 +300,7 @@ def test_multi_tick_action_reuses_same_high_level_semantics_until_fully_consumed
             "type": "rest_long",
             "actor": "system",
             "params": {},
-            "success": True,
+            "executed": True,
             "time_cost": 1.0,
         }
     ]
@@ -311,5 +311,5 @@ def test_multi_tick_action_reuses_same_high_level_semantics_until_fully_consumed
     assert second_window[0]["type"] == "rest_long"
     assert second_window[0]["actor"] == "system"
     assert second_window[0]["params"] == {}
-    assert second_window[0]["success"] is True
+    assert second_window[0]["executed"] is True
     assert second_window[0]["time_cost"] == pytest.approx(1.0 / 3.0)

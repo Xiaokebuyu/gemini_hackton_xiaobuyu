@@ -49,7 +49,7 @@ class DiscoveryHandler(StaticCommandHandler):
         if cmd.type == "passive_scan":
             # Passive scans are handled by PassivePerceptionHook at settlement
             return ExecuteResult(
-                success=True,
+                executed=True,
                 metadata={"status": "deferred_to_hook", "reason": "passive_scan handled by PassivePerceptionHook"},
             )
         return self._compute_discover(cmd, state, world)

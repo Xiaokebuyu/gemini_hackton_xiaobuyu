@@ -130,7 +130,7 @@ class TestKillCountFlag:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["combat_cleared"] is True
         _apply(result, state)
 
@@ -175,7 +175,7 @@ class TestKillCountFlag:
             state,
             world,
         )
-        assert result.success and result.metadata["combat_cleared"]
+        assert result.executed and result.metadata["combat_cleared"]
         _apply(result, state)
         assert state.flags.get("kill_count_goblin", 0) == 1
 
@@ -187,7 +187,7 @@ class TestKillCountFlag:
             state,
             world,
         )
-        assert result.success and result.metadata["combat_cleared"]
+        assert result.executed and result.metadata["combat_cleared"]
         _apply(result, state)
         assert state.flags.get("kill_count_goblin", 0) == 2
 

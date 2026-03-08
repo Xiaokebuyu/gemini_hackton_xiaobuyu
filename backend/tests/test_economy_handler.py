@@ -123,7 +123,7 @@ class TestEconomyHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["status"] == "refreshed"
         assert result.metadata["rotating_count"] == 1
         _apply(result, state)
@@ -137,7 +137,7 @@ class TestEconomyHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.delta is None
         assert result.metadata["status"] == "noop"
 
@@ -152,7 +152,7 @@ class TestEconomyHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0 / 6.0
         assert result.metadata["status"] == "purchased"
         assert result.metadata["shop_initialized"] is True
@@ -183,9 +183,9 @@ class TestEconomyHandler:
             world,
         )
 
-        assert no_gold.success is False
+        assert no_gold.executed is False
         assert no_gold.errors == ["not enough gold"]
-        assert no_stock.success is False
+        assert no_stock.executed is False
         assert no_stock.errors == ["not enough stock: potion"]
 
     def test_trade_sell_updates_inventory_gold_and_buyback_state(self) -> None:
@@ -202,7 +202,7 @@ class TestEconomyHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.time_cost == 1.0 / 6.0
         assert result.metadata["status"] == "sold"
         assert result.metadata["unit_price"] == 40
@@ -228,7 +228,7 @@ class TestEconomyHandler:
             _make_world(),
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["shop_initialized"] is False
         assert result.metadata["shop_updated"] is False
         _apply(result, state)

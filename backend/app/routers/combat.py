@@ -124,7 +124,7 @@ async def combat_action(
             after_payload = _get_hostile_payload(session, sub_area_id)
 
         if (
-            result.success
+            result.executed
             and after_payload is not None
             and bool(after_payload.get("combat_active", False))
         ):
@@ -136,7 +136,7 @@ async def combat_action(
                     source="system",
                 ),
             )
-            if round_result.success:
+            if round_result.executed:
                 refreshed_payload = _get_hostile_payload(session, sub_area_id)
                 if refreshed_payload is not None:
                     after_payload = refreshed_payload
@@ -158,7 +158,7 @@ async def combat_action(
             cause=action_type,
         )
 
-        if not result.success:
+        if not result.executed:
             pass
         elif after_payload is not None and bool(after_payload.get("combat_active", False)):
             await queue.put(
@@ -197,7 +197,7 @@ async def combat_action(
                 await queue.put(SSEEvent("loot_display", loot_payload))
 
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(_build_stream_end_event("completed", result.success))
+        await queue.put(_build_stream_end_event("completed", result.executed))
 
     return await _stream_with_lock(world_id, session_id, _execute)
 
@@ -233,7 +233,7 @@ async def encounter_action(
             await queue.put(
                 _manual_action_result(
                     choice,
-                    success=False,
+                    executed=False,
                     errors=["encounter already cleared"],
                     metadata={"sub_area_id": sub_area_id},
                 )
@@ -245,7 +245,7 @@ async def encounter_action(
             await queue.put(
                 _manual_action_result(
                     choice,
-                    success=False,
+                    executed=False,
                     errors=["combat already started"],
                     metadata={"sub_area_id": sub_area_id},
                 )
@@ -259,7 +259,7 @@ async def encounter_action(
                 await queue.put(
                     _manual_action_result(
                         choice,
-                        success=True,
+                        executed=True,
                         metadata={"sub_area_id": sub_area_id},
                     )
                 )
@@ -270,7 +270,7 @@ async def encounter_action(
                 await queue.put(
                     _manual_action_result(
                         choice,
-                        success=False,
+                        executed=False,
                         errors=["encounter must be entered before this action"],
                         metadata={"sub_area_id": sub_area_id},
                     )
@@ -287,23 +287,23 @@ async def encounter_action(
                 ),
             )
             await queue.put(_build_action_result_event(enter_result, "enter"))
-            if enter_result.success:
+            if enter_result.executed:
                 await queue.put(SSEEvent("scene_change", build_scene_change(session)))
                 await queue.put(SSEEvent("location_overview", build_location_overview(session)))
                 await _emit_hostile_entry_events(queue, session, sub_area_id=sub_area_id)
             else:
                 await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-            await queue.put(_build_stream_end_event("completed", enter_result.success))
+            await queue.put(_build_stream_end_event("completed", enter_result.executed))
             return
 
         stealth = payload.get("last_stealth_result")
         if status != "stealth_resolved" or not isinstance(stealth, Mapping) or not bool(
-            stealth.get("success", False)
+            stealth.get("passed", False)
         ):
             await queue.put(
                 _manual_action_result(
                     choice,
-                    success=False,
+                    executed=False,
                     errors=["encounter is not ready for follow-up actions"],
                     metadata={"sub_area_id": sub_area_id},
                 )
@@ -327,12 +327,12 @@ async def encounter_action(
             await queue.put(
                 _manual_action_result(
                     choice,
-                    success=start_result.success,
+                    executed=start_result.executed,
                     errors=list(start_result.errors),
                     metadata={"sub_area_id": sub_area_id},
                 )
             )
-            if start_result.success:
+            if start_result.executed:
                 payload = _get_hostile_payload(session, sub_area_id)
                 if payload is not None:
                     await queue.put(
@@ -346,7 +346,7 @@ async def encounter_action(
                         )
                     )
             await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-            await queue.put(_build_stream_end_event("completed", start_result.success))
+            await queue.put(_build_stream_end_event("completed", start_result.executed))
             return
 
         if choice == "sneak_through":
@@ -354,7 +354,7 @@ async def encounter_action(
                 await queue.put(
                     _manual_action_result(
                         choice,
-                        success=False,
+                        executed=False,
                         errors=["blocking encounters cannot be bypassed"],
                         metadata={"sub_area_id": sub_area_id},
                     )
@@ -369,7 +369,7 @@ async def encounter_action(
             await queue.put(
                 _manual_action_result(
                     choice,
-                    success=True,
+                    executed=True,
                     metadata={"sub_area_id": sub_area_id},
                 )
             )
@@ -385,7 +385,7 @@ async def encounter_action(
                     params={},
                 ),
             )
-            if leave_result.success:
+            if leave_result.executed:
                 await _reset_hostile_to_spotted(
                     session,
                     sub_area_id=sub_area_id,
@@ -394,21 +394,21 @@ async def encounter_action(
             await queue.put(
                 _manual_action_result(
                     choice,
-                    success=leave_result.success,
+                    executed=leave_result.executed,
                     errors=list(leave_result.errors),
                     metadata={"sub_area_id": sub_area_id},
                 )
             )
-            if leave_result.success:
+            if leave_result.executed:
                 await queue.put(SSEEvent("scene_change", build_scene_change(session)))
             await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-            await queue.put(_build_stream_end_event("completed", leave_result.success))
+            await queue.put(_build_stream_end_event("completed", leave_result.executed))
             return
 
         await queue.put(
             _manual_action_result(
                 choice,
-                success=False,
+                executed=False,
                 errors=["unsupported encounter action"],
                 metadata={"sub_area_id": sub_area_id},
             )
@@ -586,7 +586,7 @@ async def _emit_hostile_entry_events(
             source="system",
         ),
     )
-    if not result.success:
+    if not result.executed:
         return
     stealth_meta = dict(result.metadata)
     for roll in result.rolls:
@@ -601,7 +601,7 @@ async def _emit_hostile_entry_events(
             )
         )
     await queue.put(SSEEvent("stealth_result", _stealth_result_payload(stealth_meta)))
-    if bool(stealth_meta.get("success", False)):
+    if bool(stealth_meta.get("passed", False)):
         return
     start_result = await _execute_command(
         session,
@@ -614,7 +614,7 @@ async def _emit_hostile_entry_events(
             source="system",
         ),
     )
-    if not start_result.success:
+    if not start_result.executed:
         return
     combat_payload = _get_hostile_payload(session, sub_area_id)
     if combat_payload is None:
@@ -757,14 +757,14 @@ def _roll_payload(
     purpose = str(roll.purpose)
     if purpose.startswith("monster_attack:"):
         dc = fallback_player_ac
-        success = roll.total >= dc
+        passed = roll.total >= dc
         return {
             "type": roll.dice,
             "result": roll.result,
             "modifier": modifier,
             "total": roll.total,
             "dc": dc,
-            "success": success,
+            "passed": passed,
             "skill": "monster_attack",
             "roller": "enemy",
             "roller_name": purpose.split(":", 1)[1] or f"Enemy {index + 1}",
@@ -772,19 +772,19 @@ def _roll_payload(
 
     if purpose == "attack":
         dc = int(result.metadata.get("target_ac", 0))
-        success = bool(result.metadata.get("hit", False))
+        passed = bool(result.metadata.get("hit", False))
         skill = "attack"
     elif purpose == "shove":
         dc = int(result.metadata.get("resist_dc", 0))
-        success = bool(result.metadata.get("passed", False))
+        passed = bool(result.metadata.get("passed", False))
         skill = "shove"
     elif purpose == "flee":
         dc = int(result.metadata.get("escape_dc", 0))
-        success = bool(result.metadata.get("passed", False))
+        passed = bool(result.metadata.get("passed", False))
         skill = "flee"
     else:
         dc = 0
-        success = bool(roll.critical)
+        passed = bool(roll.critical)
         skill = purpose
 
     return {
@@ -793,7 +793,7 @@ def _roll_payload(
         "modifier": modifier,
         "total": roll.total,
         "dc": dc,
-        "success": success,
+        "passed": passed,
         "skill": skill,
         "roller": "player",
         "roller_name": session.runtime.state.player.character_name or "Player",
@@ -902,7 +902,7 @@ def _stealth_roll_payload(
         "modifier": modifier,
         "total": roll.total,
         "dc": int(metadata.get("dc", 0)),
-        "success": bool(metadata.get("success", False)),
+        "passed": bool(metadata.get("passed", False)),
         "skill": "stealth",
         "roller": "player",
         "roller_name": session.runtime.state.player.character_name or "Player",
@@ -911,7 +911,7 @@ def _stealth_roll_payload(
 
 def _stealth_result_payload(metadata: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        "success": bool(metadata.get("success", False)),
+        "passed": bool(metadata.get("passed", False)),
         "roll": int(metadata.get("roll", 0)),
         "dc": int(metadata.get("dc", 0)),
         "modifier": int(metadata.get("modifier", 0)),
@@ -926,14 +926,14 @@ def _stealth_result_payload(metadata: Mapping[str, Any]) -> dict[str, Any]:
 def _manual_action_result(
     action_type: str,
     *,
-    success: bool,
+    executed: bool,
     errors: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> SSEEvent:
     return SSEEvent(
         "action_result",
         {
-            "success": success,
+            "executed": executed,
             "action_type": action_type,
             "time_cost": 0.0,
             "errors": list(errors or []),
@@ -947,13 +947,6 @@ def _combat_action_result_event(
     action_type: str,
     result: PipelineResult,
 ) -> SSEEvent:
-    if action_type == "flee" and not bool(result.metadata.get("passed", False)):
-        return _manual_action_result(
-            action_type,
-            success=False,
-            errors=["failed to flee"],
-            metadata=dict(result.metadata),
-        )
     return _build_action_result_event(result, action_type)
 
 

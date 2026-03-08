@@ -359,6 +359,9 @@ class GameRuntime:
             runner = getattr(self._agent_orchestration, "run_post_action_round", None)
             if callable(runner):
                 runtime.pipeline.set_stage_b_runner(runner)
+        # 恢复后强制同步队友位置到玩家当前区域
+        from app.game_core.orchestration.companion_manager import CompanionManager
+        CompanionManager(runtime.state).sync_to_player()
         phase = str(meta.get("phase", "")).strip() or "character_creation"
         return ManagedSession(
             world_id=world_id,
@@ -443,7 +446,7 @@ class GameRuntime:
         session: ManagedSession,
         result: Any,
     ) -> None:
-        if not getattr(result, "success", False):
+        if not getattr(result, "executed", False):
             errors = getattr(result, "errors", None)
             if isinstance(errors, list) and errors:
                 raise ValueError(str(errors[0]))

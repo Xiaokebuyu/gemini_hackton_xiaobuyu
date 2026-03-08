@@ -80,7 +80,7 @@ def test_interaction_service_returns_rejection_without_resolved_event() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.completed is False
     assert result.reason == "interaction_rejected"
     assert [event.event_type for event in result.events] == ["interaction_rejected"]
 
@@ -105,7 +105,7 @@ def test_interaction_service_rejects_presence_before_resolving() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.completed is False
     assert result.reason == "interaction_rejected"
     assert [event.event_type for event in result.events] == ["interaction_rejected"]
     assert result.events[0].payload["code"] == "npc_not_present"
@@ -131,7 +131,7 @@ def test_interaction_service_executes_talk_snapshot() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     assert result.reason == "completed"
     assert [event.event_type for event in result.events] == [
         "interaction_resolved",
@@ -171,7 +171,7 @@ def test_interaction_service_executes_quest_brief_snapshot() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     assert [event.event_type for event in result.events] == [
         "interaction_resolved",
         "quest_brief",
@@ -198,7 +198,7 @@ def test_interaction_service_executes_shop_refresh() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     assert [event.event_type for event in result.events] == [
         "interaction_resolved",
         "shop_snapshot",
@@ -211,7 +211,7 @@ def test_interaction_service_handles_pipeline_failure() -> None:
 
     async def _execute(_session, _request):
         return SimpleNamespace(
-            success=False,
+            executed=False,
             errors=["interaction failed"],
             time_cost=0.0,
             metadata={},
@@ -244,7 +244,7 @@ def test_interaction_service_handles_pipeline_failure() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.completed is False
     assert result.reason == "interaction_rejected"
     assert [event.event_type for event in result.events] == [
         "interaction_resolved",
@@ -272,7 +272,7 @@ def test_interaction_service_rejects_unknown_snapshot_type() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.completed is False
     assert result.reason == "interaction_rejected"
     assert [event.event_type for event in result.events] == [
         "interaction_resolved",
@@ -300,7 +300,7 @@ def test_interaction_service_rejects_unknown_execution_kind() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.completed is False
     assert result.reason == "interaction_rejected"
     assert [event.event_type for event in result.events] == [
         "interaction_resolved",
@@ -333,7 +333,7 @@ def test_shop_snapshot_includes_player_gold() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     shop_payload = result.events[1].payload
     assert "player_gold" in shop_payload
     assert isinstance(shop_payload["player_gold"], int)
@@ -359,7 +359,7 @@ def test_shop_snapshot_stock_enriched_with_item_details() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     shop_payload = result.events[1].payload
     stock = shop_payload["stock"]
     assert len(stock) > 0
@@ -390,7 +390,7 @@ def test_shop_snapshot_includes_player_sellable_items() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     shop_payload = result.events[1].payload
     sellable = shop_payload["player_sellable_items"]
     assert any(item["item_id"] == "training_sword" for item in sellable)
@@ -424,7 +424,7 @@ def test_talk_snapshot_includes_available_intents() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     talk_payload = result.events[1].payload
     intents = talk_payload["available_intents"]
     assert "talk" in intents
@@ -467,7 +467,7 @@ def test_talk_snapshot_merchant_has_shop_intents() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     intents = result.events[1].payload["available_intents"]
     assert "browse" in intents
     assert "buy" in intents
@@ -504,7 +504,7 @@ def test_inspect_item_returns_item_details() -> None:
         )
     )
 
-    assert result.success is True
+    assert result.completed is True
     assert [e.event_type for e in result.events] == [
         "interaction_resolved",
         "inspect_item",

@@ -134,7 +134,7 @@ def _state_with_party(world: WorldInstance) -> StateContainer:
 
 
 def _noop_executor(command: Command) -> ExecuteResult:
-    return ExecuteResult(success=True)
+    return ExecuteResult(executed=True)
 
 
 def _npc_speak_response(text: str = "Hello.") -> dict[str, Any]:
@@ -195,7 +195,7 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is False
+        assert result.completed is False
         assert result.error == "npc_not_found"
         assert result.npc_result is None
 
@@ -213,7 +213,7 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         assert result.npc_id == "merchant_tom"
         assert result.time_cost == 1 / 6
 
@@ -263,7 +263,7 @@ class TestNpcInteractionCoordinator:
             )
         )
 
-        assert result.success is True
+        assert result.completed is True
         assert directive["consumed"] is True
         assert instance.directive_queue == []
         assert "west_gate" in llm.calls[0]["system_prompt"]
@@ -334,12 +334,12 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         assert result.npc_result is not None
         speeches = [
             tr.message
             for tr in result.npc_result.tool_results
-            if tr.success and tr.metadata.get("event_type") == "speech"
+            if tr.ok and tr.metadata.get("event_type") == "speech"
         ]
         assert speeches == ["First reply."]
         assert result.npc_result.turns_used == 1
@@ -446,10 +446,10 @@ class TestNpcInteractionCoordinator:
         ))
 
         assert result.teammate_results == {}
-        assert result.success is True
+        assert result.completed is True
 
     def test_no_llm_returns_no_results_but_success(self) -> None:
-        """With no LLM, executor degrades gracefully → coordinator still returns success=True."""
+        """With no LLM, executor degrades gracefully → coordinator still completes."""
         world = _world_with_characters()
         state = _state_with_party(world)
         registry = RoleToolRegistry()
@@ -465,12 +465,12 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is True
+        assert result.completed is True
         # No LLM → empty results, but structure is intact
         assert result.dialogue_options  # static options always built
 
     def test_npc_agent_exception_returns_agent_failed(self) -> None:
-        """LLM throws → NPC agent exception → coordinator returns success=False."""
+        """LLM throws → NPC agent exception → coordinator returns completed=False."""
         world = _world_with_characters()
         state = _state_with_party(world)
         registry = RoleToolRegistry()
@@ -486,7 +486,7 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is False
+        assert result.completed is False
         assert result.error == "agent_failed"
 
     def test_text_only_npc_response_is_reported_as_invalid_agent_response(self) -> None:
@@ -500,7 +500,7 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.success is False
+        assert result.completed is False
         assert result.error == "invalid_agent_response"
         assert result.error_reason == "text_without_tool"
 
@@ -557,7 +557,7 @@ class TestTeammateInInteraction:
                 execute_command=_noop_executor,
             ))
 
-        assert result.success is True
+        assert result.completed is True
         assert "sure_responder" in result.teammate_results
 
     def test_teammate_never_reacts_when_tendency_is_zero(self) -> None:
@@ -726,12 +726,12 @@ class TestExtractSpeechText:
         result = AgentResult(
             tool_results=[
                 ToolResult(
-                    success=True,
+                    ok=True,
                     message="Hello there!",
                     metadata={"event_type": "speech"},
                 ),
                 ToolResult(
-                    success=True,
+                    ok=True,
                     message="*nods*",
                     metadata={"event_type": "emote"},
                 ),
@@ -753,8 +753,8 @@ class TestExtractSpeechText:
 
         result = AgentResult(
             tool_results=[
-                ToolResult(success=True, message="First.", metadata={"event_type": "speech"}),
-                ToolResult(success=True, message="Second.", metadata={"event_type": "speech"}),
+                ToolResult(ok=True, message="First.", metadata={"event_type": "speech"}),
+                ToolResult(ok=True, message="Second.", metadata={"event_type": "speech"}),
             ],
         )
         text = _extract_speech_text(result)

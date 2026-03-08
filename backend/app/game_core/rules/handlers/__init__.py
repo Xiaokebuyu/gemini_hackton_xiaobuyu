@@ -1,5 +1,6 @@
 """Concrete rules handlers."""
 
+from app.game_core.rules.handlers.companion import CompanionHandler
 from app.game_core.rules.handlers.combat import CombatHandler
 from app.game_core.rules.handlers.board import BoardHandler
 from app.game_core.rules.handlers.container import ContainerHandler
@@ -19,6 +20,7 @@ from app.game_core.rules.handlers.status_effect import StatusEffectHandler
 from app.game_core.rules.handlers.world_state import WorldStateHandler
 
 __all__ = [
+    "CompanionHandler",
     "CombatHandler",
     "BoardHandler",
     "ContainerHandler",

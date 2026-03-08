@@ -559,7 +559,7 @@ def test_navigate_executes_real_runtime_and_maps_failures(monkeypatch) -> None:
     moved_events = _parse_sse(moved)
     moved_result = _sse_event(moved_events, "action_result")
     assert moved_result is not None
-    assert moved_result["success"] is True
+    assert moved_result["executed"] is True
     assert _sse_event(moved_events, "scene_change") is not None
     moved_overview = _sse_event(moved_events, "location_overview")
     assert moved_overview is not None
@@ -579,11 +579,84 @@ def test_navigate_executes_real_runtime_and_maps_failures(monkeypatch) -> None:
     assert invalid_action.status_code == 400
     assert invalid_action.json()["detail"]["code"] == "invalid_navigation_request"
 
-    # rejected: execution failure inside SSE → action_result.success=False
+    # rejected: execution failure inside SSE → action_result.executed=False
     assert rejected.status_code == 200
     rejected_result = _sse_event(_parse_sse(rejected), "action_result")
     assert rejected_result is not None
-    assert rejected_result["success"] is False
+    assert rejected_result["executed"] is False
+
+
+def test_companion_routes_run_command_round_trip(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        session = asyncio.run(_load_session(session_id))
+        assert session is not None
+        merchant = session.runtime.world.characters.get("merchant")
+        assert merchant is not None
+        if "recruitable" not in merchant.tags:
+            merchant.tags.append("recruitable")
+        session.runtime.state.relations.relationship_stages["merchant"] = "acquaintance"
+        session.runtime.state.relations.npc_dispositions["merchant"] = {
+            "approval": 20,
+            "trust": 10,
+            "fear": 0,
+            "romance": 0,
+        }
+        session.runtime.state.relations._dirty = True
+        initial_accumulated = session.runtime.state.time.accumulated
+        asyncio.run(_save_session(session))
+
+        recruited = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/companion/recruit",
+            json={"npc_id": "merchant"},
+        )
+        dismissed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/companion/dismiss",
+            json={"npc_id": "merchant"},
+        )
+
+    assert recruited.status_code == 200
+    recruited_events = _parse_sse(recruited)
+    recruited_names = [evt["event"] for evt in recruited_events]
+    assert recruited_names.index("action_result") < recruited_names.index("companion_recruited")
+    recruit_action = _sse_event(recruited_events, "action_result")
+    assert recruit_action is not None
+    assert recruit_action["executed"] is True
+    assert recruit_action["action_type"] == "recruit_companion"
+    assert recruit_action["time_cost"] == 0.0
+    recruit_payload = _sse_event(recruited_events, "companion_recruited")
+    assert recruit_payload is not None
+    assert recruit_payload["npc_id"] == "merchant"
+    assert "merchant" in recruit_payload["party_members"]
+    recruited_overview = _sse_event(recruited_events, "location_overview")
+    assert recruited_overview is not None
+    assert any(
+        item.get("character_id") == "merchant" and item.get("is_companion") is True
+        for item in recruited_overview["present_npcs"]
+    )
+
+    assert dismissed.status_code == 200
+    dismissed_events = _parse_sse(dismissed)
+    dismissed_names = [evt["event"] for evt in dismissed_events]
+    assert dismissed_names.index("action_result") < dismissed_names.index("companion_dismissed")
+    dismiss_action = _sse_event(dismissed_events, "action_result")
+    assert dismiss_action is not None
+    assert dismiss_action["executed"] is True
+    assert dismiss_action["action_type"] == "dismiss_companion"
+    assert dismiss_action["time_cost"] == 0.0
+    dismiss_payload = _sse_event(dismissed_events, "companion_dismissed")
+    assert dismiss_payload is not None
+    assert dismiss_payload["npc_id"] == "merchant"
+    assert "merchant" not in dismiss_payload["party_members"]
+
+    session = asyncio.run(_load_session(session_id))
+    assert session is not None
+    assert "merchant" not in session.runtime.state.party.members
+    assert session.runtime.state.time.accumulated == initial_accumulated
 
 
 def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:
@@ -622,10 +695,10 @@ def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:
     assert streamed.headers["content-type"].startswith("text/event-stream")
     assert "event: action_result" in streamed.text
     assert "event: stream_end" in streamed.text
-    assert '"success":true' in streamed.text
+    assert '"executed":true' in streamed.text
     assert '"action_type":"move_area"' in streamed.text
     assert rejected.status_code == 200
-    assert '"success":false' in rejected.text
+    assert '"executed":false' in rejected.text
     assert "unknown area: missing" in rejected.text
     assert invalid_request.status_code == 400
     assert invalid_request.json()["detail"]["code"] == "invalid_action_request"
@@ -655,15 +728,53 @@ def test_action_stream_emits_dice_roll_for_skill_checks(monkeypatch) -> None:
     assert dice_roll["modifier"] == 5
     assert dice_roll["total"] == 15
     assert dice_roll["dc"] == 13
-    assert dice_roll["success"] is True
+    assert dice_roll["passed"] is True
+    assert dice_roll["passed"] is True
 
     action_result = _sse_event(events, "action_result")
     assert action_result is not None
+    assert action_result["executed"] is True
+    assert action_result["outcome"] == {
+        "category": "check",
+        "passed": True,
+        "margin": 2,
+    }
     assert action_result["rolls"][0]["purpose"] == "skill_check"
     assert action_result["rolls"][0]["dice"] == "1d20"
 
     event_names = [event.get("event") for event in events]
     assert event_names.index("dice_roll") < event_names.index("action_result")
+
+
+def test_action_stream_failed_skill_check_uses_executed_plus_outcome(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: 5)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "skill_check", "params": {"skill": "athletics", "dc": 13}},
+        )
+
+    assert streamed.status_code == 200
+    events = _parse_sse(streamed)
+    dice_roll = _sse_event(events, "dice_roll")
+    assert dice_roll is not None
+    assert dice_roll["passed"] is False
+    assert dice_roll["passed"] is False
+
+    action_result = _sse_event(events, "action_result")
+    assert action_result is not None
+    assert action_result["executed"] is True
+    assert action_result["executed"] is True
+    assert action_result["outcome"] == {
+        "category": "check",
+        "passed": False,
+        "margin": -3,
+    }
 
 
 def test_action_stream_summarizes_before_agent_reactions(monkeypatch) -> None:
@@ -822,14 +933,14 @@ def test_input_stream_parses_text_commands(monkeypatch) -> None:
     assert '\"action_type\":\"move_area\"' in parsed.text
     assert f'\"area_id\":\"{target_area}\"' in parsed.text
     assert "event: action_result" in parsed.text
-    assert '\"success\":true' in parsed.text
+    assert '\"executed\":true' in parsed.text
     assert "event: stream_end" in parsed.text
 
     assert runtime_rejected.status_code == 200
     assert runtime_rejected.headers["content-type"].startswith("text/event-stream")
     assert "event: input_parsed" in runtime_rejected.text
     assert "event: action_result" in runtime_rejected.text
-    assert '\"success\":false' in runtime_rejected.text
+    assert '\"executed\":false' in runtime_rejected.text
     assert "unknown area: missing" in runtime_rejected.text
 
     assert parser_rejected.status_code == 200
@@ -842,6 +953,77 @@ def test_input_stream_parses_text_commands(monkeypatch) -> None:
     assert empty_rejected.status_code == 200
     assert "event: input_rejected" in empty_rejected.text
     assert '\"code\":\"empty_input\"' in empty_rejected.text
+
+
+def test_interact_stream_routes_public_utterance_without_focus(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_public_utterance(
+            self,
+            session,
+            player_message,
+            intent="talk",
+            text_chunk_sink=None,
+            check_result=None,
+        ):
+            del session, text_chunk_sink
+            assert player_message == "大家先听我说。"
+            assert intent == "talk"
+            assert check_result is None
+            return [
+                SSEEvent("gm_comment", {"content": "空气瞬间安静下来。"}),
+                SSEEvent(
+                    "teammate_response",
+                    {"character_id": "cow_girl", "content": "我在听。", "type": "speech"},
+                ),
+            ]
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={"intent": "talk", "message": "大家先听我说。", "scope": "public"},
+        )
+
+    assert streamed.status_code == 200
+    assert "event: interaction_rejected" not in streamed.text
+    events = _parse_sse(streamed)
+    assert _sse_event(events, "gm_comment")["content"] == "空气瞬间安静下来。"
+    assert _sse_event(events, "teammate_response")["content"] == "我在听。"
+    assert _sse_event(events, "stream_end")["completed"] is True
+
+
+def test_interact_stream_party_scope_advances_even_when_silent(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_free_chat(self, session, player_message):
+            del session
+            assert player_message == "先等等。"
+            return []
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        before = asyncio.run(_load_session(session_id))
+        assert before is not None
+        initial_accumulated = before.runtime.state.time.accumulated
+
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={"intent": "chat", "message": "先等等。", "scope": "party"},
+        )
+
+    assert streamed.status_code == 200
+    events = _parse_sse(streamed)
+    assert _sse_event(events, "stream_end")["completed"] is True
+    after = asyncio.run(_load_session(session_id))
+    assert after is not None
+    assert after.runtime.state.time.accumulated == pytest.approx(initial_accumulated + (1 / 6))
 
 
 def test_interact_stream_executes_minimal_shop_flow(monkeypatch) -> None:
@@ -934,7 +1116,7 @@ def test_interact_stream_executes_minimal_shop_flow(monkeypatch) -> None:
     assert "event: interaction_resolved" in buy.text
     assert "event: action_result" in buy.text
     assert "event: shop_snapshot" in buy.text
-    assert '\"success\":true' in buy.text
+    assert '\"executed\":true' in buy.text
     assert '\"action_type\":\"trade_buy\"' in buy.text
     assert "event: stream_end" in buy.text
     assert inventory_after_buy.status_code == 200
@@ -948,7 +1130,7 @@ def test_interact_stream_executes_minimal_shop_flow(monkeypatch) -> None:
     assert "event: interaction_resolved" in sell.text
     assert "event: action_result" in sell.text
     assert "event: shop_snapshot" in sell.text
-    assert '\"success\":true' in sell.text
+    assert '\"executed\":true' in sell.text
     assert '\"action_type\":\"trade_sell\"' in sell.text
     assert "event: stream_end" in sell.text
     assert inventory_after_sell.status_code == 200
@@ -989,7 +1171,7 @@ def test_interact_stream_executes_minimal_shop_flow(monkeypatch) -> None:
     assert "event: action_result" not in missing_npc.text
 
     assert move_away.status_code == 200
-    assert _action_result_payload(move_away)["success"] is True
+    assert _action_result_payload(move_away)["executed"] is True
     assert npc_not_present.status_code == 200
     assert "event: interaction_rejected" in npc_not_present.text
     assert '\"code\":\"npc_not_present\"' in npc_not_present.text
@@ -1048,7 +1230,7 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
         )
 
     assert left.status_code == 200
-    assert _action_result_payload(left)["success"] is True
+    assert _action_result_payload(left)["executed"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1058,7 +1240,7 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
 
     assert entered.status_code == 200
     entered_result = _action_result_payload(entered)
-    assert entered_result["success"] is True
+    assert entered_result["executed"] is True
     entered_overview = _sse_event(_parse_sse(entered), "location_overview")
     assert entered_overview is not None
     assert entered_overview["location_id"] == "counter"
@@ -1147,7 +1329,7 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
         )
 
     assert left.status_code == 200
-    assert _action_result_payload(left)["success"] is True
+    assert _action_result_payload(left)["executed"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1157,7 +1339,7 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
 
     assert entered.status_code == 200
     entered_result = _action_result_payload(entered)
-    assert entered_result["success"] is True
+    assert entered_result["executed"] is True
     entered_overview = _sse_event(_parse_sse(entered), "location_overview")
     assert entered_overview is not None
     assert entered_overview["location_id"] == "counter"
@@ -1170,7 +1352,7 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
     assert "event: board_snapshot" not in greeted_once.text
     action_payloads = _event_payloads(greeted_once.text, "action_result")
     assert len(action_payloads) == 1
-    assert action_payloads[0]["success"] is True
+    assert action_payloads[0]["executed"] is True
     assert action_payloads[0]["action_type"] == "add_knowledge"
     greeted_once_payloads = _event_payloads(greeted_once.text, "talk_snapshot")
     assert len(greeted_once_payloads) == 1
@@ -1196,6 +1378,67 @@ def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
         "Shared a brief greeting.",
         "Shared a brief greeting.",
     ]
+
+
+def test_interact_stream_check_uses_standard_dice_roll_payload(monkeypatch) -> None:
+    class FakeAgentOrchestration:
+        async def run_npc_interaction(
+            self,
+            *,
+            session,
+            npc_id,
+            player_message,
+            intent="talk",
+            text_chunk_sink=None,
+            check_result=None,
+        ):
+            del session, player_message, intent, text_chunk_sink
+            assert npc_id == "merchant"
+            assert check_result is not None
+            return [
+                SSEEvent(
+                    "npc_response",
+                    {"npc_id": "merchant", "content": "行吧，你过去。", "type": "speech"},
+                )
+            ]
+
+    runtime = _runtime(agent_orchestration=FakeAgentOrchestration())
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: 10)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
+        client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
+            json={"action": "enter_sub_location", "location_id": "counter"},
+        )
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "talk",
+                "message": "让我过去。",
+                "check_skill": "persuasion",
+                "check_dc": 13,
+            },
+        )
+
+    assert streamed.status_code == 200
+    events = _parse_sse(streamed)
+    dice_roll = _sse_event(events, "dice_roll")
+    assert dice_roll is not None
+    assert dice_roll["skill"] == "persuasion"
+    assert dice_roll["result"] == 10
+    assert dice_roll["modifier"] == 1
+    assert dice_roll["total"] == 11
+    assert dice_roll["dc"] == 13
+    assert dice_roll["passed"] is False
+    assert dice_roll["roll"] == 10
+    assert dice_roll["passed"] is False
+    assert _sse_event(events, "npc_response")["content"] == "行吧，你过去。"
 
 
 def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
@@ -1282,7 +1525,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
         )
 
     assert left.status_code == 200
-    assert _action_result_payload(left)["success"] is True
+    assert _action_result_payload(left)["executed"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1291,7 +1534,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
 
     assert entered.status_code == 200
     entered_result = _action_result_payload(entered)
-    assert entered_result["success"] is True
+    assert entered_result["executed"] is True
     entered_overview = _sse_event(_parse_sse(entered), "location_overview")
     assert entered_overview is not None
     assert entered_overview["location_id"] == "counter"
@@ -1410,7 +1653,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
         )
 
     assert left.status_code == 200
-    assert _action_result_payload(left)["success"] is True
+    assert _action_result_payload(left)["executed"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1420,7 +1663,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
 
     assert entered.status_code == 200
     entered_result = _action_result_payload(entered)
-    assert entered_result["success"] is True
+    assert entered_result["executed"] is True
     entered_overview = _sse_event(_parse_sse(entered), "location_overview")
     assert entered_overview is not None
     assert entered_overview["location_id"] == "counter"
@@ -1555,7 +1798,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
         )
 
     assert left.status_code == 200
-    assert _action_result_payload(left)["success"] is True
+    assert _action_result_payload(left)["executed"] is True
 
     assert rejected.status_code == 200
     assert "event: interaction_rejected" in rejected.text
@@ -1565,7 +1808,7 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
 
     assert entered.status_code == 200
     entered_result = _action_result_payload(entered)
-    assert entered_result["success"] is True
+    assert entered_result["executed"] is True
     entered_overview = _sse_event(_parse_sse(entered), "location_overview")
     assert entered_overview is not None
     assert entered_overview["location_id"] == "counter"
@@ -1820,9 +2063,9 @@ def test_action_stream_browse_board_full_chain_from_planner(monkeypatch) -> None
         )
 
     assert opening.status_code == 200
-    assert _action_result_payload(entered_board)["success"] is True
+    assert _action_result_payload(entered_board)["executed"] is True
     browse_payload = _action_result_payload(browse)
-    assert browse_payload["success"] is True
+    assert browse_payload["executed"] is True
     browse_entries = browse_payload["metadata"].get("entries")
     assert isinstance(browse_entries, list)
     assert browse_entries
@@ -1860,8 +2103,8 @@ def test_action_stream_browse_board_accept_chain_updates_quest_status(monkeypatc
         )
 
     assert opening.status_code == 200
-    assert _action_result_payload(entered_board)["success"] is True
-    assert _action_result_payload(browse)["success"] is True
+    assert _action_result_payload(entered_board)["executed"] is True
+    assert _action_result_payload(browse)["executed"] is True
 
     session = asyncio.run(_load_session(session_id))
     assert session is not None
@@ -1882,7 +2125,7 @@ def test_action_stream_browse_board_accept_chain_updates_quest_status(monkeypatc
             },
         )
 
-    assert _action_result_payload(accept)["success"] is True
+    assert _action_result_payload(accept)["executed"] is True
     session = asyncio.run(_load_session(session_id))
     assert session is not None
     quest = session.runtime.state.quests.get_dynamic_quest(quest_id)
@@ -1910,9 +2153,9 @@ def test_action_stream_browse_board_empty_board_has_no_entries(monkeypatch) -> N
             json={"action_type": "browse_board", "params": {"board_id": "board"}},
         )
 
-    assert _action_result_payload(entered_board)["success"] is True
+    assert _action_result_payload(entered_board)["executed"] is True
     empty_payload = _action_result_payload(empty_board)
-    assert empty_payload["success"] is True
+    assert empty_payload["executed"] is True
     assert empty_payload["metadata"]["entries"] == []
 
 
@@ -1937,9 +2180,9 @@ def test_action_stream_browse_board_rejects_when_not_in_guild_board(monkeypatch)
             json={"action_type": "browse_board", "params": {"board_id": "board"}},
         )
 
-    assert _action_result_payload(moved)["success"] is True
-    assert _action_result_payload(entered_yard)["success"] is True
+    assert _action_result_payload(moved)["executed"] is True
+    assert _action_result_payload(entered_yard)["executed"] is True
     reject_payload = _action_result_payload(rejected)
-    assert reject_payload["success"] is False
+    assert reject_payload["executed"] is False
     assert reject_payload["errors"]
     assert any("board interactable not found" in str(error) for error in reject_payload["errors"])

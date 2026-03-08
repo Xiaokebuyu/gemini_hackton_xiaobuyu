@@ -7,6 +7,7 @@ from typing import Any
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
+from app.game_core.rules.models import Command
 from app.game_core.state import StateChange
 
 
@@ -157,26 +158,28 @@ class RelationshipHook(NoOpSettlementHook):
             # Hostile/enemy stages: auto-dismiss companions
             if new_stage in ("hostile", "enemy") and has_party:
                 if npc_id in (context.state.party.members or {}):
-                    from app.game_core.orchestration.companion_manager import (
-                        CompanionManager,
-                    )
-                    mgr = CompanionManager(context.world, context.state)
-                    dismiss_result = mgr.force_leave(npc_id, reason=new_stage)
-                    if dismiss_result.success:
-                        context.record_change(
-                            StateChange(
-                                slice="party",
-                                operation="remove",
-                                path=f"members.{npc_id}",
-                                value=None,
-                            )
+                    dismiss_result = context.execute_command(
+                        Command(
+                            type="force_leave_companion",
+                            params={
+                                "npc_id": npc_id,
+                                "reason": f"relationship_{new_stage}",
+                            },
+                            source="system",
                         )
+                    )
+                    if dismiss_result.executed:
                         sse_events.append(
                             SSEEvent(
                                 event_type="companion_dismissed",
                                 payload={
                                     "npc_id": npc_id,
-                                    "reason": f"relationship_{new_stage}",
+                                    "reason": (
+                                        dismiss_result.metadata.get(
+                                            "reason",
+                                            f"relationship_{new_stage}",
+                                        )
+                                    ),
                                     "old_stage": old_stage,
                                     "new_stage": new_stage,
                                 },

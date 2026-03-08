@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.game_core.result_semantics import normalize_outcome
 from app.game_core.state import StateDelta
 
 
@@ -42,7 +43,7 @@ class DiceRoll:
 class ExecuteResult:
     """Structured command execution result."""
 
-    success: bool
+    executed: bool
     delta: StateDelta | None = None
     narrative_hints: list[str] = field(default_factory=list)
     rolls: list[DiceRoll] = field(default_factory=list)
@@ -51,14 +52,25 @@ class ExecuteResult:
     is_dry_run: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+        self.metadata.setdefault("executed", self.executed)
+        outcome = normalize_outcome(
+            str(self.metadata.get("command") or ""),
+            self.metadata,
+        )
+        if outcome is not None:
+            self.metadata["outcome"] = outcome
+
     @classmethod
     def error(cls, reason: str) -> "ExecuteResult":
-        return cls(success=False, errors=[reason])
+        return cls(executed=False, errors=[reason])
 
     @classmethod
     def not_implemented(cls, name: str) -> "ExecuteResult":
         return cls(
-            success=False,
+            executed=False,
             errors=[f"{name} not implemented"],
             metadata={"status": "stub"},
         )

@@ -323,7 +323,7 @@ class ContextAssembler:
     @staticmethod
     def _build_engine_result_stub() -> dict[str, Any]:
         return {
-            "success": None,
+            "executed": None,
             "narrative_hints": [],
             "rolls": [],
             "time_cost": 0.0,

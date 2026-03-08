@@ -70,14 +70,14 @@ def _make_coordinator(
 
 def _make_result(
     *,
-    success: bool = True,
+    executed: bool = True,
     action_type: str = "skill_check",
     narrative_hints: list[str] | None = None,
     sse_events: list[SSEEvent] | None = None,
     time_cost: float = 0.0,
 ) -> PipelineResult:
     return PipelineResult(
-        success=success,
+        executed=executed,
         action_type=action_type,
         narrative_hints=narrative_hints or [],
         sse_events=sse_events or [],
@@ -104,7 +104,7 @@ def test_tick_record_creation() -> None:
     record = TickRecord(
         tick=12,
         action_type="navigate",
-        success=True,
+        executed=True,
         summary="Player moves to courtyard.",
     )
     assert record.tick == 12
@@ -120,7 +120,7 @@ def test_companion_instance_receive_tick() -> None:
     record = TickRecord(
         tick=5,
         action_type="rest_short",
-        success=True,
+        executed=True,
         summary="Player rests briefly.",
     )
     instance.receive_tick(record)
@@ -135,7 +135,7 @@ def test_event_log_sliding_window() -> None:
             TickRecord(
                 tick=tick,
                 action_type="move_area",
-                success=True,
+                executed=True,
                 summary=f"tick_{tick}",
             )
         )
@@ -152,7 +152,7 @@ def test_get_recent_events() -> None:
             TickRecord(
                 tick=tick,
                 action_type="navigate",
-                success=True,
+                executed=True,
                 summary=f"tick_{tick}",
             )
         )
@@ -169,7 +169,7 @@ def test_get_events_by_tag() -> None:
         TickRecord(
             tick=1,
             action_type="attack",
-            success=True,
+            executed=True,
             summary="combat",
             tags=["COMBAT"],
         )
@@ -178,7 +178,7 @@ def test_get_events_by_tag() -> None:
         TickRecord(
             tick=2,
             action_type="rest_long",
-            success=True,
+            executed=True,
             summary="rest",
             tags=["REST", "REST"],
         )
@@ -187,7 +187,7 @@ def test_get_events_by_tag() -> None:
         TickRecord(
             tick=3,
             action_type="move_area",
-            success=True,
+            executed=True,
             summary="travel",
             tags=["NAVIGATION"],
         )
@@ -205,7 +205,7 @@ def test_manager_dispatch_tick() -> None:
     record = TickRecord(
         tick=7,
         action_type="skill_check",
-        success=True,
+        executed=True,
         summary="Player checks lock.",
     )
     manager.dispatch_tick(record)
@@ -244,7 +244,7 @@ def test_dispatch_skipped_on_failure() -> None:
     manager = CompanionRuntimeManager()
     coordinator, scene_bus = _make_coordinator(state, manager)
     _add_entry(scene_bus, "ENGINE", tags=["COMBAT"])
-    result = _make_result(success=False, action_type="attack")
+    result = _make_result(executed=False, action_type="attack")
     coordinator._dispatch_companion_events(result)
     assert manager.get("ally_anna") is None
 
@@ -358,7 +358,7 @@ def test_snapshot_includes_event_log_size() -> None:
         TickRecord(
             tick=1,
             action_type="move_area",
-            success=True,
+            executed=True,
             summary="move",
         )
     )
@@ -366,7 +366,7 @@ def test_snapshot_includes_event_log_size() -> None:
         TickRecord(
             tick=2,
             action_type="rest_short",
-            success=True,
+            executed=True,
             summary="rest",
         )
     )

@@ -55,7 +55,7 @@ class DescribeEnvironmentTool(_GmTool):
             area_id = context.state.player.current_area or ""
         if not area_id:
             return ToolResult(
-                success=True,
+                ok=True,
                 message="No current area.",
                 metadata={"status": "no_area"},
             )
@@ -104,7 +104,7 @@ class DescribeEnvironmentTool(_GmTool):
         }
 
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"Environment reference for {area_id}.",
             metadata={"status": "ok", "reference": reference},
         )
@@ -142,12 +142,12 @@ class NarrateTool(_GmTool):
         text = params.get("text", "")
         if not isinstance(text, str) or not text.strip():
             return ToolResult(
-                success=False,
+                ok=False,
                 message="text is required.",
                 metadata={"status": "invalid_params"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=text.strip(),
             metadata={"status": "ok", "event_type": "gm_narration"},
         )
@@ -185,12 +185,12 @@ class CommentTool(_GmTool):
         text = params.get("text", "")
         if not isinstance(text, str) or not text.strip():
             return ToolResult(
-                success=False,
+                ok=False,
                 message="text is required.",
                 metadata={"status": "invalid_params"},
             )
         return ToolResult(
-            success=True,
+            ok=True,
             message=text.strip(),
             metadata={"status": "ok", "event_type": "gm_comment"},
         )
@@ -220,7 +220,7 @@ class PassTurnTool(_GmTool):
         self, params: dict[str, Any], context: AgentContext,
     ) -> ToolResult:
         return ToolResult(
-            success=True,
+            ok=True,
             message="",
             metadata={"status": "ok", "event_type": "pass"},
         )
@@ -242,7 +242,8 @@ class SuggestOptionsTool(_GmTool):
     def description(self) -> str:
         return (
             "Generate player dialogue options. Each option has text and "
-            "either a skill check intent or an action intent."
+            "either a skill check intent or an action intent. Options may "
+            "also include an optional npc_id or starter message."
         )
 
     @property
@@ -264,6 +265,8 @@ class SuggestOptionsTool(_GmTool):
                                 },
                             },
                             "action": {"type": "string"},
+                            "npc_id": {"type": "string"},
+                            "message": {"type": "string"},
                         },
                         "required": ["text"],
                     },
@@ -278,7 +281,7 @@ class SuggestOptionsTool(_GmTool):
         raw_options = params.get("options")
         if not isinstance(raw_options, list) or not raw_options:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="options list is required.",
                 metadata={"status": "invalid_params"},
             )
@@ -291,13 +294,13 @@ class SuggestOptionsTool(_GmTool):
 
         if not validated:
             return ToolResult(
-                success=False,
+                ok=False,
                 message="No valid options provided.",
                 metadata={"status": "invalid_params"},
             )
 
         return ToolResult(
-            success=True,
+            ok=True,
             message=f"{len(validated)} options generated.",
             metadata={
                 "status": "ok",
@@ -325,14 +328,32 @@ class SuggestOptionsTool(_GmTool):
                 dc = check.get("dc")
                 if isinstance(dc, int):
                     entry["check"]["dc"] = dc
+                npc_id = opt.get("npc_id")
+                if isinstance(npc_id, str) and npc_id.strip():
+                    entry["npc_id"] = npc_id.strip()
+                message = opt.get("message")
+                if isinstance(message, str) and message.strip():
+                    entry["message"] = message.strip()
                 return entry
 
         action = opt.get("action")
         if isinstance(action, str) and action.strip():
             entry["action"] = action.strip()
+            npc_id = opt.get("npc_id")
+            if isinstance(npc_id, str) and npc_id.strip():
+                entry["npc_id"] = npc_id.strip()
+            message = opt.get("message")
+            if isinstance(message, str) and message.strip():
+                entry["message"] = message.strip()
             return entry
 
         # option has text but neither valid check nor action
+        npc_id = opt.get("npc_id")
+        if isinstance(npc_id, str) and npc_id.strip():
+            entry["npc_id"] = npc_id.strip()
+        message = opt.get("message")
+        if isinstance(message, str) and message.strip():
+            entry["message"] = message.strip()
         return None
 
 

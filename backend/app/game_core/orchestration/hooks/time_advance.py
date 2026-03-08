@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
+from app.game_core.orchestration.hooks.rest_phase import RestPhaseInfo, is_quiet_rest_slot
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
@@ -48,6 +49,16 @@ class TimeAdvanceHook(NoOpSettlementHook):
         shops_refreshed = 0
         if crossed_day:
             shops_refreshed = self._refresh_daily_merchants(context)
+        rest_info = None
+        rest_phase = getattr(context, "rest_phase", None)
+        if isinstance(rest_phase, RestPhaseInfo):
+            rest_info = {
+                "rest_type": rest_phase.rest_action_type,
+                "slot_index": rest_phase.rest_slot_index,
+                "total_slots": rest_phase.rest_total_slots,
+                "is_quiet": is_quiet_rest_slot(context, rest_phase),
+                "is_final": rest_phase.is_final_rest_slot,
+            }
         return HookResult(
             sse_events=[
                 SSEEvent(
@@ -60,6 +71,7 @@ class TimeAdvanceHook(NoOpSettlementHook):
                         "crossed_day": crossed_day,
                         "period_changed": period_changed,
                         "shops_refreshed": shops_refreshed,
+                        "rest_info": rest_info,
                     },
                 )
             ],
@@ -88,7 +100,7 @@ class TimeAdvanceHook(NoOpSettlementHook):
             result = context.execute_command(
                 Command(type="refresh_shop", params={"npc_id": npc_id})
             )
-            if result.success:
+            if result.executed:
                 count += 1
         return count
 

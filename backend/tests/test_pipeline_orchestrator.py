@@ -27,6 +27,6 @@ def test_pipeline_result_exposes_execute_errors() -> None:
         )
     )
 
-    assert result.success is False
+    assert result.executed is False
     assert result.action_type == "move_area"
     assert result.errors == ["unknown area: missing"]

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.game_core.content import WorldInstance
+from app.game_core.orchestration.presence import get_area_npcs, is_colocated
 from app.game_core.state import StateContainer
 
 
@@ -54,47 +55,36 @@ def build_interaction_policy_context(
     current_location_text = (player.current_location or "").strip()
     current_location = current_location_text or None
 
-    # NPC positions from AreaSlice
-    npc_positions: dict[str, tuple[str | None, str | None]] = {}
-    for raw_area_id, area in state.areas.areas.items():
-        area_id = str(raw_area_id).strip()
-        if not area_id:
-            continue
-        for raw_npc_id, raw_location_id in area.npc_locations.items():
-            npc_id = str(raw_npc_id).strip()
-            if not npc_id:
-                continue
-            location_text = (
-                str(raw_location_id).strip()
-                if isinstance(raw_location_id, str)
-                else ""
-            )
-            npc_positions[npc_id] = (area_id, location_text or None)
+    # Collect all area IDs to scan: AreaSlice runtime areas + CharacterRegistry
+    # declared areas (for NPCs that exist only in content, never moved at runtime).
+    all_area_ids: set[str] = set()
+    for raw_area_id in state.areas.areas:
+        aid = str(raw_area_id).strip()
+        if aid:
+            all_area_ids.add(aid)
+    if world.has_registry("characters"):
+        for template in world.characters.list_all():
+            for field_name in ("area_id", "current_area"):
+                raw_val = str(getattr(template, field_name, "") or "").strip()
+                if raw_val:
+                    all_area_ids.add(raw_val)
+                    break
 
-    # NPC names + fallback positions from CharacterRegistry
+    # Build npc_positions using the shared presence helper (covers both primary
+    # AreaSlice data and CharacterRegistry fallback per area).
+    npc_positions: dict[str, tuple[str | None, str | None]] = {}
+    for aid in all_area_ids:
+        for npc_id, sub_loc in get_area_npcs(state, world, aid).items():
+            if npc_id not in npc_positions:
+                npc_positions[npc_id] = (aid, sub_loc)
+
+    # NPC names from CharacterRegistry
     npc_names: dict[str, str] = {}
     if world.has_registry("characters"):
-        for raw_character in world.characters.list_all():
-            npc_id = raw_character.id.strip()
-            if not npc_id:
-                continue
-            npc_name = raw_character.name.strip() or npc_id
-            npc_names[npc_id] = npc_name
-            if npc_id in npc_positions:
-                continue
-            resolved_area: str | None = None
-            for field_name in ("area_id", "current_area"):
-                raw_val = str(getattr(raw_character, field_name, "") or "").strip()
-                if raw_val:
-                    resolved_area = raw_val
-                    break
-            resolved_location: str | None = None
-            for field_name in ("location_id", "current_location"):
-                raw_val = str(getattr(raw_character, field_name, "") or "").strip()
-                if raw_val:
-                    resolved_location = raw_val
-                    break
-            npc_positions[npc_id] = (resolved_area, resolved_location)
+        for template in world.characters.list_all():
+            npc_id = template.id.strip()
+            if npc_id:
+                npc_names[npc_id] = template.name.strip() or npc_id
 
     # Dynamic quests from QuestSlice
     dynamic_quests = {
@@ -196,11 +186,8 @@ def _validate_npc_presence(
             "code": "npc_not_present",
             "message": f"npc is not in the current area: {npc_id}",
         }
-    if npc_area == context.current_area:
-        if npc_location is None and context.current_location is None:
-            return None
-        if npc_location and context.current_location and npc_location == context.current_location:
-            return None
+    if npc_area == context.current_area and is_colocated(npc_location, context.current_location):
+        return None
     return {
         "code": "npc_not_present",
         "message": f"npc is not in the current location: {npc_id}",

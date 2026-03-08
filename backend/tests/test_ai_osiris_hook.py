@@ -797,7 +797,7 @@ class TestAIOsirisHook:
         assert result.metadata["status"] == "partial_failure"
         assert result.metadata["executed_count"] == 2
         assert result.metadata["failed_count"] == 1
-        assert result.metadata["command_results"][0]["success"] is False
+        assert result.metadata["command_results"][0]["executed"] is False
         assert result.metadata["command_results"][0]["errors"] == [
             "ai_osiris cannot modify player location directly"
         ]
@@ -982,8 +982,8 @@ class TestAIOsirisHook:
 
     def test_summary_actions_populated_from_action_log(self) -> None:
         action_records = [
-            {"type": "trade_buy", "actor": "player", "params": {"item_id": "dagger"}, "success": True, "time_cost": 1.0 / 6.0},
-            {"type": "skill_check", "actor": "player", "params": {"skill": "perception"}, "success": False, "time_cost": 1.0 / 6.0},
+            {"type": "trade_buy", "actor": "player", "params": {"item_id": "dagger"}, "executed": True, "time_cost": 1.0 / 6.0},
+            {"type": "skill_check", "actor": "player", "params": {"skill": "perception"}, "executed": False, "time_cost": 1.0 / 6.0},
         ]
         evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
         context = _make_context(
@@ -1004,7 +1004,7 @@ class TestAIOsirisHook:
         assert summary["actions"][0]["actor"] == "player"
         assert summary["actions"][0]["params"]["item_id"] == "dagger"
         assert summary["actions"][1]["type"] == "skill_check"
-        assert summary["actions"][1]["success"] is False
+        assert summary["actions"][1]["executed"] is False
         assert summary["actions"][0]["visibility_scope"] == "local"
         assert summary["actions"][0]["witnessed_by"] == ["companion_1"]
 
@@ -1223,7 +1223,7 @@ class TestAIOsirisHook:
                     "type": "trade_buy",
                     "actor": "player",
                     "params": {"seller_npc": "merchant_tom", "item_id": "dagger"},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 1.0 / 6.0,
                 },
             ],
@@ -1244,9 +1244,9 @@ class TestAIOsirisHook:
                 StateChange(slice="flags", operation="set", path="flags.x", value=1)
             ],
             action_log=[
-                {"type": "trade_buy", "actor": "player", "params": {}, "success": True, "time_cost": 0.0},
-                {"type": "steal", "actor": "player", "params": {}, "success": True, "time_cost": 0.0},
-                {"type": "move_area", "actor": "player", "params": {}, "success": True, "time_cost": 0.0},
+                {"type": "trade_buy", "actor": "player", "params": {}, "executed": True, "time_cost": 0.0},
+                {"type": "steal", "actor": "player", "params": {}, "executed": True, "time_cost": 0.0},
+                {"type": "move_area", "actor": "player", "params": {}, "executed": True, "time_cost": 0.0},
             ],
         )
 
@@ -1269,7 +1269,7 @@ class TestAIOsirisHook:
                     "type": "trade_buy",
                     "actor": "player",
                     "params": {"item_id": "dagger"},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],
@@ -1296,7 +1296,7 @@ class TestAIOsirisHook:
                     "type": "cast_spell",
                     "actor": "player",
                     "params": {"spell_id": "magic_missile"},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],
@@ -1329,7 +1329,7 @@ class TestAIOsirisHook:
                     "type": "unknown_action",
                     "actor": "player",
                     "params": {"target": "npc_1"},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],
@@ -1352,7 +1352,7 @@ class TestAIOsirisHook:
                     "type": "trade_buy",
                     "actor": "player",
                     "params": {"seller_npc": "merchant_tom", "item_id": "dagger"},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],
@@ -1380,7 +1380,7 @@ class TestAIOsirisHook:
                     "type": "skill_check",
                     "actor": "player",
                     "params": {"skill": "perception", "dc": 15},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],
@@ -1402,7 +1402,7 @@ class TestAIOsirisHook:
                     "type": "attack",
                     "actor": "player",
                     "params": {"target": "goblin"},
-                    "success": False,
+                    "executed": False,
                     "time_cost": 0.0,
                     "narrative_hints": ["disastrous failure"],
                 },
@@ -1428,7 +1428,7 @@ class TestAIOsirisHook:
                     "type": "some_new_action",
                     "actor": "player",
                     "params": {},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],
@@ -1451,7 +1451,7 @@ class TestAIOsirisHook:
                     "type": "steal",
                     "actor": "player",
                     "params": {"container_id": "chest_01"},
-                    "success": True,
+                    "executed": True,
                     "time_cost": 0.0,
                 },
             ],

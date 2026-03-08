@@ -337,7 +337,7 @@ class AgenticExecutor:
                 "function_response": {
                     "name": tc["name"],
                     "response": {
-                        "success": result.success,
+                        "ok": result.ok,
                         "message": result.message,
                         **result.metadata,
                     },
@@ -455,7 +455,7 @@ class AgenticExecutor:
         message: str,
     ) -> ToolResult:
         return ToolResult(
-            success=False,
+            ok=False,
             message=message,
             metadata={
                 "status": status,
@@ -507,7 +507,7 @@ class AgenticExecutor:
         else:
             return False
         return any(
-            result.success
+            result.ok
             and str(result.metadata.get("event_type", "")) in visible_event_types
             for result in results
         )

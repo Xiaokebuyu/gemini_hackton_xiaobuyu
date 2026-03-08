@@ -85,6 +85,7 @@ export interface CharacterCreationRequest {
 }
 
 export interface InteractRequest {
+  scope?: 'public' | 'private' | 'party'
   target_kind?: string
   target_id?: string
   npc_id?: string
@@ -93,6 +94,8 @@ export interface InteractRequest {
   quest_id?: string
   count?: number
   message?: string
+  check_skill?: string
+  check_dc?: number
 }
 
 export interface NavigateRequest {

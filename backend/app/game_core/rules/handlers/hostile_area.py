@@ -84,16 +84,16 @@ class HostileAreaHandler(StaticCommandHandler):
         )
         modifier = state.player.get_skill_bonus("stealth")
         total = roll_result + modifier
-        success = total >= stealth_dc
+        passed = total >= stealth_dc
         blocking = bool(payload.get("blocking", False))
         options: list[dict[str, str]] = []
-        if success:
+        if passed:
             options.append({"action": "surprise_attack", "label": "发动突袭"})
             if not blocking:
                 options.append({"action": "sneak_through", "label": "潜行通过"})
             options.append({"action": "retreat", "label": "撤退"})
 
-        if success:
+        if passed:
             narrative = "你借着阴影悄然逼近，敌人尚未发现你的踪迹。"
             surprise_state = "player_surprise"
             status = "stealth_resolved"
@@ -107,7 +107,7 @@ class HostileAreaHandler(StaticCommandHandler):
         updated_payload["status"] = status
         updated_payload["entry_mode"] = "entered"
         updated_payload["last_stealth_result"] = {
-            "success": success,
+            "passed": passed,
             "roll": roll_result,
             "dc": stealth_dc,
             "modifier": modifier,
@@ -133,7 +133,7 @@ class HostileAreaHandler(StaticCommandHandler):
                 "status": status,
                 "sub_area_id": sub_area_id,
                 "area_id": self._non_empty_string(updated_payload.get("area_id")) or "",
-                "success": success,
+                "passed": passed,
                 "roll": roll_result,
                 "all_rolls": list(all_rolls),
                 "dc": stealth_dc,

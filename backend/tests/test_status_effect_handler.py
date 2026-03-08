@@ -67,7 +67,7 @@ class TestStatusEffectHandler:
             state,
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["removed_count"] == 1
         _apply(result, state)
         assert len(state.player.active_effects) == 1
@@ -90,7 +90,7 @@ class TestStatusEffectHandler:
             state,
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["removed_count"] == 1
         _apply(result, state)
         assert [effect["effect_id"] for effect in state.player.active_effects] == ["regen"]
@@ -109,7 +109,7 @@ class TestStatusEffectHandler:
             state,
         )
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["removed_count"] == 2
         _apply(result, state)
         assert [effect["effect_id"] for effect in state.player.active_effects] == ["bless"]
@@ -137,7 +137,7 @@ class TestStatusEffectHandler:
 
         result = _execute(Command(type="tick_effects"), state)
 
-        assert result.success is True
+        assert result.executed is True
         assert result.metadata["applied_count"] == 2
         assert result.metadata["expired_count"] == 1
         assert result.metadata["hp_delta"] == -2
@@ -160,7 +160,7 @@ class TestStatusEffectHandler:
             WorldInstance("test_world"),
         )
 
-        assert result.success is False
+        assert result.executed is False
         assert result.errors == ["player slice is required"]
 
 
@@ -206,7 +206,7 @@ class TestSaveEndOfTurn:
             "app.game_core.rules.handler_utils.roll_d20", lambda: 12
         )
         result = _execute(Command(type="tick_effects"), state)
-        assert result.success is True
+        assert result.executed is True
         state.apply(result.delta)
         assert len(state.player.active_effects) == 0
         assert result.metadata["expired_count"] == 1
@@ -221,7 +221,7 @@ class TestSaveEndOfTurn:
             "app.game_core.rules.handler_utils.roll_d20", lambda: 1
         )
         result = _execute(Command(type="tick_effects"), state)
-        assert result.success is True
+        assert result.executed is True
         state.apply(result.delta)
         # Effect still present (ticked once: remaining_ticks = 5-1 = 4)
         assert len(state.player.active_effects) == 1

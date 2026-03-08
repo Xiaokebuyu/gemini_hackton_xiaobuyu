@@ -37,7 +37,7 @@ def _make_coordinator() -> tuple[TickCoordinator, SceneBus]:
 
 def _make_result(action_type: str, narrative_hints: list[str] | None = None) -> PipelineResult:
     return PipelineResult(
-        success=True,
+        executed=True,
         action_type=action_type,
         narrative_hints=narrative_hints or [],
     )

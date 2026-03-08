@@ -340,10 +340,10 @@ class TestDiscoveryHandler:
     def test_discover_success_marks_discovery(self) -> None:
         world = self._world()
         state = self._state()
-        # Force success by patching roll — we can't, so just test that it runs and either passes or fails
+        # Forcing a pass would be nicer; for now just assert the command executes.
         # For deterministic testing, we check the handler runs without error
         result = self._handler.compute(self._cmd(), state, world)
-        assert result.success  # always succeeds (even on failed check)
+        assert result.executed  # always succeeds (even on failed check)
         if result.metadata.get("passed"):
             if result.delta:
                 state.apply(result.delta)
@@ -354,7 +354,7 @@ class TestDiscoveryHandler:
         state = self._state()
         state.areas.mark_discovery("forest", "ruins")
         result = self._handler.compute(self._cmd(), state, world)
-        assert not result.success
+        assert not result.executed
         assert "already_discovered" in result.errors
 
     def test_discover_unknown_discovery_returns_error(self) -> None:
@@ -364,7 +364,7 @@ class TestDiscoveryHandler:
             Command(type="discover", params={"area_id": "forest", "discovery_id": "nonexistent"}),
             state, world,
         )
-        assert not result.success
+        assert not result.executed
         assert any("discovery_not_found" in e for e in result.errors)
 
     def test_discover_unknown_area_returns_error(self) -> None:
@@ -374,13 +374,13 @@ class TestDiscoveryHandler:
             Command(type="discover", params={"area_id": "nowhere", "discovery_id": "ruins"}),
             state, world,
         )
-        assert not result.success
+        assert not result.executed
 
     def test_passive_scan_returns_deferred(self) -> None:
         world = self._world()
         state = self._state()
         result = self._handler.compute(Command(type="passive_scan", params={}), state, world)
-        assert result.success
+        assert result.executed
         assert result.metadata.get("status") == "deferred_to_hook"
 
     def test_validate_discover_missing_area_id(self) -> None:
@@ -466,7 +466,7 @@ class TestInteractableHandler:
         world = self._world_with_lever()
         state = _make_state(_player_slice(area="dungeon", location=None))
         result = self._handler.compute(self._cmd(), state, world)
-        assert not result.success
+        assert not result.executed
         assert "not_in_sub_location" in result.errors
 
     def test_interact_unknown_interactable_returns_error(self) -> None:
@@ -476,7 +476,7 @@ class TestInteractableHandler:
             Command(type="interact_object_v2", params={"interactable_id": "nonexistent"}),
             state, world,
         )
-        assert not result.success
+        assert not result.executed
         assert any("interactable_not_found" in e for e in result.errors)
 
     def test_inspect_with_no_checks_always_succeeds(self) -> None:
@@ -486,7 +486,7 @@ class TestInteractableHandler:
             Command(type="interact_object_v2", params={"interactable_id": "mural"}),
             state, world,
         )
-        assert result.success
+        assert result.executed
         assert result.metadata.get("passed") is True
 
     def test_second_interaction_blocked_when_one_time(self) -> None:
@@ -494,14 +494,14 @@ class TestInteractableHandler:
         state = self._state()
         state.areas.mark_interactable_used("dungeon", "lever")
         result = self._handler.compute(self._cmd(), state, world)
-        assert not result.success
+        assert not result.executed
         assert "already_used" in result.errors
 
     def test_successful_interaction_marks_one_time(self) -> None:
         world = self._world_with_lever(one_time=True, dc=1)  # dc=1 means any roll passes
         state = self._state()
         result = self._handler.compute(self._cmd(), state, world)
-        assert result.success
+        assert result.executed
         if result.metadata.get("passed") and result.delta:
             state.apply(result.delta)
             assert state.areas.is_interactable_used("dungeon", "lever")

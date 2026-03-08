@@ -134,7 +134,7 @@ def _agent_result_to_decision(result: AgentResult) -> GmNarrationDecision:
     entries: list[dict[str, Any]] = []
 
     for tr in result.tool_results:
-        if not tr.success:
+        if not tr.ok:
             continue
         event_type = tr.metadata.get("event_type", "")
 

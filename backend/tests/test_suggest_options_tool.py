@@ -35,7 +35,7 @@ def test_execute_returns_tool_identifier_in_metadata() -> None:
     tool = _tool()
     params = {"options": [{"text": "Talk", "action": "talk"}]}
     result = asyncio.run(tool.execute(params, _context()))
-    assert result.success is True
+    assert result.ok is True
     assert result.metadata.get("tool") == "suggest_options"
     assert result.metadata.get("options") == [{"text": "Talk", "action": "talk"}]
 
@@ -74,7 +74,7 @@ def test_validate_option_dc_non_int_ignored() -> None:
 def _make_gm_result_with_suggest_options(options: list[dict[str, Any]]) -> Any:
     """Build a minimal AgentResult mock containing a suggest_options tool result."""
     tr = MagicMock()
-    tr.success = True
+    tr.ok = True
     tr.metadata = {"tool": "suggest_options", "options": options}
     result = MagicMock()
     result.tool_results = [tr]
@@ -83,7 +83,7 @@ def _make_gm_result_with_suggest_options(options: list[dict[str, Any]]) -> Any:
 
 def _make_gm_result_without_suggest_options() -> Any:
     tr = MagicMock()
-    tr.success = True
+    tr.ok = True
     tr.metadata = {"tool": "narrate", "text": "The air grows cold."}
     result = MagicMock()
     result.tool_results = [tr]
@@ -96,7 +96,7 @@ def _extract_lm_options(gm_result: Any) -> list[dict[str, Any]] | None:
         return None
     for _tr in gm_result.tool_results:
         if (
-            _tr.success
+            _tr.ok
             and isinstance(_tr.metadata, dict)
             and _tr.metadata.get("tool") == "suggest_options"
         ):

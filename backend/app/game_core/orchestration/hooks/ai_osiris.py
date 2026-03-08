@@ -203,7 +203,17 @@ _TRIVIAL_ACTION_TYPES = frozenset(
 _TICK_KIND_TRAVEL = frozenset({"move_area", "enter_sub_location", "leave_sub_location"})
 _TICK_KIND_REST = frozenset({"rest_short", "rest_long", "night_watch", "set_camp"})
 _TICK_KIND_CONVERSATION = frozenset(
-    {"speak", "dialogue", "talk", "emote", "dialogue_turn", "private_chat_turn"}
+    {
+        "speak",
+        "dialogue",
+        "talk",
+        "emote",
+        "dialogue_turn",
+        "public_utterance_turn",
+        "party_chat_turn",
+        "free_chat_turn",
+        "private_chat_turn",
+    }
 )
 _TICK_KIND_COMBAT = frozenset(
     {
@@ -250,7 +260,11 @@ _ACTION_VERBS: dict[str, str] = {
     # Rest
     "rest_short": "took short rest", "rest_long": "took long rest",
     "night_watch": "kept watch", "set_camp": "set up camp",
-    "dialogue_turn": "spoke with", "private_chat_turn": "spoke privately with",
+    "dialogue_turn": "spoke with",
+    "public_utterance_turn": "spoke aloud",
+    "party_chat_turn": "spoke to the party",
+    "free_chat_turn": "spoke to the party",
+    "private_chat_turn": "spoke privately with",
     # Spellcasting
     "cast_spell": "cast", "prepare_spells": "prepared spells",
     "break_concentration": "broke concentration",
@@ -302,6 +316,9 @@ _ACTION_CATEGORY_TAGS: dict[str, list[str]] = {
     "rest_short": ["REST"], "rest_long": ["REST"],
     "night_watch": ["REST"], "set_camp": ["REST"],
     "dialogue_turn": ["DIALOGUE", "NPC_INTERACTION"],
+    "public_utterance_turn": ["DIALOGUE", "PUBLIC_UTTERANCE"],
+    "party_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
+    "free_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
     "private_chat_turn": ["DIALOGUE", "PRIVATE_CHAT"],
     # Spellcasting
     "cast_spell": ["SPELLCASTING"], "prepare_spells": ["SPELLCASTING"],
@@ -615,18 +632,18 @@ class AIOsirisHook(NoOpSettlementHook):
         successful_commands: list[Command] = []
         for command in commands:
             result = context.execute_command(command)
-            if not result.success:
+            if not result.executed:
                 failed_count += 1
             applied_change_count = len(result.delta.changes) if result.delta is not None else 0
             command_results.append(
                 {
                     "command_type": command.type,
-                    "success": result.success,
+                    "executed": result.executed,
                     "errors": list(result.errors),
                     "applied_change_count": applied_change_count,
                 }
             )
-            if result.success:
+            if result.executed:
                 successful_commands.append(command)
 
         visible_entries: list[dict[str, Any]] = []
@@ -1266,7 +1283,7 @@ class AIOsirisHook(NoOpSettlementHook):
     ) -> str:
         action_type = action.get("type", "")
         params = action.get("params", {})
-        success = action.get("success", True)
+        executed = action.get("executed", True)
         hints = action.get("narrative_hints", [])
 
         verb = _ACTION_VERBS.get(action_type, action_type.replace("_", " "))
@@ -1312,7 +1329,7 @@ class AIOsirisHook(NoOpSettlementHook):
         if hints:
             detail += "; " + "; ".join(str(h) for h in hints if isinstance(h, str))
 
-        if not success:
+        if not executed:
             detail += " — failed"
 
         return detail
