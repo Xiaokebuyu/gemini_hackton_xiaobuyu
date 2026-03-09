@@ -251,6 +251,7 @@ class PipelineOrchestrator:
             change_log=change_log,
             scene_bus=shared.scene_bus,
             label=label,
+            sse_collector=collected,
         )
         if emit_visible_events:
             for payload in payloads:

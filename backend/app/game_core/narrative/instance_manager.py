@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterator
 
 from app.game_core.narrative.context_window import ContextWindow, WindowMessage
 
@@ -137,7 +137,7 @@ class InstanceManager:
     def __init__(
         self,
         max_instances: int = 200,
-        max_tokens_per_instance: int = 200_000,
+        max_tokens_per_instance: int = 32_768,
         overflow_threshold: float = 0.9,
     ) -> None:
         self._pool: OrderedDict[str, NPCInstance] = OrderedDict()
@@ -200,6 +200,10 @@ class InstanceManager:
 
     def get_active_instances(self) -> list[NPCInstance]:
         return list(self._pool.values())
+
+    def iter_instances(self) -> Iterator[tuple[str, NPCInstance]]:
+        """Yield (actor_id, instance) pairs for persistence."""
+        yield from self._pool.items()
 
     def get_instance_stats(self) -> dict[str, Any]:
         return {

@@ -350,14 +350,18 @@ class TestPrivateChatCoordinator:
         assert len(instance.context_window.messages) == initial_count + 2
 
     def test_overflow_populates_graphize_candidates(self) -> None:
-        """Tiny max_tokens forces overflow → graphize_candidates non-empty."""
+        """Tiny graphize_threshold forces graphize trigger → graphize_candidates non-empty."""
         coordinator, _ = _build_coordinator(
             llm_responses=[_npc_speak_response("overflow acknowledged")],
         )
-        # max_tokens=1 will overflow immediately
+        # graphize_threshold=1 will trigger immediately on any message add
         instance = NPCInstance(
             actor_id="merchant_tom",
-            context_window=ContextWindow(actor_id="merchant_tom", max_tokens=1),
+            context_window=ContextWindow(
+                actor_id="merchant_tom",
+                max_tokens=10000,
+                graphize_threshold=1,
+            ),
         )
 
         result = asyncio.run(coordinator.execute(

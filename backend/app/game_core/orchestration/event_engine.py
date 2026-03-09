@@ -549,11 +549,15 @@ def run_inline_event_check(
     change_log: list[StateChange],
     scene_bus: "SceneBus",
     label: str,
+    sse_collector: "list | None" = None,
 ) -> list[dict[str, Any]]:
     """Evaluate event conditions, apply transitions, and execute on_trigger commands.
 
     This is the lightweight inline counterpart to ``EventConditionHook``.
     A6/C1/external checks use this for immediate in-tick reactivity.
+
+    When ``sse_collector`` is provided, quest_completed SSE events are
+    appended to it (consistent with NarrativeWeaver's SSE collection pattern).
     """
     if not state.has_slice("events"):
         return []
@@ -571,10 +575,13 @@ def run_inline_event_check(
             continue
 
         from_state = _canonical_state(event_snapshot)
+        patch = dict(transition.patch)
+        patch.setdefault("from_state", from_state)
+        patch.setdefault("reason", transition.reason)
         state.events.set_state(
             transition.event_id,
             transition.to_state,
-            patch=transition.patch,
+            patch=patch,
         )
         change = StateChange(
             slice="events",
@@ -601,7 +608,18 @@ def run_inline_event_check(
         if command is None:
             continue
         if command.type == "complete_objective":
-            _apply_complete_objective(state, command)
+            completion_info = _apply_complete_objective(
+                state,
+                command,
+                change_log=change_log,
+                scene_bus=scene_bus,
+            )
+            if completion_info is not None and sse_collector is not None:
+                from app.game_core.orchestration.models import SSEEvent
+                sse_collector.append(SSEEvent(
+                    event_type="quest_completed",
+                    payload=completion_info,
+                ))
             continue
         try:
             result = rules_engine.execute(command, state, world)
@@ -646,41 +664,64 @@ def _coerce_event_command(raw: Any) -> Command | None:
     return Command(type=command_type, params=params, source="system", context=context)
 
 
-def _apply_complete_objective(state: StateContainer, command: Command) -> None:
+def _apply_complete_objective(
+    state: StateContainer,
+    command: Command,
+    *,
+    change_log: list[StateChange] | None = None,
+    scene_bus: "SceneBus | None" = None,
+) -> dict[str, Any] | None:
+    """Mark an objective completed; if quest auto-completes, apply rewards.
+
+    Returns completion info dict when the quest transitions to completed,
+    or None otherwise.
+    """
     if not state.has_slice("quests"):
-        return
+        return None
     if not isinstance(command.params, Mapping):
-        return
+        return None
 
     quest_id = _coerce_non_empty_string(command.params.get("quest_id"))
     if quest_id is None:
-        return
+        return None
 
     objective_index = _coerce_int(command.params.get("objective_index"))
     if objective_index is None or objective_index < 0:
-        return
+        return None
 
     raw_quest = state.quests.dynamic_quests.get(quest_id)
     if not isinstance(raw_quest, dict):
-        return
+        return None
 
     raw_objectives = raw_quest.get("objectives")
     if not isinstance(raw_objectives, list):
-        return
+        return None
     if objective_index >= len(raw_objectives):
-        return
+        return None
     if not isinstance(raw_objectives[objective_index], Mapping):
-        return
+        return None
 
     objectives = [
         dict(item) if isinstance(item, Mapping) else {} for item in raw_objectives
     ]
     if not (0 <= objective_index < len(objectives)):
-        return
+        return None
+    if bool(objectives[objective_index].get("completed")):
+        return None
 
     objectives[objective_index]["completed"] = True
     updated_quest = dict(raw_quest)
     updated_quest["objectives"] = objectives
+    _record_complete_objective_change(
+        change_log,
+        scene_bus,
+        StateChange(
+            slice="quests",
+            operation="set",
+            path=f"dynamic_quests.{quest_id}.objectives.{objective_index}.completed",
+            value=True,
+        ),
+    )
 
     has_required_objective = False
     all_required_done = True
@@ -696,6 +737,69 @@ def _apply_complete_objective(state: StateContainer, command: Command) -> None:
 
     if has_required_objective and all_required_done:
         updated_quest["status"] = "completed"
+        rewards = updated_quest.get("rewards", {})
+        _apply_quest_rewards(state, rewards)
+        state.quests.dynamic_quests[quest_id] = updated_quest
+        state.quests._dirty = True
+        _record_complete_objective_change(
+            change_log,
+            scene_bus,
+            StateChange(
+                slice="quests",
+                operation="set",
+                path=f"dynamic_quests.{quest_id}.status",
+                value="completed",
+            ),
+        )
+        return {
+            "quest_id": quest_id,
+            "title": updated_quest.get("title", ""),
+            "rewards": rewards if isinstance(rewards, Mapping) else {},
+        }
 
     state.quests.dynamic_quests[quest_id] = updated_quest
     state.quests._dirty = True
+    return None
+
+
+def _record_complete_objective_change(
+    change_log: list[StateChange] | None,
+    scene_bus: "SceneBus | None",
+    change: StateChange,
+) -> None:
+    if change_log is not None:
+        change_log.append(change)
+    if scene_bus is not None:
+        scene_bus.record_state_change(change)
+
+
+def _apply_quest_rewards(state: StateContainer, rewards: Any) -> None:
+    """Apply quest rewards (gold, xp, items) directly to PlayerSlice.
+
+    Called only when a dynamic quest auto-completes via complete_objective.
+    Uses PlayerSlice methods directly — this is a controlled exception
+    consistent with the direct-state-mutation pattern in event_engine.py.
+    """
+    if not state.has_slice("player"):
+        return
+    if not isinstance(rewards, Mapping):
+        return
+
+    gold = rewards.get("gold")
+    if isinstance(gold, (int, float)) and gold > 0:
+        state.player.modify_gold(int(gold))
+
+    xp = rewards.get("xp")
+    if isinstance(xp, (int, float)) and xp > 0:
+        state.player.add_xp(int(xp))
+
+    items = rewards.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            item_id = _coerce_non_empty_string(item.get("item_id"))
+            count_raw = item.get("count", 1)
+            count = _coerce_int(count_raw) or 1
+            if item_id is not None and count > 0:
+                state.player.add_item(item_id, count)

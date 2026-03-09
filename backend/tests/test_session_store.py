@@ -156,3 +156,20 @@ def test_save_store_strictly_filters_sessions_without_matching_world_id() -> Non
     listed = asyncio.run(store.list_session_meta(world_id="test_world"))
 
     assert [item["session_id"] for item in listed] == ["sess_current"]
+
+
+def test_save_store_round_trip_preserves_story_facts() -> None:
+    port = NullPersistencePort()
+    store = SaveStore(port)
+    runtime = _runtime()
+    facts = [
+        {"subject": "guild", "relation": "warns_about", "object": "raiders"},
+        {"subject": "raiders", "relation": "target", "object": "western_farm"},
+    ]
+
+    runtime.state.narrative_plan.add_story_facts(facts)
+    asyncio.run(store.save_runtime("sess_story_facts", runtime))
+    restored = asyncio.run(store.load_runtime("test_world", "sess_story_facts"))
+
+    assert restored is not None
+    assert restored.state.narrative_plan.story_facts == facts

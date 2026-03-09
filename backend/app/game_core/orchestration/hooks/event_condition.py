@@ -282,10 +282,13 @@ class EventConditionHook(NoOpSettlementHook):
                 continue
 
             from_state = _canonical_state(known_events[transition.event_id])
+            patch = dict(transition.patch)
+            patch.setdefault("from_state", from_state)
+            patch.setdefault("reason", transition.reason)
             context.state.events.set_state(
                 transition.event_id,
                 transition.to_state,
-                patch=transition.patch,
+                patch=patch,
             )
             context.record_change(StateChange(slice="events", operation="set", path=f"state.{transition.event_id}", value=transition.to_state))
             updated_event = context.state.events.get_event(transition.event_id) or {}

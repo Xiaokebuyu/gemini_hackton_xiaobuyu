@@ -5,10 +5,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from app.game_core.adapters.planner_system import PlannerSystemAssembly
 from app.game_core.content import ContentRegistry, WorldInstance
 from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
 from app.game_core.narrative.instance_manager import InstanceManager
-from app.game_core.planning import DynamicSubAreaManager
+from app.game_core.planning import (
+    DynamicSubAreaManager,
+    ItemDesignerSubSystem,
+    NarrativeWeaverSubSystem,
+    NpcDirectorSubSystem,
+    PacingControllerSubSystem,
+    PlannerDispatcher,
+    QuestManagerSubSystem,
+    WorldBuilderSubSystem,
+)
 from app.game_core.content.registries import (
     CharacterRegistry,
     ClassRegistry,
@@ -31,7 +41,7 @@ from app.game_core.orchestration import (
 )
 from app.game_core.orchestration.hooks.ai_osiris import AIOsirisEvaluator, AIOsirisHook
 from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook, GmNarrator
-from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook, NarrativePlannerProvider
+from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
 from app.game_core.rules import RulesEngine, register_default_rules_handlers
 from app.game_core.state import StateContainer, StateSlice
 from app.game_core.state.slices import (
@@ -153,7 +163,7 @@ def build_runtime_for_world(
     *,
     gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
     osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
-    narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+    planner_system_factory: Callable[[], PlannerSystemAssembly] | None = None,
     instance_manager: InstanceManager | None = None,
 ) -> DefaultRuntime:
     """Build a fully wired default runtime for an already loaded world.
@@ -161,9 +171,8 @@ def build_runtime_for_world(
     If *osiris_evaluator_factory* is provided, it is called to create an
     LLM-driven AIOsirisEvaluator.  If *gm_narrator_factory* is provided,
     it is called with (world, state) to create an LLM-driven GmNarrator.
-    If *narrative_planner_factory* is provided, it is called to create an
-    LLM-driven NarrativePlanner. All resulting hooks are registered before
-    the defaults so the deterministic fallbacks are skipped.
+    If *planner_system_factory* is provided, it is called to create a
+    multi-agent planner system.
     """
     state = StateContainer.create_new(world)
     rules_engine = RulesEngine()
@@ -191,15 +200,33 @@ def build_runtime_for_world(
         tick_coordinator.register_settlement_hook(
             GmNarrationHook(narrator=narrator)
         )
-    if narrative_planner_factory is not None:
-        planner = narrative_planner_factory()
-        tick_coordinator.register_settlement_hook(
-            NarrativePlannerHook(
-                planner=planner,
-                instance_manager=instance_manager,
-                sub_area_manager=sub_area_manager,
-            )
+    planner_system = planner_system_factory() if planner_system_factory is not None else None
+    if planner_system is not None:
+        planner_hook = NarrativePlannerHook(blackboard=planner_system.blackboard)
+        dispatcher = PlannerDispatcher()
+        quest_manager = QuestManagerSubSystem(
+            dispatcher=dispatcher,
+            agent=planner_system.quest_manager_agent,
+            sse_collector=planner_hook._pending_sse,
         )
+        dispatcher.register(quest_manager)
+        dispatcher.register(NpcDirectorSubSystem(
+            instance_manager=instance_manager,
+            agent=planner_system.npc_director_agent,
+        ))
+        dispatcher.register(WorldBuilderSubSystem(
+            sub_area_manager=sub_area_manager,
+            sse_collector=planner_hook._pending_sse,
+            agent=planner_system.world_builder_agent,
+        ))
+        dispatcher.register(PacingControllerSubSystem())
+        dispatcher.register(NarrativeWeaverSubSystem(
+            sse_collector=planner_hook._pending_sse,
+            agent=planner_system.narrative_weaver_agent,
+        ))
+        dispatcher.register(ItemDesignerSubSystem(sse_collector=planner_hook._pending_sse))
+        planner_hook._dispatcher = dispatcher
+        tick_coordinator.register_settlement_hook(planner_hook)
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
         world=world,
@@ -220,7 +247,7 @@ def build_restored_runtime_for_world(
     *,
     gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
     osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
-    narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+    planner_system_factory: Callable[[], PlannerSystemAssembly] | None = None,
     instance_manager: InstanceManager | None = None,
 ) -> DefaultRuntime:
     """Build a fully wired default runtime from restored session payload."""
@@ -250,15 +277,33 @@ def build_restored_runtime_for_world(
         tick_coordinator.register_settlement_hook(
             GmNarrationHook(narrator=narrator)
         )
-    if narrative_planner_factory is not None:
-        planner = narrative_planner_factory()
-        tick_coordinator.register_settlement_hook(
-            NarrativePlannerHook(
-                planner=planner,
-                instance_manager=instance_manager,
-                sub_area_manager=sub_area_manager,
-            )
+    planner_system = planner_system_factory() if planner_system_factory is not None else None
+    if planner_system is not None:
+        planner_hook = NarrativePlannerHook(blackboard=planner_system.blackboard)
+        dispatcher = PlannerDispatcher()
+        quest_manager = QuestManagerSubSystem(
+            dispatcher=dispatcher,
+            agent=planner_system.quest_manager_agent,
+            sse_collector=planner_hook._pending_sse,
         )
+        dispatcher.register(quest_manager)
+        dispatcher.register(NpcDirectorSubSystem(
+            instance_manager=instance_manager,
+            agent=planner_system.npc_director_agent,
+        ))
+        dispatcher.register(WorldBuilderSubSystem(
+            sub_area_manager=sub_area_manager,
+            sse_collector=planner_hook._pending_sse,
+            agent=planner_system.world_builder_agent,
+        ))
+        dispatcher.register(PacingControllerSubSystem())
+        dispatcher.register(NarrativeWeaverSubSystem(
+            sse_collector=planner_hook._pending_sse,
+            agent=planner_system.narrative_weaver_agent,
+        ))
+        dispatcher.register(ItemDesignerSubSystem(sse_collector=planner_hook._pending_sse))
+        planner_hook._dispatcher = dispatcher
+        tick_coordinator.register_settlement_hook(planner_hook)
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
         world=world,

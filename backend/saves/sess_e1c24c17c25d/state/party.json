@@ -1,7 +1,7 @@
 {
   "companion_approval": {
-    "high_elf_archer": -10,
-    "priestess": 40
+    "high_elf_archer": 50,
+    "priestess": 85
   },
   "members": {
     "high_elf_archer": {
@@ -50,6 +50,34 @@
       ],
       "location": "frontier_town",
       "participants": [
+        "priestess"
+      ],
+      "summary": "Day 2 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 2,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "high_elf_archer",
+        "priestess"
+      ],
+      "summary": "Day 2 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 2,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "high_elf_archer",
         "priestess"
       ],
       "summary": "Day 2 meaningful dialogue at frontier_town",

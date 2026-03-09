@@ -13,6 +13,7 @@ Decision record: D-N15 (narrative.md)
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 import json
 from typing import TYPE_CHECKING, Any
@@ -214,6 +215,31 @@ class WorldKnowledgeGraph:
             return
         self._seed_from_world(world)
         self._seeded.add(world_id)
+
+    def inject_story_facts(self, facts: list[dict[str, Any]]) -> None:
+        """Inject persisted story facts as dynamic edges into the global graph.
+
+        Called once per session load to restore LLM-extracted triples that were
+        produced during previous play sessions and persisted via
+        NarrativePlanSlice.story_facts.  Idempotent — duplicate edges are
+        silently overwritten by NetworkX.
+        """
+        for fact in facts:
+            subj = fact.get("subject", "")
+            rel = fact.get("relation", "")
+            obj = fact.get("object", "")
+            if not (subj and rel and obj):
+                continue
+            if subj not in self._graph:
+                self._graph.add_node(
+                    subj, label=subj, tags=[], description="", node_type="story_fact",
+                )
+            if obj not in self._graph:
+                self._graph.add_node(
+                    obj, label=obj, tags=[], description="", node_type="story_fact",
+                )
+            weight = float(fact.get("weight", 1.0))
+            self._graph.add_edge(subj, obj, relation=rel, weight=weight, source="story_fact")
 
     async def ensure_lore_enriched(self, world: WorldInstance) -> None:
         """Lazily enrich the graph with semantic triples extracted from lore text.
@@ -566,13 +592,13 @@ class WorldKnowledgeGraph:
         undirected = graph.to_undirected()
         activation: dict[str, float] = {s: 1.0 for s in seeds}
         # frontier: (node_id, current_activation, depth)
-        frontier: list[tuple[str, float, int]] = [
+        frontier: deque[tuple[str, float, int]] = deque(
             (s, 1.0, 0) for s in seeds
-        ]
+        )
         visited: set[str] = set(seeds)
 
         while frontier:
-            node, act, depth = frontier.pop(0)
+            node, act, depth = frontier.popleft()
             if depth >= max_depth:
                 continue
             for neighbour in undirected.neighbors(node):
@@ -835,6 +861,77 @@ class WorldKnowledgeGraph:
     @staticmethod
     def _is_memory_node(graph: nx.DiGraph, node_id: str) -> bool:
         return graph.nodes[node_id].get("node_type") == NODE_MEMORY
+
+    # ------------------------------------------------------------------
+    # Phase 4: actor-private graph persistence
+    # ------------------------------------------------------------------
+
+    def export_actor_state(self) -> dict[str, Any]:
+        """Export actor-private graphs for persistence.
+
+        Returns serializable dict containing all actor graph nodes, edges,
+        and memory counters.  Returns {} when there is nothing to persist.
+        """
+        if not self._actor_graphs:
+            return {}
+        actors: dict[str, Any] = {}
+        for actor_id, graph in self._actor_graphs.items():
+            if graph.number_of_nodes() == 0:
+                continue
+            nodes = []
+            for nid, data in graph.nodes(data=True):
+                nodes.append({"id": nid, **{k: v for k, v in data.items()}})
+            edges = []
+            for src, dst, data in graph.edges(data=True):
+                edges.append({"src": src, "dst": dst, **{k: v for k, v in data.items()}})
+            actors[actor_id] = {"nodes": nodes, "edges": edges}
+        if not actors:
+            return {}
+        return {
+            "actors": actors,
+            "memory_counts": dict(self._actor_memory_counts),
+        }
+
+    def import_actor_state(self, data: dict[str, Any]) -> None:
+        """Restore actor-private graphs from persisted data.
+
+        Idempotent — overwrites existing actor graphs for actors present in
+        *data*.  Actors absent from *data* are left unchanged.
+        """
+        if not data or not isinstance(data, dict):
+            return
+        actors_raw = data.get("actors")
+        if not isinstance(actors_raw, dict):
+            return
+        for actor_id, actor_data in actors_raw.items():
+            if not isinstance(actor_data, dict):
+                continue
+            graph = nx.DiGraph()
+            for node in actor_data.get("nodes", []):
+                if not isinstance(node, dict):
+                    continue
+                # Copy to avoid mutating the caller's dict
+                node_copy = dict(node)
+                nid = node_copy.pop("id", "")
+                if not nid:
+                    continue
+                graph.add_node(nid, **node_copy)
+            for edge in actor_data.get("edges", []):
+                if not isinstance(edge, dict):
+                    continue
+                # Copy to avoid mutating the caller's dict
+                edge_copy = dict(edge)
+                src = edge_copy.pop("src", "")
+                dst = edge_copy.pop("dst", "")
+                if src and dst:
+                    graph.add_edge(src, dst, **edge_copy)
+            if graph.number_of_nodes() > 0:
+                self._actor_graphs[actor_id] = graph
+        counts = data.get("memory_counts")
+        if isinstance(counts, dict):
+            for k, v in counts.items():
+                if isinstance(k, str) and isinstance(v, int):
+                    self._actor_memory_counts[k] = v
 
 
 # ------------------------------------------------------------------

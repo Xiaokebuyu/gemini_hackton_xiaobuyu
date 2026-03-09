@@ -436,7 +436,7 @@ class AgentContextBuilder:
             "l3_location_details": self._build_l3(current_area, current_location, area_state),
             "l4_dynamic_state": self._build_l4_npc(npc_id),
             "l5_scene_bus": self._build_l5_role("npc", npc_id),
-            "l6_memory_recall": await self._build_l6(npc_id, memory_retriever, role="npc"),
+            "l6_memory_recall": {"hits": [], "source": "recall_tool"},
             "l7_engine_result": None,
         }
 
@@ -450,10 +450,9 @@ class AgentContextBuilder:
         """队友: 队伍视角，L0 + L1(部分) + L2-L6。"""
         current_area, current_location = self._resolve_location()
         area_state = self._get_area_state(current_area)
-        l6 = await self._build_l6(char_id, memory_retriever, role="teammate")
+        l6: dict[str, Any] = {"hits": [], "source": "recall_tool"}
         companion_summary = _build_companion_memory_context(companion_instance)
         if companion_summary:
-            l6 = dict(l6)
             l6["companion_memory"] = companion_summary
         return {
             "l0_world_constants": self._build_l0(),
@@ -483,6 +482,13 @@ class AgentContextBuilder:
         layers = await self.build_npc_context(npc_id, memory_retriever=memory_retriever)
         l4 = layers["l4_dynamic_state"] or {}
         l6 = layers["l6_memory_recall"] or {}
+
+        # Extract role-specific truth-source data for constraint injection (P3.5)
+        tags = _profile_get(profile, "tags", [])
+        role_data: dict[str, Any] | None = None
+        if isinstance(tags, list):
+            role_data = _extract_role_data(tags, npc_id, self._state, self._world)
+
         return _build_npc_prompt_text(
             profile,
             disposition=l4.get("disposition", {}),
@@ -490,6 +496,7 @@ class AgentContextBuilder:
             impressions=l4.get("impressions", []),
             knowledge_hits=l6.get("hits", []),
             time_info=l4.get("time"),
+            role_data=role_data,
         )
 
     async def build_npc_full_context(
@@ -519,6 +526,13 @@ class AgentContextBuilder:
         layers = await self.build_npc_context(npc_id, memory_retriever=memory_retriever)
         l4 = layers["l4_dynamic_state"] or {}
         l6 = layers["l6_memory_recall"] or {}
+
+        # Extract role-specific truth-source data for constraint injection (P3.5)
+        tags = _profile_get(profile, "tags", [])
+        role_data: dict[str, Any] | None = None
+        if isinstance(tags, list):
+            role_data = _extract_role_data(tags, npc_id, self._state, self._world)
+
         system_prompt = _build_npc_prompt_text(
             profile,
             disposition=l4.get("disposition", {}),
@@ -529,6 +543,7 @@ class AgentContextBuilder:
             time_info=l4.get("time"),
             is_private=is_private,
             is_passive=is_passive,
+            role_data=role_data,
         )
         return NpcFullContext(system_prompt=system_prompt, layers=layers)
 
@@ -863,11 +878,26 @@ class AgentContextBuilder:
                 else:
                     _sub_area_counts["temporary"] += 1
                 _sub_area_counts["total"] += 1
+        _content_hints: list[dict[str, Any]] = []
+        if isinstance(area_state, dict) and area_id and self._state.has_slice("areas"):
+            for _sa in area_state.get("temporary_sub_areas", []):
+                if not isinstance(_sa, dict):
+                    continue
+                hint = _sa.get("content_hints") or _sa.get("description", "")
+                if not hint:
+                    continue
+                sub_id = _sa.get("id", "")
+                _content_hints.append({
+                    "location": _sa.get("label", sub_id),
+                    "hint": hint,
+                    "discovered": self._state.areas.is_discovery_found(area_id, sub_id),
+                })
         return {
             "area_id": area_id,
             "template": template,
             "state": dict(area_state) if isinstance(area_state, dict) else None,
             "dynamic_sub_area_counts": _sub_area_counts,
+            "content_hints": _content_hints,
         }
 
     # ----------------------------------------------------------------
@@ -917,7 +947,7 @@ class AgentContextBuilder:
             for _sa in area_state.get("temporary_sub_areas", []):
                 if isinstance(_sa, dict):
                     _dynamic_sub_areas.append(dict(_sa))
-        return {
+        result: dict[str, Any] = {
             "location_id": location_id,
             "template": template,
             "is_dynamic": is_dynamic,
@@ -925,6 +955,10 @@ class AgentContextBuilder:
             "discovered_items": discovered_items,
             "dynamic_sub_areas": _dynamic_sub_areas,
         }
+        if is_dynamic and isinstance(template, dict):
+            result["content_hints"] = template.get("content_hints", "")
+            result["interactables"] = list(template.get("interactables", []))
+        return result
 
     # ----------------------------------------------------------------
     # Private: L4 — dynamic state (role-specific)
@@ -1095,25 +1129,47 @@ class AgentContextBuilder:
         )
 
     def _extract_scene_keywords(self, actor_id: str, role: str = "npc") -> list[str]:
-        """Extract keywords from recent scene entries visible to *actor_id*.
+        """Extract structured English IDs as keywords for knowledge graph query.
 
-        Tokenises the last 5 visible entries, deduplicates and caps at 20
-        keywords.  Phase 3 can replace this with NLP-based extraction.
+        Uses entity IDs directly (NPC id, area id, quest milestones) instead
+        of text tokenization, bypassing Chinese segmentation issues entirely.
         """
+        keywords: list[str] = [actor_id]
+
+        # Current area and location
+        player_snap = self._state.player.snapshot()
+        area_id = player_snap.get("current_area", "")
+        if area_id:
+            keywords.append(area_id)
+        location = player_snap.get("current_location", "")
+        if location:
+            keywords.append(location)
+
+        # Active quest milestones
+        if self._state.has_slice("quests"):
+            for q in self._state.quests.get_active_quests():
+                if milestone := q.get("target_milestone", ""):
+                    keywords.append(milestone)
+
+        # NPC IDs from recent scene entries
         scene_data = self._build_l5_role(role, actor_id)
-        entries = scene_data.get("entries", [])[-5:]
-        words: list[str] = []
-        for entry in entries:
-            content = entry.get("content", "") if isinstance(entry, dict) else ""
-            words.extend(
-                w.lower().strip(".,!?\"'()[]") for w in content.split() if len(w) > 3
-            )
+        for entry in (scene_data.get("entries") or [])[-5:]:
+            if isinstance(entry, dict):
+                meta = entry.get("metadata") or {}
+                if npc_id := meta.get("npc_id"):
+                    keywords.append(npc_id)
+                if npc_id := meta.get("speaker_id"):
+                    keywords.append(npc_id)
+                if npc_id := meta.get("character_id"):
+                    keywords.append(npc_id)
+
+        # Deduplicate preserving order
         seen: set[str] = set()
         result: list[str] = []
-        for w in words:
-            if w and w not in seen:
-                seen.add(w)
-                result.append(w)
+        for kw in keywords:
+            if kw and kw not in seen:
+                seen.add(kw)
+                result.append(kw)
         return result[:20]
 
     @staticmethod
@@ -1175,6 +1231,130 @@ def _filter_secrets(secrets_raw: list[Any], trust_val: int) -> list[str]:
     return result
 
 
+def _extract_receptionist_data(state: StateContainer) -> dict[str, Any]:
+    """Extract bulletin board tasks + player active quests for receptionist NPCs."""
+    bulletins: list[dict[str, Any]] = []
+    if state.has_slice("areas") and state.has_slice("player"):
+        area_id = state.player.current_area
+        if area_id:
+            for _board_id, entries in state.areas.get_all_board_bulletins(area_id).items():
+                for entry in entries:
+                    bulletins.append({
+                        "quest_id": entry.get("quest_id", ""),
+                        "title": entry.get("title", ""),
+                        "summary": entry.get("summary", ""),
+                    })
+
+    active_quests: list[dict[str, str]] = []
+    if state.has_slice("quests"):
+        for qid, qdata in state.quests.dynamic_quests.items():
+            if isinstance(qdata, dict) and qdata.get("status") == "active":
+                active_quests.append({
+                    "quest_id": qid,
+                    "title": str(qdata.get("title", "")),
+                })
+
+    return {
+        "role": "receptionist",
+        "bulletins": bulletins,
+        "active_quests": active_quests,
+    }
+
+
+def _extract_merchant_data(npc_id: str, state: StateContainer) -> dict[str, Any]:
+    """Extract shop inventory for merchant NPCs."""
+    inventory: list[dict[str, Any]] = []
+    if state.has_slice("relations"):
+        shop = state.relations.get_shop_state(npc_id)
+        if isinstance(shop, dict):
+            for item in shop.get("current_stock", []):
+                if isinstance(item, dict):
+                    inventory.append({
+                        "item_id": item.get("item_id", ""),
+                        "price": item.get("base_price", 0),
+                        "stock": item.get("remaining"),  # None = unlimited
+                    })
+    return {
+        "role": "merchant",
+        "inventory": inventory,
+    }
+
+
+def _extract_role_data(
+    tags: list[Any],
+    npc_id: str,
+    state: StateContainer,
+    world: WorldInstance,
+) -> dict[str, Any] | None:
+    """Return role-specific truth-source data based on NPC tags, or None."""
+    tag_set = {str(t).strip().lower() for t in tags}
+
+    if "receptionist" in tag_set:
+        return _extract_receptionist_data(state)
+    if "merchant" in tag_set:
+        return _extract_merchant_data(npc_id, state)
+    return None
+
+
+def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
+    """Format a role-specific constraint block for injection into NPC system prompt."""
+    role = role_data.get("role", "")
+
+    if role == "receptionist":
+        bulletins = role_data.get("bulletins", [])
+        active = role_data.get("active_quests", [])
+        lines = [
+            "\n\n## 你的职责（严格遵守）",
+            "你是公会柜台职员，负责任务发布、查询、接取和报告。",
+            "",
+            "### 可用任务（公告板）",
+        ]
+        if bulletins:
+            for b in bulletins:
+                lines.append(f"- 【{b.get('title', '?')}】{b.get('summary', '')}")
+        else:
+            lines.append("- （当前公告板上没有可接取的任务）")
+        lines.append("")
+        lines.append("### 玩家已接任务")
+        if active:
+            for q in active:
+                lines.append(f"- {q.get('title', q.get('quest_id', '?'))}")
+        else:
+            lines.append("- （玩家当前没有进行中的任务）")
+        lines.append("")
+        lines.append("### 约束规则")
+        lines.append("- 你只能推荐公告板上实际存在的任务，绝不编造不存在的任务")
+        lines.append('- 被问及公告板上没有的任务时，如实说"目前没有这类委托"')
+        lines.append("- 玩家报告完成任务时，确认任务 ID 在已接列表中")
+        return "\n".join(lines)
+
+    if role == "merchant":
+        inventory = role_data.get("inventory", [])
+        lines = [
+            "\n\n## 你的职责（严格遵守）",
+            "你是商人，负责商品买卖和推荐。",
+            "",
+            "### 当前库存",
+        ]
+        if inventory:
+            for item in inventory:
+                stock = item.get("stock")
+                stock_str = "无限" if stock is None else str(stock)
+                lines.append(
+                    f"- {item.get('item_id', '?')} — "
+                    f"价格:{item.get('price', '?')} 库存:{stock_str}"
+                )
+        else:
+            lines.append("- （当前没有库存）")
+        lines.append("")
+        lines.append("### 约束规则")
+        lines.append("- 只能出售库存中实际存在的商品，绝不编造不存在的商品")
+        lines.append("- 价格以库存列表为准，不得自行调整")
+        return "\n".join(lines)
+
+    return ""
+
+
 def _build_npc_prompt_text(
     npc_profile: Any,
     disposition: Mapping[str, Any],
@@ -1185,6 +1365,7 @@ def _build_npc_prompt_text(
     time_info: dict[str, Any] | None = None,
     is_private: bool = False,
     is_passive: bool = False,
+    role_data: dict[str, Any] | None = None,
 ) -> str:
     """Format NPC system prompt string from resolved profile + relationship data."""
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
@@ -1281,22 +1462,8 @@ def _build_npc_prompt_text(
                 + "\n".join(f"- {s}" for s in eligible)
             )
 
-    # Build L6 knowledge block (cap at 5 to avoid token bloat)
+    # knowledge_block is no longer pre-injected — NPC uses recall tool to query on demand
     knowledge_block = ""
-    if knowledge_hits:
-        klines: list[str] = []
-        for hit in knowledge_hits[:5]:
-            label = hit.get("label", "")
-            if not label:
-                continue
-            node_type = hit.get("node_type", "")
-            description = hit.get("description", "")
-            line = f"- {label} ({node_type})" if node_type else f"- {label}"
-            if description:
-                line += f": {description}"
-            klines.append(line)
-        if klines:
-            knowledge_block = "\n\n## Relevant world knowledge\n" + "\n".join(klines)
 
     # Build narrative-planner directive block (P1-B)
     directive_block = ""
@@ -1313,6 +1480,11 @@ def _build_npc_prompt_text(
             "你收到了以下叙事指令，请在对话中自然融入，不要生硬提及：\n"
             f"- {directive_desc}"
         )
+
+    # Role constraint block — inject truth-source data for specialized NPCs (P3.5)
+    role_block = ""
+    if role_data is not None:
+        role_block = _format_role_constraint_block(role_data)
 
     if is_passive:
         tool_rules = """\
@@ -1332,6 +1504,7 @@ def _build_npc_prompt_text(
 - Use `emote` for physical actions or emotional expressions.
 - Use `update_feeling` if the conversation meaningfully changes your feelings toward the player (keep delta small: ±5 to ±15).
 - Use `remember` to note important new information from this conversation.
+- Use `recall` when the player mentions a topic, person, or place you're unsure about. It searches your memory.
 - Use `refuse` if asked something you wouldn't agree to.
 - If the player clearly invites you to join the party and you genuinely agree, call `join_party` in the same turn as your visible response.
 - Do not verbally agree to join the party unless you also call `join_party`.
@@ -1357,7 +1530,7 @@ You are {name}, an NPC in a dark-fantasy CRPG world.
 - Romance: {romance} (romantic interest, range 0 to 100){time_block}{behavior_block}{private_block}
 
 ## Your memories of the player
-{memories_block}{knowledge_block}{secrets_block}{directive_block}
+{memories_block}{knowledge_block}{secrets_block}{directive_block}{role_block}
 
 {tool_rules}
 
@@ -1423,21 +1596,7 @@ def _build_teammate_prompt_text(
         "\n\n## How to behave\n" + "\n".join(behavior_parts) if behavior_parts else ""
     )
 
-    knowledge_block = ""
-    if knowledge_hits:
-        klines: list[str] = []
-        for hit in knowledge_hits[:5]:
-            label = hit.get("label", "")
-            if not label:
-                continue
-            node_type = hit.get("node_type", "")
-            description = hit.get("description", "")
-            line = f"- {label} ({node_type})" if node_type else f"- {label}"
-            if description:
-                line += f": {description}"
-            klines.append(line)
-        if klines:
-            knowledge_block = "\n\n## Relevant world knowledge\n" + "\n".join(klines)
+    # knowledge_block is no longer pre-injected — teammate uses recall tool to query on demand
     companion_block = f"\n\n{companion_memory}" if companion_memory else ""
 
     return f"""\
@@ -1461,6 +1620,7 @@ that strongly affects you, or you have a relevant opinion.
 - Use `speak` for dialogue, `emote` for physical/emotional reactions.
 - Use `express_opinion` if the action genuinely shifts your feelings \
 (delta should be small: ±5 to ±10).
+- Use `recall` when the player mentions a topic, person, or place you're unsure about. It searches your memory.
 - Do not output plain text outside tool calls.
 - Use `leave_party` only when you are explicitly deciding to leave the party; do not use it for routine disagreement or banter.
 - If you react visibly, use at most one `speak` and optionally one `emote`.
@@ -1474,4 +1634,4 @@ of making a separate follow-up turn.
 - Don't repeat what the player already knows happened.
 
 ## Language
-Match the language of the user message.{knowledge_block}{companion_block}"""
+Match the language of the user message.{companion_block}"""

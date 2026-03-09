@@ -155,6 +155,13 @@ def test_narrative_planner_execute_prunes_consumed_directives() -> None:
     mock_planner.plan = AsyncMock(return_value=FakeDecision())
     hook = NarrativePlannerHook(planner=mock_planner)
 
+    # Wire a dispatcher with NarrativeWeaverSubSystem so directive GC runs
+    from app.game_core.planning.subsystem import PlannerDispatcher
+    from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
+    dispatcher = PlannerDispatcher()
+    dispatcher.register(NarrativeWeaverSubSystem(sse_collector=hook._pending_sse))
+    hook._dispatcher = dispatcher
+
     asyncio.run(hook.execute(ctx))
 
     # The consumed directive should have been pruned

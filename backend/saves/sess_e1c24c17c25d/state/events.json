@@ -314,6 +314,38 @@
       "spread_to": [],
       "tags": [],
       "text": "有人看到边境镇的‘名人’们在酒馆集结，似乎在讨论某种不详的印记。"
+    },
+    {
+      "area_id": null,
+      "content": "A rumor is spreading among the local adventurers about a new 'Porcelain' rank fighter who seems to be on surprisingly good terms with the High Elf Archer's party.",
+      "created_at": {
+        "day": 2,
+        "period": "day",
+        "slot": 11
+      },
+      "metadata": {},
+      "rumor_id": "rumor_d54beec1c6ab",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "A rumor is spreading among the local adventurers about a new 'Porcelain' rank fighter who seems to be on surprisingly good terms with the High Elf Archer's party."
+    },
+    {
+      "area_id": null,
+      "content": "有人看到那名白瓷等级的战士与银等级的妖精弓手在神殿举止亲密，甚至在讨论秘密地图。",
+      "created_at": {
+        "day": 2,
+        "period": "day",
+        "slot": 12
+      },
+      "metadata": {},
+      "rumor_id": "rumor_4ed5d06b12d4",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "有人看到那名白瓷等级的战士与银等级的妖精弓手在神殿举止亲密，甚至在讨论秘密地图。"
     }
   ]
 }

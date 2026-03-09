@@ -25,6 +25,7 @@ class SettlementContext:
     action_log: list[dict[str, Any]] = field(default_factory=list)
     rest_phase: Any | None = None
     companion_manager: Any | None = None
+    knowledge_graph: Any | None = None
 
     def execute_command(self, cmd: Command) -> ExecuteResult:
         result = self._rules_engine.execute(cmd, self.state, self.world)

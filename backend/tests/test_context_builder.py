@@ -129,7 +129,7 @@ class TestLayerBuilders:
 
         assert ctx["l1_chapter_state"] is None
         assert ctx["l7_engine_result"] is None
-        assert ctx["l6_memory_recall"] == {"hits": [], "source": "null"}
+        assert ctx["l6_memory_recall"] == {"hits": [], "source": "recall_tool"}
 
     def test_build_npc_context_l4_only_self_disposition(self) -> None:
         """NPC L4 should only contain self relationship data."""
@@ -521,7 +521,9 @@ def _one_hit(
 
 class TestL6Injection:
     def test_npc_prompt_includes_knowledge_block_when_hits_present(self) -> None:
-        """build_npc_system_prompt with a retriever returning hits → prompt contains block."""
+        """P19-B: L6 is no longer pre-injected into the prompt.
+        Knowledge is retrieved on-demand via the recall tool.
+        The prompt should include a recall tool rule instead."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -532,11 +534,12 @@ class TestL6Injection:
         ))
 
         assert prompt is not None
-        assert "## Relevant world knowledge" in prompt
-        assert "Iron Sword" in prompt
+        # Knowledge block no longer pre-injected; recall tool is mentioned instead
+        assert "## Relevant world knowledge" not in prompt
+        assert "recall" in prompt
 
     def test_npc_prompt_no_knowledge_block_when_hits_empty(self) -> None:
-        """Empty hits → no knowledge block in prompt."""
+        """Empty hits → no knowledge block in prompt (also true when hits present)."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -550,7 +553,7 @@ class TestL6Injection:
         assert "## Relevant world knowledge" not in prompt
 
     def test_npc_prompt_hits_capped_at_5(self) -> None:
-        """8 hits → only 5 rendered in prompt."""
+        """P19-B: knowledge is no longer pre-injected regardless of hit count."""
         hits = [_one_hit(f"Item {i}", "item") for i in range(8)]
         world = _world_with_characters()
         state = _state_with_relations(world)
@@ -562,11 +565,11 @@ class TestL6Injection:
         ))
 
         assert prompt is not None
-        assert "Item 4" in prompt    # 5th item (0-indexed) → included
-        assert "Item 5" not in prompt  # 6th item → capped out
+        # No pre-injected knowledge block
+        assert "## Relevant world knowledge" not in prompt
 
     def test_npc_prompt_hit_with_description_formatted_correctly(self) -> None:
-        """Hit with non-empty description → 'label (type): description' format."""
+        """P19-B: retriever hits no longer affect the prompt text directly."""
         hit = _one_hit("Merchant Tom", "character", description="A shrewd trader.")
         world = _world_with_characters()
         state = _state_with_relations(world)
@@ -577,10 +580,12 @@ class TestL6Injection:
             "merchant_tom", memory_retriever=retriever,
         ))
 
-        assert "Merchant Tom (character): A shrewd trader." in prompt
+        # prompt should be valid (not None) but no pre-injected knowledge
+        assert prompt is not None
+        assert "## Relevant world knowledge" not in prompt
 
     def test_npc_prompt_hit_without_description_formatted_correctly(self) -> None:
-        """Hit with empty description → 'label (type)' format (no colon)."""
+        """P19-B: retriever hits no longer pre-injected."""
         hit = _one_hit("Iron Sword", "item", description="")
         world = _world_with_characters()
         state = _state_with_relations(world)
@@ -591,11 +596,12 @@ class TestL6Injection:
             "merchant_tom", memory_retriever=retriever,
         ))
 
-        assert "Iron Sword (item)" in prompt
-        assert "Iron Sword (item):" not in prompt  # no colon when no description
+        assert prompt is not None
+        # No pre-injected knowledge block
+        assert "## Relevant world knowledge" not in prompt
 
     def test_teammate_prompt_includes_knowledge_block_when_hits_present(self) -> None:
-        """build_teammate_system_prompt with hits → prompt contains knowledge block."""
+        """P19-B: teammate prompt no longer pre-injects knowledge block."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -606,8 +612,9 @@ class TestL6Injection:
         ))
 
         assert prompt is not None
-        assert "## Relevant world knowledge" in prompt
-        assert "Dark Dungeon" in prompt
+        # Knowledge no longer pre-injected — NPC uses recall tool instead
+        assert "## Relevant world knowledge" not in prompt
+        assert "recall" in prompt
 
     def test_teammate_prompt_no_knowledge_block_when_hits_empty(self) -> None:
         """Teammate prompt with empty hits → no knowledge block."""
@@ -774,7 +781,8 @@ class TestNpcFullContext:
         assert asyncio.run(builder.build_npc_full_context("nonexistent")) is None
 
     def test_no_double_retriever_call(self) -> None:
-        """build_npc_full_context must call retriever exactly once (no double-call)."""
+        """P19-B: build_npc_full_context no longer calls the retriever at all.
+        Knowledge retrieval moved to RecallTool (on-demand via AgentContext.metadata)."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -784,7 +792,7 @@ class TestNpcFullContext:
             "merchant_tom", memory_retriever=retriever,
         ))
 
-        assert retriever.call_count == 1
+        assert retriever.call_count == 0
 
     def test_system_prompt_matches_expected_data(self) -> None:
         """system_prompt integrates L4 relationship data exactly as build_npc_system_prompt."""
@@ -852,7 +860,8 @@ class TestTeammateFull:
         assert asyncio.run(builder.build_teammate_full_context("nonexistent")) is None
 
     def test_no_double_retriever_call(self) -> None:
-        """build_teammate_full_context must call retriever exactly once."""
+        """P19-B: build_teammate_full_context no longer calls the retriever at all.
+        Knowledge retrieval moved to RecallTool (on-demand via AgentContext.metadata)."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -862,7 +871,7 @@ class TestTeammateFull:
             "paladin_aria", memory_retriever=retriever,
         ))
 
-        assert retriever.call_count == 1
+        assert retriever.call_count == 0
 
     def test_system_prompt_contains_teammate_data(self) -> None:
         """system_prompt integrates L4 disposition data (approval/trust)."""

@@ -422,10 +422,10 @@ def test_register_npc_tools_registers_nine() -> None:
 
     tools = registry.get_tools_for("npc")
     names = {t.name for t in tools}
-    assert len(names) == 9
+    assert len(names) == 10
     assert names == {
         "speak", "emote",
-        "update_feeling", "remember", "offer_quest",
+        "update_feeling", "remember", "recall", "offer_quest",
         "offer_trade", "refuse", "reveal_secret",
         "join_party",
     }
@@ -437,10 +437,10 @@ def test_register_teammate_tools_registers_seven() -> None:
 
     tools = registry.get_tools_for("teammate")
     names = {t.name for t in tools}
-    assert len(names) == 7
+    assert len(names) == 8
     assert names == {
         "speak", "emote",
-        "express_opinion", "suggest_tactic",
+        "recall", "express_opinion", "suggest_tactic",
         "share_memory", "request_action",
         "leave_party",
     }

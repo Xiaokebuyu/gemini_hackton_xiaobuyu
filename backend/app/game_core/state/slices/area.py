@@ -125,6 +125,20 @@ class AreaSlice(StateSlice):
             return []
         return [dict(entry) for entry in entries if isinstance(entry, Mapping)]
 
+    def get_all_board_bulletins(self, area_id: str) -> dict[str, list[dict[str, Any]]]:
+        """Return all board bulletins for an area, keyed by board_id."""
+        area_state = self.areas.get(area_id)
+        if area_state is None:
+            return {}
+        raw = area_state.board_bulletins
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(k): [dict(e) for e in v if isinstance(e, Mapping)]
+            for k, v in raw.items()
+            if isinstance(v, list)
+        }
+
     def remove_board_bulletin(self, area_id: str, board_id: str, quest_id: str) -> bool:
         """Remove the matching bulletin by quest_id from an area's board."""
         area_state = self.areas.get(area_id)

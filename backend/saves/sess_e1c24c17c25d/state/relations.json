@@ -13,7 +13,7 @@
       "trust": 80
     },
     "dwarf_shaman": {
-      "approval": 20,
+      "approval": 22,
       "fear": 0,
       "romance": 0,
       "trust": 30
@@ -28,13 +28,13 @@
       "approval": 34,
       "fear": 0,
       "romance": 53,
-      "trust": 58
+      "trust": 61
     },
     "high_elf_archer": {
-      "approval": 48,
+      "approval": 63,
       "fear": 0,
-      "romance": 20,
-      "trust": 30
+      "romance": 50,
+      "trust": 47
     },
     "lizard_priest": {
       "approval": 15,
@@ -67,7 +67,7 @@
     "cow_girl": "acquaintance",
     "dwarf_shaman": "acquaintance",
     "guild_girl": "acquaintance",
-    "high_elf_archer": "acquaintance",
+    "high_elf_archer": "friend",
     "lizard_priest": "acquaintance",
     "priestess": "friend"
   },

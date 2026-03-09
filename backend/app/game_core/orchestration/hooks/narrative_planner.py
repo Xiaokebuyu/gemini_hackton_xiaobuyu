@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import logging
-from typing import Any, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
-from app.game_core.narrative.instance_manager import InstanceManager
-from app.game_core.orchestration.event_engine import _normalize_mapping
+from app.game_core.adapters.planner_system import PlannerBlackboardPort
+from app.game_core.orchestration.event_engine import _normalize_mapping, run_inline_event_check
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
+from app.game_core.rules.models import Command
 from app.game_core.orchestration.hooks.rest_phase import (
     is_quiet_rest_slot,
     resolve_rest_phase,
 )
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
-from app.game_core.planning import DynamicSubAreaManager, NarrativePlanner
 from app.game_core.planning.models import (
     AdjustPacingPlan,
     CreateQuestPlan,
@@ -28,7 +28,16 @@ from app.game_core.planning.models import (
     RetireQuestPlan,
     SpawnQuestNpcPlan,
 )
+from app.game_core.planning.semantic_events import (
+    collect_planner_events,
+    planner_event_snapshot,
+)
 from app.game_core.state import StateChange
+
+from app.game_core.planning.subsystem import PlannerEvent
+
+if TYPE_CHECKING:
+    from app.game_core.planning.subsystem import PlannerDispatcher
 
 
 logger = logging.getLogger(__name__)
@@ -68,6 +77,7 @@ _TICK_KIND_COMBAT = frozenset(
 @dataclass(slots=True)
 class NarrativePlannerDecision:
     directives: list[Any] = field(default_factory=list)
+    story_facts: list[dict[str, Any]] = field(default_factory=list)
     strategy_notes: str = ""
     next_scheduled_tick: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -78,10 +88,113 @@ class NarrativePlannerProvider(Protocol):
         ...
 
 
+def _detect_failed_milestones_sse(
+    context: "SettlementContext",
+) -> list[SSEEvent]:
+    """Scan change_log for FAILED milestone transitions and emit milestone_failed SSE."""
+    extra_sse: list[SSEEvent] = []
+    for change in context.change_log:
+        if not (
+            change.slice == "quests"
+            and change.path.startswith("milestone_states.")
+            and isinstance(change.value, dict)
+            and change.value.get("state") == "FAILED"
+        ):
+            continue
+        milestone_id = change.path[len("milestone_states."):]
+        fallback: str | None = None
+        if context.world.has_registry("quests"):
+            tmpl = context.world.quests.get_milestone(milestone_id)
+            fallback = tmpl.failure_fallback if tmpl else None
+        extra_sse.append(SSEEvent(
+            event_type="milestone_failed",
+            payload={
+                "milestone_id": milestone_id,
+                "failure_fallback": fallback or "",
+            },
+        ))
+    return extra_sse
+
+
+def _detect_completed_milestones_sse(
+    context: "SettlementContext",
+) -> list[SSEEvent]:
+    """Scan change_log for COMPLETED milestone transitions.
+
+    For each completed milestone:
+    - Emits a ``milestone_completed`` SSE event.
+    - Cascade-unlocks next_milestones that are still LOCKED.
+    - Updates chapter_completion via execute_command.
+
+    Returns list of SSE events to append (does NOT mutate sse_events directly).
+    """
+    extra_sse: list[SSEEvent] = []
+    for change in context.change_log:
+        ms_state_value = change.value
+        if isinstance(ms_state_value, dict):
+            completed_state = ms_state_value.get("state")
+        elif isinstance(ms_state_value, str):
+            completed_state = ms_state_value
+        else:
+            completed_state = None
+        if not (
+            change.slice == "quests"
+            and change.path.startswith("milestone_states.")
+            and completed_state == "COMPLETED"
+        ):
+            continue
+
+        milestone_id = change.path[len("milestone_states."):]
+        template = None
+        if context.world.has_registry("quests"):
+            template = context.world.quests.get_milestone(milestone_id)
+
+        # 1. Emit milestone_completed SSE
+        extra_sse.append(SSEEvent(
+            event_type="milestone_completed",
+            payload={
+                "milestone_id": milestone_id,
+                "title": template.title if template else milestone_id,
+                "completion_value": template.completion_value if template else 0,
+            },
+        ))
+
+        if template is None:
+            continue
+
+        # 2. Cascade-unlock next_milestones that are still LOCKED
+        for next_id in template.next_milestones:
+            next_ms = context.state.quests.get_milestone(next_id)
+            if next_ms is not None and next_ms.state == "LOCKED":
+                context.execute_command(Command(
+                    type="advance_quest",
+                    params={
+                        "quest_id": next_id,
+                        "to_state": "AVAILABLE",
+                        "quest_kind": "milestone",
+                    },
+                    source="system",
+                ))
+
+        # 3. Update chapter_completion
+        if template.chapter_id:
+            context.execute_command(Command(
+                type="modify_completion",
+                params={
+                    "chapter_id": template.chapter_id,
+                    "delta": template.completion_value / 100.0,
+                },
+                source="system",
+            ))
+
+    return extra_sse
+
+
 class NarrativePlannerHook(NoOpSettlementHook):
-    HOOK_PRIORITY = 35
+    HOOK_PRIORITY = 66
     HOOK_NAME = "narrative_planner"
     FALLBACK_INTERVAL = 6
+    _MAX_REPLAY_ROUNDS = 5
     _BOOTSTRAP_DIRECTIVES = {
         "create_quest",
         "direct_npc",
@@ -107,18 +220,30 @@ class NarrativePlannerHook(NoOpSettlementHook):
         "spawn_quest_npc",
         "plant_environmental",
         "fill_area",
+        "update_quest",
+        "curate_shop",
     }
     def __init__(
         self,
         planner: NarrativePlannerProvider | None = None,
         *,
-        instance_manager: InstanceManager | None = None,
-        sub_area_manager: DynamicSubAreaManager | None = None,
+        blackboard: PlannerBlackboardPort | None = None,
+        dispatcher: PlannerDispatcher | None = None,
     ) -> None:
-        self.planner = planner or NarrativePlanner()
-        self._bootstrap_planner = NarrativePlanner()
-        self._instance_manager = instance_manager
-        self._sub_area_manager = sub_area_manager
+        self.blackboard = blackboard if blackboard is not None else planner
+        self._dispatcher = dispatcher
+        # Scratch buffer for SSE events; written by WorldBuilderSubSystem (via reference),
+        # drained by execute() at the end of each planning cycle.
+        self._pending_sse: list[SSEEvent] = []
+
+    @property
+    def planner(self) -> NarrativePlannerProvider | None:
+        """Backward-compatible alias for the central blackboard."""
+        return self.blackboard
+
+    @planner.setter
+    def planner(self, value: NarrativePlannerProvider | None) -> None:
+        self.blackboard = value
 
     def should_skip(
         self,
@@ -130,6 +255,10 @@ class NarrativePlannerHook(NoOpSettlementHook):
         return False
 
     async def execute(self, context: SettlementContext) -> HookResult:
+        # Reset per-call SSE scratch buffer in-place so WorldBuilderSubSystem's
+        # reference (captured at construction) stays valid.
+        self._pending_sse.clear()
+
         if not context.state.has_slice("narrative_plan"):
             return HookResult(metadata=self._noop_metadata(reason="missing_slice"))
         if not context.state.has_slice("quests"):
@@ -158,55 +287,83 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 )
             )
 
-        reason = "trigger" if triggered else "fallback"
-        planner_context = self._build_planner_context(context, current_tick=current_tick)
-        try:
-            raw_decision = await self.planner.plan(planner_context)
-        except Exception as exc:
-            logger.exception(
-                "hook failed: narrative_planner",
-                extra={
-                    "hook_name": self.HOOK_NAME,
-                    "current_tick": current_tick,
-                    "reason": reason,
-                    "ticks_since_last_run": ticks_since_last_run,
-                },
+        if self.blackboard is None and self._dispatcher is None:
+            # Still detect and cascade COMPLETED/FAILED milestones even with no planner
+            milestone_sse = (
+                _detect_failed_milestones_sse(context)
+                + _detect_completed_milestones_sse(context)
             )
             return HookResult(
-                sse_events=[
-                    SSEEvent(
-                        event_type="narrative_planner_error",
-                        payload={"error": str(exc)},
-                    )
-                ],
-                metadata={
-                    "status": "planner_error",
-                    "evaluated": False,
-                    "reason": reason,
-                    "current_tick": current_tick,
-                    "ticks_since_last_run": ticks_since_last_run,
-                    "requested_count": 0,
-                    "applied_count": 0,
-                    "skipped_unsupported_count": 0,
-                    "skipped_invalid_count": 0,
-                    "applied_kinds": [],
-                    "planner_metadata": {},
-                },
+                sse_events=milestone_sse,
+                metadata=self._noop_metadata(reason="no_planner"),
             )
 
-        decision = self._normalize_decision(raw_decision)
-        (
-            requested_count,
-            applied_count,
-            skipped_unsupported_count,
-            skipped_invalid_count,
-            applied_kinds,
-        ) = self._apply_normalized_decision(
-            decision,
+        reason = "trigger" if triggered else "fallback"
+        replay = await self._run_replay(
             context,
             current_tick=current_tick,
+            reason=reason,
             allowed_directives=self._SUPPORTED_DIRECTIVES,
+            initial_change_window_start=0,
+            include_action_log=True,
+            include_tick_event=True,
         )
+        requested_count = replay["requested_count"]
+        applied_count = replay["applied_count"]
+        skipped_unsupported_count = replay["skipped_unsupported_count"]
+        skipped_invalid_count = replay["skipped_invalid_count"]
+        applied_kinds = replay["applied_kinds"]
+        subsystem_story_fact_count = replay["story_fact_count"]
+        replay_trace = replay["trace"]
+        planner_event_summaries = replay["planner_event_summaries"]
+
+        context.state.narrative_plan.set_last_planner_replay_trace(replay_trace)
+
+        blackboard_decision = NarrativePlannerDecision()
+        if self.blackboard is not None:
+            post_dispatch_context = self._build_planner_context(context, current_tick=current_tick)
+            post_dispatch_context["planner_events"] = planner_event_summaries
+            post_dispatch_context["replay_trace"] = replay_trace
+            self._inject_runtime_refs(post_dispatch_context, context)
+            try:
+                raw_decision = await self.blackboard.plan(post_dispatch_context)
+            except Exception as exc:
+                logger.exception(
+                    "hook failed: narrative_planner",
+                    extra={
+                        "hook_name": self.HOOK_NAME,
+                        "current_tick": current_tick,
+                        "reason": reason,
+                        "ticks_since_last_run": ticks_since_last_run,
+                    },
+                )
+                return HookResult(
+                    sse_events=[
+                        SSEEvent(
+                            event_type="narrative_planner_error",
+                            payload={"error": str(exc)},
+                        )
+                    ],
+                    metadata={
+                        "status": "planner_error",
+                        "evaluated": False,
+                        "reason": reason,
+                        "current_tick": current_tick,
+                        "ticks_since_last_run": ticks_since_last_run,
+                        "requested_count": requested_count,
+                        "applied_count": applied_count,
+                        "skipped_unsupported_count": skipped_unsupported_count,
+                        "skipped_invalid_count": skipped_invalid_count,
+                        "story_fact_count": subsystem_story_fact_count,
+                        "applied_kinds": applied_kinds,
+                        "planner_metadata": {},
+                        "replay_round_count": replay_trace.get("round_count", 0),
+                        "replay_stop_reason": replay_trace.get("stop_reason", "error"),
+                        "replay_event_count": len(planner_event_summaries),
+                        "replay_applied_directive_count": applied_count,
+                    },
+                )
+            blackboard_decision = self._normalize_decision(raw_decision)
 
         milestone_progressed = any(
             change.slice == "quests" and change.path.startswith("milestone_states.")
@@ -219,20 +376,27 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 + max(1, ticks_since_last_run)
             )
 
+        blackboard_story_fact_count = self._apply_story_facts(
+            blackboard_decision.story_facts,
+            context,
+        )
+        story_fact_count = subsystem_story_fact_count + blackboard_story_fact_count
+
         context.state.narrative_plan.last_run_tick = current_tick
         context.state.narrative_plan.ticks_since_milestone_progress = progress_value
         context.state.narrative_plan._dirty = True
-        if decision.strategy_notes:
-            context.state.narrative_plan.set_strategy(decision.strategy_notes)
+        if blackboard_decision.strategy_notes:
+            context.state.narrative_plan.set_strategy(blackboard_decision.strategy_notes)
         if (
-            isinstance(decision.next_scheduled_tick, int)
-            and decision.next_scheduled_tick >= current_tick
+            isinstance(blackboard_decision.next_scheduled_tick, int)
+            and blackboard_decision.next_scheduled_tick >= current_tick
         ):
-            context.state.narrative_plan.schedule_next(decision.next_scheduled_tick)
+            context.state.narrative_plan.schedule_next(blackboard_decision.next_scheduled_tick)
+        final_context = self._build_planner_context(context, current_tick=current_tick)
         context.state.narrative_plan.record_behavior(
             {
                 "tick": current_tick,
-                "changed_slices": planner_context["changed_slices"],
+                "changed_slices": final_context["changed_slices"],
                 "reason": reason,
                 "directive_count": requested_count,
             }
@@ -244,55 +408,27 @@ class NarrativePlannerHook(NoOpSettlementHook):
             context.state.narrative_plan.play_style_tags = list(derived_style_tags)
             context.state.narrative_plan._dirty = True
 
-        sse_events: list[SSEEvent] = []
+        sse_events: list[SSEEvent] = list(self._pending_sse)
+        self._pending_sse.clear()
         if applied_count > 0:
             sse_events.append(
                 SSEEvent(
                     event_type="narrative_plan_updated",
                     payload={
                         "applied_count": applied_count,
+                        "story_fact_count": story_fact_count,
                         "applied_kinds": list(applied_kinds),
                         "current_tick": current_tick,
                     },
                 )
             )
-        # Detect FAILED milestone transitions and surface failure_fallback
-        for change in context.change_log:
-            if (
-                change.slice == "quests"
-                and change.path.startswith("milestone_states.")
-                and isinstance(change.value, dict)
-                and change.value.get("state") == "FAILED"
-            ):
-                milestone_id = change.path[len("milestone_states."):]
-                fallback: str | None = None
-                if context.world.has_registry("quests"):
-                    tmpl = context.world.quests.get_milestone(milestone_id)
-                    fallback = tmpl.failure_fallback if tmpl else None
-                sse_events.append(SSEEvent(
-                    event_type="milestone_failed",
-                    payload={
-                        "milestone_id": milestone_id,
-                        "failure_fallback": fallback or "",
-                    },
-                ))
+        # Detect FAILED and COMPLETED milestone transitions
+        sse_events.extend(_detect_failed_milestones_sse(context))
+        sse_events.extend(_detect_completed_milestones_sse(context))
 
-        # Directive GC — prune consumed and expired entries each planning cycle
-        context.state.narrative_plan.prune_consumed_and_expired(current_tick)
-        for expired_payload in self._expire_dynamic_quests(
-            context,
-            current_tick=current_tick,
-        ):
-            sse_events.append(
-                SSEEvent(
-                    event_type="dynamic_quest_expired",
-                    payload=expired_payload,
-                )
-            )
-        self._despawn_expired_quest_npcs(
-            context,
-            current_tick=current_tick,
-        )
+        # Drain SSE events emitted by sub-systems during dispatch
+        sse_events.extend(self._pending_sse)
+        self._pending_sse.clear()
 
         return HookResult(
             sse_events=sse_events,
@@ -306,13 +442,20 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "applied_count": applied_count,
                 "skipped_unsupported_count": skipped_unsupported_count,
                 "skipped_invalid_count": skipped_invalid_count,
+                "story_fact_count": story_fact_count,
                 "applied_kinds": applied_kinds,
-                "planner_metadata": dict(decision.metadata),
+                "planner_metadata": dict(blackboard_decision.metadata),
+                "replay_round_count": replay_trace.get("round_count", 0),
+                "replay_stop_reason": replay_trace.get("stop_reason", "steady_state"),
+                "replay_event_count": len(planner_event_summaries),
+                "replay_applied_directive_count": applied_count,
             },
         )
 
     async def bootstrap(self, context: SettlementContext) -> HookResult:
         """Seed opening quests without advancing normal planner bookkeeping."""
+        self._pending_sse.clear()
+
         if not context.state.has_slice("narrative_plan"):
             return HookResult(metadata=self._noop_metadata(reason="missing_slice"))
         if not context.state.has_slice("quests"):
@@ -321,59 +464,97 @@ class NarrativePlannerHook(NoOpSettlementHook):
             return HookResult(metadata=self._noop_metadata(reason="missing_slice"))
 
         current_tick = context.state.time.absolute_tick()
-        planner_context = self._build_planner_context(context, current_tick=current_tick)
-        try:
-            decision = self._bootstrap_decision(planner_context)
-        except Exception as exc:
-            logger.exception(
-                "hook failed: narrative_planner_bootstrap",
-                extra={
-                    "hook_name": "narrative_planner_bootstrap",
-                    "current_tick": current_tick,
-                },
-            )
-            return HookResult(
-                sse_events=[
-                    SSEEvent(
-                        event_type="hook_error",
-                        payload={
-                            "hook": "narrative_planner_bootstrap",
-                            "error_type": type(exc).__name__,
-                            "message": str(exc),
-                        },
-                    )
-                ],
-                metadata={
-                    "status": "planner_error",
-                    "evaluated": False,
-                    "reason": "bootstrap",
-                    "current_tick": current_tick,
-                    "requested_count": 0,
-                    "applied_count": 0,
-                    "skipped_unsupported_count": 0,
-                    "skipped_invalid_count": 0,
-                    "applied_kinds": [],
-                    "planner_metadata": {},
-                },
-            )
-
-        (
-            requested_count,
-            applied_count,
-            skipped_unsupported_count,
-            skipped_invalid_count,
-            applied_kinds,
-        ) = self._apply_normalized_decision(
-            decision,
+        replay = await self._run_replay(
             context,
             current_tick=current_tick,
+            reason="bootstrap",
             allowed_directives=self._BOOTSTRAP_DIRECTIVES,
+            initial_change_window_start=len(context.change_log),
+            include_action_log=False,
+            include_tick_event=False,
+            seed_events=[
+                PlannerEvent(
+                    kind="bootstrap",
+                    tick=current_tick,
+                    source="hook",
+                    priority=0,
+                    dedupe_key="bootstrap",
+                    emitter="hook",
+                )
+            ],
         )
-        if applied_count > 0 and decision.strategy_notes:
-            context.state.narrative_plan.set_strategy(decision.strategy_notes)
+        requested_count = replay["requested_count"]
+        applied_count = replay["applied_count"]
+        skipped_unsupported_count = replay["skipped_unsupported_count"]
+        skipped_invalid_count = replay["skipped_invalid_count"]
+        applied_kinds = replay["applied_kinds"]
+        story_fact_count = replay["story_fact_count"]
+        replay_trace = replay["trace"]
+        planner_event_summaries = replay["planner_event_summaries"]
+
+        context.state.narrative_plan.set_last_planner_replay_trace(replay_trace)
+
+        blackboard_metadata: dict[str, Any] = {}
+        if self.blackboard is not None:
+            blackboard_context = self._build_planner_context(context, current_tick=current_tick)
+            blackboard_context["planner_events"] = planner_event_summaries
+            blackboard_context["replay_trace"] = replay_trace
+            self._inject_runtime_refs(blackboard_context, context)
+            try:
+                raw_decision = await self.blackboard.plan(blackboard_context)
+            except Exception as exc:
+                logger.exception(
+                    "hook failed: narrative_planner_bootstrap",
+                    extra={
+                        "hook_name": "narrative_planner_bootstrap",
+                        "current_tick": current_tick,
+                    },
+                )
+                return HookResult(
+                    sse_events=[
+                        SSEEvent(
+                            event_type="hook_error",
+                            payload={
+                                "hook": "narrative_planner_bootstrap",
+                                "error_type": type(exc).__name__,
+                                "message": str(exc),
+                            },
+                        )
+                    ],
+                    metadata={
+                        "status": "planner_error",
+                        "evaluated": False,
+                        "reason": "bootstrap",
+                        "current_tick": current_tick,
+                        "requested_count": requested_count,
+                        "applied_count": applied_count,
+                        "skipped_unsupported_count": skipped_unsupported_count,
+                        "skipped_invalid_count": skipped_invalid_count,
+                        "story_fact_count": story_fact_count,
+                        "applied_kinds": applied_kinds,
+                        "planner_metadata": {},
+                        "replay_round_count": replay_trace.get("round_count", 0),
+                        "replay_stop_reason": replay_trace.get("stop_reason", "error"),
+                        "replay_event_count": len(planner_event_summaries),
+                        "replay_applied_directive_count": applied_count,
+                    },
+                )
+            blackboard_decision = self._normalize_decision(raw_decision)
+            story_fact_count += self._apply_story_facts(blackboard_decision.story_facts, context)
+            blackboard_metadata = dict(blackboard_decision.metadata)
+            if blackboard_decision.strategy_notes:
+                context.state.narrative_plan.set_strategy(blackboard_decision.strategy_notes)
+            if (
+                isinstance(blackboard_decision.next_scheduled_tick, int)
+                and blackboard_decision.next_scheduled_tick >= current_tick
+            ):
+                context.state.narrative_plan.schedule_next(blackboard_decision.next_scheduled_tick)
+        sse_events = list(self._pending_sse)
+        self._pending_sse.clear()
         return HookResult(
+            sse_events=sse_events,
             metadata={
-                "status": "updated" if applied_count > 0 else "noop",
+                "status": "updated" if (applied_count > 0 or story_fact_count > 0) else "noop",
                 "evaluated": True,
                 "reason": "bootstrap",
                 "current_tick": current_tick,
@@ -381,8 +562,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "applied_count": applied_count,
                 "skipped_unsupported_count": skipped_unsupported_count,
                 "skipped_invalid_count": skipped_invalid_count,
+                "story_fact_count": story_fact_count,
                 "applied_kinds": applied_kinds,
-                "planner_metadata": dict(decision.metadata),
+                "planner_metadata": blackboard_metadata,
+                "replay_round_count": replay_trace.get("round_count", 0),
+                "replay_stop_reason": replay_trace.get("stop_reason", "bootstrap_complete"),
+                "replay_event_count": len(planner_event_summaries),
+                "replay_applied_directive_count": applied_count,
             },
         )
 
@@ -576,6 +762,17 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "next_scheduled_tick": context.state.narrative_plan.next_scheduled_tick,
                 "pacing_frozen": context.state.narrative_plan.pacing_frozen,
                 "behavior_window": list(context.state.narrative_plan.behavior_window),
+                "npc_directives": [
+                    {
+                        "npc_id": d.get("npc_id", ""),
+                        "kind": d.get("directive", {}).get("kind", ""),
+                        "priority": d.get("priority", "medium"),
+                        "issued_at_tick": d.get("issued_at_tick", 0),
+                    }
+                    for d in context.state.narrative_plan.npc_directives
+                    if not d.get("consumed", False)
+                    and d.get("expires_at_tick", current_tick + 1) >= current_tick
+                ],
             },
             "area_cluster": area_cluster,
             "scene": {
@@ -590,6 +787,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "world_context": world_context,
             "maps": context.world.maps if context.world.has_registry("maps") else None,
             "target_milestone_detail": self._build_target_milestone_detail(context),
+            "story_facts": list(context.state.narrative_plan.story_facts),
+            "danger_level": self._get_area_danger(context),
         }
 
     @staticmethod
@@ -699,20 +898,6 @@ class NarrativePlannerHook(NoOpSettlementHook):
             deduped.append(tag)
         return deduped
 
-    def _bootstrap_decision(self, planner_context: dict[str, Any]) -> NarrativePlannerDecision:
-        normalized = self._bootstrap_planner._normalize_context(planner_context)
-        if normalized is None:
-            return self._normalize_decision(
-                self._bootstrap_planner._noop(current_tick=0, reason="invalid_context")
-            )
-        raw = self._bootstrap_planner._try_seed_quest(normalized)
-        if raw is None:
-            raw = self._bootstrap_planner._noop(
-                current_tick=normalized["current_tick"],
-                reason="bootstrap_stable",
-            )
-        return self._normalize_decision(raw)
-
     def _apply_normalized_decision(
         self,
         decision: NarrativePlannerDecision,
@@ -727,6 +912,14 @@ class NarrativePlannerHook(NoOpSettlementHook):
         skipped_invalid_count = 0
         applied_kinds: list[str] = []
 
+        if self._dispatcher is None:
+            logger.warning(
+                "NarrativePlannerHook: no dispatcher configured, directives will be dropped"
+            )
+            return (len(decision.directives), 0, 0, len(decision.directives), [])
+
+        apply_fn = self._dispatcher.apply_directive
+
         for raw_directive in decision.directives:
             normalized = self._normalize_directive(raw_directive)
             if normalized is None:
@@ -736,7 +929,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             if kind not in allowed_directives:
                 skipped_unsupported_count += 1
                 continue
-            if not self._apply_directive(kind, payload, context, current_tick=current_tick):
+            if not apply_fn(kind, payload, context, current_tick=current_tick):
                 skipped_invalid_count += 1
                 continue
             applied_count += 1
@@ -748,6 +941,326 @@ class NarrativePlannerHook(NoOpSettlementHook):
             skipped_invalid_count,
             applied_kinds,
         )
+
+    def _apply_subsystem_results(
+        self,
+        results: list[Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+        allowed_directives: set[str],
+    ) -> tuple[int, int, int, int, list[str]]:
+        requested_count = 0
+        applied_count = 0
+        skipped_unsupported_count = 0
+        skipped_invalid_count = 0
+        applied_kinds: list[str] = []
+
+        if self._dispatcher is None:
+            return (0, 0, 0, 0, [])
+
+        for result in results:
+            directives = result.directives if hasattr(result, "directives") else []
+            if not isinstance(directives, list):
+                continue
+            requested_count += len(directives)
+            for raw_directive in directives:
+                normalized = self._normalize_directive(raw_directive)
+                if normalized is None:
+                    skipped_invalid_count += 1
+                    continue
+                kind, payload = normalized
+                if kind not in allowed_directives:
+                    skipped_unsupported_count += 1
+                    continue
+                if not self._dispatcher.apply_directive(
+                    kind,
+                    payload,
+                    context,
+                    current_tick=current_tick,
+                ):
+                    skipped_invalid_count += 1
+                    continue
+                applied_count += 1
+                applied_kinds.append(kind)
+        return (
+            requested_count,
+            applied_count,
+            skipped_unsupported_count,
+            skipped_invalid_count,
+            applied_kinds,
+        )
+
+    def _apply_subsystem_story_facts(
+        self,
+        results: list[Any],
+        context: SettlementContext,
+    ) -> int:
+        count = 0
+        for result in results:
+            story_facts = result.story_facts if hasattr(result, "story_facts") else []
+            if not isinstance(story_facts, list) or not story_facts:
+                continue
+            count += self._apply_story_facts(
+                self._normalize_story_facts(story_facts),
+                context,
+            )
+        return count
+
+    @staticmethod
+    def _attach_planner_context(
+        event: PlannerEvent,
+        *,
+        planner_context: dict[str, Any],
+        extra_payload: Mapping[str, Any] | None = None,
+    ) -> PlannerEvent:
+        payload = dict(event.payload)
+        payload["planner_context"] = planner_context
+        if isinstance(extra_payload, Mapping):
+            for key, value in extra_payload.items():
+                payload.setdefault(str(key), value)
+        return PlannerEvent(
+            kind=event.kind,
+            tick=event.tick,
+            source=event.source,
+            priority=event.priority,
+            dedupe_key=event.dedupe_key,
+            round_index=event.round_index,
+            emitter=event.emitter,
+            payload=payload,
+        )
+
+    @staticmethod
+    def _inject_runtime_refs(
+        planner_context: dict[str, Any],
+        context: SettlementContext,
+    ) -> None:
+        planner_context["__world__"] = context.world
+        planner_context["__state__"] = context.state
+        planner_context["__world_id__"] = getattr(context.world, "world_id", "")
+
+    async def _run_replay(
+        self,
+        context: SettlementContext,
+        *,
+        current_tick: int,
+        reason: str,
+        allowed_directives: set[str],
+        initial_change_window_start: int,
+        include_action_log: bool,
+        include_tick_event: bool,
+        seed_events: list[PlannerEvent] | None = None,
+    ) -> dict[str, Any]:
+        requested_count = 0
+        applied_count = 0
+        skipped_unsupported_count = 0
+        skipped_invalid_count = 0
+        applied_kinds: list[str] = []
+        story_fact_count = 0
+        all_events: list[PlannerEvent] = []
+        rounds: list[dict[str, Any]] = []
+        seen_dedupe_keys: set[str] = set()
+        stop_reason = "steady_state"
+        change_cursor = initial_change_window_start
+
+        pending_events = self._filter_new_events(
+            collect_planner_events(
+                context,
+                current_tick,
+                change_window_start=change_cursor,
+                round_index=0,
+                include_action_log=include_action_log,
+                seed_events=seed_events,
+                include_tick_event=include_tick_event,
+            ),
+            seen_dedupe_keys=seen_dedupe_keys,
+        )
+
+        for round_index in range(self._MAX_REPLAY_ROUNDS):
+            if not pending_events:
+                stop_reason = "bootstrap_complete" if reason == "bootstrap" else "steady_state"
+                break
+
+            pre_round_change_count = len(context.change_log)
+            round_requested_count = 0
+            round_applied_count = 0
+            round_skipped_unsupported_count = 0
+            round_skipped_invalid_count = 0
+            round_applied_kinds: list[str] = []
+            accepted_event_count = 0
+
+            for semantic_event in pending_events:
+                seen_dedupe_keys.add(semantic_event.dedupe_key)
+                all_events.append(semantic_event)
+
+            planner_event_summaries = [
+                planner_event_snapshot(event)
+                for event in all_events
+            ]
+
+            for semantic_event in pending_events:
+                event_context = self._build_planner_context(
+                    context,
+                    current_tick=current_tick,
+                )
+                event_context["planner_events"] = planner_event_summaries
+                self._inject_runtime_refs(event_context, context)
+                dispatch_event = self._attach_planner_context(
+                    semantic_event,
+                    planner_context=event_context,
+                    extra_payload={
+                        "dispatch_reason": reason,
+                        "replay_round_index": round_index,
+                    },
+                )
+                dispatch_results = []
+                if self._dispatcher is not None:
+                    dispatch_results = await self._dispatcher.dispatch(dispatch_event, context)
+                if dispatch_results:
+                    accepted_event_count += 1
+                (
+                    sub_requested,
+                    sub_applied,
+                    sub_skipped_unsupported,
+                    sub_skipped_invalid,
+                    sub_applied_kinds,
+                ) = self._apply_subsystem_results(
+                    dispatch_results,
+                    context,
+                    current_tick=current_tick,
+                    allowed_directives=allowed_directives,
+                )
+                round_requested_count += sub_requested
+                round_applied_count += sub_applied
+                round_skipped_unsupported_count += sub_skipped_unsupported
+                round_skipped_invalid_count += sub_skipped_invalid
+                round_applied_kinds.extend(sub_applied_kinds)
+                story_fact_count += self._apply_subsystem_story_facts(
+                    dispatch_results,
+                    context,
+                )
+
+            inline_payloads = run_inline_event_check(
+                state=context.state,
+                world=context.world,
+                rules_engine=context._rules_engine,
+                apply_delta=context._apply_delta,
+                change_log=context.change_log,
+                scene_bus=context.scene_bus,
+                label=f"planner_replay_r{round_index}",
+                sse_collector=self._pending_sse,
+            )
+            new_change_count = max(0, len(context.change_log) - pre_round_change_count)
+            rounds.append(
+                {
+                    "round_index": round_index,
+                    "event_kinds": [event.kind for event in pending_events],
+                    "accepted_event_count": accepted_event_count,
+                    "requested_directive_count": round_requested_count,
+                    "applied_directive_kinds": list(round_applied_kinds),
+                    "new_change_count": new_change_count,
+                    "inline_event_transition_count": len(inline_payloads),
+                }
+            )
+            requested_count += round_requested_count
+            applied_count += round_applied_count
+            skipped_unsupported_count += round_skipped_unsupported_count
+            skipped_invalid_count += round_skipped_invalid_count
+            applied_kinds.extend(round_applied_kinds)
+
+            change_cursor = pre_round_change_count
+            if round_index + 1 >= self._MAX_REPLAY_ROUNDS:
+                stop_reason = "max_rounds"
+                break
+
+            pending_events = self._filter_new_events(
+                collect_planner_events(
+                    context,
+                    current_tick,
+                    change_window_start=change_cursor,
+                    round_index=round_index + 1,
+                    include_action_log=False,
+                    include_tick_event=False,
+                ),
+                seen_dedupe_keys=seen_dedupe_keys,
+            )
+            if not pending_events:
+                stop_reason = "bootstrap_complete" if reason == "bootstrap" else "steady_state"
+                break
+            if new_change_count == 0 and not round_applied_kinds and not inline_payloads:
+                stop_reason = "bootstrap_complete" if reason == "bootstrap" else "steady_state"
+                break
+
+        planner_event_summaries = [
+            planner_event_snapshot(event)
+            for event in all_events
+        ]
+        trace = {
+            "hook_priority": self.HOOK_PRIORITY,
+            "current_tick": current_tick,
+            "reason": reason,
+            "round_count": len(rounds),
+            "stop_reason": stop_reason,
+            "rounds": rounds,
+        }
+        return {
+            "requested_count": requested_count,
+            "applied_count": applied_count,
+            "skipped_unsupported_count": skipped_unsupported_count,
+            "skipped_invalid_count": skipped_invalid_count,
+            "applied_kinds": applied_kinds,
+            "story_fact_count": story_fact_count,
+            "planner_event_summaries": planner_event_summaries,
+            "trace": trace,
+        }
+
+    @staticmethod
+    def _filter_new_events(
+        events: list[PlannerEvent],
+        *,
+        seen_dedupe_keys: set[str],
+    ) -> list[PlannerEvent]:
+        filtered: list[PlannerEvent] = []
+        for event in events:
+            key = event.dedupe_key or f"{event.kind}:{event.tick}:{event.round_index}"
+            if key in seen_dedupe_keys:
+                continue
+            filtered.append(event)
+        return filtered
+
+    def history_participants(self) -> dict[str, Any]:
+        participants: dict[str, Any] = {}
+        if self.blackboard is not None:
+            history_key = getattr(self.blackboard, "history_key", "__planner_blackboard__")
+            participants[str(history_key)] = self.blackboard
+            if history_key == "__planner__":
+                participants["__planner_blackboard__"] = self.blackboard
+        if self._dispatcher is None:
+            return participants
+        for subsystem in self._dispatcher.subsystems:
+            agent = getattr(subsystem, "_agent", None)
+            if agent is None:
+                continue
+            history_key = getattr(agent, "history_key", "")
+            if history_key:
+                participants[str(history_key)] = agent
+        return participants
+
+    def _apply_story_facts(
+        self,
+        facts: list[dict[str, Any]],
+        context: SettlementContext,
+    ) -> int:
+        if not facts or not context.state.has_slice("narrative_plan"):
+            return 0
+        context.state.narrative_plan.add_story_facts(facts)
+        graph = context.knowledge_graph
+        if graph is not None:
+            try:
+                graph.inject_story_facts(facts)
+            except Exception:
+                logger.exception("failed to inject story_facts into knowledge graph")
+        return len(facts)
 
     def _build_target_milestone_detail(
         self, context: SettlementContext,
@@ -767,11 +1280,21 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "failure_fallback": template.failure_fallback,
         }
 
+    @staticmethod
+    def _get_area_danger(context: SettlementContext) -> float:
+        if not context.state.has_slice("areas") or not context.state.has_slice("player"):
+            return 0.0
+        area_id = context.state.player.current_area
+        if not area_id or area_id not in context.state.areas.areas:
+            return 0.0
+        return context.state.areas.areas[area_id].danger_level
+
     @classmethod
     def _normalize_decision(cls, raw: Any) -> NarrativePlannerDecision:
         if isinstance(raw, NarrativePlannerDecision):
             return NarrativePlannerDecision(
                 directives=list(raw.directives),
+                story_facts=cls._normalize_story_facts(raw.story_facts),
                 strategy_notes=cls._string_or_empty(raw.strategy_notes),
                 next_scheduled_tick=raw.next_scheduled_tick,
                 metadata=_normalize_mapping(raw.metadata),
@@ -789,10 +1312,40 @@ class NarrativePlannerHook(NoOpSettlementHook):
             next_tick = None
         return NarrativePlannerDecision(
             directives=directives,
+            story_facts=cls._normalize_story_facts(raw.get("story_facts")),
             strategy_notes=cls._string_or_empty(raw.get("strategy_notes")),
             next_scheduled_tick=next_tick,
             metadata=_normalize_mapping(raw.get("metadata")),
         )
+
+    @classmethod
+    def _normalize_story_facts(cls, raw: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw, list):
+            return []
+        facts: list[dict[str, Any]] = []
+        for item in raw:
+            if not isinstance(item, Mapping):
+                continue
+            subject = cls._coerce_non_empty_string(item.get("subject"))
+            relation = cls._coerce_non_empty_string(item.get("relation"))
+            obj = cls._coerce_non_empty_string(item.get("object"))
+            if subject is None or relation is None or obj is None:
+                continue
+            normalized: dict[str, Any] = {
+                "subject": subject,
+                "relation": relation,
+                "object": obj,
+            }
+            weight = item.get("weight")
+            if isinstance(weight, (int, float)) and not isinstance(weight, bool):
+                normalized["weight"] = float(weight)
+            elif isinstance(weight, str):
+                try:
+                    normalized["weight"] = float(weight.strip())
+                except ValueError:
+                    pass
+            facts.append(normalized)
+        return facts
 
     @classmethod
     def _normalize_directive(
@@ -837,805 +1390,6 @@ class NarrativePlannerHook(NoOpSettlementHook):
             return None
         return kind, _normalize_mapping(raw.get("payload"))
 
-    def _apply_directive(
-        self,
-        kind: str,
-        payload: dict[str, Any],
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> bool:
-        if kind == "create_quest":
-            quest_id = self._coerce_non_empty_string(payload.get("quest_id"))
-            if quest_id is None:
-                return False
-            if quest_id in context.state.quests.dynamic_quests:
-                return False
-            status = self._coerce_non_empty_string(payload.get("status")) or "available"
-            metadata = _normalize_mapping(payload.get("metadata"))
-            raw_objectives = payload.get("objectives")
-            if not isinstance(raw_objectives, list):
-                raw_objectives = metadata.get("objectives")
-            objectives = raw_objectives if isinstance(raw_objectives, list) else []
-            raw_rewards = payload.get("rewards")
-            if not isinstance(raw_rewards, Mapping):
-                raw_rewards = metadata.get("rewards")
-            rewards = raw_rewards if isinstance(raw_rewards, Mapping) else {}
-            raw_expiry_ticks = payload.get("expiry_ticks")
-            if raw_expiry_ticks is None:
-                raw_expiry_ticks = metadata.get("expiry_ticks")
-            expiry_ticks: int | None = None
-            if raw_expiry_ticks is not None:
-                try:
-                    expiry_ticks = int(raw_expiry_ticks)
-                except (TypeError, ValueError):
-                    return False
-            urgency = self._coerce_non_empty_string(metadata.get("urgency")) or "medium"
-            on_expire = self._coerce_non_empty_string(payload.get("on_expire"))
-            if on_expire is None:
-                on_expire = self._coerce_non_empty_string(metadata.get("on_expire"))
-            if on_expire is None:
-                on_expire = "ignore"
-            on_expire = on_expire.strip().lower()
-            if on_expire not in {"ignore", "escalate", "retire"}:
-                on_expire = "ignore"
-            generated_raw = metadata.get("generated_by_escalation")
-            try:
-                generated_by_escalation = int(generated_raw)
-            except (TypeError, ValueError):
-                generated_by_escalation = 0
-            target_milestone = self._coerce_non_empty_string(
-                metadata.get("source_milestone")
-            )
-            delivery_method = (
-                self._coerce_non_empty_string(payload.get("delivery_method"))
-                or self._coerce_non_empty_string(metadata.get("delivery_method"))
-                or "board"
-            )
-            quest_payload = {
-                "quest_id": quest_id,
-                "status": status,
-                "title": self._string_or_empty(payload.get("title")),
-                "summary": self._string_or_empty(payload.get("summary")),
-                "source": "narrative_planner",
-                "created_at_tick": current_tick,
-                "target_milestone": target_milestone,
-                "urgency": urgency,
-                "objectives": objectives,
-                "rewards": rewards,
-                "delivery_method": delivery_method,
-                "expiry_ticks": expiry_ticks,
-                "on_expire": on_expire,
-                "generated_by_escalation": generated_by_escalation,
-                "planner_reasoning": self._string_or_empty(metadata.get("planner_reasoning")),
-                "metadata": metadata,
-            }
-            context.state.quests.add_dynamic_quest(quest_id, quest_payload)
-            context.state.narrative_plan.add_history(
-                {"kind": "create_quest", "quest_id": quest_id, "tick": current_tick}
-            )
-            context.record_change(StateChange(slice="quests", operation="set", path=f"dynamic.{quest_id}", value=quest_payload))
-            # P1-C Phase 1: map milestone success/failure conditions to EventSlice events
-            self._create_milestone_condition_events(quest_id, context, current_tick=current_tick)
-            self._create_objective_events(
-                quest_id,
-                quest_payload,
-                context,
-                current_tick=current_tick,
-            )
-            return True
-
-        if kind == "direct_npc":
-            npc_id = self._coerce_non_empty_string(payload.get("npc_id"))
-            if npc_id is None:
-                return False
-            directive = payload.get("directive")
-            if directive is not None and not isinstance(directive, Mapping):
-                return False
-            if not directive:
-                return False
-            expires_at_tick = current_tick + 24
-            raw_expiry = payload.get("expires_at_tick")
-            if raw_expiry is not None:
-                try:
-                    expires_at_tick = int(raw_expiry)
-                except (TypeError, ValueError):
-                    return False
-            priority = payload.get("priority")
-            if isinstance(priority, str):
-                normalized_priority = priority.strip().lower() or "medium"
-            else:
-                normalized_priority = "medium"
-            if normalized_priority not in {"high", "medium", "low"}:
-                return False
-            stored_directive = context.state.narrative_plan.add_directive(
-                {
-                    "npc_id": npc_id,
-                    "directive": dict(directive) if isinstance(directive, Mapping) else {},
-                    "priority": normalized_priority,
-                    "issued_at_tick": current_tick,
-                    "expires_at_tick": expires_at_tick,
-                    "linked_quest_id": self._coerce_non_empty_string(payload.get("linked_quest_id")),
-                    "source": "narrative_planner",
-                    "consumed": False,
-                }
-            )
-            if self._instance_manager is not None:
-                self._instance_manager.inject_directive(
-                    npc_id,
-                    stored_directive,
-                    current_tick=current_tick,
-                )
-            return True
-
-        if kind == "publish_bulletin":
-            board_id = self._coerce_non_empty_string(payload.get("board_id"))
-            if board_id is None:
-                return False
-            if not context.state.has_slice("areas"):
-                return False
-            area_id = self._coerce_non_empty_string(payload.get("area_id"))
-            if area_id is None and context.state.has_slice("player"):
-                area_id = context.state.player.current_area
-            if area_id is None:
-                return False
-            location_payload = payload.get("location")
-            resolved_area_id = self._coerce_non_empty_string(
-                location_payload.get("area_id")) if isinstance(location_payload, Mapping) else None
-            resolved_sub_location = self._coerce_non_empty_string(
-                location_payload.get("sub_location")) if isinstance(location_payload, Mapping) else None
-            area_id = resolved_area_id or area_id
-            if not area_id:
-                return False
-            metadata = _normalize_mapping(payload.get("metadata"))
-            quest_id = self._coerce_non_empty_string(metadata.get("quest_id"))
-            notify_resident_npcs = bool(payload.get("notify_resident_npcs", False))
-            board_entry: dict[str, str] = {
-                "board_id": board_id,
-                "quest_id": quest_id or "",
-                "title": self._string_or_empty(payload.get("title")),
-                "content": self._string_or_empty(payload.get("content")),
-                "published_at_tick": current_tick,
-                "source": "narrative_planner",
-                "area_id": area_id,
-            }
-            if resolved_sub_location is not None:
-                board_entry["sub_location"] = resolved_sub_location
-                board_entry["location"] = {
-                    "area_id": area_id,
-                    "sub_location": resolved_sub_location,
-                }
-            context.state.areas.add_board_bulletin(
-                area_id,
-                board_id,
-                board_entry,
-            )
-            if notify_resident_npcs:
-                for npc_id in self._resident_npcs_for_board(
-                    context=context,
-                    area_id=area_id,
-                    board_id=board_id,
-                    sub_location=resolved_sub_location,
-                ):
-                    self._apply_directive(
-                        "direct_npc",
-                        {
-                            "npc_id": npc_id,
-                            "directive": {
-                                "kind": "bulletin_awareness",
-                                "board_id": board_id,
-                                "quest_id": quest_id,
-                                "source_milestone": self._coerce_non_empty_string(metadata.get("source_milestone")),
-                                "notice": self._string_or_empty(payload.get("title")),
-                                "metadata": metadata,
-                            },
-                        },
-                        context=context,
-                        current_tick=current_tick,
-                    )
-            return True
-
-        if kind == "escalate":
-            delta = payload.get("delta")
-            if not isinstance(delta, int) or isinstance(delta, bool):
-                return False
-            if delta < -3 or delta > 3:
-                return False
-            context.state.narrative_plan.adjust_escalation(delta)
-            return True
-
-        if kind == "adjust_pacing":
-            frozen = payload.get("frozen")
-            if not isinstance(frozen, bool):
-                return False
-            context.state.narrative_plan.set_pacing_frozen(frozen)
-            return True
-
-        if kind == "retire_quest":
-            quest_id = self._coerce_non_empty_string(payload.get("quest_id"))
-            if quest_id is None:
-                return False
-            if quest_id not in context.state.quests.dynamic_quests:
-                return False
-            context.state.quests.retire_dynamic_quest(quest_id)
-            context.state.narrative_plan.add_history(
-                {"kind": "retire_quest", "quest_id": quest_id, "tick": current_tick}
-            )
-            context.record_change(StateChange(slice="quests", operation="set", path=f"dynamic.{quest_id}.status", value="retired"))
-            return True
-
-        if kind == "spawn_quest_npc":
-            npc_id = self._coerce_non_empty_string(payload.get("npc_id"))
-            if not context.state.has_slice("areas"):
-                return False
-            area_id = self._coerce_non_empty_string(payload.get("area_id"))
-            if not area_id or area_id not in context.state.areas.areas:
-                return False
-            auto_spawn = False
-            if npc_id is None:
-                npc_id = f"temp_npc_{current_tick}"
-                auto_spawn = True
-            if auto_spawn:
-                npc_id = self._find_available_npc_id(context, npc_id, max_attempts=20)
-            elif context.state.areas.find_npc_area(npc_id) is not None:
-                return False
-            location_id = self._coerce_non_empty_string(payload.get("location_id"))
-            name = self._string_or_empty(payload.get("name")) or None
-            appearance = self._string_or_empty(payload.get("appearance"))
-            personality = self._string_or_empty(payload.get("personality"))
-            dialogue_hook = self._string_or_empty(payload.get("dialogue_hook"))
-            raw_tags = payload.get("tags")
-            tags = [
-                str(tag)
-                for tag in raw_tags
-                if isinstance(tag, str)
-            ] if isinstance(raw_tags, list) else []
-            linked_quest_id = self._coerce_non_empty_string(
-                payload.get("linked_quest_id")
-            )
-            metadata = _normalize_mapping(payload.get("metadata"))
-            if linked_quest_id is None:
-                linked_quest_id = self._coerce_non_empty_string(
-                    metadata.get("linked_quest_id")
-                )
-            raw_despawn_tick = payload.get("despawn_tick")
-            if raw_despawn_tick is None:
-                raw_despawn_tick = metadata.get("despawn_tick")
-            try:
-                despawn_tick = int(raw_despawn_tick) if raw_despawn_tick is not None else None
-            except (TypeError, ValueError):
-                despawn_tick = None
-            if despawn_tick is None:
-                raw_despawn_in_ticks = payload.get("despawn_in_ticks")
-                if raw_despawn_in_ticks is None:
-                    raw_despawn_in_ticks = metadata.get("despawn_in_ticks")
-                try:
-                    despawn_in_ticks = int(raw_despawn_in_ticks) if raw_despawn_in_ticks is not None else None
-                except (TypeError, ValueError):
-                    despawn_in_ticks = None
-                if despawn_in_ticks is None:
-                    despawn_in_ticks = 24
-                despawn_tick = current_tick + max(0, despawn_in_ticks)
-            npc_profile = {
-                "npc_id": npc_id,
-                "name": self._string_or_empty(name) or npc_id,
-                "appearance": appearance,
-                "personality": personality,
-                "dialogue_hook": dialogue_hook,
-                "description": self._string_or_empty(payload.get("description")),
-                "role": self._string_or_empty(payload.get("role")),
-                "tags": tags,
-                "linked_quest_id": linked_quest_id,
-                "area_id": area_id,
-                "location_id": location_id,
-                "despawn_tick": despawn_tick,
-                "issued_at_tick": current_tick,
-            }
-            context.state.narrative_plan.add_history({
-                "kind": "spawn_quest_npc",
-                "npc_id": npc_id,
-                "name": name,
-                "appearance": appearance,
-                "personality": personality,
-                "dialogue_hook": dialogue_hook,
-                "tags": tags,
-                "linked_quest_id": linked_quest_id,
-                "role": self._string_or_empty(payload.get("role")),
-                "location_id": location_id,
-                "area_id": area_id,
-                "issued_at_tick": current_tick,
-                "despawn_tick": despawn_tick,
-            })
-            context.state.narrative_plan.add_temporary_npc(npc_id, npc_profile)
-            context.state.areas.move_npc(npc_id, area_id, location_id, source="planner")
-            context.record_change(StateChange(slice="areas", operation="set", path=f"npc_location.{npc_id}", value=area_id))
-            context.state.narrative_plan.add_directive({
-                "npc_id": npc_id,
-                "directive": {
-                    "kind": "spawn_quest_npc",
-                    "role": self._string_or_empty(payload.get("role")),
-                    "description": self._string_or_empty(payload.get("description")),
-                    "personality": personality,
-                    "dialogue_hook": dialogue_hook,
-                    "name": name or "",
-                    "area_id": area_id,
-                },
-                "issued_at_tick": current_tick,
-                "source": "narrative_planner",
-            })
-            return True
-
-        if kind == "plant_environmental":
-            area_id = self._coerce_non_empty_string(payload.get("area_id"))
-            if area_id is None:
-                return False
-            if not context.state.has_slice("areas"):
-                return False
-            if area_id not in context.state.areas.areas:
-                return False
-            clue_id = self._coerce_non_empty_string(payload.get("clue_id"))
-            if clue_id is None:
-                clue_id = f"clue_{current_tick}"
-            raw_dc = payload.get("dc")
-            try:
-                discovery_dc = int(raw_dc)
-            except (TypeError, ValueError):
-                discovery_dc = 12
-            spec = {
-                "id": clue_id,
-                "label": self._string_or_empty(payload.get("description")),
-                "description": self._string_or_empty(payload.get("description")),
-                "type": "discovery",
-                "tier": "temporary",
-                "discovery_mode": (
-                    self._coerce_non_empty_string(payload.get("discovery_mode"))
-                    or "check"
-                ),
-                "discovery_dc": discovery_dc,
-                "linked_quest_id": self._coerce_non_empty_string(payload.get("linked_quest_id")),
-                "linked_milestone": self._coerce_non_empty_string(payload.get("linked_milestone")),
-                "source": "narrative_planner",
-                "created_at_tick": current_tick,
-                "expiry_ticks": payload.get("expiry_ticks", 12),
-            }
-            manager = self._resolve_sub_area_manager(context)
-            created = manager.create(area_id, spec)
-            if created is None:
-                return False
-            context.record_change(
-                StateChange(
-                    slice="areas",
-                    operation="set",
-                    path=f"{area_id}.temporary_sub_areas.{created['id']}",
-                    value=created,
-                )
-            )
-            return True
-
-        if kind == "fill_area":
-            area_id = self._coerce_non_empty_string(payload.get("area_id"))
-            if area_id is None:
-                return False
-            if not context.state.has_slice("areas"):
-                return False
-            if area_id not in context.state.areas.areas:
-                return False
-            sub_area_id = self._coerce_non_empty_string(payload.get("id"))
-            if sub_area_id is None:
-                sub_area_id = f"fill_{current_tick}"
-            spec = {
-                "id": sub_area_id,
-                "label": self._string_or_empty(payload.get("label")),
-                "description": self._string_or_empty(payload.get("description")),
-                "type": self._coerce_non_empty_string(payload.get("type")) or "visit",
-                "tier": "permanent",
-                "source": "narrative_planner",
-                "created_at_tick": current_tick,
-                "expiry_ticks": payload.get("expiry_ticks", -1),
-            }
-            manager = self._resolve_sub_area_manager(context)
-            created = manager.create(area_id, spec)
-            if created is None:
-                return False
-            context.record_change(
-                StateChange(
-                    slice="areas",
-                    operation="set",
-                    path=f"{area_id}.temporary_sub_areas.{created['id']}",
-                    value=created,
-                )
-            )
-            return True
-
-        return False
-
-    def _resolve_sub_area_manager(self, context: SettlementContext) -> DynamicSubAreaManager:
-        if self._sub_area_manager is not None:
-            return self._sub_area_manager
-        return DynamicSubAreaManager(context.state.areas)
-
-    @classmethod
-    def _resident_npcs_for_board(
-        cls,
-        *,
-        context: SettlementContext,
-        area_id: str,
-        board_id: str,
-        sub_location: str | None,
-    ) -> list[str]:
-        if not context.world.has_registry("maps"):
-            return []
-        if not board_id:
-            return []
-        area_template = context.world.maps.get(area_id)
-        if area_template is None:
-            return []
-        raw_sub_locations = getattr(area_template, "sub_locations", None)
-        if raw_sub_locations is None and isinstance(area_template, Mapping):
-            raw_sub_locations = area_template.get("sub_locations")
-        if not isinstance(raw_sub_locations, Mapping):
-            return []
-        resolved_sub = cls._coerce_non_empty_string(sub_location) or None
-        for raw_sub_id, raw_sub in raw_sub_locations.items():
-            sub_id = cls._coerce_non_empty_string(str(raw_sub_id))
-            if sub_id is None:
-                continue
-            if resolved_sub is not None and sub_id != resolved_sub:
-                continue
-            raw_interactables = getattr(raw_sub, "interactables", None)
-            if raw_interactables is None and isinstance(raw_sub, Mapping):
-                raw_interactables = raw_sub.get("interactables")
-            if not isinstance(raw_interactables, list):
-                continue
-            has_board = False
-            for raw_interactable in raw_interactables:
-                if isinstance(raw_interactable, Mapping):
-                    interactable_id = cls._coerce_non_empty_string(
-                        raw_interactable.get("id")
-                    )
-                    raw_tags = raw_interactable.get("tags", [])
-                else:
-                    interactable_id = cls._coerce_non_empty_string(
-                        getattr(raw_interactable, "id", None)
-                    )
-                    raw_tags = getattr(raw_interactable, "tags", [])
-                if interactable_id != board_id:
-                    continue
-                if isinstance(raw_tags, list):
-                    board_tags = [str(tag).strip() for tag in raw_tags if str(tag).strip()]
-                    if "quest_source" not in board_tags:
-                        continue
-                has_board = True
-                break
-            if not has_board:
-                continue
-            raw_residents = getattr(raw_sub, "resident_npcs", None)
-            if raw_residents is None and isinstance(raw_sub, Mapping):
-                raw_residents = raw_sub.get("resident_npcs", [])
-            if not isinstance(raw_residents, list):
-                continue
-            return [str(npc_id) for npc_id in raw_residents if cls._coerce_non_empty_string(npc_id)]
-        return []
-
-    def _create_milestone_condition_events(
-        self,
-        milestone_id: str,
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> None:
-        """Create dormant EventSlice events from a MilestoneTemplate's conditions.
-
-        Called after a create_quest directive so that EventConditionHook can
-        automatically advance the milestone state when game conditions are met.
-        No-op if the milestone doesn't exist in QuestRegistry or has no conditions.
-        """
-        if not context.state.has_slice("events"):
-            return
-        if not context.world.has_registry("quests"):
-            return
-        milestone = context.world.quests.get_milestone(milestone_id)
-        if milestone is None:
-            return
-
-        specs: list[tuple[list[Any], str]] = []
-        if milestone.success_conditions:
-            specs.append((list(milestone.success_conditions), "COMPLETED"))
-        if milestone.failure_conditions:
-            specs.append((list(milestone.failure_conditions), "FAILED"))
-
-        for conditions, outcome_state in specs:
-            prefix = "sc" if outcome_state == "COMPLETED" else "fc"
-            for idx, cond in enumerate(conditions):
-                event_id = f"milestone_{milestone_id}_{prefix}_{idx}"
-                if context.state.events.get_event(event_id) is not None:
-                    continue  # already registered
-                context.state.events.activate(event_id, {
-                    "id": event_id,
-                    "event_id": event_id,
-                    "state": "dormant",
-                    "status": "dormant",
-                    "conditions": [{"type": cond.type, "params": dict(cond.params)}],
-                    "on_trigger": [{
-                        "type": "advance_quest",
-                        "params": {"quest_id": milestone_id, "to_state": outcome_state},
-                    }],
-                    "source": "narrative_planner",
-                    "milestone_id": milestone_id,
-                    "created_at_tick": current_tick,
-                })
-                context.record_change(StateChange(
-                    slice="events",
-                    operation="set",
-                    path=f"active_events.{event_id}",
-                    value={"state": "dormant"},
-                ))
-
-    def _create_objective_events(
-        self,
-        quest_id: str,
-        quest_payload: Mapping[str, Any],
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> None:
-        if not context.state.has_slice("events"):
-            return
-
-        raw_objectives = quest_payload.get("objectives")
-        if not isinstance(raw_objectives, list):
-            return
-
-        for idx, objective in enumerate(raw_objectives):
-            if not isinstance(objective, Mapping):
-                continue
-            obj_type = self._coerce_non_empty_string(objective.get("type"))
-            if obj_type is None:
-                continue
-            obj_type = obj_type.lower()
-            if self._coerce_optional_bool(objective.get("optional")):
-                continue
-
-            condition_type = self._objective_to_condition_type(obj_type)
-            if condition_type is None:
-                continue
-            raw_target = objective.get("target")
-            params = self._objective_target_to_params(condition_type, raw_target)
-            if params is None:
-                continue
-
-            event_id = f"dq_{quest_id}_obj_{idx}"
-            if context.state.events.get_event(event_id) is not None:
-                continue
-
-            context.state.events.activate(event_id, {
-                "id": event_id,
-                "event_id": event_id,
-                "state": "dormant",
-                "status": "dormant",
-                "conditions": [{
-                    "type": condition_type,
-                    "params": params,
-                }],
-                "on_trigger": [{
-                    "type": "complete_objective",
-                    "params": {
-                        "quest_id": quest_id,
-                        "objective_index": idx,
-                    },
-                }],
-                "source": "narrative_planner",
-                "created_at_tick": current_tick,
-            })
-            context.record_change(StateChange(
-                slice="events",
-                operation="set",
-                path=f"active_events.{event_id}",
-                value={"state": "dormant"},
-            ))
-
-    @staticmethod
-    def _objective_to_condition_type(obj_type: str) -> str | None:
-        mapping = {
-            "reach_location": "location_visited",
-            "location_visited": "location_visited",
-            "talk_to": "npc_talked",
-            "collect": "item_obtained",
-            "kill": "kill_count",
-        }
-        return mapping.get(obj_type)
-
-    @staticmethod
-    def _objective_target_to_params(
-        condition_type: str,
-        target: Any,
-    ) -> dict[str, Any] | None:
-        if isinstance(target, Mapping):
-            if condition_type in {"item_obtained", "kill_count", "talk_to", "npc_talked"}:
-                return {str(key): value for key, value in target.items()}
-            if condition_type in {"location_entered", "location_visited"}:
-                area_id = NarrativePlannerHook._coerce_non_empty_string(target.get("area_id"))
-                location_id = NarrativePlannerHook._coerce_non_empty_string(target.get("location_id"))
-                sub_location_id = NarrativePlannerHook._coerce_non_empty_string(target.get("sub_location_id"))
-                params = {
-                    "area_id": area_id,
-                    "location_id": location_id,
-                    "sub_location_id": sub_location_id,
-                }
-                if area_id is None and location_id is None:
-                    return None
-                return params
-            return None
-
-        if condition_type == "item_obtained":
-            if isinstance(target, str):
-                return {"item_id": target}
-            return None
-        if condition_type == "kill_count":
-            if isinstance(target, str):
-                return {"monster_type": target}
-            return None
-        if condition_type in {"talk_to", "npc_talked"}:
-            if isinstance(target, str):
-                return {"npc_id": target}
-            return None
-        if condition_type in {"location_entered", "location_visited"}:
-            if isinstance(target, str):
-                return {"area_id": target}
-            return None
-        return None
-
-    @staticmethod
-    def _coerce_optional_bool(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            return normalized in {"true", "1", "yes", "y", "on"}
-        return False
-
-    def _expire_dynamic_quests(
-        self,
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> list[dict[str, Any]]:
-        expired_payloads: list[dict[str, Any]] = []
-        for quest_id, quest in list(context.state.quests.dynamic_quests.items()):
-            if not isinstance(quest, Mapping):
-                continue
-            status = str(quest.get("status", "")).strip().lower()
-            if status in {"completed", "retired", "expired"}:
-                continue
-
-            raw_expiry_ticks = quest.get("expiry_ticks")
-            if raw_expiry_ticks is None:
-                continue
-            try:
-                expiry_ticks = int(raw_expiry_ticks)
-            except (TypeError, ValueError):
-                continue
-
-            raw_created_at_tick = quest.get("created_at_tick")
-            if raw_created_at_tick is None:
-                continue
-            try:
-                created_at_tick = int(raw_created_at_tick)
-            except (TypeError, ValueError):
-                continue
-
-            if current_tick - created_at_tick < expiry_ticks:
-                continue
-
-            on_expire = self._coerce_non_empty_string(quest.get("on_expire")) or "ignore"
-            on_expire = on_expire.strip().lower()
-            if on_expire not in {"ignore", "escalate", "retire"}:
-                on_expire = "ignore"
-
-            if on_expire in {"retire", "escalate"}:
-                context.state.quests.retire_dynamic_quest(quest_id)
-                new_status = "retired"
-            else:
-                stored = context.state.quests.dynamic_quests.get(quest_id)
-                if isinstance(stored, Mapping):
-                    updated = dict(stored)
-                else:
-                    updated = {}
-                updated["status"] = "expired"
-                context.state.quests.dynamic_quests[quest_id] = updated
-                new_status = "expired"
-
-            context.record_change(
-                StateChange(
-                    slice="quests",
-                    operation="set",
-                    path=f"dynamic.{quest_id}.status",
-                    value=new_status,
-                )
-            )
-
-            if on_expire == "escalate":
-                context.state.narrative_plan.adjust_escalation(1)
-
-            context.state.narrative_plan.add_history(
-                {
-                    "kind": "dynamic_quest_expired",
-                    "quest_id": quest_id,
-                    "tick": current_tick,
-                    "on_expire": on_expire,
-                    "status_before": status,
-                    "status_after": new_status,
-                }
-            )
-            expired_payloads.append({
-                "quest_id": quest_id,
-                "on_expire": on_expire,
-                "tick": current_tick,
-                "status": new_status,
-            })
-
-        return expired_payloads
-
-    def _find_available_npc_id(
-        self,
-        context: SettlementContext,
-        base_npc_id: str,
-        *,
-        max_attempts: int = 20,
-    ) -> str:
-        npc_id = base_npc_id
-        for suffix in range(max_attempts):
-            if suffix > 0:
-                npc_id = f"{base_npc_id}_{suffix}"
-            if context.state.areas.find_npc_area(npc_id) is None:
-                return npc_id
-        return f"{base_npc_id}_{max_attempts}"
-
-    def _despawn_expired_quest_npcs(
-        self,
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> None:
-        for entry in list(context.state.narrative_plan.quest_history):
-            if entry.get("kind") != "spawn_quest_npc":
-                continue
-            raw_despawn_tick = entry.get("despawn_tick")
-            if raw_despawn_tick is None:
-                continue
-            try:
-                despawn_tick = int(raw_despawn_tick)
-            except (TypeError, ValueError):
-                continue
-            if current_tick < despawn_tick:
-                continue
-
-            npc_id = self._coerce_non_empty_string(entry.get("npc_id"))
-            if npc_id is None:
-                continue
-            if not context.state.has_slice("areas"):
-                if context.state.has_slice("narrative_plan"):
-                    context.state.narrative_plan.remove_temporary_npc(npc_id)
-                continue
-
-            removed = False
-            for area in context.state.areas.areas.values():
-                if npc_id in area.npc_locations:
-                    area.npc_locations.pop(npc_id, None)
-                    context.state.areas._dirty = True
-                    removed = True
-            if removed:
-                context.record_change(
-                    StateChange(
-                        slice="areas",
-                        operation="set",
-                        path=f"npc_location.{npc_id}",
-                        value=None,
-                    )
-                )
-            if context.state.has_slice("narrative_plan"):
-                context.state.narrative_plan.remove_temporary_npc(npc_id)
-
     @staticmethod
     def _noop_metadata(
         *,
@@ -1653,8 +1407,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "applied_count": 0,
             "skipped_unsupported_count": 0,
             "skipped_invalid_count": 0,
+            "story_fact_count": 0,
             "applied_kinds": [],
             "planner_metadata": {},
+            "replay_round_count": 0,
+            "replay_stop_reason": "steady_state",
+            "replay_event_count": 0,
+            "replay_applied_directive_count": 0,
         }
 
     @staticmethod

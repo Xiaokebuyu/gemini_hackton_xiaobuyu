@@ -165,7 +165,18 @@ class AgentOrchestrationService:
                 payload={"npc_id": npc_id, "code": result.error or "agent_failed"},
             )]
 
-        await self._write_episode(session, npc_id, result.graphize_candidates)
+        # Graphize path: triggered by graphize_counter reaching threshold in FIFO window
+        instance_for_graphize = await self._get_or_create_instance(session, npc_id)
+        context_window_for_graphize = (
+            instance_for_graphize.context_window if instance_for_graphize is not None else None
+        )
+        if context_window_for_graphize is not None and context_window_for_graphize.should_graphize:
+            messages_to_graphize = context_window_for_graphize.collect_for_graphize()
+            if messages_to_graphize:
+                await self._write_episode(session, npc_id, messages_to_graphize)
+        elif result.graphize_candidates:
+            # Legacy overflow path (graphize_candidates from NpcInteractionCoordinator)
+            await self._write_episode(session, npc_id, result.graphize_candidates)
 
         # Write round record into each participating teammate's ContextWindow
         _write_teammate_context_windows(session, result)
@@ -331,7 +342,18 @@ class AgentOrchestrationService:
                 payload={"npc_id": npc_id, "code": result.error or "agent_failed"},
             )]
 
-        await self._write_episode(session, npc_id, result.graphize_candidates)
+        # Graphize path: triggered by graphize_counter reaching threshold in FIFO window
+        instance_for_graphize_pc = await self._get_or_create_instance(session, npc_id)
+        cw_for_graphize_pc = (
+            instance_for_graphize_pc.context_window if instance_for_graphize_pc is not None else None
+        )
+        if cw_for_graphize_pc is not None and cw_for_graphize_pc.should_graphize:
+            messages_to_graphize_pc = cw_for_graphize_pc.collect_for_graphize()
+            if messages_to_graphize_pc:
+                await self._write_episode(session, npc_id, messages_to_graphize_pc)
+        elif result.graphize_candidates:
+            # Legacy overflow path
+            await self._write_episode(session, npc_id, result.graphize_candidates)
 
         events = _private_chat_result_to_sse(
             result,
@@ -480,11 +502,17 @@ class AgentOrchestrationService:
             ))
 
         # Build AgentContext with command executor
+        npc_metadata: dict[str, Any] = {
+            "memory_retriever": self._memory_retriever,
+            "world": session.runtime.world,
+        }
+        if memory_writer is not None:
+            npc_metadata["memory_writer"] = memory_writer
         context = builder.build_agent_context(
             "npc",
             npc_id,
             execute_command=_make_command_executor(session),
-            metadata={"memory_writer": memory_writer} if memory_writer is not None else None,
+            metadata=npc_metadata,
         )
 
         history = _window_to_history(context_window) if context_window is not None else None

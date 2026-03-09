@@ -283,6 +283,8 @@ NarrativePlanner 每次运行接收四部分输入：
 
 NarrativePlanner 输出一个 `plan` 对象，包含 `interventions` 数组：
 
+> **实现偏差（D-P18b，2026-03-09）**：实际输出格式已演化。`interventions` → `directives`，`strategy_update` → `strategy_notes`。新增 `story_facts`（世界事实三元组，写入 WorldKnowledgeGraph，NPC 可通过 L6 查询）和 `next_trigger_hint`。确定性 planner 已删除（807 行），现为纯 LLM planner（`AgenticNarrativePlanner`），无 LLM 时优雅降级为 noop。详见 `app/增量更新/P18-NarrativePlanner深化与知识层修复.md` §3.3。
+
 ```json
 {
   "reasoning": "玩家已完成 M20（接受调查任务），下一目标是 M30（调查西部牧场）。玩家在酒馆已待了 8 格未出发，应该通过路人 NPC 制造紧迫感。同时考虑到玩家的对话偏好，用 NPC 对话方式投递。",
@@ -459,10 +461,18 @@ NarrativePlannerHook.execute()
     │     create_quest     → 写入 NarrativePlanSlice + QuestSlice（DISCOVERED）
     │     spawn_quest_npc  → 调用 PasserbyService.spawn() + 注入 NPC 指令
     │     direct_npc       → 写入目标 NPC 的 ContextWindow
-    │     publish_bulletin → 更新公告板状态（AreaSlice）
+    │     publish_bulletin → 更新公告板状态（AreaSlice）+ 默认通知驻留 NPC（D-P18c）
     │     plant_environmental → 更新地点状态（AreaSlice + SceneBus）
-    │     escalate         → 产生 Command → ❷ 执行
-    │     retire_quest     → 更新 NarrativePlanSlice（任务下架）
+    │                         → 支持 discovery_mode/interactables/content_hints（D-P18c Tier 1-3）
+    │                         → PassivePerceptionHook Phase 4 检测动态子地点（D-P18c）
+    │                         → InteractableHandler 动态 fallback 处理交互物件（D-P18c）
+    │     escalate         → 产生 Command → ❷ RulesEngine 执行（D-P18a，真实改变世界状态）
+    │     retire_quest     → 更新 NarrativePlanSlice（任务下架）+ 级联清理（D-P18c）
+    │                         → despawn 关联临时 NPC + 移除公告 + 移除子区域 + 清理 NPC 指令
+    │
+    ├─ 4.5 保存 story_facts（D-P18b 新增）
+    │     story_facts → NarrativePlanSlice.add_story_facts() + WorldKnowledgeGraph.inject_story_facts()
+    │     NPC 通过 L6 查询感知 planner 写入的世界事实
     │
     ├─ 5. 更新 NarrativePlanSlice
     │     strategy_notes 更新
@@ -759,6 +769,8 @@ class NarrativePlannerHook(SettlementHook):
 
     FALLBACK_INTERVAL = 6  # 兜底间隔（格数）
 
+    # 实现偏差（D-P18b）：planner 参数类型为 NarrativePlannerProvider | None。
+    # None 时 execute() noop（无 LLM 则不做叙事规划）。确定性 fallback 已删除。
     def __init__(self, planner: NarrativePlanner):
         self._planner = planner
 
@@ -889,8 +901,10 @@ NarrativePlanner 的 `spawn_quest_npc` 和 `plant_environmental` 指令可能影
 
 ### C. MilestoneTemplate 字段消费
 
-- `involved_npcs` — 确定性 planner L2/L3 优先选择相关 NPC 投递指令
-- `key_elements` — L3 create_quest payload 携带叙事要素
+> **实现偏差（D-P18b）**：确定性 planner 已删除。以下字段现由 LLM planner 通过 `target_milestone_detail` 上下文注入直接消费。
+
+- `involved_npcs` — ~~确定性 planner L2/L3 优先选择相关 NPC 投递指令~~ → LLM planner 上下文中直接可见
+- `key_elements` — ~~L3 create_quest payload 携带叙事要素~~ → LLM planner 上下文中直接可见
 - `failure_fallback` — 里程碑 FAILED 时通过 SSE `milestone_failed` 事件暴露
 
 ---
@@ -899,5 +913,6 @@ NarrativePlanner 的 `spawn_quest_npc` 和 `plant_environmental` 指令可能影
 
 | 日期 | 变更 |
 |------|------|
+| 2026-03-09 | P18 实施偏差注释：§3.2 输出格式演化（interventions→directives, +story_facts）、§4.3 指令执行细化（escalate 走 RulesEngine、retire_quest 级联清理、plant_environmental Tier 1-3、publish_bulletin 默认通知、story_facts 保存链路）、§9.1 planner 参数 Optional 化、补遗 C 确定性 planner 删除说明 |
 | 2026-03-05 | 补遗 A-C：MilestoneUnlockHook + 里程碑细节注入 + MilestoneTemplate 字段消费 |
 | 2026-02-26 | 创建。"价值与价格"核心理念 + QuestRegistry 演化为故事里程碑 + NarrativePlanner 动态任务生成 + 7 种指令类型 + 递进升级策略（L0-L5）+ 触发条件（条件+兜底）+ NarrativePlanSlice + Prompt 模板 + TickCoordinator P35 集成 |

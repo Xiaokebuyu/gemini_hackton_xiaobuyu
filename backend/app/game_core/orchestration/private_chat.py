@@ -188,14 +188,17 @@ class PrivateChatCoordinator:
                 tags=["speech"],
             ))
 
+        npc_metadata: dict[str, Any] = {
+            "memory_retriever": self._memory_retriever,
+            "world": self._world,
+        }
+        if self._memory_writer is not None:
+            npc_metadata["memory_writer"] = self._memory_writer
         npc_context = builder.build_agent_context(
             "npc",
             npc_id,
             execute_command=execute_command,
-            metadata=(
-                {"memory_writer": self._memory_writer}
-                if self._memory_writer is not None else None
-            ),
+            metadata=npc_metadata,
             scene_visibility="private",
             scene_audience=private_audience,
         )

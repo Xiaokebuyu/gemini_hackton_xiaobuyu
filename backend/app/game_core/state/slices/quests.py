@@ -197,8 +197,11 @@ class QuestSlice(StateSlice):
             else:
                 self.advance_milestone(milestone_id, str(change.value))
             return
-        if change.path.startswith("dynamic_quests.") and isinstance(change.value, Mapping):
-            _, quest_id = change.path.split(".", 1)
+        dynamic_path = change.path
+        if dynamic_path.startswith("dynamic."):
+            dynamic_path = f"dynamic_quests.{dynamic_path[len('dynamic.'):]}"
+        if dynamic_path.startswith("dynamic_quests.") and isinstance(change.value, Mapping):
+            _, quest_id = dynamic_path.split(".", 1)
             if change.operation == "remove":
                 self.dynamic_quests.pop(quest_id, None)
                 self._dirty = True

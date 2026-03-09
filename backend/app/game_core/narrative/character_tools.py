@@ -646,6 +646,104 @@ class RevealSecretTool(_CharacterTool):
 
 
 # ------------------------------------------------------------------
+# Shared: recall (NPC + Teammate)
+# ------------------------------------------------------------------
+
+
+class RecallTool(_CharacterTool):
+    """Search the actor's memory graph for knowledge about a topic or entity."""
+
+    @property
+    def name(self) -> str:
+        return "recall"
+
+    @property
+    def description(self) -> str:
+        return "Search your memory for knowledge about a topic or entity."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to look up.",
+                },
+            },
+            "required": ["query"],
+        }
+
+    @property
+    def allowed_roles(self) -> list[str]:
+        return ["npc", "teammate"]
+
+    async def execute(
+        self, params: dict[str, Any], context: AgentContext,
+    ) -> ToolResult:
+        character_id = self._get_character_id(context)
+        if not character_id:
+            return self._no_character_id()
+
+        query = self._require_text(params, "query")
+        if not query:
+            return ToolResult(
+                ok=False,
+                message="query is required.",
+                metadata={"status": "invalid_params"},
+            )
+
+        retriever = context.metadata.get("memory_retriever") if isinstance(context.metadata, dict) else None
+        if retriever is None:
+            return ToolResult(
+                ok=False,
+                message="memory unavailable",
+                metadata={"status": "memory_unavailable"},
+            )
+
+        world = context.metadata.get("world") if isinstance(context.metadata, dict) else None
+        try:
+            result = await retriever.retrieve(
+                actor_id=character_id,
+                keywords=[query],
+                context={"world": world},
+            )
+        except Exception:
+            return ToolResult(
+                ok=False,
+                message="memory unavailable",
+                metadata={"status": "memory_error"},
+            )
+
+        hits = result.get("hits", []) if isinstance(result, dict) else []
+        if not hits:
+            return ToolResult(
+                ok=True,
+                message="Nothing relevant found in memory.",
+                metadata={"status": "ok", "hits": []},
+            )
+
+        lines: list[str] = []
+        for hit in hits[:5]:
+            label = hit.get("label", "")
+            if not label:
+                continue
+            node_type = hit.get("node_type", "")
+            description = hit.get("description", "")
+            line = f"- {label} ({node_type})" if node_type else f"- {label}"
+            if description:
+                line += f": {description}"
+            lines.append(line)
+
+        summary = "\n".join(lines) if lines else "Nothing relevant found."
+        return ToolResult(
+            ok=True,
+            message=summary,
+            metadata={"status": "ok", "hits": hits[:5]},
+        )
+
+
+# ------------------------------------------------------------------
 # Teammate: express_opinion
 # ------------------------------------------------------------------
 
@@ -1047,6 +1145,7 @@ _NPC_TOOLS: list[type[_CharacterTool]] = [
     EmoteTool,
     UpdateFeelingTool,
     RememberTool,
+    RecallTool,
     OfferQuestTool,
     OfferTradeTool,
     RefuseTool,
@@ -1057,6 +1156,7 @@ _NPC_TOOLS: list[type[_CharacterTool]] = [
 _TEAMMATE_TOOLS: list[type[_CharacterTool]] = [
     SpeakTool,
     EmoteTool,
+    RecallTool,
     ExpressOpinionTool,
     SuggestTacticTool,
     ShareMemoryTool,

@@ -116,3 +116,50 @@ def test_tick_coordinator_agent_hook_failure_is_non_fatal() -> None:
     assert runtime.state.flags.get("agent_round_survived") is True
     assert any(event.event_type == "agent_hook_error" for event in result.sse_events)
     assert any(event.event_type == "agent_hook_error" for event in collected)
+
+
+def test_game_runtime_binds_graph_and_rehydrates_story_facts_on_resume() -> None:
+    class StubGraph:
+        def __init__(self) -> None:
+            self.inject_calls: list[list[dict[str, object]]] = []
+
+        def inject_story_facts(self, facts):
+            self.inject_calls.append([dict(fact) for fact in facts])
+
+    class StubAgentOrchestration:
+        def __init__(self, graph: StubGraph) -> None:
+            self._memory_retriever = type("_Retriever", (), {"_graph": graph})()
+
+    async def _run() -> None:
+        graph = StubGraph()
+        runtime = GameRuntime(
+            save_store=SaveStore(NullPersistencePort()),
+            agent_orchestration=StubAgentOrchestration(graph),
+        )
+
+        session = await runtime.create_session(
+            "test_world",
+            world_data={},
+            session_id="sess_story_facts_runtime",
+        )
+        assert session.runtime.tick_coordinator.knowledge_graph is graph
+
+        session.runtime.state.narrative_plan.add_story_facts([
+            {"subject": "guild", "relation": "warns_about", "object": "raiders"},
+        ])
+        await runtime.save_session(session)
+
+        graph.inject_calls.clear()
+        resumed = await runtime.resume_session(
+            "test_world",
+            "sess_story_facts_runtime",
+            world_data={},
+        )
+
+        assert resumed is not None
+        assert resumed.runtime.tick_coordinator.knowledge_graph is graph
+        assert graph.inject_calls == [[
+            {"subject": "guild", "relation": "warns_about", "object": "raiders"},
+        ]]
+
+    asyncio.run(_run())

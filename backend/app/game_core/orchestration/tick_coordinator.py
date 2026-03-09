@@ -57,6 +57,7 @@ class TickCoordinator:
         self.scene_bus = scene_bus
         self.pipeline = pipeline or PipelineOrchestrator()
         self.companion_manager = companion_manager
+        self.knowledge_graph: Any | None = None
         self.change_log: list[StateChange] = []
         self._pending_action_records: list[dict[str, Any]] = []
         self.settlement_hooks: list[SettlementHook] = []
@@ -161,6 +162,7 @@ class TickCoordinator:
             action_log=action_log,
             rest_phase=rest_phase,
             companion_manager=self.companion_manager,
+            knowledge_graph=self.knowledge_graph,
         )
         for hook in self.settlement_hooks:
             if hook.should_skip(self.change_log, action_log=context.action_log):
@@ -235,6 +237,7 @@ class TickCoordinator:
             change_log=self.change_log,
             scene_bus=self.scene_bus,
             label="post_external",
+            sse_collector=collected_events,
         ):
             event = SSEEvent(event_type="event_state_changed", payload=payload)
             collected_events.append(event)

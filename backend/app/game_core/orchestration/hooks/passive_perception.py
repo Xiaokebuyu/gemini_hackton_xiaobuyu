@@ -7,6 +7,7 @@ from typing import Any
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
+from app.game_core.state import StateChange
 
 
 class PassivePerceptionHook(NoOpSettlementHook):
@@ -18,6 +19,7 @@ class PassivePerceptionHook(NoOpSettlementHook):
     1. Area-level discoveries (visibility_dc) when player is on world map (no sub-location).
     2. Sub-location interactable visibility_dc for hidden interactables.
     3. Sub-location container trap detect_dc.
+    4. Dynamic sub-area discovery (plant_environmental, discovery_mode="check").
     """
 
     HOOK_PRIORITY = 45
@@ -117,9 +119,38 @@ class PassivePerceptionHook(NoOpSettlementHook):
                                     },
                                 ))
 
+        # 4. Dynamic sub-area discovery (plant_environmental, discovery_mode="check")
+        dynamic_sub_areas_found: list[str] = []
+        if area_id:
+            for sub_area in context.state.areas.list_temporary_sub_areas(area_id):
+                if sub_area.get("discovery_mode") != "check":
+                    continue
+                sub_id = sub_area.get("id", "")
+                if not sub_id or context.state.areas.is_discovery_found(area_id, sub_id):
+                    continue
+                dc = int(sub_area.get("discovery_dc", 0))
+                if dc <= 0 or passive >= dc:
+                    context.state.areas.mark_discovery(area_id, sub_id)
+                    dynamic_sub_areas_found.append(sub_id)
+                    context.record_change(StateChange(
+                        slice="areas",
+                        operation="set",
+                        path=f"discovered_items.{sub_id}",
+                        value=True,
+                    ))
+                    sse_events.append(SSEEvent(
+                        event_type="discovery_reveal",
+                        payload={
+                            "area_id": area_id,
+                            "discovery_id": sub_id,
+                            "label": sub_area.get("label", sub_id),
+                            "source": "dynamic_sub_area",
+                        },
+                    ))
+
         status = (
             "applied"
-            if (discoveries_found or interactables_revealed or traps_detected)
+            if (discoveries_found or interactables_revealed or traps_detected or dynamic_sub_areas_found)
             else "noop"
         )
         return HookResult(
@@ -130,5 +161,6 @@ class PassivePerceptionHook(NoOpSettlementHook):
                 "discoveries_found": discoveries_found,
                 "interactables_revealed": interactables_revealed,
                 "traps_detected": traps_detected,
+                "dynamic_sub_areas_found": dynamic_sub_areas_found,
             },
         )

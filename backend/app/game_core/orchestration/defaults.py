@@ -6,6 +6,7 @@ from app.game_core.orchestration.action_dispatcher import ActionDispatcher
 from app.game_core.orchestration.hooks import (
     AIOsirisHook,
     CampfireHook,
+    DirectiveTriggerHook,
     DynamicSubAreaExpiryHook,
     EncounterHook,
     EventConditionHook,
@@ -104,6 +105,7 @@ DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     CampfireHook,           # NEW (P63)
     RelationshipHook,
     PrivateChatTriggerHook,
+    DirectiveTriggerHook,   # P76 — directive → NPC chat invitation
     TimeAdvanceHook,
     DynamicSubAreaExpiryHook,
     GmNarrationHook,

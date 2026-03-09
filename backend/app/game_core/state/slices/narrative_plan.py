@@ -27,6 +27,10 @@ class NarrativePlanSlice(StateSlice):
         self.play_style_tags: list[str] = []
         self.behavior_window: list[dict[str, Any]] = []
         self.temporary_npcs: dict[str, dict[str, Any]] = {}
+        self.story_facts: list[dict[str, Any]] = []
+        self.actor_knowledge: dict[str, Any] = {}
+        self.context_windows_data: dict[str, Any] = {}
+        self.last_planner_replay_trace: dict[str, Any] = {}
 
     def restore(self, payload: Mapping[str, Any]) -> None:
         self.current_chapter = str(payload.get("current_chapter", ""))
@@ -63,6 +67,18 @@ class NarrativePlanSlice(StateSlice):
             dict(item) for item in payload.get("behavior_window", [])
             if isinstance(item, Mapping)
         ]
+        self.story_facts = [
+            dict(item) for item in payload.get("story_facts", [])
+            if isinstance(item, Mapping)
+        ]
+        raw_ak = payload.get("actor_knowledge")
+        self.actor_knowledge = dict(raw_ak) if isinstance(raw_ak, Mapping) else {}
+        raw_cw = payload.get("context_windows_data")
+        self.context_windows_data = dict(raw_cw) if isinstance(raw_cw, Mapping) else {}
+        raw_trace = payload.get("last_planner_replay_trace")
+        self.last_planner_replay_trace = (
+            dict(raw_trace) if isinstance(raw_trace, Mapping) else {}
+        )
         self.clear_dirty()
 
     def serialize(self) -> dict[str, Any]:
@@ -87,11 +103,35 @@ class NarrativePlanSlice(StateSlice):
                 for npc_id, profile in self.temporary_npcs.items()
             },
             "behavior_window": [dict(item) for item in self.behavior_window],
+            "story_facts": [dict(f) for f in self.story_facts],
+            "actor_knowledge": dict(self.actor_knowledge),
+            "context_windows_data": dict(self.context_windows_data),
+            "last_planner_replay_trace": dict(self.last_planner_replay_trace),
         }
 
     def record_behavior(self, entry: dict[str, Any]) -> None:
         self.behavior_window.append(dict(entry))
         self.behavior_window = self.behavior_window[-24:]
+        self._dirty = True
+
+    def add_story_facts(self, facts: list[dict[str, Any]]) -> None:
+        """Append new story facts (planner-produced world knowledge triples)."""
+        self.story_facts.extend(dict(f) for f in facts)
+        self._dirty = True
+
+    def set_actor_knowledge(self, data: dict[str, Any]) -> None:
+        """Update actor knowledge blob (from WKG export). Marks dirty."""
+        self.actor_knowledge = dict(data) if data else {}
+        self._dirty = True
+
+    def set_context_windows_data(self, data: dict[str, Any]) -> None:
+        """Update serialized context windows blob. Marks dirty."""
+        self.context_windows_data = dict(data) if data else {}
+        self._dirty = True
+
+    def set_last_planner_replay_trace(self, trace: dict[str, Any]) -> None:
+        """Persist the latest planner replay summary."""
+        self.last_planner_replay_trace = dict(trace) if trace else {}
         self._dirty = True
 
     def add_temporary_npc(self, npc_id: str, profile: dict[str, Any]) -> None:
@@ -115,6 +155,15 @@ class NarrativePlanSlice(StateSlice):
 
     def add_directive(self, directive: dict[str, Any]) -> dict[str, Any]:
         stored = dict(directive)
+        npc_id = stored.get("npc_id")
+        if npc_id is not None:
+            # Remove any pending (unconsumed) directive for the same NPC before
+            # appending the new one, ensuring at most one pending per NPC.
+            # Already-consumed directives are retained for GC / audit.
+            self.npc_directives = [
+                d for d in self.npc_directives
+                if d.get("npc_id") != npc_id or d.get("consumed", False)
+            ]
         self.npc_directives.append(stored)
         self._dirty = True
         return stored
@@ -233,6 +282,9 @@ class NarrativePlanSlice(StateSlice):
                 if isinstance(npc_id, str) and isinstance(profile, Mapping)
             }
             self._dirty = True
+            return
+        if change.path == "last_planner_replay_trace" and isinstance(change.value, Mapping):
+            self.set_last_planner_replay_trace(dict(change.value))
             return
         if change.operation in {"set", "modify"} and change.path in self._SIMPLE_FIELDS:
             coerce = self._SIMPLE_FIELDS[change.path]

@@ -9,6 +9,13 @@ from typing import Any
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.instance_manager import InstanceManager
 from app.game_core.content.registries.maps import MapRegistry
+from app.game_core.planning.subsystem import PlannerDispatcher
+from app.game_core.planning.quest_manager import QuestManagerSubSystem
+from app.game_core.planning.npc_director import NpcDirectorSubSystem
+from app.game_core.planning.world_builder import WorldBuilderSubSystem
+from app.game_core.planning.pacing_controller import PacingControllerSubSystem
+from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
+from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.content.registries.factions import FactionRegistry
 from app.game_core.content.registries.lore import LoreRegistry
 from app.game_core.orchestration.hooks.narrative_planner import (
@@ -54,12 +61,112 @@ class ExplodingPlanner:
         raise RuntimeError("planner unavailable")
 
 
+class StaticBlackboard:
+    def __init__(self, decision: Any | None = None) -> None:
+        self.decision = decision or NarrativePlannerDecision(
+            directives=[],
+            metadata={"status": "noop", "reason": "stable", "provider": "test_blackboard"},
+        )
+        self.calls: list[dict[str, object]] = []
+
+    async def plan(self, context):
+        self.calls.append(dict(context))
+        return self.decision
+
+
+class PlannerBlackboardAdapter:
+    def __init__(self, planner: Any) -> None:
+        self._planner = planner
+
+    async def plan(self, context):
+        raw = await self._planner.plan(context)
+        decision = NarrativePlannerHook._normalize_decision(raw)
+        return NarrativePlannerDecision(
+            directives=[],
+            story_facts=list(decision.story_facts),
+            strategy_notes=decision.strategy_notes,
+            next_scheduled_tick=decision.next_scheduled_tick,
+            metadata=dict(decision.metadata),
+        )
+
+
+class PlannerAgentAdapter:
+    def __init__(self, planner: Any, *, allowed_directives: set[str] | None = None) -> None:
+        self._planner = planner
+        self._allowed_directives = set(allowed_directives or set())
+        self._emitted = False
+
+    async def evaluate(self, context):
+        if self._emitted and self._allowed_directives:
+            return {
+                "directives": [],
+                "story_facts": [],
+                "strategy_notes": "",
+                "metadata": {},
+            }
+        raw = await self._planner.plan(context)
+        decision = NarrativePlannerHook._normalize_decision(raw)
+        directives = list(decision.directives)
+        if self._allowed_directives:
+            filtered: list[dict[str, Any]] = []
+            for directive in directives:
+                directive_kind = self._directive_kind_hint(directive)
+                if directive_kind not in self._allowed_directives:
+                    continue
+                normalized = NarrativePlannerHook._normalize_directive(directive)
+                if normalized is None:
+                    filtered.append(directive)
+                    continue
+                filtered.append(directive)
+            directives = filtered
+        if directives:
+            self._emitted = True
+        return {
+            "directives": directives,
+            "story_facts": [],
+            "strategy_notes": "",
+            "metadata": {},
+        }
+
+    @staticmethod
+    def _directive_kind_hint(raw: Any) -> str:
+        if isinstance(raw, dict):
+            return str(raw.get("kind", "")).strip()
+        if isinstance(raw, CreateQuestPlan):
+            return "create_quest"
+        if isinstance(raw, DirectNpcPlan):
+            return "direct_npc"
+        if isinstance(raw, SpawnQuestNpcPlan):
+            return "spawn_quest_npc"
+        if isinstance(raw, PlantEnvironmentalPlan):
+            return "plant_environmental"
+        if isinstance(raw, FillAreaPlan):
+            return "fill_area"
+        return str(getattr(raw, "kind", "")).strip()
+
+
+class RecordingAgent:
+    def __init__(self, directives: list[dict[str, Any]] | None = None) -> None:
+        self.directives = list(directives or [])
+        self.calls: list[dict[str, Any]] = []
+
+    async def evaluate(self, context):
+        self.calls.append(dict(context))
+        return {
+            "directives": list(self.directives),
+            "story_facts": [],
+            "strategy_notes": "",
+            "metadata": {},
+        }
+
+
 def _make_context(
     *,
     change_log: list[StateChange] | None = None,
     narrative_plan_payload: dict[str, object] | None = None,
     quest_payload: dict[str, object] | None = None,
     area_payload: dict[str, object] | None = None,
+    inject_semantic_seed: bool = True,
 ) -> SettlementContext:
     world = WorldInstance("test_world")
     maps = MapRegistry()
@@ -136,6 +243,42 @@ def _make_context(
     scene_bus = SceneBus(scene_slice)
 
     active_change_log = list(change_log or [])
+    has_semantic_seed = any(
+        (
+            change.slice == "quests"
+            and (
+                change.path.startswith("milestone_states.")
+                or change.path.startswith("dynamic_quests.")
+            )
+        )
+        or (change.slice == "player" and change.path in {"current_area", "current_location"})
+        or (change.slice == "events" and change.path.startswith("state."))
+        or (change.slice == "relations" and change.path.startswith("shop_states."))
+        for change in active_change_log
+    )
+    if inject_semantic_seed and not has_semantic_seed:
+        active_change_log.extend(
+            [
+                StateChange(
+                    slice="quests",
+                    operation="set",
+                    path="milestone_states.ms_1",
+                    value={"state": "AVAILABLE"},
+                ),
+                StateChange(
+                    slice="player",
+                    operation="set",
+                    path="current_area",
+                    value=state.player.current_area,
+                ),
+                StateChange(
+                    slice="player",
+                    operation="set",
+                    path="current_location",
+                    value=state.player.current_location,
+                ),
+            ]
+        )
 
     def _apply_delta(delta: StateDelta | None) -> None:
         if delta is None:
@@ -170,7 +313,138 @@ def _latest_board_bulletin(context: SettlementContext) -> dict[str, Any] | None:
     return all_entries[-1] if all_entries else None
 
 
+def _build_test_hook(
+    *,
+    planner: Any | None = None,
+    blackboard: Any | None = None,
+    quest_agent: Any | None = None,
+    npc_agent: Any | None = None,
+    world_agent: Any | None = None,
+    weaver_agent: Any | None = None,
+    instance_manager: Any | None = None,
+    sub_area_manager: Any | None = None,
+) -> NarrativePlannerHook:
+    if planner is not None:
+        if blackboard is None:
+            blackboard = PlannerBlackboardAdapter(planner)
+        if (
+            quest_agent is None
+            and npc_agent is None
+            and world_agent is None
+            and weaver_agent is None
+        ):
+            quest_agent = PlannerAgentAdapter(
+                planner,
+                allowed_directives={
+                    "create_quest",
+                    "publish_bulletin",
+                    "retire_quest",
+                    "update_quest",
+                },
+            )
+            npc_agent = PlannerAgentAdapter(
+                planner,
+                allowed_directives={"direct_npc", "spawn_quest_npc"},
+            )
+            world_agent = PlannerAgentAdapter(
+                planner,
+                allowed_directives={"plant_environmental", "fill_area"},
+            )
+            weaver_agent = PlannerAgentAdapter(
+                planner,
+                allowed_directives={"escalate", "adjust_pacing"},
+            )
+    if blackboard is None:
+        blackboard = StaticBlackboard()
+
+    hook = NarrativePlannerHook(blackboard=blackboard)
+    dispatcher = PlannerDispatcher()
+    quest_manager = QuestManagerSubSystem(
+        dispatcher=dispatcher,
+        agent=quest_agent,
+    )
+    dispatcher.register(quest_manager)
+    dispatcher.register(NpcDirectorSubSystem(
+        instance_manager=instance_manager,
+        agent=npc_agent,
+    ))
+    dispatcher.register(WorldBuilderSubSystem(
+        sub_area_manager=sub_area_manager,
+        sse_collector=hook._pending_sse,
+        agent=world_agent,
+    ))
+    dispatcher.register(PacingControllerSubSystem())
+    dispatcher.register(NarrativeWeaverSubSystem(
+        sse_collector=hook._pending_sse,
+        agent=weaver_agent,
+    ))
+    dispatcher.register(ItemDesignerSubSystem())
+    hook._dispatcher = dispatcher
+    return hook
+
+
+def _make_hook_with_sub_area_manager(planner: Any, sub_area_manager: Any) -> NarrativePlannerHook:
+    """Build a NarrativePlannerHook wired with a full dispatcher + custom sub_area_manager."""
+    return _build_test_hook(planner=planner, sub_area_manager=sub_area_manager)
+
+
+def _make_full_hook(planner: Any = None) -> NarrativePlannerHook:
+    """Build a NarrativePlannerHook with all sub-systems wired."""
+    return _build_test_hook(planner=planner)
+
+
+def _make_full_hook_with_instance_manager(
+    planner: Any, instance_manager: Any
+) -> NarrativePlannerHook:
+    """Build a NarrativePlannerHook wired with a specific InstanceManager."""
+    return _build_test_hook(planner=planner, instance_manager=instance_manager)
+
+
+def _make_bootstrap_planner(
+    *,
+    seeded: bool,
+    metadata: dict[str, Any] | None = None,
+) -> RecordingPlanner:
+    directives: list[Any] = []
+    if seeded:
+        directives = [
+            CreateQuestPlan(
+                "dq_ms_1",
+                {
+                    "title": "Lead: Ms 1",
+                    "summary": "Follow the new lead tied to ms_1.",
+                    "metadata": {"source_milestone": "ms_1", "urgency": "medium"},
+                },
+            ),
+            {
+                "kind": "publish_bulletin",
+                "payload": {
+                    "board_id": "board",
+                    "title": "New Lead Posted",
+                    "content": "A fresh lead: Ms 1.",
+                    "tags": ["quest", "planner"],
+                    "urgency": "medium",
+                    "posted_by": "narrative_planner",
+                    "metadata": {"quest_id": "dq_ms_1", "source_milestone": "ms_1"},
+                },
+            },
+        ]
+    return RecordingPlanner(
+        NarrativePlannerDecision(
+            directives=directives,
+            metadata=metadata or (
+                {"status": "quest_seeded", "provider": "bootstrap_agent"}
+                if seeded
+                else {"status": "noop", "provider": "bootstrap_agent", "reason": "stable"}
+            ),
+        )
+    )
+
+
 class TestNarrativePlannerHook:
+    def test_hook_priority_runs_after_relationship_and_before_time_advance(self) -> None:
+        assert NarrativePlannerHook.HOOK_PRIORITY == 66
+
     def test_missing_required_slices_return_noop(self) -> None:
         missing_plan = _make_context()
         del missing_plan.state._slices["narrative_plan"]
@@ -199,6 +473,7 @@ class TestNarrativePlannerHook:
                 )
             ],
             narrative_plan_payload={"last_run_tick": 8},
+            inject_semantic_seed=False,
         )
 
         result = asyncio.run(NarrativePlannerHook().execute(context))
@@ -218,21 +493,33 @@ class TestNarrativePlannerHook:
                 ]
             )
         )
-        context = _make_context(change_log=[])
+        context = _make_context(change_log=[], inject_semantic_seed=False)
         context.action_log = [{"type": "rest_long", "time_cost": 1.0}]
         context.state.time.accumulated = 4.0
         context.state.time._dirty = True
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert planner.calls == []
         assert result.metadata["status"] == "noop"
         assert result.metadata["reason"] == "quiet_rest_slot"
 
-    def test_default_planner_evaluates_on_fallback_and_updates_bookkeeping(self) -> None:
-        context = _make_context(narrative_plan_payload={"last_run_tick": 3})
+    def test_planner_evaluates_on_fallback_and_updates_bookkeeping(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {"kind": "adjust_pacing", "payload": {"frozen": True}},
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                ],
+                metadata={"status": "fallback_maintenance", "provider": "llm_planner"},
+            )
+        )
+        context = _make_context(
+            narrative_plan_payload={"last_run_tick": 3},
+            inject_semantic_seed=False,
+        )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["evaluated"] is True
@@ -240,18 +527,22 @@ class TestNarrativePlannerHook:
         assert result.metadata["requested_count"] == 2
         assert result.metadata["applied_count"] == 2
         assert result.metadata["applied_kinds"] == [
-            "create_quest",
-            "publish_bulletin",
+            "adjust_pacing",
+            "escalate",
         ]
-        assert context.state.quests.get_dynamic_quest("dq_ms_1") is not None
-        bulletin = _latest_board_bulletin(context)
-        assert bulletin is not None
-        assert bulletin["board_id"] == "board"
+        assert context.state.narrative_plan.pacing_frozen is True
+        assert context.state.narrative_plan.escalation_level == 1
         assert context.state.narrative_plan.last_run_tick == 9
         assert context.state.narrative_plan.behavior_window[-1]["reason"] == "fallback"
         assert result.sse_events[0].event_type == "narrative_plan_updated"
 
-    def test_default_planner_does_not_duplicate_existing_seeded_quest(self) -> None:
+    def test_planner_does_not_duplicate_existing_seeded_quest(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[],
+                metadata={"status": "noop", "provider": "llm_planner", "reason": "stable"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 3},
             quest_payload={
@@ -270,7 +561,7 @@ class TestNarrativePlannerHook:
             },
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["requested_count"] == 0
@@ -280,6 +571,7 @@ class TestNarrativePlannerHook:
         assert len(context.state.quests.dynamic_quests) == 2
 
     def test_bootstrap_seeds_first_available_milestone_without_advancing_bookkeeping(self) -> None:
+        planner = _make_bootstrap_planner(seeded=True)
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 12,
@@ -291,7 +583,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook().bootstrap(context))
+        result = asyncio.run(_make_full_hook(planner).bootstrap(context))
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["reason"] == "bootstrap"
@@ -309,6 +601,7 @@ class TestNarrativePlannerHook:
         assert result.sse_events == []
 
     def test_bootstrap_noops_when_seeded_quest_already_exists(self) -> None:
+        planner = _make_bootstrap_planner(seeded=False)
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 4,
@@ -331,20 +624,37 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook().bootstrap(context))
+        result = asyncio.run(_make_full_hook(planner).bootstrap(context))
 
         assert result.metadata["status"] == "noop"
         assert result.metadata["reason"] == "bootstrap"
         assert result.metadata["applied_count"] == 0
-        assert result.metadata["planner_metadata"]["reason"] == "bootstrap_stable"
+        assert result.metadata["planner_metadata"]["reason"] == "stable"
         assert context.state.narrative_plan.last_run_tick == 4
         assert context.state.areas.list_temporary_sub_areas("forest") == []
 
-    def test_default_planner_stall_l1_publishes_hint(self) -> None:
+    def test_planner_stall_l1_publishes_hint(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {"kind": "publish_bulletin", "payload": {
+                        "board_id": "board",
+                        "title": "Stall Hint",
+                        "content": "Things are stalling.",
+                        "tags": ["hint"],
+                        "urgency": "medium",
+                        "posted_by": "narrative_planner",
+                    }},
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                ],
+                metadata={"status": "escalation_l1", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
                 "ticks_since_milestone_progress": 6,
+                "pacing_frozen": True,
             },
             quest_payload={
                 "milestone_states": {"ms_a": {"state": "ACTIVE"}},
@@ -354,7 +664,7 @@ class TestNarrativePlannerHook:
             },
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert "publish_bulletin" in result.metadata["applied_kinds"]
@@ -362,7 +672,15 @@ class TestNarrativePlannerHook:
         assert result.metadata["planner_metadata"]["status"] == "escalation_l1"
         assert context.state.narrative_plan.escalation_level == 1
 
-    def test_default_planner_thaw_response_unfreezes_pacing(self) -> None:
+    def test_planner_thaw_response_unfreezes_pacing(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {"kind": "adjust_pacing", "payload": {"frozen": False}},
+                ],
+                metadata={"status": "thaw", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
@@ -375,7 +693,7 @@ class TestNarrativePlannerHook:
             },
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["applied_kinds"] == ["adjust_pacing"]
@@ -396,12 +714,90 @@ class TestNarrativePlannerHook:
             narrative_plan_payload={"last_run_tick": 8, "ticks_since_milestone_progress": 5},
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["reason"] == "trigger"
         assert planner.calls[0]["changed_slices"] == ["quests"]
         assert context.state.narrative_plan.ticks_since_milestone_progress == 0
+
+    def test_execute_dispatches_semantic_events_before_blackboard(self) -> None:
+        blackboard = StaticBlackboard()
+        quest_agent = RecordingAgent(
+            directives=[
+                {
+                    "kind": "create_quest",
+                    "payload": {
+                        "quest_id": "dq_semantic",
+                        "title": "Semantic Lead",
+                        "summary": "Derived from quest acceptance.",
+                    },
+                }
+            ]
+        )
+        world_agent = RecordingAgent()
+        context = _make_context(
+            change_log=[
+                StateChange("quests", "modify", "dynamic_quests.dq_existing", {
+                    "status": "active",
+                    "title": "Existing",
+                    "summary": "In progress",
+                }),
+                StateChange("player", "set", "current_area", "forest"),
+                StateChange("player", "set", "current_location", None),
+            ],
+            area_payload={
+                "areas": {
+                    "forest": {
+                        "temporary_sub_areas": [
+                            {"id": "camp", "label": "Camp", "expiry": 6}
+                        ]
+                    }
+                }
+            },
+        )
+        context.action_log = [
+            {
+                "type": "board_accept_quest",
+                "params": {"quest_id": "dq_existing", "board_id": "board"},
+                "executed": True,
+            },
+            {
+                "type": "move_area",
+                "params": {"area_id": "forest"},
+                "executed": True,
+            },
+        ]
+
+        hook = _build_test_hook(
+            blackboard=blackboard,
+            quest_agent=quest_agent,
+            world_agent=world_agent,
+        )
+        result = asyncio.run(hook.execute(context))
+
+        assert result.metadata["status"] == "updated"
+        assert [call["current_event"]["kind"] for call in quest_agent.calls] == [
+            "quest_accepted",
+            "quest_created",
+        ]
+        assert [call["current_event"]["kind"] for call in world_agent.calls] == [
+            "area_entered",
+            "scene_changed",
+            "quest_created",
+        ]
+        assert len(blackboard.calls) == 1
+        assert "dq_semantic" in blackboard.calls[0]["quests"]["dynamic_quests"]
+        assert [event["kind"] for event in blackboard.calls[0]["planner_events"]] == [
+            "quest_accepted",
+            "area_entered",
+            "scene_changed",
+            "tick_settlement",
+            "quest_created",
+        ]
+        assert blackboard.calls[0]["replay_trace"]["round_count"] == 2
+        assert result.metadata["replay_round_count"] == 2
+        assert result.metadata["replay_stop_reason"] == "steady_state"
 
     def test_create_quest_applies_and_duplicate_is_counted_invalid(self) -> None:
         planner = RecordingPlanner(
@@ -417,7 +813,7 @@ class TestNarrativePlannerHook:
         )
         context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         created = context.state.quests.get_dynamic_quest("dq_new")
         assert result.metadata["status"] == "updated"
@@ -463,7 +859,7 @@ class TestNarrativePlannerHook:
         )
         context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         created = context.state.quests.get_dynamic_quest("dq_ext")
         assert result.metadata["applied_count"] == 1
@@ -499,7 +895,7 @@ class TestNarrativePlannerHook:
         )
         context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         created = context.state.quests.get_dynamic_quest("dq_default")
         assert result.metadata["applied_kinds"] == ["create_quest"]
@@ -539,7 +935,7 @@ class TestNarrativePlannerHook:
         )
         context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["create_quest"]
@@ -583,9 +979,12 @@ class TestNarrativePlannerHook:
                 ],
             }
         )
-        context = _make_context(change_log=[StateChange("player", "set", "current_area", "forest")])
+        context = _make_context(change_log=[
+            StateChange("quests", "set", "milestone_states.ms_1", {"state": "AVAILABLE"}),
+            StateChange("player", "set", "current_area", "forest"),
+        ])
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 5
         assert context.state.narrative_plan.npc_directives[-1]["npc_id"] == "npc_guard"
@@ -623,7 +1022,10 @@ class TestNarrativePlannerHook:
         })
         world = WorldInstance("test_world_bulletin")
         world.register(maps)
-        context = _make_context(change_log=[StateChange("player", "set", "current_area", "forest")])
+        context = _make_context(change_log=[
+            StateChange("quests", "set", "milestone_states.ms_1", {"state": "AVAILABLE"}),
+            StateChange("player", "set", "current_area", "forest"),
+        ])
         context.world = world
         planner = RecordingPlanner(
             {
@@ -642,7 +1044,7 @@ class TestNarrativePlannerHook:
             }
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_kinds"] == ["publish_bulletin"]
         assert len(context.state.narrative_plan.npc_directives) == 2
@@ -679,6 +1081,7 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.quest_history == []
 
     def test_dynamic_quest_expiry_marks_ignored(self) -> None:
+        planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 0},
             quest_payload={
@@ -696,7 +1099,7 @@ class TestNarrativePlannerHook:
             },
         )
         context.state.player.current_area = "void"
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert any(
             event.event_type == "dynamic_quest_expired"
@@ -709,6 +1112,7 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "ignore"
 
     def test_dynamic_quest_expiry_escalates_and_retire(self) -> None:
+        planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 0},
             quest_payload={
@@ -726,7 +1130,7 @@ class TestNarrativePlannerHook:
             },
         )
         context.state.player.current_area = "void"
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert context.state.narrative_plan.escalation_level == 1
         assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "retired"
@@ -739,6 +1143,7 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "escalate"
 
     def test_dynamic_quest_expiry_retire(self) -> None:
+        planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 0},
             quest_payload={
@@ -756,7 +1161,7 @@ class TestNarrativePlannerHook:
             },
         )
         context.state.player.current_area = "void"
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "retired"
         assert any(
@@ -786,12 +1191,8 @@ class TestNarrativePlannerHook:
         instance_manager = InstanceManager()
         active_instance = instance_manager.get_or_create("npc_guard", current_tick=3)
 
-        result = asyncio.run(
-            NarrativePlannerHook(
-                planner=planner,
-                instance_manager=instance_manager,
-            ).execute(context)
-        )
+        hook = _make_full_hook_with_instance_manager(planner, instance_manager)
+        result = asyncio.run(hook.execute(context))
 
         assert result.metadata["applied_kinds"] == ["direct_npc"]
         assert len(context.state.narrative_plan.npc_directives) == 1
@@ -809,9 +1210,19 @@ class TestNarrativePlannerHook:
                 ]
             }
         )
-        context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
+        context = _make_context(
+            change_log=[StateChange("player", "set", "current_area", "forest")],
+            inject_semantic_seed=False,
+        )
+        hook = _build_test_hook(
+            planner=planner,
+            npc_agent=PlannerAgentAdapter(
+                planner,
+                allowed_directives={"spawn_quest_npc", "unknown_kind"},
+            ),
+        )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(hook.execute(context))
 
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_unsupported_count"] == 1
@@ -826,7 +1237,7 @@ class TestNarrativePlannerHook:
 
         with caplog.at_level(logging.ERROR):
             result = asyncio.run(
-                NarrativePlannerHook(planner=ExplodingPlanner()).execute(context)
+                _make_full_hook(planner=ExplodingPlanner()).execute(context)
             )
 
         assert result.metadata["status"] == "planner_error"
@@ -856,7 +1267,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["spawn_quest_npc"]
@@ -879,7 +1290,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {"npc_locations": {"npc_existing": None}}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_invalid_count"] == 1
@@ -914,7 +1325,7 @@ class TestNarrativePlannerHook:
         )
         context.state.player.current_area = "void"
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["spawn_quest_npc"]
@@ -979,7 +1390,8 @@ class TestNarrativePlannerHook:
                 "despawn_tick": 9,
             }
         )
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 0
         assert "temp_npc_9" not in context.state.areas.areas["forest"].npc_locations
@@ -1001,7 +1413,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["plant_environmental"]
@@ -1025,7 +1437,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["fill_area"]
@@ -1083,9 +1495,8 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(
-            NarrativePlannerHook(planner=planner, sub_area_manager=manager).execute(context)
-        )
+        hook = _make_hook_with_sub_area_manager(planner, manager)
+        result = asyncio.run(hook.execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert len(manager.calls) == 1
@@ -1128,9 +1539,8 @@ class TestNarrativePlannerHook:
             change_log=[StateChange("flags", "set", "flags.x", True)],
             area_payload={"areas": {"forest": {}}},
         )
-        result = asyncio.run(
-            NarrativePlannerHook(planner=planner, sub_area_manager=manager).execute(context)
-        )
+        hook = _make_hook_with_sub_area_manager(planner, manager)
+        result = asyncio.run(hook.execute(context))
 
         assert result.metadata["applied_count"] == 1
         assert len(manager.calls) == 1
@@ -1138,11 +1548,25 @@ class TestNarrativePlannerHook:
         assert manager.calls[0][1]["id"] == "grove_1"
 
     def test_escalation_l2_directs_npc(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {"kind": "direct_npc", "payload": {
+                        "npc_id": "sailor",
+                        "directive": {"kind": "hint", "topic": "ms_a"},
+                        "priority": "high",
+                    }},
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                ],
+                metadata={"status": "escalation_l2", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
                 "ticks_since_milestone_progress": 8,
                 "escalation_level": 1,
+                "pacing_frozen": True,
             },
             quest_payload={
                 "milestone_states": {"ms_a": {"state": "ACTIVE"}},
@@ -1153,7 +1577,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {"npc_locations": {"sailor": True}}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert "direct_npc" in result.metadata["applied_kinds"]
@@ -1162,11 +1586,29 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.escalation_level == 2
 
     def test_escalation_l3_creates_quest_if_missing(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    CreateQuestPlan(
+                        "dq_ms_a",
+                        {"title": "Urgent: Lead", "summary": "Escalated quest for ms_a."},
+                    ),
+                    {"kind": "direct_npc", "payload": {
+                        "npc_id": "sailor",
+                        "directive": {"kind": "hint", "topic": "ms_a"},
+                        "priority": "high",
+                    }},
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                ],
+                metadata={"status": "escalation_l3", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
                 "ticks_since_milestone_progress": 11,
                 "escalation_level": 2,
+                "pacing_frozen": True,
             },
             quest_payload={
                 "milestone_states": {"ms_a": {"state": "ACTIVE"}},
@@ -1175,7 +1617,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {"npc_locations": {"sailor": True}}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert "create_quest" in result.metadata["applied_kinds"]
@@ -1186,11 +1628,25 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.escalation_level == 3
 
     def test_escalation_l4_crisis_with_freeze(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    {"kind": "escalate", "payload": {"delta": 1}},
+                    {"kind": "adjust_pacing", "payload": {"frozen": True}},
+                    PlantEnvironmentalPlan(
+                        "forest",
+                        {"clue_id": "crisis_clue", "dc": 15, "description": "Crisis sign"},
+                    ),
+                ],
+                metadata={"status": "escalation_l4", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
                 "ticks_since_milestone_progress": 14,
                 "escalation_level": 3,
+                "pacing_frozen": True,
             },
             quest_payload={
                 "milestone_states": {"ms_a": {"state": "ACTIVE"}},
@@ -1201,7 +1657,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert "escalate" in result.metadata["applied_kinds"]
@@ -1212,10 +1668,17 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.pacing_frozen is True
 
     def test_escalation_noop_without_milestone(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[],
+                metadata={"status": "noop", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={
                 "last_run_tick": 3,
                 "ticks_since_milestone_progress": 8,
+                "pacing_frozen": True,
             },
             quest_payload={
                 "milestone_states": {},
@@ -1223,13 +1686,21 @@ class TestNarrativePlannerHook:
             },
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["applied_count"] == 0
         assert result.metadata["planner_metadata"]["status"] == "noop"
 
     def test_area_fill_triggers_when_capacity_available(self) -> None:
+        planner = RecordingPlanner(
+            NarrativePlannerDecision(
+                directives=[
+                    FillAreaPlan("forest", {"label": "New Sub-area", "id": "fill_sub_1"}),
+                ],
+                metadata={"status": "area_fill", "provider": "llm_planner"},
+            )
+        )
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 3},
             quest_payload={
@@ -1239,7 +1710,7 @@ class TestNarrativePlannerHook:
             area_payload={"areas": {"forest": {}}},
         )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert "fill_area" in result.metadata["applied_kinds"]
@@ -1498,6 +1969,7 @@ class TestP36MilestoneDetail:
         assert hook._derive_play_style_tags([{"action_type": "dialogue"}] * 5) == []
 
     def test_execute_updates_play_style_tags_from_behavior_window(self) -> None:
+        planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             change_log=[StateChange("flags", "set", "flags.behavior_window_trigger", True)],
             quest_payload={"milestone_states": {}},
@@ -1507,7 +1979,7 @@ class TestP36MilestoneDetail:
                 {"tick": i, "action_type": "dialogue"},
             )
 
-        result = asyncio.run(NarrativePlannerHook().execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["status"] == "updated"
         assert context.state.narrative_plan.play_style_tags == ["DIALOGUE_HEAVY"]
@@ -1524,7 +1996,7 @@ class TestP36MilestoneDetail:
             change_log=[StateChange("flags", "set", "flags.x", True)],
         )
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_invalid_count"] == 1
@@ -1543,84 +2015,8 @@ class TestP36MilestoneDetail:
         )
         context = _make_context(change_log=[StateChange("flags", "set", "flags.x", True)])
 
-        result = asyncio.run(NarrativePlannerHook(planner=planner).execute(context))
+        result = asyncio.run(_make_full_hook(planner).execute(context))
 
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_invalid_count"] == 1
         assert context.state.narrative_plan.npc_directives == []
-
-    def test_l2_uses_involved_npc_from_milestone(self) -> None:
-        """L2 escalation 使用 milestone involved_npcs[0] 而非硬编码 guild_clerk。"""
-        world = self._world_with_milestone("ms_a", involved_npcs=["sheriff_dane"])
-        context = self._context_with_world(
-            _make_context(
-                narrative_plan_payload={
-                    "last_run_tick": 3,
-                    "ticks_since_milestone_progress": 8,
-                    "escalation_level": 1,
-                    "current_target_milestone": "ms_a",
-                },
-                quest_payload={
-                    "milestone_states": {"ms_a": {"state": "ACTIVE"}},
-                    "dynamic_quests": {
-                        "dq_ms_a": {"status": "active", "title": "Lead", "summary": "ok"},
-                    },
-                },
-            ),
-            world,
-        )
-        asyncio.run(NarrativePlannerHook().execute(context))
-        # strategy_notes is saved to narrative_plan slice
-        strategy = context.state.narrative_plan.strategy_notes
-        assert "sheriff_dane" in strategy
-
-    def test_l2_no_directive_when_no_npc_available(self) -> None:
-        """involved_npcs 为空且附近无 NPC 时不下达 direct_npc。"""
-        context = _make_context(
-            narrative_plan_payload={
-                "last_run_tick": 3,
-                "ticks_since_milestone_progress": 8,
-                "escalation_level": 1,
-            },
-            quest_payload={
-                "milestone_states": {"ms_a": {"state": "ACTIVE"}},
-                "dynamic_quests": {
-                    "dq_ms_a": {"status": "active", "title": "Lead", "summary": "ok"},
-                },
-            },
-        )
-        asyncio.run(NarrativePlannerHook().execute(context))
-        strategy = context.state.narrative_plan.strategy_notes
-        assert "L2 recommend" in strategy
-        assert "no available NPC" in strategy
-
-    def test_l3_create_quest_metadata_includes_key_elements(self) -> None:
-        """L3 urgency 生成的动态任务 metadata 包含 key_elements，summary 使用 narrative_context。"""
-        world = self._world_with_milestone(
-            "ms_a",
-            key_elements=["magic_stone", "prophecy"],
-            involved_npcs=["sage_elder"],
-            narrative_context="Seek the ancient magic stone.",
-        )
-        context = self._context_with_world(
-            _make_context(
-                narrative_plan_payload={
-                    "last_run_tick": 3,
-                    "ticks_since_milestone_progress": 11,
-                    "escalation_level": 2,
-                    "current_target_milestone": "ms_a",
-                },
-                quest_payload={
-                    "milestone_states": {"ms_a": {"state": "ACTIVE"}},
-                    "dynamic_quests": {},
-                },
-            ),
-            world,
-        )
-        result = asyncio.run(NarrativePlannerHook().execute(context))
-        assert result.metadata["planner_metadata"]["status"] == "escalation_l3"
-        dq = context.state.quests.get_dynamic_quest("dq_ms_a")
-        assert dq is not None
-        meta = dq.get("metadata", {})
-        assert meta.get("key_elements") == ["magic_stone", "prophecy"]
-        assert "ancient magic stone" in dq.get("summary", "")

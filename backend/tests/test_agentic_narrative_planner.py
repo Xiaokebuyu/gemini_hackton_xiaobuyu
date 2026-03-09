@@ -1,11 +1,4 @@
-"""Tests for AgenticNarrativePlanner (O-3).
-
-Verifies:
-1. LLM returns valid JSON with directives → plan is returned as-is
-2. LLM returns invalid JSON → fallback to deterministic NarrativePlanner
-3. LLM returns JSON missing 'directives' key → fallback
-4. NarrativePlanner.plan() is now async and behaves identically
-"""
+"""Tests for AgenticNarrativePlanner."""
 
 from __future__ import annotations
 
@@ -14,7 +7,6 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from app.game_core.planning.planner import NarrativePlanner
 from app.narrators import AgenticNarrativePlanner, _format_planner_context
 
 
@@ -63,6 +55,7 @@ def test_valid_json_with_directives_returned() -> None:
     plan_json = json.dumps({
         "strategy_notes": "escalate mildly",
         "directives": [{"kind": "escalate", "payload": {"delta": 1}}],
+        "story_facts": [{"subject": "guild", "relation": "warns_about", "object": "raiders"}],
     })
     llm = _make_llm(plan_json)
     planner = AgenticNarrativePlanner(llm=llm)
@@ -72,64 +65,38 @@ def test_valid_json_with_directives_returned() -> None:
     assert "directives" in result
     assert result["directives"][0]["kind"] == "escalate"
     assert result.get("strategy_notes") == "escalate mildly"
+    assert result.get("story_facts") == [
+        {"subject": "guild", "relation": "warns_about", "object": "raiders"},
+    ]
 
 
-def test_invalid_json_falls_back_to_deterministic() -> None:
-    """LLM returns non-JSON text → fallback to NarrativePlanner output."""
+def test_invalid_json_returns_llm_noop() -> None:
+    """LLM returns non-JSON text → planner returns noop payload."""
     llm = _make_llm("Sorry, I cannot help with that.")
     planner = AgenticNarrativePlanner(llm=llm)
 
     result = asyncio.run(planner.plan(_MINIMAL_CONTEXT))
 
-    # Deterministic planner always returns dict with directives + metadata
     assert isinstance(result, dict)
     assert "directives" in result
     assert "metadata" in result
     provider = result["metadata"].get("provider", "")
-    assert provider == "default_planner"
+    assert provider == "llm_planner"
+    assert result["metadata"].get("reason") == "parse_failed"
+    assert result["story_facts"] == []
 
 
-def test_json_missing_directives_key_falls_back() -> None:
-    """LLM returns valid JSON but without 'directives' key → fallback."""
+def test_json_missing_directives_key_returns_llm_noop() -> None:
+    """LLM returns valid JSON but without 'directives' key → planner returns noop."""
     plan_json = json.dumps({"strategy_notes": "hmm", "actions": []})
     llm = _make_llm(plan_json)
     planner = AgenticNarrativePlanner(llm=llm)
 
     result = asyncio.run(planner.plan(_MINIMAL_CONTEXT))
 
-    # Must come from fallback (has metadata.provider)
     assert "metadata" in result
-    assert result["metadata"].get("provider") == "default_planner"
-
-
-# ------------------------------------------------------------------
-# Tests: NarrativePlanner.plan() async
-# ------------------------------------------------------------------
-
-
-def test_deterministic_planner_is_now_async() -> None:
-    """NarrativePlanner.plan() is async and returns the same structure as before."""
-    planner = NarrativePlanner()
-    context = {
-        "quests": {
-            "available_milestones": [],
-            "active_milestones": [],
-            "dynamic_quests": {},
-        },
-        "narrative_plan": {
-            "escalation_level": 0,
-            "ticks_since_milestone_progress": 0,
-            "pacing_frozen": False,
-        },
-        "current_tick": 1,
-    }
-
-    result = asyncio.run(planner.plan(context))
-
-    assert isinstance(result, dict)
-    assert "directives" in result
-    assert "metadata" in result
-    assert result["metadata"]["provider"] == "default_planner"
+    assert result["metadata"].get("provider") == "llm_planner"
+    assert result["story_facts"] == []
 
 
 def test_format_planner_context_includes_party_and_area_context() -> None:
@@ -194,14 +161,14 @@ def test_format_planner_context_includes_party_and_area_context() -> None:
 
 def test_system_prompt_contains_full_phase3_requirements() -> None:
     prompt = AgenticNarrativePlanner._SYSTEM_PROMPT
-    assert "You are a narrative planner AI for this RPG." in prompt
-    assert "You are NOT the GM" in prompt
-    assert "7 Core Principles" in prompt
-    assert "L0-L5 ladder" in prompt
-    assert "spawn_quest_npc" in prompt
+    assert "你是叙事编剧" in prompt
+    assert "你不是 GM" in prompt
+    assert "story_facts" in prompt
+    assert "设计原则" in prompt
+    assert "升级阶梯" in prompt
     assert "plant_environmental" in prompt
     assert "fill_area" in prompt
-    assert "Output must be strict JSON only" in prompt
-    assert "npc_id must come from Area NPCs" in prompt
-    assert "board_id must come from Quest boards" in prompt
-    assert "Max 3 directives" in prompt
+    assert "严格 JSON" in prompt
+    assert "npc_id 必须来自" in prompt
+    assert "board_id 必须来自" in prompt
+    assert "最多 3 条 directives" in prompt

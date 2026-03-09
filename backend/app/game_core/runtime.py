@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from app.game_core.adapters.firestore_persistence import FirestorePersistencePort
     from app.game_core.orchestration.hooks.ai_osiris import AIOsirisEvaluator
     from app.game_core.orchestration.hooks.gm_narration import GmNarrator
-    from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerProvider
+    from app.game_core.adapters.planner_system import PlannerSystemAssembly
     from app.game_core.state import StateContainer
 from app.game_core.adapters.local_persistence import LocalFilePersistencePort
 from app.game_core.adapters.session_store import SaveResult, SaveStore
@@ -112,14 +112,14 @@ class GameRuntime:
         instance_manager: Any = None,
         gm_narrator_factory: Callable[[WorldInstance, StateContainer], GmNarrator] | None = None,
         osiris_evaluator_factory: Callable[[], AIOsirisEvaluator] | None = None,
-        narrative_planner_factory: Callable[[], NarrativePlannerProvider] | None = None,
+        planner_system_factory: Callable[[], PlannerSystemAssembly] | None = None,
     ) -> None:
         self._save_store = save_store or SaveStore(self._default_persistence_port())
         self._agent_orchestration = agent_orchestration
         self._instance_manager = instance_manager
         self._gm_narrator_factory = gm_narrator_factory
         self._osiris_evaluator_factory = osiris_evaluator_factory
-        self._narrative_planner_factory = narrative_planner_factory
+        self._planner_system_factory = planner_system_factory
         self._world_cache: dict[str, WorldInstance] = {}
         self._execution_locks_guard = asyncio.Lock()
         self._execution_locks: dict[str, asyncio.Lock] = {}
@@ -211,13 +211,10 @@ class GameRuntime:
             world,
             gm_narrator_factory=self._gm_narrator_factory,
             osiris_evaluator_factory=self._osiris_evaluator_factory,
-            narrative_planner_factory=self._narrative_planner_factory,
+            planner_system_factory=self._planner_system_factory,
             instance_manager=self._instance_manager,
         )
-        if self._agent_orchestration is not None:
-            runner = getattr(self._agent_orchestration, "run_post_action_round", None)
-            if callable(runner):
-                runtime.pipeline.set_stage_b_runner(runner)
+        self._bind_runtime_services(runtime)
         resolved_session_id = session_id or self._new_session_id()
         await self._save_store.save_runtime(resolved_session_id, runtime)
         return ManagedSession(
@@ -350,18 +347,17 @@ class GameRuntime:
             world, session_id,
             gm_narrator_factory=self._gm_narrator_factory,
             osiris_evaluator_factory=self._osiris_evaluator_factory,
-            narrative_planner_factory=self._narrative_planner_factory,
+            planner_system_factory=self._planner_system_factory,
             instance_manager=self._instance_manager,
         )
         if runtime is None:
             return None
-        if self._agent_orchestration is not None:
-            runner = getattr(self._agent_orchestration, "run_post_action_round", None)
-            if callable(runner):
-                runtime.pipeline.set_stage_b_runner(runner)
+        self._bind_runtime_services(runtime)
         # 恢复后强制同步队友位置到玩家当前区域
         from app.game_core.orchestration.companion_manager import CompanionManager
         CompanionManager(runtime.state).sync_to_player()
+        self._restore_knowledge_graph(runtime)
+        self._restore_context_windows(runtime)
         phase = str(meta.get("phase", "")).strip() or "character_creation"
         return ManagedSession(
             world_id=world_id,
@@ -374,11 +370,100 @@ class GameRuntime:
         """Persist one managed session through the configured save store."""
         if session.world_id != session.runtime.world.world_id:
             raise ValueError("managed session world_id does not match runtime world")
+        self._sync_knowledge_graph_state(session.runtime)
+        self._save_context_windows(session)
         return await self._save_store.save_runtime(
             session.session_id,
             session.runtime,
             phase=session.phase,
         )
+
+    def _sync_knowledge_graph_state(self, runtime: DefaultRuntime) -> None:
+        """Export WKG actor-private state into NarrativePlanSlice for persistence."""
+        graph = getattr(runtime.tick_coordinator, "knowledge_graph", None)
+        if graph is None or not runtime.state.has_slice("narrative_plan"):
+            return
+        export_fn = getattr(graph, "export_actor_state", None)
+        if not callable(export_fn):
+            return
+        actor_state = export_fn()
+        if actor_state:
+            runtime.state.narrative_plan.set_actor_knowledge(actor_state)
+
+    def _save_context_windows(self, session: ManagedSession) -> None:
+        """Serialize all active ContextWindows + planner history into NarrativePlanSlice."""
+        if not session.runtime.state.has_slice("narrative_plan"):
+            return
+        im = self._instance_manager
+        windows_data: dict[str, Any] = {}
+        if im is not None:
+            iter_fn = getattr(im, "iter_instances", None)
+            if callable(iter_fn):
+                for actor_id, instance in iter_fn():
+                    cw = instance.context_window
+                    if cw is not None and cw.messages:
+                        windows_data[actor_id] = cw.export_messages()
+        # Save planner/blackboard/subsystem histories alongside window data
+        hook = self._find_narrative_planner_hook(session)
+        history_participants = (
+            hook.history_participants()
+            if hook is not None and hasattr(hook, "history_participants")
+            else {}
+        )
+        for history_key, participant in history_participants.items():
+            export_fn = getattr(participant, "export_history", None)
+            if not callable(export_fn):
+                continue
+            history = export_fn()
+            if history:
+                windows_data[str(history_key)] = history
+        if windows_data:
+            session.runtime.state.narrative_plan.set_context_windows_data(windows_data)
+
+    def _restore_context_windows(self, runtime: DefaultRuntime) -> None:
+        """Restore ContextWindows and planner history from NarrativePlanSlice."""
+        if not runtime.state.has_slice("narrative_plan"):
+            return
+        windows_data = runtime.state.narrative_plan.context_windows_data
+        if not isinstance(windows_data, dict) or not windows_data:
+            return
+        im = self._instance_manager
+        planner_data = dict(windows_data)
+        legacy_history = planner_data.pop("__planner__", None)
+        if legacy_history is not None and "__planner_blackboard__" not in planner_data:
+            planner_data["__planner_blackboard__"] = legacy_history
+        if im is not None:
+            get_fn = getattr(im, "get_or_create", None)
+            if callable(get_fn):
+                for actor_id, messages in planner_data.items():
+                    if actor_id.startswith("__"):
+                        continue
+                    if isinstance(messages, list):
+                        instance = get_fn(actor_id)
+                        if instance is not None:
+                            instance.context_window.import_messages(messages)
+        history_payloads = {
+            key: value
+            for key, value in planner_data.items()
+            if isinstance(key, str) and key.startswith("__")
+        }
+        if history_payloads:
+            for hook in runtime.tick_coordinator.settlement_hooks:
+                if not isinstance(hook, NarrativePlannerHook):
+                    continue
+                participants = (
+                    hook.history_participants()
+                    if hasattr(hook, "history_participants")
+                    else {}
+                )
+                for history_key, payload in history_payloads.items():
+                    participant = participants.get(history_key)
+                    if participant is None:
+                        continue
+                    import_fn = getattr(participant, "import_history", None)
+                    if callable(import_fn) and isinstance(payload, list):
+                        import_fn(payload)
+                break
 
     async def list_sessions(self, world_id: str) -> list[SavedSessionInfo]:
         """List saved sessions for one world."""
@@ -479,12 +564,14 @@ class GameRuntime:
                     },
                 )
             ]
-        if persist and int(result.metadata.get("applied_count", 0) or 0) > 0:
+        if persist and (
+            int(result.metadata.get("applied_count", 0) or 0) > 0
+            or int(result.metadata.get("story_fact_count", 0) or 0) > 0
+        ):
             await self.save_session(session)
         return list(result.sse_events)
 
-    @staticmethod
-    def _build_bootstrap_context(session: ManagedSession) -> SettlementContext:
+    def _build_bootstrap_context(self, session: ManagedSession) -> SettlementContext:
         return SettlementContext(
             change_log=[],
             state=session.runtime.state,
@@ -492,7 +579,40 @@ class GameRuntime:
             scene_bus=SceneBus(SceneSlice()),
             _rules_engine=session.runtime.rules_engine,
             _apply_delta=session.runtime.state.apply,
+            knowledge_graph=getattr(session.runtime.tick_coordinator, "knowledge_graph", None),
         )
+
+    def _bind_runtime_services(self, runtime: DefaultRuntime) -> None:
+        if self._agent_orchestration is not None:
+            runner = getattr(self._agent_orchestration, "run_post_action_round", None)
+            if callable(runner):
+                runtime.pipeline.set_stage_b_runner(runner)
+        runtime.tick_coordinator.knowledge_graph = self._resolve_knowledge_graph()
+
+    def _resolve_knowledge_graph(self) -> Any | None:
+        return getattr(
+            getattr(self._agent_orchestration, "_memory_retriever", None),
+            "_graph",
+            None,
+        )
+
+    @staticmethod
+    def _restore_knowledge_graph(runtime: DefaultRuntime) -> None:
+        if not runtime.state.has_slice("narrative_plan"):
+            return
+        graph = getattr(runtime.tick_coordinator, "knowledge_graph", None)
+        if graph is None:
+            return
+        # 1. Restore story facts (existing)
+        facts = runtime.state.narrative_plan.story_facts
+        if facts:
+            graph.inject_story_facts(facts)
+        # 2. Restore actor-private knowledge (new)
+        actor_knowledge = runtime.state.narrative_plan.actor_knowledge
+        if actor_knowledge:
+            import_fn = getattr(graph, "import_actor_state", None)
+            if callable(import_fn):
+                import_fn(actor_knowledge)
 
     @staticmethod
     def _find_narrative_planner_hook(

@@ -119,7 +119,7 @@ class SaveStore:
         *,
         gm_narrator_factory: Any = None,
         osiris_evaluator_factory: Any = None,
-        narrative_planner_factory: Any = None,
+        planner_system_factory: Any = None,
         instance_manager: Any = None,
     ) -> DefaultRuntime | None:
         """Load and restore one runtime using an already loaded world."""
@@ -128,7 +128,7 @@ class SaveStore:
             session_id,
             gm_narrator_factory=gm_narrator_factory,
             osiris_evaluator_factory=osiris_evaluator_factory,
-            narrative_planner_factory=narrative_planner_factory,
+            planner_system_factory=planner_system_factory,
             instance_manager=instance_manager,
         )
         return runtime
@@ -140,7 +140,7 @@ class SaveStore:
         *,
         gm_narrator_factory: Any = None,
         osiris_evaluator_factory: Any = None,
-        narrative_planner_factory: Any = None,
+        planner_system_factory: Any = None,
         instance_manager: Any = None,
     ) -> tuple[DefaultRuntime | None, dict[str, Any]]:
         """Load one runtime plus persisted metadata using an already loaded world."""
@@ -153,7 +153,7 @@ class SaveStore:
             state_payload,
             gm_narrator_factory=gm_narrator_factory,
             osiris_evaluator_factory=osiris_evaluator_factory,
-            narrative_planner_factory=narrative_planner_factory,
+            planner_system_factory=planner_system_factory,
             instance_manager=instance_manager,
         )
         return runtime, meta_payload

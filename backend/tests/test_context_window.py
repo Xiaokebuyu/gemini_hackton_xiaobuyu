@@ -69,13 +69,15 @@ class TestContextWindow:
         assert result is False
 
     def test_add_message_returns_true_at_threshold(self) -> None:
-        cw = ContextWindow(actor_id="npc_01", max_tokens=100, overflow_threshold=0.9)
-        result = cw.add_message(_msg(tokens=90))   # exactly 90 %
+        # graphize_counter reaches graphize_threshold exactly
+        cw = ContextWindow(actor_id="npc_01", max_tokens=1000, graphize_threshold=90)
+        result = cw.add_message(_msg(tokens=90))   # exactly at threshold
         assert result is True
 
     def test_add_message_returns_true_above_threshold(self) -> None:
-        cw = ContextWindow(actor_id="npc_01", max_tokens=100, overflow_threshold=0.9)
-        result = cw.add_message(_msg(tokens=95))   # 95 %
+        # graphize_counter exceeds graphize_threshold
+        cw = ContextWindow(actor_id="npc_01", max_tokens=1000, graphize_threshold=90)
+        result = cw.add_message(_msg(tokens=95))   # above threshold
         assert result is True
 
     def test_should_graphize_false_below_threshold(self) -> None:
@@ -84,7 +86,8 @@ class TestContextWindow:
         assert cw.should_graphize is False
 
     def test_should_graphize_true_at_threshold(self) -> None:
-        cw = ContextWindow(actor_id="npc_01", max_tokens=100, overflow_threshold=0.9)
+        # graphize_counter-based threshold (new in P19-C)
+        cw = ContextWindow(actor_id="npc_01", max_tokens=1000, graphize_threshold=90)
         cw.add_message(_msg(tokens=90))
         assert cw.should_graphize is True
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from app.game_core.adapters.llm import LlmPort
@@ -18,7 +18,6 @@ from app.game_core.narrative.context import AgentContext
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.models import AgentResult
 from app.game_core.orchestration.hooks.gm_narration import GmNarrationDecision
-from app.game_core.planning.planner import NarrativePlanner
 from app.game_core.state import StateContainer
 
 logger = logging.getLogger(__name__)
@@ -169,84 +168,228 @@ def _agent_result_to_decision(result: AgentResult) -> GmNarrationDecision:
 
 
 class AgenticNarrativePlanner:
-    """LLM-driven narrative planner with deterministic fallback (O-3).
+    """LLM-driven narrative planner (P18, P19-D, P20-1b).
 
-    Calls LLM with a compact game-state summary and expects a JSON plan
-    with ``directives``. Falls back to ``NarrativePlanner`` on any parse
-    failure.
+    When an *executor* is provided the planner runs as a multi-turn agent that
+    can call read_design_skill / list_design_skills tools before producing its
+    JSON plan.  Without an executor it falls back to single-shot text
+    generation (legacy behaviour).
+
+    Maintains a sliding history window (max 100K tokens) of past decisions
+    so the model has continuity across planning rounds.
     """
 
-    _SYSTEM_PROMPT = """You are a narrative planner AI for this RPG.
-You are NOT the GM and must never output narration.
+    _SYSTEM_PROMPT = """你是叙事编剧。根据玩家当前处境，编排"下一幕"。
+你不是 GM，不输出叙述文字，只输出结构化 JSON 指令。
 
-Output must be strict JSON only, no markdown.
+## 输出格式（严格 JSON，不加 markdown）
 {
-  "strategy_notes": "<brief reasoning>",
+  "reasoning": "<简要推理，为什么选择这些指令>",
   "directives": [
     {"kind": "...", "payload": {...}}
   ],
-  "metadata": {}
+  "story_facts": [
+    {"subject": "entity_id", "relation": "relation_type", "object": "entity_id"}
+  ],
+  "strategy_notes": "<给自己的笔记，下次运行时会看到>",
+  "next_trigger_hint": "player_moves_or_3_ticks"
 }
 
-Rules:
-1. Never invent identifiers. npc_id must come from Area NPCs, board_id must come from Quest boards.
-2. If no safe intervention exists, return an empty directives array.
-3. Max 3 directives.
-4. Never emit malformed JSON.
+## 规则
+1. 不要发明标识符。npc_id 必须来自"可用 NPC"列表，board_id 必须来自"任务板"列表。
+2. 如果没有安全的干预方式，返回空 directives 数组。
+3. 最多 3 条 directives。
+4. story_facts 记录本次编排确立的世界事实（三元组），relation 只能是：knows_about / interacted_with / made_promise / related_to / has_opinion_of。NPC 会通过知识图谱读到这些事实。
+5. strategy_notes 是你的私人笔记，只有你下次运行时能看到。
+6. direct_npc 的 directive.kind 只能是：talk（主动找玩家说话）、approach（接近玩家）、react（对局面反应）、inform（分享信息）。
+7. directive 只描述行为意图和话题，不要写完整台词。正确："topic": "西部牧场的委托"。错误："content": "冒险者，你听说西部牧场的事了吗？"
 
-7 Core Principles:
-1) Protect the narrative arc; avoid deviating from milestone progression.
-2) Blend interventions into nearby scene context.
-3) Respect pacing and escalate pressure gradually.
-4) Keep interventions progressive, not jumpy.
-5) Adapt to observed player style and recent behavior.
-6) Avoid repetitive actions that add no new progress.
-7) Keep every directive minimal and high signal.
+## 设计原则
+1. 保护叙事弧线，不偏离里程碑路径。
+2. 干预融入场景，不突兀。
+3. 尊重节奏，逐步施压。
+4. 渐进推进，不跳跃。
+5. 适应玩家风格和近期行为。
+6. 避免重复无效干预。
+7. 每条指令最小且高信号。
 
-L0-L5 ladder:
-- L0: monitor only, no intervention.
-- L1: soft hinting (environmental nudge / light bulletin tone).
-- L2: targeted recommendation through relevant NPC.
-- L3: urgent guidance to accelerate stalled progress.
-- L4: hard pressure with world deterioration.
-- L5: final warning and strong escalation.
+## 升级阶梯
+- L0: 仅监控，不干预。
+- L1: 环境暗示（bulletin / 轻量线索）。
+- L2: 通过相关 NPC 定向推荐。
+- L3: 紧急引导，加速停滞进展。
+- L4: 高压，世界恶化迹象。
+- L5: 最终警告，强力升级。
 
-All supported directive types (with payload fields):
+## 可用指令
+- create_quest: {"kind":"create_quest","payload":{"quest_id":"dq_x","title":"...","summary":"...","status":"available","metadata":{},...}}
+- direct_npc: {"kind":"direct_npc","payload":{"npc_id":"...","directive":{"kind":"talk|approach|react|inform","topic":"..."},"priority":"high|medium|low"}}
+- publish_bulletin: {"kind":"publish_bulletin","payload":{"board_id":"...","area_id":"...","title":"...","content":"...",...}}
 - escalate: {"kind":"escalate","payload":{"delta":1}}
-- direct_npc: {"kind":"direct_npc","payload":{"npc_id":"...","directive":{"kind":"...","...":...},"priority":"high|medium|low","expires_at_tick":123}}
-- publish_bulletin: {"kind":"publish_bulletin","payload":{"board_id":"...","area_id":"...","title":"...","content":"...","metadata":{"quest_id":"dq_x","source_milestone":"ms_x"},"notify_resident_npcs":false}}
-- create_quest: {"kind":"create_quest","payload":{"quest_id":"dq_x","title":"...","summary":"...","status":"available","metadata":{}}}
 - adjust_pacing: {"kind":"adjust_pacing","payload":{"frozen":true}}
 - retire_quest: {"kind":"retire_quest","payload":{"quest_id":"dq_x"}}
-- spawn_quest_npc: {"kind":"spawn_quest_npc","payload":{"npc_id":"temp_...", "area_id":"...", "location_id":"...", "role":"...", "description":"...", "dialogue_hook":"..."}}
-- plant_environmental: {"kind":"plant_environmental","payload":{"area_id":"...","dc":12,"description":"...","clue_id":"clue_x"}}
+- plant_environmental: {"kind":"plant_environmental","payload":{"area_id":"...","dc":12,"description":"..."}}
 - fill_area: {"kind":"fill_area","payload":{"area_id":"...","id":"fill_1","label":"...","description":"..."}}
-
-Always return strategy_notes including escalation intention and why the selected directives are safe."""
+- update_quest: {"kind":"update_quest","payload":{"quest_id":"dq_x","current_step":"...","next_steps":["..."],"hints":["..."]}}
+- curate_shop: {"kind":"curate_shop","payload":{"npc_id":"...","add_items":[{"item_id":"...","count":5}],"remove_items":["old_item_id"],"restock_items":[{"item_id":"...","count":10}]}}
+"""
 
     def __init__(
         self,
         llm: LlmPort,
-        fallback: NarrativePlanner | None = None,
+        executor: AgenticExecutor | None = None,
+        design_skill_port: Any = None,
+        world_id: str = "",
+        *,
+        role: str = "planner",
+        system_prompt: str | None = None,
+        provider_name: str = "llm_planner",
+        history_key: str = "__planner__",
+        context_formatter: Callable[[dict[str, Any]], str] | None = None,
+        allowed_skill_categories: list[str] | None = None,
     ) -> None:
         self._llm = llm
-        self._fallback = fallback or NarrativePlanner()
+        self._executor = executor
+        self._design_skill_port = design_skill_port
+        self._world_id = world_id
+        self._role = role
+        self._system_prompt = system_prompt or self._SYSTEM_PROMPT
+        self._provider_name = provider_name
+        self._history_key = history_key
+        self._context_formatter = context_formatter or _format_planner_context
+        self._allowed_skill_categories = list(allowed_skill_categories or [])
+        self._history: list[dict[str, Any]] = []  # sliding decision history
+        self._history_tokens: int = 0
+        self._max_history_tokens: int = 100_000
 
     async def plan(self, context: dict[str, Any]) -> dict[str, Any]:
-        user_msg = _format_planner_context(context)
-        try:
-            response = await self._llm.generate(
-                self._SYSTEM_PROMPT,
-                [{"role": "user", "parts": [{"text": user_msg}]}],
-                [],  # no tools — pure JSON text output
+        user_msg = self._context_formatter(context)
+
+        if self._executor is not None:
+            # Multi-turn agent: the LLM may call read_design_skill / list_design_skills
+            # before producing its final JSON plan.
+            # world_id: prefer the value injected into the context dict at call time
+            # (from NarrativePlannerHook._build_planner_context), falling back to
+            # the value stored at construction time (from deps.py).
+            effective_world_id = str(
+                context.get("__world_id__") or self._world_id or ""
             )
-            text = (response.text or "").strip()
+            agent_ctx = AgentContext(
+                role=self._role,
+                world=context.get("__world__"),
+                state=context.get("__state__"),
+                metadata={
+                    "design_skill_port": self._design_skill_port,
+                    "world_id": effective_world_id,
+                    "allowed_skill_categories": list(self._allowed_skill_categories),
+                },
+            )
+            try:
+                result = await self._executor.run_agentic(
+                    role=self._role,
+                    context=agent_ctx,
+                    system_prompt=self._system_prompt,
+                    user_message=user_msg,
+                    max_turns=4,
+                    conversation_history=list(self._history),
+                )
+                text = (result.text or "").strip()
+            except Exception:
+                logger.debug(
+                    "AgenticNarrativePlanner: multi-turn LLM call failed, returning noop"
+                )
+                return {
+                    "directives": [],
+                    "strategy_notes": "",
+                    "story_facts": [],
+                    "metadata": {
+                        "status": "noop",
+                        "provider": self._provider_name,
+                        "reason": "agent_failed",
+                    },
+                }
+        else:
+            # Single-shot fallback (legacy behaviour)
+            history = list(self._history)
+            history.append({"role": "user", "parts": [{"text": user_msg}]})
+            try:
+                response = await self._llm.generate(
+                    self._system_prompt,
+                    history,
+                    [],  # no tools — pure JSON text output
+                )
+                text = (response.text or "").strip()
+            except Exception:
+                logger.debug("AgenticNarrativePlanner: LLM/parse failed, returning noop")
+                return {
+                    "directives": [],
+                    "strategy_notes": "",
+                    "story_facts": [],
+                    "metadata": {
+                        "status": "noop",
+                        "provider": self._provider_name,
+                        "reason": "parse_failed",
+                    },
+                }
+
+        try:
+            # Strip possible markdown code block wrapping
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
             parsed = json.loads(text)
             if isinstance(parsed, dict) and "directives" in parsed:
+                # Record this round to history
+                self._append_history(user_msg, text)
                 return parsed
         except Exception:
-            logger.debug("AgenticNarrativePlanner: parse failed, using deterministic fallback")
-        return await self._fallback.plan(context)
+            logger.debug("AgenticNarrativePlanner: JSON parse failed, returning noop")
+        # No fallback — return empty noop
+        return {
+            "directives": [],
+            "strategy_notes": "",
+            "story_facts": [],
+            "metadata": {"status": "noop", "provider": self._provider_name, "reason": "parse_failed"},
+        }
+
+    @property
+    def history_key(self) -> str:
+        return self._history_key
+
+    async def evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
+        return await self.plan(context)
+
+    def _append_history(self, user_msg: str, model_output: str) -> None:
+        """Append this round's I/O to history; FIFO-evict if over token budget."""
+        user_tokens = max(1, len(user_msg) // 4)
+        model_tokens = max(1, len(model_output) // 4)
+        self._history.append({"role": "user", "parts": [{"text": user_msg}]})
+        self._history.append({"role": "model", "parts": [{"text": model_output}]})
+        self._history_tokens += user_tokens + model_tokens
+        # FIFO eviction: pop in pairs (1 user + 1 model = 1 round)
+        while self._history_tokens > self._max_history_tokens and len(self._history) >= 2:
+            old_user = self._history.pop(0)
+            old_model = self._history.pop(0)
+            self._history_tokens -= max(1, len(old_user["parts"][0]["text"]) // 4)
+            self._history_tokens -= max(1, len(old_model["parts"][0]["text"]) // 4)
+
+    def export_history(self) -> list[dict[str, Any]]:
+        """Serialize history for persistence."""
+        return [
+            {"role": h["role"], "text": h["parts"][0]["text"]}
+            for h in self._history
+        ]
+
+    def import_history(self, data: list[dict[str, Any]]) -> None:
+        """Restore history from persistence."""
+        self._history = []
+        self._history_tokens = 0
+        for entry in (data or []):
+            if not isinstance(entry, dict):
+                continue
+            role = entry.get("role", "user")
+            text = entry.get("text", "")
+            self._history.append({"role": role, "parts": [{"text": text}]})
+            self._history_tokens += max(1, len(text) // 4)
 
 
 def _format_planner_context(ctx: dict[str, Any]) -> str:
@@ -295,6 +438,14 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
         "## 当前叙事计划状态",
         f"Strategy notes: {np_ctx.get('strategy_notes', '') or '(none)'}",
     ]
+    pending_directives = np_ctx.get("npc_directives", [])
+    if pending_directives:
+        lines += ["", "## 未消费指令（避免重复下发）"]
+        for d in pending_directives:
+            lines.append(
+                f"  npc={d.get('npc_id', '?')} kind={d.get('kind', '?')} "
+                f"priority={d.get('priority', '?')} issued_at={d.get('issued_at_tick', 0)}"
+            )
     dynamic_quests = q.get("dynamic_quests", {})
     if dynamic_quests:
         dq_parts = [
@@ -304,6 +455,16 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
         lines.append(f"Dynamic quests: {', '.join(dq_parts)}")
     else:
         lines.append("Dynamic quests: none")
+
+    # ---- 世界中已确立的事实 ----
+    story_facts = ctx.get("story_facts", [])
+    if story_facts:
+        lines += ["", "## 世界中已确立的事实"]
+        for fact in story_facts[-20:]:  # 只取最近 20 条
+            subj = fact.get("subject", "?")
+            rel = fact.get("relation", "?")
+            obj = fact.get("object", "?")
+            lines.append(f"  {subj} --[{rel}]--> {obj}")
 
     # ---- Part 3: 玩家行为画像 ----
     lines += [
@@ -318,6 +479,9 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
             f"location={location.get('location_id') or '(none)'}"
         ),
     ]
+    danger = ctx.get("danger_level", 0.0)
+    if danger:
+        lines.append(f"Danger level: {danger:.1f}")
     party = ctx.get("party", [])
     if party:
         party_parts = [str(member.get("id", "?")) for member in party if isinstance(member, dict)]
@@ -427,4 +591,161 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
         ]
         lines.append("Pending events:\n" + "\n".join(pending_lines))
 
+    planner_events = ctx.get("planner_events", [])
+    if isinstance(planner_events, list) and planner_events:
+        lines += [
+            "",
+            "## Planner Events",
+        ]
+        for item in planner_events[:12]:
+            if not isinstance(item, dict):
+                continue
+            payload = item.get("payload", {})
+            if not isinstance(payload, dict):
+                payload = {}
+            payload_summary = []
+            for key in ("milestone_id", "quest_id", "area_id", "location_id", "npc_id", "event_id", "status", "to_state"):
+                value = payload.get(key)
+                if value in ("", None):
+                    continue
+                payload_summary.append(f"{key}={value}")
+            if not payload_summary and payload:
+                payload_summary.append(json.dumps(payload, ensure_ascii=False, default=str)[:120])
+            lines.append(
+                "  "
+                + f"{item.get('kind', '?')} "
+                + (
+                    f"[source={item.get('source', '?')}, round={item.get('round_index', 0)}, "
+                    f"emitter={item.get('emitter', item.get('source', '?'))}] "
+                )
+                + (" ".join(payload_summary) if payload_summary else "")
+            )
+
+    replay_trace = ctx.get("replay_trace", {})
+    if isinstance(replay_trace, dict) and replay_trace:
+        round_count = replay_trace.get("round_count", 0)
+        stop_reason = replay_trace.get("stop_reason", "steady_state")
+        lines.append(f"Planner replay: rounds={round_count}, stop_reason={stop_reason}")
+
     return "\n".join(lines)
+
+
+def _format_subsystem_context(ctx: dict[str, Any]) -> str:
+    lines = [_format_planner_context(ctx)]
+    event = ctx.get("current_event")
+    if not isinstance(event, dict):
+        event = ctx.get("event", {})
+    if isinstance(event, dict):
+        lines.extend(
+            [
+                "",
+                "## 当前事件",
+                f"kind: {event.get('kind', 'tick_settlement')}",
+                f"tick: {event.get('tick', 0)}",
+                f"source: {event.get('source', 'unknown')}",
+                f"round: {event.get('round_index', 0)}",
+            ]
+        )
+        payload = event.get("payload", {})
+        if isinstance(payload, dict) and payload:
+            lines.append("payload: " + json.dumps(payload, ensure_ascii=False, default=str))
+    return "\n".join(lines)
+
+
+PLANNER_BLACKBOARD_PROMPT = """你是叙事规划黑板协调器。
+你不直接下发业务 directives；你的职责是维护全局策略、记录 story_facts，并给下轮规划留下高密度 strategy_notes。
+
+## 输出格式（严格 JSON）
+{
+  "directives": [],
+  "story_facts": [
+    {"subject": "entity_id", "relation": "relation_type", "object": "entity_id"}
+  ],
+  "strategy_notes": "<新的全局策略笔记>",
+  "next_scheduled_tick": 123
+}
+
+## 规则
+1. directives 必须是空数组。
+2. 只总结真正稳定的世界事实，不记录临时猜测。
+3. strategy_notes 用于协调 QuestManager / NpcDirector / WorldBuilder / NarrativeWeaver 的长期方向。
+4. 如果没有新的高价值判断，保留简短空白更新，不要编造。
+5. 你会看到本轮完整 planner_events；只做总结和协调，不输出业务 directive。
+"""
+
+
+QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
+你只负责任务生命周期：create_quest / publish_bulletin / retire_quest / update_quest。
+
+## 输出格式（严格 JSON）
+{
+  "directives": [{"kind": "...", "payload": {...}}],
+  "story_facts": [],
+  "strategy_notes": ""
+}
+
+## 规则
+1. 只能输出 create_quest / publish_bulletin / retire_quest / update_quest。
+2. 任务必须紧贴当前里程碑和已知世界状态。
+3. 如果没有明确需要，不要重复投递已有任务。
+4. 最多 3 条 directives。
+5. update_quest 用于在关键节点完成后推送步骤指引；只能对 status=active 的任务使用，字段增量合并（只提供需要更新的字段）。
+6. 只围绕 current_event 决策；如果 current_event 与任务生命周期无关，返回空 directives。
+"""
+
+
+NPC_DIRECTOR_AGENT_PROMPT = """你是 NpcDirector 子系统。
+你只负责 NPC 行为编排：direct_npc / spawn_quest_npc。
+
+## 输出格式（严格 JSON）
+{
+  "directives": [{"kind": "...", "payload": {...}}],
+  "story_facts": [],
+  "strategy_notes": ""
+}
+
+## 规则
+1. 只能输出 direct_npc / spawn_quest_npc。
+2. direct_npc 只描述行为意图和话题，不写完整台词。
+3. 优先复用当前区域已存在 NPC；只有必要时才生成临时 NPC。
+4. 最多 3 条 directives。
+5. 只围绕 current_event 决策；如果 current_event 不要求 NPC 出手，返回空 directives。
+"""
+
+
+WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
+你只负责世界填充：plant_environmental / fill_area。
+
+## 输出格式（严格 JSON）
+{
+  "directives": [{"kind": "...", "payload": {...}}],
+  "story_facts": [],
+  "strategy_notes": ""
+}
+
+## 规则
+1. 只能输出 plant_environmental / fill_area。
+2. 环境内容必须和当前区域、里程碑、世界规则一致。
+3. 不要重复制造已经存在的地点。
+4. 最多 3 条 directives。
+5. 只围绕 current_event 决策；如果 current_event 不要求世界填充，返回空 directives。
+"""
+
+
+NARRATIVE_WEAVER_AGENT_PROMPT = """你是 NarrativeWeaver 子系统。
+你负责叙事编织和长期推进，可以建议 retire_quest / adjust_pacing / escalate。
+
+## 输出格式（严格 JSON）
+{
+  "directives": [{"kind": "...", "payload": {...}}],
+  "story_facts": [],
+  "strategy_notes": ""
+}
+
+## 规则
+1. 只能输出 retire_quest / adjust_pacing / escalate。
+2. 只有在长期停滞、任务失效或叙事需要降温/升压时才出手。
+3. 优先保持叙事弧线稳定，不要频繁震荡节奏。
+4. 最多 2 条 directives。
+5. 只围绕 current_event 决策；如果 current_event 没有长期维护意义，返回空 directives。
+"""

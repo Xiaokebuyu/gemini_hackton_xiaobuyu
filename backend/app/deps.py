@@ -99,15 +99,114 @@ def _build_game_runtime() -> GameRuntime:
 
         gm_narrator_factory = _build_gm_narrator
 
-    narrative_planner_factory = None
+    planner_system_factory = None
     if llm_provider is not None:
-        llm = llm_provider
+        def _build_planner_system() -> Any:
+            from app.game_core.adapters.planner_system import PlannerSystemAssembly
+            from app.game_core.narrative.executor import AgenticExecutor
+            from app.game_core.narrative.registry import RoleToolRegistry
+            from app.game_core.narrative.planner_tools import register_planner_tools
+            from app.llm_gemini import GeminiLlmAdapter
+            from app.design_skill_provider import LocalDesignSkillProvider
+            from app.narrators import (
+                AgenticNarrativePlanner,
+                NARRATIVE_WEAVER_AGENT_PROMPT,
+                NPC_DIRECTOR_AGENT_PROMPT,
+                PLANNER_BLACKBOARD_PROMPT,
+                QUEST_MANAGER_AGENT_PROMPT,
+                WORLD_BUILDER_AGENT_PROMPT,
+                _format_subsystem_context,
+            )
 
-        def _build_narrative_planner() -> Any:
-            from app.narrators import AgenticNarrativePlanner
-            return AgenticNarrativePlanner(llm=llm)
+            blackboard_registry = RoleToolRegistry()
+            quest_registry = RoleToolRegistry()
+            npc_registry = RoleToolRegistry()
+            world_registry = RoleToolRegistry()
+            weaver_registry = RoleToolRegistry()
+            register_planner_tools(
+                quest_registry,
+                roles=["quest_manager"],
+            )
+            register_planner_tools(
+                npc_registry,
+                roles=["npc_director"],
+            )
+            register_planner_tools(
+                world_registry,
+                roles=["world_builder"],
+            )
+            register_planner_tools(
+                weaver_registry,
+                roles=["narrative_weaver"],
+            )
 
-        narrative_planner_factory = _build_narrative_planner
+            blackboard_llm = GeminiLlmAdapter(profile_name="planner_blackboard")
+            quest_llm = GeminiLlmAdapter(profile_name="quest_manager")
+            npc_llm = GeminiLlmAdapter(profile_name="npc_director")
+            world_llm = GeminiLlmAdapter(profile_name="world_builder")
+            weaver_llm = GeminiLlmAdapter(profile_name="narrative_weaver")
+
+            return PlannerSystemAssembly(
+                blackboard=AgenticNarrativePlanner(
+                    llm=blackboard_llm,
+                    executor=AgenticExecutor(tool_registry=blackboard_registry, llm=blackboard_llm),
+                    world_id="",
+                    role="planner_blackboard",
+                    system_prompt=PLANNER_BLACKBOARD_PROMPT,
+                    provider_name="planner_blackboard",
+                    history_key="__planner_blackboard__",
+                ),
+                quest_manager_agent=AgenticNarrativePlanner(
+                    llm=quest_llm,
+                    executor=AgenticExecutor(tool_registry=quest_registry, llm=quest_llm),
+                    design_skill_port=LocalDesignSkillProvider(),
+                    world_id="",
+                    role="quest_manager",
+                    system_prompt=QUEST_MANAGER_AGENT_PROMPT,
+                    provider_name="quest_manager_agent",
+                    history_key="__quest_manager_agent__",
+                    context_formatter=_format_subsystem_context,
+                    allowed_skill_categories=["quests", "social"],
+                ),
+                npc_director_agent=AgenticNarrativePlanner(
+                    llm=npc_llm,
+                    executor=AgenticExecutor(tool_registry=npc_registry, llm=npc_llm),
+                    design_skill_port=LocalDesignSkillProvider(),
+                    world_id="",
+                    role="npc_director",
+                    system_prompt=NPC_DIRECTOR_AGENT_PROMPT,
+                    provider_name="npc_director_agent",
+                    history_key="__npc_director_agent__",
+                    context_formatter=_format_subsystem_context,
+                    allowed_skill_categories=["npcs", "social"],
+                ),
+                world_builder_agent=AgenticNarrativePlanner(
+                    llm=world_llm,
+                    executor=AgenticExecutor(tool_registry=world_registry, llm=world_llm),
+                    design_skill_port=LocalDesignSkillProvider(),
+                    world_id="",
+                    role="world_builder",
+                    system_prompt=WORLD_BUILDER_AGENT_PROMPT,
+                    provider_name="world_builder_agent",
+                    history_key="__world_builder_agent__",
+                    context_formatter=_format_subsystem_context,
+                    allowed_skill_categories=["areas", "environments", "encounters"],
+                ),
+                narrative_weaver_agent=AgenticNarrativePlanner(
+                    llm=weaver_llm,
+                    executor=AgenticExecutor(tool_registry=weaver_registry, llm=weaver_llm),
+                    design_skill_port=LocalDesignSkillProvider(),
+                    world_id="",
+                    role="narrative_weaver",
+                    system_prompt=NARRATIVE_WEAVER_AGENT_PROMPT,
+                    provider_name="narrative_weaver_agent",
+                    history_key="__narrative_weaver_agent__",
+                    context_formatter=_format_subsystem_context,
+                    allowed_skill_categories=["narrative"],
+                ),
+            )
+
+        planner_system_factory = _build_planner_system
     # ── end app-layer construction ─────────────────────────────────────────────
 
     return GameRuntime(
@@ -115,7 +214,7 @@ def _build_game_runtime() -> GameRuntime:
         agent_orchestration=agent_orchestration,
         gm_narrator_factory=gm_narrator_factory,
         osiris_evaluator_factory=osiris_evaluator_factory,
-        narrative_planner_factory=narrative_planner_factory,
+        planner_system_factory=planner_system_factory,
     )
 
 

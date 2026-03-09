@@ -3,6 +3,7 @@
 from app.game_core.orchestration.hooks.ai_osiris import AIOsirisHook
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook, SettlementHook
 from app.game_core.orchestration.hooks.campfire import CampfireHook
+from app.game_core.orchestration.hooks.directive_trigger import DirectiveTriggerHook
 from app.game_core.orchestration.hooks.dynamic_sub_area_expiry import DynamicSubAreaExpiryHook
 from app.game_core.orchestration.hooks.encounter import EncounterHook
 from app.game_core.orchestration.hooks.event_condition import EventConditionHook
@@ -22,6 +23,7 @@ from app.game_core.orchestration.hooks.time_advance import TimeAdvanceHook
 __all__ = [
     "AIOsirisHook",
     "CampfireHook",
+    "DirectiveTriggerHook",
     "DynamicSubAreaExpiryHook",
     "EncounterHook",
     "EventConditionHook",
