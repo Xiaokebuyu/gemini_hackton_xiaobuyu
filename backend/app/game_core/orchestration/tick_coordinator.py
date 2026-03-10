@@ -21,6 +21,7 @@ from app.game_core.rules import RulesEngine
 from app.game_core.rules.models import ExecuteResult
 from app.game_core.state import StateChange, StateContainer, StateDelta
 from app.game_core.orchestration.event_engine import run_inline_event_check
+from app.game_core.orchestration.combat_sse import extract_combat_sse
 
 
 _SEMANTIC_TAGS: dict[str, list[str]] = {
@@ -115,6 +116,9 @@ class TickCoordinator:
             )
         self._dispatch_companion_events(result)   # Phase C3
         self._sync_party_to_player()
+        # Phase 9: immediate combat SSE events
+        combat_events = extract_combat_sse(result.action_type, result.metadata)
+        result.sse_events.extend(combat_events)
         self.accumulate(result.time_cost)
         while self.check_settlement():
             before_accumulated = self.state.time.accumulated

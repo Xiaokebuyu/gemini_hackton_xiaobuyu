@@ -23,8 +23,6 @@ _BINARY_ACTION_COMMANDS = frozenset({
     "lockpick",
     "night_watch",
     "enter_hostile",
-    "flee",
-    "shove",
 })
 
 
@@ -90,8 +88,6 @@ def normalize_outcome(
             metadata,
             ("total", "dc"),
             ("passive_total", "dc"),
-            ("flee_total", "escape_dc"),
-            ("shove_total", "resist_dc"),
         )
         if margin is not None:
             outcome["margin"] = margin

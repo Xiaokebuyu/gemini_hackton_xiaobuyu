@@ -228,6 +228,8 @@ class FastAPIInputPort:
             "sell",
             "talk",
             "greet",
+            "accept_quest",
+            "report_quest",
             "inspect_item",
             "ask_quest",
             "ask_progress",
@@ -239,7 +241,8 @@ class FastAPIInputPort:
                 **base,
                 code="invalid_intent",
                 message=(
-                    "npc intent must be browse, buy, sell, talk, greet, "
+                    "npc intent must be browse, buy, sell, talk, greet, accept_quest, "
+                    "report_quest, "
                     "inspect_item, ask_quest, ask_progress, ask_location, "
                     "ask_requirements, or ask_reward"
                 ),
@@ -335,6 +338,52 @@ class FastAPIInputPort:
                     "kind": "snapshot",
                     "snapshot_type": _QUEST_SNAPSHOT_INTENTS[intent],
                     "quest_id": str(quest_id),
+                },
+            )
+        if intent == "accept_quest":
+            if quest_id is None:
+                return self._rejected_action(
+                    **base,
+                    code="missing_quest",
+                    message="quest_id is required for npc accept_quest",
+                )
+            return self._resolved_action(
+                target_kind="npc",
+                target_id=target_id,
+                intent="accept_quest",
+                item_id=None,
+                quest_id=str(quest_id),
+                count=1,
+                execution={
+                    "kind": "pipeline_action",
+                    "action_type": "accept_quest",
+                    "params": {
+                        "npc_id": target_id,
+                        "quest_id": str(quest_id),
+                    },
+                },
+            )
+        if intent == "report_quest":
+            if quest_id is None:
+                return self._rejected_action(
+                    **base,
+                    code="missing_quest",
+                    message="quest_id is required for npc report_quest",
+                )
+            return self._resolved_action(
+                target_kind="npc",
+                target_id=target_id,
+                intent="report_quest",
+                item_id=None,
+                quest_id=str(quest_id),
+                count=1,
+                execution={
+                    "kind": "pipeline_action",
+                    "action_type": "report_quest",
+                    "params": {
+                        "npc_id": target_id,
+                        "quest_id": str(quest_id),
+                    },
                 },
             )
         return self._resolved_action(

@@ -1,66 +1,128 @@
-"""Tests for kill_count flag writing on monster defeat (P5 Phase 8)."""
+"""Tests for kill_count flag writing on monster defeat via v2 combat_attack."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import random
+import unittest.mock as mock
+from typing import Any
 
-import pytest
-
-from app.game_core.content import WorldInstance
-from app.game_core.content.registries import ItemRegistry, MapRegistry, MonsterRegistry
-from app.game_core.rules import Command, RulesEngine
+from app.game_core.rules import Command
 from app.game_core.rules.handlers import CombatHandler
 from app.game_core.state import StateContainer
-from app.game_core.state.slices import AreaSlice, PlayerSlice, TimeSlice
-from app.game_core.state.slices.flags import FlagSlice
+from app.game_core.state.slices import AreaSlice, FlagSlice, PlayerSlice
 
 
 # ------------------------------------------------------------------
-# Helpers (mirrors test_combat_handler.py patterns)
+# Helpers (v2 combat payload setup)
 # ------------------------------------------------------------------
 
-
-def _make_world() -> WorldInstance:
-    world = WorldInstance("test_world")
-    maps = MapRegistry()
-    maps.load({"forest": {"id": "forest"}})
-    world.register(maps)
-
-    monsters = MonsterRegistry()
-    monsters.load({
-        "goblin": {"id": "goblin", "name": "Goblin", "hp": 7, "ac": 13},
-        "wolf": {"id": "wolf", "name": "Wolf", "hp": 11, "ac": 12},
-    })
-    world.register(monsters)
-
-    items = ItemRegistry()
-    items.load({"potion": {"id": "potion", "heal_amount": 5}})
-    world.register(items)
-    return world
+_DEFAULT_GRID = {
+    "width": 6,
+    "height": 6,
+    "terrain": ["GGGGGG"] * 6,
+}
 
 
-def _make_state(*, strength: int = 14, hp: int = 30) -> StateContainer:
+def _unit(
+    unit_id: str,
+    side: str,
+    position: list[int],
+    *,
+    hp: int = 10,
+    max_hp: int = 10,
+    ac: int = 5,
+    alive: bool = True,
+    fled: bool = False,
+    action_used: bool = False,
+    move_used: bool = False,
+    monster_id: str | None = None,
+    attacks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    u: dict[str, Any] = {
+        "unit_id": unit_id,
+        "side": side,
+        "source": "monster",
+        "position": list(position),
+        "speed": 6,
+        "hp": hp,
+        "max_hp": max_hp,
+        "ac": ac,
+        "alive": alive,
+        "fled": fled,
+        "action_used": action_used,
+        "move_used": move_used,
+        "disengaged": False,
+        "dashed": False,
+        "defending": False,
+        "reaction_used": False,
+        "surprised": False,
+        "attacks": attacks or [
+            {"name": "Claw", "hit_bonus": 10, "damage_dice": "1d4",
+             "damage_type": "slashing", "range": 1},
+        ],
+        "stats": {"dex": 10, "wis": 10},
+    }
+    if monster_id is not None:
+        u["monster_id"] = monster_id
+    return u
+
+
+def _make_v2_payload(
+    units: list[dict[str, Any]],
+    turn_order: list[str],
+    area_id: str = "forest",
+    sub_area_id: str = "combat_1",
+) -> dict[str, Any]:
+    return {
+        "area_id": area_id,
+        "version": 2,
+        "combat_active": True,
+        "cleared": False,
+        "blocking": True,
+        "status": "engaged",
+        "units": [dict(u) for u in units],
+        "grid": _DEFAULT_GRID,
+        "turn_order": list(turn_order),
+        "current_turn_index": 0,
+        "current_unit_id": turn_order[0] if turn_order else "",
+        "combat_round": 1,
+        "initiative_rolls": {},
+        "monster_ids": [u["monster_id"] for u in units if u.get("monster_id")],
+    }
+
+
+def _make_state(
+    payload: dict[str, Any],
+    sub_area_id: str = "combat_1",
+    area_id: str = "forest",
+) -> StateContainer:
     state = StateContainer()
 
     player = PlayerSlice()
     player.restore({
-        "character_id": "player_1",
-        "hp": hp,
-        "max_hp": 30,
-        "current_area": "forest",
-        "stats": {"str": strength, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
+        "character_id": "hero",
+        "hp": 20,
+        "max_hp": 20,
+        "ac": 14,
+        "current_area": area_id,
+        "xp": 0,
+        "stats": {"str": 14, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
         "proficiency_bonus": 2,
-        "inventory": [],
     })
     state.register(player)
 
     areas = AreaSlice()
-    areas.restore({"areas": {"forest": {"danger_level": 1.0, "npc_locations": {}, "hostile_tracking": {}}}})
+    areas.restore({
+        "areas": {
+            area_id: {
+                "danger_level": 1.0,
+                "npc_locations": {},
+                "hostile_tracking": {},
+            }
+        }
+    })
+    areas.register_hostile(sub_area_id, payload)
     state.register(areas)
-
-    time_slice = TimeSlice()
-    time_slice.restore({"day": 1, "slot": 9})
-    state.register(time_slice)
 
     flags = FlagSlice()
     flags.restore({"flags": {}})
@@ -69,38 +131,11 @@ def _make_state(*, strength: int = 14, hp: int = 30) -> StateContainer:
     return state
 
 
-def _setup_combat(
-    state: StateContainer,
-    *,
-    monster_id: str = "goblin",
-    hp: int = 1,
-    ac: int = 5,
-) -> None:
-    """Register an active combat with a near-death monster."""
-    state.areas.register_hostile("combat_1", {
-        "area_id": "forest",
-        "status": "engaged",
-        "cleared": False,
-        "blocking": True,
-        "combat_active": True,
-        "combat_round": 1,
-        "surprise_state": "none",
-        "monster_ids": [monster_id],
-        "participants": [{
-            "monster_id": monster_id,
-            "name": monster_id.capitalize(),
-            "hp": hp,
-            "max_hp": max(1, hp),
-            "ac": ac,
-            "alive": True,
-        }],
-        "player_flags": {"defending": False, "disengaged": False, "dashed": False},
-    })
-
-
-def _patch_rolls(monkeypatch: pytest.MonkeyPatch, handler: CombatHandler, values: Iterable[int]) -> None:
-    iterator = iter(values)
-    monkeypatch.setattr("app.game_core.rules.handler_utils.roll_d20", lambda: next(iterator))
+def _seq_rolls(*values: int):
+    it = iter(values)
+    def _roll(a: int, b: int) -> int:
+        return next(it, values[-1])
+    return _roll
 
 
 def _apply(result, state: StateContainer) -> None:
@@ -114,109 +149,94 @@ def _apply(result, state: StateContainer) -> None:
 
 
 class TestKillCountFlag:
-    def test_kill_count_incremented_on_defeat(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When a monster is killed, kill_count_{monster_id} flag should increment."""
+    def test_kill_count_incremented_on_defeat(self) -> None:
+        """When a monster is killed via combat_attack, kill_count flag should increment."""
+        attacker = _unit("player", "ally", [0, 0])
+        target = _unit("goblin_1", "enemy", [1, 0], hp=1, ac=1,
+                        monster_id="goblin")
+        payload = _make_v2_payload([attacker, target], ["player"])
+        state = _make_state(payload)
+
+        cmd = Command(type="combat_attack",
+                      params={"sub_area_id": "combat_1", "target": "goblin_1"},
+                      source="player")
         handler = CombatHandler()
-        _patch_rolls(monkeypatch, handler, [20])  # guaranteed hit
-        engine = RulesEngine()
-        engine.register(handler)
-
-        state = _make_state(strength=14)
-        _setup_combat(state, monster_id="goblin", hp=1, ac=5)
-
-        result = engine.execute(
-            Command(type="attack", params={"target": "goblin"}),
-            state,
-            _make_world(),
-        )
+        # d20=15 → total=15+10=25 > AC=1 → hit; 1d4=1 → kills 1 HP goblin
+        with mock.patch.object(random, "randint", _seq_rolls(15, 1)):
+            result = handler.compute(cmd, state, None)
 
         assert result.executed is True
         assert result.metadata["combat_cleared"] is True
         _apply(result, state)
-
         assert state.flags.get("kill_count_goblin", 0) == 1
 
-    def test_kill_count_not_incremented_on_flee(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When a monster flees, kill_count should NOT increment."""
-        handler = CombatHandler()
-        _patch_rolls(monkeypatch, handler, [20])  # guaranteed hit
-        engine = RulesEngine()
-        engine.register(handler)
+    def test_kill_count_not_incremented_on_flee(self) -> None:
+        """When a monster flees (fled=True), kill_count should NOT increment."""
+        attacker = _unit("player", "ally", [0, 0])
+        # Monster already fled
+        target = _unit("goblin_1", "enemy", [1, 0], hp=0, ac=1,
+                        alive=False, fled=True, monster_id="goblin")
+        payload = _make_v2_payload([attacker, target], ["player"])
+        # Manually set combat inactive (already fled)
+        payload["combat_active"] = False
+        payload["cleared"] = True
+        state = _make_state(payload)
 
-        state = _make_state(strength=14)
-        # Monster with enough HP to survive but configured to flee
-        _setup_combat(state, monster_id="goblin", hp=100, ac=5)
-        # Simulate monster fleeing by directly setting participant state
-        hostile = state.areas.get_hostile_state("combat_1")
-        assert hostile is not None
-        hostile["participants"][0]["alive"] = False
-        hostile["participants"][0]["fled"] = True
-        hostile["combat_active"] = False
-        hostile["cleared"] = True
-        hostile["status"] = "cleared"
-
-        # After flee, no kill_count should exist
+        # No kill_count should have been incremented (monster fled, not killed)
         assert state.flags.get("kill_count_goblin", 0) == 0
 
-    def test_kill_count_accumulates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Multiple kills should accumulate the count."""
-        handler = CombatHandler()
-        engine = RulesEngine()
-        engine.register(handler)
-        world = _make_world()
+    def test_kill_count_accumulates(self) -> None:
+        """Multiple kills in separate combats should accumulate the count."""
+        for expected_count in (1, 2):
+            attacker = _unit("player", "ally", [0, 0])
+            target = _unit("goblin_1", "enemy", [1, 0], hp=1, ac=1,
+                            monster_id="goblin")
+            payload = _make_v2_payload([attacker, target], ["player"])
+            state = _make_state(payload)
+            # Restore existing kill count before second combat
+            if expected_count == 2:
+                state.flags.restore({"flags": {"kill_count_goblin": 1}})
 
-        state = _make_state(strength=14)
+            cmd = Command(type="combat_attack",
+                          params={"sub_area_id": "combat_1", "target": "goblin_1"},
+                          source="player")
+            handler = CombatHandler()
+            with mock.patch.object(random, "randint", _seq_rolls(15, 1)):
+                result = handler.compute(cmd, state, None)
 
-        # First combat: kill a goblin
-        _setup_combat(state, monster_id="goblin", hp=1, ac=5)
-        _patch_rolls(monkeypatch, handler, [20])
-        result = engine.execute(
-            Command(type="attack", params={"target": "goblin"}),
-            state,
-            world,
-        )
-        assert result.executed and result.metadata["combat_cleared"]
-        _apply(result, state)
-        assert state.flags.get("kill_count_goblin", 0) == 1
+            assert result.executed and result.metadata["combat_cleared"]
+            _apply(result, state)
+            assert state.flags.get("kill_count_goblin", 0) == expected_count
 
-        # Second combat: kill another goblin
-        _setup_combat(state, monster_id="goblin", hp=1, ac=5)
-        _patch_rolls(monkeypatch, handler, [20])
-        result = engine.execute(
-            Command(type="attack", params={"target": "goblin"}),
-            state,
-            world,
-        )
-        assert result.executed and result.metadata["combat_cleared"]
-        _apply(result, state)
-        assert state.flags.get("kill_count_goblin", 0) == 2
-
-    def test_kill_count_different_monster_types(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_kill_count_different_monster_types(self) -> None:
         """Different monster types get separate kill_count flags."""
-        handler = CombatHandler()
-        engine = RulesEngine()
-        engine.register(handler)
-        world = _make_world()
-
-        state = _make_state(strength=14)
-
         # Kill a goblin
-        _setup_combat(state, monster_id="goblin", hp=1, ac=5)
-        _patch_rolls(monkeypatch, handler, [20])
-        result = engine.execute(
-            Command(type="attack", params={"target": "goblin"}),
-            state, world,
-        )
-        _apply(result, state)
+        attacker = _unit("player", "ally", [0, 0])
+        goblin = _unit("goblin_1", "enemy", [1, 0], hp=1, ac=1, monster_id="goblin")
+        payload = _make_v2_payload([attacker, goblin], ["player"])
+        state = _make_state(payload)
 
-        # Kill a wolf
-        _setup_combat(state, monster_id="wolf", hp=1, ac=5)
-        _patch_rolls(monkeypatch, handler, [20])
-        result = engine.execute(
-            Command(type="attack", params={"target": "wolf"}),
-            state, world,
-        )
+        cmd = Command(type="combat_attack",
+                      params={"sub_area_id": "combat_1", "target": "goblin_1"},
+                      source="player")
+        handler = CombatHandler()
+        with mock.patch.object(random, "randint", _seq_rolls(15, 1)):
+            result = handler.compute(cmd, state, None)
         _apply(result, state)
-
         assert state.flags.get("kill_count_goblin", 0) == 1
-        assert state.flags.get("kill_count_wolf", 0) == 1
+
+        # Kill a wolf in a new combat
+        wolf = _unit("wolf_1", "enemy", [1, 0], hp=1, ac=1, monster_id="wolf")
+        payload2 = _make_v2_payload([attacker, wolf], ["player"],
+                                    sub_area_id="combat_2")
+        state2 = _make_state(payload2, sub_area_id="combat_2")
+        state2.flags.restore({"flags": {"kill_count_goblin": 1}})
+
+        cmd2 = Command(type="combat_attack",
+                       params={"sub_area_id": "combat_2", "target": "wolf_1"},
+                       source="player")
+        with mock.patch.object(random, "randint", _seq_rolls(15, 1)):
+            result2 = handler.compute(cmd2, state2, None)
+        _apply(result2, state2)
+        assert state2.flags.get("kill_count_goblin", 0) == 1
+        assert state2.flags.get("kill_count_wolf", 0) == 1

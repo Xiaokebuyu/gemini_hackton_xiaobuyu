@@ -394,7 +394,8 @@ class StateContainer:
                     continue
                 char_area = (char.area_id or char.current_area or "").strip()
                 if char_area and char_area in areas:
-                    areas[char_area]["npc_locations"][char_id] = None
+                    char_location = (char.location_id or char.current_location or "").strip()
+                    areas[char_area]["npc_locations"][char_id] = char_location or None
 
         return {"areas": areas}
 

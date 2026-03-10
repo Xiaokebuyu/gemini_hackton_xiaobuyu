@@ -1,0 +1,15 @@
+{
+  "flags": {
+    "directive_trigger_cooldown_goblin_slayer": 14,
+    "directive_trigger_cooldown_high_elf_archer": 13,
+    "guild_girl_reprimand_pending": true,
+    "hea_annoyed_by_player_persistent": true,
+    "narrative_escalation_level": 4,
+    "reached_ruins_during_investigation": true,
+    "talked_to_blacksmith": true,
+    "talked_to_goblin_slayer": true,
+    "talked_to_guild_girl": true,
+    "talked_to_guild_quartermaster": true,
+    "talked_to_high_elf_archer": true
+  }
+}

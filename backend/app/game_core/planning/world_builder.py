@@ -13,7 +13,7 @@ from app.game_core.orchestration.models import SSEEvent
 from app.game_core.planning.dynamic_sub_area import DynamicSubAreaManager
 from app.game_core.planning.subsystem import PlannerEvent, SubSystemResult
 from app.game_core.planning.utils import coerce_non_empty_string, string_or_empty
-from app.game_core.state import StateChange
+from app.game_core.rules.models import Command
 
 if TYPE_CHECKING:
     from app.game_core.adapters.planner_system import PlannerAgentPort
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class WorldBuilderSubSystem:
     """PlannerSubSystem responsible for environmental/world-building directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"plant_environmental", "fill_area"})
+    _HANDLES: frozenset[str] = frozenset({"plant_environmental", "fill_area", "plant_encounter"})
 
     def __init__(
         self,
@@ -83,6 +83,8 @@ class WorldBuilderSubSystem:
             return self._apply_plant_environmental(payload, context, current_tick=current_tick)
         if kind == "fill_area":
             return self._apply_fill_area(payload, context, current_tick=current_tick)
+        if kind == "plant_encounter":
+            return self._apply_plant_encounter(payload, context, current_tick=current_tick)
         return False
 
     # ------------------------------------------------------------------
@@ -96,55 +98,46 @@ class WorldBuilderSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        area_id = coerce_non_empty_string(payload.get("area_id"))
-        if area_id is None:
-            return False
-        if not context.state.has_slice("areas"):
-            return False
-        if area_id not in context.state.areas.areas:
-            return False
-        clue_id = coerce_non_empty_string(payload.get("clue_id"))
-        if clue_id is None:
-            clue_id = f"clue_{current_tick}"
-        raw_dc = payload.get("dc")
-        try:
-            discovery_dc = int(raw_dc)
-        except (TypeError, ValueError):
-            discovery_dc = 12
-        spec = {
-            "id": clue_id,
-            "label": string_or_empty(payload.get("description")),
-            "description": string_or_empty(payload.get("description")),
-            "type": "discovery",
-            "tier": "temporary",
-            "discovery_mode": (
-                coerce_non_empty_string(payload.get("discovery_mode")) or "check"
-            ),
-            "discovery_dc": discovery_dc,
-            "linked_quest_id": coerce_non_empty_string(payload.get("linked_quest_id")),
-            "linked_milestone": coerce_non_empty_string(payload.get("linked_milestone")),
-            "source": "narrative_planner",
-            "created_at_tick": current_tick,
-            "expiry_ticks": payload.get("expiry_ticks", 12),
-        }
-        manager = self._resolve_sub_area_manager(context)
-        created = manager.create(area_id, spec)
-        if created is None:
-            return False
-        context.record_change(
-            StateChange(
-                slice="areas",
-                operation="set",
-                path=f"{area_id}.temporary_sub_areas.{created['id']}",
-                value=created,
+        self._preview_sub_area_create(
+            area_id=coerce_non_empty_string(payload.get("area_id")),
+            spec={
+                "id": coerce_non_empty_string(payload.get("clue_id")) or f"clue_{current_tick}",
+                "label": string_or_empty(payload.get("description")),
+                "description": string_or_empty(payload.get("description")),
+                "type": "discovery",
+                "tier": "temporary",
+                "discovery_mode": coerce_non_empty_string(payload.get("discovery_mode")) or "check",
+                "discovery_dc": payload.get("dc", 12),
+                "linked_quest_id": coerce_non_empty_string(payload.get("linked_quest_id")),
+                "linked_milestone": coerce_non_empty_string(payload.get("linked_milestone")),
+                "source": "narrative_planner",
+                "created_at_tick": current_tick,
+                "expiry_ticks": payload.get("expiry_ticks", 12),
+            },
+        )
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_plant_environmental",
+                params=params,
+                source="narrative_planner",
             )
         )
+        if not result.executed:
+            return False
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        sub_area_id = coerce_non_empty_string(metadata.get("sub_area_id"))
+        sub_area_label = string_or_empty(metadata.get("sub_area_label"))
+        if area_id is None or sub_area_id is None:
+            return False
         self._sse_collector.append(SSEEvent(
             event_type="environment_changed",
             payload={
                 "area_id": area_id,
-                "sub_area_id": created["id"],
-                "sub_area_label": created.get("label", ""),
+                "sub_area_id": sub_area_id,
+                "sub_area_label": sub_area_label,
                 "change_type": "plant_environmental",
             },
         ))
@@ -152,7 +145,7 @@ class WorldBuilderSubSystem:
             "source": "ENGINE",
             "content": (
                 f"[ENGINE:environment_changed] New discovery point appeared:"
-                f" {created.get('label', created['id'])}"
+                f" {sub_area_label or sub_area_id}"
             ),
             "visibility": "system",
             "tags": ["environment_changed", "narrative_planner"],
@@ -170,44 +163,42 @@ class WorldBuilderSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        area_id = coerce_non_empty_string(payload.get("area_id"))
-        if area_id is None:
-            return False
-        if not context.state.has_slice("areas"):
-            return False
-        if area_id not in context.state.areas.areas:
-            return False
-        sub_area_id = coerce_non_empty_string(payload.get("id"))
-        if sub_area_id is None:
-            sub_area_id = f"fill_{current_tick}"
-        spec = {
-            "id": sub_area_id,
-            "label": string_or_empty(payload.get("label")),
-            "description": string_or_empty(payload.get("description")),
-            "type": coerce_non_empty_string(payload.get("type")) or "visit",
-            "tier": "permanent",
-            "source": "narrative_planner",
-            "created_at_tick": current_tick,
-            "expiry_ticks": payload.get("expiry_ticks", -1),
-        }
-        manager = self._resolve_sub_area_manager(context)
-        created = manager.create(area_id, spec)
-        if created is None:
-            return False
-        context.record_change(
-            StateChange(
-                slice="areas",
-                operation="set",
-                path=f"{area_id}.temporary_sub_areas.{created['id']}",
-                value=created,
+        self._preview_sub_area_create(
+            area_id=coerce_non_empty_string(payload.get("area_id")),
+            spec={
+                "id": coerce_non_empty_string(payload.get("id")) or f"fill_{current_tick}",
+                "label": string_or_empty(payload.get("label")),
+                "description": string_or_empty(payload.get("description")),
+                "type": coerce_non_empty_string(payload.get("type")) or "visit",
+                "tier": "permanent",
+                "source": "narrative_planner",
+                "created_at_tick": current_tick,
+                "expiry_ticks": payload.get("expiry_ticks", -1),
+            },
+        )
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_fill_area",
+                params=params,
+                source="narrative_planner",
             )
         )
+        if not result.executed:
+            return False
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        sub_area_id = coerce_non_empty_string(metadata.get("sub_area_id"))
+        sub_area_label = string_or_empty(metadata.get("sub_area_label"))
+        if area_id is None or sub_area_id is None:
+            return False
         self._sse_collector.append(SSEEvent(
             event_type="environment_changed",
             payload={
                 "area_id": area_id,
-                "sub_area_id": created["id"],
-                "sub_area_label": created.get("label", ""),
+                "sub_area_id": sub_area_id,
+                "sub_area_label": sub_area_label,
                 "change_type": "fill_area",
             },
         ))
@@ -215,7 +206,7 @@ class WorldBuilderSubSystem:
             "source": "ENGINE",
             "content": (
                 f"[ENGINE:environment_changed] New area location added:"
-                f" {created.get('label', created['id'])}"
+                f" {sub_area_label or sub_area_id}"
             ),
             "visibility": "system",
             "tags": ["environment_changed", "narrative_planner"],
@@ -223,13 +214,62 @@ class WorldBuilderSubSystem:
         return True
 
     # ------------------------------------------------------------------
-    # Helper: resolve sub-area manager
+    # Handler: plant_encounter
     # ------------------------------------------------------------------
 
-    def _resolve_sub_area_manager(self, context: SettlementContext) -> DynamicSubAreaManager:
-        if self._sub_area_manager is not None:
-            return self._sub_area_manager
-        return DynamicSubAreaManager(context.state.areas)
+    def _apply_plant_encounter(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_plant_encounter",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return False
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        sub_area_id = coerce_non_empty_string(metadata.get("sub_area_id"))
+        entry = metadata.get("entry")
+        if area_id is None or sub_area_id is None or not isinstance(entry, Mapping):
+            return False
+        context.scene_bus.add_entry({
+            "source": "ENGINE",
+            "content": (
+                f"[ENGINE:encounter_planted] Encounter seeded at {sub_area_id}"
+                f" in {area_id}: {entry.get('description') or ', '.join(entry.get('monster_ids', [])[:3])}"
+            ),
+            "visibility": "system",
+            "tags": ["encounter_planted", "narrative_planner"],
+        })
+        return True
+
+    def _preview_sub_area_create(
+        self,
+        *,
+        area_id: str | None,
+        spec: dict[str, Any],
+    ) -> None:
+        manager = self._sub_area_manager
+        if manager is None or area_id is None:
+            return
+        if isinstance(manager, DynamicSubAreaManager):
+            return
+        create = getattr(manager, "create", None)
+        if not callable(create):
+            return
+        try:
+            create(area_id, dict(spec))
+        except Exception:
+            logger.debug("WorldBuilderSubSystem: preview create failed", exc_info=True)
 
     async def _evaluate_with_agent(
         self,

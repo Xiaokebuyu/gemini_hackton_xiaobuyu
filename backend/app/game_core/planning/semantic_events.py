@@ -171,7 +171,7 @@ def _events_from_action(
     if not isinstance(params, Mapping):
         params = {}
 
-    if action_type == "board_accept_quest":
+    if action_type in {"board_accept_quest", "accept_quest"}:
         quest_id = _non_empty_string(params.get("quest_id"))
         if quest_id is None:
             return []

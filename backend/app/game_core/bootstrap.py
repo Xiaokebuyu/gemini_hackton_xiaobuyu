@@ -20,6 +20,7 @@ from app.game_core.planning import (
     WorldBuilderSubSystem,
 )
 from app.game_core.content.registries import (
+    BattleMapRegistry,
     CharacterRegistry,
     ClassRegistry,
     FactionRegistry,
@@ -61,6 +62,7 @@ from app.game_core.state.slices import (
 DEFAULT_CONTENT_REGISTRY_TYPES: tuple[type[ContentRegistry], ...] = (
     TagRegistry,
     MapRegistry,
+    BattleMapRegistry,
     ClassRegistry,
     SkillRegistry,
     LoreRegistry,
@@ -98,6 +100,44 @@ class DefaultRuntime:
     tick_coordinator: TickCoordinator
     instance_manager: InstanceManager | None = None
     companion_manager: CompanionRuntimeManager | None = None
+
+
+def build_narrative_planner_hook(
+    planner_system: PlannerSystemAssembly,
+    *,
+    state: StateContainer,
+    instance_manager: InstanceManager | None = None,
+) -> NarrativePlannerHook:
+    """Wire one planner-system assembly into the canonical planner hook stack."""
+    planner_hook = NarrativePlannerHook(blackboard=planner_system.blackboard)
+    dispatcher = PlannerDispatcher()
+    sub_area_manager = DynamicSubAreaManager(state.areas)
+    quest_manager = QuestManagerSubSystem(
+        dispatcher=dispatcher,
+        agent=planner_system.quest_manager_agent,
+        sse_collector=planner_hook._pending_sse,
+    )
+    dispatcher.register(quest_manager)
+    dispatcher.register(NpcDirectorSubSystem(
+        instance_manager=instance_manager,
+        agent=planner_system.npc_director_agent,
+    ))
+    dispatcher.register(WorldBuilderSubSystem(
+        sub_area_manager=sub_area_manager,
+        sse_collector=planner_hook._pending_sse,
+        agent=planner_system.world_builder_agent,
+    ))
+    dispatcher.register(PacingControllerSubSystem())
+    dispatcher.register(NarrativeWeaverSubSystem(
+        sse_collector=planner_hook._pending_sse,
+        agent=planner_system.narrative_weaver_agent,
+    ))
+    dispatcher.register(ItemDesignerSubSystem(
+        sse_collector=planner_hook._pending_sse,
+        agent=planner_system.item_designer_agent,
+    ))
+    planner_hook._dispatcher = dispatcher
+    return planner_hook
 
 
 def _register_default_content_registries(world: WorldInstance) -> None:
@@ -189,7 +229,6 @@ def build_runtime_for_world(
         pipeline=pipeline,
         companion_manager=runtime_companion_manager,
     )
-    sub_area_manager = DynamicSubAreaManager(state.areas)
     if osiris_evaluator_factory is not None:
         evaluator = osiris_evaluator_factory()
         tick_coordinator.register_settlement_hook(
@@ -202,31 +241,13 @@ def build_runtime_for_world(
         )
     planner_system = planner_system_factory() if planner_system_factory is not None else None
     if planner_system is not None:
-        planner_hook = NarrativePlannerHook(blackboard=planner_system.blackboard)
-        dispatcher = PlannerDispatcher()
-        quest_manager = QuestManagerSubSystem(
-            dispatcher=dispatcher,
-            agent=planner_system.quest_manager_agent,
-            sse_collector=planner_hook._pending_sse,
+        tick_coordinator.register_settlement_hook(
+            build_narrative_planner_hook(
+                planner_system,
+                state=state,
+                instance_manager=instance_manager,
+            )
         )
-        dispatcher.register(quest_manager)
-        dispatcher.register(NpcDirectorSubSystem(
-            instance_manager=instance_manager,
-            agent=planner_system.npc_director_agent,
-        ))
-        dispatcher.register(WorldBuilderSubSystem(
-            sub_area_manager=sub_area_manager,
-            sse_collector=planner_hook._pending_sse,
-            agent=planner_system.world_builder_agent,
-        ))
-        dispatcher.register(PacingControllerSubSystem())
-        dispatcher.register(NarrativeWeaverSubSystem(
-            sse_collector=planner_hook._pending_sse,
-            agent=planner_system.narrative_weaver_agent,
-        ))
-        dispatcher.register(ItemDesignerSubSystem(sse_collector=planner_hook._pending_sse))
-        planner_hook._dispatcher = dispatcher
-        tick_coordinator.register_settlement_hook(planner_hook)
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
         world=world,
@@ -266,7 +287,6 @@ def build_restored_runtime_for_world(
         pipeline=pipeline,
         companion_manager=runtime_companion_manager,
     )
-    sub_area_manager = DynamicSubAreaManager(state.areas)
     if osiris_evaluator_factory is not None:
         evaluator = osiris_evaluator_factory()
         tick_coordinator.register_settlement_hook(
@@ -279,31 +299,13 @@ def build_restored_runtime_for_world(
         )
     planner_system = planner_system_factory() if planner_system_factory is not None else None
     if planner_system is not None:
-        planner_hook = NarrativePlannerHook(blackboard=planner_system.blackboard)
-        dispatcher = PlannerDispatcher()
-        quest_manager = QuestManagerSubSystem(
-            dispatcher=dispatcher,
-            agent=planner_system.quest_manager_agent,
-            sse_collector=planner_hook._pending_sse,
+        tick_coordinator.register_settlement_hook(
+            build_narrative_planner_hook(
+                planner_system,
+                state=state,
+                instance_manager=instance_manager,
+            )
         )
-        dispatcher.register(quest_manager)
-        dispatcher.register(NpcDirectorSubSystem(
-            instance_manager=instance_manager,
-            agent=planner_system.npc_director_agent,
-        ))
-        dispatcher.register(WorldBuilderSubSystem(
-            sub_area_manager=sub_area_manager,
-            sse_collector=planner_hook._pending_sse,
-            agent=planner_system.world_builder_agent,
-        ))
-        dispatcher.register(PacingControllerSubSystem())
-        dispatcher.register(NarrativeWeaverSubSystem(
-            sse_collector=planner_hook._pending_sse,
-            agent=planner_system.narrative_weaver_agent,
-        ))
-        dispatcher.register(ItemDesignerSubSystem(sse_collector=planner_hook._pending_sse))
-        planner_hook._dispatcher = dispatcher
-        tick_coordinator.register_settlement_hook(planner_hook)
     register_default_settlement_hooks(tick_coordinator)
     return DefaultRuntime(
         world=world,

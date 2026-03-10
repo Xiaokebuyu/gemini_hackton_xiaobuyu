@@ -230,7 +230,9 @@ class AgenticNarrativePlanner:
 - retire_quest: {"kind":"retire_quest","payload":{"quest_id":"dq_x"}}
 - plant_environmental: {"kind":"plant_environmental","payload":{"area_id":"...","dc":12,"description":"..."}}
 - fill_area: {"kind":"fill_area","payload":{"area_id":"...","id":"fill_1","label":"...","description":"..."}}
+- plant_encounter: {"kind":"plant_encounter","payload":{"area_id":"...","sub_area_id":"...","monster_ids":["goblin","goblin","hobgoblin"],"threat_level":"moderate","description":"...","map_category":"cave"}}
 - update_quest: {"kind":"update_quest","payload":{"quest_id":"dq_x","current_step":"...","next_steps":["..."],"hints":["..."]}}
+- design_reward: {"kind":"design_reward","payload":{"linked_quest_id":"dq_x","item_id":"...","quantity":1,"reward_type":"item"}}
 - curate_shop: {"kind":"curate_shop","payload":{"npc_id":"...","add_items":[{"item_id":"...","count":5}],"remove_items":["old_item_id"],"restock_items":[{"item_id":"...","count":10}]}}
 """
 
@@ -714,7 +716,7 @@ NPC_DIRECTOR_AGENT_PROMPT = """你是 NpcDirector 子系统。
 
 
 WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
-你只负责世界填充：plant_environmental / fill_area。
+你只负责世界填充：plant_environmental / fill_area / plant_encounter。
 
 ## 输出格式（严格 JSON）
 {
@@ -724,7 +726,7 @@ WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
 }
 
 ## 规则
-1. 只能输出 plant_environmental / fill_area。
+1. 只能输出 plant_environmental / fill_area / plant_encounter。
 2. 环境内容必须和当前区域、里程碑、世界规则一致。
 3. 不要重复制造已经存在的地点。
 4. 最多 3 条 directives。
@@ -748,4 +750,27 @@ NARRATIVE_WEAVER_AGENT_PROMPT = """你是 NarrativeWeaver 子系统。
 3. 优先保持叙事弧线稳定，不要频繁震荡节奏。
 4. 最多 2 条 directives。
 5. 只围绕 current_event 决策；如果 current_event 没有长期维护意义，返回空 directives。
+"""
+
+
+ITEM_DESIGNER_AGENT_PROMPT = """你是 ItemDesigner 子系统。
+你只负责物品相关规划：design_reward / curate_shop。
+
+## 输出格式（严格 JSON）
+{
+  "directives": [{"kind": "...", "payload": {...}}],
+  "story_facts": [],
+  "strategy_notes": ""
+}
+
+## 规则
+1. 只能输出 design_reward / curate_shop。
+2. 每轮最多 1 条 directive。
+3. 只能使用上下文中真实存在的 item_id；不要发明新品、价格或候选外物品。
+4. current_event=quest_created / quest_accepted 时，只能从 reward_candidates 中选择 0 或 1 个候选设计奖励；reward_candidates 为空时返回空 directives。
+5. current_event=shop_refreshed 时，只能针对该事件里的 npc_id，从 shop_candidates 中选择 0 或 1 个候选做库存策展；shop_candidates 为空时返回空 directives。
+6. player progression 是优先目标，但不能违背 quest 语义、merchant_profile 和候选约束。
+7. design_reward 只给 linked_quest_id 指向的动态任务补 item reward，不发金币、不改任务状态。
+8. curate_shop 只做最小库存策展，不重复添加相同 item_id 的库存行。
+9. blacksmith_like 商人不得策展出不符合铁匠身份的商品。
 """

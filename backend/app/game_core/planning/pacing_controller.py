@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from app.game_core.planning.subsystem import PlannerEvent, SubSystemResult
 from app.game_core.rules.models import Command
-from app.game_core.state import StateChange
 
 if TYPE_CHECKING:
     from app.game_core.orchestration.settlement import SettlementContext
@@ -80,38 +79,14 @@ class PacingControllerSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        delta = payload.get("delta")
-        if not isinstance(delta, int) or isinstance(delta, bool):
-            return False
-        if delta < -3 or delta > 3:
-            return False
-        context.state.narrative_plan.adjust_escalation(delta)
-        context.record_change(StateChange(
-            slice="narrative_plan",
-            operation="set",
-            path="escalation_level",
-            value=context.state.narrative_plan.escalation_level,
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(Command(
+            type="planner_escalate",
+            params=params,
+            source="narrative_planner",
         ))
-        # Persist escalation to world state: bump area danger level
-        area_id = ""
-        if context.state.has_slice("player"):
-            area_id = context.state.player.current_area or ""
-        if area_id:
-            context.execute_command(Command(
-                type="adjust_danger",
-                params={"area_id": area_id, "delta": 0.05 * delta},
-                source="system",
-            ))
-        # Persist escalation level as a world flag for downstream consumers
-        context.execute_command(Command(
-            type="set_flag",
-            params={
-                "key": "narrative_escalation_level",
-                "value": context.state.narrative_plan.escalation_level,
-            },
-            source="system",
-        ))
-        return True
+        return result.executed
 
     # ------------------------------------------------------------------
     # Handler: adjust_pacing
@@ -124,15 +99,10 @@ class PacingControllerSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        del current_tick  # unused
-        frozen = payload.get("frozen")
-        if not isinstance(frozen, bool):
-            return False
-        context.state.narrative_plan.set_pacing_frozen(frozen)
-        context.record_change(StateChange(
-            slice="narrative_plan",
-            operation="set",
-            path="pacing_frozen",
-            value=frozen,
+        del current_tick
+        result = context.execute_command(Command(
+            type="planner_set_pacing_frozen",
+            params=dict(payload),
+            source="narrative_planner",
         ))
-        return True
+        return result.executed

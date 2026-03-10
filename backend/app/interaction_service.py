@@ -11,6 +11,7 @@ from app.game_core.content import WorldInstance
 from app.game_core.orchestration.interaction import (
     InteractionPolicyContext,
     build_interaction_policy_context,
+    resolve_accept_quest_board_id,
     validate_preconditions,
     validate_presence,
 )
@@ -27,6 +28,7 @@ from app.interaction_views import (
     build_shop_snapshot_payload,
     build_talk_snapshot_payload,
 )
+from app.quest_views import normalize_dynamic_quest_panel
 
 
 @dataclass(frozen=True)
@@ -54,13 +56,18 @@ class InteractionViewContext:
     current_location: str | None
     npc_positions: dict[str, tuple[str | None, str | None]]
     npc_names: dict[str, str]
+    npc_tags: dict[str, frozenset[str]]
     relationship_stages: dict[str, str]
     npc_dispositions: dict[str, dict[str, int]]
     npc_impressions: dict[str, list[str]]
+    npc_refresh_modes: dict[str, list[str]]
     shop_states: dict[str, dict[str, Any]]
-    dynamic_quests: dict[str, dict[str, Any]]
+    dynamic_quest_views: dict[str, dict[str, Any]]
     milestone_states: dict[str, Any]
     board_quest_metadata: dict[str, dict[str, Any]]
+    current_day: int
+    current_slot: int
+    current_period: str
     player_gold: int
     player_inventory: list[dict[str, Any]]
     item_catalog: dict[str, dict[str, Any]]
@@ -102,6 +109,8 @@ def build_interaction_view_context(
                 npc_positions[npc_id] = (area_id, location_text or None)
 
     npc_names: dict[str, str] = {}
+    npc_tags: dict[str, frozenset[str]] = {}
+    npc_refresh_modes: dict[str, list[str]] = {}
     if world.has_registry("characters"):
         for raw_character in world.characters.list_all():
             npc_id = raw_character.id.strip()
@@ -109,6 +118,26 @@ def build_interaction_view_context(
                 continue
             npc_name = raw_character.name.strip() or npc_id
             npc_names[npc_id] = npc_name
+            npc_tags[npc_id] = frozenset(
+                str(tag).strip().lower()
+                for tag in getattr(raw_character, "tags", [])
+                if str(tag).strip()
+            )
+            refresh_modes: list[str] = []
+            raw_refresh = getattr(raw_character, "refresh_on", None)
+            if raw_refresh is None:
+                shop_inventory = getattr(raw_character, "shop_inventory", None)
+                raw_refresh = getattr(shop_inventory, "refresh_on", None) if shop_inventory else None
+            if isinstance(raw_refresh, str):
+                refresh_modes = [raw_refresh.strip()] if raw_refresh.strip() else []
+            elif isinstance(raw_refresh, list):
+                refresh_modes = [
+                    str(entry).strip()
+                    for entry in raw_refresh
+                    if str(entry).strip()
+                ]
+            if refresh_modes:
+                npc_refresh_modes[npc_id] = refresh_modes
             if npc_id in npc_positions:
                 continue
             area_id: str | None = None
@@ -164,6 +193,7 @@ def build_interaction_view_context(
         for key, value in quests.dynamic_quests.items()
         if str(key).strip()
     }
+    dynamic_quest_views = normalize_dynamic_quest_panel(dynamic_quests)
     milestone_states: dict[str, str] = {}
     for milestone_id, milestone in quests.milestone_states.items():
         normalized_state = milestone.state.strip()
@@ -171,6 +201,9 @@ def build_interaction_view_context(
             milestone_states[milestone_id.strip()] = normalized_state
 
     player_gold = player.gold
+    current_day = int(state.time.day)
+    current_slot = int(state.time.slot)
+    current_period = str(state.time.period)
 
     player_inventory: list[dict[str, Any]] = []
     for stack in player.inventory:
@@ -217,13 +250,18 @@ def build_interaction_view_context(
         current_location=current_location,
         npc_positions=npc_positions,
         npc_names=npc_names,
+        npc_tags=npc_tags,
         relationship_stages=relationship_stages,
         npc_dispositions=npc_dispositions,
         npc_impressions=npc_impressions,
+        npc_refresh_modes=npc_refresh_modes,
         shop_states=shop_states,
-        dynamic_quests=dynamic_quests,
+        dynamic_quest_views=dynamic_quest_views,
         milestone_states=milestone_states,
         board_quest_metadata=board_quest_metadata,
+        current_day=current_day,
+        current_slot=current_slot,
+        current_period=current_period,
         player_gold=player_gold,
         player_inventory=player_inventory,
         item_catalog=item_catalog,
@@ -331,6 +369,7 @@ class InteractionService:
                 session,
                 normalized_map,
                 execution_map,
+                policy_ctx,
                 resolved_event,
             )
         return InteractionExecutionResult(
@@ -422,11 +461,37 @@ class InteractionService:
         session: ManagedSession,
         normalized: Mapping[str, Any],
         execution: Mapping[str, Any],
+        policy_context: InteractionPolicyContext,
         resolved_event: InteractionOutputEvent,
     ) -> InteractionExecutionResult:
         action_type = _normalized_text(execution.get("action_type"))
         params = execution.get("params", {})
         params_map = dict(params) if isinstance(params, Mapping) else {}
+        if action_type in {"accept_quest", "report_quest"}:
+            quest_id = (
+                _normalized_id(normalized.get("quest_id"))
+                or _normalized_id(params_map.get("quest_id"))
+                or ""
+            )
+            params_map["quest_id"] = quest_id
+            params_map["npc_id"] = _normalized_id(normalized.get("target_id")) or ""
+        if action_type == "accept_quest":
+            board_id = resolve_accept_quest_board_id(policy_context, quest_id)
+            if not board_id:
+                return InteractionExecutionResult(
+                    completed=False,
+                    reason="interaction_rejected",
+                    events=[
+                        _interaction_rejected_event(
+                            normalized,
+                            issue={
+                                "code": "quest_not_offerable",
+                                "message": f"quest is not currently offerable here: {quest_id}",
+                            },
+                        )
+                    ],
+                )
+            params_map["board_id"] = board_id
         request = _PipelineActionRequest(action_type=action_type, params=params_map)
         result = await self._execute_structured_action(session, request)
         if not result.executed:

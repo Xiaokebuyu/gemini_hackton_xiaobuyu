@@ -179,6 +179,10 @@ class PlannerDispatcher:
         self._busy[name] = True
         try:
             result = await subsystem.evaluate(event, context)
+            metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+            metadata.setdefault("subsystem", name)
+            metadata.setdefault("event_kind", event.kind)
+            result.metadata = metadata
             results.append(result)
         except Exception:
             logger.exception(
@@ -194,6 +198,10 @@ class PlannerDispatcher:
             self._busy[name] = True
             try:
                 result = await subsystem.evaluate(queued_event, context)
+                metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+                metadata.setdefault("subsystem", name)
+                metadata.setdefault("event_kind", queued_event.kind)
+                result.metadata = metadata
                 results.append(result)
             except Exception:
                 logger.exception(

@@ -18,7 +18,7 @@ def _load_json(path: Path) -> Any:
 
 
 def load_v2_world_data() -> dict[str, Any]:
-    """加载 v2 世界数据，返回 WorldInstance.load_all() 所需的 10-key dict。"""
+    """加载 v2 世界数据，返回 WorldInstance.load_all() 所需的 world-data mapping。"""
     return {
         "tags":       _load_json(_V2_DIR / "tags.json"),
         "factions":   _load_json(_V2_DIR / "factions.json"),
@@ -30,4 +30,5 @@ def load_v2_world_data() -> dict[str, Any]:
         "monsters":   _load_json(_V2_DIR / "monsters.json"),
         "maps":       _load_json(_V2_DIR / "maps.json"),
         "quests":     _load_json(_V2_DIR / "quests.json"),
+        "battle_maps": _load_json(_V2_DIR / "battle_maps.json"),
     }

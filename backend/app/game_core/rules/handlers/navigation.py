@@ -186,18 +186,61 @@ class NavigationHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         location_id = self._resolve_location_alias(cmd.params) or ""
         area_id = state.player.current_area
+
+        changes: list[StateChange] = [
+            StateChange("player", "set", "current_location", location_id),
+        ]
+        metadata: dict[str, Any] = {
+            "area_id": area_id,
+            "from_location": state.player.current_location,
+            "to_location": location_id,
+        }
+
+        # --- Phase 8: planted encounter detection ---
+        if state.has_slice("areas") and area_id:
+            hostile = state.areas.get_hostile_state(location_id)
+            if hostile and hostile.get("status") == "planted" and not hostile.get("cleared"):
+                expiry = int(hostile.get("expiry_ticks", -1))
+                created = int(hostile.get("created_at_tick", 0))
+                current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
+                expired = expiry > 0 and (current_tick - created) >= expiry
+
+                if expired:
+                    changes.append(
+                        StateChange(
+                            "areas",
+                            "modify",
+                            f"hostile_tracking.{location_id}",
+                            {**hostile, "status": "expired", "cleared": True},
+                        )
+                    )
+                else:
+                    changes.append(
+                        StateChange(
+                            "areas",
+                            "modify",
+                            f"hostile_tracking.{location_id}",
+                            {**hostile, "status": "spotted"},
+                        )
+                    )
+                    metadata["encounter_spotted"] = {
+                        "sub_area_id": location_id,
+                        "area_id": hostile.get("area_id", area_id),
+                        "description": hostile.get("description", ""),
+                        "threat_level": hostile.get("threat_level", "moderate"),
+                        "blocking": hostile.get("blocking", True),
+                        "monster_ids": hostile.get("monster_ids", []),
+                        "map_category": hostile.get("map_category"),
+                        "map_tags": hostile.get("map_tags", []),
+                        "source": "plant_encounter",
+                    }
+
         return handler_success(
             "navigation",
             "enter_sub_location",
-            changes=[
-                StateChange("player", "set", "current_location", location_id),
-            ],
+            changes=changes,
             time_cost=1.0 / 6.0,
-            metadata={
-                "area_id": area_id,
-                "from_location": state.player.current_location,
-                "to_location": location_id,
-            },
+            metadata=metadata,
             omit_empty_delta=False,
         )
 

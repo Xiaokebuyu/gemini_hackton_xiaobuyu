@@ -20,6 +20,7 @@ from app.game_core.adapters.local_persistence import LocalFilePersistencePort
 from app.game_core.adapters.session_store import SaveResult, SaveStore
 from app.game_core.bootstrap import (
     DefaultRuntime,
+    build_narrative_planner_hook,
     build_default_world,
     build_runtime_for_world,
 )
@@ -28,6 +29,9 @@ from app.game_core.orchestration.hooks.narrative_planner import NarrativePlanner
 from app.game_core.orchestration.models import SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
+from app.game_core.planning.opening_bootstrap import (
+    build_opening_bootstrap_planner_system,
+)
 from app.game_core.rules import Command
 from app.game_core.state.slices import SceneSlice
 from app.world_data_loader import load_goblin_slayer_world_data
@@ -547,7 +551,7 @@ class GameRuntime:
         persist: bool = False,
     ) -> list[SSEEvent]:
         """Seed opening quests without advancing the normal tick lifecycle."""
-        hook = self._find_narrative_planner_hook(session)
+        hook = self._resolve_bootstrap_planner_hook(session)
         if hook is None:
             return []
         try:
@@ -580,6 +584,19 @@ class GameRuntime:
             _rules_engine=session.runtime.rules_engine,
             _apply_delta=session.runtime.state.apply,
             knowledge_graph=getattr(session.runtime.tick_coordinator, "knowledge_graph", None),
+        )
+
+    def _resolve_bootstrap_planner_hook(
+        self,
+        session: ManagedSession,
+    ) -> NarrativePlannerHook | None:
+        hook = self._find_narrative_planner_hook(session)
+        if hook is not None and getattr(hook, "_dispatcher", None) is not None:
+            return hook
+        return build_narrative_planner_hook(
+            build_opening_bootstrap_planner_system(),
+            state=session.runtime.state,
+            instance_manager=self._instance_manager,
         )
 
     def _bind_runtime_services(self, runtime: DefaultRuntime) -> None:

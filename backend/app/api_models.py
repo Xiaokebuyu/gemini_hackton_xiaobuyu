@@ -148,10 +148,22 @@ class MapPanelResponse(BaseModel):
 
 
 class QuestPanelResponse(BaseModel):
-    """Quest panel payload."""
+    """Quest panel payload.
+
+    ``dynamic_quests`` contains application-layer quest views, not raw
+    ``QuestSlice`` payloads. Persisted fields such as ``requires_report`` and
+    ``reported`` may appear there, while fields such as ``can_report``,
+    ``ui_state`` and ``badge`` are derived read-model values.
+    """
 
     milestone_states: dict[str, Any] = Field(default_factory=dict)
-    dynamic_quests: dict[str, Any] = Field(default_factory=dict)
+    dynamic_quests: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Application-layer dynamic quest views. Top-level report flags are "
+            "persisted state; can_report/ui_state/badge are derived fields."
+        ),
+    )
     chapter_completion: dict[str, float] = Field(default_factory=dict)
 
 
@@ -205,7 +217,13 @@ class InteractRequest(BaseModel):
     npc_id: str | None = None
     intent: str
     item_id: str | None = None
-    quest_id: str | None = None
+    quest_id: str | None = Field(
+        default=None,
+        description=(
+            "Quest target for quest-related NPC intents. Required for "
+            "accept_quest/report_quest and used by quest-focused ask_* reads."
+        ),
+    )
     count: int = 1
     message: str | None = None
     check_skill: str | None = None

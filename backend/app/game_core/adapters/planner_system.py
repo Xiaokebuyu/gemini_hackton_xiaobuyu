@@ -66,4 +66,4 @@ class PlannerSystemAssembly:
     npc_director_agent: PlannerAgentPort | None = None
     world_builder_agent: PlannerAgentPort | None = None
     narrative_weaver_agent: PlannerAgentPort | None = None
-
+    item_designer_agent: PlannerAgentPort | None = None

@@ -16,17 +16,12 @@ from app.game_core.orchestration.hooks.rest_phase import (
 )
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
-from app.game_core.planning.models import (
-    AdjustPacingPlan,
-    CreateQuestPlan,
-    DirectNpcPlan,
-    EscalatePlan,
-    FillAreaPlan,
-    PlanningDirective,
-    PlantEnvironmentalPlan,
-    PublishBulletinPlan,
-    RetireQuestPlan,
-    SpawnQuestNpcPlan,
+from app.game_core.planning.directive_contracts import (
+    SUPPORTED_PLANNER_DIRECTIVE_KINDS,
+    DirectiveValidationResult,
+    is_unsupported_directive_reason,
+    normalize_planner_directive,
+    validate_planner_directive,
 )
 from app.game_core.planning.semantic_events import (
     collect_planner_events,
@@ -211,17 +206,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         "party",
     }
     _SUPPORTED_DIRECTIVES = {
-        "create_quest",
-        "direct_npc",
-        "publish_bulletin",
-        "escalate",
-        "adjust_pacing",
-        "retire_quest",
-        "spawn_quest_npc",
-        "plant_environmental",
-        "fill_area",
-        "update_quest",
-        "curate_shop",
+        *SUPPORTED_PLANNER_DIRECTIVE_KINDS,
     }
     def __init__(
         self,
@@ -308,18 +293,19 @@ class NarrativePlannerHook(NoOpSettlementHook):
             include_action_log=True,
             include_tick_event=True,
         )
-        requested_count = replay["requested_count"]
-        applied_count = replay["applied_count"]
-        skipped_unsupported_count = replay["skipped_unsupported_count"]
-        skipped_invalid_count = replay["skipped_invalid_count"]
-        applied_kinds = replay["applied_kinds"]
+        replay_requested_count = replay["requested_count"]
+        replay_applied_count = replay["applied_count"]
+        replay_skipped_unsupported_count = replay["skipped_unsupported_count"]
+        replay_skipped_invalid_count = replay["skipped_invalid_count"]
+        replay_applied_kinds = replay["applied_kinds"]
         subsystem_story_fact_count = replay["story_fact_count"]
         replay_trace = replay["trace"]
         planner_event_summaries = replay["planner_event_summaries"]
 
-        context.state.narrative_plan.set_last_planner_replay_trace(replay_trace)
-
         blackboard_decision = NarrativePlannerDecision()
+        blackboard_metadata: dict[str, Any] = {}
+        blackboard_apply_summary = self._empty_apply_summary()
+        blackboard_story_fact_count = 0
         if self.blackboard is not None:
             post_dispatch_context = self._build_planner_context(context, current_tick=current_tick)
             post_dispatch_context["planner_events"] = planner_event_summaries
@@ -337,6 +323,22 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "ticks_since_last_run": ticks_since_last_run,
                     },
                 )
+                replay_trace["blackboard_summary"] = {
+                    "source": "blackboard",
+                    "requested_directive_count": 0,
+                    "applied_directive_count": 0,
+                    "skipped_unsupported_count": 0,
+                    "skipped_invalid_count": 0,
+                    "applied_kinds": [],
+                    "story_fact_count": 0,
+                    "directive_audit": [],
+                    "planner_metadata": {},
+                    "status": "planner_error",
+                }
+                self._commit_runtime_state(
+                    context,
+                    last_planner_replay_trace=replay_trace,
+                )
                 return HookResult(
                     sse_events=[
                         SSEEvent(
@@ -350,20 +352,30 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "reason": reason,
                         "current_tick": current_tick,
                         "ticks_since_last_run": ticks_since_last_run,
-                        "requested_count": requested_count,
-                        "applied_count": applied_count,
-                        "skipped_unsupported_count": skipped_unsupported_count,
-                        "skipped_invalid_count": skipped_invalid_count,
+                        "requested_count": replay_requested_count,
+                        "applied_count": replay_applied_count,
+                        "skipped_unsupported_count": replay_skipped_unsupported_count,
+                        "skipped_invalid_count": replay_skipped_invalid_count,
                         "story_fact_count": subsystem_story_fact_count,
-                        "applied_kinds": applied_kinds,
+                        "applied_kinds": replay_applied_kinds,
                         "planner_metadata": {},
                         "replay_round_count": replay_trace.get("round_count", 0),
                         "replay_stop_reason": replay_trace.get("stop_reason", "error"),
                         "replay_event_count": len(planner_event_summaries),
-                        "replay_applied_directive_count": applied_count,
+                        "replay_applied_directive_count": replay_applied_count,
                     },
                 )
             blackboard_decision = self._normalize_decision(raw_decision)
+            blackboard_apply_summary = self._apply_directive_batch(
+                blackboard_decision.directives,
+                context,
+                current_tick=current_tick,
+                allowed_directives=self._SUPPORTED_DIRECTIVES,
+                source="blackboard",
+                subsystem_name="blackboard",
+                round_index=int(replay_trace.get("round_count", 0)),
+            )
+            blackboard_metadata = dict(blackboard_decision.metadata)
 
         milestone_progressed = any(
             change.slice == "quests" and change.path.startswith("milestone_states.")
@@ -380,33 +392,59 @@ class NarrativePlannerHook(NoOpSettlementHook):
             blackboard_decision.story_facts,
             context,
         )
+        requested_count = replay_requested_count + int(blackboard_apply_summary["requested_count"])
+        applied_count = replay_applied_count + int(blackboard_apply_summary["applied_count"])
+        skipped_unsupported_count = replay_skipped_unsupported_count + int(
+            blackboard_apply_summary["skipped_unsupported_count"]
+        )
+        skipped_invalid_count = replay_skipped_invalid_count + int(
+            blackboard_apply_summary["skipped_invalid_count"]
+        )
+        applied_kinds = list(replay_applied_kinds) + list(blackboard_apply_summary["applied_kinds"])
         story_fact_count = subsystem_story_fact_count + blackboard_story_fact_count
-
-        context.state.narrative_plan.last_run_tick = current_tick
-        context.state.narrative_plan.ticks_since_milestone_progress = progress_value
-        context.state.narrative_plan._dirty = True
+        replay_trace["directive_audit"] = list(replay_trace.get("directive_audit", []))
+        replay_trace["directive_audit"].extend(blackboard_apply_summary["directive_audit"])
+        replay_trace["blackboard_summary"] = {
+            "source": "blackboard",
+            "requested_directive_count": int(blackboard_apply_summary["requested_count"]),
+            "applied_directive_count": int(blackboard_apply_summary["applied_count"]),
+            "skipped_unsupported_count": int(
+                blackboard_apply_summary["skipped_unsupported_count"]
+            ),
+            "skipped_invalid_count": int(blackboard_apply_summary["skipped_invalid_count"]),
+            "applied_kinds": list(blackboard_apply_summary["applied_kinds"]),
+            "story_fact_count": blackboard_story_fact_count,
+            "directive_audit": list(blackboard_apply_summary["directive_audit"]),
+            "planner_metadata": dict(blackboard_metadata),
+        }
+        final_context = self._build_planner_context(context, current_tick=current_tick)
+        behavior_window = list(context.state.narrative_plan.behavior_window)
+        behavior_entry = {
+            "tick": current_tick,
+            "changed_slices": final_context["changed_slices"],
+            "reason": reason,
+            "directive_count": requested_count,
+        }
+        simulated_behavior_window = behavior_window + [behavior_entry]
+        simulated_behavior_window = simulated_behavior_window[-24:]
+        derived_style_tags = self._derive_play_style_tags(
+            simulated_behavior_window
+        )
+        commit_payload: dict[str, Any] = {
+            "last_planner_replay_trace": replay_trace,
+            "last_run_tick": current_tick,
+            "ticks_since_milestone_progress": progress_value,
+            "behavior_entry": behavior_entry,
+            "play_style_tags": list(derived_style_tags),
+        }
         if blackboard_decision.strategy_notes:
-            context.state.narrative_plan.set_strategy(blackboard_decision.strategy_notes)
+            commit_payload["strategy_notes"] = blackboard_decision.strategy_notes
         if (
             isinstance(blackboard_decision.next_scheduled_tick, int)
             and blackboard_decision.next_scheduled_tick >= current_tick
         ):
-            context.state.narrative_plan.schedule_next(blackboard_decision.next_scheduled_tick)
-        final_context = self._build_planner_context(context, current_tick=current_tick)
-        context.state.narrative_plan.record_behavior(
-            {
-                "tick": current_tick,
-                "changed_slices": final_context["changed_slices"],
-                "reason": reason,
-                "directive_count": requested_count,
-            }
-        )
-        derived_style_tags = self._derive_play_style_tags(
-            context.state.narrative_plan.behavior_window
-        )
-        if derived_style_tags != context.state.narrative_plan.play_style_tags:
-            context.state.narrative_plan.play_style_tags = list(derived_style_tags)
-            context.state.narrative_plan._dirty = True
+            commit_payload["next_scheduled_tick"] = blackboard_decision.next_scheduled_tick
+        self._commit_runtime_state(context, **commit_payload)
 
         sse_events: list[SSEEvent] = list(self._pending_sse)
         self._pending_sse.clear()
@@ -444,7 +482,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "skipped_invalid_count": skipped_invalid_count,
                 "story_fact_count": story_fact_count,
                 "applied_kinds": applied_kinds,
-                "planner_metadata": dict(blackboard_decision.metadata),
+                "planner_metadata": dict(blackboard_metadata),
                 "replay_round_count": replay_trace.get("round_count", 0),
                 "replay_stop_reason": replay_trace.get("stop_reason", "steady_state"),
                 "replay_event_count": len(planner_event_summaries),
@@ -483,18 +521,19 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 )
             ],
         )
-        requested_count = replay["requested_count"]
-        applied_count = replay["applied_count"]
-        skipped_unsupported_count = replay["skipped_unsupported_count"]
-        skipped_invalid_count = replay["skipped_invalid_count"]
-        applied_kinds = replay["applied_kinds"]
-        story_fact_count = replay["story_fact_count"]
+        replay_requested_count = replay["requested_count"]
+        replay_applied_count = replay["applied_count"]
+        replay_skipped_unsupported_count = replay["skipped_unsupported_count"]
+        replay_skipped_invalid_count = replay["skipped_invalid_count"]
+        replay_applied_kinds = replay["applied_kinds"]
+        subsystem_story_fact_count = replay["story_fact_count"]
         replay_trace = replay["trace"]
         planner_event_summaries = replay["planner_event_summaries"]
 
-        context.state.narrative_plan.set_last_planner_replay_trace(replay_trace)
-
+        blackboard_decision = NarrativePlannerDecision()
         blackboard_metadata: dict[str, Any] = {}
+        blackboard_apply_summary = self._empty_apply_summary()
+        blackboard_story_fact_count = 0
         if self.blackboard is not None:
             blackboard_context = self._build_planner_context(context, current_tick=current_tick)
             blackboard_context["planner_events"] = planner_event_summaries
@@ -509,6 +548,22 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "hook_name": "narrative_planner_bootstrap",
                         "current_tick": current_tick,
                     },
+                )
+                replay_trace["blackboard_summary"] = {
+                    "source": "blackboard",
+                    "requested_directive_count": 0,
+                    "applied_directive_count": 0,
+                    "skipped_unsupported_count": 0,
+                    "skipped_invalid_count": 0,
+                    "applied_kinds": [],
+                    "story_fact_count": 0,
+                    "directive_audit": [],
+                    "planner_metadata": {},
+                    "status": "planner_error",
+                }
+                self._commit_runtime_state(
+                    context,
+                    last_planner_replay_trace=replay_trace,
                 )
                 return HookResult(
                     sse_events=[
@@ -526,29 +581,70 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "evaluated": False,
                         "reason": "bootstrap",
                         "current_tick": current_tick,
-                        "requested_count": requested_count,
-                        "applied_count": applied_count,
-                        "skipped_unsupported_count": skipped_unsupported_count,
-                        "skipped_invalid_count": skipped_invalid_count,
-                        "story_fact_count": story_fact_count,
-                        "applied_kinds": applied_kinds,
+                        "requested_count": replay_requested_count,
+                        "applied_count": replay_applied_count,
+                        "skipped_unsupported_count": replay_skipped_unsupported_count,
+                        "skipped_invalid_count": replay_skipped_invalid_count,
+                        "story_fact_count": subsystem_story_fact_count,
+                        "applied_kinds": replay_applied_kinds,
                         "planner_metadata": {},
                         "replay_round_count": replay_trace.get("round_count", 0),
                         "replay_stop_reason": replay_trace.get("stop_reason", "error"),
                         "replay_event_count": len(planner_event_summaries),
-                        "replay_applied_directive_count": applied_count,
+                        "replay_applied_directive_count": replay_applied_count,
                     },
                 )
             blackboard_decision = self._normalize_decision(raw_decision)
-            story_fact_count += self._apply_story_facts(blackboard_decision.story_facts, context)
+            blackboard_apply_summary = self._apply_directive_batch(
+                blackboard_decision.directives,
+                context,
+                current_tick=current_tick,
+                allowed_directives=self._BOOTSTRAP_DIRECTIVES,
+                source="blackboard",
+                subsystem_name="blackboard",
+                round_index=int(replay_trace.get("round_count", 0)),
+            )
+            blackboard_story_fact_count = self._apply_story_facts(
+                blackboard_decision.story_facts,
+                context,
+            )
             blackboard_metadata = dict(blackboard_decision.metadata)
-            if blackboard_decision.strategy_notes:
-                context.state.narrative_plan.set_strategy(blackboard_decision.strategy_notes)
-            if (
-                isinstance(blackboard_decision.next_scheduled_tick, int)
-                and blackboard_decision.next_scheduled_tick >= current_tick
-            ):
-                context.state.narrative_plan.schedule_next(blackboard_decision.next_scheduled_tick)
+        requested_count = replay_requested_count + int(blackboard_apply_summary["requested_count"])
+        applied_count = replay_applied_count + int(blackboard_apply_summary["applied_count"])
+        skipped_unsupported_count = replay_skipped_unsupported_count + int(
+            blackboard_apply_summary["skipped_unsupported_count"]
+        )
+        skipped_invalid_count = replay_skipped_invalid_count + int(
+            blackboard_apply_summary["skipped_invalid_count"]
+        )
+        applied_kinds = list(replay_applied_kinds) + list(blackboard_apply_summary["applied_kinds"])
+        story_fact_count = subsystem_story_fact_count + blackboard_story_fact_count
+        replay_trace["directive_audit"] = list(replay_trace.get("directive_audit", []))
+        replay_trace["directive_audit"].extend(blackboard_apply_summary["directive_audit"])
+        replay_trace["blackboard_summary"] = {
+            "source": "blackboard",
+            "requested_directive_count": int(blackboard_apply_summary["requested_count"]),
+            "applied_directive_count": int(blackboard_apply_summary["applied_count"]),
+            "skipped_unsupported_count": int(
+                blackboard_apply_summary["skipped_unsupported_count"]
+            ),
+            "skipped_invalid_count": int(blackboard_apply_summary["skipped_invalid_count"]),
+            "applied_kinds": list(blackboard_apply_summary["applied_kinds"]),
+            "story_fact_count": blackboard_story_fact_count,
+            "directive_audit": list(blackboard_apply_summary["directive_audit"]),
+            "planner_metadata": dict(blackboard_metadata),
+        }
+        bootstrap_commit_payload: dict[str, Any] = {
+            "last_planner_replay_trace": replay_trace,
+        }
+        if blackboard_decision.strategy_notes:
+            bootstrap_commit_payload["strategy_notes"] = blackboard_decision.strategy_notes
+        if (
+            isinstance(blackboard_decision.next_scheduled_tick, int)
+            and blackboard_decision.next_scheduled_tick >= current_tick
+        ):
+            bootstrap_commit_payload["next_scheduled_tick"] = blackboard_decision.next_scheduled_tick
+        self._commit_runtime_state(context, **bootstrap_commit_payload)
         sse_events = list(self._pending_sse)
         self._pending_sse.clear()
         return HookResult(
@@ -906,41 +1002,16 @@ class NarrativePlannerHook(NoOpSettlementHook):
         current_tick: int,
         allowed_directives: set[str],
     ) -> tuple[int, int, int, int, list[str]]:
-        requested_count = len(decision.directives)
-        applied_count = 0
-        skipped_unsupported_count = 0
-        skipped_invalid_count = 0
-        applied_kinds: list[str] = []
-
-        if self._dispatcher is None:
-            logger.warning(
-                "NarrativePlannerHook: no dispatcher configured, directives will be dropped"
-            )
-            return (len(decision.directives), 0, 0, len(decision.directives), [])
-
-        apply_fn = self._dispatcher.apply_directive
-
-        for raw_directive in decision.directives:
-            normalized = self._normalize_directive(raw_directive)
-            if normalized is None:
-                skipped_invalid_count += 1
-                continue
-            kind, payload = normalized
-            if kind not in allowed_directives:
-                skipped_unsupported_count += 1
-                continue
-            if not apply_fn(kind, payload, context, current_tick=current_tick):
-                skipped_invalid_count += 1
-                continue
-            applied_count += 1
-            applied_kinds.append(kind)
-        return (
-            requested_count,
-            applied_count,
-            skipped_unsupported_count,
-            skipped_invalid_count,
-            applied_kinds,
+        summary = self._apply_directive_batch(
+            decision.directives,
+            context,
+            current_tick=current_tick,
+            allowed_directives=allowed_directives,
+            source="blackboard",
+            subsystem_name="blackboard",
+            round_index=0,
         )
+        return self._summary_tuple(summary)
 
     def _apply_subsystem_results(
         self,
@@ -950,45 +1021,35 @@ class NarrativePlannerHook(NoOpSettlementHook):
         current_tick: int,
         allowed_directives: set[str],
     ) -> tuple[int, int, int, int, list[str]]:
-        requested_count = 0
-        applied_count = 0
-        skipped_unsupported_count = 0
-        skipped_invalid_count = 0
-        applied_kinds: list[str] = []
-
-        if self._dispatcher is None:
-            return (0, 0, 0, 0, [])
-
+        summary = self._empty_apply_summary()
         for result in results:
             directives = result.directives if hasattr(result, "directives") else []
             if not isinstance(directives, list):
                 continue
-            requested_count += len(directives)
-            for raw_directive in directives:
-                normalized = self._normalize_directive(raw_directive)
-                if normalized is None:
-                    skipped_invalid_count += 1
-                    continue
-                kind, payload = normalized
-                if kind not in allowed_directives:
-                    skipped_unsupported_count += 1
-                    continue
-                if not self._dispatcher.apply_directive(
-                    kind,
-                    payload,
-                    context,
-                    current_tick=current_tick,
-                ):
-                    skipped_invalid_count += 1
-                    continue
-                applied_count += 1
-                applied_kinds.append(kind)
+            apply_summary = self._apply_directive_batch(
+                directives,
+                context,
+                current_tick=current_tick,
+                allowed_directives=allowed_directives,
+                source="subsystem",
+                subsystem_name=self._metadata_string(
+                    getattr(result, "metadata", {}),
+                    "subsystem",
+                    default="unknown",
+                ),
+                round_index=0,
+            )
+            self._merge_apply_summary(summary, apply_summary)
+        return self._summary_tuple(summary)
+
+    @staticmethod
+    def _summary_tuple(summary: dict[str, Any]) -> tuple[int, int, int, int, list[str]]:
         return (
-            requested_count,
-            applied_count,
-            skipped_unsupported_count,
-            skipped_invalid_count,
-            applied_kinds,
+            int(summary.get("requested_count", 0)),
+            int(summary.get("applied_count", 0)),
+            int(summary.get("skipped_unsupported_count", 0)),
+            int(summary.get("skipped_invalid_count", 0)),
+            list(summary.get("applied_kinds", [])),
         )
 
     def _apply_subsystem_story_facts(
@@ -1006,6 +1067,205 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 context,
             )
         return count
+
+    def _apply_directive_batch(
+        self,
+        directives: list[Any],
+        context: SettlementContext | None,
+        *,
+        current_tick: int,
+        allowed_directives: set[str],
+        source: str,
+        subsystem_name: str,
+        round_index: int,
+    ) -> dict[str, Any]:
+        summary = self._empty_apply_summary()
+        summary["requested_count"] = len(directives)
+
+        for raw_directive in directives:
+            validation = validate_planner_directive(
+                raw_directive,
+                allowed_directives=allowed_directives,
+            )
+            if not validation.ok:
+                status = (
+                    "unsupported"
+                    if is_unsupported_directive_reason(validation.reason_code)
+                    else "invalid_contract"
+                )
+                if status == "unsupported":
+                    summary["skipped_unsupported_count"] += 1
+                else:
+                    summary["skipped_invalid_count"] += 1
+                summary["directive_audit"].append(
+                    self._directive_audit_entry(
+                        source=source,
+                        subsystem_name=subsystem_name,
+                        round_index=round_index,
+                        validation=validation,
+                        status=status,
+                    )
+                )
+                continue
+
+            if self._dispatcher is None:
+                summary["skipped_invalid_count"] += 1
+                summary["directive_audit"].append(
+                    self._directive_audit_entry(
+                        source=source,
+                        subsystem_name=subsystem_name,
+                        round_index=round_index,
+                        validation=validation,
+                        status="subsystem_rejected",
+                        reason_code="missing_dispatcher",
+                    )
+                )
+                continue
+
+            applied = self._dispatcher.apply_directive(
+                validation.kind,
+                validation.payload,
+                context,
+                current_tick=current_tick,
+            )
+            if not applied:
+                summary["skipped_invalid_count"] += 1
+                summary["directive_audit"].append(
+                    self._directive_audit_entry(
+                        source=source,
+                        subsystem_name=subsystem_name,
+                        round_index=round_index,
+                        validation=validation,
+                        status="subsystem_rejected",
+                        reason_code="dispatcher_rejected",
+                    )
+                )
+                continue
+
+            summary["applied_count"] += 1
+            summary["applied_kinds"].append(validation.kind)
+            summary["directive_audit"].append(
+                self._directive_audit_entry(
+                    source=source,
+                    subsystem_name=subsystem_name,
+                    round_index=round_index,
+                    validation=validation,
+                    status="applied",
+                )
+            )
+
+        return summary
+
+    @staticmethod
+    def _empty_apply_summary() -> dict[str, Any]:
+        return {
+            "requested_count": 0,
+            "applied_count": 0,
+            "skipped_unsupported_count": 0,
+            "skipped_invalid_count": 0,
+            "applied_kinds": [],
+            "directive_audit": [],
+        }
+
+    @classmethod
+    def _merge_apply_summary(
+        cls,
+        target: dict[str, Any],
+        source_summary: dict[str, Any],
+    ) -> None:
+        target["requested_count"] += int(source_summary.get("requested_count", 0))
+        target["applied_count"] += int(source_summary.get("applied_count", 0))
+        target["skipped_unsupported_count"] += int(
+            source_summary.get("skipped_unsupported_count", 0)
+        )
+        target["skipped_invalid_count"] += int(source_summary.get("skipped_invalid_count", 0))
+        target["applied_kinds"].extend(source_summary.get("applied_kinds", []))
+        target["directive_audit"].extend(source_summary.get("directive_audit", []))
+
+    @staticmethod
+    def _directive_audit_entry(
+        *,
+        source: str,
+        subsystem_name: str,
+        round_index: int,
+        validation: DirectiveValidationResult,
+        status: str,
+        reason_code: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "source": source,
+            "subsystem": subsystem_name,
+            "round_index": round_index,
+            "kind": validation.kind,
+            "status": status,
+            "reason_code": reason_code or validation.reason_code,
+            "payload_digest": dict(validation.payload_digest),
+        }
+
+    @staticmethod
+    def _new_round_subsystem_summary(name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "event_kinds": [],
+            "accepted_event_count": 0,
+            "requested_directive_count": 0,
+            "applied_directive_count": 0,
+            "skipped_unsupported_count": 0,
+            "skipped_invalid_count": 0,
+            "applied_kinds": [],
+            "story_fact_count": 0,
+            "directive_audit": [],
+            "metadata": {},
+        }
+
+    @staticmethod
+    def _merge_subsystem_metadata(
+        summary: dict[str, Any],
+        metadata: Mapping[str, Any] | None,
+    ) -> None:
+        if not isinstance(metadata, Mapping):
+            return
+        raw_target = summary.get("metadata")
+        target = raw_target if isinstance(raw_target, dict) else {}
+        for key, value in metadata.items():
+            if key in {"subsystem", "event_kind"}:
+                continue
+            if key == "candidate_summary" and isinstance(value, Mapping):
+                existing = target.get("candidate_summary")
+                merged = dict(existing) if isinstance(existing, Mapping) else {}
+                for nested_key, nested_value in value.items():
+                    merged[str(nested_key)] = nested_value
+                target["candidate_summary"] = merged
+                continue
+            if key == "rejected_directives" and isinstance(value, list):
+                existing_list = target.get("rejected_directives")
+                merged_list = list(existing_list) if isinstance(existing_list, list) else []
+                merged_list.extend(
+                    dict(entry) for entry in value if isinstance(entry, Mapping)
+                )
+                target["rejected_directives"] = merged_list
+                continue
+            if key == "filtered_directive_count":
+                current = target.get("filtered_directive_count", 0)
+                try:
+                    target["filtered_directive_count"] = int(current) + int(value)
+                except (TypeError, ValueError):
+                    target["filtered_directive_count"] = current
+                continue
+            target[str(key)] = value
+        summary["metadata"] = target
+
+    @classmethod
+    def _metadata_string(
+        cls,
+        metadata: Any,
+        key: str,
+        *,
+        default: str = "",
+    ) -> str:
+        if isinstance(metadata, Mapping):
+            return cls._string_or_empty(metadata.get(key)) or default
+        return default
 
     @staticmethod
     def _attach_planner_context(
@@ -1059,6 +1319,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         story_fact_count = 0
         all_events: list[PlannerEvent] = []
         rounds: list[dict[str, Any]] = []
+        directive_audit: list[dict[str, Any]] = []
         seen_dedupe_keys: set[str] = set()
         stop_reason = "steady_state"
         change_cursor = initial_change_window_start
@@ -1088,6 +1349,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
             round_skipped_invalid_count = 0
             round_applied_kinds: list[str] = []
             accepted_event_count = 0
+            round_subsystems: dict[str, dict[str, Any]] = {}
+            round_directive_audit: list[dict[str, Any]] = []
 
             for semantic_event in pending_events:
                 seen_dedupe_keys.add(semantic_event.dedupe_key)
@@ -1118,27 +1381,85 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     dispatch_results = await self._dispatcher.dispatch(dispatch_event, context)
                 if dispatch_results:
                     accepted_event_count += 1
-                (
-                    sub_requested,
-                    sub_applied,
-                    sub_skipped_unsupported,
-                    sub_skipped_invalid,
-                    sub_applied_kinds,
-                ) = self._apply_subsystem_results(
-                    dispatch_results,
-                    context,
-                    current_tick=current_tick,
-                    allowed_directives=allowed_directives,
-                )
-                round_requested_count += sub_requested
-                round_applied_count += sub_applied
-                round_skipped_unsupported_count += sub_skipped_unsupported
-                round_skipped_invalid_count += sub_skipped_invalid
-                round_applied_kinds.extend(sub_applied_kinds)
-                story_fact_count += self._apply_subsystem_story_facts(
-                    dispatch_results,
-                    context,
-                )
+                for result in dispatch_results:
+                    subsystem_name = self._metadata_string(
+                        getattr(result, "metadata", {}),
+                        "subsystem",
+                        default="unknown",
+                    )
+                    subsystem_summary = round_subsystems.setdefault(
+                        subsystem_name,
+                        self._new_round_subsystem_summary(subsystem_name),
+                    )
+                    event_kind = self._metadata_string(
+                        getattr(result, "metadata", {}),
+                        "event_kind",
+                        default=semantic_event.kind,
+                    )
+                    if event_kind and event_kind not in subsystem_summary["event_kinds"]:
+                        subsystem_summary["event_kinds"].append(event_kind)
+                    subsystem_summary["accepted_event_count"] += 1
+                    self._merge_subsystem_metadata(
+                        subsystem_summary,
+                        _normalize_mapping(getattr(result, "metadata", {})),
+                    )
+
+                    directives = (
+                        result.directives
+                        if hasattr(result, "directives") and isinstance(result.directives, list)
+                        else []
+                    )
+                    apply_summary = self._apply_directive_batch(
+                        directives,
+                        context,
+                        current_tick=current_tick,
+                        allowed_directives=allowed_directives,
+                        source="subsystem",
+                        subsystem_name=subsystem_name,
+                        round_index=round_index,
+                    )
+                    subsystem_summary["requested_directive_count"] += int(
+                        apply_summary.get("requested_count", 0)
+                    )
+                    subsystem_summary["applied_directive_count"] += int(
+                        apply_summary.get("applied_count", 0)
+                    )
+                    subsystem_summary["skipped_unsupported_count"] += int(
+                        apply_summary.get("skipped_unsupported_count", 0)
+                    )
+                    subsystem_summary["skipped_invalid_count"] += int(
+                        apply_summary.get("skipped_invalid_count", 0)
+                    )
+                    subsystem_summary["applied_kinds"].extend(
+                        apply_summary.get("applied_kinds", [])
+                    )
+                    subsystem_summary["directive_audit"].extend(
+                        apply_summary.get("directive_audit", [])
+                    )
+                    round_requested_count += int(apply_summary.get("requested_count", 0))
+                    round_applied_count += int(apply_summary.get("applied_count", 0))
+                    round_skipped_unsupported_count += int(
+                        apply_summary.get("skipped_unsupported_count", 0)
+                    )
+                    round_skipped_invalid_count += int(
+                        apply_summary.get("skipped_invalid_count", 0)
+                    )
+                    round_applied_kinds.extend(apply_summary.get("applied_kinds", []))
+                    round_directive_audit.extend(apply_summary.get("directive_audit", []))
+
+                    story_facts = (
+                        result.story_facts
+                        if hasattr(result, "story_facts") and isinstance(result.story_facts, list)
+                        else []
+                    )
+                    applied_story_facts = 0
+                    if story_facts:
+                        applied_story_facts = self._apply_story_facts(
+                            self._normalize_story_facts(story_facts),
+                            context,
+                        )
+                    subsystem_summary["story_fact_count"] += applied_story_facts
+                    story_fact_count += applied_story_facts
 
             inline_payloads = run_inline_event_check(
                 state=context.state,
@@ -1157,9 +1478,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     "event_kinds": [event.kind for event in pending_events],
                     "accepted_event_count": accepted_event_count,
                     "requested_directive_count": round_requested_count,
+                    "applied_directive_count": round_applied_count,
+                    "skipped_unsupported_count": round_skipped_unsupported_count,
+                    "skipped_invalid_count": round_skipped_invalid_count,
                     "applied_directive_kinds": list(round_applied_kinds),
                     "new_change_count": new_change_count,
                     "inline_event_transition_count": len(inline_payloads),
+                    "subsystems": list(round_subsystems.values()),
                 }
             )
             requested_count += round_requested_count
@@ -1167,6 +1492,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             skipped_unsupported_count += round_skipped_unsupported_count
             skipped_invalid_count += round_skipped_invalid_count
             applied_kinds.extend(round_applied_kinds)
+            directive_audit.extend(round_directive_audit)
 
             change_cursor = pre_round_change_count
             if round_index + 1 >= self._MAX_REPLAY_ROUNDS:
@@ -1202,6 +1528,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "round_count": len(rounds),
             "stop_reason": stop_reason,
             "rounds": rounds,
+            "directive_audit": directive_audit,
+            "blackboard_summary": {},
         }
         return {
             "requested_count": requested_count,
@@ -1253,7 +1581,15 @@ class NarrativePlannerHook(NoOpSettlementHook):
     ) -> int:
         if not facts or not context.state.has_slice("narrative_plan"):
             return 0
-        context.state.narrative_plan.add_story_facts(facts)
+        result = context.execute_command(
+            Command(
+                type="planner_add_story_facts",
+                params={"facts": list(facts)},
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return 0
         graph = context.knowledge_graph
         if graph is not None:
             try:
@@ -1261,6 +1597,20 @@ class NarrativePlannerHook(NoOpSettlementHook):
             except Exception:
                 logger.exception("failed to inject story_facts into knowledge graph")
         return len(facts)
+
+    @staticmethod
+    def _commit_runtime_state(
+        context: SettlementContext,
+        **params: Any,
+    ) -> bool:
+        result = context.execute_command(
+            Command(
+                type="planner_commit_runtime_state",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        return result.executed
 
     def _build_target_milestone_detail(
         self, context: SettlementContext,
@@ -1352,43 +1702,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         cls,
         raw: Any,
     ) -> tuple[str, dict[str, Any]] | None:
-        if isinstance(raw, PlanningDirective):
-            kind = cls._coerce_non_empty_string(raw.kind)
-            if kind is None:
-                return None
-            return kind, _normalize_mapping(raw.payload)
-        if isinstance(raw, CreateQuestPlan):
-            return "create_quest", cls._merge_payload({"quest_id": raw.quest_id}, raw.payload)
-        if isinstance(raw, DirectNpcPlan):
-            if not raw.directive:
-                return None
-            return "direct_npc", {
-                "npc_id": raw.npc_id,
-                "directive": dict(raw.directive) if isinstance(raw.directive, Mapping) else {},
-            }
-        if isinstance(raw, PublishBulletinPlan):
-            return "publish_bulletin", cls._merge_payload(
-                {"board_id": raw.board_id},
-                raw.payload,
-            )
-        if isinstance(raw, EscalatePlan):
-            return "escalate", cls._merge_payload({"delta": raw.delta}, raw.payload)
-        if isinstance(raw, AdjustPacingPlan):
-            return "adjust_pacing", cls._merge_payload({"frozen": raw.frozen}, raw.payload)
-        if isinstance(raw, RetireQuestPlan):
-            return "retire_quest", cls._merge_payload({"quest_id": raw.quest_id}, raw.payload)
-        if isinstance(raw, SpawnQuestNpcPlan):
-            return "spawn_quest_npc", cls._merge_payload({"npc_id": raw.npc_id}, raw.payload)
-        if isinstance(raw, PlantEnvironmentalPlan):
-            return "plant_environmental", cls._merge_payload({"area_id": raw.area_id}, raw.payload)
-        if isinstance(raw, FillAreaPlan):
-            return "fill_area", cls._merge_payload({"area_id": raw.area_id}, raw.payload)
-        if not isinstance(raw, Mapping):
-            return None
-        kind = cls._coerce_non_empty_string(raw.get("kind"))
-        if kind is None:
-            return None
-        return kind, _normalize_mapping(raw.get("payload"))
+        return normalize_planner_directive(raw)
 
     @staticmethod
     def _noop_metadata(
@@ -1426,15 +1740,3 @@ class NarrativePlannerHook(NoOpSettlementHook):
     @classmethod
     def _string_or_empty(cls, value: Any) -> str:
         return cls._coerce_non_empty_string(value) or ""
-
-    @classmethod
-    def _merge_payload(
-        cls,
-        base: Mapping[str, Any],
-        extra: Any,
-    ) -> dict[str, Any]:
-        merged = _normalize_mapping(extra)
-        result = dict(merged)
-        for key, value in base.items():
-            result[str(key)] = value
-        return result

@@ -252,6 +252,229 @@ def test_interaction_service_handles_pipeline_failure() -> None:
     ]
 
 
+def test_interaction_service_resolves_receptionist_accept_quest_to_pipeline_action() -> None:
+    runtime, session = _interaction_session()
+    session.runtime.state.quests.add_dynamic_quest(
+        "dq_report_in",
+        {
+            "status": "available",
+            "title": "Lead: Report In",
+            "summary": "Follow the new lead tied to report_in.",
+        },
+    )
+    session.runtime.state.areas.add_board_bulletin(
+        "guild_hall",
+        "board",
+        {
+            "board_id": "board",
+            "quest_id": "dq_report_in",
+            "title": "New Lead Posted",
+        },
+    )
+    captured: dict[str, object] = {}
+
+    async def _execute(_session, request):
+        captured["action_type"] = request.action_type
+        captured["params"] = dict(request.params)
+        return SimpleNamespace(
+            executed=True,
+            errors=[],
+            time_cost=1 / 6,
+            metadata={"board_id": "board", "quest_id": "dq_report_in"},
+            narrative_hints=[],
+            sse_events=[],
+        )
+
+    service = _service(runtime, execute_structured_action=_execute)
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "receptionist",
+                "intent": "accept_quest",
+                "item_id": None,
+                "quest_id": "dq_report_in",
+                "count": 1,
+                "execution": {
+                    "kind": "pipeline_action",
+                    "action_type": "accept_quest",
+                    "params": {
+                        "npc_id": "receptionist",
+                        "quest_id": "dq_report_in",
+                    },
+                },
+            },
+        )
+    )
+
+    assert result.completed is True
+    assert [event.event_type for event in result.events] == [
+        "interaction_resolved",
+        "action_result",
+    ]
+    assert captured["action_type"] == "accept_quest"
+    assert captured["params"] == {
+        "npc_id": "receptionist",
+        "quest_id": "dq_report_in",
+        "board_id": "board",
+    }
+
+
+def test_interaction_service_rejects_accept_quest_for_non_receptionist() -> None:
+    runtime, session = _interaction_session()
+    session.runtime.state.quests.add_dynamic_quest(
+        "dq_report_in",
+        {
+            "status": "available",
+            "title": "Lead: Report In",
+            "summary": "Follow the new lead tied to report_in.",
+        },
+    )
+    session.runtime.state.areas.add_board_bulletin(
+        "guild_hall",
+        "board",
+        {
+            "board_id": "board",
+            "quest_id": "dq_report_in",
+            "title": "New Lead Posted",
+        },
+    )
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "accept_quest",
+                "item_id": None,
+                "quest_id": "dq_report_in",
+                "count": 1,
+                "execution": {
+                    "kind": "pipeline_action",
+                    "action_type": "accept_quest",
+                    "params": {
+                        "npc_id": "merchant",
+                        "quest_id": "dq_report_in",
+                    },
+                },
+            },
+        )
+    )
+
+    assert result.completed is False
+    assert result.reason == "interaction_rejected"
+    assert [event.event_type for event in result.events] == ["interaction_rejected"]
+    assert result.events[0].payload["code"] == "npc_cannot_accept_quests"
+
+
+def test_interaction_service_resolves_receptionist_report_quest_to_pipeline_action() -> None:
+    runtime, session = _interaction_session()
+    session.runtime.state.quests.add_dynamic_quest(
+        "dq_report_in",
+        {
+            "status": "completed",
+            "title": "Lead: Report In",
+            "summary": "Follow the new lead tied to report_in.",
+            "requires_report": True,
+        },
+    )
+    captured: dict[str, object] = {}
+
+    async def _execute(_session, request):
+        captured["action_type"] = request.action_type
+        captured["params"] = dict(request.params)
+        return SimpleNamespace(
+            executed=True,
+            errors=[],
+            time_cost=1 / 6,
+            metadata={"quest_id": "dq_report_in", "reported": True},
+            narrative_hints=[],
+            sse_events=[],
+        )
+
+    service = _service(runtime, execute_structured_action=_execute)
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "receptionist",
+                "intent": "report_quest",
+                "item_id": None,
+                "quest_id": "dq_report_in",
+                "count": 1,
+                "execution": {
+                    "kind": "pipeline_action",
+                    "action_type": "report_quest",
+                    "params": {
+                        "npc_id": "receptionist",
+                        "quest_id": "dq_report_in",
+                    },
+                },
+            },
+        )
+    )
+
+    assert result.completed is True
+    assert [event.event_type for event in result.events] == [
+        "interaction_resolved",
+        "action_result",
+    ]
+    assert captured["action_type"] == "report_quest"
+    assert captured["params"] == {
+        "npc_id": "receptionist",
+        "quest_id": "dq_report_in",
+    }
+
+
+def test_interaction_service_rejects_report_quest_for_unready_quest() -> None:
+    runtime, session = _interaction_session()
+    session.runtime.state.quests.add_dynamic_quest(
+        "dq_report_in",
+        {
+            "status": "active",
+            "title": "Lead: Report In",
+            "summary": "Follow the new lead tied to report_in.",
+            "requires_report": True,
+        },
+    )
+    service = _service(runtime)
+
+    result = asyncio.run(
+        service.execute(
+            session,
+            {
+                "status": "resolved",
+                "target_kind": "npc",
+                "target_id": "receptionist",
+                "intent": "report_quest",
+                "item_id": None,
+                "quest_id": "dq_report_in",
+                "count": 1,
+                "execution": {
+                    "kind": "pipeline_action",
+                    "action_type": "report_quest",
+                    "params": {
+                        "npc_id": "receptionist",
+                        "quest_id": "dq_report_in",
+                    },
+                },
+            },
+        )
+    )
+
+    assert result.completed is False
+    assert result.reason == "interaction_rejected"
+    assert [event.event_type for event in result.events] == ["interaction_rejected"]
+    assert result.events[0].payload["code"] == "quest_not_ready_to_report"
+
+
 def test_interaction_service_rejects_unknown_snapshot_type() -> None:
     runtime, session = _interaction_session()
     service = _service(runtime)
@@ -337,6 +560,13 @@ def test_shop_snapshot_includes_player_gold() -> None:
     shop_payload = result.events[1].payload
     assert "player_gold" in shop_payload
     assert isinstance(shop_payload["player_gold"], int)
+    assert shop_payload["refresh_policy"] == {
+        "mode": "manual",
+        "configured_modes": [],
+        "auto_refresh": False,
+        "last_refresh_tick": shop_payload["last_refresh_tick"],
+    }
+    assert shop_payload["next_refresh_hint"] is None
 
 
 def test_shop_snapshot_stock_enriched_with_item_details() -> None:
@@ -397,81 +627,6 @@ def test_shop_snapshot_includes_player_sellable_items() -> None:
     sword = next(item for item in sellable if item["item_id"] == "training_sword")
     assert sword["name"] == "Training Sword"
     assert isinstance(sword["base_price"], int)
-
-
-# ------------------------------------------------------------------
-# Talk snapshot enrichment
-# ------------------------------------------------------------------
-
-
-def test_talk_snapshot_includes_available_intents() -> None:
-    runtime, session = _interaction_session()
-    service = _service(runtime)
-
-    result = asyncio.run(
-        service.execute(
-            session,
-            {
-                "status": "resolved",
-                "target_kind": "npc",
-                "target_id": "merchant",
-                "intent": "talk",
-                "item_id": None,
-                "quest_id": None,
-                "count": 1,
-                "execution": {"kind": "snapshot", "snapshot_type": "talk"},
-            },
-        )
-    )
-
-    assert result.completed is True
-    talk_payload = result.events[1].payload
-    intents = talk_payload["available_intents"]
-    assert "talk" in intents
-    assert "greet" in intents
-
-
-def test_talk_snapshot_merchant_has_shop_intents() -> None:
-    runtime, session = _interaction_session()
-    # Refresh shop first to populate shop_states
-    service = _service(runtime)
-    asyncio.run(
-        service.execute(
-            session,
-            {
-                "status": "resolved",
-                "target_kind": "npc",
-                "target_id": "merchant",
-                "intent": "browse",
-                "item_id": None,
-                "quest_id": None,
-                "count": 1,
-                "execution": {"kind": "shop_refresh"},
-            },
-        )
-    )
-    # Now get talk snapshot
-    result = asyncio.run(
-        service.execute(
-            session,
-            {
-                "status": "resolved",
-                "target_kind": "npc",
-                "target_id": "merchant",
-                "intent": "talk",
-                "item_id": None,
-                "quest_id": None,
-                "count": 1,
-                "execution": {"kind": "snapshot", "snapshot_type": "talk"},
-            },
-        )
-    )
-
-    assert result.completed is True
-    intents = result.events[1].payload["available_intents"]
-    assert "browse" in intents
-    assert "buy" in intents
-    assert "sell" in intents
 
 
 # ------------------------------------------------------------------

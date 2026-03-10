@@ -110,6 +110,7 @@ def _build_game_runtime() -> GameRuntime:
             from app.design_skill_provider import LocalDesignSkillProvider
             from app.narrators import (
                 AgenticNarrativePlanner,
+                ITEM_DESIGNER_AGENT_PROMPT,
                 NARRATIVE_WEAVER_AGENT_PROMPT,
                 NPC_DIRECTOR_AGENT_PROMPT,
                 PLANNER_BLACKBOARD_PROMPT,
@@ -123,6 +124,7 @@ def _build_game_runtime() -> GameRuntime:
             npc_registry = RoleToolRegistry()
             world_registry = RoleToolRegistry()
             weaver_registry = RoleToolRegistry()
+            item_registry = RoleToolRegistry()
             register_planner_tools(
                 quest_registry,
                 roles=["quest_manager"],
@@ -139,12 +141,17 @@ def _build_game_runtime() -> GameRuntime:
                 weaver_registry,
                 roles=["narrative_weaver"],
             )
+            register_planner_tools(
+                item_registry,
+                roles=["item_designer"],
+            )
 
             blackboard_llm = GeminiLlmAdapter(profile_name="planner_blackboard")
             quest_llm = GeminiLlmAdapter(profile_name="quest_manager")
             npc_llm = GeminiLlmAdapter(profile_name="npc_director")
             world_llm = GeminiLlmAdapter(profile_name="world_builder")
             weaver_llm = GeminiLlmAdapter(profile_name="narrative_weaver")
+            item_llm = GeminiLlmAdapter(profile_name="item_designer")
 
             return PlannerSystemAssembly(
                 blackboard=AgenticNarrativePlanner(
@@ -203,6 +210,18 @@ def _build_game_runtime() -> GameRuntime:
                     history_key="__narrative_weaver_agent__",
                     context_formatter=_format_subsystem_context,
                     allowed_skill_categories=["narrative"],
+                ),
+                item_designer_agent=AgenticNarrativePlanner(
+                    llm=item_llm,
+                    executor=AgenticExecutor(tool_registry=item_registry, llm=item_llm),
+                    design_skill_port=LocalDesignSkillProvider(),
+                    world_id="",
+                    role="item_designer",
+                    system_prompt=ITEM_DESIGNER_AGENT_PROMPT,
+                    provider_name="item_designer_agent",
+                    history_key="__item_designer_agent__",
+                    context_formatter=_format_subsystem_context,
+                    allowed_skill_categories=["items"],
                 ),
             )
 

@@ -1280,6 +1280,206 @@ def _extract_merchant_data(npc_id: str, state: StateContainer) -> dict[str, Any]
     }
 
 
+_GUARD_FLAG_PREFIXES = ("guard_", "travel_", "permit_", "lockdown_")
+
+
+def _resolve_npc_area_and_location(
+    npc_id: str,
+    state: StateContainer,
+    world: WorldInstance,
+) -> tuple[str, str | None]:
+    area_id = ""
+    location_id: str | None = None
+
+    if state.has_slice("areas"):
+        area_id = state.areas.find_npc_area(npc_id) or ""
+        if area_id:
+            location_id = state.areas.get_area(area_id).npc_locations.get(npc_id)
+
+    if area_id:
+        return area_id, location_id
+
+    if not world.has_registry("characters"):
+        return "", None
+
+    profile = world.characters.get(npc_id)
+    if profile is None:
+        return "", None
+
+    area_id = str(
+        getattr(profile, "area_id", "") or getattr(profile, "current_area", "") or ""
+    ).strip()
+    raw_location = (
+        getattr(profile, "location_id", None)
+        or getattr(profile, "current_location", None)
+    )
+    if raw_location is not None:
+        normalized = str(raw_location).strip()
+        if normalized:
+            location_id = normalized
+    return area_id, location_id
+
+
+def _collect_player_effect_labels(state: StateContainer) -> list[str]:
+    if not state.has_slice("player"):
+        return []
+    labels: list[str] = []
+    for raw_effect in state.player.active_effects:
+        label = ""
+        if isinstance(raw_effect, Mapping):
+            label = str(
+                raw_effect.get("name")
+                or raw_effect.get("effect_id")
+                or raw_effect.get("id")
+                or raw_effect.get("status")
+                or ""
+            ).strip()
+        else:
+            label = str(raw_effect).strip()
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _event_targets_area(raw_event: Mapping[str, Any], area_id: str) -> bool:
+    direct_candidates = (
+        raw_event.get("area_id"),
+        raw_event.get("current_area"),
+    )
+    for candidate in direct_candidates:
+        if str(candidate or "").strip() == area_id:
+            return True
+
+    for nested_key in ("payload", "trigger_condition", "location"):
+        nested = raw_event.get(nested_key)
+        if not isinstance(nested, Mapping):
+            continue
+        if str(nested.get("area_id") or "").strip() == area_id:
+            return True
+    return False
+
+
+def _extract_temple_keeper_data(
+    npc_id: str,
+    state: StateContainer,
+    world: WorldInstance,
+) -> dict[str, Any]:
+    """Extract service catalog + player status for temple keeper NPCs."""
+    services: list[dict[str, Any]] = []
+    if world.has_registry("characters"):
+        profile = world.characters.get(npc_id)
+        shop = getattr(profile, "shop", None) if profile is not None else None
+        raw_services = shop.get("services", []) if isinstance(shop, Mapping) else []
+        if isinstance(raw_services, list):
+            for raw_service in raw_services:
+                if not isinstance(raw_service, Mapping):
+                    continue
+                service_id = str(
+                    raw_service.get("service_id") or raw_service.get("id") or ""
+                ).strip()
+                if not service_id:
+                    continue
+                label = str(raw_service.get("label") or service_id).strip() or service_id
+                price = raw_service.get("price", 0)
+                try:
+                    normalized_price: int | str = int(price)
+                except (TypeError, ValueError):
+                    normalized_price = str(price)
+                notes = str(
+                    raw_service.get("notes")
+                    or raw_service.get("availability")
+                    or ""
+                ).strip()
+                services.append({
+                    "service_id": service_id,
+                    "label": label,
+                    "price": normalized_price,
+                    "notes": notes,
+                })
+
+    area_id, location_id = _resolve_npc_area_and_location(npc_id, state, world)
+    player_state = {
+        "hp": None,
+        "max_hp": None,
+        "gold": None,
+        "active_effects": [],
+    }
+    if state.has_slice("player"):
+        player_state = {
+            "hp": int(state.player.hp),
+            "max_hp": int(state.player.max_hp),
+            "gold": int(state.player.gold),
+            "active_effects": _collect_player_effect_labels(state),
+        }
+
+    return {
+        "role": "temple_keeper",
+        "area_id": area_id,
+        "location_id": location_id,
+        "services": services,
+        "player_state": player_state,
+    }
+
+
+def _extract_guard_data(
+    npc_id: str,
+    state: StateContainer,
+    world: WorldInstance,
+) -> dict[str, Any]:
+    """Extract patrol-area security facts for guard NPCs."""
+    area_id, location_id = _resolve_npc_area_and_location(npc_id, state, world)
+
+    danger_level: float | None = None
+    if area_id and state.has_slice("areas"):
+        danger_level = state.areas.get_danger(area_id)
+
+    pending_events: list[dict[str, str]] = []
+    if area_id and state.has_slice("events"):
+        for raw_event in state.events.pending_events:
+            if not isinstance(raw_event, Mapping) or not _event_targets_area(raw_event, area_id):
+                continue
+            event_id = str(
+                raw_event.get("event_id") or raw_event.get("id") or ""
+            ).strip()
+            title = str(
+                raw_event.get("title")
+                or raw_event.get("name")
+                or event_id
+            ).strip()
+            summary = str(
+                raw_event.get("summary")
+                or raw_event.get("description")
+                or ""
+            ).strip()
+            pending_events.append({
+                "event_id": event_id,
+                "title": title,
+                "summary": summary,
+            })
+
+    access_flags: list[dict[str, Any]] = []
+    if area_id and state.has_slice("flags"):
+        for key, value in sorted(state.flags.get_all().items()):
+            key_str = str(key).strip()
+            if not key_str.startswith(_GUARD_FLAG_PREFIXES):
+                continue
+            if area_id not in key_str:
+                continue
+            access_flags.append({
+                "key": key_str,
+                "value": value,
+            })
+
+    return {
+        "role": "guard",
+        "area_id": area_id,
+        "location_id": location_id,
+        "danger_level": danger_level,
+        "pending_events": pending_events,
+        "access_flags": access_flags,
+    }
+
+
 def _extract_role_data(
     tags: list[Any],
     npc_id: str,
@@ -1293,6 +1493,10 @@ def _extract_role_data(
         return _extract_receptionist_data(state)
     if "merchant" in tag_set:
         return _extract_merchant_data(npc_id, state)
+    if "temple_keeper" in tag_set:
+        return _extract_temple_keeper_data(npc_id, state, world)
+    if "guard" in tag_set:
+        return _extract_guard_data(npc_id, state, world)
     return None
 
 
@@ -1350,6 +1554,94 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         lines.append("### 约束规则")
         lines.append("- 只能出售库存中实际存在的商品，绝不编造不存在的商品")
         lines.append("- 价格以库存列表为准，不得自行调整")
+        return "\n".join(lines)
+
+    if role == "temple_keeper":
+        services = role_data.get("services", [])
+        player_state = role_data.get("player_state", {})
+        active_effects = player_state.get("active_effects", [])
+        lines = [
+            "\n\n## 你的职责（严格遵守）",
+            "你是神殿接待者，负责治疗、祝福与捐赠相关的服务说明。",
+            "",
+            "### 当前服务目录",
+        ]
+        if services:
+            for service in services:
+                notes = str(service.get("notes", "")).strip()
+                detail = (
+                    f"- {service.get('label', service.get('service_id', '?'))} "
+                    f"({service.get('service_id', '?')}) — 价格:{service.get('price', '?')}"
+                )
+                if notes:
+                    detail += f" 说明:{notes}"
+                lines.append(detail)
+        else:
+            lines.append("- （当前没有可提供的神殿服务）")
+        lines.append("")
+        lines.append("### 当前来访者状态")
+        hp = player_state.get("hp")
+        max_hp = player_state.get("max_hp")
+        gold = player_state.get("gold")
+        if hp is not None and max_hp is not None:
+            lines.append(f"- 生命值: {hp}/{max_hp}")
+        else:
+            lines.append("- 生命值: （未知）")
+        if gold is not None:
+            lines.append(f"- 持有金币: {gold}")
+        else:
+            lines.append("- 持有金币: （未知）")
+        if active_effects:
+            lines.append(f"- 当前状态效果: {', '.join(str(effect) for effect in active_effects)}")
+        else:
+            lines.append("- 当前状态效果: 无")
+        lines.append("")
+        lines.append("### 约束规则")
+        lines.append("- 你只能说明服务目录中实际存在的治疗、祝福和捐赠项目")
+        lines.append("- 不得编造新的价格、疗效、折扣或额外仪式")
+        lines.append("- 对玩家是否需要治疗或能否支付的判断，必须以上述状态为准")
+        return "\n".join(lines)
+
+    if role == "guard":
+        pending_events = role_data.get("pending_events", [])
+        access_flags = role_data.get("access_flags", [])
+        lines = [
+            "\n\n## 你的职责（严格遵守）",
+            "你是守卫，负责通行核验、风险提醒和秩序维护。",
+            "",
+            "### 驻守信息",
+        ]
+        area_id = str(role_data.get("area_id") or "").strip()
+        location_id = str(role_data.get("location_id") or "").strip()
+        danger_level = role_data.get("danger_level")
+        lines.append(f"- 驻守区域: {area_id or '（未知）'}")
+        lines.append(f"- 当前岗位: {location_id or '（未知）'}")
+        if danger_level is not None:
+            lines.append(f"- 当前危险度: {danger_level}")
+        else:
+            lines.append("- 当前危险度: （未知）")
+        lines.append("")
+        lines.append("### 当前安全事实")
+        if pending_events:
+            for event in pending_events:
+                summary = str(event.get("summary", "")).strip()
+                detail = f"- {event.get('title', event.get('event_id', '?'))}"
+                if summary:
+                    detail += f"：{summary}"
+                lines.append(detail)
+        else:
+            lines.append("- （当前没有待处理的区域事件）")
+        lines.append("")
+        lines.append("### 通行与戒严标记")
+        if access_flags:
+            for flag in access_flags:
+                lines.append(f"- {flag.get('key', '?')} = {flag.get('value')}")
+        else:
+            lines.append("- （当前没有额外的通行或戒严标记）")
+        lines.append("")
+        lines.append("### 约束规则")
+        lines.append("- 你只能根据上述危险度、待处理事件和通行标记回答安全与通行问题")
+        lines.append("- 不得编造不存在的封锁、搜查、许可要求或戒严措施")
         return "\n".join(lines)
 
     return ""

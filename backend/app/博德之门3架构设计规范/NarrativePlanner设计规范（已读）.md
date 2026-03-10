@@ -281,7 +281,7 @@ NarrativePlanner 每次运行接收四部分输入：
 
 ### 3.2 输出设计：指令类型
 
-NarrativePlanner 输出一个 `plan` 对象，包含 `interventions` 数组：
+NarrativePlanner 当前输出一个 `plan` 对象，核心字段为 `directives`、`strategy_notes`、`story_facts` 与 `next_trigger_hint`：
 
 > **实现偏差（D-P18b，2026-03-09）**：实际输出格式已演化。`interventions` → `directives`，`strategy_update` → `strategy_notes`。新增 `story_facts`（世界事实三元组，写入 WorldKnowledgeGraph，NPC 可通过 L6 查询）和 `next_trigger_hint`。确定性 planner 已删除（807 行），现为纯 LLM planner（`AgenticNarrativePlanner`），无 LLM 时优雅降级为 noop。详见 `app/增量更新/P18-NarrativePlanner深化与知识层修复.md` §3.3。
 
@@ -289,33 +289,53 @@ NarrativePlanner 输出一个 `plan` 对象，包含 `interventions` 数组：
 {
   "reasoning": "玩家已完成 M20（接受调查任务），下一目标是 M30（调查西部牧场）。玩家在酒馆已待了 8 格未出发，应该通过路人 NPC 制造紧迫感。同时考虑到玩家的对话偏好，用 NPC 对话方式投递。",
 
-  "strategy_update": "升级紧迫感——让受伤难民出现在酒馆，通过情感触发推动玩家出发",
-
-  "interventions": [
+  "strategy_notes": "升级紧迫感，让公会柜台优先以 NPC 对话而不是公告板投递线索",
+  "story_facts": [],
+  "next_trigger_hint": "re-evaluate after the player accepts or reports the current lead",
+  "directives": [
     {
-      "type": "create_quest",
-      "params": { ... }
+      "kind": "create_quest",
+      "payload": {
+        "quest_id": "dq_western_farm",
+        "title": "西部牧场的新线索",
+        "summary": "先去和公会柜台确认西部牧场的紧急委托。",
+        "status": "available",
+        "source_milestone": "M30"
+      }
     },
     {
-      "type": "spawn_quest_npc",
-      "params": { ... }
+      "kind": "direct_npc",
+      "payload": {
+        "npc_id": "guild_girl",
+        "directive": {"kind": "present_quest", "quest_id": "dq_western_farm"},
+        "priority": "high",
+        "linked_quest_id": "dq_western_farm"
+      }
     }
   ]
 }
 ```
 
-#### 指令类型全集
+> **当前 runtime contract（2026-03-10）**：最小字段要求以 `app/game_core/planning/directive_contracts.py` 为唯一权威。这里的表格描述的是 shared validator 会强制校验的最小 contract；通过 contract 后，subsystem / `planner_*` handler 仍可能基于世界状态拒绝执行。
 
-| 指令类型 | 参数 | 效果 | 典型场景 |
-|---------|------|------|---------|
-| `create_quest` | quest_def | 创建动态任务，写入玩家任务日志 | 生成引导任务 |
-| `spawn_quest_npc` | npc_profile, dialogue_hook, quest_id | 生成携带任务的路人 NPC | 受伤农民冲进酒馆 |
-| `direct_npc` | npc_id, directive, quest_id | 指挥现有 NPC 下次交互时主动提及任务 | 公会接待员叫住玩家 |
-| `publish_bulletin` | quest_id, board_location | 在公告板发布任务 | 公会任务板新增委托 |
-| `plant_environmental` | location_id, description, discovery | 在地点放置环境线索 | 酒馆门口出现难民帐篷 |
-| `escalate` | escalation_type, params | 升级叙事紧迫感 | 难民数量增加、danger 上升 |
-| `adjust_pacing` | direction, reason | 调整节奏（加速/减速） | 玩家刚打完仗，减缓推进 |
-| `retire_quest` | quest_id, reason | 过期/失效的动态任务下架 | 玩家已通过其他途径达成目标 |
+#### 指令类型全集（当前最小 contract）
+
+| 指令类型 | 最小 required 字段 | 关键说明 |
+|---------|--------------------|---------|
+| `create_quest` | `quest_id` | 其他 quest 字段走开放 payload，由 QuestManager / planner handler 决定如何落地 |
+| `direct_npc` | `npc_id`, `directive` | `directive` 必须是非空 mapping；`priority` 仅允许 `high/medium/low` |
+| `publish_bulletin` | `board_id` | `area_id` 可选；公告板内容合法性由后续执行层判断 |
+| `escalate` | `delta` | `delta` 必须为 `-3..3` 的整数 |
+| `adjust_pacing` | `frozen` | 仅做 planner 自身节奏冻结/恢复控制 |
+| `retire_quest` | `quest_id` | 资源清理由 runtime 按 `linked_quest_id` 自动级联 |
+| `spawn_quest_npc` | `area_id` | `npc_id` 可选；当前已不在 LLM prompt 中作为主力投递手段暴露 |
+| `plant_environmental` | `area_id` | 具体 discovery / content_hints 语义由 WorldBuilder 决定 |
+| `fill_area` | `area_id` | `id` 可选；用于批量生成动态子地点 |
+| `update_quest` | `quest_id` | 其他字段走增量 merge，且仅允许更新 active dynamic quest |
+| `design_reward` | `linked_quest_id`, `item_id` | `reward_type` 固定为 `item`，`quantity` 默认为 `1` |
+| `curate_shop` | `npc_id` | 只校验商人目标；库存动作合法性留给 ItemDesigner / handler |
+
+> 下文 `3.3+` 的 JSON 主要保留“叙事意图”和 richer payload 示例。若与当前 runtime 的最小字段要求冲突，以 `kind/payload` 容器和 `directive_contracts.py` 为准。
 
 ### 3.3 `create_quest` 详细格式
 
@@ -453,31 +473,31 @@ NarrativePlannerHook.execute()
     │
     ├─ 3. LLM 推理
     │     构建 prompt → NarrativePlanner LLM 调用
-    │     → 输出 reasoning + strategy_update + interventions
+    │     → 输出 reasoning + strategy_notes + directives + story_facts + next_trigger_hint
     │     → JSON 解析 + 格式验证
     │
     ├─ 4. 指令执行
     │     逐条验证指令合法性
-    │     create_quest     → 写入 NarrativePlanSlice + QuestSlice（DISCOVERED）
-    │     spawn_quest_npc  → 调用 PasserbyService.spawn() + 注入 NPC 指令
-    │     direct_npc       → 写入目标 NPC 的 ContextWindow
-    │     publish_bulletin → 更新公告板状态（AreaSlice）+ 默认通知驻留 NPC（D-P18c）
-    │     plant_environmental → 更新地点状态（AreaSlice + SceneBus）
+    │     directive_contracts.py 做最小 contract 校验
+    │     通过后统一转为 planner_* command → ❷ RulesEngine handler → StateDelta
+    │     create_quest     → planner_create_quest
+    │     spawn_quest_npc  → planner_spawn_quest_npc
+    │     direct_npc       → planner_direct_npc
+    │     publish_bulletin → planner_publish_bulletin
+    │     plant_environmental → planner_plant_environmental
     │                         → 支持 discovery_mode/interactables/content_hints（D-P18c Tier 1-3）
     │                         → PassivePerceptionHook Phase 4 检测动态子地点（D-P18c）
     │                         → InteractableHandler 动态 fallback 处理交互物件（D-P18c）
-    │     escalate         → 产生 Command → ❷ RulesEngine 执行（D-P18a，真实改变世界状态）
-    │     retire_quest     → 更新 NarrativePlanSlice（任务下架）+ 级联清理（D-P18c）
+    │     escalate         → planner_escalate（D-P18a，真实改变世界状态）
+    │     retire_quest     → planner_retire_quest + 级联清理（D-P18c）
     │                         → despawn 关联临时 NPC + 移除公告 + 移除子区域 + 清理 NPC 指令
     │
     ├─ 4.5 保存 story_facts（D-P18b 新增）
-    │     story_facts → NarrativePlanSlice.add_story_facts() + WorldKnowledgeGraph.inject_story_facts()
+    │     story_facts → planner_add_story_facts + WorldKnowledgeGraph.inject_story_facts()
     │     NPC 通过 L6 查询感知 planner 写入的世界事实
     │
     ├─ 5. 更新 NarrativePlanSlice
-    │     strategy_notes 更新
-    │     last_run_tick 更新
-    │     active_quests 列表更新
+    │     planner_commit_runtime_state 提交 replay trace / strategy_notes / last_run_tick 等 runtime 字段
     │
     └─ 6. 返回 HookResult
           commands: 产生的 Command 列表
@@ -746,11 +766,13 @@ self.state.narrative_plan.record_behavior(
 严格输出以下 JSON：
 {output_schema}
 
-如果当前不需要干预（玩家方向正确、刚完成重要事件、正在战斗等），输出空 interventions：
+如果当前不需要干预（玩家方向正确、刚完成重要事件、正在战斗等），输出空 directives：
 {
   "reasoning": "玩家正在朝牧场方向移动，无需干预",
-  "strategy_update": "维持当前策略，下次兜底检查时再评估",
-  "interventions": []
+  "strategy_notes": "维持当前策略，下次兜底检查时再评估",
+  "story_facts": [],
+  "next_trigger_hint": "re-evaluate on the next fallback window",
+  "directives": []
 }
 ```
 
@@ -856,9 +878,9 @@ NarrativePlanner 的 `spawn_quest_npc` 和 `plant_environmental` 指令可能影
 |------|------|
 | 调用频率 | 平均每 6 格一次（兜底），活跃引导期可能每 3-4 格 |
 | 输入 token | ~1500-2500（蓝图 + 画像 + 计划 + 上下文） |
-| 输出 token | ~300-800（reasoning + interventions） |
+| 输出 token | ~300-800（reasoning + directives） |
 | 模型选择 | Flash + medium thinking（需要创造性但不需要深度推理） |
-| 空跑率 | 预计 40-60% 的运行输出空 interventions（玩家方向正确时） |
+| 空跑率 | 预计 40-60% 的运行输出空 directives（玩家方向正确时） |
 | 同时活跃任务上限 | 2 个（prompt 约束） |
 
 ---

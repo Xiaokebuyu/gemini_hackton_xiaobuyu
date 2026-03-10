@@ -14,7 +14,6 @@ from app.game_core.orchestration.models import SSEEvent
 from app.game_core.planning.subsystem import PlannerEvent, SubSystemResult
 from app.game_core.planning.utils import coerce_non_empty_string
 from app.game_core.rules.models import Command
-from app.game_core.state import StateChange
 
 if TYPE_CHECKING:
     from app.game_core.adapters.planner_system import PlannerAgentPort
@@ -83,7 +82,13 @@ class NarrativeWeaverSubSystem:
         directives: list[dict[str, Any]] = []
 
         # 1. Directive GC
-        context.state.narrative_plan.prune_consumed_and_expired(current_tick)
+        context.execute_command(
+            Command(
+                type="planner_prune_npc_directives",
+                params={"current_tick": current_tick},
+                source="narrative_planner",
+            )
+        )
 
         # 2. Dynamic quest expiry
         self._expire_dynamic_quests(context, current_tick=current_tick)
@@ -158,68 +163,26 @@ class NarrativeWeaverSubSystem:
             on_expire = on_expire.strip().lower()
             if on_expire not in {"ignore", "escalate", "retire"}:
                 on_expire = "ignore"
-
-            if on_expire in {"retire", "escalate"}:
-                context.state.quests.retire_dynamic_quest(quest_id)
-                new_status = "retired"
-            else:
-                stored = context.state.quests.dynamic_quests.get(quest_id)
-                if isinstance(stored, Mapping):
-                    updated = dict(stored)
-                else:
-                    updated = {}
-                updated["status"] = "expired"
-                context.state.quests.dynamic_quests[quest_id] = updated
-                new_status = "expired"
-
-            context.record_change(
-                StateChange(
-                    slice="quests",
-                    operation="set",
-                    path=f"dynamic_quests.{quest_id}.status",
-                    value=new_status,
+            result = context.execute_command(
+                Command(
+                    type="planner_expire_dynamic_quest",
+                    params={
+                        "quest_id": quest_id,
+                        "current_tick": current_tick,
+                    },
+                    source="narrative_planner",
                 )
             )
-
-            if on_expire == "escalate":
-                context.state.narrative_plan.adjust_escalation(1)
-                # Persist escalation to world state: bump area danger level
-                expire_area_id = ""
-                if context.state.has_slice("player"):
-                    expire_area_id = context.state.player.current_area or ""
-                if expire_area_id:
-                    context.execute_command(Command(
-                        type="adjust_danger",
-                        params={"area_id": expire_area_id, "delta": 0.05},
-                        source="system",
-                    ))
-                # Persist escalation level as a world flag
-                context.execute_command(Command(
-                    type="set_flag",
-                    params={
-                        "key": "narrative_escalation_level",
-                        "value": context.state.narrative_plan.escalation_level,
-                    },
-                    source="system",
-                ))
-
-            context.state.narrative_plan.add_history(
-                {
-                    "kind": "dynamic_quest_expired",
-                    "quest_id": quest_id,
-                    "tick": current_tick,
-                    "on_expire": on_expire,
-                    "status_before": status,
-                    "status_after": new_status,
-                }
-            )
+            if not result.executed:
+                continue
+            metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
             self._sse_collector.append(SSEEvent(
                 event_type="dynamic_quest_expired",
                 payload={
-                    "quest_id": quest_id,
-                    "on_expire": on_expire,
-                    "tick": current_tick,
-                    "status": new_status,
+                    "quest_id": metadata.get("quest_id", quest_id),
+                    "on_expire": metadata.get("on_expire", on_expire),
+                    "tick": metadata.get("tick", current_tick),
+                    "status": metadata.get("status"),
                 },
             ))
 
@@ -249,28 +212,13 @@ class NarrativeWeaverSubSystem:
             npc_id = coerce_non_empty_string(entry.get("npc_id"))
             if npc_id is None:
                 continue
-            if not context.state.has_slice("areas"):
-                if context.state.has_slice("narrative_plan"):
-                    context.state.narrative_plan.remove_temporary_npc(npc_id)
-                continue
-
-            removed = False
-            for area in context.state.areas.areas.values():
-                if npc_id in area.npc_locations:
-                    area.npc_locations.pop(npc_id, None)
-                    context.state.areas._dirty = True
-                    removed = True
-            if removed:
-                context.record_change(
-                    StateChange(
-                        slice="areas",
-                        operation="set",
-                        path=f"npc_location.{npc_id}",
-                        value=None,
-                    )
+            context.execute_command(
+                Command(
+                    type="planner_despawn_quest_npc",
+                    params={"npc_id": npc_id},
+                    source="narrative_planner",
                 )
-            if context.state.has_slice("narrative_plan"):
-                context.state.narrative_plan.remove_temporary_npc(npc_id)
+            )
 
     # ------------------------------------------------------------------
     # Auto-escalation safety net (new — design §5.2)

@@ -21,6 +21,7 @@ from typing import Any
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.presence import get_area_npcs, is_colocated
 from app.game_core.state import StateContainer
+from app.game_core.state.quest_runtime import normalize_runtime_dynamic_quest
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,9 @@ class InteractionPolicyContext:
     current_location: str | None
     npc_positions: dict[str, tuple[str | None, str | None]]
     npc_names: dict[str, str]
+    npc_tags: dict[str, frozenset[str]]
     dynamic_quests: dict[str, dict[str, Any]]
+    board_quest_offers: dict[str, str]
 
 
 # ------------------------------------------------------------------
@@ -80,11 +83,17 @@ def build_interaction_policy_context(
 
     # NPC names from CharacterRegistry
     npc_names: dict[str, str] = {}
+    npc_tags: dict[str, frozenset[str]] = {}
     if world.has_registry("characters"):
         for template in world.characters.list_all():
             npc_id = template.id.strip()
             if npc_id:
                 npc_names[npc_id] = template.name.strip() or npc_id
+                npc_tags[npc_id] = frozenset(
+                    str(tag).strip().lower()
+                    for tag in getattr(template, "tags", [])
+                    if str(tag).strip()
+                )
 
     # Dynamic quests from QuestSlice
     dynamic_quests = {
@@ -93,12 +102,22 @@ def build_interaction_policy_context(
         if str(key).strip()
     }
 
+    board_quest_offers: dict[str, str] = {}
+    if current_area and state.has_slice("areas"):
+        for board_id, entries in state.areas.get_all_board_bulletins(current_area).items():
+            for entry in entries:
+                quest_id = str(entry.get("quest_id", "")).strip()
+                if quest_id and quest_id not in board_quest_offers:
+                    board_quest_offers[quest_id] = board_id
+
     return InteractionPolicyContext(
         current_area=current_area,
         current_location=current_location,
         npc_positions=npc_positions,
         npc_names=npc_names,
+        npc_tags=npc_tags,
         dynamic_quests=dynamic_quests,
+        board_quest_offers=board_quest_offers,
     )
 
 
@@ -154,8 +173,54 @@ def validate_preconditions(
                 ),
             }
         return _validate_dynamic_quest_exists(context, quest_id)
+    if target_kind == "npc" and intent == "accept_quest":
+        if quest_id is None:
+            return {
+                "code": "missing_quest",
+                "message": "quest_id is required for npc accept_quest",
+            }
+        quest_issue = _validate_dynamic_quest_exists(context, quest_id)
+        if quest_issue is not None:
+            return quest_issue
+        role_issue = _validate_required_npc_tag(
+            context,
+            target_id,
+            required_tag="receptionist",
+            error_code="npc_cannot_accept_quests",
+            action_label="quest acceptance",
+        )
+        if role_issue is not None:
+            return role_issue
+        return _validate_quest_offerable(context, quest_id)
+    if target_kind == "npc" and intent == "report_quest":
+        if quest_id is None:
+            return {
+                "code": "missing_quest",
+                "message": "quest_id is required for npc report_quest",
+            }
+        quest_issue = _validate_dynamic_quest_exists(context, quest_id)
+        if quest_issue is not None:
+            return quest_issue
+        role_issue = _validate_required_npc_tag(
+            context,
+            target_id,
+            required_tag="receptionist",
+            error_code="npc_cannot_report_quests",
+            action_label="quest reporting",
+        )
+        if role_issue is not None:
+            return role_issue
+        return _validate_quest_reportable(context, quest_id)
 
     return None
+
+
+def resolve_accept_quest_board_id(
+    context: InteractionPolicyContext,
+    quest_id: str,
+) -> str | None:
+    """Resolve the current-area board that is offering *quest_id*."""
+    return context.board_quest_offers.get(quest_id.strip())
 
 
 # ------------------------------------------------------------------
@@ -204,3 +269,61 @@ def _validate_dynamic_quest_exists(
         "code": "quest_not_found",
         "message": f"dynamic quest not found: {quest_id}",
     }
+
+
+def _validate_required_npc_tag(
+    context: InteractionPolicyContext,
+    npc_id: str,
+    *,
+    required_tag: str,
+    error_code: str,
+    action_label: str,
+) -> dict[str, str] | None:
+    tags = context.npc_tags.get(npc_id, frozenset())
+    if required_tag in tags:
+        return None
+    return {
+        "code": error_code,
+        "message": f"npc does not support {action_label}: {npc_id}",
+    }
+
+
+def _validate_quest_offerable(
+    context: InteractionPolicyContext,
+    quest_id: str,
+) -> dict[str, str] | None:
+    if resolve_accept_quest_board_id(context, quest_id) is not None:
+        return None
+    return {
+        "code": "quest_not_offerable",
+        "message": f"quest is not currently offerable here: {quest_id}",
+    }
+
+
+def _validate_quest_reportable(
+    context: InteractionPolicyContext,
+    quest_id: str,
+) -> dict[str, str] | None:
+    quest_map = normalize_runtime_dynamic_quest(
+        quest_id,
+        context.dynamic_quests.get(quest_id, {}),
+    )
+    if not bool(quest_map.get("requires_report")):
+        return {
+            "code": "quest_not_reportable",
+            "message": f"quest does not require reporting: {quest_id}",
+        }
+
+    status = str(quest_map.get("status", "")).strip().lower()
+    if status != "completed":
+        return {
+            "code": "quest_not_ready_to_report",
+            "message": f"quest is not ready to report: {quest_id}",
+        }
+
+    if bool(quest_map.get("reported")):
+        return {
+            "code": "quest_already_reported",
+            "message": f"quest has already been reported: {quest_id}",
+        }
+    return None

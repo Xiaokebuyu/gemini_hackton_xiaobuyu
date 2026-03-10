@@ -718,3 +718,545 @@ D-R 扩展（均有记录）：stand_up(D-R24)、consume_resource(D-R25)、inves
   - 所有目标都失败时才 early exit，否则已命中目标的变更保留
 
 **测试基线**：898 passed（+14，含 F-C 的 10 个新增）；spell handler 24 通过（新增 5 个 DC/豁免/多目标测试）
+
+---
+
+### [D-R34] BattleGrid — SRPG 战旗网格基础设施（2026-03-10）
+
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §2.3, §3.1
+**新文件**：`app/game_core/rules/battle_grid.py`（~240 行）
+**测试文件**：`tests/test_battle_grid.py`（32 个测试，全部通过）
+
+**架构定位**：❷ 规则引擎层工具模块（纯计算，无状态，不 import 应用层），与 `handler_utils.py`、`models.py` 同级。
+
+**主要组件**：
+
+| 组件 | 说明 |
+|------|------|
+| `TerrainType` | `@dataclass(slots=True, frozen=True)`，8 字段（code/name/move_cost/ac_bonus/range_bonus/blocks_los/speed_penalty） |
+| `TERRAIN_REGISTRY` | 8 种地形：G(草)/F(林)/H(丘)/S(沼)/W(水)/R(石)/B(墙)/M(山) |
+| `BattleGrid` | `@dataclass(slots=True)`，宽/高/terrain；terrain存储为 `[row][col]`（row-major） |
+
+**关键设计决策**：
+
+- **API 参数顺序 vs 内部存储**：公开 API 均为 `(col, row)` 与 unit position `[col, row]` 一致；内部索引必须 `terrain[row][col]`（row-major），不混淆
+- **未知地形码 fallback**：`at()` 对未知 code 返回 grass（宽松模式，不 raise）；越界同样 fallback 而非 crash
+- **地形不可通行判断**：`move_cost == 0` → 不可通行（W/B/M 三种）；`is_passable()` 越界返回 False
+- **`side` 参数语义**：告诉算法"谁在移动"——只有对立方 alive 单位才阻挡通行（己方不阻挡，死亡单位不阻挡）
+- **寻路**：`reachable_cells()` 用 Dijkstra（带地形消耗的加权 BFS）；`shortest_path()` 用 A*（曼哈顿启发，含终点 alive 敌方不阻挡）
+- **LoS**：Bresenham 算法，首尾格不检查（只检查中间格的 `blocks_los`）
+- **`from_map_data()`**：JSON 格式 `{width, height, terrain: [行字符串…]}`，尺寸不符时 `raise ValueError`
+
+**测试覆盖分布**（32 个）：
+- 地形注册表：3 个（8 种 code 全在 / frozen / 不可通行零消耗）
+- 基础访问：6 个（边界内外 / 查表 / 未知 fallback / 通行性 / 占用检查）
+- 距离与范围：3 个（曼哈顿 / cells_in_range / 近边界裁剪）
+- BFS 可达性：6 个（开放草地 / 地形消耗 / 不可通行阻挡 / 敌方阻挡 / 友方不阻挡 / 死敌不阻挡）
+- A* 最短路径：5 个（直线 / 绕墙 / 无路 / 偏好低消耗 / 敌方绕路）
+- LoS：4 个（无阻挡 / 墙阻挡 / 山阻挡 / 同格）
+- 构建：4 个（正常解析 / 行数不符 / 列数不符 / 地形码往返正确）
+
+**不改动任何现有文件**：Phase 1 纯增量，下一步（Phase 2）将在 `CombatHandler` 接入网格坐标。
+
+---
+
+### [D-R35] combat_units.py — 单位构建工厂 + start_combat v2 payload
+
+**日期**：2026-03-10
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §2.2, §2.5, §2.6, §3.5.3, §3.5.4
+
+#### 新建文件
+
+**`app/game_core/rules/combat_units.py`**（~270 行）
+
+❷ 规则引擎层纯工具模块，只 import stdlib + game_core 内部类型。
+
+| 函数 | 说明 |
+|------|------|
+| `build_player_unit(state)` | player 单位，main_hand 装备→武器攻击，无装备→徒手攻击(1d1)，speed=3 |
+| `build_companion_unit(char_id, member_data, template)` | combat_capable=False→None；HP 优先 member_data→template.base_hp→10 |
+| `build_monster_unit(monster_id, template, index)` | unit_id=f"{mid}_{index}"；speed=max(2, feet//10)；空 attacks→默认 Slam |
+| `resolve_surprise(units, state, stealth_total)` | "player_surprise"→enemy d20+WIS_mod vs stealth_total；"enemy_surprise"→all ally；"none"→全 False；原地赋值返回 units |
+| `roll_initiative(unit)` | (d20+DEX_mod, DEX) 用于排序 + 平局 |
+| `build_turn_order(units)` | 过滤 alive+not fled，按 (initiative, dex) 降序；返回 (turn_order list, initiative_rolls dict) |
+| `assign_positions(units, w, h)` | ally 左侧 col 0-1，enemy 右侧 col w-2~w-1，原地赋值 |
+| `build_default_grid(width=8, height=6)` | 全草地默认网格 dict |
+
+Unit dict 包含 24 个字段（unit_id/side/source/monster_id/character_id/name/hp/max_hp/ac/stats/speed/position/alive/fled/active_effects/attacks/ai_personality/flee_threshold/flee_chance/action_used/move_used/disengaged/dashed/defending/reaction_used/surprised/proficiency_bonus）。
+
+#### 修改文件
+
+**`app/game_core/rules/handlers/combat.py`**
+
+- 新增 import：`combat_units` 7 个函数
+- 重写 `_compute_start_combat` 后半段（L302 以后）：
+  1. 构建 units 列表（player + companions + monsters）
+  2. 未知怪物模板→内联 fallback unit
+  3. 默认 8×6 草地网格
+  4. 分配初始位置
+  5. 突袭检定（`last_stealth_result.roll+modifier` 或 `cmd.params.stealth_total`）
+  6. 先攻检定 + 排序
+  7. `combat_round = 0 if any(surprised) else 1`（新语义；旧逻辑：`0 if surprise_state != "none"`）
+  8. 向后兼容 `participants` 从 enemy units 导出（v1 格式）
+  9. combat_seed 注入 version/grid/units/turn_order/initiative_rolls/current_turn_index/current_unit_id/environment
+- `_build_participants` 加 `# Legacy (v1) — remove after Phase 4` 注释
+
+**`tests/test_combat_handler.py`**
+
+- `test_start_combat_creates_minimal_combat_payload`：加 `stealth_total: 100` 使敌方必定 surprised（新语义下 combat_round 取决于是否有 surprised 单位，非纯粹 surprise_state）；补加 v2 字段断言（version/units/grid/turn_order）
+
+#### 关键设计决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | `combat_round` 由 `any(surprised)` 决定而非 `surprise_state != "none"` | 若 enemy_surprise 但所有 ally 通过感知→无人 surprised→应为 round=1；D&D 规则语义更准确 |
+| 2 | 仍输出 `participants`（v1 向后兼容） | attack/defend 等命令依赖此字段，Phase 3-4 迁移后删除 |
+| 3 | `area.py` 不改 | `_normalize_hostile_payload` 的 dict-spread 自动保留 version/grid/units 等新字段 |
+| 4 | `stealth_total` 优先从 `cmd.params` 读（覆盖 existing_payload 推导值） | 主调方可显式指定，测试可控 |
+
+**测试覆盖**（24 新测试 in `tests/test_combat_units.py`）：
+- PlayerUnit：3 个（基础字段 / 徒手 / 武器）
+- CompanionUnit：4 个（basic / non-combat-none / hp-fallback / attacks）
+- MonsterUnit：4 个（basic / speed-conversion / default-attack / with-attacks）
+- Surprise：4 个（player_surprise-all-fail / player_surprise-none-fail / enemy_surprise / none）
+- TurnOrder：3 个（降序 / DEX 平局 / 排除死亡fled）
+- Positions：3 个（sides / all-have / single）
+- DefaultGrid：3 个（dimensions / all-grass / custom-size）
+
+测试基线：1983 passed（+71 vs 前次基线 1912）。
+
+---
+
+### [D-R36] v2 SRPG 回合命令：combat_move / combat_end_turn / combat_disengage / combat_dash
+
+**日期**：2026-03-10
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §2.7, §2.8, §四 Phase 3
+
+#### 修改文件
+
+**`app/game_core/rules/handlers/combat.py`**（~275 行新增）
+
+- 新增 import：`from app.game_core.rules.battle_grid import BattleGrid`
+- `COMMAND_TYPES` 追加 4 个 v2 命令：`combat_move`、`combat_end_turn`、`combat_disengage`、`combat_dash`
+- `validate()` 末尾增加 v2 路由（`{"combat_move", "combat_end_turn", "combat_disengage", "combat_dash"} → _validate_v2_command`）
+- `compute()` 增加 4 个 v2 命令路由
+- 新增辅助方法：
+  - `_find_unit(units, unit_id)` — 按 unit_id 查找
+  - `_is_unit_active(unit)` — alive + not fled
+  - `_resolve_v2_combat(params, state, world=None)` — 复用 `_resolve_active_combat` 并过滤 `version==2`
+  - `_validate_v2_command(cmd, state, world)` — 通用验证：v2 payload 存在 + 当前回合检查
+- 新增命令方法：
+  - `_compute_combat_move` — 可达性（BattleGrid.reachable_cells）+ 机会攻击（随机 d20 + 伤害）+ position 更新
+  - `_compute_combat_end_turn` — 推进 index、wrap 时 round++、跳过死亡/突袭单位、重置下一单位回合状态
+  - `_compute_combat_disengage` — 设置 disengaged=True + action_used=True
+  - `_compute_combat_dash` — 设置 dashed=True + action_used=True
+
+**`app/game_core/orchestration/defaults.py`**
+
+- `DEFAULT_ACTION_COMMAND_TYPES` 追加 4 行：`combat_move / combat_end_turn / combat_disengage / combat_dash`
+
+#### 关键设计决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | 新命令名 `combat_move/end_turn/disengage/dash` | 与 v1 命令并存，不破坏旧逻辑 |
+| 2 | `combat_move` 中 opportunity attack 用 `random.randint` + `roll_damage_dice` | 复用 combat.py 已有模式 |
+| 3 | `reaction_used` 在 `round_advanced` 时重置所有单位 | D&D 5e：反应每轮恢复一次 |
+| 4 | `defending` 在 `combat_end_turn` 重置时清除 | 设计说 AC+2 "到下回合"，轮次结束时清除 |
+| 5 | BattleGrid 从 `payload["grid"]` 通过 `from_map_data` 重建 | grid 字典格式兼容（width/height/terrain） |
+| 6 | 被击杀的移动者不更新 position | 符合 D&D：被机会攻击击倒后停在原地 |
+| 7 | v2 命令要求 `payload["version"] == 2` | 明确区分新旧代码路径 |
+
+#### 新建测试文件
+
+**`tests/test_combat_v2_turn.py`**（14 个测试，全部通过）
+
+| 组 | 测试 | 验证点 |
+|----|------|--------|
+| move | test_combat_move_updates_position | 移动到可达格→position 更新 + move_used=True |
+| move | test_combat_move_unreachable_fails | 目标不可达→error |
+| move | test_combat_move_already_moved_fails | move_used=True→validation 失败 |
+| move | test_combat_move_dash_doubles_speed | dashed=True→effective speed 翻倍 |
+| opp | test_opportunity_attack_triggers | 离开敌方近战范围→敌方免费攻击 |
+| opp | test_opportunity_attack_disengage_prevents | disengaged=True→不触发机会攻击 |
+| opp | test_opportunity_attack_reaction_used_limit | reaction_used→不触发 |
+| turn | test_combat_end_turn_advances_to_next_unit | current_turn_index 推进 |
+| turn | test_combat_end_turn_wraps_round | 越界→round++ + index=0 |
+| turn | test_combat_end_turn_skips_dead_unit | 跳过 alive=False 的单位 |
+| turn | test_combat_end_turn_skips_surprised_in_round_0 | round 0 跳过 surprised 单位 |
+| turn | test_combat_end_turn_clears_surprised_entering_round_1 | 进入 round 1 清除所有 surprised |
+| disengage | test_combat_disengage_sets_flags | disengaged=True + action_used=True |
+| dash | test_combat_dash_sets_flags | dashed=True + action_used=True |
+
+**测试基线**：1997 passed（+14 vs D-R35 的 1983）。
+
+### [D-R37] v2 SRPG 攻击命令：combat_attack / combat_defend（2026-03-10）
+
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §2.7, §四 Phase 4
+
+#### 改动文件
+
+| 文件 | 内容 |
+|------|------|
+| `combat.py` | `COMMAND_TYPES` 追加 `combat_attack`/`combat_defend`；`validate()` 路由扩展；`compute()` 路由新增；`_validate_v2_command` 扩展（action_used 检查 + target 参数校验）；新增 `_compute_combat_attack`（~110 行）、`_compute_combat_defend`（~15 行） |
+| `defaults.py` | `DEFAULT_ACTION_COMMAND_TYPES` 追加 `combat_attack`/`combat_defend` |
+| `tests/test_combat_v2_attack.py` | 新建 — 14 个测试 |
+
+#### combat_attack 核心流程
+
+1. 目标解析 + 同侧检查
+2. 攻击选择（attack_index 参数）
+3. BattleGrid 距离检查（weapon_range + terrain range_bonus）
+4. LoS 检查（仅远程 range > 1）
+5. 目标 AC = base + terrain_ac_bonus（目标格）+ defending_bonus + active_effects
+6. 攻击骰 d20 + hit_bonus；critical=d20==20；auto_miss=d20==1
+7. 命中时：伤害骰（暴击双骰）+ 怪物/玩家伤害减免
+8. action_used = True
+9. 战斗结束检测（所有 enemy 死/逃 → combat_cleared=True + XP + kill_count）
+10. 玩家 HP 同步（unit_id="player" 被攻击时同步 PlayerSlice.hp）
+
+#### 关键设计决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | 新命令名 combat_attack/combat_defend | 与 v1 attack/defend 并存，不修改 v1 |
+| 2 | 距离用曼哈顿距离 | BattleGrid.distance() 一致 |
+| 3 | 地形 AC 加成取目标位置 | forest +2, stone +1 |
+| 4 | 地形 range_bonus 取攻击者位置 | hill +1 |
+| 5 | 暴击双骰 | D&D 5e 简化版 |
+| 6 | combat.random / handler_utils.random 同一模块对象 | 测试中 mock.patch.object(random, "randint", seq_fn) 统一拦截 |
+
+#### 测试覆盖
+
+| 组 | 测试 | 验证点 |
+|----|------|--------|
+| attack | test_combat_attack_melee_hit | 命中→伤害+action_used |
+| attack | test_combat_attack_melee_miss | 未命中→伤害=0 |
+| attack | test_combat_attack_melee_out_of_range | 距离>range→error |
+| attack | test_combat_attack_ranged_hit | 远程命中成功 |
+| attack | test_combat_attack_ranged_blocked_los | LoS 被墙阻挡→error |
+| attack | test_combat_attack_terrain_ac_bonus | 目标在森林→AC+2 |
+| attack | test_combat_attack_range_bonus_from_hill | 攻击者在丘陵→range+1 |
+| attack | test_combat_attack_defending_target_ac_bonus | 目标 defending→AC+2 |
+| attack | test_combat_attack_action_already_used_fails | action_used=True→validation 失败 |
+| attack | test_combat_attack_friendly_fire_fails | 攻击同侧→error |
+| attack | test_combat_attack_kills_last_enemy_clears_combat | 击杀最后敌人→cleared |
+| attack | test_combat_attack_player_hp_sync | 攻击玩家→PlayerSlice HP 同步 |
+| attack | test_combat_attack_critical_double_damage_dice | d20=20→暴击双骰 |
+| defend | test_combat_defend_sets_flags | defending=True+action_used=True |
+
+**测试基线**：2024 passed（+14 vs D-R36 的 1997；不计 8 skipped 和 5 pre-existing failures）。
+
+---
+
+### [D-R38] combat_npc_turn：怪物 AI 自主回合命令（Phase 5）
+
+**日期**：2026-03-10
+
+#### 背景
+
+Phase 5 实现怪物 AI 决策模块（`battle_ai.py`，由 Agent 1 完成）与 `combat_npc_turn` engine-only 命令，使怪物在自己的回合自主执行移动+行动。
+
+#### 改动范围
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/rules/handlers/combat.py` | 新增 `combat_npc_turn` 到 COMMAND_TYPES + validate/compute 路由 + `_validate_combat_npc_turn` + `_compute_combat_npc_turn` + import `decide_monster_turn` |
+| `app/game_core/orchestration/defaults.py` | 追加 `("combat_npc_turn", "combat_npc_turn")` 到 DEFAULT_ACTION_COMMAND_TYPES |
+| `tests/test_combat_v2_npc.py` | 新建，6 个集成测试 |
+
+#### 关键设计决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | `combat_npc_turn` 是 engine-only（source=engine/system） | 与 start_combat/advance_combat_round 一致 |
+| 2 | 内联移动+攻击逻辑，不反向调用 combat_move/combat_attack | 一次原子操作完成 NPC 回合，避免跨命令路由 |
+| 3 | 不自动 end_turn | 调用方（编排层）负责后续 combat_end_turn |
+| 4 | 机会攻击逻辑与 combat_move 一致 | 复用相同 grid.distance 检测 |
+| 5 | 攻击解析复用 _participant_effect_ac_mod + _apply_player_damage_resistance | 与 combat_attack 一致的 AC 和伤害计算 |
+| 6 | flee 时 alive=False + fled=True | 与旧 flee 命令语义一致，战斗结束检测可识别 |
+
+#### 测试覆盖
+
+| 测试 | 验证点 |
+|------|--------|
+| test_npc_turn_attacks_adjacent_target | 近战怪相邻目标→攻击+action_used |
+| test_npc_turn_moves_then_attacks | 远距离目标→移动接近+攻击 |
+| test_npc_turn_flees_when_low_hp | 低 HP 胆小怪→fled=True |
+| test_npc_turn_player_source_rejected | source="player"→validation 失败 |
+| test_npc_turn_kills_last_enemy_clears | 击杀最后敌人→combat_cleared |
+| test_npc_turn_player_hp_sync | 攻击玩家→PlayerSlice HP 同步 |
+
+**测试基线**：2059 passed（+6 vs D-R37 的 2053；不计 8 skipped 和 5 pre-existing failures）。
+
+---
+
+### [D-R39] Phase 6：队友参战 LLM AI — companion_combat_ai.py + 决策覆盖（2026-03-10）
+
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §四 Phase 6
+**计划文件**：`/home/xiaokebuyu/.claude/plans/cozy-dazzling-locket.md`
+
+#### 架构决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | LLM 决策在应用层预计算，通过 `cmd.params["decision"]` 传入 combat_npc_turn | rules 层保持同步纯函数，不引入 async / 应用层依赖 |
+| 2 | `validate_decision()` 放 battle_ai.py（❷ 规则层） | 纯函数验证，复用 BattleGrid.reachable_cells |
+| 3 | LLM 模块新建 `app/companion_combat_ai.py` | agent_orchestration.py 已 2216 行，不写 god file |
+| 4 | 无 LLM 时（NullLlmProvider）自动降级规则 AI | 与项目现有降级模式一致 |
+
+#### 新建文件
+
+**`app/companion_combat_ai.py`**（~175 行，应用层）
+
+| 函数 | 说明 |
+|------|------|
+| `build_battlefield_summary(grid_data, units, current_unit_id)` | 生成战场文字摘要（地形网格 + 单位列表 + 攻击清单 + 速度）|
+| `_build_system_prompt(unit, summary, character_name, personality_hint, approval)` | 构建 LLM system prompt（含角色性格、好感度定性描述、严格 JSON 格式要求）|
+| `_parse_decision_response(text)` | 解析 LLM 响应：直接 JSON parse → 正则提取 `{...}` → 验证 action 字段 → None |
+| `decide_companion_combat_turn(unit, grid_data, all_units, character_name, personality_hint, approval, llm_provider)` | 主入口：LLM 调用 + 解析，任何异常 → return None → 调用方使用规则 AI |
+
+#### 修改文件（Agent 1 负责，D-R39 联合记录）
+
+**`app/game_core/rules/battle_ai.py`**
+
+- 新增 `validate_decision(decision, unit, grid, all_units) -> bool`
+- 验证：move_to 可达性 / action 合法枚举 / 攻击目标存活+对立阵营 / 射程+LoS
+
+**`app/game_core/rules/handlers/combat.py`**（`_compute_combat_npc_turn`）
+
+- 新增决策覆盖逻辑：读取 `cmd.params.get("decision")` → MonsterDecision → validate_decision → 覆盖或 fallback
+- metadata 新增 `decision_source`：`"override"` | `"rules_ai"`
+
+#### 测试文件
+
+**`tests/test_companion_combat_ai.py`**（新建，7 个测试）
+
+| 测试 | 验证点 |
+|------|--------|
+| test_valid_llm_response_returns_decision | LLM 返回合法 JSON → 返回 dict（action/target_id/attack_index/move_to 全部对齐）|
+| test_invalid_json_returns_none | LLM 返回非 JSON 文本 → 返回 None |
+| test_llm_exception_returns_none | LLM 抛异常 → 返回 None（优雅降级）|
+| test_battlefield_summary_format | 摘要含网格尺寸/地形行/两侧单位/← 你 标记/攻击信息/速度 |
+| test_parse_decision_response_extracts_embedded_json | 嵌在散文中的 JSON 块可被正则提取 |
+| test_parse_decision_response_returns_none_for_missing_action | 缺少 action 字段 → None |
+| test_parse_decision_response_returns_none_for_empty_string | 空字符串 → None |
+
+---
+
+### [D-R39] Phase 6a — validate_decision + combat_npc_turn 决策覆盖
+
+**日期**：2026-03-10
+
+**改动范围**：
+- `app/game_core/rules/battle_ai.py`：新增 `validate_decision()` 公共函数（约 60 行）
+- `app/game_core/rules/handlers/combat.py`：import 补充 `MonsterDecision, validate_decision`；`_compute_combat_npc_turn()` 插入决策覆盖逻辑；metadata 新增 `decision_source` 字段
+
+**设计决策**：
+- `validate_decision()` 放规则层（`battle_ai.py`），纯函数无副作用，复用 `BattleGrid.reachable_cells / distance / line_of_sight`
+- 决策覆盖通过 `cmd.params["decision"]` 传入，应用层预计算，规则层只做验证。保持 rules 层同步纯函数，不引入 async / 应用层依赖
+- 有效覆盖 → `decision_source="override"`；fallback（无效/异常/未传）→ `decision_source="rules_ai"`
+- `effective_speed = speed * 2` 当 `unit.dashed=True`（与 dash 行动语义一致）
+
+**validate_decision 验证逻辑**：
+1. action 必须是 `{"attack", "flee", "defend", "hold"}` 之一
+2. `move_to` 非 None 时：目标格必须在 `reachable_cells()` 返回的可达集合内
+3. `action="attack"` 时：target 存活且属于对立阵营、attack_index 合法、攻击后位置到目标距离 ≤ range + terrain_bonus、远程需 LoS
+
+**新增测试**：
+- `tests/test_battle_ai.py`：+3 个（test_validate_decision_valid, test_validate_decision_invalid_move, test_validate_decision_invalid_target）
+- `tests/test_combat_v2_npc.py`：+2 个（test_npc_turn_with_valid_decision_override, test_npc_turn_with_invalid_decision_fallback）
+
+**测试基线**：2066 passed（+7 vs D-R38 的 2059）。
+
+---
+
+### [D-R40] Phase 7（Agent 2）：环境修正 + start_combat 地图选择（2026-03-10）
+
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §四 Phase 7
+**计划文件**：`/home/xiaokebuyu/.claude/plans/cozy-dazzling-locket.md`
+
+#### 改动范围
+
+| 文件 | 内容 |
+|------|------|
+| `app/game_core/rules/battle_grid.py` | 新增 `EnvironmentModifiers` dataclass（frozen）+ `compute_environment_modifiers()` 函数 |
+| `app/game_core/rules/handlers/combat.py` | import 新增 `compute_environment_modifiers`, `assign_positions_from_spawns`；`start_combat` 地图选择逻辑；`_compute_combat_attack` + `_compute_combat_npc_turn` 攻击环境修正 |
+| `tests/test_combat_v2_env.py` | 新建，11 个测试 |
+
+#### EnvironmentModifiers（battle_grid.py）
+
+`compute_environment_modifiers(weather, time_of_day)` 映射：
+
+| 条件 | 效果 |
+|------|------|
+| weather="rain" | hit_modifier=-1 |
+| weather="fog" | hit_modifier=-2, max_visibility=3 |
+| time_of_day="night" | ranged_hit_modifier=-2 |
+| 其他 | 无修正 |
+
+多条件叠加（night+rain → hit=-1, ranged_hit=-2）。
+
+#### start_combat 地图选择（8a）
+
+原来固定 `build_default_grid() + assign_positions()`，现改为：
+1. 读取 `cmd.params["map_category"]` 或 `cmd.params["map_tags"]`
+2. 若 world 存在且有 `battle_maps` registry → 按 category 或 tags 选 variant
+3. 选中时用 variant 尺寸/地形构建 grid，并调用 `assign_positions_from_spawns()`
+4. 未选中时 fallback 到 `build_default_grid() + assign_positions()`（保留后向兼容）
+
+#### 攻击环境修正（8b）
+
+在 `_compute_combat_attack` 和 `_compute_combat_npc_turn` 两处的 `atk_total = atk_roll + hit_bonus` 之后追加：
+- `atk_total += env_mods.hit_modifier`
+- 若 `weapon_range > 1`：`atk_total += env_mods.ranged_hit_modifier`
+- 浓雾 LoS 限制：`fog_blocked = env_mods.max_visibility is not None and distance > env_mods.max_visibility`
+- `hit = (atk_total >= total_ac or critical) and not auto_miss and not fog_blocked`
+
+#### 关键设计决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | `EnvironmentModifiers` 放 `battle_grid.py` | 与地形系统同层，纯计算无副作用，无循环依赖 |
+| 2 | 浓雾 LoS 用 `fog_blocked` gate 而非 `has_los = False` | `_compute_combat_attack` 无 `has_los` 变量；两处结构不同，用 `fog_blocked` 统一处理 |
+| 3 | start_combat fallback 保留旧路径 | 无 world / 无 battle_maps registry 时不报错，向后兼容 |
+| 4 | fog_blocked 不改 critical 标记 | 浓雾中暴击骰但因 LoS 受阻而未命中，骰子记录仍反映真实 d20 值 |
+
+#### 测试覆盖（11 个测试，test_combat_v2_env.py）
+
+| 测试 | 验证点 |
+|------|--------|
+| test_environment_modifiers_defaults | clear/day → 零修正，无 visibility cap |
+| test_environment_modifiers_rain | rain → hit_modifier=-1 |
+| test_environment_modifiers_fog_visibility | fog → hit_modifier=-2, max_visibility=3 |
+| test_environment_modifiers_night_ranged | night → ranged_hit_modifier=-2 |
+| test_environment_modifiers_night_and_rain_stack | night+rain 叠加 |
+| test_environment_modifiers_night_and_fog_stack | night+fog 叠加 |
+| test_environment_modifiers_is_frozen | frozen dataclass 不可变 |
+| test_combat_attack_with_rain_penalty | rain 使 borderline 攻击未命中 |
+| test_combat_attack_without_rain_penalty_hits | 对照组：clear 天气相同骰命中 |
+| test_combat_attack_ranged_night_penalty | 夜间远程攻击 -2 惩罚 |
+| test_combat_attack_fog_blocks_distant_ranged | 浓雾超出 max_visibility → nat20 也未命中 |
+
+**测试基线**：2111 passed（+11 vs D-R39 的 2100；5 个 pre-existing failures 不变）。
+
+---
+
+### [D-R40] Phase 7a — BattleMapRegistry + assign_positions_from_spawns
+
+**日期**：2026-03-10
+
+**改动范围**：
+- `app/game_core/content/registries/battle_maps.py`（新建，~190 行）：`BattleMapVariant` + `BattleMapTemplate` frozen dataclasses + `BattleMapRegistry(ContentRegistry)` 含 `load/get/list_all/select_variant/select_by_tags` + load 验证
+- `data/goblin_slayer/v2/battle_maps.json`（新建，~120 行）：cave/ruins/plains/woodland/hills 5 类各 2 变体，标准 8×6 尺寸，spawn 3+3 点
+- `app/game_core/content/registries/__init__.py`：新增 `BattleMapRegistry/Template/Variant` 导出
+- `app/game_core/content/world.py`：新增 `battle_maps` TYPE_CHECKING import + `battle_maps` property
+- `app/game_data_loader_v2.py`：新增 `"battle_maps"` key 加载
+- `app/game_core/rules/combat_units.py`：新增 `assign_positions_from_spawns()` 函数（~20 行），就地分配 spawn 点位，超出则回绕
+
+**设计决策**：
+- `BattleMapVariant` 字段用 `tuple[str, ...]` / `tuple[tuple[int,int], ...]` 而非 list（frozen dataclass 需不可变容器）
+- `BattleMapRegistry` 继承 `ContentRegistry`，JSON 顶层 key = category，value = `{"variants": [...]}`，与现有 10 个 registry 的单文件模式一致
+- `assign_positions_from_spawns()` 保留 `assign_positions()` 不变，新函数处理模板 spawn 点；超出回绕用 `idx % len(spawns)` 实现
+- `world.battle_maps` property 仅在 `battle_maps` registry 已注册时有效（`has_registry()` 调用前置守卫在 combat.py 中，此处不重复）
+- `WorldInstance.load_all()` 已有兜底循环加载未分组 registry，battle_maps 无需加入有序分组
+- terrain 合法字符集 `GFHSWRBM` 在注册表内静态定义，load 阶段逐格验证，非法字符记录 `_load_issues`
+
+**测试文件**：
+- `tests/test_battle_maps.py`（新建，25 个测试）：覆盖 load/select_variant/select_by_tags/spawn 无重叠/terrain 维度/边界验证
+- `tests/test_combat_units.py`：追加 `TestAssignPositionsFromSpawns` 4 个测试（basic/wraps/in-place/tuple input）
+
+**测试基线**：2100 passed（+34 vs D-R39 的 2066；5 个已知 pre-existing 失败不变）。
+
+---
+
+### [D-R41] Phase 8：Planner → 战斗联动（WorldBuilder plant_encounter + 导航激活）（2026-03-10）
+
+**设计文档**：`app/增量更新/战斗系统战旗化重构.md` §四 Phase 8
+**计划文件**：`/home/xiaokebuyu/.claude/plans/cozy-dazzling-locket.md`
+
+#### 改动范围
+
+| 文件 | 内容 |
+|------|------|
+| `app/game_core/planning/world_builder.py` | `_HANDLES` 扩展 `plant_encounter`；`apply_directive` 新增路由；新增 `_apply_plant_encounter` 方法（~55 行） |
+| `app/game_core/rules/handlers/navigation.py` | `_compute_enter_sub_location` 追加 planted 检测逻辑（~45 行） |
+| `app/narrators.py` | 主 prompt 追加 `plant_encounter` 指令示例；`WORLD_BUILDER_AGENT_PROMPT` 更新（两处文案） |
+| `tests/test_world_builder_encounter.py` | 新建，5 个测试 |
+| `tests/test_navigation_planted.py` | 新建，4 个测试 |
+
+#### plant_encounter 指令语义
+
+Planner 通过 `plant_encounter` 指令将怪物遭遇预植入子地点（`status="planted"`）。玩家导航到该子地点时，NavigationHandler 自动将状态转换为 `status="spotted"` 并在 ExecuteResult.metadata 中写入 `encounter_spotted` 字段，复用现有 enter_hostile → start_combat 流程。
+
+#### 关键设计决策
+
+| # | 决策 | 原因 |
+|---|------|------|
+| 1 | planted → spotted 在 navigation handler 内完成 | enter_sub_location 是玩家进入子地点的唯一入口 |
+| 2 | encounter_spotted 信息放 metadata，不在 handler 创建 SSEEvent | 规则层不持有 SSEEvent 类型，SSE 构造由上层负责 |
+| 3 | monster_ids 验证 soft-fail（跳过不存在的怪物） | SettlementContext 可能无 world，且 start_combat 已有 fallback |
+| 4 | expiry_ticks 在导航检测时校验 | 避免新增 hook，复用导航时的一次性检查 |
+| 5 | _apply_plant_encounter 调用 upsert_hostile 直接写状态 + record_change 记账 | 与 _apply_plant_environmental/_apply_fill_area 的状态直写模式一致 |
+| 6 | plant_encounter 不发 SSE | 遭遇在玩家到达时激活，种植时静默 |
+
+#### 测试覆盖（9 个测试）
+
+| 测试 | 验证点 |
+|------|--------|
+| test_plant_encounter_creates_hostile_tracking | 合法 payload → hostile_tracking 创建，status="planted" |
+| test_plant_encounter_missing_area_fails | 不存在的 area_id → return False |
+| test_plant_encounter_missing_monsters_fails | monster_ids 空/缺失 → return False |
+| test_plant_encounter_no_sse_emitted | 不发 SSE（sse_collector 为空） |
+| test_plant_encounter_metadata_stored | threat_level/surprise_modifier/map_tags 正确存储 |
+| test_enter_sub_location_detects_planted | planted entry → metadata 含 encounter_spotted + status 变 "spotted" |
+| test_enter_sub_location_no_planted | 无 planted entry → 正常导航，无 encounter_spotted |
+| test_enter_sub_location_planted_expired | 过期 planted → 不激活，标记 expired/cleared |
+| test_enter_sub_location_planted_cleared_skipped | cleared=True → 不再激活 |
+
+**测试基线**：2123 passed（+9 vs D-R40b 的 2111+補 的 2114；5 个已知 pre-existing 失败不变）。
+
+---
+
+### [D-R42] Phase 9：旧战斗代码清理（2026-03-10）
+
+#### 背景
+
+combat.py 在 Phase 2-8 完成后已完全迁移至 v2（SRPG 战旗），v1 死代码已在前序 checkpoint 中清除。本次审计确认清理状态并补齐遗漏的 import 清理。
+
+#### 改动清单
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/rules/handlers/combat.py` | 删除未使用的 `resolve_roll` import（v1 遗留） |
+
+#### 确认已完成的清理（前序 checkpoint 中完成）
+
+- v1 COMMAND_TYPES 条目全部删除（`attack`/`defend`/`disengage`/`dash`/`shove`/`flee`/`use_combat_item`/`offhand_attack`/`stand_up`/`advance_combat_round`）
+- v1 类常量 `_FLAG_COMMANDS`/`_DIRECT_RESOLUTION_COMMANDS` 已删除
+- v1 验证器 6 个（`_validate_flag_command`、`_validate_advance_combat_round`、`_validate_flee`、`_validate_use_combat_item`、`_validate_direct_resolution_command`、`_validate_stand_up`）已删除
+- v1 计算方法 8 个已删除
+- v1 支撑函数 8 个（含 `_build_participants`、`_resolve_monster_responses` 等）已删除
+- `_apply_player_damage_resistance` 重命名为 `_apply_damage_resistance`
+- `defaults.py` 无 v1 条目（`attack`/`defend`/`disengage`/`dash`/`shove`/`flee`/`use_combat_item`/`offhand_attack`/`stand_up` 已不存在）
+- `result_semantics.py` 无 v1 战斗命令特定分支
+
+#### Combat SSE 补充（Phase 9 Part B，2026-03-10）
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/orchestration/combat_sse.py` | 新建；`extract_combat_sse(action_type, metadata)` → 8 种战斗 action 转 SSEEvent |
+| `app/game_core/orchestration/tick_coordinator.py` | `process()` 在 `_append_pipeline_action` 后插入 `extract_combat_sse` 调用，结果 extend 到 `result.sse_events` |
+| `tests/test_combat_sse.py` | 新建；11 个纯同步测试覆盖所有 SSE 分支 |
+| `tests/test_combat_handler.py` | 清理 v1 测试（保留 8 个 start_combat / dispatcher 测试） |
+
+SSE 事件类型映射：
+- `start_combat` → `combat_started`（含 grid/units/turn_order/current_unit_id/environment）
+- `combat_move` → `unit_moved`（含 unit_id/from/to）
+- `combat_attack` / `combat_npc_turn` → `unit_attacked`（命中时）；target_alive=False 追加 `unit_defeated`；combat_cleared=True 追加 `combat_ended`
+- `combat_end_turn` → `turn_changed`（含 next_unit_id/combat_round/round_advanced）
+- `combat_defend` / `combat_disengage` / `combat_dash` — 在 SSE 类型集合中但当前不生成事件（无需暴露给前端）
+
+#### 架构状态
+
+combat.py 当前 1254 行，仅含 v2 SRPG 命令：`start_combat` + 7 个战旗命令（`combat_move`/`combat_end_turn`/`combat_disengage`/`combat_dash`/`combat_attack`/`combat_defend`/`combat_npc_turn`）。combat_sse.py 提供标准化 SSE 转换，TickCoordinator 自动注入。

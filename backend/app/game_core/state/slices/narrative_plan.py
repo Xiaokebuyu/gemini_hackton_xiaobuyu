@@ -245,15 +245,57 @@ class NarrativePlanSlice(StateSlice):
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
-        if change.path == "npc_directives" and isinstance(change.value, Mapping):
-            self.add_directive(dict(change.value))
-            return
-        if change.path == "quest_history" and isinstance(change.value, Mapping):
-            self.add_history(dict(change.value))
-            return
-        if change.path == "behavior_window" and isinstance(change.value, Mapping):
-            self.record_behavior(dict(change.value))
-            return
+        if change.path == "npc_directives":
+            if isinstance(change.value, Mapping):
+                self.add_directive(dict(change.value))
+                return
+            if change.operation in {"set", "modify"} and isinstance(change.value, list):
+                self.npc_directives = [
+                    dict(item) for item in change.value
+                    if isinstance(item, Mapping)
+                ]
+                self._dirty = True
+                return
+        if change.path == "quest_history":
+            if isinstance(change.value, Mapping):
+                self.add_history(dict(change.value))
+                return
+            if change.operation in {"set", "modify"} and isinstance(change.value, list):
+                self.quest_history = [
+                    dict(item) for item in change.value
+                    if isinstance(item, Mapping)
+                ]
+                self._dirty = True
+                return
+        if change.path == "behavior_window":
+            if isinstance(change.value, Mapping):
+                self.record_behavior(dict(change.value))
+                return
+            if change.operation in {"set", "modify"} and isinstance(change.value, list):
+                self.behavior_window = [
+                    dict(item) for item in change.value
+                    if isinstance(item, Mapping)
+                ][-24:]
+                self._dirty = True
+                return
+        if change.path == "story_facts":
+            if change.operation in {"add", "append"}:
+                if isinstance(change.value, Mapping):
+                    self.add_story_facts([dict(change.value)])
+                    return
+                if isinstance(change.value, list):
+                    self.add_story_facts([
+                        dict(item) for item in change.value
+                        if isinstance(item, Mapping)
+                    ])
+                    return
+            if change.operation in {"set", "modify"} and isinstance(change.value, list):
+                self.story_facts = [
+                    dict(item) for item in change.value
+                    if isinstance(item, Mapping)
+                ]
+                self._dirty = True
+                return
         if change.path == "escalation_level":
             if change.operation == "add":
                 self.adjust_escalation(int(change.value))
@@ -283,6 +325,15 @@ class NarrativePlanSlice(StateSlice):
             }
             self._dirty = True
             return
+        if change.path.startswith("temporary_npcs."):
+            _, npc_id = change.path.split(".", 1)
+            if change.operation == "remove":
+                self.remove_temporary_npc(npc_id)
+                return
+            if isinstance(change.value, Mapping):
+                self.temporary_npcs[str(npc_id)] = dict(change.value)
+                self._dirty = True
+                return
         if change.path == "last_planner_replay_trace" and isinstance(change.value, Mapping):
             self.set_last_planner_replay_trace(dict(change.value))
             return

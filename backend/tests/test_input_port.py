@@ -140,7 +140,8 @@ def test_fastapi_input_port_normalizes_talk_and_rejects_invalid_npc_intent() -> 
         "count": 1,
         "code": "invalid_intent",
         "message": (
-            "npc intent must be browse, buy, sell, talk, greet, "
+            "npc intent must be browse, buy, sell, talk, greet, accept_quest, "
+            "report_quest, "
             "inspect_item, ask_quest, ask_progress, ask_location, "
             "ask_requirements, or ask_reward"
         ),
@@ -209,6 +210,86 @@ def test_fastapi_input_port_normalizes_all_npc_quest_snapshots() -> None:
                 "quest_id": "dq_report_in",
             },
         }
+
+
+def test_fastapi_input_port_normalizes_accept_quest() -> None:
+    missing = _parse_action({"npc_id": "receptionist", "intent": "accept_quest"})
+    assert missing == {
+        "status": "rejected",
+        "target_kind": "npc",
+        "target_id": "receptionist",
+        "intent": "accept_quest",
+        "item_id": None,
+        "quest_id": None,
+        "count": 1,
+        "code": "missing_quest",
+        "message": "quest_id is required for npc accept_quest",
+    }
+
+    resolved = _parse_action(
+        {
+            "npc_id": "receptionist",
+            "intent": "accept_quest",
+            "quest_id": "dq_report_in",
+        }
+    )
+    assert resolved == {
+        "status": "resolved",
+        "target_kind": "npc",
+        "target_id": "receptionist",
+        "intent": "accept_quest",
+        "item_id": None,
+        "quest_id": "dq_report_in",
+        "count": 1,
+        "execution": {
+            "kind": "pipeline_action",
+            "action_type": "accept_quest",
+            "params": {
+                "npc_id": "receptionist",
+                "quest_id": "dq_report_in",
+            },
+        },
+    }
+
+
+def test_fastapi_input_port_normalizes_report_quest() -> None:
+    missing = _parse_action({"npc_id": "receptionist", "intent": "report_quest"})
+    assert missing == {
+        "status": "rejected",
+        "target_kind": "npc",
+        "target_id": "receptionist",
+        "intent": "report_quest",
+        "item_id": None,
+        "quest_id": None,
+        "count": 1,
+        "code": "missing_quest",
+        "message": "quest_id is required for npc report_quest",
+    }
+
+    resolved = _parse_action(
+        {
+            "npc_id": "receptionist",
+            "intent": "report_quest",
+            "quest_id": "dq_report_in",
+        }
+    )
+    assert resolved == {
+        "status": "resolved",
+        "target_kind": "npc",
+        "target_id": "receptionist",
+        "intent": "report_quest",
+        "item_id": None,
+        "quest_id": "dq_report_in",
+        "count": 1,
+        "execution": {
+            "kind": "pipeline_action",
+            "action_type": "report_quest",
+            "params": {
+                "npc_id": "receptionist",
+                "quest_id": "dq_report_in",
+            },
+        },
+    }
 
 
 def test_fastapi_input_port_still_rejects_basic_shape_errors() -> None:

@@ -52,6 +52,11 @@ from app.game_core.content.registries.class_types import (
 from app.game_core.content.registries.shared_types import Effect, LootTableDef
 from app.game_core.content.registries.skills import SkillRegistry, SkillTemplate
 from app.game_core.content.registries.tag import TagDimension, TagRegistry
+from app.game_core.content.registries.battle_maps import (
+    BattleMapRegistry,
+    BattleMapTemplate,
+    BattleMapVariant,
+)
 
 __all__ = [
     "BackgroundTemplate",
@@ -94,6 +99,10 @@ __all__ = [
     # shared_types
     "Effect",
     "LootTableDef",
+    # battle_maps
+    "BattleMapRegistry",
+    "BattleMapTemplate",
+    "BattleMapVariant",
     # map_types
     "EncounterEntry",
     "CheckPath",

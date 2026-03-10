@@ -719,10 +719,20 @@ class TestItemDesignerStub:
         event = PlannerEvent(kind="shop_refreshed", tick=1)
         assert stub.accepts_event(event) is True
 
-    def test_accepts_quest_completed(self) -> None:
+    def test_accepts_quest_created(self) -> None:
+        stub = ItemDesignerSubSystem()
+        event = PlannerEvent(kind="quest_created", tick=1)
+        assert stub.accepts_event(event) is True
+
+    def test_accepts_quest_accepted(self) -> None:
+        stub = ItemDesignerSubSystem()
+        event = PlannerEvent(kind="quest_accepted", tick=1)
+        assert stub.accepts_event(event) is True
+
+    def test_rejects_quest_completed(self) -> None:
         stub = ItemDesignerSubSystem()
         event = PlannerEvent(kind="quest_completed", tick=1)
-        assert stub.accepts_event(event) is True
+        assert stub.accepts_event(event) is False
 
     def test_rejects_tick_settlement(self) -> None:
         stub = ItemDesignerSubSystem()
@@ -736,7 +746,7 @@ class TestItemDesignerStub:
         result = asyncio.run(stub.evaluate(event, ctx))
         assert result.directives == []
 
-    def test_apply_directive_returns_false_for_design_reward(self) -> None:
+    def test_apply_directive_returns_false_for_invalid_design_reward(self) -> None:
         stub = ItemDesignerSubSystem()
         ctx = _make_settlement_context()
         result = stub.apply_directive(

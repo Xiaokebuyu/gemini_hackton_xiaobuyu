@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import random
-import re
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
+from app.game_core.rules.battle_grid import BattleGrid, compute_environment_modifiers
 from app.game_core.rules.handler_utils import (
     build_dice_roll,
-    coerce_int,
     coerce_non_empty_string,
-    get_non_empty_string,
     handler_success,
     handler_success_no_delta,
-    resolve_item_heal_amount,
-    resolve_roll,
     roll_damage_dice,
+)
+from app.game_core.rules.battle_ai import MonsterDecision, decide_monster_turn, validate_decision
+from app.game_core.rules.combat_units import (
+    assign_positions,
+    assign_positions_from_spawns,
+    build_companion_unit,
+    build_default_grid,
+    build_monster_unit,
+    build_player_unit,
+    build_turn_order,
+    resolve_surprise,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
@@ -39,25 +46,16 @@ def _participant_effect_ac_mod(participant: Mapping[str, Any]) -> int:
 
 class CombatHandler(StaticCommandHandler):
     COMMAND_TYPES = (
-        "attack",
-        "defend",
-        "disengage",
-        "dash",
-        "shove",
-        "flee",
-        "use_combat_item",
-        "offhand_attack",
         "start_combat",
-        "stand_up",
-        "advance_combat_round",
+        "combat_move",
+        "combat_end_turn",
+        "combat_disengage",
+        "combat_dash",
+        "combat_attack",
+        "combat_defend",
+        "combat_npc_turn",
     )
 
-    _FLAG_COMMANDS = {
-        "defend": "defending",
-        "disengage": "disengaged",
-        "dash": "dashed",
-    }
-    _DIRECT_RESOLUTION_COMMANDS = frozenset({"attack", "shove", "offhand_attack"})
     _SURPRISE_STATES = frozenset({"none", "player_surprise", "enemy_surprise"})
 
     def validate(
@@ -68,20 +66,11 @@ class CombatHandler(StaticCommandHandler):
     ) -> ValidationResult:
         if cmd.type == "start_combat":
             return self._validate_start_combat(cmd, state, world)
-        if cmd.type == "advance_combat_round":
-            return self._validate_advance_combat_round(cmd, state, world)
-        if state.player.is_action_prevented():
-            return ValidationResult(ok=False, reason="action prevented by active effect")
-        if cmd.type in self._FLAG_COMMANDS:
-            return self._validate_flag_command(cmd, state, world)
-        if cmd.type == "flee":
-            return self._validate_flee(cmd, state, world)
-        if cmd.type == "use_combat_item":
-            return self._validate_use_combat_item(cmd, state, world)
-        if cmd.type in self._DIRECT_RESOLUTION_COMMANDS:
-            return self._validate_direct_resolution_command(cmd, state, world)
-        if cmd.type == "stand_up":
-            return self._validate_stand_up(cmd, state)
+        if cmd.type == "combat_npc_turn":
+            return self._validate_combat_npc_turn(cmd, state, world)
+        if cmd.type in {"combat_move", "combat_end_turn", "combat_disengage", "combat_dash",
+                        "combat_attack", "combat_defend"}:
+            return self._validate_v2_command(cmd, state, world)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -96,18 +85,20 @@ class CombatHandler(StaticCommandHandler):
 
         if cmd.type == "start_combat":
             return self._compute_start_combat(cmd, state, world)
-        if cmd.type == "advance_combat_round":
-            return self._compute_advance_combat_round(cmd, state, world)
-        if cmd.type in self._FLAG_COMMANDS:
-            return self._compute_flag_command(cmd, state)
-        if cmd.type == "flee":
-            return self._compute_flee(cmd, state)
-        if cmd.type == "use_combat_item":
-            return self._compute_use_combat_item(cmd, state, world)
-        if cmd.type in self._DIRECT_RESOLUTION_COMMANDS:
-            return self._compute_direct_resolution_command(cmd, state, world)
-        if cmd.type == "stand_up":
-            return self._compute_stand_up(cmd, state)
+        if cmd.type == "combat_move":
+            return self._compute_combat_move(cmd, state, world)
+        if cmd.type == "combat_end_turn":
+            return self._compute_combat_end_turn(cmd, state, world)
+        if cmd.type == "combat_disengage":
+            return self._compute_combat_disengage(cmd, state)
+        if cmd.type == "combat_dash":
+            return self._compute_combat_dash(cmd, state)
+        if cmd.type == "combat_attack":
+            return self._compute_combat_attack(cmd, state, world)
+        if cmd.type == "combat_defend":
+            return self._compute_combat_defend(cmd, state)
+        if cmd.type == "combat_npc_turn":
+            return self._compute_combat_npc_turn(cmd, state, world)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_start_combat(
@@ -161,105 +152,6 @@ class CombatHandler(StaticCommandHandler):
 
         return ValidationResult(ok=True)
 
-    def _validate_flag_command(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ValidationResult:
-        if not state.has_slice("player"):
-            return ValidationResult(ok=False, reason="player slice is required")
-        if not state.has_slice("areas"):
-            return ValidationResult(ok=False, reason="areas slice is required")
-        identity_check = self._validate_character_identity(cmd.params, state)
-        if identity_check is not None:
-            return identity_check
-        resolved = self._resolve_active_combat(cmd.params, state, world)
-        if resolved is None:
-            return ValidationResult(ok=False, reason="active combat sub_area_id is required")
-        return ValidationResult(ok=True)
-
-    def _validate_advance_combat_round(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ValidationResult:
-        if cmd.source not in {"engine", "system"}:
-            return ValidationResult(
-                ok=False,
-                reason="advance_combat_round is restricted to engine/system",
-            )
-        if not state.has_slice("areas"):
-            return ValidationResult(ok=False, reason="areas slice is required")
-        resolved = self._resolve_active_combat(cmd.params, state, world)
-        if resolved is None:
-            return ValidationResult(ok=False, reason="active combat sub_area_id is required")
-        return ValidationResult(ok=True)
-
-    def _validate_flee(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ValidationResult:
-        return self._validate_flag_command(cmd, state, world)
-
-    def _validate_use_combat_item(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ValidationResult:
-        common = self._validate_flag_command(cmd, state, world)
-        if not common.ok:
-            return common
-        if not world.has_registry("items"):
-            return ValidationResult(ok=False, reason="items registry is required")
-        item_id = get_non_empty_string(cmd.params, "item_id")
-        if item_id is None:
-            return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-        if world.items.get(item_id) is None:
-            return ValidationResult(ok=False, reason=f"unknown item: {item_id}")
-        if state.player.get_item_count(item_id) < 1:
-            return ValidationResult(ok=False, reason=f"item not in inventory: {item_id}")
-        if "target" in cmd.params:
-            target = coerce_non_empty_string(cmd.params.get("target"))
-            if target is None:
-                return ValidationResult(ok=False, reason="target must be player/self")
-            if target not in {"player", "self"}:
-                return ValidationResult(ok=False, reason="target must be player/self")
-        return ValidationResult(ok=True)
-
-    def _validate_direct_resolution_command(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ValidationResult:
-        target = get_non_empty_string(cmd.params, "target")
-        if target is None:
-            return ValidationResult(ok=False, reason="target must be a non-empty string")
-        if "sub_area_id" in cmd.params and coerce_non_empty_string(cmd.params.get("sub_area_id")) is None:
-            return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
-        common = self._validate_flag_command(cmd, state, world)
-        if not common.ok:
-            return common
-        resolved = self._resolve_active_combat(cmd.params, state, world)
-        if resolved is None:
-            return ValidationResult(ok=False, reason="active combat sub_area_id is required")
-        _, payload, _ = resolved
-        participants = state.areas.participant_snapshots(payload)
-        if not participants:
-            return ValidationResult(ok=False, reason="combat participants are required")
-        target_resolution = state.areas.resolve_participant(target, participants)
-        if target_resolution is None:
-            return ValidationResult(ok=False, reason=f"unknown combat target: {target}")
-        _, participant = target_resolution
-        if not bool(participant.get("alive", False)):
-            return ValidationResult(ok=False, reason=f"target is not alive: {target}")
-        return ValidationResult(ok=True)
-
     def _compute_start_combat(
         self,
         cmd: Command,
@@ -302,9 +194,102 @@ class CombatHandler(StaticCommandHandler):
         monster_ids = self._normalize_monster_ids(cmd.params.get("monsters"))
         if not monster_ids and existing_payload:
             monster_ids = self._normalize_monster_ids(existing_payload.get("monster_ids"))
-        participants = self._build_participants(monster_ids, world)
         existing_payload = existing_payload or {}
-        combat_round = 0 if surprise_state != "none" else 1
+
+        # --- v2 unit construction ---
+
+        # 1. Build units list starting with player
+        units: list[dict[str, Any]] = [build_player_unit(state)]
+
+        # Companions
+        if state.has_slice("party") and world.has_registry("characters"):
+            for char_id, member_data in state.party.members.items():
+                tmpl = world.characters.get(char_id)
+                if tmpl is not None:
+                    companion = build_companion_unit(char_id, member_data, tmpl)
+                    if companion is not None:
+                        units.append(companion)
+
+        # Monsters
+        seen: dict[str, int] = {}
+        for mid in monster_ids:
+            seen[mid] = seen.get(mid, 0) + 1
+            tmpl = world.monsters.get(mid)
+            if tmpl is not None:
+                units.append(build_monster_unit(mid, tmpl, seen[mid]))
+            else:
+                # Fallback for unknown monster templates
+                units.append({
+                    "unit_id": f"{mid}_{seen[mid]}",
+                    "side": "enemy",
+                    "source": "monster",
+                    "monster_id": mid,
+                    "character_id": None,
+                    "name": mid,
+                    "hp": 10,
+                    "max_hp": 10,
+                    "ac": 10,
+                    "stats": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
+                    "speed": 3,
+                    "position": None,
+                    "alive": True,
+                    "fled": False,
+                    "active_effects": [],
+                    "attacks": [{"name": "Slam", "hit_bonus": 0, "damage_dice": "1d4",
+                                 "damage_type": "bludgeoning", "range": 1, "tags": ["MELEE"]}],
+                    "ai_personality": "aggressive",
+                    "flee_threshold": 0.0,
+                    "flee_chance": 0.5,
+                    "action_used": False,
+                    "move_used": False,
+                    "disengaged": False,
+                    "dashed": False,
+                    "defending": False,
+                    "reaction_used": False,
+                    "surprised": False,
+                    "proficiency_bonus": 2,
+                })
+
+        # 2. Select battle map or build default grid
+        map_variant = None
+        map_category = cmd.params.get("map_category")
+        map_tags = cmd.params.get("map_tags")
+        if world is not None and world.has_registry("battle_maps"):
+            if map_category:
+                map_variant = world.battle_maps.select_variant(str(map_category))
+            elif map_tags and isinstance(map_tags, list):
+                map_variant = world.battle_maps.select_by_tags(map_tags)
+
+        # 3. Assign positions
+        if map_variant is not None:
+            grid = {
+                "width": map_variant.width,
+                "height": map_variant.height,
+                "terrain": list(map_variant.terrain),
+            }
+            assign_positions_from_spawns(
+                units, map_variant.player_spawn, map_variant.enemy_spawn
+            )
+        else:
+            grid = build_default_grid()
+            assign_positions(units, grid["width"], grid["height"])
+
+        # 4. Surprise resolution — extract stealth_total from payload or cmd params
+        stealth_total = 0
+        if existing_payload:
+            lsr = existing_payload.get("last_stealth_result")
+            if isinstance(lsr, dict):
+                stealth_total = int(lsr.get("roll", 0)) + int(lsr.get("modifier", 0))
+        stealth_total = int(cmd.params.get("stealth_total", stealth_total))
+        resolve_surprise(units, surprise_state, stealth_total)
+
+        # 5. Initiative and turn order
+        turn_order, initiative_rolls = build_turn_order(units)
+
+        # 6. Combat round: 0 if any unit is surprised (surprise round), else 1
+        combat_round = 0 if any(u["surprised"] for u in units) else 1
+
+        # 7. Assemble combat seed with v2 fields
         combat_seed = {
             **existing_payload,
             "area_id": area_id,
@@ -313,12 +298,26 @@ class CombatHandler(StaticCommandHandler):
             "surprise_state": surprise_state,
             "combat_started_at_tick": state.time.absolute_tick() if state.has_slice("time") else None,
             "monster_ids": list(monster_ids),
+            # v2 new fields
+            "version": 2,
+            "grid": grid,
+            "units": units,
+            "turn_order": turn_order,
+            "initiative_rolls": initiative_rolls,
+            "current_turn_index": 0,
+            "current_unit_id": turn_order[0] if turn_order else "",
+            "environment": {
+                "time_of_day": state.time.period if state.has_slice("time") else "day",
+                "weather": "clear",
+            },
         }
+
+        # 8. Build normalized combat payload via area slice
         combat_payload, _, _ = state.areas.build_combat_hostile(
             combat_seed,
-            participants,
+            [],
             blocking=bool(existing_payload.get("blocking", True)),
-            player_flags=self._default_player_flags(),
+            player_flags={},
             current_tick=self._current_tick(state),
         )
 
@@ -342,500 +341,6 @@ class CombatHandler(StaticCommandHandler):
                 "combat_round": combat_round,
             },
             omit_empty_delta=False,
-        )
-
-    def _compute_flag_command(
-        self,
-        cmd: Command,
-        state: StateContainer,
-    ) -> ExecuteResult:
-        resolved = self._resolve_active_combat(cmd.params, state, None)
-        if resolved is None:
-            return ExecuteResult.error("active combat not found")
-        sub_area_id, payload, _ = resolved
-        updated_payload = dict(payload)
-        flags = self._normalized_player_flags(updated_payload)
-        flag_key = self._FLAG_COMMANDS[cmd.type]
-        flags[flag_key] = True
-        updated_payload["player_flags"] = flags
-        return handler_success(
-            "combat",
-            cmd.type,
-            changes=[
-                StateChange(
-                    "areas",
-                    "modify",
-                    f"hostile_tracking.{sub_area_id}",
-                    updated_payload,
-                )
-            ],
-            metadata={
-                "status": flag_key,
-                "sub_area_id": sub_area_id,
-            },
-            omit_empty_delta=False,
-        )
-
-    def _compute_advance_combat_round(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ExecuteResult:
-        resolved = self._resolve_active_combat(cmd.params, state, world)
-        if resolved is None:
-            return ExecuteResult.error("active combat not found")
-        sub_area_id, payload, _ = resolved
-        updated_payload = state.areas.copy_hostile_state(payload)
-        current_round = int(updated_payload.get("combat_round", 1))
-        next_round = 1 if current_round < 1 else current_round + 1
-        updated_payload["combat_round"] = next_round
-        updated_payload["player_flags"] = self._default_player_flags()
-        return handler_success(
-            "combat",
-            "advance_combat_round",
-            changes=[
-                StateChange(
-                    "areas",
-                    "modify",
-                    f"hostile_tracking.{sub_area_id}",
-                    updated_payload,
-                )
-            ],
-            metadata={
-                "status": "advanced",
-                "sub_area_id": sub_area_id,
-                "combat_round": next_round,
-            },
-            omit_empty_delta=False,
-        )
-
-    def _compute_flee(
-        self,
-        cmd: Command,
-        state: StateContainer,
-    ) -> ExecuteResult:
-        resolved = self._resolve_active_combat(cmd.params, state, None)
-        if resolved is None:
-            return ExecuteResult.error("active combat not found")
-        sub_area_id, payload, _ = resolved
-        flags = self._normalized_player_flags(payload)
-
-        escape_dc = 10
-        if bool(payload.get("blocking", False)):
-            escape_dc += 2
-        if flags["disengaged"]:
-            escape_dc -= 2
-        if flags["dashed"]:
-            escape_dc -= 2
-
-        roll_result, all_rolls, dice = resolve_roll()
-        flee_bonus = max(
-            state.player.get_skill_bonus("athletics"),
-            state.player.get_skill_bonus("acrobatics"),
-        )
-        flee_total = roll_result + flee_bonus
-
-        flee_roll = build_dice_roll(
-            purpose="flee",
-            dice=dice,
-            result=roll_result,
-            modifiers=[{"name": "athletics_or_acrobatics", "value": flee_bonus}],
-            total=flee_total,
-        )
-
-        passed = flee_total >= escape_dc
-        if not passed:
-            return handler_success_no_delta(
-                "combat",
-                "flee",
-                metadata={
-                    "status": "failed",
-                    "sub_area_id": sub_area_id,
-                    "escape_dc": escape_dc,
-                    "raw_roll": roll_result,
-                    "all_rolls": list(all_rolls),
-                    "flee_total": flee_total,
-                    "passed": False,
-                },
-                rolls=[flee_roll],
-            )
-
-        updated_payload = state.areas.copy_hostile_state(payload)
-        updated_payload["status"] = "active"
-        updated_payload["combat_active"] = False
-        updated_payload["player_flags"] = self._default_player_flags()
-        updated_payload.pop("cleared_at_tick", None)
-        return handler_success(
-            "combat",
-            "flee",
-            changes=[
-                StateChange(
-                    "areas",
-                    "modify",
-                    f"hostile_tracking.{sub_area_id}",
-                    updated_payload,
-                )
-            ],
-            metadata={
-                "status": "fled",
-                "sub_area_id": sub_area_id,
-                "escape_dc": escape_dc,
-                "raw_roll": roll_result,
-                "all_rolls": list(all_rolls),
-                "flee_total": flee_total,
-                "passed": True,
-            },
-            rolls=[flee_roll],
-            omit_empty_delta=False,
-        )
-
-    def _compute_use_combat_item(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ExecuteResult:
-        resolved = self._resolve_active_combat(cmd.params, state, world)
-        if resolved is None:
-            return ExecuteResult.error("active combat not found")
-        sub_area_id, _, _ = resolved
-        item_id = str(cmd.params["item_id"]).strip()
-        item_template = world.items.get(item_id)
-        heal_amount = resolve_item_heal_amount(item_template)
-        if heal_amount is None:
-            return handler_success_no_delta(
-                "combat",
-                "use_combat_item",
-                metadata={
-                    "status": "no_effect",
-                    "sub_area_id": sub_area_id,
-                    "item_id": item_id,
-                    "hp_delta": 0,
-                },
-            )
-
-        inventory = self._player_inventory_snapshot(state)
-        updated_inventory = self._remove_from_inventory(inventory, item_id, 1)
-        target_hp = min(int(state.player.max_hp), int(state.player.hp) + heal_amount)
-        hp_delta = target_hp - int(state.player.hp)
-
-        changes: list[StateChange] = [
-            StateChange("player", "set", "inventory", updated_inventory),
-        ]
-        if hp_delta != 0:
-            changes.append(StateChange("player", "add", "hp", hp_delta))
-
-        return handler_success(
-            "combat",
-            "use_combat_item",
-            changes=changes,
-            metadata={
-                "status": "used",
-                "sub_area_id": sub_area_id,
-                "item_id": item_id,
-                "hp_delta": hp_delta,
-            },
-            omit_empty_delta=False,
-        )
-
-    def _compute_direct_resolution_command(
-        self,
-        cmd: Command,
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> ExecuteResult:
-        target = coerce_non_empty_string(cmd.params.get("target")) or ""
-        resolved = self._resolve_active_combat(cmd.params, state, None)
-        if resolved is None:
-            return ExecuteResult.error("active combat not found")
-        sub_area_id, payload, _ = resolved
-        participants = state.areas.participant_snapshots(payload)
-        target_resolution = state.areas.resolve_participant(target, participants)
-        if target_resolution is None:
-            return ExecuteResult.error(f"unknown combat target: {target}")
-        target_index, participant = target_resolution
-        if not bool(participant.get("alive", False)):
-            return ExecuteResult.error(f"target is not alive: {target}")
-
-        if cmd.type == "shove":
-            return self._compute_shove_resolution(
-                state=state,
-                sub_area_id=sub_area_id,
-                target=target,
-                payload=payload,
-                participants=participants,
-                participant=participant,
-            )
-        return self._compute_attack_resolution(
-            command_type=cmd.type,
-            state=state,
-            world=world,
-            sub_area_id=sub_area_id,
-            target=target,
-            payload=payload,
-            participants=participants,
-            target_index=target_index,
-            participant=participant,
-            damage_type=str(cmd.params.get("damage_type", "physical")).strip().lower(),
-        )
-
-    def _compute_attack_resolution(
-        self,
-        *,
-        command_type: str,
-        state: StateContainer,
-        world: WorldInstance,
-        sub_area_id: str,
-        target: str,
-        payload: Mapping[str, Any],
-        participants: list[dict[str, Any]],
-        target_index: int,
-        participant: Mapping[str, Any],
-        damage_type: str = "physical",
-    ) -> ExecuteResult:
-        target_effects = participant.get("active_effects", [])
-        adv = any(bool(e.get("advantage_on_attacks_against")) for e in target_effects)
-        roll_result, all_rolls, dice = resolve_roll(advantage=adv)
-        strength_mod = state.player.get_modifier("str")
-        prof = state.player.proficiency_bonus
-        effect_mods = state.player.get_effect_modifiers()
-        attack_bonus_from_effects = effect_mods.get("attack", 0)
-        attack_total = roll_result + strength_mod + prof + attack_bonus_from_effects
-        target_ac = state.areas.participant_ac(participant) + _participant_effect_ac_mod(participant)
-        hit = attack_total >= target_ac
-
-        attack_roll = build_dice_roll(
-            purpose="attack",
-            dice=dice,
-            result=roll_result,
-            modifiers=[
-                {"name": "str", "value": strength_mod},
-                {"name": "proficiency", "value": prof},
-                {"name": "effects", "value": attack_bonus_from_effects},
-            ],
-            total=attack_total,
-        )
-
-        updated_target = dict(participant)
-        damage = 0
-        damage_multiplier = 1.0
-        if hit:
-            raw_damage = 1 if command_type == "offhand_attack" else max(
-                1,
-                prof + strength_mod,
-            )
-            monster_id = state.areas.participant_monster_id(participant)
-            template = world.monsters.get(monster_id) if world.has_registry("monsters") else None
-            if template is not None:
-                if damage_type in getattr(template, "immunities", []):
-                    raw_damage = 0
-                    damage_multiplier = 0.0
-                elif damage_type in getattr(template, "resistances", []):
-                    raw_damage = max(1, raw_damage // 2)
-                    damage_multiplier = 0.5
-                elif damage_type in getattr(template, "vulnerabilities", []):
-                    raw_damage = raw_damage * 2
-                    damage_multiplier = 2.0
-            damage = raw_damage
-            remaining_hp = max(0, state.areas.participant_hp(participant) - damage)
-            updated_target["hp"] = remaining_hp
-            updated_target["alive"] = remaining_hp > 0
-
-        participants[target_index] = updated_target
-        updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
-            payload,
-            participants,
-            blocking=bool(payload.get("blocking", False)),
-            player_flags=self._default_player_flags(),
-            current_tick=self._current_tick(state),
-        )
-        target_name = state.areas.participant_name(updated_target)
-        target_monster_id = state.areas.participant_monster_id(updated_target)
-        target_alive = bool(updated_target.get("alive", False))
-
-        # 怪物回合：仅在战斗仍活跃时执行
-        extra_changes: list[StateChange] = []
-        extra_rolls: list[Any] = []
-        monster_responses: list[dict[str, Any]] = []
-
-        if combat_active and not combat_cleared:
-            updated_participants, extra_changes, extra_rolls, monster_responses = \
-                self._resolve_monster_responses(
-                    participants=state.areas.participant_snapshots(updated_payload),
-                    state=state,
-                    world=world,
-                )
-            # 若怪物逃跑导致战斗结束，重建 payload
-            if any(r.get("action") == "flee" for r in monster_responses):
-                updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
-                    updated_payload,
-                    updated_participants,
-                    blocking=bool(updated_payload.get("blocking", False)),
-                    player_flags=self._default_player_flags(),
-                    current_tick=self._current_tick(state),
-                )
-
-        # XP 分发（combat_cleared 可能在怪物逃跑后才为 True）
-        xp_awarded = 0
-        if combat_cleared:
-            xp_awarded = self._compute_combat_xp(
-                state.areas.participant_snapshots(updated_payload), world
-            )
-            if xp_awarded > 0:
-                extra_changes.append(
-                    StateChange("player", "set", "xp", state.player.xp + xp_awarded)
-                )
-            # kill_count flags for defeated (non-fled) monsters
-            if state.has_slice("flags"):
-                for p in state.areas.participant_snapshots(updated_payload):
-                    if not p.get("alive", True) and not p.get("fled", False):
-                        mid = state.areas.participant_monster_id(p)
-                        if mid:
-                            key = f"kill_count_{mid}"
-                            cur = int(state.flags.get(key, 0) or 0)
-                            extra_changes.append(
-                                StateChange("flags", "set", f"flags.{key}", cur + 1)
-                            )
-
-        all_changes = [
-            StateChange(
-                "areas",
-                "modify",
-                f"hostile_tracking.{sub_area_id}",
-                updated_payload,
-            ),
-            *extra_changes,
-        ]
-
-        return handler_success(
-            "combat",
-            command_type,
-            changes=all_changes,
-            metadata={
-                "status": "hit" if hit else "miss",
-                "sub_area_id": sub_area_id,
-                "target": target,
-                "target_monster_id": target_monster_id,
-                "target_name": target_name,
-                "raw_roll": roll_result,
-                "all_rolls": list(all_rolls),
-                "attack_total": attack_total,
-                "target_ac": target_ac,
-                "damage": damage,
-                "damage_type": damage_type,
-                "damage_multiplier": damage_multiplier,
-                "advantage": adv,
-                "hit": hit,
-                "target_hp": state.areas.participant_hp(updated_target),
-                "target_alive": target_alive,
-                "target_defeated": hit and not target_alive,
-                "combat_active": combat_active,
-                "combat_cleared": combat_cleared,
-                "monster_responses": monster_responses,
-                "xp_awarded": xp_awarded,
-            },
-            rolls=[attack_roll, *extra_rolls],
-            omit_empty_delta=False,
-        )
-
-    def _compute_shove_resolution(
-        self,
-        *,
-        state: StateContainer,
-        sub_area_id: str,
-        target: str,
-        payload: Mapping[str, Any],
-        participants: list[dict[str, Any]],
-        participant: Mapping[str, Any],
-    ) -> ExecuteResult:
-        roll_result, all_rolls, dice = resolve_roll()
-        athletics_bonus = state.player.get_skill_bonus("athletics")
-        shove_total = roll_result + athletics_bonus
-        target_ac = state.areas.participant_ac(participant) + _participant_effect_ac_mod(participant)
-        resist_dc = 10 + max(0, target_ac - 10)
-        passed = shove_total >= resist_dc
-
-        shove_roll = build_dice_roll(
-            purpose="shove",
-            dice=dice,
-            result=roll_result,
-            modifiers=[{"name": "athletics", "value": athletics_bonus}],
-            total=shove_total,
-        )
-
-        blocking = False if passed else bool(payload.get("blocking", False))
-        updated_payload, combat_active, combat_cleared = state.areas.build_combat_hostile(
-            payload,
-            participants,
-            blocking=blocking,
-            player_flags=self._default_player_flags(),
-            current_tick=self._current_tick(state),
-        )
-
-        return handler_success(
-            "combat",
-            "shove",
-            changes=[
-                StateChange(
-                    "areas",
-                    "modify",
-                    f"hostile_tracking.{sub_area_id}",
-                    updated_payload,
-                )
-            ],
-            metadata={
-                "status": "shoved" if passed else "resisted",
-                "sub_area_id": sub_area_id,
-                "target": target,
-                "target_monster_id": state.areas.participant_monster_id(participant),
-                "target_name": state.areas.participant_name(participant),
-                "raw_roll": roll_result,
-                "all_rolls": list(all_rolls),
-                "shove_total": shove_total,
-                "resist_dc": resist_dc,
-                "passed": passed,
-                "blocking": bool(updated_payload.get("blocking", False)),
-                "combat_active": combat_active,
-                "combat_cleared": combat_cleared,
-            },
-            rolls=[shove_roll],
-            omit_empty_delta=False,
-        )
-
-    def _validate_stand_up(
-        self,
-        cmd: Command,
-        state: StateContainer,
-    ) -> ValidationResult:
-        if not state.has_slice("player"):
-            return ValidationResult(ok=False, reason="player slice is required")
-        return ValidationResult(ok=True)
-
-    def _compute_stand_up(
-        self,
-        cmd: Command,
-        state: StateContainer,
-    ) -> ExecuteResult:
-        effects = state.player.active_effects
-        prone_effects = [e for e in effects if e.get("effect_id") == "prone"]
-        if not prone_effects:
-            return handler_success_no_delta(
-                "combat",
-                "stand_up",
-                metadata={"status": "not_prone"},
-            )
-        updated = [e for e in effects if e.get("effect_id") != "prone"]
-        changes = [StateChange("player", "set", "active_effects", updated)]
-        return handler_success(
-            "combat",
-            "stand_up",
-            changes=changes,
-            metadata={
-                "status": "stood_up",
-                "removed_count": len(prone_effects),
-            },
-            narrative_hints=["你从地面起身，重新站稳脚跟。"],
         )
 
     def _resolve_active_combat(
@@ -897,39 +402,6 @@ class CombatHandler(StaticCommandHandler):
         if len(uncleared) != 1:
             return []
         return self._normalize_monster_ids(uncleared[0][1].get("monster_ids"))
-
-    def _build_participants(
-        self,
-        monster_ids: list[str],
-        world: WorldInstance,
-    ) -> list[dict[str, Any]]:
-        participants: list[dict[str, Any]] = []
-        seen: dict[str, int] = {}
-        for monster_id in monster_ids:
-            template = world.monsters.get(monster_id)
-            if template is None:
-                max_hp = 10
-                ac = 10
-                name = monster_id
-            else:
-                max_hp = template.hp or template.max_hp
-                if max_hp is None or max_hp < 1:
-                    max_hp = 10
-                ac = template.ac if template.ac is not None and template.ac >= 1 else 10
-                name = template.name or monster_id
-            seen[monster_id] = seen.get(monster_id, 0) + 1
-            participants.append(
-                {
-                    "id": f"{monster_id}_{seen[monster_id]}",
-                    "monster_id": monster_id,
-                    "name": name,
-                    "hp": max_hp,
-                    "max_hp": max_hp,
-                    "ac": ac,
-                    "alive": True,
-                }
-            )
-        return participants
 
     def _area_exists(
         self,
@@ -1000,80 +472,7 @@ class CombatHandler(StaticCommandHandler):
         return state.time.absolute_tick()
 
     @staticmethod
-    def _default_player_flags() -> dict[str, bool]:
-        return {
-            "defending": False,
-            "disengaged": False,
-            "dashed": False,
-        }
-
-    @staticmethod
-    def _normalized_player_flags(payload: Mapping[str, Any]) -> dict[str, bool]:
-        raw_flags = payload.get("player_flags", {})
-        if not isinstance(raw_flags, Mapping):
-            raw_flags = {}
-        return {
-            "defending": bool(raw_flags.get("defending", False)),
-            "disengaged": bool(raw_flags.get("disengaged", False)),
-            "dashed": bool(raw_flags.get("dashed", False)),
-        }
-
-
-    @staticmethod
-    def _player_inventory_snapshot(state: StateContainer) -> list[dict[str, Any]]:
-        return [item.snapshot() for item in state.player.inventory]
-
-    # ------------------------------------------------------------------
-    # Combat AI helpers（怪物回合决策 + XP 分发）
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _decide_monster_action(
-        ai_personality: str,
-        hp_ratio: float,
-        flee_threshold: float,
-        flee_chance: float = 0.5,
-    ) -> str:
-        """Decide what action the monster takes this turn.
-
-        Returns "attack" or "flee".
-        flee_threshold == 0.0 means the monster never flees voluntarily.
-        flee_chance: probability of actually fleeing once below flee_threshold.
-        """
-        if flee_threshold <= 0.0 or hp_ratio > flee_threshold:
-            return "attack"
-        if ai_personality == "cowardly":
-            return "flee"
-        if ai_personality == "aggressive" and hp_ratio >= 0.1:
-            return "attack"
-        return "flee" if random.random() < flee_chance else "attack"
-
-    @staticmethod
-    def _estimate_damage(dice_str: str) -> float:
-        """期望伤害估算，如 '2d6' → 7.0，用于攻击选择。"""
-        m = re.match(r"(\d+)d(\d+)", str(dice_str))
-        if not m:
-            return 1.0
-        n, d = int(m.group(1)), int(m.group(2))
-        return n * (d + 1) / 2.0
-
-    @staticmethod
-    def _select_attack(attacks: list[Any], ai_personality: str) -> Any:
-        """根据 ai_personality 从多攻击中选择最优攻击。"""
-        if len(attacks) <= 1:
-            return attacks[0]
-        if ai_personality == "aggressive":
-            return max(
-                attacks,
-                key=lambda a: CombatHandler._estimate_damage(getattr(a, "damage_dice", "1d4")),
-            )
-        if ai_personality == "defensive":
-            return max(attacks, key=lambda a: int(getattr(a, "hit_bonus", 0) or 0))
-        # cowardly: 选射程最远
-        return max(attacks, key=lambda a: int(getattr(a, "range", 1) or 1))
-
-    @staticmethod
-    def _apply_player_damage_resistance(
+    def _apply_damage_resistance(
         damage: int,
         damage_type: str,
         state: StateContainer,
@@ -1088,136 +487,6 @@ class CombatHandler(StaticCommandHandler):
             if f"{damage_type}_vulnerability" in tags:
                 return damage * 2
         return damage
-
-    @staticmethod
-    def _roll_monster_attack(
-        attack_name: str,
-        damage_dice: str,
-        hit_bonus: int,
-        player_ac: int,
-        advantage: bool = False,
-    ) -> tuple[bool, int, Any]:
-        """Roll a monster attack against the player's AC.
-
-        Returns (hit, damage, DiceRoll).
-        """
-        d20, all_d20, dice_notation = resolve_roll(advantage=advantage)
-        total = d20 + hit_bonus
-        hit = total >= player_ac
-        damage = roll_damage_dice(damage_dice) if hit else 0
-        roll = build_dice_roll(
-            purpose=f"monster_attack:{attack_name}",
-            dice=dice_notation,
-            result=d20,
-            modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
-            total=total,
-        )
-        return hit, damage, roll
-
-    def _resolve_monster_responses(
-        self,
-        *,
-        participants: list[dict[str, Any]],
-        state: StateContainer,
-        world: WorldInstance,
-    ) -> tuple[list[dict[str, Any]], list[StateChange], list[Any], list[dict[str, Any]]]:
-        """Resolve each alive monster's action this turn.
-
-        Returns:
-            updated_participants – participant list with fled monsters marked
-            extra_changes        – StateChange list (player HP change if hit)
-            extra_rolls          – DiceRoll list from monster attacks
-            responses            – per-monster action metadata
-        """
-        # 玩家 AC：使用 stored ac 字段 + 活跃效果修正（如防御姿态 +2 AC）
-        effect_mods = state.player.get_effect_modifiers()
-        player_ac = state.player.ac + effect_mods.get("ac", 0)
-        monster_adv_on_player = state.player.get_advantage_on_attacks_against()
-        player_hp = state.player.hp
-        updated_participants = [dict(p) for p in participants]
-        extra_changes: list[StateChange] = []
-        extra_rolls: list[Any] = []
-        responses: list[dict[str, Any]] = []
-        total_player_damage = 0
-
-        for idx, p in enumerate(updated_participants):
-            if not bool(p.get("alive", False)):
-                continue  # 已死亡或已逃跑的怪物不再行动
-
-            monster_id = str(p.get("monster_id", ""))
-            hp = int(p.get("hp", 0))
-            max_hp = int(p.get("max_hp", 1))
-            hp_ratio = hp / max_hp if max_hp > 0 else 0.0
-
-            template = world.monsters.get(monster_id) if world.has_registry("monsters") else None
-            ai_personality = getattr(template, "ai_personality", "aggressive") if template else "aggressive"
-            flee_threshold = getattr(template, "flee_threshold", 0.0) if template else 0.0
-            flee_chance = float(getattr(template, "flee_chance", 0.5)) if template else 0.5
-
-            # Phase 4: 若怪物受 prevents_action 效果影响，跳过本回合
-            monster_effects = p.get("active_effects", [])
-            if any(bool(e.get("prevents_action")) for e in monster_effects):
-                responses.append({
-                    "monster_id": monster_id,
-                    "action": "stunned",
-                    "hit": False,
-                    "damage": 0,
-                })
-                continue
-
-            action = self._decide_monster_action(ai_personality, hp_ratio, flee_threshold, flee_chance)
-
-            if action == "flee":
-                updated_participants[idx]["alive"] = False
-                updated_participants[idx]["fled"] = True
-                responses.append({
-                    "monster_id": monster_id,
-                    "action": "flee",
-                    "hit": False,
-                    "damage": 0,
-                })
-                continue
-
-            # action == "attack"：仅当怪物模板有 attacks 时才发起攻击
-            attacks = getattr(template, "attacks", []) if template else []
-            if not attacks:
-                # 无 attacks 定义 → 本回合不行动
-                responses.append({
-                    "monster_id": monster_id,
-                    "action": "hold",
-                    "hit": False,
-                    "damage": 0,
-                })
-                continue
-
-            selected_attack = self._select_attack(attacks, ai_personality)
-            attack_name = getattr(selected_attack, "name", "strike") or "strike"
-            damage_dice = getattr(selected_attack, "damage_dice", "1d4") or "1d4"
-            hit_bonus = int(getattr(selected_attack, "hit_bonus", 0) or 0)
-            damage_type = getattr(selected_attack, "damage_type", "physical") or "physical"
-
-            hit, dmg, roll = self._roll_monster_attack(
-                attack_name, damage_dice, hit_bonus, player_ac,
-                advantage=monster_adv_on_player,
-            )
-            if hit and dmg > 0:
-                dmg = self._apply_player_damage_resistance(dmg, damage_type, state)
-            extra_rolls.append(roll)
-            total_player_damage += dmg
-            responses.append({
-                "monster_id": monster_id,
-                "action": "attack",
-                "hit": hit,
-                "damage": dmg,
-                "damage_type": damage_type,
-                "attack_name": attack_name,
-            })
-
-        if total_player_damage > 0:
-            new_hp = max(0, player_hp - total_player_damage)
-            extra_changes.append(StateChange("player", "set", "hp", new_hp))
-
-        return updated_participants, extra_changes, extra_rolls, responses
 
     def _compute_combat_xp(
         self,
@@ -1240,51 +509,6 @@ class CombatHandler(StaticCommandHandler):
         return total
 
     @staticmethod
-    def _remove_from_inventory(
-        inventory: list[dict[str, Any]],
-        item_id: str,
-        count: int,
-    ) -> list[dict[str, Any]]:
-        updated: list[dict[str, Any]] = []
-        removed = False
-        for item in inventory:
-            if removed or str(item.get("item_id")) != item_id:
-                updated.append(dict(item))
-                continue
-            current_count = coerce_int(item.get("count")) or 0
-            remaining = current_count - count
-            if remaining < 0:
-                raise ValueError(f"not enough items: {item_id}")
-            if remaining > 0:
-                new_item = dict(item)
-                new_item["count"] = remaining
-                updated.append(new_item)
-            removed = True
-        if not removed:
-            raise ValueError(f"item not found: {item_id}")
-        return updated
-
-    @staticmethod
-    def _validate_character_identity(
-        params: Mapping[str, Any],
-        state: StateContainer,
-        *,
-        key: str = "character",
-    ) -> ValidationResult | None:
-        raw_value = params.get(key)
-        if raw_value is None:
-            return None
-        value = coerce_non_empty_string(raw_value)
-        if value is None:
-            return ValidationResult(ok=False, reason=f"{key} must be a non-empty string")
-        if value == "player":
-            return None
-        player_character_id = coerce_non_empty_string(state.player.character_id)
-        if player_character_id is not None and value == player_character_id:
-            return None
-        return ValidationResult(ok=False, reason=f"{key} must refer to the current player")
-
-    @staticmethod
     def _normalize_monster_ids(raw_value: Any) -> list[str]:
         if not isinstance(raw_value, list):
             return []
@@ -1294,3 +518,736 @@ class CombatHandler(StaticCommandHandler):
             if monster_id is not None:
                 monster_ids.append(monster_id)
         return monster_ids
+
+    # ------------------------------------------------------------------
+    # V2 SRPG commands（移动、回合推进、脱离、冲刺）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_unit(units: list[dict[str, Any]], unit_id: str) -> dict[str, Any] | None:
+        """在 units 列表中按 unit_id 查找。"""
+        for u in units:
+            if u.get("unit_id") == unit_id:
+                return u
+        return None
+
+    @staticmethod
+    def _is_unit_active(unit: dict[str, Any]) -> bool:
+        """存活且未逃跑。"""
+        return bool(unit.get("alive")) and not bool(unit.get("fled"))
+
+    def _resolve_v2_combat(
+        self,
+        params: Mapping[str, Any],
+        state: StateContainer,
+        world: WorldInstance | None = None,
+    ) -> tuple[str, dict[str, Any], str] | None:
+        """解析 v2 战斗状态。返回 (sub_area_id, payload, area_id) 或 None。"""
+        resolved = self._resolve_active_combat(params, state, world)
+        if resolved is None:
+            return None
+        sub_area_id, payload, area_id = resolved
+        if payload.get("version") != 2:
+            return None
+        return (sub_area_id, payload, area_id)
+
+    def _validate_v2_command(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ValidationResult:
+        """所有 v2 命令的通用验证：v2 payload 存在 + 战斗激活。"""
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
+        resolved = self._resolve_v2_combat(cmd.params, state, world)
+        if resolved is None:
+            return ValidationResult(ok=False, reason="active v2 combat not found")
+        _, payload, _ = resolved
+        # 对需要当前回合验证的命令，检查 unit_id
+        if cmd.type in {"combat_move", "combat_disengage", "combat_dash", "combat_attack", "combat_defend"}:
+            current_uid = payload.get("current_unit_id", "")
+            unit = self._find_unit(payload.get("units", []), current_uid)
+            if unit is None:
+                return ValidationResult(ok=False, reason="current unit not found")
+            if cmd.type == "combat_move" and unit.get("move_used"):
+                return ValidationResult(ok=False, reason="unit has already moved this turn")
+            if cmd.type in {"combat_disengage", "combat_dash", "combat_attack", "combat_defend"} and unit.get("action_used"):
+                return ValidationResult(ok=False, reason="unit has already used action this turn")
+        # combat_attack 额外验证：target 参数
+        if cmd.type == "combat_attack":
+            target_uid = coerce_non_empty_string(cmd.params.get("target"))
+            if target_uid is None:
+                return ValidationResult(ok=False, reason="target is required")
+        return ValidationResult(ok=True)
+
+    def _compute_combat_move(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance | None,
+    ) -> ExecuteResult:
+        resolved = self._resolve_v2_combat(cmd.params, state, world)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        units = updated["units"]
+        current_uid = updated["current_unit_id"]
+        unit = self._find_unit(units, current_uid)
+
+        # 目标格
+        target_col = int(cmd.params["col"])
+        target_row = int(cmd.params["row"])
+        target = (target_col, target_row)
+
+        # 构建 BattleGrid
+        grid = BattleGrid.from_map_data(updated["grid"])
+
+        # 有效速度：dashed 时翻倍
+        effective_speed = unit["speed"] * 2 if unit.get("dashed") else unit["speed"]  # type: ignore[index]
+
+        # 可达性检查
+        start = tuple(unit["position"])  # type: ignore[index]
+        reachable = grid.reachable_cells(start, effective_speed, units, side=unit["side"])  # type: ignore[index]
+        if target not in reachable:
+            return ExecuteResult.error("target cell is not reachable")
+
+        # --- 机会攻击检查 ---
+        rolls = []
+        opportunity_attacks = []
+        opposing_side = "enemy" if unit["side"] == "ally" else "ally"  # type: ignore[index]
+        for other in units:
+            if other["side"] != opposing_side:
+                continue
+            if not self._is_unit_active(other):
+                continue
+            if other.get("reaction_used"):
+                continue
+            if unit.get("disengaged"):  # type: ignore[union-attr]
+                continue
+            # 检查：other 是否与 start 相邻（距离=1）且移动后不再相邻
+            other_pos = tuple(other["position"])
+            if grid.distance(other_pos, start) == 1 and grid.distance(other_pos, target) > 1:  # type: ignore[arg-type]
+                # 触发机会攻击 — 取第一个近战攻击
+                melee_atk = None
+                for atk in other.get("attacks", []):
+                    if atk.get("range", 1) <= 1:
+                        melee_atk = atk
+                        break
+                if melee_atk is None:
+                    continue
+                # 掷攻击骰
+                atk_roll = random.randint(1, 20)
+                hit_bonus = int(melee_atk.get("hit_bonus", 0))
+                atk_total = atk_roll + hit_bonus
+                target_ac = unit["ac"]  # type: ignore[index]
+                hit = atk_total >= target_ac
+                damage = 0
+                if hit:
+                    damage = roll_damage_dice(melee_atk.get("damage_dice", "1d4"))
+                    unit["hp"] = max(0, unit["hp"] - damage)  # type: ignore[index]
+                    if unit["hp"] <= 0:  # type: ignore[index]
+                        unit["alive"] = False  # type: ignore[index]
+                other["reaction_used"] = True
+                rolls.append(build_dice_roll(
+                    purpose=f"opportunity_attack_{other['unit_id']}",
+                    dice="1d20", result=atk_roll,
+                    modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+                    total=atk_total,
+                ))
+                opportunity_attacks.append({
+                    "attacker_id": other["unit_id"],
+                    "target_id": unit["unit_id"],  # type: ignore[index]
+                    "attack_name": melee_atk["name"],
+                    "hit": hit, "damage": damage,
+                    "target_hp": unit["hp"],  # type: ignore[index]
+                    "target_alive": unit["alive"],  # type: ignore[index]
+                })
+
+        # 如果移动者被击杀，仍然记录结果但不执行移动
+        if unit["alive"]:  # type: ignore[index]
+            unit["position"] = [target_col, target_row]  # type: ignore[index]
+        unit["move_used"] = True  # type: ignore[index]
+
+        return handler_success(
+            "combat", "combat_move",
+            changes=[StateChange("areas", "modify",
+                                 f"hostile_tracking.{sub_area_id}", updated)],
+            metadata={
+                "unit_id": current_uid,
+                "from": list(start),
+                "to": [target_col, target_row],
+                "opportunity_attacks": opportunity_attacks,
+            },
+            rolls=rolls,
+            omit_empty_delta=False,
+        )
+
+    def _compute_combat_end_turn(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance | None,
+    ) -> ExecuteResult:
+        resolved = self._resolve_v2_combat(cmd.params, state, world)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        units = updated["units"]
+        turn_order = updated["turn_order"]
+
+        # 推进 index
+        idx = updated["current_turn_index"] + 1
+        round_advanced = False
+        if idx >= len(turn_order):
+            idx = 0
+            updated["combat_round"] = updated.get("combat_round", 1) + 1
+            round_advanced = True
+
+        # 进入 round 1 时清除所有 surprised
+        if round_advanced and updated["combat_round"] == 1:
+            for u in units:
+                u["surprised"] = False
+
+        # 跳过死亡/逃跑/被突袭（round 0）单位
+        attempts = 0
+        while attempts < len(turn_order):
+            uid = turn_order[idx]
+            u = self._find_unit(units, uid)
+            if u is None or not self._is_unit_active(u):
+                idx = (idx + 1) % len(turn_order)
+                if idx == 0:
+                    updated["combat_round"] = updated.get("combat_round", 1) + 1
+                    round_advanced = True
+                    if updated["combat_round"] == 1:
+                        for uu in units:
+                            uu["surprised"] = False
+                attempts += 1
+                continue
+            # 突袭轮：round 0 中被突袭的单位跳过
+            if updated["combat_round"] == 0 and u.get("surprised"):
+                idx = (idx + 1) % len(turn_order)
+                if idx == 0:
+                    updated["combat_round"] = updated.get("combat_round", 0) + 1
+                    round_advanced = True
+                    if updated["combat_round"] == 1:
+                        for uu in units:
+                            uu["surprised"] = False
+                attempts += 1
+                continue
+            break
+        else:
+            # 理论上不应到这（至少 1 个单位活着），但防御性处理
+            pass
+
+        # 重置下一个单位的回合状态
+        next_uid = turn_order[idx]
+        next_unit = self._find_unit(units, next_uid)
+        if next_unit is not None:
+            next_unit["action_used"] = False
+            next_unit["move_used"] = False
+            next_unit["disengaged"] = False
+            next_unit["dashed"] = False
+            next_unit["defending"] = False
+            # reaction_used 在回合结束后不重置（每轮重置一次）
+            # → 进入新回合时重置所有 reaction_used
+        if round_advanced:
+            for u in units:
+                u["reaction_used"] = False
+
+        updated["current_turn_index"] = idx
+        updated["current_unit_id"] = next_uid
+
+        return handler_success(
+            "combat", "combat_end_turn",
+            changes=[StateChange("areas", "modify",
+                                 f"hostile_tracking.{sub_area_id}", updated)],
+            metadata={
+                "next_unit_id": next_uid,
+                "combat_round": updated["combat_round"],
+                "round_advanced": round_advanced,
+            },
+            omit_empty_delta=False,
+        )
+
+    def _compute_combat_disengage(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        resolved = self._resolve_v2_combat(cmd.params, state)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        unit = self._find_unit(updated["units"], updated["current_unit_id"])
+        unit["disengaged"] = True  # type: ignore[index]
+        unit["action_used"] = True  # type: ignore[index]
+        return handler_success(
+            "combat", "combat_disengage",
+            changes=[StateChange("areas", "modify",
+                                 f"hostile_tracking.{sub_area_id}", updated)],
+            metadata={"unit_id": unit["unit_id"], "status": "disengaged"},  # type: ignore[index]
+            omit_empty_delta=False,
+        )
+
+    def _compute_combat_dash(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        resolved = self._resolve_v2_combat(cmd.params, state)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        unit = self._find_unit(updated["units"], updated["current_unit_id"])
+        unit["dashed"] = True  # type: ignore[index]
+        unit["action_used"] = True  # type: ignore[index]
+        return handler_success(
+            "combat", "combat_dash",
+            changes=[StateChange("areas", "modify",
+                                 f"hostile_tracking.{sub_area_id}", updated)],
+            metadata={"unit_id": unit["unit_id"], "status": "dashed"},  # type: ignore[index]
+            omit_empty_delta=False,
+        )
+
+    def _compute_combat_attack(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance | None,
+    ) -> ExecuteResult:
+        """v2 攻击命令：距离检查 + LoS + 地形效果 + 伤害 + 战斗结束检测。"""
+        resolved = self._resolve_v2_combat(cmd.params, state, world)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        units = updated["units"]
+        current_uid = updated["current_unit_id"]
+        attacker = self._find_unit(units, current_uid)
+
+        # 1. 目标解析
+        target_uid = str(cmd.params["target"]).strip()
+        target = self._find_unit(units, target_uid)
+        if target is None or not self._is_unit_active(target):
+            return ExecuteResult.error(f"invalid target: {target_uid}")
+        if target["side"] == attacker["side"]:  # type: ignore[index]
+            return ExecuteResult.error("cannot attack friendly unit")
+
+        # 2. 选择攻击
+        attack_index = int(cmd.params.get("attack_index", 0))
+        attacks = attacker.get("attacks", [])  # type: ignore[union-attr]
+        if not attacks or attack_index >= len(attacks):
+            return ExecuteResult.error("invalid attack selection")
+        selected_attack = attacks[attack_index]
+
+        # 3. 构建 BattleGrid + 距离检查
+        grid = BattleGrid.from_map_data(updated["grid"])
+        attacker_pos: tuple[int, int] = tuple(attacker["position"])  # type: ignore[assignment,index]
+        target_pos: tuple[int, int] = tuple(target["position"])
+        distance = grid.distance(attacker_pos, target_pos)
+
+        weapon_range = int(selected_attack.get("range", 1))
+        attacker_terrain = grid.at(attacker_pos[0], attacker_pos[1])
+        effective_range = weapon_range + attacker_terrain.range_bonus
+        if distance > effective_range:
+            return ExecuteResult.error("target is out of range")
+
+        # 4. LoS 检查（远程攻击：range > 1）
+        is_ranged = weapon_range > 1
+        if is_ranged and not grid.line_of_sight(attacker_pos, target_pos):
+            return ExecuteResult.error("no line of sight to target")
+
+        # 5. 目标 AC = base + terrain_ac_bonus + defending_bonus + active_effects
+        base_ac = int(target["ac"])
+        target_terrain = grid.at(target_pos[0], target_pos[1])
+        terrain_ac_bonus = target_terrain.ac_bonus
+        defending_bonus = 2 if target.get("defending") else 0
+        effect_ac_mod = _participant_effect_ac_mod(target)
+        total_ac = base_ac + terrain_ac_bonus + defending_bonus + effect_ac_mod
+
+        # 6. 攻击骰 d20 + hit_bonus
+        atk_roll = random.randint(1, 20)
+        hit_bonus = int(selected_attack.get("hit_bonus", 0))
+        atk_total = atk_roll + hit_bonus
+        # 环境修正
+        env = updated.get("environment", {})
+        env_mods = compute_environment_modifiers(
+            str(env.get("weather", "clear")),
+            str(env.get("time_of_day", "day")),
+        )
+        atk_total += env_mods.hit_modifier
+        if weapon_range > 1:
+            atk_total += env_mods.ranged_hit_modifier
+        # 浓雾 LoS 限制：超出能见度距离视为无 LoS，攻击自动未命中
+        fog_blocked = (
+            env_mods.max_visibility is not None and distance > env_mods.max_visibility
+        )
+        critical = atk_roll == 20
+        auto_miss = atk_roll == 1
+        hit = (atk_total >= total_ac or critical) and not auto_miss and not fog_blocked
+
+        # 7. 伤害
+        damage = 0
+        damage_type = str(selected_attack.get("damage_type", "physical"))
+        if hit:
+            damage = roll_damage_dice(selected_attack.get("damage_dice", "1d4"))
+            if critical:
+                damage += roll_damage_dice(selected_attack.get("damage_dice", "1d4"))  # 暴击双骰
+            # 伤害减免：怪物模板抗性
+            monster_id = target.get("monster_id")
+            if monster_id and world is not None and world.has_registry("monsters"):
+                template = world.monsters.get(monster_id)
+                if template is not None:
+                    if damage_type in template.immunities:
+                        damage = 0
+                    elif damage_type in template.resistances:
+                        damage = max(1, damage // 2)
+                    elif damage_type in template.vulnerabilities:
+                        damage = damage * 2
+            # 伤害减免：玩家 active_effects 抗性
+            if target.get("unit_id") == "player" and state.has_slice("player"):
+                damage = self._apply_damage_resistance(damage, damage_type, state)
+
+            target["hp"] = max(0, target["hp"] - damage)
+            if target["hp"] <= 0:
+                target["alive"] = False
+
+        # 8. 标记 action_used
+        attacker["action_used"] = True  # type: ignore[index]
+
+        # 9. 骰子记录
+        attack_roll_record = build_dice_roll(
+            purpose="combat_attack",
+            dice="1d20", result=atk_roll,
+            modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+            total=atk_total,
+        )
+
+        # 10. 战斗结束检测
+        extra_changes: list[StateChange] = []
+        combat_cleared = False
+        xp_awarded = 0
+
+        enemy_units = [u for u in units if u["side"] == "enemy"]
+        if all(not self._is_unit_active(u) for u in enemy_units):
+            combat_cleared = True
+            updated["combat_active"] = False
+            updated["cleared"] = True
+            if state.has_slice("time"):
+                updated["cleared_at_tick"] = self._current_tick(state)
+            # XP
+            if world is not None:
+                xp_awarded = self._compute_combat_xp(enemy_units, world)
+                if xp_awarded > 0 and state.has_slice("player"):
+                    extra_changes.append(StateChange("player", "set", "xp", state.player.xp + xp_awarded))
+            # Kill counts
+            if state.has_slice("flags"):
+                for u in enemy_units:
+                    if not u.get("alive") and not u.get("fled"):
+                        mid = u.get("monster_id")
+                        if mid:
+                            key = f"kill_count_{mid}"
+                            cur = int(state.flags.get(key, 0) or 0)
+                            extra_changes.append(StateChange("flags", "set", f"flags.{key}", cur + 1))
+
+        # 11. 玩家 HP 同步（当玩家单位被攻击时）
+        if target.get("unit_id") == "player" and damage > 0 and state.has_slice("player"):
+            extra_changes.append(StateChange("player", "set", "hp", target["hp"]))
+
+        all_changes = [
+            StateChange("areas", "modify", f"hostile_tracking.{sub_area_id}", updated),
+            *extra_changes,
+        ]
+
+        return handler_success(
+            "combat", "combat_attack",
+            changes=all_changes,
+            metadata={
+                "attacker_id": current_uid,
+                "target_id": target_uid,
+                "attack_name": selected_attack.get("name", "Attack"),
+                "hit": hit,
+                "critical": critical,
+                "damage": damage,
+                "damage_type": damage_type,
+                "target_hp": target["hp"],
+                "target_alive": target["alive"],
+                "target_ac": total_ac,
+                "terrain_ac_bonus": terrain_ac_bonus,
+                "combat_cleared": combat_cleared,
+                "xp_awarded": xp_awarded,
+            },
+            rolls=[attack_roll_record],
+            omit_empty_delta=False,
+        )
+
+    def _compute_combat_defend(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        """v2 防御命令：设置 defending=True + action_used=True。"""
+        resolved = self._resolve_v2_combat(cmd.params, state)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        unit = self._find_unit(updated["units"], updated["current_unit_id"])
+        unit["defending"] = True  # type: ignore[index]
+        unit["action_used"] = True  # type: ignore[index]
+        return handler_success(
+            "combat", "combat_defend",
+            changes=[StateChange("areas", "modify",
+                                 f"hostile_tracking.{sub_area_id}", updated)],
+            metadata={"unit_id": unit["unit_id"], "status": "defending"},  # type: ignore[index]
+            omit_empty_delta=False,
+        )
+
+    # ------------------------------------------------------------------
+    # combat_npc_turn（怪物 AI 自主回合，engine-only）
+    # ------------------------------------------------------------------
+
+    def _validate_combat_npc_turn(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance | None,
+    ) -> ValidationResult:
+        """engine/system 专用：验证 NPC 回合命令。"""
+        if cmd.source not in {"engine", "system"}:
+            return ValidationResult(ok=False, reason="combat_npc_turn is restricted to engine/system")
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
+        resolved = self._resolve_v2_combat(cmd.params, state, world)
+        if resolved is None:
+            return ValidationResult(ok=False, reason="active v2 combat not found")
+        _, payload, _ = resolved
+        unit = self._find_unit(payload.get("units", []), payload.get("current_unit_id", ""))
+        if unit is None:
+            return ValidationResult(ok=False, reason="current unit not found")
+        if not self._is_unit_active(unit):
+            return ValidationResult(ok=False, reason="current unit is not active")
+        return ValidationResult(ok=True)
+
+    def _compute_combat_npc_turn(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance | None,
+    ) -> ExecuteResult:
+        """怪物 AI 自主回合：移动 + 行动（攻击/逃跑/防御/hold）。
+
+        调用方（编排层）负责后续 combat_end_turn。
+        """
+        resolved = self._resolve_v2_combat(cmd.params, state, world)
+        sub_area_id, payload, _ = resolved  # type: ignore[misc]
+        updated = state.areas.copy_hostile_state(payload)
+        units = updated["units"]
+        unit = self._find_unit(units, updated["current_unit_id"])
+
+        if unit is None:
+            return ExecuteResult.error("current unit not found after state copy")
+        if unit.get("source") == "player":
+            return ExecuteResult.error("combat_npc_turn cannot be used for player units")
+
+        grid = BattleGrid.from_map_data(updated["grid"])
+
+        # --- 决策覆盖（LLM pre-computed） ---
+        decision_source = "rules_ai"
+        raw_decision = cmd.params.get("decision")
+        if raw_decision and isinstance(raw_decision, dict):
+            try:
+                parsed = MonsterDecision(
+                    move_to=tuple(raw_decision["move_to"]) if raw_decision.get("move_to") else None,
+                    action=str(raw_decision.get("action", "hold")),
+                    target_id=raw_decision.get("target_id"),
+                    attack_index=int(raw_decision.get("attack_index", 0)),
+                )
+                if validate_decision(parsed, unit, grid, units):
+                    decision = parsed
+                    decision_source = "override"
+                else:
+                    decision = decide_monster_turn(unit, grid, units)
+            except (KeyError, TypeError, ValueError):
+                decision = decide_monster_turn(unit, grid, units)
+        else:
+            decision = decide_monster_turn(unit, grid, units)
+
+        rolls: list[dict[str, Any]] = []
+        opportunity_attacks: list[dict[str, Any]] = []
+        attack_result: dict[str, Any] = {}
+
+        # --- Phase A: 移动 ---
+        if decision.move_to is not None and self._is_unit_active(unit):
+            start: tuple[int, int] = tuple(unit["position"])  # type: ignore[assignment]
+            move_target = decision.move_to
+            # 机会攻击检查（复用 combat_move 逻辑）
+            opposing_side = "enemy" if unit["side"] == "ally" else "ally"
+            for other in units:
+                if other["side"] != opposing_side or not self._is_unit_active(other):
+                    continue
+                if other.get("reaction_used"):
+                    continue
+                other_pos: tuple[int, int] = tuple(other["position"])  # type: ignore[assignment]
+                if grid.distance(other_pos, start) == 1 and grid.distance(other_pos, move_target) > 1:
+                    melee_atk = next(
+                        (a for a in other.get("attacks", []) if a.get("range", 1) <= 1),
+                        None,
+                    )
+                    if melee_atk is None:
+                        continue
+                    atk_roll = random.randint(1, 20)
+                    hit_bonus = int(melee_atk.get("hit_bonus", 0))
+                    atk_total = atk_roll + hit_bonus
+                    hit = atk_total >= int(unit["ac"])
+                    damage = 0
+                    if hit:
+                        damage = roll_damage_dice(melee_atk.get("damage_dice", "1d4"))
+                        if unit.get("unit_id") == "player" and state.has_slice("player"):
+                            damage_type = str(melee_atk.get("damage_type", "physical"))
+                            damage = self._apply_damage_resistance(damage, damage_type, state)
+                        unit["hp"] = max(0, unit["hp"] - damage)
+                        if unit["hp"] <= 0:
+                            unit["alive"] = False
+                    other["reaction_used"] = True
+                    rolls.append(build_dice_roll(
+                        purpose=f"opportunity_attack_{other['unit_id']}",
+                        dice="1d20", result=atk_roll,
+                        modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+                        total=atk_total,
+                    ))
+                    opportunity_attacks.append({
+                        "attacker_id": other["unit_id"],
+                        "target_id": unit["unit_id"],
+                        "attack_name": melee_atk["name"],
+                        "hit": hit,
+                        "damage": damage,
+                        "target_hp": unit["hp"],
+                        "target_alive": unit.get("alive", False),
+                    })
+            # 仅在移动单位仍存活时更新位置
+            if self._is_unit_active(unit):
+                unit["position"] = list(move_target)
+        unit["move_used"] = True
+
+        # --- Phase B: 行动 ---
+        if decision.action == "attack" and self._is_unit_active(unit) and decision.target_id:
+            target = self._find_unit(units, decision.target_id)
+            if target and self._is_unit_active(target):
+                atk = unit["attacks"][decision.attack_index]
+                attacker_pos: tuple[int, int] = tuple(unit["position"])  # type: ignore[assignment]
+                target_pos: tuple[int, int] = tuple(target["position"])  # type: ignore[assignment]
+                distance = grid.distance(attacker_pos, target_pos)
+                weapon_range = int(atk.get("range", 1))
+                attacker_terrain = grid.at(attacker_pos[0], attacker_pos[1])
+                in_range = distance <= weapon_range + attacker_terrain.range_bonus
+                has_los = weapon_range <= 1 or grid.line_of_sight(attacker_pos, target_pos)
+                if in_range and has_los:
+                    base_ac = int(target["ac"])
+                    t_terrain = grid.at(target_pos[0], target_pos[1])
+                    total_ac = (
+                        base_ac
+                        + t_terrain.ac_bonus
+                        + (2 if target.get("defending") else 0)
+                        + _participant_effect_ac_mod(target)
+                    )
+                    atk_roll = random.randint(1, 20)
+                    hit_bonus = int(atk.get("hit_bonus", 0))
+                    atk_total = atk_roll + hit_bonus
+                    # 环境修正
+                    env = updated.get("environment", {})
+                    env_mods = compute_environment_modifiers(
+                        str(env.get("weather", "clear")),
+                        str(env.get("time_of_day", "day")),
+                    )
+                    atk_total += env_mods.hit_modifier
+                    if weapon_range > 1:
+                        atk_total += env_mods.ranged_hit_modifier
+                    # 浓雾 LoS 限制：超出能见度距离视为无 LoS，攻击自动未命中
+                    fog_blocked = (
+                        env_mods.max_visibility is not None
+                        and distance > env_mods.max_visibility
+                    )
+                    critical = atk_roll == 20
+                    auto_miss = atk_roll == 1
+                    hit = (atk_total >= total_ac or critical) and not auto_miss and not fog_blocked
+                    damage = 0
+                    damage_type = str(atk.get("damage_type", "physical"))
+                    if hit:
+                        damage = roll_damage_dice(atk.get("damage_dice", "1d4"))
+                        if critical:
+                            damage += roll_damage_dice(atk.get("damage_dice", "1d4"))
+                        if target.get("unit_id") == "player" and state.has_slice("player"):
+                            damage = self._apply_damage_resistance(damage, damage_type, state)
+                    target["hp"] = max(0, target["hp"] - damage)
+                    if target["hp"] <= 0:
+                        target["alive"] = False
+                    rolls.append(build_dice_roll(
+                        purpose=f"npc_attack:{atk.get('name', 'Attack')}",
+                        dice="1d20", result=atk_roll,
+                        modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+                        total=atk_total,
+                    ))
+                    attack_result = {
+                        "target_id": decision.target_id,
+                        "attack_name": atk.get("name", "Attack"),
+                        "hit": hit,
+                        "critical": critical,
+                        "damage": damage,
+                        "damage_type": damage_type,
+                        "target_hp": target["hp"],
+                        "target_alive": target["alive"],
+                    }
+        elif decision.action == "flee" and self._is_unit_active(unit):
+            unit["alive"] = False
+            unit["fled"] = True
+        elif decision.action == "defend" and self._is_unit_active(unit):
+            unit["defending"] = True
+        unit["action_used"] = True
+
+        # --- 战斗结束检测 ---
+        extra_changes: list[StateChange] = []
+        combat_cleared = False
+        xp_awarded = 0
+        enemy_units = [u for u in units if u["side"] == "enemy"]
+        if all(not self._is_unit_active(u) for u in enemy_units):
+            combat_cleared = True
+            updated["combat_active"] = False
+            updated["cleared"] = True
+            if state.has_slice("time"):
+                updated["cleared_at_tick"] = self._current_tick(state)
+            if world is not None:
+                xp_awarded = self._compute_combat_xp(enemy_units, world)
+                if xp_awarded > 0 and state.has_slice("player"):
+                    extra_changes.append(
+                        StateChange("player", "set", "xp", state.player.xp + xp_awarded)
+                    )
+            if state.has_slice("flags"):
+                for u in enemy_units:
+                    if not u.get("alive") and not u.get("fled"):
+                        mid = u.get("monster_id")
+                        if mid:
+                            key = f"kill_count_{mid}"
+                            cur = int(state.flags.get(key, 0) or 0)
+                            extra_changes.append(
+                                StateChange("flags", "set", f"flags.{key}", cur + 1)
+                            )
+
+        # 玩家 HP 同步
+        if attack_result.get("target_id") == "player":
+            player_unit = self._find_unit(units, "player")
+            if player_unit and state.has_slice("player"):
+                extra_changes.append(StateChange("player", "set", "hp", player_unit["hp"]))
+
+        return handler_success(
+            "combat", "combat_npc_turn",
+            changes=[
+                StateChange("areas", "modify", f"hostile_tracking.{sub_area_id}", updated),
+                *extra_changes,
+            ],
+            metadata={
+                "unit_id": updated["current_unit_id"],
+                "decision_action": decision.action,
+                "decision_source": decision_source,
+                "move_to": list(decision.move_to) if decision.move_to else None,
+                "opportunity_attacks": opportunity_attacks,
+                "attack": attack_result or None,
+                "combat_cleared": combat_cleared,
+                "xp_awarded": xp_awarded,
+            },
+            rolls=rolls,
+            omit_empty_delta=False,
+        )

@@ -8,6 +8,65 @@ if TYPE_CHECKING:
     from app.interaction_service import InteractionViewContext
 
 
+_INTENT_ORDER = (
+    "talk",
+    "greet",
+    "browse",
+    "buy",
+    "sell",
+    "inspect_item",
+    "ask_quest",
+    "ask_progress",
+    "ask_location",
+    "ask_requirements",
+    "ask_reward",
+    "accept_quest",
+    "report_quest",
+)
+
+_REFRESH_MODE_PRIORITY = ("daily", "long_rest", "rest")
+
+
+def _normalize_refresh_modes(raw_refresh: Any) -> list[str]:
+    if isinstance(raw_refresh, str):
+        mode = raw_refresh.strip()
+        return [mode] if mode else []
+    if isinstance(raw_refresh, list):
+        return [
+            str(entry).strip()
+            for entry in raw_refresh
+            if str(entry).strip()
+        ]
+    return []
+
+
+def _resolve_primary_refresh_mode(modes: list[str]) -> str:
+    lowered = {mode.strip().lower(): mode.strip().lower() for mode in modes if mode.strip()}
+    for preferred in _REFRESH_MODE_PRIORITY:
+        if preferred in lowered:
+            return preferred
+    if modes:
+        return str(modes[0]).strip().lower() or "manual"
+    return "manual"
+
+
+def _build_refresh_hint(
+    *,
+    mode: str,
+    auto_refresh: bool,
+    current_day: int,
+) -> str | None:
+    if auto_refresh and mode == "daily":
+        return f"Refreshes automatically when day {current_day + 1} begins."
+    if mode == "long_rest":
+        return "Configured to refresh after a long rest."
+    if mode == "rest":
+        return "Configured to refresh after rest."
+    if mode == "manual":
+        return None
+    return "Refreshes from system-driven shop events."
+
+
 def build_shop_snapshot_payload(
     context: InteractionViewContext,
     npc_id: str,
@@ -23,6 +82,22 @@ def build_shop_snapshot_payload(
         normalized_tick = int(last_refresh_tick) if last_refresh_tick is not None else None
     except (TypeError, ValueError):
         normalized_tick = None
+    refresh_modes = _normalize_refresh_modes(shop_state.get("refresh_on"))
+    if not refresh_modes:
+        refresh_modes = list(context.npc_refresh_modes.get(npc_id, []))
+    primary_refresh_mode = _resolve_primary_refresh_mode(refresh_modes)
+    auto_refresh = "daily" in {mode.lower() for mode in refresh_modes}
+    refresh_policy = {
+        "mode": primary_refresh_mode,
+        "configured_modes": [mode.lower() for mode in refresh_modes],
+        "auto_refresh": auto_refresh,
+        "last_refresh_tick": normalized_tick,
+    }
+    next_refresh_hint = _build_refresh_hint(
+        mode=primary_refresh_mode,
+        auto_refresh=auto_refresh,
+        current_day=context.current_day,
+    )
 
     enriched_stock: list[dict[str, Any]] = []
     for raw_item in stock_list:
@@ -60,6 +135,8 @@ def build_shop_snapshot_payload(
         "stock": enriched_stock,
         "player_sellable_items": player_sellable,
         "last_refresh_tick": normalized_tick,
+        "refresh_policy": refresh_policy,
+        "next_refresh_hint": next_refresh_hint,
     }
 
 
@@ -100,14 +177,27 @@ def build_talk_snapshot_payload(
             disposition[key] = 0
     impressions = context.npc_impressions.get(npc_id, [])
     recent_impressions = impressions[-3:] if isinstance(impressions, list) else []
-    available_intents = ["talk", "greet"]
+    available_intents = {"talk", "greet"}
     if npc_id in context.shop_states:
-        available_intents.extend(["browse", "buy", "sell", "inspect_item"])
-    if context.dynamic_quests:
-        available_intents.extend([
+        available_intents.update({"browse", "buy", "sell", "inspect_item"})
+    if context.dynamic_quest_views:
+        available_intents.update({
             "ask_quest", "ask_progress", "ask_location",
             "ask_requirements", "ask_reward",
-        ])
+        })
+    if "receptionist" in context.npc_tags.get(npc_id, frozenset()):
+        if any(
+            str(quest.get("status", "")).strip() == "available"
+            for quest in context.dynamic_quest_views.values()
+            if isinstance(quest, Mapping)
+        ):
+            available_intents.add("accept_quest")
+        if any(
+            bool(quest.get("can_report"))
+            for quest in context.dynamic_quest_views.values()
+            if isinstance(quest, Mapping)
+        ):
+            available_intents.add("report_quest")
 
     return {
         "target_kind": "npc",
@@ -121,7 +211,7 @@ def build_talk_snapshot_payload(
             "disposition": disposition,
             "recent_impressions": recent_impressions,
         },
-        "available_intents": available_intents,
+        "available_intents": _ordered_available_intents(available_intents),
     }
 
 
@@ -132,7 +222,7 @@ def build_quest_brief_payload(
 ) -> dict[str, Any]:
     """Return one read-only dynamic-quest brief for NPC ask_quest interactions."""
 
-    quest_map = context.dynamic_quests.get(quest_id, {})
+    quest_map = _get_dynamic_quest_view(context, quest_id)
     source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     return {
         "target_kind": "npc",
@@ -141,9 +231,14 @@ def build_quest_brief_payload(
             "quest_id": quest_id,
             "quest_kind": "dynamic",
             "status": str(quest_map.get("status", "")).strip(),
+            "ui_state": str(quest_map.get("ui_state", "")),
+            "badge": _copy_badge(quest_map.get("badge")),
             "title": str(quest_map.get("title", "")),
             "summary": str(quest_map.get("summary", "")),
             "source_milestone": source_milestone,
+            "requires_report": bool(quest_map.get("requires_report")),
+            "reported": bool(quest_map.get("reported")),
+            "can_report": bool(quest_map.get("can_report")),
         },
     }
 
@@ -155,7 +250,7 @@ def build_quest_progress_payload(
 ) -> dict[str, Any]:
     """Return one read-only dynamic-quest status snapshot for NPC ask_progress."""
 
-    quest_map = context.dynamic_quests.get(quest_id, {})
+    quest_map = _get_dynamic_quest_view(context, quest_id)
     status = str(quest_map.get("status", "")).strip()
     source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
     source_milestone_state: str | None = None
@@ -172,11 +267,16 @@ def build_quest_progress_payload(
             "quest_id": quest_id,
             "quest_kind": "dynamic",
             "status": status,
+            "ui_state": str(quest_map.get("ui_state", "")),
+            "badge": _copy_badge(quest_map.get("badge")),
             "title": str(quest_map.get("title", "")),
             "summary": str(quest_map.get("summary", "")),
             "can_accept": status == "available",
             "is_active": status == "active",
             "is_closed": status in {"completed", "failed", "retired"},
+            "requires_report": bool(quest_map.get("requires_report")),
+            "reported": bool(quest_map.get("reported")),
+            "can_report": bool(quest_map.get("can_report")),
             "source_milestone": source_milestone,
             "source_milestone_state": source_milestone_state,
         },
@@ -190,7 +290,7 @@ def build_quest_location_payload(
 ) -> dict[str, Any]:
     """Return one read-only dynamic-quest location hint for NPC ask_location."""
 
-    quest_map = context.dynamic_quests.get(quest_id, {})
+    quest_map = _get_dynamic_quest_view(context, quest_id)
     status = str(quest_map.get("status", "")).strip()
     resolved_area_id = str(quest_map.get("area_id", "")).strip() or None
     resolved_location_id = str(quest_map.get("location_id", "")).strip() or None
@@ -202,6 +302,8 @@ def build_quest_location_payload(
             "quest_id": quest_id,
             "quest_kind": "dynamic",
             "status": status,
+            "ui_state": str(quest_map.get("ui_state", "")),
+            "badge": _copy_badge(quest_map.get("badge")),
             "location_known": bool(resolved_area_id or resolved_location_id),
             "area_id": resolved_area_id,
             "location_id": resolved_location_id,
@@ -217,7 +319,7 @@ def build_quest_requirements_payload(
 ) -> dict[str, Any]:
     """Return one read-only dynamic-quest requirements view for NPC ask_requirements."""
 
-    quest_map = context.dynamic_quests.get(quest_id, {})
+    quest_map = _get_dynamic_quest_view(context, quest_id)
     status = str(quest_map.get("status", "")).strip()
     raw_requirements = quest_map.get("requirements", [])
     requirements = (
@@ -241,6 +343,8 @@ def build_quest_requirements_payload(
             "quest_id": quest_id,
             "quest_kind": "dynamic",
             "status": status,
+            "ui_state": str(quest_map.get("ui_state", "")),
+            "badge": _copy_badge(quest_map.get("badge")),
             "requirements_known": bool(requirements),
             "requirements": requirements,
             "can_accept": status == "available",
@@ -257,31 +361,14 @@ def build_quest_reward_payload(
 ) -> dict[str, Any]:
     """Return one read-only dynamic-quest reward view for NPC ask_reward."""
 
-    quest_map = context.dynamic_quests.get(quest_id, {})
+    quest_map = _get_dynamic_quest_view(context, quest_id)
     status = str(quest_map.get("status", "")).strip()
     source_milestone = _resolve_quest_source_milestone(context, quest_id, quest_map)
-    reward_gold = quest_map.get("reward_gold")
-    try:
-        gold = int(reward_gold) if reward_gold is not None and int(reward_gold) >= 0 else None
-    except (TypeError, ValueError):
-        gold = None
-    raw_items = quest_map.get("reward_items", [])
-    items: list[dict[str, Any]] = []
-    if isinstance(raw_items, list):
-        for raw_item in raw_items:
-            if not isinstance(raw_item, dict):
-                continue
-            item_id = str(raw_item.get("item_id", "")).strip()
-            if not item_id:
-                continue
-            try:
-                count = int(raw_item.get("count", 1))
-            except (TypeError, ValueError):
-                count = 1
-            if count < 1:
-                count = 1
-            items.append({"item_id": item_id, "count": count})
-    reward_summary = str(quest_map.get("reward_summary", "")).strip() or None
+    raw_rewards = quest_map.get("rewards", {})
+    rewards = raw_rewards if isinstance(raw_rewards, Mapping) else {}
+    gold = rewards.get("gold")
+    xp = rewards.get("xp")
+    items = _enrich_reward_items(rewards.get("items", []), context.item_catalog)
     return {
         "target_kind": "npc",
         "target_id": npc_id,
@@ -289,13 +376,57 @@ def build_quest_reward_payload(
             "quest_id": quest_id,
             "quest_kind": "dynamic",
             "status": status,
+            "ui_state": str(quest_map.get("ui_state", "")),
+            "badge": _copy_badge(quest_map.get("badge")),
             "source_milestone": source_milestone,
-            "reward_known": bool(gold is not None or items or reward_summary is not None),
+            "reward_known": bool(gold is not None or xp is not None or items),
             "gold": gold,
+            "xp": xp,
             "items": items,
-            "reward_summary": reward_summary,
         },
     }
+
+
+def _ordered_available_intents(enabled_intents: set[str]) -> list[str]:
+    return [intent for intent in _INTENT_ORDER if intent in enabled_intents]
+
+
+def _get_dynamic_quest_view(
+    context: InteractionViewContext,
+    quest_id: str,
+) -> Mapping[str, Any]:
+    quest_view = context.dynamic_quest_views.get(quest_id, {})
+    return quest_view if isinstance(quest_view, Mapping) else {}
+
+
+def _copy_badge(raw_badge: Any) -> dict[str, str]:
+    badge = raw_badge if isinstance(raw_badge, Mapping) else {}
+    return {
+        "key": str(badge.get("key", "")).strip(),
+        "label": str(badge.get("label", "")).strip(),
+    }
+
+
+def _enrich_reward_items(
+    raw_items: Any,
+    item_catalog: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    if not isinstance(raw_items, list):
+        return []
+    enriched: list[dict[str, Any]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, Mapping):
+            continue
+        item_id = str(raw_item.get("item_id", "")).strip()
+        if not item_id:
+            continue
+        item_view = dict(raw_item)
+        catalog_entry = item_catalog.get(item_id, {})
+        item_view["name"] = str(catalog_entry.get("name", item_id))
+        item_view["type"] = str(catalog_entry.get("type", ""))
+        item_view["rarity"] = str(catalog_entry.get("rarity", ""))
+        enriched.append(item_view)
+    return enriched
 
 
 def build_inspect_item_payload(

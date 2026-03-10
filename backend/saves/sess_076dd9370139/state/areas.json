@@ -1,0 +1,219 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.2500000000000002,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "permanent_hostile_slots": {
+        "ancient_ruins": {
+          "active_ids": [],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
+      "properties": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 10,
+          "description": "原本宏伟的石质拱门已经崩塌了大半，地面上覆盖着厚厚的腐殖质。不远处的阴影中散落着一些破碎的木棒，空气中隐约可以闻到一股排泄物与腐肉混合的恶臭。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "fill_10",
+          "interactables": [],
+          "label": "",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 10,
+          "description": "阳光只能勉强照亮入口附近的地面，深处是一片死寂的黑暗。墙上的浮雕已被污物覆盖，地面上有明显的拖拽痕迹，一直延伸到更深处的拐角。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "fill_10",
+          "interactables": [],
+          "label": "",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 10,
+          "description": "在进入主遗迹之前的树林掩映处，有一些被废弃的简陋营火堆和破损的陶罐。这里原本是冒险者的临时落脚点，现在却充满了被翻动过的痕迹。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "fill_10",
+          "interactables": [],
+          "label": "",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        }
+      ]
+    },
+    "cow_girl_farm": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "cow_girl": "main_house"
+      },
+      "npc_presence_sources": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "board_bulletins": {
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "",
+            "published_at_tick": 8,
+            "quest_id": "",
+            "source": "narrative_planner",
+            "title": ""
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 1.1,
+      "discovered_items": [],
+      "exploration": "discovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "blacksmith": "blacksmith_shop",
+        "dwarf_shaman": "adventurer_guild",
+        "goblin_slayer": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "guild_quartermaster": "adventurer_guild",
+        "high_elf_archer": "adventurer_guild",
+        "lizard_priest": "adventurer_guild",
+        "north_gate_warden": "north_gate",
+        "priestess": "mother_earth_temple",
+        "tavern_keeper": "tavern",
+        "temple_matron": "mother_earth_temple",
+        "town_guard": "town_square"
+      },
+      "npc_presence_sources": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 8,
+          "description": "城镇的中心地带，矗立着一座略显磨损的地母神石像。这里常有流动商贩摆摊，是连接公会、神殿与城门的交通枢纽。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "fill_8",
+          "interactables": [],
+          "label": "",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_high_elf_archer_9",
+          "name": "僻静处",
+          "resident_npcs": [
+            "high_elf_archer"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        },
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_goblin_slayer_10",
+          "name": "僻静处",
+          "resident_npcs": [
+            "goblin_slayer"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        }
+      ]
+    },
+    "water_capital": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.0,
+      "discovered_items": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

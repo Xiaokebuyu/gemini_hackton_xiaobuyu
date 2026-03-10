@@ -1,0 +1,60 @@
+{
+  "active_events": {
+    "evt_wounded_rookie_contact": {
+      "event_id": "evt_wounded_rookie_contact",
+      "event_type": "generic",
+      "from_state": "triggered",
+      "id": "evt_wounded_rookie_contact",
+      "metadata": {},
+      "payload": {},
+      "reason": "triggered_ready",
+      "source": "ai_osiris",
+      "state": "active",
+      "status": "active",
+      "trigger_condition": {
+        "tick": 12,
+        "type": "absolute_tick"
+      },
+      "triggered_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 12
+      }
+    }
+  },
+  "pending_events": [],
+  "rumors": [
+    {
+      "area_id": null,
+      "content": "听说最近有个白瓷等级的新人挺稳重的，出发前把公会和铁匠铺都跑了个遍。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 8
+      },
+      "metadata": {},
+      "rumor_id": "rumor_5a5981a16e04",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "听说最近有个白瓷等级的新人挺稳重的，出发前把公会和铁匠铺都跑了个遍。"
+    },
+    {
+      "area_id": null,
+      "content": "听说有个白瓷等级的新人在铁匠铺缠着银等级的妖精弓手不放，结果被狠狠地讨厌了。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 9
+      },
+      "metadata": {},
+      "rumor_id": "rumor_e3bc3d28d2b2",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "听说有个白瓷等级的新人在铁匠铺缠着银等级的妖精弓手不放，结果被狠狠地讨厌了。"
+    }
+  ]
+}

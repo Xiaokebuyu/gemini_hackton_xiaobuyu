@@ -29,6 +29,7 @@ from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.defaults import register_default_rules_handlers
 from app.game_core.state import StateChange, StateContainer, StateDelta
 from app.game_core.state.slices import RelationSlice, SceneSlice
 
@@ -110,7 +111,7 @@ def _make_context(
         state=state,
         world=world,
         scene_bus=scene_bus,
-        _rules_engine=RulesEngine(),
+        _rules_engine=_build_rules_engine(),
         _apply_delta=_apply_delta,
     )
 
@@ -126,6 +127,12 @@ def _make_shop_state(items: list[dict[str, Any]] | None = None) -> dict[str, Any
 
 def _make_designer(*, sse_collector: list | None = None) -> ItemDesignerSubSystem:
     return ItemDesignerSubSystem(sse_collector=sse_collector)
+
+
+def _build_rules_engine() -> RulesEngine:
+    rules_engine = RulesEngine()
+    register_default_rules_handlers(rules_engine)
+    return rules_engine
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +171,35 @@ def test_blacksmith_has_merchant_tag() -> None:
     tags = bs.get("tags", [])
     assert "merchant" in tags, "blacksmith must have 'merchant' tag"
     assert "craftsman" in tags, "blacksmith must have 'craftsman' tag"
+
+
+def test_guild_quartermaster_has_supply_shop_inventory() -> None:
+    chars = _load_characters()
+    quartermaster = chars["guild_quartermaster"]
+
+    assert "merchant" in quartermaster.get("tags", [])
+    assert "guild_staff" in quartermaster.get("tags", [])
+    assert quartermaster.get("refresh_on") == "daily"
+
+    shop_inv = quartermaster.get("shop_inventory")
+    assert isinstance(shop_inv, dict)
+    base_ids = {entry.get("item_id") for entry in shop_inv.get("base_pool", [])}
+    rotating_ids = {entry.get("item_id") for entry in shop_inv.get("rotating_pool", [])}
+    assert {"trail_rations", "waterskin", "exploration_torch"}.issubset(base_ids)
+    assert {"bandage_roll", "chalk_bundle", "blessed_salt_packet"}.issubset(rotating_ids)
+
+
+def test_tavern_keeper_shop_is_placed_in_tavern() -> None:
+    chars = _load_characters()
+    maps = _load_maps()
+
+    tavern_keeper = chars["tavern_keeper"]
+    assert "merchant" in tavern_keeper.get("tags", [])
+    assert tavern_keeper.get("location_id") == "tavern"
+    assert tavern_keeper.get("refresh_on") == "daily"
+
+    tavern = maps.get("frontier_town", {}).get("sub_locations", {}).get("tavern", {})
+    assert "tavern_keeper" in tavern.get("resident_npcs", [])
 
 
 # ---------------------------------------------------------------------------

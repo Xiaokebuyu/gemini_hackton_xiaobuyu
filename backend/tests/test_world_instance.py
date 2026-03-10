@@ -1,5 +1,9 @@
+import pytest
+
 from typing import Any
 
+from app.game_data_loader_v2 import load_v2_world_data
+from app.game_core.bootstrap import build_default_world
 from app.game_core.content.base import ContentRegistry
 from app.game_core.content.registries.characters import CharacterRegistry
 from app.game_core.content.registries.classes import ClassRegistry
@@ -47,11 +51,49 @@ def test_world_instance_load_all_uses_dependency_order_before_insertion_order():
     world.register(RecordingRegistry("tags", calls))
     world.register(RecordingRegistry("items", calls))
     world.register(RecordingRegistry("maps", calls))
+    world.register(RecordingRegistry("battle_maps", calls))
     world.register(RecordingRegistry("skills", calls))
 
     world.load_all({})
 
-    assert calls == ["tags", "maps", "skills", "characters", "items", "custom"]
+    assert calls == [
+        "tags",
+        "maps",
+        "battle_maps",
+        "skills",
+        "characters",
+        "items",
+        "custom",
+    ]
+
+
+def test_build_default_world_registers_empty_battle_maps_registry() -> None:
+    world = build_default_world("test_world", world_data={})
+
+    assert world.has_registry("battle_maps") is True
+    assert world.battle_maps.list_all() == []
+
+
+def test_build_default_world_fail_fast_includes_battle_maps_registry_name() -> None:
+    invalid_world_data = {
+        "battle_maps": {
+            "cave": {
+                "variants": [
+                    {
+                        "name": "broken_map",
+                        "size": [4, 3],
+                        "terrain": ["GGGG", "GGGG"],
+                        "player_spawn": [[0, 0]],
+                        "enemy_spawn": [[3, 0]],
+                        "tags": ["indoor"],
+                    }
+                ]
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="battle_maps:"):
+        build_default_world("bad_world", world_data=invalid_world_data)
 
 
 def test_world_instance_validate_reports_registry_and_cross_registry_issues():
@@ -150,6 +192,26 @@ def test_world_instance_validate_returns_empty_dict_when_all_registered_data_is_
         world.register(registry)
 
     assert world.validate() == {}
+
+
+def test_build_default_world_exposes_expanded_frontier_town_activity_ring() -> None:
+    world = build_default_world("goblin_slayer", world_data=load_v2_world_data())
+
+    frontier_town = world.maps.get("frontier_town")
+    ancient_ruins = world.maps.get("ancient_ruins")
+    assert frontier_town is not None
+    assert ancient_ruins is not None
+
+    assert world.characters.get("guild_quartermaster") is not None
+    assert world.characters.get("tavern_keeper") is not None
+    assert world.characters.get("temple_matron") is not None
+    assert world.characters.get("north_gate_warden") is not None
+
+    assert "north_gate" in frontier_town.sub_locations
+    assert "forest_approach" in ancient_ruins.sub_locations
+    assert "waystone_clearing" in ancient_ruins.sub_locations
+    assert world.items.get("trail_rations") is not None
+    assert world.items.get("bandage_roll") is not None
 
 
 # ------------------------------------------------------------------

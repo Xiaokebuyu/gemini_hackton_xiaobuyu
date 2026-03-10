@@ -200,14 +200,36 @@ class QuestSlice(StateSlice):
         dynamic_path = change.path
         if dynamic_path.startswith("dynamic."):
             dynamic_path = f"dynamic_quests.{dynamic_path[len('dynamic.'):]}"
-        if dynamic_path.startswith("dynamic_quests.") and isinstance(change.value, Mapping):
-            _, quest_id = dynamic_path.split(".", 1)
-            if change.operation == "remove":
-                self.dynamic_quests.pop(quest_id, None)
-                self._dirty = True
-            else:
+        if dynamic_path.startswith("dynamic_quests."):
+            _, rest = dynamic_path.split(".", 1)
+            if "." not in rest:
+                quest_id = rest
+                if change.operation == "remove":
+                    self.dynamic_quests.pop(quest_id, None)
+                    self._dirty = True
+                    return
+                if not isinstance(change.value, Mapping):
+                    raise ValueError(
+                        f"unsupported quest state change: {change.operation} {change.path}"
+                    )
                 self.dynamic_quests[quest_id] = dict(change.value)
                 self._dirty = True
+                return
+
+            quest_id, nested_path = rest.split(".", 1)
+            if quest_id not in self.dynamic_quests:
+                raise ValueError(
+                    f"unsupported quest state change: missing dynamic quest '{quest_id}'"
+                )
+            updated = deepcopy(self.dynamic_quests[quest_id])
+            self._apply_nested_dynamic_change(
+                updated,
+                nested_path.split("."),
+                value=change.value,
+                remove=change.operation == "remove",
+            )
+            self.dynamic_quests[quest_id] = updated
+            self._dirty = True
             return
         if change.path.startswith("chapter_completion."):
             _, chapter_id = change.path.split(".", 1)
@@ -219,4 +241,61 @@ class QuestSlice(StateSlice):
             return
         raise ValueError(
             f"unsupported quest state change: {change.operation} {change.path}"
+        )
+
+    @classmethod
+    def _apply_nested_dynamic_change(
+        cls,
+        container: Any,
+        path_parts: list[str],
+        *,
+        value: Any,
+        remove: bool,
+    ) -> None:
+        if not path_parts:
+            raise ValueError("nested quest change requires path parts")
+        key = path_parts[0]
+        is_leaf = len(path_parts) == 1
+
+        if isinstance(container, list):
+            try:
+                index = int(key)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"invalid list index in quest path: {key}") from exc
+            if not (0 <= index < len(container)):
+                raise ValueError(f"quest list index out of range: {index}")
+            if is_leaf:
+                if remove:
+                    container.pop(index)
+                else:
+                    container[index] = value
+                return
+            cls._apply_nested_dynamic_change(
+                container[index],
+                path_parts[1:],
+                value=value,
+                remove=remove,
+            )
+            return
+
+        if not isinstance(container, dict):
+            raise ValueError(f"quest nested container must be dict/list, got {type(container)!r}")
+
+        if is_leaf:
+            if remove:
+                container.pop(key, None)
+            else:
+                container[key] = value
+            return
+
+        child = container.get(key)
+        if not isinstance(child, (dict, list)):
+            next_key = path_parts[1]
+            child = [] if next_key.isdigit() else {}
+            container[key] = child
+        cls._apply_nested_dynamic_change(
+            child,
+            path_parts[1:],
+            value=value,
+            remove=remove,
         )

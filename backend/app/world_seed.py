@@ -139,15 +139,28 @@ def _shell_world_seed(world_id: str) -> dict[str, Any]:
                 }
             },
         },
-        "tags": {},
+        "tags": {
+            "roles": {
+                "id": "roles",
+                "tags": ["merchant", "receptionist", "guild_staff"],
+            }
+        },
         "skills": {},
         "lore": {},
         "characters": {
+            "receptionist": {
+                "id": "receptionist",
+                "name": "Guild Receptionist",
+                "current_area": "guild_hall",
+                "current_location": "counter",
+                "tags": ["receptionist", "guild_staff"],
+            },
             "merchant": {
                 "id": "merchant",
                 "name": "Guild Merchant",
                 "current_area": "guild_hall",
                 "current_location": "counter",
+                "tags": ["merchant"],
                 "sell_markup": 1.0,
                 "buy_rate": 0.5,
                 "shop_inventory": {

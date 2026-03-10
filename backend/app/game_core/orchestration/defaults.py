@@ -71,15 +71,6 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("cast_spell", "cast_spell"),
     ("prepare_spells", "prepare_spells"),
     ("break_concentration", "break_concentration"),
-    ("attack", "attack"),
-    ("defend", "defend"),
-    ("disengage", "disengage"),
-    ("dash", "dash"),
-    ("shove", "shove"),
-    ("flee", "flee"),
-    ("use_combat_item", "use_combat_item"),
-    ("offhand_attack", "offhand_attack"),
-    ("stand_up", "stand_up"),
     ("refresh_shop", "refresh_shop"),
     ("night_watch", "night_watch"),
     ("discover", "discover"),
@@ -89,6 +80,16 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("board_accept_quest", "board_accept_quest"),
     ("board_complete_quest", "board_complete_quest"),
     ("board_retire_quest", "board_retire_quest"),
+    ("accept_quest", "receptionist_accept_quest"),
+    ("report_quest", "receptionist_report_quest"),
+    # v2 SRPG combat commands
+    ("combat_move", "combat_move"),
+    ("combat_end_turn", "combat_end_turn"),
+    ("combat_disengage", "combat_disengage"),
+    ("combat_dash", "combat_dash"),
+    ("combat_attack", "combat_attack"),
+    ("combat_defend", "combat_defend"),
+    ("combat_npc_turn", "combat_npc_turn"),
 )
 
 DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (

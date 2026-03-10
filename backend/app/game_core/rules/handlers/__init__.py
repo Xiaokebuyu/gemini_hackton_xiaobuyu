@@ -13,6 +13,14 @@ from app.game_core.rules.handlers.hostile_area import HostileAreaHandler
 from app.game_core.rules.handlers.interactable import InteractableHandler
 from app.game_core.rules.handlers.inventory import InventoryHandler
 from app.game_core.rules.handlers.navigation import NavigationHandler
+from app.game_core.rules.handlers.planner import (
+    PlannerItemHandler,
+    PlannerNpcHandler,
+    PlannerQuestHandler,
+    PlannerRuntimeHandler,
+    PlannerWorldHandler,
+)
+from app.game_core.rules.handlers.receptionist import ReceptionistHandler
 from app.game_core.rules.handlers.rest import RestHandler
 from app.game_core.rules.handlers.skill_check import SkillCheckHandler
 from app.game_core.rules.handlers.spell import SpellHandler
@@ -33,6 +41,12 @@ __all__ = [
     "InteractableHandler",
     "InventoryHandler",
     "NavigationHandler",
+    "PlannerItemHandler",
+    "PlannerNpcHandler",
+    "PlannerQuestHandler",
+    "PlannerRuntimeHandler",
+    "PlannerWorldHandler",
+    "ReceptionistHandler",
     "RestHandler",
     "SkillCheckHandler",
     "SpellHandler",

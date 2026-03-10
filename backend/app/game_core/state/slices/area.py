@@ -549,6 +549,19 @@ class AreaSlice(StateSlice):
         target_area.npc_presence_sources[character_id] = source
         self._dirty = True
 
+    def remove_npc_presence(self, character_id: str) -> bool:
+        removed = False
+        for area in self.areas.values():
+            if character_id in area.npc_locations:
+                area.npc_locations.pop(character_id, None)
+                removed = True
+            if character_id in area.npc_presence_sources:
+                area.npc_presence_sources.pop(character_id, None)
+                removed = True
+        if removed:
+            self._dirty = True
+        return removed
+
     # ── 6. Temporary sub-areas ───────────────────────────────────────────────
 
     def add_temporary_sub_area(
@@ -773,13 +786,16 @@ class AreaSlice(StateSlice):
 
     def apply_state_change(self, change: StateChange) -> None:
         if change.path.startswith("npc_presence."):
+            _, character_id = change.path.split(".", 1)
+            if change.operation == "remove":
+                self.remove_npc_presence(character_id)
+                return
             if change.operation not in {"set", "modify"}:
                 raise ValueError(
                     f"unsupported npc presence state change: {change.operation} {change.path}"
                 )
             if not isinstance(change.value, Mapping):
                 raise ValueError("npc presence payload must be a mapping")
-            _, character_id = change.path.split(".", 1)
             area_id = self._coerce_non_empty_string(change.value.get("area_id"))
             if area_id is None:
                 raise ValueError("npc presence payload must include area_id")
@@ -864,6 +880,16 @@ class AreaSlice(StateSlice):
                     raise ValueError("temporary sub-area entries must be mappings")
                 normalized.append(dict(item))
             self.get_area(area_id).temporary_sub_areas = normalized
+            self._dirty = True
+            return
+        if field_name == "board_bulletins":
+            if change.operation not in {"set", "modify"}:
+                raise ValueError(
+                    f"unsupported board bulletin change: {change.operation} {change.path}"
+                )
+            if not isinstance(change.value, Mapping):
+                raise ValueError("board bulletin payload must be a mapping")
+            self.get_area(area_id).board_bulletins = self._coerce_board_bulletins(change.value)
             self._dirty = True
             return
         if field_name.startswith("properties.") and change.operation in {"set", "modify"}:

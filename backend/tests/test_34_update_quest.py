@@ -26,6 +26,7 @@ from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.planning.quest_manager import QuestManagerSubSystem
 from app.game_core.planning.subsystem import PlannerDispatcher
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.defaults import register_default_rules_handlers
 from app.game_core.state import StateChange, StateContainer, StateDelta
 from app.game_core.state.slices import (
     NarrativePlanSlice,
@@ -73,12 +74,15 @@ def _make_context(
         state.apply(delta)
         change_log.extend(delta.changes)
 
+    rules_engine = RulesEngine()
+    register_default_rules_handlers(rules_engine)
+
     return SettlementContext(
         change_log=change_log,
         state=state,
         world=world,
         scene_bus=scene_bus,
-        _rules_engine=RulesEngine(),
+        _rules_engine=rules_engine,
         _apply_delta=_apply_delta,
     )
 
@@ -353,7 +357,7 @@ def test_update_quest_logged_to_quest_history() -> None:
     )
 
     history = context.state.narrative_plan.quest_history
-    matching = [h for h in history if h.get("type") == "update_quest" and h.get("quest_id") == "dq_hist"]
+    matching = [h for h in history if h.get("kind") == "update_quest" and h.get("quest_id") == "dq_hist"]
     assert len(matching) == 1
     assert matching[0]["tick"] == 12
 

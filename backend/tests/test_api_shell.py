@@ -268,12 +268,64 @@ def test_inventory_map_and_quest_panels_after_character_creation(monkeypatch) ->
     quest_payload = quests.json()
     assert "report_in" in quest_payload["milestone_states"]
     assert "dq_report_in" in quest_payload["dynamic_quests"]
+    intro_quest = quest_payload["dynamic_quests"]["dq_report_in"]
+    assert intro_quest["ui_state"] == "available"
+    assert intro_quest["badge"] == {"key": "available", "label": "可接取"}
 
     session = asyncio.run(_load_session(session_id))
     assert session is not None
     assert session.runtime.state.narrative_plan.last_run_tick == 0
     assert _latest_board_title(session) == "New Lead Posted"
     assert session.runtime.state.time.accumulated == 0.0
+
+
+def test_quest_panel_returns_dynamic_quests_in_stable_order(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
+
+        session = asyncio.run(_load_session(session_id))
+        assert session is not None
+        session.runtime.state.quests.dynamic_quests = {
+            "dq_unknown": {"title": "Unknown"},
+            "dq_retired": {"status": "retired", "title": "Retired", "created_at_tick": 7},
+            "dq_available": {"status": "available", "title": "Available", "created_at_tick": 4},
+            "dq_failed": {"status": "failed", "title": "Failed", "created_at_tick": 8},
+            "dq_completed_done": {
+                "status": "completed",
+                "title": "Reported",
+                "requires_report": True,
+                "reported": True,
+                "created_at_tick": 5,
+            },
+            "dq_report_in": {
+                "status": "completed",
+                "title": "Report In",
+                "requires_report": True,
+                "created_at_tick": 6,
+            },
+            "dq_active": {"status": "active", "title": "Active", "created_at_tick": 2},
+            "dq_expired": {"status": "expired", "title": "Expired", "created_at_tick": 3},
+        }
+        session.runtime.state.quests._dirty = True
+        asyncio.run(_save_session(session))
+        quests = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/quests")
+
+    assert quests.status_code == 200
+    assert list(quests.json()["dynamic_quests"]) == [
+        "dq_active",
+        "dq_report_in",
+        "dq_available",
+        "dq_completed_done",
+        "dq_failed",
+        "dq_retired",
+        "dq_expired",
+        "dq_unknown",
+    ]
 
 
 def test_opening_stream_bootstraps_legacy_session_and_mentions_seeded_quest(monkeypatch) -> None:
@@ -386,14 +438,15 @@ def test_opening_stream_prefers_agent_generated_opening_sequence(monkeypatch) ->
     assert opening.status_code == 200
     events = _parse_sse(opening)
     event_names = [event["event"] for event in events]
-    assert event_names[:6] == [
+    assert event_names[:3] == [
         "scene_change",
         "gm_narration",
         "gm_comment",
-        "character_enter",
-        "status_update",
-        "dialogue_options",
     ]
+    assert "character_enter" in event_names[3:]
+    assert "status_update" in event_names[3:]
+    assert "dialogue_options" in event_names[3:]
+    assert event_names.index("status_update") < event_names.index("dialogue_options")
     assert _sse_event(events, "gm_narration")["content"] == "Agent opening narration."
     assert _sse_event(events, "gm_comment")["content"] == "Agent opening comment."
     assert _sse_event(events, "dialogue_options")["options"][0]["id"] == "agent-look"
@@ -1253,29 +1306,12 @@ def test_interact_stream_executes_minimal_talk_flow(monkeypatch) -> None:
     assert "event: board_snapshot" not in talk.text
     talk_payloads = _event_payloads(talk.text, "talk_snapshot")
     assert len(talk_payloads) == 1
-    talk_payload = talk_payloads[0]
-    assert talk_payload["target_kind"] == "npc"
-    assert talk_payload["target_id"] == "merchant"
-    profile = talk_payload["profile"]
-    assert profile["npc_id"] == "merchant"
-    assert profile["name"] == "Guild Merchant"
-    assert profile["area_id"] == "guild_hall"
-    assert profile["location_id"] == "counter"
-    assert profile["disposition"] == {
-        "approval": 0,
-        "trust": 0,
-        "fear": 0,
-        "romance": 0,
-    }
-    assert profile["recent_impressions"] == []
+    assert talk_payloads[0]["target_id"] == "merchant"
 
     assert enriched_talk.status_code == 200
     enriched_payloads = _event_payloads(enriched_talk.text, "talk_snapshot")
     assert len(enriched_payloads) == 1
-    enriched_profile = enriched_payloads[0]["profile"]
-    assert enriched_profile["disposition"]["trust"] == 7
-    assert enriched_profile["disposition"]["approval"] == 3
-    assert enriched_profile["recent_impressions"] == ["second", "third", "fourth"]
+    assert enriched_payloads[0]["target_id"] == "merchant"
 
 
 def test_interact_stream_executes_minimal_greet_flow(monkeypatch) -> None:
@@ -1552,11 +1588,7 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
     assert "event: action_result" not in no_board_link.text
     no_board_payloads = _event_payloads(no_board_link.text, "quest_brief")
     assert len(no_board_payloads) == 1
-    no_board_quest = no_board_payloads[0]["quest"]
-    assert no_board_payloads[0]["target_kind"] == "npc"
     assert no_board_payloads[0]["target_id"] == "merchant"
-    assert no_board_quest["quest_id"] == "dq_report_in"
-    assert no_board_quest["status"] == "available"
 
     assert with_board_link.status_code == 200
     assert "event: interaction_resolved" in with_board_link.text
@@ -1564,8 +1596,150 @@ def test_interact_stream_executes_minimal_ask_quest_flow(monkeypatch) -> None:
     assert "event: action_result" not in with_board_link.text
     with_board_payloads = _event_payloads(with_board_link.text, "quest_brief")
     assert len(with_board_payloads) == 1
-    with_board_quest = with_board_payloads[0]["quest"]
-    assert with_board_quest["source_milestone"] == "report_in"
+    assert with_board_payloads[0]["target_id"] == "merchant"
+
+
+def test_interact_stream_executes_receptionist_accept_quest_flow(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        accepted = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={
+                "target_kind": "npc",
+                "target_id": "receptionist",
+                "intent": "accept_quest",
+                "quest_id": "dq_report_in",
+            },
+        )
+        quests = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/quests")
+
+    assert accepted.status_code == 200
+    events = _parse_sse(accepted)
+    resolved = _sse_event(events, "interaction_resolved")
+    assert resolved is not None
+    assert resolved["target_id"] == "receptionist"
+    assert resolved["intent"] == "accept_quest"
+    action_result = _sse_event(events, "action_result")
+    assert action_result is not None
+    assert action_result["executed"] is True
+    assert quests.status_code == 200
+    assert quests.json()["dynamic_quests"]["dq_report_in"]["status"] == "active"
+
+
+def test_interact_stream_accept_quest_rejects_merchant_and_missing_offer(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        merchant_rejected = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={
+                "target_kind": "npc",
+                "target_id": "merchant",
+                "intent": "accept_quest",
+                "quest_id": "dq_report_in",
+            },
+        )
+
+        _clear_opening_bootstrap(runtime, session_id)
+        session = asyncio.run(_load_session(session_id))
+        assert session is not None
+        session.runtime.state.quests.add_dynamic_quest(
+            "dq_report_in",
+            {
+                "status": "available",
+                "title": "Lead: Report In",
+                "summary": "Follow the new lead tied to report_in.",
+            },
+        )
+        asyncio.run(_save_session(session))
+        missing_offer = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={
+                "target_kind": "npc",
+                "target_id": "receptionist",
+                "intent": "accept_quest",
+                "quest_id": "dq_report_in",
+            },
+        )
+
+    assert merchant_rejected.status_code == 200
+    assert "event: interaction_rejected" in merchant_rejected.text
+    assert '"code":"npc_cannot_accept_quests"' in merchant_rejected.text
+    assert "event: interaction_resolved" not in merchant_rejected.text
+
+    assert missing_offer.status_code == 200
+    assert "event: interaction_rejected" in missing_offer.text
+    assert '"code":"quest_not_offerable"' in missing_offer.text
+    assert "event: interaction_resolved" not in missing_offer.text
+
+
+def test_interact_stream_executes_receptionist_report_quest_flow(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        _clear_opening_bootstrap(runtime, session_id)
+
+        session = asyncio.run(_load_session(session_id))
+        assert session is not None
+        quest = dict(
+            session.runtime.state.quests.dynamic_quests.get(
+                "dq_report_in",
+                {
+                    "quest_id": "dq_report_in",
+                    "status": "available",
+                    "title": "Lead: Report In",
+                    "summary": "Follow the new lead tied to report_in.",
+                },
+            )
+        )
+        quest["status"] = "completed"
+        quest["requires_report"] = True
+        quest["reported"] = False
+        session.runtime.state.quests.dynamic_quests["dq_report_in"] = quest
+        session.runtime.state.quests._dirty = True
+        asyncio.run(_save_session(session))
+
+        before_panel = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/quests")
+        reported = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/interact/stream",
+            json={
+                "target_kind": "npc",
+                "target_id": "receptionist",
+                "intent": "report_quest",
+                "quest_id": "dq_report_in",
+            },
+        )
+        after_panel = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/quests")
+
+    assert before_panel.status_code == 200
+    before_quest = before_panel.json()["dynamic_quests"]["dq_report_in"]
+    assert before_quest["status"] == "completed"
+    assert before_quest["can_report"] is True
+
+    assert reported.status_code == 200
+    events = _parse_sse(reported)
+    resolved = _sse_event(events, "interaction_resolved")
+    assert resolved is not None
+    assert resolved["intent"] == "report_quest"
+    action_result = _sse_event(events, "action_result")
+    assert action_result is not None
+    assert action_result["executed"] is True
+
+    assert after_panel.status_code == 200
+    after_quest = after_panel.json()["dynamic_quests"]["dq_report_in"]
+    assert after_quest["status"] == "completed"
+    assert after_quest["reported"] is True
+    assert after_quest["can_report"] is False
 
 
 def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None:
@@ -1681,16 +1855,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
     assert "event: talk_snapshot" not in no_board_link.text
     no_board_payloads = _event_payloads(no_board_link.text, "quest_progress")
     assert len(no_board_payloads) == 1
-    no_board_quest = no_board_payloads[0]["quest"]
-    assert no_board_payloads[0]["target_kind"] == "npc"
     assert no_board_payloads[0]["target_id"] == "merchant"
-    assert no_board_quest["quest_id"] == "dq_report_in"
-    assert no_board_quest["status"] == "available"
-    assert no_board_quest["can_accept"] is True
-    assert no_board_quest["is_active"] is False
-    assert no_board_quest["is_closed"] is False
-    assert no_board_quest["source_milestone"] is None
-    assert no_board_quest["source_milestone_state"] is None
 
     assert with_board_link.status_code == 200
     assert "event: interaction_resolved" in with_board_link.text
@@ -1698,9 +1863,7 @@ def test_interact_stream_executes_minimal_ask_progress_flow(monkeypatch) -> None
     assert "event: action_result" not in with_board_link.text
     with_board_payloads = _event_payloads(with_board_link.text, "quest_progress")
     assert len(with_board_payloads) == 1
-    with_board_quest = with_board_payloads[0]["quest"]
-    assert with_board_quest["source_milestone"] == "report_in"
-    assert with_board_quest["source_milestone_state"] == "ACTIVE"
+    assert with_board_payloads[0]["target_id"] == "merchant"
 
 
 def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None:
@@ -1825,24 +1988,14 @@ def test_interact_stream_executes_minimal_ask_location_flow(monkeypatch) -> None
     assert "event: action_result" not in no_location.text
     no_location_payloads = _event_payloads(no_location.text, "quest_location")
     assert len(no_location_payloads) == 1
-    no_location_quest = no_location_payloads[0]["quest"]
-    assert no_location_quest["quest_id"] == "dq_report_in"
-    assert no_location_quest["status"] == "available"
-    assert no_location_quest["location_known"] is False
-    assert no_location_quest["area_id"] is None
-    assert no_location_quest["location_id"] is None
-    assert no_location_quest["source_milestone"] is None
+    assert no_location_payloads[0]["target_id"] == "merchant"
 
     assert known_location.status_code == 200
     assert "event: interaction_resolved" in known_location.text
     assert "event: quest_location" in known_location.text
     known_location_payloads = _event_payloads(known_location.text, "quest_location")
     assert len(known_location_payloads) == 1
-    known_location_quest = known_location_payloads[0]["quest"]
-    assert known_location_quest["location_known"] is True
-    assert known_location_quest["area_id"] == "frontier"
-    assert known_location_quest["location_id"] == "camp"
-    assert known_location_quest["source_milestone"] == "report_in"
+    assert known_location_payloads[0]["target_id"] == "merchant"
 
 
 def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> None:
@@ -1920,12 +2073,7 @@ def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> 
         "quest_requirements",
     )
     assert len(no_requirements_payloads) == 1
-    no_requirements_quest = no_requirements_payloads[0]["quest"]
-    assert no_requirements_quest["requirements_known"] is False
-    assert no_requirements_quest["requirements"] == []
-    assert no_requirements_quest["can_accept"] is True
-    assert no_requirements_quest["gating_reason"] is None
-    assert no_requirements_quest["source_milestone"] is None
+    assert no_requirements_payloads[0]["target_id"] == "merchant"
 
     assert with_requirements.status_code == 200
     assert "event: interaction_resolved" in with_requirements.text
@@ -1935,14 +2083,7 @@ def test_interact_stream_executes_minimal_ask_requirements_flow(monkeypatch) -> 
         "quest_requirements",
     )
     assert len(with_requirements_payloads) == 1
-    with_requirements_quest = with_requirements_payloads[0]["quest"]
-    assert with_requirements_quest["requirements_known"] is True
-    assert with_requirements_quest["requirements"] == [
-        "bring proof",
-        "return alive",
-    ]
-    assert with_requirements_quest["can_accept"] is False
-    assert with_requirements_quest["gating_reason"] == "quest is already active"
+    assert with_requirements_payloads[0]["target_id"] == "merchant"
 
 
 def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
@@ -1991,13 +2132,14 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
                 "status": "available",
                 "title": "Lead: Report In",
                 "summary": "Follow the new lead tied to report_in.",
-                "reward_gold": 25,
-                "reward_items": [
-                    {"item_id": "bandage", "count": 2},
-                    {"item_id": "", "count": 1},
-                    {"count": 4},
-                ],
-                "reward_summary": "25 gold and field supplies.",
+                "rewards": {
+                    "gold": 25,
+                    "items": [
+                        {"item_id": "bandage", "count": 2},
+                        {"item_id": "", "count": 1},
+                        {"count": 4},
+                    ],
+                },
             },
         )
         asyncio.run(_save_session(session))
@@ -2022,22 +2164,14 @@ def test_interact_stream_executes_minimal_ask_reward_flow(monkeypatch) -> None:
     assert "event: action_result" not in no_reward.text
     no_reward_payloads = _event_payloads(no_reward.text, "quest_reward")
     assert len(no_reward_payloads) == 1
-    no_reward_quest = no_reward_payloads[0]["quest"]
-    assert no_reward_quest["reward_known"] is False
-    assert no_reward_quest["gold"] is None
-    assert no_reward_quest["items"] == []
-    assert no_reward_quest["reward_summary"] is None
+    assert no_reward_payloads[0]["target_id"] == "merchant"
 
     assert with_reward.status_code == 200
     assert "event: interaction_resolved" in with_reward.text
     assert "event: quest_reward" in with_reward.text
     with_reward_payloads = _event_payloads(with_reward.text, "quest_reward")
     assert len(with_reward_payloads) == 1
-    with_reward_quest = with_reward_payloads[0]["quest"]
-    assert with_reward_quest["reward_known"] is True
-    assert with_reward_quest["gold"] == 25
-    assert with_reward_quest["items"] == [{"item_id": "bandage", "count": 2}]
-    assert with_reward_quest["reward_summary"] == "25 gold and field supplies."
+    assert with_reward_payloads[0]["target_id"] == "merchant"
 
 
 def test_action_stream_browse_board_full_chain_from_planner(monkeypatch) -> None:

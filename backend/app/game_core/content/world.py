@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Mapping, cast
 from app.game_core.content.base import ContentRegistry
 
 if TYPE_CHECKING:
+    from app.game_core.content.registries.battle_maps import BattleMapRegistry
     from app.game_core.content.registries.characters import CharacterRegistry
     from app.game_core.content.registries.classes import ClassRegistry
     from app.game_core.content.registries.factions import FactionRegistry
@@ -54,7 +55,7 @@ class WorldInstance:
         """Load registries in dependency order."""
         ordered_groups = [
             ["tags"],
-            ["maps", "classes", "skills", "lore"],
+            ["maps", "battle_maps", "classes", "skills", "lore"],
             ["characters", "items", "monsters", "factions", "quests"],
         ]
         loaded: set[str] = set()
@@ -130,6 +131,10 @@ class WorldInstance:
     @property
     def quests(self) -> QuestRegistry:
         return cast("QuestRegistry", self.get_registry("quests"))
+
+    @property
+    def battle_maps(self) -> BattleMapRegistry:
+        return cast("BattleMapRegistry", self.get_registry("battle_maps"))
 
     def snapshot(self) -> dict[str, Any]:
         """Return a world-level registry summary."""

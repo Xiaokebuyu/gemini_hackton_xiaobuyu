@@ -14,6 +14,7 @@ from app.api_models import (
 )
 from app.deps import _load_session_or_404
 from app.game_core import ManagedSession
+from app.quest_views import normalize_dynamic_quest_panel
 from app.scene_views import build_location_overview
 
 router = APIRouter()
@@ -122,7 +123,11 @@ def _quest_response(session: ManagedSession) -> QuestPanelResponse:
 
     return QuestPanelResponse(
         milestone_states=enriched_milestones,
-        dynamic_quests=dict(quest_payload.get("dynamic_quests", {})),
+        dynamic_quests=normalize_dynamic_quest_panel(
+            quest_payload.get("dynamic_quests", {})
+            if isinstance(quest_payload.get("dynamic_quests", {}), Mapping)
+            else {}
+        ),
         chapter_completion=dict(quest_payload.get("chapter_completion", {})),
     )
 

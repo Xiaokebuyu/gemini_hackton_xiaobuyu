@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Mapping
 from app.game_core.rules.models import Command
 from app.game_core.planning.subsystem import PlannerEvent, SubSystemResult
 from app.game_core.planning.utils import coerce_non_empty_string, normalize_mapping, string_or_empty
-from app.game_core.state import StateChange
 
 if TYPE_CHECKING:
     from app.game_core.adapters.planner_system import PlannerAgentPort
@@ -101,92 +100,16 @@ class QuestManagerSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        quest_id = coerce_non_empty_string(payload.get("quest_id"))
-        if quest_id is None:
-            return False
-        if quest_id in context.state.quests.dynamic_quests:
-            return False
-        status = coerce_non_empty_string(payload.get("status")) or "available"
-        metadata = normalize_mapping(payload.get("metadata"))
-        raw_objectives = payload.get("objectives")
-        if not isinstance(raw_objectives, list):
-            raw_objectives = metadata.get("objectives")
-        objectives = raw_objectives if isinstance(raw_objectives, list) else []
-        raw_rewards = payload.get("rewards")
-        if not isinstance(raw_rewards, Mapping):
-            raw_rewards = metadata.get("rewards")
-        rewards = raw_rewards if isinstance(raw_rewards, Mapping) else {}
-        raw_expiry_ticks = payload.get("expiry_ticks")
-        if raw_expiry_ticks is None:
-            raw_expiry_ticks = metadata.get("expiry_ticks")
-        expiry_ticks: int | None = None
-        if raw_expiry_ticks is not None:
-            try:
-                expiry_ticks = int(raw_expiry_ticks)
-            except (TypeError, ValueError):
-                return False
-        urgency = coerce_non_empty_string(metadata.get("urgency")) or "medium"
-        on_expire = coerce_non_empty_string(payload.get("on_expire"))
-        if on_expire is None:
-            on_expire = coerce_non_empty_string(metadata.get("on_expire"))
-        if on_expire is None:
-            on_expire = "ignore"
-        on_expire = on_expire.strip().lower()
-        if on_expire not in {"ignore", "escalate", "retire"}:
-            on_expire = "ignore"
-        generated_raw = metadata.get("generated_by_escalation")
-        try:
-            generated_by_escalation = int(generated_raw)
-        except (TypeError, ValueError):
-            generated_by_escalation = 0
-        target_milestone = coerce_non_empty_string(metadata.get("source_milestone"))
-        delivery_method = (
-            coerce_non_empty_string(payload.get("delivery_method"))
-            or coerce_non_empty_string(metadata.get("delivery_method"))
-            or "board"
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_create_quest",
+                params=params,
+                source="narrative_planner",
+            )
         )
-        quest_payload = {
-            "quest_id": quest_id,
-            "status": status,
-            "title": string_or_empty(payload.get("title")),
-            "summary": string_or_empty(payload.get("summary")),
-            "source": "narrative_planner",
-            "created_at_tick": current_tick,
-            "target_milestone": target_milestone,
-            "urgency": urgency,
-            "objectives": objectives,
-            "rewards": rewards,
-            "delivery_method": delivery_method,
-            "expiry_ticks": expiry_ticks,
-            "on_expire": on_expire,
-            "generated_by_escalation": generated_by_escalation,
-            "planner_reasoning": string_or_empty(metadata.get("planner_reasoning")),
-            "metadata": metadata,
-        }
-        context.state.quests.add_dynamic_quest(quest_id, quest_payload)
-        self._activate_source_milestone(
-            context,
-            source_milestone=target_milestone,
-            current_tick=current_tick,
-        )
-        context.state.narrative_plan.add_history(
-            {"kind": "create_quest", "quest_id": quest_id, "tick": current_tick}
-        )
-        context.record_change(StateChange(
-            slice="quests",
-            operation="set",
-            path=f"dynamic_quests.{quest_id}",
-            value=quest_payload,
-        ))
-        # Map milestone success/failure conditions to EventSlice events
-        self._create_milestone_condition_events(quest_id, context, current_tick=current_tick)
-        self._create_objective_events(
-            quest_id,
-            quest_payload,
-            context,
-            current_tick=current_tick,
-        )
-        return True
+        return result.executed
 
     # ------------------------------------------------------------------
     # Handler: publish_bulletin
@@ -199,53 +122,25 @@ class QuestManagerSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        board_id = coerce_non_empty_string(payload.get("board_id"))
-        if board_id is None:
-            return False
-        if not context.state.has_slice("areas"):
-            return False
-        area_id = coerce_non_empty_string(payload.get("area_id"))
-        if area_id is None and context.state.has_slice("player"):
-            area_id = context.state.player.current_area
-        if area_id is None:
-            return False
-        location_payload = payload.get("location")
-        resolved_area_id = coerce_non_empty_string(
-            location_payload.get("area_id")) if isinstance(location_payload, Mapping) else None
-        resolved_sub_location = coerce_non_empty_string(
-            location_payload.get("sub_location")) if isinstance(location_payload, Mapping) else None
-        area_id = resolved_area_id or area_id
-        if not area_id:
-            return False
-        metadata = normalize_mapping(payload.get("metadata"))
-        quest_id = coerce_non_empty_string(metadata.get("quest_id"))
-        notify_resident_npcs = bool(payload.get("notify_resident_npcs", True))
-        board_entry: dict[str, Any] = {
-            "board_id": board_id,
-            "quest_id": quest_id or "",
-            "title": string_or_empty(payload.get("title")),
-            "content": string_or_empty(payload.get("content")),
-            "published_at_tick": current_tick,
-            "source": "narrative_planner",
-            "area_id": area_id,
-        }
-        if resolved_sub_location is not None:
-            board_entry["sub_location"] = resolved_sub_location
-            board_entry["location"] = {
-                "area_id": area_id,
-                "sub_location": resolved_sub_location,
-            }
-        context.state.areas.add_board_bulletin(
-            area_id,
-            board_id,
-            board_entry,
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_publish_bulletin",
+                params=params,
+                source="narrative_planner",
+            )
         )
-        context.record_change(StateChange(
-            slice="areas",
-            operation="set",
-            path=f"{area_id}.board_bulletins.{board_id}",
-            value=board_entry,
-        ))
+        if not result.executed:
+            return False
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        board_id = coerce_non_empty_string(metadata.get("board_id"))
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        resolved_sub_location = coerce_non_empty_string(metadata.get("sub_location"))
+        quest_id = coerce_non_empty_string(metadata.get("quest_id"))
+        notify_resident_npcs = bool(metadata.get("notify_resident_npcs", True))
+        if board_id is None or area_id is None:
+            return False
         if notify_resident_npcs:
             for npc_id in self._resident_npcs_for_board(
                 context=context,
@@ -262,9 +157,9 @@ class QuestManagerSubSystem:
                             "kind": "bulletin_awareness",
                             "board_id": board_id,
                             "quest_id": quest_id,
-                            "source_milestone": coerce_non_empty_string(metadata.get("source_milestone")),
+                            "source_milestone": coerce_non_empty_string(normalize_mapping(payload.get("metadata")).get("source_milestone")),
                             "notice": string_or_empty(payload.get("title")),
-                            "metadata": metadata,
+                            "metadata": normalize_mapping(payload.get("metadata")),
                         },
                     },
                     context,
@@ -283,67 +178,16 @@ class QuestManagerSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        quest_id = coerce_non_empty_string(payload.get("quest_id"))
-        if quest_id is None:
-            return False
-        if quest_id not in context.state.quests.dynamic_quests:
-            return False
-        context.state.quests.retire_dynamic_quest(quest_id)
-        context.state.narrative_plan.add_history(
-            {"kind": "retire_quest", "quest_id": quest_id, "tick": current_tick}
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_retire_quest",
+                params=params,
+                source="narrative_planner",
+            )
         )
-        context.record_change(StateChange(
-            slice="quests",
-            operation="set",
-            path=f"dynamic_quests.{quest_id}.status",
-            value="retired",
-        ))
-
-        # ---- Cascade cleanup ----
-
-        # 1. Despawn linked temporary NPCs
-        if context.state.has_slice("areas"):
-            for entry in list(context.state.narrative_plan.quest_history):
-                if entry.get("kind") != "spawn_quest_npc":
-                    continue
-                if entry.get("linked_quest_id") != quest_id:
-                    continue
-                npc_id = entry.get("npc_id", "")
-                if not npc_id:
-                    continue
-                for area_state in context.state.areas.areas.values():
-                    if npc_id in area_state.npc_locations:
-                        area_state.npc_locations.pop(npc_id, None)
-                        context.state.areas._dirty = True
-                context.state.narrative_plan.remove_temporary_npc(npc_id)
-                context.record_change(StateChange(
-                    slice="areas",
-                    operation="set",
-                    path=f"npc_location.{npc_id}",
-                    value=None,
-                ))
-
-            # 2. Remove linked board bulletins
-            for a_id, area_state in context.state.areas.areas.items():
-                for board_id in list(area_state.board_bulletins.keys()):
-                    context.state.areas.remove_board_bulletin(a_id, board_id, quest_id)
-
-            # 3. Remove linked dynamic sub-areas
-            for a_id, area_state in context.state.areas.areas.items():
-                for sub_area in list(area_state.temporary_sub_areas):
-                    if sub_area.get("linked_quest_id") == quest_id:
-                        context.state.areas.remove_temporary_sub_area(
-                            a_id, sub_area.get("id", "")
-                        )
-
-        # 4. Remove linked NPC directives
-        directives = context.state.narrative_plan.npc_directives
-        filtered = [d for d in directives if d.get("linked_quest_id") != quest_id]
-        if len(filtered) != len(directives):
-            context.state.narrative_plan.npc_directives = filtered
-            context.state.narrative_plan._dirty = True
-
-        return True
+        return result.executed
 
     # ------------------------------------------------------------------
     # Handler: update_quest
@@ -356,58 +200,30 @@ class QuestManagerSubSystem:
         *,
         current_tick: int,
     ) -> bool:
-        quest_id = coerce_non_empty_string(payload.get("quest_id"))
-        if quest_id is None:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_update_quest",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
             return False
-        quest = context.state.quests.dynamic_quests.get(quest_id)
-        if not isinstance(quest, dict):
-            return False
-        if quest.get("status") != "active":
-            return False
-
-        updated = dict(quest)
-        # Incremental merge — only update fields that are provided
-        current_step = payload.get("current_step")
-        if isinstance(current_step, str) and current_step.strip():
-            updated["current_step"] = current_step.strip()
-        next_steps = payload.get("next_steps")
-        if isinstance(next_steps, list):
-            updated["next_steps"] = [str(s).strip() for s in next_steps if str(s).strip()]
-        hints = payload.get("hints")
-        if isinstance(hints, list):
-            updated["hints"] = [str(h).strip() for h in hints if str(h).strip()]
-        completed_objectives = payload.get("completed_objectives")
-        if isinstance(completed_objectives, list):
-            updated["completed_objectives"] = [str(o).strip() for o in completed_objectives if str(o).strip()]
-
-        context.state.quests.dynamic_quests[quest_id] = updated
-        context.state.quests._dirty = True
-        context.record_change(StateChange(
-            slice="quests",
-            operation="modify",
-            path=f"dynamic_quests.{quest_id}",
-            value=updated,
-        ))
-
-        # SSE notification to frontend
         if self._sse_collector is not None:
             from app.game_core.orchestration.models import SSEEvent
+
+            metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
             self._sse_collector.append(SSEEvent(
                 event_type="quest_progress_updated",
                 payload={
-                    "quest_id": quest_id,
-                    "current_step": updated.get("current_step"),
-                    "next_steps": updated.get("next_steps", []),
-                    "hints": updated.get("hints", []),
+                    "quest_id": metadata.get("quest_id"),
+                    "current_step": metadata.get("current_step"),
+                    "next_steps": metadata.get("next_steps", []),
+                    "hints": metadata.get("hints", []),
                 },
             ))
-
-        context.state.narrative_plan.quest_history.append({
-            "type": "update_quest",
-            "quest_id": quest_id,
-            "tick": current_tick,
-        })
-        context.state.narrative_plan._dirty = True
         return True
 
     # ------------------------------------------------------------------
@@ -474,173 +290,6 @@ class QuestManagerSubSystem:
             return [str(npc_id) for npc_id in raw_residents if coerce_non_empty_string(npc_id)]
         return []
 
-    # ------------------------------------------------------------------
-    # Helper: milestone + objective event creation
-    # ------------------------------------------------------------------
-
-    def _create_milestone_condition_events(
-        self,
-        milestone_id: str,
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> None:
-        """Create dormant EventSlice events from a MilestoneTemplate's conditions."""
-        if not context.state.has_slice("events"):
-            return
-        if not context.world.has_registry("quests"):
-            return
-        milestone = context.world.quests.get_milestone(milestone_id)
-        if milestone is None:
-            return
-
-        specs: list[tuple[list[Any], str]] = []
-        if milestone.success_conditions:
-            specs.append((list(milestone.success_conditions), "COMPLETED"))
-        if milestone.failure_conditions:
-            specs.append((list(milestone.failure_conditions), "FAILED"))
-
-        for conditions, outcome_state in specs:
-            prefix = "sc" if outcome_state == "COMPLETED" else "fc"
-            for idx, cond in enumerate(conditions):
-                event_id = f"milestone_{milestone_id}_{prefix}_{idx}"
-                if context.state.events.get_event(event_id) is not None:
-                    continue
-                context.state.events.activate(event_id, {
-                    "id": event_id,
-                    "event_id": event_id,
-                    "state": "dormant",
-                    "status": "dormant",
-                    "conditions": [{"type": cond.type, "params": dict(cond.params)}],
-                    "on_trigger": [{
-                        "type": "advance_quest",
-                        "params": {"quest_id": milestone_id, "to_state": outcome_state},
-                    }],
-                    "source": "narrative_planner",
-                    "milestone_id": milestone_id,
-                    "created_at_tick": current_tick,
-                })
-                context.record_change(StateChange(
-                    slice="events",
-                    operation="set",
-                    path=f"active_events.{event_id}",
-                    value={"state": "dormant"},
-                ))
-
-    def _create_objective_events(
-        self,
-        quest_id: str,
-        quest_payload: Mapping[str, Any],
-        context: SettlementContext,
-        *,
-        current_tick: int,
-    ) -> None:
-        if not context.state.has_slice("events"):
-            return
-
-        raw_objectives = quest_payload.get("objectives")
-        if not isinstance(raw_objectives, list):
-            return
-
-        for idx, objective in enumerate(raw_objectives):
-            if not isinstance(objective, Mapping):
-                continue
-            obj_type = coerce_non_empty_string(objective.get("type"))
-            if obj_type is None:
-                continue
-            obj_type = obj_type.lower()
-            if self._coerce_optional_bool(objective.get("optional")):
-                continue
-
-            condition_type = self._objective_to_condition_type(obj_type)
-            if condition_type is None:
-                continue
-            raw_target = objective.get("target")
-            params = self._objective_target_to_params(condition_type, raw_target)
-            if params is None:
-                continue
-
-            event_id = f"dq_{quest_id}_obj_{idx}"
-            if context.state.events.get_event(event_id) is not None:
-                continue
-
-            context.state.events.activate(event_id, {
-                "id": event_id,
-                "event_id": event_id,
-                "state": "dormant",
-                "status": "dormant",
-                "conditions": [{
-                    "type": condition_type,
-                    "params": params,
-                }],
-                "on_trigger": [{
-                    "type": "complete_objective",
-                    "params": {
-                        "quest_id": quest_id,
-                        "objective_index": idx,
-                    },
-                }],
-                "source": "narrative_planner",
-                "created_at_tick": current_tick,
-            })
-            context.record_change(StateChange(
-                slice="events",
-                operation="set",
-                path=f"active_events.{event_id}",
-                value={"state": "dormant"},
-            ))
-
-    @staticmethod
-    def _objective_to_condition_type(obj_type: str) -> str | None:
-        mapping = {
-            "reach_location": "location_visited",
-            "location_visited": "location_visited",
-            "talk_to": "npc_talked",
-            "collect": "item_obtained",
-            "kill": "kill_count",
-        }
-        return mapping.get(obj_type)
-
-    @staticmethod
-    def _objective_target_to_params(
-        condition_type: str,
-        target: Any,
-    ) -> dict[str, Any] | None:
-        if isinstance(target, Mapping):
-            if condition_type in {"item_obtained", "kill_count", "talk_to", "npc_talked"}:
-                return {str(key): value for key, value in target.items()}
-            if condition_type in {"location_entered", "location_visited"}:
-                area_id = coerce_non_empty_string(target.get("area_id"))
-                location_id = coerce_non_empty_string(target.get("location_id"))
-                sub_location_id = coerce_non_empty_string(target.get("sub_location_id"))
-                params = {
-                    "area_id": area_id,
-                    "location_id": location_id,
-                    "sub_location_id": sub_location_id,
-                }
-                if area_id is None and location_id is None:
-                    return None
-                return params
-            return None
-
-        if condition_type == "item_obtained":
-            if isinstance(target, str):
-                return {"item_id": target}
-            return None
-        if condition_type == "kill_count":
-            if isinstance(target, str):
-                return {"monster_type": target}
-            return None
-        if condition_type in {"talk_to", "npc_talked"}:
-            if isinstance(target, str):
-                return {"npc_id": target}
-            return None
-        if condition_type in {"location_entered", "location_visited"}:
-            if isinstance(target, str):
-                return {"area_id": target}
-            return None
-        return None
-
     async def _evaluate_with_agent(
         self,
         event: PlannerEvent,
@@ -683,40 +332,3 @@ class QuestManagerSubSystem:
             strategy_notes=strategy_notes,
             metadata=metadata,
         )
-
-    def _activate_source_milestone(
-        self,
-        context: SettlementContext,
-        *,
-        source_milestone: str | None,
-        current_tick: int,
-    ) -> None:
-        if source_milestone is None:
-            return
-        if context.state.quests.get_milestone_state(source_milestone) != "AVAILABLE":
-            return
-        result = context.execute_command(
-            Command(
-                type="advance_quest",
-                params={
-                    "quest_id": source_milestone,
-                    "to_state": "ACTIVE",
-                    "tick": current_tick,
-                },
-                source="system",
-            )
-        )
-        if not result.executed:
-            logger.debug(
-                "QuestManagerSubSystem: failed to activate source milestone %r",
-                source_milestone,
-            )
-
-    @staticmethod
-    def _coerce_optional_bool(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            return normalized in {"true", "1", "yes", "y", "on"}
-        return False

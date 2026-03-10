@@ -32,6 +32,7 @@ from app.game_core.planning.models import (
     SpawnQuestNpcPlan,
 )
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.defaults import register_default_rules_handlers
 from app.game_core.state import StateChange, StateContainer, StateDelta
 from app.game_core.state.slices import (
     AreaSlice,
@@ -288,12 +289,15 @@ def _make_context(
         for change in delta.changes:
             scene_bus.record_state_change(change)
 
+    rules_engine = RulesEngine()
+    register_default_rules_handlers(rules_engine)
+
     return SettlementContext(
         change_log=active_change_log,
         state=state,
         world=world,
         scene_bus=scene_bus,
-        _rules_engine=RulesEngine(),
+        _rules_engine=rules_engine,
         _apply_delta=_apply_delta,
     )
 
