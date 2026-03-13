@@ -48,6 +48,8 @@ class TestHostileAreaHandler:
     def test_command_types(self):
         h = HostileAreaHandler()
         assert "enter_hostile" in h.command_types
+        assert "record_hostile_stealth_choice" in h.command_types
+        assert "mark_hostile_spotted" in h.command_types
 
     def test_validate_requires_sub_area_id(self):
         h = HostileAreaHandler()
@@ -135,3 +137,53 @@ class TestHostileAreaHandler:
         meta = result.metadata
         if not meta["passed"]:
             assert meta["surprise_state"] in ("none", "enemy_surprise")
+
+    def test_record_stealth_choice_updates_hostile_tracking(self):
+        h = HostileAreaHandler()
+        state = _make_state()
+        result = h.compute(
+            Command(
+                type="record_hostile_stealth_choice",
+                params={"sub_area_id": "hostile_1", "choice": "sneak_through"},
+                source="system",
+            ),
+            state,
+            None,
+        )
+
+        assert result.executed is True
+        state.apply(result.delta)
+        payload = state.areas.get_hostile_state("hostile_1")
+        assert payload["last_stealth_choice"] == "sneak_through"
+
+    def test_mark_hostile_spotted_clears_stealth_runtime_fields(self):
+        h = HostileAreaHandler()
+        state = _make_state()
+        state.areas.upsert_hostile(
+            "hostile_1",
+            {
+                **state.areas.copy_hostile_state(state.areas.get_hostile_state("hostile_1")),
+                "status": "stealth_resolved",
+                "entry_mode": "entered",
+                "last_stealth_result": {"passed": True},
+                "last_stealth_choice": "retreat",
+            },
+        )
+
+        result = h.compute(
+            Command(
+                type="mark_hostile_spotted",
+                params={"sub_area_id": "hostile_1", "last_choice": "retreat"},
+                source="system",
+            ),
+            state,
+            None,
+        )
+
+        assert result.executed is True
+        state.apply(result.delta)
+        payload = state.areas.get_hostile_state("hostile_1")
+        assert payload["status"] == "spotted"
+        assert payload["entry_mode"] is None
+        assert payload["last_stealth_result"] is None
+        assert payload["last_stealth_choice"] == "retreat"

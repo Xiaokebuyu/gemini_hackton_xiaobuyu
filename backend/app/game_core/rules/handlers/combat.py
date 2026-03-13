@@ -24,6 +24,7 @@ from app.game_core.rules.combat_units import (
     build_monster_unit,
     build_player_unit,
     build_turn_order,
+    compute_attack_ability_mod,
     resolve_surprise,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
@@ -54,6 +55,7 @@ class CombatHandler(StaticCommandHandler):
         "combat_attack",
         "combat_defend",
         "combat_npc_turn",
+        "combat_finalize_status",
     )
 
     _SURPRISE_STATES = frozenset({"none", "player_surprise", "enemy_surprise"})
@@ -68,6 +70,8 @@ class CombatHandler(StaticCommandHandler):
             return self._validate_start_combat(cmd, state, world)
         if cmd.type == "combat_npc_turn":
             return self._validate_combat_npc_turn(cmd, state, world)
+        if cmd.type == "combat_finalize_status":
+            return self._validate_combat_finalize_status(cmd, state)
         if cmd.type in {"combat_move", "combat_end_turn", "combat_disengage", "combat_dash",
                         "combat_attack", "combat_defend"}:
             return self._validate_v2_command(cmd, state, world)
@@ -99,7 +103,32 @@ class CombatHandler(StaticCommandHandler):
             return self._compute_combat_defend(cmd, state)
         if cmd.type == "combat_npc_turn":
             return self._compute_combat_npc_turn(cmd, state, world)
+        if cmd.type == "combat_finalize_status":
+            return self._compute_combat_finalize_status(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
+
+    def _validate_combat_finalize_status(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if cmd.source not in {"engine", "system"}:
+            return ValidationResult(
+                ok=False,
+                reason="combat_finalize_status is restricted to engine/system",
+            )
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
+        sub_area_id = coerce_non_empty_string(cmd.params.get("sub_area_id"))
+        if sub_area_id is None:
+            return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
+        status = coerce_non_empty_string(cmd.params.get("status"))
+        if status is None:
+            return ValidationResult(ok=False, reason="status must be a non-empty string")
+        payload = state.areas.get_hostile_state(sub_area_id)
+        if payload is None:
+            return ValidationResult(ok=False, reason=f"unknown hostile sub area: {sub_area_id}")
+        return ValidationResult(ok=True)
 
     def _validate_start_combat(
         self,
@@ -150,6 +179,14 @@ class CombatHandler(StaticCommandHandler):
             if world.monsters.get(monster_id) is None:
                 return ValidationResult(ok=False, reason=f"unknown monster: {monster_id}")
 
+        # D-5: unit count cap (W3-7)
+        _MAX_ENEMY_UNITS = 5
+        if len(monster_ids) > _MAX_ENEMY_UNITS:
+            return ValidationResult(
+                ok=False,
+                reason=f"too many enemies: {len(monster_ids)}, max {_MAX_ENEMY_UNITS}",
+            )
+
         return ValidationResult(ok=True)
 
     def _compute_start_combat(
@@ -199,7 +236,7 @@ class CombatHandler(StaticCommandHandler):
         # --- v2 unit construction ---
 
         # 1. Build units list starting with player
-        units: list[dict[str, Any]] = [build_player_unit(state)]
+        units: list[dict[str, Any]] = [build_player_unit(state, world)]
 
         # Companions
         if state.has_slice("party") and world.has_registry("characters"):
@@ -253,7 +290,11 @@ class CombatHandler(StaticCommandHandler):
         # 2. Select battle map or build default grid
         map_variant = None
         map_category = cmd.params.get("map_category")
+        if map_category is None and existing_payload:
+            map_category = existing_payload.get("map_category")
         map_tags = cmd.params.get("map_tags")
+        if map_tags is None and existing_payload:
+            map_tags = existing_payload.get("map_tags")
         if world is not None and world.has_registry("battle_maps"):
             if map_category:
                 map_variant = world.battle_maps.select_variant(str(map_category))
@@ -508,6 +549,36 @@ class CombatHandler(StaticCommandHandler):
                 total += int(getattr(template, "xp_reward", 0) or 0)
         return total
 
+    def _compute_combat_loot(
+        self,
+        participants: list[dict[str, Any]],
+        world: WorldInstance,
+    ) -> tuple[list[tuple[str, int]], int]:
+        """Roll loot_table + gold_drop for killed monsters."""
+        items: list[tuple[str, int]] = []
+        gold_total = 0
+        if not world.has_registry("monsters"):
+            return items, gold_total
+        for p in participants:
+            if bool(p.get("alive", True)) or bool(p.get("fled", False)):
+                continue
+            monster_id = str(p.get("monster_id", ""))
+            template = world.monsters.get(monster_id)
+            if template is None:
+                continue
+            for entry in getattr(template, "loot_table", None) or []:
+                chance = float(getattr(entry, "chance", 0))
+                if random.random() < chance:
+                    item_id = str(getattr(entry, "item_id", ""))
+                    count_expr = str(getattr(entry, "count", "1"))
+                    count = max(1, roll_damage_dice(count_expr))
+                    if item_id:
+                        items.append((item_id, count))
+            gold_expr = getattr(template, "gold_drop", None)
+            if gold_expr and str(gold_expr).strip() not in ("", "0"):
+                gold_total += max(0, roll_damage_dice(str(gold_expr)))
+        return items, gold_total
+
     @staticmethod
     def _normalize_monster_ids(raw_value: Any) -> list[str]:
         if not isinstance(raw_value, list):
@@ -635,23 +706,38 @@ class CombatHandler(StaticCommandHandler):
                         break
                 if melee_atk is None:
                     continue
-                # 掷攻击骰
+                # 掷攻击骰（机会攻击 — 移动触发）
                 atk_roll = random.randint(1, 20)
                 hit_bonus = int(melee_atk.get("hit_bonus", 0))
                 atk_total = atk_roll + hit_bonus
+                # 属性修正 + 熟练加值（非怪物单位）
+                oa_ability_mod = 0
+                oa_prof_bonus = 0
+                if other.get("source") != "monster":
+                    oa_ability_mod = compute_attack_ability_mod(
+                        other.get("stats", {}), melee_atk.get("tags", [])
+                    )
+                    oa_prof_bonus = int(other.get("proficiency_bonus", 0))
+                    atk_total += oa_ability_mod + oa_prof_bonus
                 target_ac = unit["ac"]  # type: ignore[index]
                 hit = atk_total >= target_ac
                 damage = 0
                 if hit:
                     damage = roll_damage_dice(melee_atk.get("damage_dice", "1d4"))
+                    if other.get("source") != "monster":
+                        damage = max(1, damage + oa_ability_mod)
                     unit["hp"] = max(0, unit["hp"] - damage)  # type: ignore[index]
                     if unit["hp"] <= 0:  # type: ignore[index]
                         unit["alive"] = False  # type: ignore[index]
                 other["reaction_used"] = True
+                oa_modifiers = [{"name": "hit_bonus", "value": hit_bonus}]
+                if other.get("source") != "monster":
+                    oa_modifiers.append({"name": "ability_mod", "value": oa_ability_mod})
+                    oa_modifiers.append({"name": "proficiency_bonus", "value": oa_prof_bonus})
                 rolls.append(build_dice_roll(
                     purpose=f"opportunity_attack_{other['unit_id']}",
                     dice="1d20", result=atk_roll,
-                    modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+                    modifiers=oa_modifiers,
                     total=atk_total,
                 ))
                 opportunity_attacks.append({
@@ -860,10 +946,19 @@ class CombatHandler(StaticCommandHandler):
         effect_ac_mod = _participant_effect_ac_mod(target)
         total_ac = base_ac + terrain_ac_bonus + defending_bonus + effect_ac_mod
 
-        # 6. 攻击骰 d20 + hit_bonus
+        # 6. 攻击骰 d20 + hit_bonus + 属性修正（仅非怪物单位）
         atk_roll = random.randint(1, 20)
         hit_bonus = int(selected_attack.get("hit_bonus", 0))
         atk_total = atk_roll + hit_bonus
+        # 属性修正 + 熟练加值（monster 的 hit_bonus 已 baked-in，不再叠加）
+        ability_mod = 0
+        prof_bonus = 0
+        if attacker.get("source") != "monster":
+            ability_mod = compute_attack_ability_mod(
+                attacker.get("stats", {}), selected_attack.get("tags", [])
+            )
+            prof_bonus = int(attacker.get("proficiency_bonus", 0))
+            atk_total += ability_mod + prof_bonus
         # 环境修正
         env = updated.get("environment", {})
         env_mods = compute_environment_modifiers(
@@ -873,13 +968,20 @@ class CombatHandler(StaticCommandHandler):
         atk_total += env_mods.hit_modifier
         if weapon_range > 1:
             atk_total += env_mods.ranged_hit_modifier
-        # 浓雾 LoS 限制：超出能见度距离视为无 LoS，攻击自动未命中
+        # D-8: 夜间/浓雾能见度限制 — 超出能见度的远程攻击自动未命中
+        visibility_blocked = (
+            is_ranged
+            and env_mods.max_visibility is not None
+            and distance > env_mods.max_visibility
+        )
+        # 保留旧逻辑名称（fog_blocked）兼容浓雾，合并夜间视野
         fog_blocked = (
             env_mods.max_visibility is not None and distance > env_mods.max_visibility
-        )
+        ) and not is_ranged  # 近战攻击不受能见度影响
+        visibility_check_failed = visibility_blocked  # 远程超出视野
         critical = atk_roll == 20
         auto_miss = atk_roll == 1
-        hit = (atk_total >= total_ac or critical) and not auto_miss and not fog_blocked
+        hit = (atk_total >= total_ac or critical) and not auto_miss and not visibility_check_failed
 
         # 7. 伤害
         damage = 0
@@ -888,6 +990,17 @@ class CombatHandler(StaticCommandHandler):
             damage = roll_damage_dice(selected_attack.get("damage_dice", "1d4"))
             if critical:
                 damage += roll_damage_dice(selected_attack.get("damage_dice", "1d4"))  # 暴击双骰
+            # 属性修正加入伤害（仅非怪物单位，最小 1）
+            if attacker.get("source") != "monster":
+                damage = max(1, damage + ability_mod)
+            # D-7: 天气伤害类型修正（雨天火焰×0.5，雷电×1.5）
+            type_multiplier = env_mods.get_damage_modifier(damage_type)
+            if type_multiplier != 1.0:
+                damage = max(0, int(damage * type_multiplier))
+            # 地形免疫：目标站在浅水格时免疫火焰伤害
+            target_terrain_immunities = getattr(target_terrain, "damage_immunities", frozenset())
+            if damage_type in target_terrain_immunities:
+                damage = 0
             # 伤害减免：怪物模板抗性
             monster_id = target.get("monster_id")
             if monster_id and world is not None and world.has_registry("monsters"):
@@ -911,10 +1024,14 @@ class CombatHandler(StaticCommandHandler):
         attacker["action_used"] = True  # type: ignore[index]
 
         # 9. 骰子记录
+        attack_modifiers = [{"name": "hit_bonus", "value": hit_bonus}]
+        if attacker.get("source") != "monster":
+            attack_modifiers.append({"name": "ability_mod", "value": ability_mod})
+            attack_modifiers.append({"name": "proficiency_bonus", "value": prof_bonus})
         attack_roll_record = build_dice_roll(
             purpose="combat_attack",
             dice="1d20", result=atk_roll,
-            modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+            modifiers=attack_modifiers,
             total=atk_total,
         )
 
@@ -922,6 +1039,8 @@ class CombatHandler(StaticCommandHandler):
         extra_changes: list[StateChange] = []
         combat_cleared = False
         xp_awarded = 0
+        loot_items: list[tuple[str, int]] = []
+        loot_gold = 0
 
         enemy_units = [u for u in units if u["side"] == "enemy"]
         if all(not self._is_unit_active(u) for u in enemy_units):
@@ -935,6 +1054,23 @@ class CombatHandler(StaticCommandHandler):
                 xp_awarded = self._compute_combat_xp(enemy_units, world)
                 if xp_awarded > 0 and state.has_slice("player"):
                     extra_changes.append(StateChange("player", "set", "xp", state.player.xp + xp_awarded))
+                # Loot
+                loot_items, loot_gold = self._compute_combat_loot(enemy_units, world)
+                if loot_gold > 0 and state.has_slice("player"):
+                    current_gold = int(getattr(state.player, "gold", 0))
+                    extra_changes.append(StateChange("player", "set", "gold", current_gold + loot_gold))
+                if loot_items and state.has_slice("player"):
+                    inventory = [stack.snapshot() for stack in state.player.inventory]
+                    for item_id, count in loot_items:
+                        merged = False
+                        for stack in inventory:
+                            if stack.get("item_id") == item_id:
+                                stack["count"] = int(stack.get("count", 0)) + count
+                                merged = True
+                                break
+                        if not merged:
+                            inventory.append({"item_id": item_id, "count": count, "tags": []})
+                    extra_changes.append(StateChange("player", "set", "inventory", inventory))
             # Kill counts
             if state.has_slice("flags"):
                 for u in enemy_units:
@@ -954,12 +1090,22 @@ class CombatHandler(StaticCommandHandler):
             *extra_changes,
         ]
 
+        # D-4: 玩家死亡元数据（让 handler 自身也能检测 defeat）
+        player_defeated = False
+        if target.get("unit_id") == "player" and target["hp"] <= 0:
+            player_defeated = True
+            updated["combat_active"] = False
+
         return handler_success(
             "combat", "combat_attack",
             changes=all_changes,
             metadata={
                 "attacker_id": current_uid,
                 "target_id": target_uid,
+                # D-10: 丰富化 unit_defeated SSE 所需字段
+                "target_name": str(target.get("name", target_uid)),
+                "target_side": str(target.get("side", "unknown")),
+                "target_source": str(target.get("source", "unknown")),
                 "attack_name": selected_attack.get("name", "Attack"),
                 "hit": hit,
                 "critical": critical,
@@ -971,6 +1117,9 @@ class CombatHandler(StaticCommandHandler):
                 "terrain_ac_bonus": terrain_ac_bonus,
                 "combat_cleared": combat_cleared,
                 "xp_awarded": xp_awarded,
+                "loot_items": [{"item_id": iid, "count": c} for iid, c in loot_items],
+                "gold_dropped": loot_gold,
+                "player_defeated": player_defeated,
             },
             rolls=[attack_roll_record],
             omit_empty_delta=False,
@@ -1092,10 +1241,21 @@ class CombatHandler(StaticCommandHandler):
                     atk_roll = random.randint(1, 20)
                     hit_bonus = int(melee_atk.get("hit_bonus", 0))
                     atk_total = atk_roll + hit_bonus
+                    # 属性修正 + 熟练加值（非怪物单位做机会攻击）
+                    npc_oa_ability_mod = 0
+                    npc_oa_prof_bonus = 0
+                    if other.get("source") != "monster":
+                        npc_oa_ability_mod = compute_attack_ability_mod(
+                            other.get("stats", {}), melee_atk.get("tags", [])
+                        )
+                        npc_oa_prof_bonus = int(other.get("proficiency_bonus", 0))
+                        atk_total += npc_oa_ability_mod + npc_oa_prof_bonus
                     hit = atk_total >= int(unit["ac"])
                     damage = 0
                     if hit:
                         damage = roll_damage_dice(melee_atk.get("damage_dice", "1d4"))
+                        if other.get("source") != "monster":
+                            damage = max(1, damage + npc_oa_ability_mod)
                         if unit.get("unit_id") == "player" and state.has_slice("player"):
                             damage_type = str(melee_atk.get("damage_type", "physical"))
                             damage = self._apply_damage_resistance(damage, damage_type, state)
@@ -1103,10 +1263,14 @@ class CombatHandler(StaticCommandHandler):
                         if unit["hp"] <= 0:
                             unit["alive"] = False
                     other["reaction_used"] = True
+                    npc_oa_modifiers = [{"name": "hit_bonus", "value": hit_bonus}]
+                    if other.get("source") != "monster":
+                        npc_oa_modifiers.append({"name": "ability_mod", "value": npc_oa_ability_mod})
+                        npc_oa_modifiers.append({"name": "proficiency_bonus", "value": npc_oa_prof_bonus})
                     rolls.append(build_dice_roll(
                         purpose=f"opportunity_attack_{other['unit_id']}",
                         dice="1d20", result=atk_roll,
-                        modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+                        modifiers=npc_oa_modifiers,
                         total=atk_total,
                     ))
                     opportunity_attacks.append({
@@ -1147,6 +1311,15 @@ class CombatHandler(StaticCommandHandler):
                     atk_roll = random.randint(1, 20)
                     hit_bonus = int(atk.get("hit_bonus", 0))
                     atk_total = atk_roll + hit_bonus
+                    # 属性修正 + 熟练加值（非怪物单位）
+                    npc_ability_mod = 0
+                    npc_prof_bonus = 0
+                    if unit.get("source") != "monster":
+                        npc_ability_mod = compute_attack_ability_mod(
+                            unit.get("stats", {}), atk.get("tags", [])
+                        )
+                        npc_prof_bonus = int(unit.get("proficiency_bonus", 0))
+                        atk_total += npc_ability_mod + npc_prof_bonus
                     # 环境修正
                     env = updated.get("environment", {})
                     env_mods = compute_environment_modifiers(
@@ -1156,33 +1329,53 @@ class CombatHandler(StaticCommandHandler):
                     atk_total += env_mods.hit_modifier
                     if weapon_range > 1:
                         atk_total += env_mods.ranged_hit_modifier
-                    # 浓雾 LoS 限制：超出能见度距离视为无 LoS，攻击自动未命中
-                    fog_blocked = (
-                        env_mods.max_visibility is not None
+                    # D-8: 夜间/浓雾能见度限制 — 远程攻击超出视野自动未命中
+                    npc_vis_blocked = (
+                        weapon_range > 1
+                        and env_mods.max_visibility is not None
                         and distance > env_mods.max_visibility
                     )
                     critical = atk_roll == 20
                     auto_miss = atk_roll == 1
-                    hit = (atk_total >= total_ac or critical) and not auto_miss and not fog_blocked
+                    hit = (atk_total >= total_ac or critical) and not auto_miss and not npc_vis_blocked
                     damage = 0
                     damage_type = str(atk.get("damage_type", "physical"))
                     if hit:
                         damage = roll_damage_dice(atk.get("damage_dice", "1d4"))
                         if critical:
                             damage += roll_damage_dice(atk.get("damage_dice", "1d4"))
+                        # 属性修正加入伤害（非怪物单位，最小 1）
+                        if unit.get("source") != "monster":
+                            damage = max(1, damage + npc_ability_mod)
+                        # D-7: 天气伤害类型修正
+                        type_multiplier = env_mods.get_damage_modifier(damage_type)
+                        if type_multiplier != 1.0:
+                            damage = max(0, int(damage * type_multiplier))
+                        # 地形免疫：目标站在浅水格时免疫火焰伤害
+                        t_terrain_immunities = getattr(t_terrain, "damage_immunities", frozenset())
+                        if damage_type in t_terrain_immunities:
+                            damage = 0
                         if target.get("unit_id") == "player" and state.has_slice("player"):
                             damage = self._apply_damage_resistance(damage, damage_type, state)
                     target["hp"] = max(0, target["hp"] - damage)
                     if target["hp"] <= 0:
                         target["alive"] = False
+                    npc_atk_modifiers = [{"name": "hit_bonus", "value": hit_bonus}]
+                    if unit.get("source") != "monster":
+                        npc_atk_modifiers.append({"name": "ability_mod", "value": npc_ability_mod})
+                        npc_atk_modifiers.append({"name": "proficiency_bonus", "value": npc_prof_bonus})
                     rolls.append(build_dice_roll(
                         purpose=f"npc_attack:{atk.get('name', 'Attack')}",
                         dice="1d20", result=atk_roll,
-                        modifiers=[{"name": "hit_bonus", "value": hit_bonus}],
+                        modifiers=npc_atk_modifiers,
                         total=atk_total,
                     ))
                     attack_result = {
                         "target_id": decision.target_id,
+                        # D-10: 丰富化 unit_defeated SSE 所需字段
+                        "target_name": str(target.get("name", decision.target_id)),
+                        "target_side": str(target.get("side", "unknown")),
+                        "target_source": str(target.get("source", "unknown")),
                         "attack_name": atk.get("name", "Attack"),
                         "hit": hit,
                         "critical": critical,
@@ -1232,22 +1425,71 @@ class CombatHandler(StaticCommandHandler):
             if player_unit and state.has_slice("player"):
                 extra_changes.append(StateChange("player", "set", "hp", player_unit["hp"]))
 
+        # D-4: 玩家死亡元数据
+        player_defeated = (
+            attack_result.get("target_id") == "player"
+            and not attack_result.get("target_alive", True)
+        )
+        if player_defeated:
+            updated["combat_active"] = False
+
+        metadata = {
+            "unit_id": updated["current_unit_id"],
+            "decision_action": decision.action,
+            "decision_source": decision_source,
+            "move_to": list(decision.move_to) if decision.move_to else None,
+            "opportunity_attacks": opportunity_attacks,
+            "attack": attack_result or None,
+            "combat_cleared": combat_cleared,
+            "xp_awarded": xp_awarded,
+            "player_defeated": player_defeated,
+            "attacker_id": unit.get("unit_id"),
+        }
+        decision_provider = coerce_non_empty_string(cmd.params.get("decision_provider"))
+        if decision_provider is not None:
+            metadata["decision_provider"] = decision_provider
+        decision_tier = coerce_non_empty_string(cmd.params.get("decision_tier"))
+        if decision_tier is not None:
+            metadata["decision_tier"] = decision_tier
+
         return handler_success(
             "combat", "combat_npc_turn",
             changes=[
                 StateChange("areas", "modify", f"hostile_tracking.{sub_area_id}", updated),
                 *extra_changes,
             ],
-            metadata={
-                "unit_id": updated["current_unit_id"],
-                "decision_action": decision.action,
-                "decision_source": decision_source,
-                "move_to": list(decision.move_to) if decision.move_to else None,
-                "opportunity_attacks": opportunity_attacks,
-                "attack": attack_result or None,
-                "combat_cleared": combat_cleared,
-                "xp_awarded": xp_awarded,
-            },
+            metadata=metadata,
             rolls=rolls,
+            omit_empty_delta=False,
+        )
+
+    def _compute_combat_finalize_status(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        sub_area_id = coerce_non_empty_string(cmd.params.get("sub_area_id")) or ""
+        status = coerce_non_empty_string(cmd.params.get("status")) or ""
+        payload = state.areas.get_hostile_state(sub_area_id)
+        if payload is None:
+            return ExecuteResult.error(f"unknown hostile sub area: {sub_area_id}")
+        updated = state.areas.copy_hostile_state(payload)
+        updated["status"] = status
+        updated["combat_active"] = False
+        return handler_success(
+            "combat",
+            "combat_finalize_status",
+            changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"hostile_tracking.{sub_area_id}",
+                    updated,
+                )
+            ],
+            metadata={
+                "sub_area_id": sub_area_id,
+                "status": status,
+            },
             omit_empty_delta=False,
         )

@@ -61,6 +61,46 @@ class TestAreaSlice:
         assert "new_area" in area_slice.areas
         assert area_slice.get_area("new_area").npc_locations["npc_alpha"] == "plaza"
 
+    def test_move_npc_clears_old_room_and_sets_new_room(self) -> None:
+        area_slice = AreaSlice()
+        area_slice.restore(
+            {
+                "areas": {
+                    "forest": {
+                        "npc_locations": {"npc_alpha": "camp"},
+                        "npc_rooms": {"npc_alpha": "tent"},
+                    },
+                    "town": {"npc_locations": {}, "npc_rooms": {}},
+                }
+            }
+        )
+
+        area_slice.move_npc("npc_alpha", "town", "inn", room_id="common_room")
+
+        assert "npc_alpha" not in area_slice.get_area("forest").npc_rooms
+        assert area_slice.get_area("town").npc_rooms["npc_alpha"] == "common_room"
+
+    def test_apply_state_change_npc_presence_updates_room(self) -> None:
+        area_slice = AreaSlice()
+        area_slice.restore({"areas": {"town": {}}})
+
+        area_slice.apply_state_change(
+            StateChange(
+                "areas",
+                "set",
+                "npc_presence.npc_alpha",
+                {
+                    "area_id": "town",
+                    "location_id": "guild",
+                    "room_id": "guild_counter",
+                    "source": "schedule",
+                },
+            )
+        )
+
+        assert area_slice.get_area("town").npc_locations["npc_alpha"] == "guild"
+        assert area_slice.get_area("town").npc_rooms["npc_alpha"] == "guild_counter"
+
     def test_find_container_area_returns_current_bucket(self) -> None:
         area_slice = AreaSlice()
         area_slice.restore(

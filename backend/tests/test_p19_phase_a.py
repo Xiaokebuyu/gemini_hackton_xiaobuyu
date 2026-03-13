@@ -41,6 +41,9 @@ def _make_settlement_context(
     area_id: str = "test_area",
     npc_in_area: str | None = None,
     player_location: str | None = None,
+    player_room: str | None = None,
+    npc_location: str | None = "market",
+    npc_room: str | None = None,
     with_flags: bool = True,
     absolute_tick: int = 10,
 ) -> SettlementContext:
@@ -56,6 +59,7 @@ def _make_settlement_context(
     player.restore({
         "current_area": area_id,
         "current_location": player_location,
+        "current_room": player_room,
     })
     state.register(player)
 
@@ -74,7 +78,14 @@ def _make_settlement_context(
 
     areas = AreaSlice()
     if npc_in_area:
-        areas.restore({"areas": {area_id: {"npc_locations": {npc_in_area: "market"}}}})
+        areas.restore({
+            "areas": {
+                area_id: {
+                    "npc_locations": {npc_in_area: npc_location},
+                    "npc_rooms": {npc_in_area: npc_room},
+                }
+            }
+        })
     else:
         areas.restore({"areas": {area_id: {}}})
     state.register(areas)
@@ -118,6 +129,7 @@ def _add_directive(
     consumed: bool = False,
     expires_at_tick: int = 100,
     issued_at_tick: int = 5,
+    linked_quest_id: str | None = None,
 ) -> dict[str, Any]:
     directive: dict[str, Any] = {
         "npc_id": npc_id,
@@ -127,6 +139,8 @@ def _add_directive(
         "expires_at_tick": expires_at_tick,
         "issued_at_tick": issued_at_tick,
     }
+    if linked_quest_id is not None:
+        directive["linked_quest_id"] = linked_quest_id
     return ctx.state.narrative_plan.add_directive(directive)
 
 
@@ -338,7 +352,12 @@ class TestDirectiveTriggerHookCore:
         _random.random = lambda: 0.0  # type: ignore[method-assign]
         try:
             ctx = _make_settlement_context(npc_in_area="npc_alice")
-            _add_directive(ctx, "npc_alice", priority="medium")
+            _add_directive(
+                ctx,
+                "npc_alice",
+                priority="medium",
+                linked_quest_id="dq_notice",
+            )
 
             def _run() -> Any:
                 async def _body() -> Any:
@@ -356,6 +375,71 @@ class TestDirectiveTriggerHookCore:
         assert event.event_type == "npc_wants_to_chat"
         assert event.payload["npc_id"] == "npc_alice"
         assert event.payload["reason"] == "directive"
+        assert event.payload["linked_quest_id"] == "dq_notice"
+        assert event.payload["colocated"] is False
+        assert event.payload["npc_location"] == "market"
+
+    def test_same_room_directive_sets_colocated_true(self) -> None:
+        """Same room directives produce a colocated invitation payload."""
+        import random as _random
+        original_random = _random.random
+        _random.random = lambda: 0.0  # type: ignore[method-assign]
+        try:
+            ctx = _make_settlement_context(
+                npc_in_area="npc_alice",
+                player_location="guild_hall",
+                player_room="counter",
+                npc_location="guild_hall",
+                npc_room="counter",
+            )
+            _add_directive(ctx, "npc_alice", priority="high")
+
+            def _run() -> Any:
+                async def _body() -> Any:
+                    hook = DirectiveTriggerHook()
+                    return await hook.execute(ctx)
+                return asyncio.run(_body())
+
+            result = _run()
+        finally:
+            _random.random = original_random  # type: ignore[method-assign]
+
+        assert result.metadata.get("triggered") == 1
+        payload = result.sse_events[0].payload
+        assert payload["colocated"] is True
+        assert "npc_location" not in payload
+        assert "npc_room" not in payload
+
+    def test_different_room_directive_carries_room_hint(self) -> None:
+        """Same sub-location but different room should degrade to a location hint."""
+        import random as _random
+        original_random = _random.random
+        _random.random = lambda: 0.0  # type: ignore[method-assign]
+        try:
+            ctx = _make_settlement_context(
+                npc_in_area="npc_alice",
+                player_location="guild_hall",
+                player_room="office",
+                npc_location="guild_hall",
+                npc_room="counter",
+            )
+            _add_directive(ctx, "npc_alice", priority="high", issued_at_tick=6)
+
+            def _run() -> Any:
+                async def _body() -> Any:
+                    hook = DirectiveTriggerHook()
+                    return await hook.execute(ctx)
+                return asyncio.run(_body())
+
+            result = _run()
+        finally:
+            _random.random = original_random  # type: ignore[method-assign]
+
+        assert result.metadata.get("triggered") == 1
+        payload = result.sse_events[0].payload
+        assert payload["colocated"] is False
+        assert payload["npc_location"] == "guild_hall"
+        assert payload["npc_room"] == "counter"
 
     def test_respects_cooldown(self) -> None:
         """Hook respects cooldown flag — same NPC not triggered again within cooldown."""

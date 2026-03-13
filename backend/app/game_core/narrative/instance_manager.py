@@ -234,7 +234,7 @@ class InstanceManager:
         instance = self._pool.pop(actor_id, None)
         if instance is None:
             return None
-        messages = instance.context_window.pop_oldest_for_graphize(fraction=1.0)
+        messages = instance.context_window.collect_for_graphize()
         if messages:
             self._pending_writebacks.append(
                 PendingInstanceWriteback(

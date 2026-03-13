@@ -12,6 +12,7 @@ from app.game_core.orchestration.hooks.relationship import (
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.handlers.world_state import WorldStateHandler
 from app.game_core.state import StateChange, StateContainer
 from app.game_core.state.slices import SceneSlice
 from app.game_core.state.slices.relations import RelationSlice
@@ -43,14 +44,22 @@ def _make_context(
     })
     state.register(rel)
 
+    engine = RulesEngine()
+    engine.register(WorldStateHandler())
+
+    def _apply_delta(delta) -> None:
+        if delta is None:
+            return
+        state.apply(delta)
+
     return SettlementContext(
         change_log=change_log or [StateChange(slice="relations", operation="set",
                                                path="x", value="y")],
         state=state,
         world=WorldInstance("test"),
         scene_bus=SceneBus(scene_sl),
-        _rules_engine=RulesEngine(),
-        _apply_delta=lambda d: None,
+        _rules_engine=engine,
+        _apply_delta=_apply_delta,
     )
 
 

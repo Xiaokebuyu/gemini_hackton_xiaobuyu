@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, TYPE_CHECKING, Mapping, Protocol
 
 from app.game_core.content import WorldInstance
+from app.game_core.location_utils import location_condition_met, normalize_condition_mapping
 from app.game_core.rules.models import Command
 from app.game_core.state import StateContainer
 from app.game_core.state.delta import StateChange
@@ -223,17 +224,18 @@ class BasicEventConditionEvaluator:
         state: StateContainer,
         condition: Mapping[str, Any],
     ) -> tuple[bool, int]:
-        condition_type = _coerce_string(condition.get("type")).lower()
-        params = self._condition_params(condition)
+        normalized_condition = normalize_condition_mapping(condition)
+        condition_type = _coerce_string(normalized_condition.get("type")).lower()
+        params = self._condition_params(normalized_condition)
 
         if condition_type in {"", "__invalid__"}:
             return False, 1
         if condition_type == "flag_set":
             return self._check_flag_set(state, params), 0
         if condition_type == "location_entered":
-            return self._check_location_entered(state, params), 0
+            return self._check_location_condition(state, params, condition_type), 0
         if condition_type == "location_visited":
-            return self._check_location_entered(state, params), 0
+            return self._check_location_condition(state, params, condition_type), 0
         if condition_type == "period_reached":
             return self._check_period_reached(state, params), 0
         if condition_type == "time_reached":
@@ -252,6 +254,8 @@ class BasicEventConditionEvaluator:
             return self._check_item_obtained(state, params), 0
         if condition_type == "kill_count":
             return self._check_kill_count(state, params), 0
+        if condition_type == "level_reached":
+            return self._check_level_reached(state, params), 0
         return False, 1
 
     @staticmethod
@@ -279,27 +283,24 @@ class BasicEventConditionEvaluator:
         return state.flags.get(key) == expected_value
 
     @staticmethod
-    def _check_location_entered(
+    def _check_location_condition(
         state: StateContainer,
         params: Mapping[str, Any],
+        condition_type: str,
     ) -> bool:
         if not state.has_slice("player"):
             return False
-
-        area_id = _coerce_non_empty_string(params.get("area_id"))
-        location_id = _coerce_non_empty_string(params.get("location_id"))
-        if area_id is None and location_id is None:
-            return False
-
-        area_ok = True
-        if area_id is not None:
-            area_ok = state.player.current_area == area_id
-
-        location_ok = True
-        if location_id is not None:
-            location_ok = state.player.current_location == location_id
-
-        return area_ok and location_ok
+        current_flags = state.flags.snapshot().get("flags", {}) if state.has_slice("flags") else {}
+        if not isinstance(current_flags, Mapping):
+            current_flags = {}
+        return location_condition_met(
+            condition_type,
+            params,
+            current_area=state.player.current_area,
+            current_location=state.player.current_location,
+            current_room=getattr(state.player, "current_room", None),
+            current_flags=current_flags,
+        )
 
     @staticmethod
     def _check_period_reached(state: StateContainer, params: Mapping[str, Any]) -> bool:
@@ -486,6 +487,23 @@ class BasicEventConditionEvaluator:
         current = state.flags.get(f"kill_count_{monster_type}", 0)
         try:
             return int(current) >= required
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _check_level_reached(state: StateContainer, params: Mapping[str, Any]) -> bool:
+        """Check if the player has reached or exceeded a required level.
+
+        params:
+            level: int — minimum required level
+        """
+        if not state.has_slice("player"):
+            return False
+        required_level = _coerce_int(params.get("level"))
+        if required_level is None:
+            return False
+        try:
+            return int(state.player.level) >= required_level
         except (TypeError, ValueError):
             return False
 

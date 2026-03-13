@@ -15,7 +15,8 @@ def test_normalize_dynamic_quest_view_adds_stable_defaults() -> None:
 
     assert quest["quest_id"] == "dq_intro"
     assert quest["status"] == "active"
-    assert quest["current_step"] is None
+    # B-3: active quest with no objectives gets current_step from summary
+    assert quest["current_step"] == "Follow the first clue."
     assert quest["next_steps"] == []
     assert quest["hints"] == []
     assert quest["requires_report"] is False

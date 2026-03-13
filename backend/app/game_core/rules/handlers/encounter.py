@@ -115,8 +115,16 @@ class EncounterHandler(StaticCommandHandler):
         ) is None:
             return ValidationResult(
                 ok=False,
-                reason="monster_ids must be a list of non-empty values",
-            )
+                    reason="monster_ids must be a list of non-empty values",
+                )
+
+        if "map_category" in cmd.params:
+            map_category = self._get_optional_non_empty_string(cmd.params.get("map_category"))
+            if map_category is None and cmd.params.get("map_category") is not None:
+                return ValidationResult(
+                    ok=False,
+                    reason="map_category must be a non-empty string or null",
+                )
 
         return ValidationResult(ok=True)
 
@@ -207,6 +215,7 @@ class EncounterHandler(StaticCommandHandler):
             self._get_optional_non_empty_string(cmd.params.get("description"))
             or f"A hostile group stirs in {area_id}."
         )
+        map_category = self._get_optional_non_empty_string(cmd.params.get("map_category"))
         name = (
             self._get_optional_non_empty_string(cmd.params.get("name"))
             or description
@@ -255,6 +264,8 @@ class EncounterHandler(StaticCommandHandler):
         }
         if template_id is not None:
             hostile_state["template_id"] = template_id
+        if map_category is not None:
+            hostile_state["map_category"] = map_category
         return handler_success(
             "encounter",
             "encounter_check",
@@ -284,6 +295,7 @@ class EncounterHandler(StaticCommandHandler):
                 "stealth_dc": stealth_dc,
                 "name": name,
                 "description": description,
+                **({"map_category": map_category} if map_category is not None else {}),
                 **({"template_id": template_id} if template_id is not None else {}),
             },
         )

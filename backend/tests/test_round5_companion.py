@@ -14,6 +14,7 @@ from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import Command, RulesEngine
 from app.game_core.rules.handlers import CompanionHandler
+from app.game_core.rules.handlers.world_state import WorldStateHandler
 from app.game_core.state import StateChange, StateContainer, StateDelta
 from app.game_core.state.slices import AreaSlice, SceneSlice
 from app.game_core.state.slices.party import PartySlice
@@ -90,6 +91,7 @@ def _make_state(
 def _make_engine() -> RulesEngine:
     engine = RulesEngine()
     engine.register(CompanionHandler())
+    engine.register(WorldStateHandler())
     return engine
 
 
@@ -292,6 +294,26 @@ def test_force_leave_not_member_returns_failure() -> None:
     )
     assert result.executed is False
     assert result.errors == ["not_member"]
+
+
+def test_restore_after_combat_updates_party_hp_via_command() -> None:
+    state = _make_state(
+        party_members={"npc1": {"name": "npc1", "hp": 0, "max_hp": 20}},
+    )
+    result = _execute(
+        Command(
+            type="restore_companion_after_combat",
+            params={"npc_id": "npc1", "restored_hp": 14},
+            source="system",
+        ),
+        state,
+        WorldInstance("test"),
+    )
+
+    assert result.executed is True
+    _apply(result, state)
+    assert state.party.members["npc1"]["hp"] == 14
+    assert result.metadata["event_type"] == "companion_restored_after_combat"
 
 
 def test_cold_both_thresholds_met_returns_hostile() -> None:

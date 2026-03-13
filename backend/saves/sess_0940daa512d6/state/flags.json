@@ -1,0 +1,11 @@
+{
+  "flags": {
+    "church_friendly_act_1": true,
+    "directive_trigger_cooldown_lizard_priest": 13,
+    "narrative_escalation_level": 1,
+    "talked_to_priestess": true,
+    "visited_location_frontier_town__adventurer_guild": true,
+    "visited_location_frontier_town__mother_earth_temple": true,
+    "visited_location_frontier_town__novice_priestess_footprints": true
+  }
+}

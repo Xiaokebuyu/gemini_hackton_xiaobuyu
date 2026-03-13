@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Mapping
 
 from app.game_core.content import WorldInstance
+from app.game_core.content.registries.shared_types import Effect
 
 if TYPE_CHECKING:
     from app.game_core.content.registries.items import ItemTemplate
@@ -330,6 +331,12 @@ class InventoryHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         item_id = str(cmd.params["item_id"]).strip()
         item_template = world.items.get(item_id)
+
+        # --- buff / remove_status path (e.g. antidote removes "poisoned") ---
+        buff_result = self._try_buff_effect(item_id, item_template, state)
+        if buff_result is not None:
+            return buff_result
+
         heal_amount = resolve_item_heal_amount(item_template)
         if heal_amount is None:
             return ExecuteResult(
@@ -363,6 +370,56 @@ class InventoryHandler(StaticCommandHandler):
                 "item_id": item_id,
                 "status": "consumed",
                 "hp_delta": actual_heal,
+            },
+            omit_empty_delta=False,
+        )
+
+    def _try_buff_effect(
+        self,
+        item_id: str,
+        item_template: Any,
+        state: StateContainer,
+    ) -> ExecuteResult | None:
+        """Return an ExecuteResult if the item has a buff/remove_status effect, else None."""
+        if item_template is None:
+            return None
+        consumable_data = getattr(item_template, "consumable_data", None)
+        if consumable_data is None:
+            return None
+        effect = getattr(consumable_data, "effect", None)
+        if not isinstance(effect, Effect) or effect.type != "buff":
+            return None
+        remove_status = str(effect.params.get("remove_status", "")).strip()
+        if not remove_status:
+            return None
+
+        # Build updated active_effects list with the target effect_id removed
+        current_effects: list[dict] = [
+            dict(e) for e in state.player.active_effects
+            if isinstance(e, dict)
+        ]
+        next_effects = [e for e in current_effects if e.get("effect_id") != remove_status]
+        removed_count = len(current_effects) - len(next_effects)
+
+        inventory = self._player_inventory_snapshot(state)
+        next_inventory = self._remove_from_inventory(inventory, item_id, 1)
+
+        changes: list[StateChange] = [
+            StateChange("player", "set", "inventory", next_inventory),
+            StateChange("player", "set", "active_effects", next_effects),
+        ]
+        return handler_success(
+            "inventory",
+            "use_item",
+            changes=changes,
+            time_cost=1.0 / 6.0,
+            metadata={
+                "item_id": item_id,
+                "status": "consumed",
+                "effect_type": "buff",
+                "remove_status": remove_status,
+                "removed_count": removed_count,
+                "hp_delta": 0,
             },
             omit_empty_delta=False,
         )

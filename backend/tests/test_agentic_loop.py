@@ -348,8 +348,9 @@ def test_npc_side_effects_and_single_visible_reply_share_one_turn() -> None:
     assert result.metadata["finish_reason"] == "visible_output_emitted"
 
 
-def test_npc_text_only_response_is_protocol_error() -> None:
-    """NPC text without a visible tool is a protocol violation."""
+def test_npc_text_only_response_is_gracefully_wrapped() -> None:
+    """NPC text without a visible tool call is gracefully wrapped as a synthetic
+    speech ToolResult (P29-A1) instead of a protocol_error."""
     llm = RecordingLlmProvider([
         LlmResponse(text="I should have used speak.", finish_reason="stop"),
     ])
@@ -358,10 +359,14 @@ def test_npc_text_only_response_is_protocol_error() -> None:
     result = asyncio.run(executor.run_agentic("npc", _ctx(role="npc")))
 
     assert result.text == ""
-    assert result.tool_results == []
-    assert result.metadata["status"] == "protocol_error"
-    assert result.metadata["reason"] == "text_without_tool"
-    assert result.metadata["text_present"] is True
+    assert result.metadata["status"] == "completed"
+    assert result.metadata["finish_reason"] == "text_fallback"
+    assert len(result.tool_results) == 1
+    tr = result.tool_results[0]
+    assert tr.ok is True
+    assert tr.message == "I should have used speak."
+    assert tr.metadata["event_type"] == "speech"
+    assert tr.metadata.get("synthetic") is True
 
 
 def test_npc_passive_metadata_allows_silent_pass_turn() -> None:

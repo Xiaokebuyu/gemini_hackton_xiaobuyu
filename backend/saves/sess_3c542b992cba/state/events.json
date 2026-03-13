@@ -1,0 +1,22 @@
+{
+  "active_events": {},
+  "pending_events": [],
+  "rumors": [
+    {
+      "area_id": null,
+      "content": "听说今天公会来了一个新的白瓷等级冒险者，不知道能在这种边境地方撑多久。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 9
+      },
+      "metadata": {},
+      "rumor_id": "rumor_81f1a4479848",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "听说今天公会来了一个新的白瓷等级冒险者，不知道能在这种边境地方撑多久。"
+    }
+  ]
+}

@@ -396,3 +396,209 @@ class TestInventoryHandlerEquipFA:
         assert result.metadata["ac"] == 11  # unarmored: 10 + 1
         _apply(result, state)
         assert state.player.ac == 11
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — dice heal + buff/remove_status tests
+# ---------------------------------------------------------------------------
+
+def _make_world_with_dice_items() -> WorldInstance:
+    """World with dice-based healing potion and an antidote."""
+    world = WorldInstance("test_dice")
+    items = ItemRegistry()
+    items.load({
+        "heal_potion": {
+            "id": "heal_potion",
+            "name": "Healing Potion",
+            "type": "consumable",
+            "consumable_data": {
+                "trigger": "on_use",
+                "charges": 1,
+                "effect": {
+                    "type": "heal",
+                    "params": {"dice": "2d4+2"},
+                    "target": "self",
+                },
+            },
+        },
+        "static_potion": {
+            "id": "static_potion",
+            "name": "Static Potion",
+            "type": "consumable",
+            "consumable_data": {
+                "trigger": "on_use",
+                "charges": 1,
+                "effect": {
+                    "type": "heal",
+                    "params": {"amount": 8},
+                    "target": "self",
+                },
+            },
+        },
+        "antidote": {
+            "id": "antidote",
+            "name": "Antidote",
+            "type": "consumable",
+            "consumable_data": {
+                "trigger": "on_use",
+                "charges": 1,
+                "effect": {
+                    "type": "buff",
+                    "params": {"remove_status": "poisoned"},
+                    "target": "self",
+                },
+            },
+        },
+        "torch": {
+            "id": "torch",
+            "name": "Torch",
+            "type": "consumable",
+            "consumable_data": {
+                "trigger": "on_use",
+                "charges": 1,
+                "effect": {
+                    "type": "utility",
+                    "params": {"light_radius": 20},
+                    "target": "self",
+                },
+            },
+        },
+    })
+    world.register(items)
+    return world
+
+
+class TestPhase4UseItem:
+    """Phase 4: dice-based heal amounts and buff/remove_status consumables."""
+
+    def test_dice_heal_rolls_dice_expression(self, monkeypatch) -> None:
+        """Heal potion with 'dice': '2d4+2' rolls dice instead of using fixed amount."""
+        # Monkeypatch random.randint to return predictable rolls: both dice → 4 → total 4+4+2=10
+        import random as _random
+        rolls = iter([4, 4])
+        monkeypatch.setattr(_random, "randint", lambda a, b: next(rolls))
+
+        world = _make_world_with_dice_items()
+        state = _make_state(
+            inventory=[{"item_id": "heal_potion", "count": 1, "tags": []}],
+            hp=5,
+        )
+        result = _make_engine().execute(
+            Command(type="use_item", params={"item_id": "heal_potion"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["status"] == "consumed"
+        # 2d4+2 with rolls [4,4] = 10, but hp cap is max_hp (12) - current (5) = 7
+        assert result.metadata["hp_delta"] == 7
+        _apply(result, state)
+        assert state.player.hp == 12
+
+    def test_dice_heal_minimum_one(self, monkeypatch) -> None:
+        """roll_damage_dice ensures minimum 1, and heal is capped to missing HP."""
+        import random as _random
+        monkeypatch.setattr(_random, "randint", lambda a, b: 1)  # both dice roll 1 → 2+2=4
+
+        world = _make_world_with_dice_items()
+        state = _make_state(
+            inventory=[{"item_id": "heal_potion", "count": 1, "tags": []}],
+            hp=10,
+        )
+        result = _make_engine().execute(
+            Command(type="use_item", params={"item_id": "heal_potion"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["hp_delta"] == 2  # min(4, 12-10)=2
+        _apply(result, state)
+        assert state.player.hp == 12
+
+    def test_static_amount_fallback(self) -> None:
+        """Heal potion with 'amount': 8 (no dice) still heals correctly."""
+        world = _make_world_with_dice_items()
+        state = _make_state(
+            inventory=[{"item_id": "static_potion", "count": 1, "tags": []}],
+            hp=4,
+        )
+        result = _make_engine().execute(
+            Command(type="use_item", params={"item_id": "static_potion"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["status"] == "consumed"
+        assert result.metadata["hp_delta"] == 8
+        _apply(result, state)
+        assert state.player.hp == 12
+
+    def test_antidote_removes_poisoned_status(self) -> None:
+        """Antidote with buff/remove_status removes the 'poisoned' effect from player."""
+        world = _make_world_with_dice_items()
+        state = _make_state(
+            inventory=[{"item_id": "antidote", "count": 1, "tags": []}],
+            hp=8,
+        )
+        # Inject a poisoned active effect
+        state.player.active_effects = [
+            {"effect_id": "poisoned", "instance_id": "eff_001", "remaining_duration": 3},
+            {"effect_id": "bleeding", "instance_id": "eff_002", "remaining_duration": 2},
+        ]
+
+        result = _make_engine().execute(
+            Command(type="use_item", params={"item_id": "antidote"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["status"] == "consumed"
+        assert result.metadata["effect_type"] == "buff"
+        assert result.metadata["remove_status"] == "poisoned"
+        assert result.metadata["removed_count"] == 1
+        assert result.metadata["hp_delta"] == 0
+
+        _apply(result, state)
+        # poisoned removed, bleeding intact
+        remaining = [e["effect_id"] for e in state.player.active_effects]
+        assert "poisoned" not in remaining
+        assert "bleeding" in remaining
+        # antidote consumed from inventory
+        assert state.player.get_item_count("antidote") == 0
+
+    def test_antidote_when_not_poisoned_still_consumes(self) -> None:
+        """Antidote is consumed even if player is not currently poisoned."""
+        world = _make_world_with_dice_items()
+        state = _make_state(
+            inventory=[{"item_id": "antidote", "count": 1, "tags": []}],
+            hp=8,
+        )
+        # No active effects
+        result = _make_engine().execute(
+            Command(type="use_item", params={"item_id": "antidote"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["status"] == "consumed"
+        assert result.metadata["removed_count"] == 0
+        _apply(result, state)
+        assert state.player.get_item_count("antidote") == 0
+
+    def test_utility_effect_item_is_noop(self) -> None:
+        """Utility-type consumable (torch) returns no_effect without consuming."""
+        world = _make_world_with_dice_items()
+        state = _make_state(
+            inventory=[{"item_id": "torch", "count": 1, "tags": []}],
+            hp=8,
+        )
+        result = _make_engine().execute(
+            Command(type="use_item", params={"item_id": "torch"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["status"] == "no_effect"
+        # Item not consumed (no delta)
+        assert result.delta is None
+        assert state.player.get_item_count("torch") == 1

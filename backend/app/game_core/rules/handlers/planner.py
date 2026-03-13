@@ -11,6 +11,8 @@ from copy import deepcopy
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
+from app.game_core.orchestration.presence import resolve_npc_room, room_exists
+from app.game_core.scene_interactables import canonical_facility_ids
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
     coerce_float,
@@ -53,10 +55,67 @@ def _normalize_string_list(value: Any) -> list[str]:
     return normalized
 
 
+def _normalize_interactable_list(value: Any) -> list[Any]:
+    """Normalize an interactables list, preserving dict objects.
+
+    Interactable elements should be dicts with id/name/description/type/tags/
+    checks so that InteractableHandler can match and process them. Plain string
+    entries are kept for backward compatibility.
+    """
+    if not isinstance(value, list):
+        return []
+    result: list[Any] = []
+    for item in value:
+        if isinstance(item, dict):
+            if item:
+                result.append(item)
+        else:
+            text = coerce_non_empty_string(item)
+            if text is not None:
+                result.append(text)
+    return result
+
+
+def _normalize_interactable_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            continue
+        interactable_id = coerce_non_empty_string(item.get("id"))
+        if interactable_id is None:
+            continue
+        normalized_item = dict(item)
+        normalized_item["id"] = interactable_id
+        normalized.append(normalized_item)
+    return normalized
+
+
+def _planner_location_exists(
+    state: StateContainer,
+    world: WorldInstance,
+    area_id: str,
+    location_id: str | None,
+) -> bool:
+    if location_id is None:
+        return True
+    if world.has_registry("maps") and world.maps.get_sub_location(area_id, location_id) is not None:
+        return True
+    area_state = state.areas.areas.get(area_id) if state.has_slice("areas") else None
+    if area_state is None:
+        return False
+    return any(
+        str(item.get("id", "")).strip() == location_id
+        for item in area_state.temporary_sub_areas
+        if isinstance(item, Mapping)
+    )
+
+
 def _planner_source_gate(cmd: Command) -> ValidationResult:
-    if cmd.source == "narrative_planner":
+    if cmd.source in ("narrative_planner", "npc"):
         return ValidationResult(ok=True)
-    return ValidationResult(ok=False, reason="planner command source must be narrative_planner")
+    return ValidationResult(ok=False, reason="planner command source must be narrative_planner or npc")
 
 
 def _planner_success(
@@ -88,7 +147,6 @@ class PlannerQuestHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         source_gate = _planner_source_gate(cmd)
         if not source_gate.ok:
             return source_gate
@@ -114,6 +172,13 @@ class PlannerQuestHandler(StaticCommandHandler):
                 return ValidationResult(ok=False, reason="area_id must be resolvable")
             if area_id not in state.areas.areas:
                 return ValidationResult(ok=False, reason=f"unknown area_id: {area_id}")
+            # S3-03: validate quest_id exists if provided
+            quest_id = self._resolve_bulletin_quest_id(cmd.params)
+            if quest_id is not None and quest_id not in state.quests.dynamic_quests:
+                return ValidationResult(
+                    ok=False,
+                    reason=f"quest not found in dynamic_quests: {quest_id}",
+                )
             return ValidationResult(ok=True)
         if cmd.type == "planner_retire_quest":
             quest_id = coerce_non_empty_string(cmd.params.get("quest_id"))
@@ -162,11 +227,63 @@ class PlannerQuestHandler(StaticCommandHandler):
         quest_id = coerce_non_empty_string(cmd.params.get("quest_id")) or ""
         current_tick = coerce_int(cmd.params.get("current_tick")) or 0
         status = coerce_non_empty_string(cmd.params.get("status")) or "available"
+        # A-5 (S3-06): reject if quest_id collides with a milestone_id
+        if quest_id in state.quests.milestone_states:
+            return ExecuteResult.error(
+                f"quest_id '{quest_id}' collides with an existing milestone_id"
+            )
         metadata = _normalize_mapping(cmd.params.get("metadata"))
         raw_objectives = cmd.params.get("objectives")
         if not isinstance(raw_objectives, list):
             raw_objectives = metadata.get("objectives")
-        objectives = raw_objectives if isinstance(raw_objectives, list) else []
+        raw_objectives_list = raw_objectives if isinstance(raw_objectives, list) else []
+        # Normalize objectives: ensure each entry is a dict with description + completed,
+        # and preserve optional structured condition binding (P25-14 Phase 2).
+        # Unknown keys in existing dicts are preserved for backward compatibility
+        # (e.g. legacy "type"/"target" keys used by _build_objective_event_changes).
+        normalized_objectives = []
+        for obj in raw_objectives_list:
+            if isinstance(obj, str):
+                normalized_objectives.append({"description": obj, "completed": False})
+            elif isinstance(obj, dict):
+                # Start from a copy of the original to preserve unknown keys
+                entry: dict[str, Any] = dict(obj)
+                # Ensure canonical fields are present
+                if "description" not in entry:
+                    entry["description"] = str(obj.get("text", ""))
+                else:
+                    entry["description"] = str(entry["description"])
+                entry["completed"] = bool(obj.get("completed", False))
+                # Validate structured condition if present
+                condition = obj.get("condition")
+                if isinstance(condition, dict) and condition.get("type"):
+                    entry["condition"] = condition
+                elif "condition" in entry and not (isinstance(entry["condition"], dict) and entry["condition"].get("type")):
+                    # Remove invalid condition entries
+                    del entry["condition"]
+                # A8b: auto-generate condition when type present but condition absent
+                if "condition" not in entry:
+                    obj_type = coerce_non_empty_string(str(obj.get("type", "")))
+                    if obj_type:
+                        auto_cond_type = self._objective_to_condition_type(obj_type.lower())
+                        if auto_cond_type is not None:
+                            auto_params = self._objective_target_to_params(
+                                auto_cond_type, obj.get("target")
+                            )
+                            if auto_params is not None:
+                                entry["condition"] = {"type": auto_cond_type, "params": auto_params}
+                            else:
+                                entry.setdefault("metadata_warnings", []).append(
+                                    f"could not derive condition params for type={obj_type}"
+                                )
+                        else:
+                            entry.setdefault("metadata_warnings", []).append(
+                                f"unknown objective type for auto-condition: {obj_type}"
+                            )
+                normalized_objectives.append(entry)
+            else:
+                normalized_objectives.append({"description": str(obj), "completed": False})
+        objectives = normalized_objectives
         raw_rewards = cmd.params.get("rewards")
         if not isinstance(raw_rewards, Mapping):
             raw_rewards = metadata.get("rewards")
@@ -205,6 +322,11 @@ class PlannerQuestHandler(StaticCommandHandler):
             if "reported" in cmd.params
             else metadata.get("reported")
         )
+        # Phase 3 (P26-3-1): level wall — min_level from cmd params or metadata, default 1
+        raw_min_level = cmd.params.get("min_level")
+        if raw_min_level is None:
+            raw_min_level = metadata.get("min_level")
+        min_level = max(1, coerce_int(raw_min_level) or 1)
         quest_payload = {
             "quest_id": quest_id,
             "status": status,
@@ -221,8 +343,9 @@ class PlannerQuestHandler(StaticCommandHandler):
             "on_expire": on_expire,
             "generated_by_escalation": generated_by_escalation,
             "planner_reasoning": _string_or_empty(metadata.get("planner_reasoning")),
-            "requires_report": _coerce_optional_bool(raw_requires_report),
+            "requires_report": _coerce_optional_bool(raw_requires_report) if raw_requires_report is not None else (delivery_method == "board"),
             "reported": _coerce_optional_bool(raw_reported),
+            "min_level": min_level,
             "metadata": metadata,
         }
 
@@ -244,6 +367,18 @@ class PlannerQuestHandler(StaticCommandHandler):
                     {"state": "ACTIVE", "tick": current_tick},
                 )
             )
+            # Sync current_target_milestone when null — avoids overwriting an active target
+            if state.has_slice("narrative_plan"):
+                current_target = state.narrative_plan.current_target_milestone
+                if not current_target:
+                    changes.append(
+                        StateChange(
+                            "narrative_plan",
+                            "set",
+                            "current_target_milestone",
+                            target_milestone,
+                        )
+                    )
         changes.extend(
             self._build_milestone_condition_event_changes(
                 quest_id,
@@ -252,18 +387,50 @@ class PlannerQuestHandler(StaticCommandHandler):
                 world=world,
             )
         )
-        changes.extend(
-            self._build_objective_event_changes(
-                quest_id,
-                quest_payload,
-                current_tick=current_tick,
-                state=state,
+        # Path B (EventEngine-based objective tracking) removed — objectives are now
+        # tracked directly by QuestObjectiveTrackingHook (P56) via condition fields.
+        # A-1 (S3-04/S5-06): auto-publish bulletin when delivery_method=="board"
+        # and quest status is "available", so create_quest is atomic with publish.
+        if status == "available" and delivery_method == "board" and state.has_slice("areas"):
+            auto_area_id = (
+                coerce_non_empty_string(cmd.params.get("area_id"))
+                or (state.player.current_area if state.has_slice("player") else None)
             )
-        )
+            # derive board_id from params or fall back to area-local default
+            auto_board_id = coerce_non_empty_string(cmd.params.get("board_id")) or "quest_board"
+            if auto_area_id and auto_area_id in state.areas.areas:
+                board_entry: dict[str, Any] = {
+                    "board_id": auto_board_id,
+                    "quest_id": quest_id,
+                    "title": quest_payload["title"],
+                    "content": quest_payload["summary"],
+                    "published_at_tick": current_tick,
+                    "source": "narrative_planner",
+                    "area_id": auto_area_id,
+                }
+                changes.append(
+                    StateChange(
+                        "areas",
+                        "append",
+                        f"board_bulletins.{auto_board_id}",
+                        board_entry,
+                    )
+                )
+        # A9e: write quest_id back to milestone outline step when step_index is supplied
+        step_index = coerce_int(cmd.params.get("step_index"))
+        if step_index is not None and step_index >= 0 and state.has_slice("narrative_plan"):
+            changes.append(
+                StateChange(
+                    "narrative_plan",
+                    "set",
+                    "milestone_outline.step_quest_id",
+                    {"step_index": step_index, "quest_id": quest_id},
+                )
+            )
         return _planner_success(
             cmd.type,
             changes=changes,
-            metadata={"quest_id": quest_id},
+            metadata={"quest_id": quest_id, "step_index": step_index},
         )
 
     def _compute_publish_bulletin(
@@ -273,7 +440,14 @@ class PlannerQuestHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         current_tick = coerce_int(cmd.params.get("current_tick")) or 0
         board_id = coerce_non_empty_string(cmd.params.get("board_id")) or ""
-        area_id = self._resolve_area_id(cmd.params, state) or ""
+        raw_area_id = self._resolve_area_id(cmd.params, state)
+        # 3b: coerce_non_empty_string returns None for empty-after-strip strings, but
+        # _resolve_area_id can return an empty-string value that passed validate() via
+        # location.area_id before being stripped here.  Re-apply coerce to catch it.
+        area_id_checked = coerce_non_empty_string(raw_area_id)
+        if area_id_checked is None:
+            return ExecuteResult.error("area_id must be a non-empty string")
+        area_id = area_id_checked
         location_payload = cmd.params.get("location")
         resolved_sub_location = (
             coerce_non_empty_string(location_payload.get("sub_location"))
@@ -281,7 +455,9 @@ class PlannerQuestHandler(StaticCommandHandler):
             else None
         )
         metadata = _normalize_mapping(cmd.params.get("metadata"))
-        quest_id = coerce_non_empty_string(metadata.get("quest_id"))
+        quest_id = self._resolve_bulletin_quest_id(cmd.params)
+        if quest_id is not None and coerce_non_empty_string(metadata.get("quest_id")) is None:
+            metadata["quest_id"] = quest_id
         board_entry: dict[str, Any] = {
             "board_id": board_id,
             "quest_id": quest_id or "",
@@ -311,6 +487,14 @@ class PlannerQuestHandler(StaticCommandHandler):
                 "sub_location": resolved_sub_location,
                 "notify_resident_npcs": bool(cmd.params.get("notify_resident_npcs", True)),
             },
+        )
+
+    @staticmethod
+    def _resolve_bulletin_quest_id(params: Mapping[str, Any]) -> str | None:
+        metadata = _normalize_mapping(params.get("metadata"))
+        return (
+            coerce_non_empty_string(metadata.get("quest_id"))
+            or coerce_non_empty_string(params.get("quest_id"))
         )
 
     def _compute_retire_quest(
@@ -580,7 +764,8 @@ class PlannerQuestHandler(StaticCommandHandler):
                     "sub_location_id": sub_location_id,
                 }
                 if area_id is None and location_id is None:
-                    return None
+                    # A8c: fall back to passthrough instead of discarding params
+                    return {str(key): value for key, value in target.items()}
                 return params
             return None
         if condition_type == "item_obtained" and isinstance(target, str):
@@ -600,6 +785,8 @@ class PlannerNpcHandler(StaticCommandHandler):
         "planner_spawn_quest_npc",
         "planner_despawn_quest_npc",
         "planner_prune_npc_directives",
+        "planner_assign_capability",
+        "planner_revoke_capability",
     )
 
     def validate(
@@ -608,7 +795,6 @@ class PlannerNpcHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         source_gate = _planner_source_gate(cmd)
         if not source_gate.ok:
             return source_gate
@@ -630,6 +816,17 @@ class PlannerNpcHandler(StaticCommandHandler):
                 return ValidationResult(ok=False, reason="area_id must be a non-empty string")
             if area_id not in state.areas.areas:
                 return ValidationResult(ok=False, reason=f"unknown area_id: {area_id}")
+            location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+            room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+            if not _planner_location_exists(state, world, area_id, location_id):
+                return ValidationResult(
+                    ok=False,
+                    reason=f"unknown location_id: {location_id}",
+                )
+            if room_id is not None and location_id is None:
+                return ValidationResult(ok=False, reason="room_id requires location_id")
+            if room_id is not None and not room_exists(state, world, area_id, location_id, room_id):
+                return ValidationResult(ok=False, reason=f"unknown room_id: {room_id}")
             return ValidationResult(ok=True)
         if cmd.type == "planner_despawn_quest_npc":
             npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
@@ -640,6 +837,25 @@ class PlannerNpcHandler(StaticCommandHandler):
             current_tick = coerce_int(cmd.params.get("current_tick"))
             if current_tick is None:
                 return ValidationResult(ok=False, reason="current_tick must be an integer")
+            return ValidationResult(ok=True)
+        if cmd.type == "planner_assign_capability":
+            npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
+            if npc_id is None:
+                return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+            capability_id = coerce_non_empty_string(cmd.params.get("capability_id"))
+            if capability_id is None:
+                return ValidationResult(ok=False, reason="capability_id must be a non-empty string")
+            instruction = coerce_non_empty_string(cmd.params.get("instruction"))
+            if instruction is None:
+                return ValidationResult(ok=False, reason="instruction must be a non-empty string")
+            return ValidationResult(ok=True)
+        if cmd.type == "planner_revoke_capability":
+            npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
+            if npc_id is None:
+                return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+            capability_id = coerce_non_empty_string(cmd.params.get("capability_id"))
+            if capability_id is None:
+                return ValidationResult(ok=False, reason="capability_id must be a non-empty string")
             return ValidationResult(ok=True)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
@@ -655,11 +871,15 @@ class PlannerNpcHandler(StaticCommandHandler):
         if cmd.type == "planner_direct_npc":
             return self._compute_direct_npc(cmd)
         if cmd.type == "planner_spawn_quest_npc":
-            return self._compute_spawn_quest_npc(cmd, state)
+            return self._compute_spawn_quest_npc(cmd, state, world)
         if cmd.type == "planner_despawn_quest_npc":
             return self._compute_despawn_quest_npc(cmd, state)
         if cmd.type == "planner_prune_npc_directives":
             return self._compute_prune_npc_directives(cmd, state)
+        if cmd.type == "planner_assign_capability":
+            return self._compute_assign_capability(cmd)
+        if cmd.type == "planner_revoke_capability":
+            return self._compute_revoke_capability(cmd)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _compute_direct_npc(self, cmd: Command) -> ExecuteResult:
@@ -669,6 +889,10 @@ class PlannerNpcHandler(StaticCommandHandler):
         expires_at_tick = current_tick + 24 if raw_expiry is None else (coerce_int(raw_expiry) or -1)
         if expires_at_tick < 0:
             return ExecuteResult.error("expires_at_tick must be an integer")
+        # 3c: clamp so that expires_at_tick is never in the past (LLM may supply
+        # a negative value or an absolute tick that is less than current_tick).
+        if expires_at_tick < current_tick:
+            expires_at_tick = current_tick
         priority = _string_or_empty(cmd.params.get("priority")).strip().lower() or "medium"
         if priority not in {"high", "medium", "low"}:
             return ExecuteResult.error("priority must be one of high/medium/low")
@@ -692,6 +916,7 @@ class PlannerNpcHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         current_tick = coerce_int(cmd.params.get("current_tick")) or 0
         area_id = coerce_non_empty_string(cmd.params.get("area_id")) or ""
@@ -701,6 +926,20 @@ class PlannerNpcHandler(StaticCommandHandler):
         elif state.areas.find_npc_area(npc_id) is not None:
             return ExecuteResult.error(f"npc already present: {npc_id}")
         location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+        requested_room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+        resolved_room_id = resolve_npc_room(
+            state,
+            world,
+            area_id=area_id,
+            location_id=location_id,
+            npc_id=npc_id,
+            requested_room_id=requested_room_id,
+        )
+        # 3a: area slice enforces that room_id requires location_id.  If
+        # resolve_npc_room returned a room but location_id is absent, clear the
+        # room so the StateChange is always consistent.
+        if resolved_room_id is not None and not location_id:
+            resolved_room_id = None
         name = _string_or_empty(cmd.params.get("name")) or npc_id
         appearance = _string_or_empty(cmd.params.get("appearance"))
         personality = _string_or_empty(cmd.params.get("personality"))
@@ -736,6 +975,7 @@ class PlannerNpcHandler(StaticCommandHandler):
             "linked_quest_id": linked_quest_id,
             "area_id": area_id,
             "location_id": location_id,
+            "room_id": resolved_room_id,
             "despawn_tick": despawn_tick,
             "issued_at_tick": current_tick,
         }
@@ -750,6 +990,7 @@ class PlannerNpcHandler(StaticCommandHandler):
             "linked_quest_id": linked_quest_id,
             "role": role,
             "location_id": location_id,
+            "room_id": resolved_room_id,
             "area_id": area_id,
             "issued_at_tick": current_tick,
             "despawn_tick": despawn_tick,
@@ -777,7 +1018,12 @@ class PlannerNpcHandler(StaticCommandHandler):
                     "areas",
                     "set",
                     f"npc_presence.{npc_id}",
-                    {"area_id": area_id, "location_id": location_id, "source": "planner"},
+                    {
+                        "area_id": area_id,
+                        "location_id": location_id,
+                        "room_id": resolved_room_id,
+                        "source": "planner",
+                    },
                 ),
                 StateChange("narrative_plan", "add", "npc_directives", directive),
             ],
@@ -818,10 +1064,58 @@ class PlannerNpcHandler(StaticCommandHandler):
         changes: list[StateChange] = []
         if pruned_count > 0:
             changes.append(StateChange("narrative_plan", "set", "npc_directives", after))
+
+        # Prune expired capabilities (direct slice mutation is a controlled exception)
+        capabilities_pruned = 0
+        if state.has_slice("narrative_plan"):
+            capabilities_pruned = state.narrative_plan.prune_expired_capabilities(current_tick)
+
+        metadata: dict[str, Any] = {"pruned_count": pruned_count}
+        if capabilities_pruned > 0:
+            metadata["capabilities_pruned"] = capabilities_pruned
         return _planner_success(
             cmd.type,
             changes=changes,
-            metadata={"pruned_count": pruned_count},
+            metadata=metadata,
+        )
+
+    def _compute_assign_capability(self, cmd: Command) -> ExecuteResult:
+        current_tick = coerce_int(cmd.params.get("current_tick")) or 0
+        npc_id = coerce_non_empty_string(cmd.params.get("npc_id")) or ""
+        capability_id = coerce_non_empty_string(cmd.params.get("capability_id")) or ""
+        instruction = coerce_non_empty_string(cmd.params.get("instruction")) or ""
+        functional = _string_or_empty(cmd.params.get("functional"))
+        raw_fp = cmd.params.get("functional_params")
+        functional_params = _normalize_mapping(raw_fp) if raw_fp is not None else {}
+        raw_expiry = cmd.params.get("expiry_ticks")
+        if raw_expiry is not None:
+            expiry_tick = (coerce_int(raw_expiry) or 0) + current_tick
+        else:
+            expiry_tick = 0
+        cap_dict = {
+            "capability_id": capability_id,
+            "npc_id": npc_id,
+            "instruction": instruction,
+            "functional": functional,
+            "functional_params": functional_params,
+            "assigned_tick": current_tick,
+            "expiry_tick": expiry_tick,
+            "source": "planner",
+        }
+        return _planner_success(
+            cmd.type,
+            changes=[StateChange("narrative_plan", "set", "npc_capabilities.assign", cap_dict)],
+            metadata={"npc_id": npc_id, "capability_id": capability_id},
+        )
+
+    def _compute_revoke_capability(self, cmd: Command) -> ExecuteResult:
+        npc_id = coerce_non_empty_string(cmd.params.get("npc_id")) or ""
+        capability_id = coerce_non_empty_string(cmd.params.get("capability_id")) or ""
+        revoke_dict = {"npc_id": npc_id, "capability_id": capability_id}
+        return _planner_success(
+            cmd.type,
+            changes=[StateChange("narrative_plan", "remove", "npc_capabilities.revoke", revoke_dict)],
+            metadata={"npc_id": npc_id, "capability_id": capability_id},
         )
 
     @staticmethod
@@ -839,7 +1133,10 @@ class PlannerWorldHandler(StaticCommandHandler):
     COMMAND_TYPES = (
         "planner_plant_environmental",
         "planner_fill_area",
+        "planner_fill_location",
         "planner_plant_encounter",
+        "planner_discover_room",
+        "planner_fill_room",
     )
 
     def validate(
@@ -848,7 +1145,6 @@ class PlannerWorldHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         source_gate = _planner_source_gate(cmd)
         if not source_gate.ok:
             return source_gate
@@ -866,6 +1162,89 @@ class PlannerWorldHandler(StaticCommandHandler):
                 return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
             if not isinstance(monster_ids, list) or not monster_ids:
                 return ValidationResult(ok=False, reason="monster_ids must be a non-empty list")
+        if cmd.type == "planner_fill_area":
+            conflict_reason = self._validate_fill_area_target(area_id, cmd.params, world)
+            if conflict_reason is not None:
+                return ValidationResult(ok=False, reason=conflict_reason)
+        if cmd.type == "planner_discover_room":
+            location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+            room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+            if location_id is None:
+                return ValidationResult(ok=False, reason="location_id must be a non-empty string")
+            if room_id is None:
+                return ValidationResult(ok=False, reason="room_id must be a non-empty string")
+            if not world.has_registry("maps"):
+                return ValidationResult(ok=False, reason="maps registry is required")
+            sub_loc = world.maps.get_sub_location(area_id, location_id)
+            if sub_loc is None:
+                return ValidationResult(ok=False, reason=f"unknown sub_location '{location_id}'")
+            room_template = sub_loc.rooms.get(room_id)
+            if room_template is None:
+                return ValidationResult(ok=False, reason=f"unknown room '{room_id}' in sub_location '{location_id}'")
+            if not getattr(room_template, "discoverable", False):
+                return ValidationResult(ok=False, reason=f"room '{room_id}' is not discoverable")
+        if cmd.type == "planner_fill_room":
+            location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+            room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+            name = coerce_non_empty_string(cmd.params.get("name"))
+            if location_id is None:
+                return ValidationResult(ok=False, reason="location_id must be a non-empty string")
+            if room_id is None:
+                return ValidationResult(ok=False, reason="room_id must be a non-empty string")
+            if name is None:
+                return ValidationResult(ok=False, reason="name must be a non-empty string")
+            # Check capacity: max 5 dynamic rooms per sub_location
+            if state.areas.count_dynamic_rooms(area_id, location_id) >= 5:
+                return ValidationResult(ok=False, reason=f"dynamic room capacity exceeded for '{location_id}'")
+            # Check no duplicate room_id (static + dynamic)
+            if world.has_registry("maps"):
+                sub_loc = world.maps.get_sub_location(area_id, location_id)
+                if sub_loc is not None and room_id in sub_loc.rooms:
+                    return ValidationResult(ok=False, reason=f"room_id '{room_id}' already exists as a static room")
+            existing = state.areas.list_dynamic_rooms(area_id, location_id)
+            if any(r.get("room_id") == room_id for r in existing):
+                return ValidationResult(ok=False, reason=f"dynamic room_id '{room_id}' already exists")
+        if cmd.type == "planner_fill_location":
+            location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+            if location_id is None:
+                return ValidationResult(ok=False, reason="location_id must be a non-empty string")
+            if not world.has_registry("maps"):
+                return ValidationResult(ok=False, reason="maps registry is required")
+            sub_loc = world.maps.get_sub_location(area_id, location_id)
+            if sub_loc is None:
+                return ValidationResult(ok=False, reason=f"unknown sub_location '{location_id}'")
+            room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+            if room_id is not None:
+                static_room = sub_loc.rooms.get(room_id)
+                has_dynamic_room = any(
+                    str(room.get("room_id", "")).strip() == room_id
+                    for room in state.areas.list_dynamic_rooms(area_id, location_id)
+                )
+                if static_room is None and not has_dynamic_room:
+                    return ValidationResult(
+                        ok=False,
+                        reason=f"unknown room '{room_id}' in sub_location '{location_id}'",
+                    )
+            interactables = _normalize_interactable_dict_list(cmd.params.get("interactables"))
+            if not interactables:
+                return ValidationResult(ok=False, reason="interactables must be a non-empty list")
+            existing_count = state.areas.count_scoped_interactable_overlays(
+                area_id,
+                location_id,
+                room_id,
+            )
+            existing_ids = {
+                str(item.get("id", "")).strip()
+                for item in state.areas.list_scoped_interactable_overlays(area_id, location_id, room_id)
+            }
+            new_ids = {
+                str(item.get("id", "")).strip()
+                for item in interactables
+                if str(item.get("id", "")).strip()
+            }
+            projected_count = existing_count + len(new_ids - existing_ids)
+            if projected_count > 4:
+                return ValidationResult(ok=False, reason="scene interactable overlay capacity exceeded")
         return ValidationResult(ok=True)
 
     def compute(
@@ -881,9 +1260,37 @@ class PlannerWorldHandler(StaticCommandHandler):
             return self._compute_plant_environmental(cmd, state)
         if cmd.type == "planner_fill_area":
             return self._compute_fill_area(cmd, state)
+        if cmd.type == "planner_fill_location":
+            return self._compute_fill_location(cmd, state)
         if cmd.type == "planner_plant_encounter":
             return self._compute_plant_encounter(cmd)
+        if cmd.type == "planner_discover_room":
+            return self._compute_discover_room(cmd)
+        if cmd.type == "planner_fill_room":
+            return self._compute_fill_room(cmd)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
+
+    def _validate_fill_area_target(
+        self,
+        area_id: str,
+        params: Mapping[str, Any],
+        world: WorldInstance,
+    ) -> str | None:
+        sub_area_id = coerce_non_empty_string(params.get("id"))
+        if sub_area_id is None:
+            return None
+        if world.has_registry("maps"):
+            sub_loc = world.maps.get_sub_location(area_id, sub_area_id)
+            if sub_loc is not None:
+                return f"fill_area duplicates existing sub_location '{sub_area_id}'"
+            area_template = world.maps.get(area_id)
+            if area_template is not None:
+                for existing_sub_loc in area_template.sub_locations.values():
+                    if sub_area_id in getattr(existing_sub_loc, "rooms", {}):
+                        return f"fill_area duplicates existing room '{sub_area_id}'"
+        if sub_area_id in canonical_facility_ids(area_id):
+            return f"fill_area duplicates canonical facility '{sub_area_id}'"
+        return None
 
     def _compute_plant_environmental(
         self,
@@ -922,6 +1329,68 @@ class PlannerWorldHandler(StaticCommandHandler):
             spec_overrides={},
         )
 
+    def _compute_fill_location(self, cmd: Command, state: StateContainer) -> ExecuteResult:
+        area_id = coerce_non_empty_string(cmd.params.get("area_id")) or ""
+        location_id = coerce_non_empty_string(cmd.params.get("location_id")) or ""
+        room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+        # Auto-fill room_id when player is in the target location and has a room
+        if room_id is None and state.has_slice("player"):
+            player = state.player
+            if (
+                (player.current_area or "") == area_id
+                and (player.current_location or "") == location_id
+                and player.current_room
+            ):
+                room_id = player.current_room
+        interactables = _normalize_interactable_dict_list(cmd.params.get("interactables"))
+        scope_key = (
+            f"{location_id}__{room_id}"
+            if room_id is not None
+            else location_id
+        )
+        # 2a: capacity double-check using the same upsert logic as AreaSlice.
+        # Simulate what upsert_scoped_interactable_overlays would do so that
+        # compute() returns ExecuteResult.error instead of letting the state
+        # layer raise ValueError.
+        _MAX_OVERLAY_ENTRIES = 4
+        existing_overlays = state.areas.list_scoped_interactable_overlays(
+            area_id, location_id, room_id
+        )
+        existing_by_id = {
+            str(item.get("id", "")).strip()
+            for item in existing_overlays
+            if str(item.get("id", "")).strip()
+        }
+        simulated_count = len(existing_overlays)
+        for item in interactables:
+            item_id = str(item.get("id", "")).strip()
+            if not item_id:
+                continue
+            if item_id not in existing_by_id:
+                simulated_count += 1
+                existing_by_id.add(item_id)
+        if simulated_count > _MAX_OVERLAY_ENTRIES:
+            return ExecuteResult.error("scene interactable overlay capacity exceeded")
+        metadata = {
+            "area_id": area_id,
+            "location_id": location_id,
+            "room_id": room_id,
+            "scope_key": scope_key,
+            "interactable_count": len(interactables),
+        }
+        return _planner_success(
+            cmd.type,
+            changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"{area_id}.scoped_interactable_overlay.{scope_key}",
+                    interactables,
+                )
+            ],
+            metadata=metadata,
+        )
+
     def _compute_sub_area_command(
         self,
         cmd: Command,
@@ -943,10 +1412,10 @@ class PlannerWorldHandler(StaticCommandHandler):
         counts = state.areas.count_dynamic_sub_areas(area_id)
         tier = default_tier
         if default_tier == "permanent":
-            if counts.get("permanent", 0) >= 3 or counts.get("total", 0) >= 6:
+            if counts.get("permanent", 0) >= 8 or counts.get("total", 0) >= 15:
                 return ExecuteResult.error("dynamic sub-area capacity exceeded")
         else:
-            if counts.get("total", 0) >= 6:
+            if counts.get("total", 0) >= 15:
                 return ExecuteResult.error("dynamic sub-area capacity exceeded")
         sub_area_id = (
             coerce_non_empty_string(cmd.params.get("clue_id"))
@@ -956,6 +1425,10 @@ class PlannerWorldHandler(StaticCommandHandler):
         expiry_ticks = coerce_int(cmd.params.get("expiry_ticks"))
         if expiry_ticks is None:
             expiry_ticks = default_expiry
+        # 2b: normalize interactables and resident_npcs to lists defensively,
+        # so that downstream code reading these fields never encounters non-list values.
+        raw_interactables = _normalize_interactable_list(cmd.params.get("interactables"))
+        raw_resident_npcs = _normalize_string_list(cmd.params.get("resident_npcs"))
         created = {
             "id": sub_area_id,
             "label": _string_or_empty(cmd.params.get(label_fallback_key)),
@@ -966,8 +1439,8 @@ class PlannerWorldHandler(StaticCommandHandler):
             "discovery_mode": coerce_non_empty_string(spec_overrides.get("discovery_mode")) or "auto",
             "discovery_dc": coerce_int(spec_overrides.get("discovery_dc")) or 0,
             "hostile_config": cmd.params.get("hostile_config"),
-            "interactables": _normalize_string_list(cmd.params.get("interactables")),
-            "resident_npcs": _normalize_string_list(cmd.params.get("resident_npcs")),
+            "interactables": raw_interactables if isinstance(raw_interactables, list) else [],
+            "resident_npcs": raw_resident_npcs if isinstance(raw_resident_npcs, list) else [],
             "linked_quest_id": spec_overrides.get("linked_quest_id"),
             "linked_milestone": spec_overrides.get("linked_milestone"),
             "source": "narrative_planner",
@@ -976,20 +1449,42 @@ class PlannerWorldHandler(StaticCommandHandler):
             "status": "active",
         }
         temporary.append(created)
+        # A4: for each resident NPC listed, emit an npc_presence StateChange
+        extra_changes: list[StateChange] = []
+        for npc_id in created.get("resident_npcs") or []:
+            npc_id_str = coerce_non_empty_string(npc_id)
+            if npc_id_str is None:
+                continue
+            extra_changes.append(
+                StateChange(
+                    "areas",
+                    "set",
+                    f"npc_presence.{npc_id_str}",
+                    {
+                        "area_id": area_id,
+                        "location_id": sub_area_id,
+                        "source": "planner",
+                    },
+                )
+            )
         return _planner_success(
             cmd.type,
-            changes=[StateChange("areas", "set", f"{area_id}.temporary_sub_areas", temporary)],
+            changes=[StateChange("areas", "set", f"{area_id}.temporary_sub_areas", temporary), *extra_changes],
             metadata={
                 "area_id": area_id,
                 "sub_area_id": created["id"],
                 "sub_area_label": created.get("label", ""),
                 "change_type": change_type,
                 "sub_area": created,
+                "npc_presence_count": len(extra_changes),
             },
         )
 
     def _compute_plant_encounter(self, cmd: Command) -> ExecuteResult:
-        area_id = coerce_non_empty_string(cmd.params.get("area_id")) or ""
+        area_id = coerce_non_empty_string(cmd.params.get("area_id"))
+        # 2c: guard against empty area_id which would produce an invalid hostile_tracking entry
+        if not area_id:
+            return ExecuteResult.error("area_id must be a non-empty string")
         current_tick = coerce_int(cmd.params.get("current_tick")) or 0
         sub_area_id = coerce_non_empty_string(cmd.params.get("sub_area_id")) or ""
         surprise_modifier = coerce_int(cmd.params.get("surprise_modifier"))
@@ -1015,6 +1510,69 @@ class PlannerWorldHandler(StaticCommandHandler):
             cmd.type,
             changes=[StateChange("areas", "modify", f"hostile_tracking.{sub_area_id}", entry)],
             metadata={"area_id": area_id, "sub_area_id": sub_area_id, "entry": entry},
+        )
+
+    def _compute_discover_room(self, cmd: Command) -> ExecuteResult:
+        area_id = coerce_non_empty_string(cmd.params.get("area_id")) or ""
+        location_id = coerce_non_empty_string(cmd.params.get("location_id")) or ""
+        room_id = coerce_non_empty_string(cmd.params.get("room_id")) or ""
+        return _planner_success(
+            cmd.type,
+            changes=[
+                StateChange(
+                    "areas",
+                    "set",
+                    f"{area_id}.discovered_room.{location_id}.{room_id}",
+                    True,
+                )
+            ],
+            metadata={
+                "area_id": area_id,
+                "location_id": location_id,
+                "room_id": room_id,
+            },
+        )
+
+    def _compute_fill_room(self, cmd: Command) -> ExecuteResult:
+        area_id = coerce_non_empty_string(cmd.params.get("area_id")) or ""
+        location_id = coerce_non_empty_string(cmd.params.get("location_id")) or ""
+        room_id = coerce_non_empty_string(cmd.params.get("room_id")) or ""
+        name = coerce_non_empty_string(cmd.params.get("name")) or ""
+        current_tick = coerce_int(cmd.params.get("current_tick")) or 0
+        description = _string_or_empty(cmd.params.get("description"))
+        discoverable = _coerce_optional_bool(cmd.params.get("discoverable"))
+        expiry_ticks = coerce_int(cmd.params.get("expiry_ticks"))
+        room_dict: dict[str, Any] = {
+            "sub_loc_id": location_id,
+            "room_id": room_id,
+            "name": name,
+            "description": description,
+            "discoverable": discoverable,
+            "expiry": expiry_ticks if expiry_ticks is not None else -1,
+            "created_at_tick": current_tick,
+            "source": "narrative_planner",
+        }
+        # 2d: defensive isinstance check — room_dict must be a Mapping before
+        # emitting a StateChange. It is always a dict here, but verify explicitly
+        # to guard against future refactors that might substitute a different type.
+        if not isinstance(room_dict, Mapping):
+            return ExecuteResult.error("fill_room: room entry must be a mapping")
+        return _planner_success(
+            cmd.type,
+            changes=[
+                StateChange(
+                    "areas",
+                    "add",
+                    f"{area_id}.dynamic_room",
+                    room_dict,
+                )
+            ],
+            metadata={
+                "area_id": area_id,
+                "location_id": location_id,
+                "room_id": room_id,
+                "name": name,
+            },
         )
 
 

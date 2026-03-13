@@ -10,6 +10,7 @@ from app.game_core.rules.handler_utils import (
     build_dice_roll,
     coerce_int,
     handler_success,
+    handler_success_no_delta,
     resolve_roll,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
@@ -17,7 +18,11 @@ from app.game_core.state import StateChange, StateContainer
 
 
 class HostileAreaHandler(StaticCommandHandler):
-    COMMAND_TYPES = ("enter_hostile",)
+    COMMAND_TYPES = (
+        "enter_hostile",
+        "record_hostile_stealth_choice",
+        "mark_hostile_spotted",
+    )
 
     def validate(
         self,
@@ -25,6 +30,10 @@ class HostileAreaHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
+        if cmd.type == "record_hostile_stealth_choice":
+            return self._validate_record_stealth_choice(cmd, state)
+        if cmd.type == "mark_hostile_spotted":
+            return self._validate_mark_spotted(cmd, state)
         del world
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
@@ -64,6 +73,10 @@ class HostileAreaHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ExecuteResult:
+        if cmd.type == "record_hostile_stealth_choice":
+            return self._compute_record_stealth_choice(cmd, state)
+        if cmd.type == "mark_hostile_spotted":
+            return self._compute_mark_spotted(cmd, state)
         del world
         sub_area_id = str(cmd.params["sub_area_id"]).strip()
         payload = state.areas.get_hostile_state(sub_area_id)
@@ -154,6 +167,118 @@ class HostileAreaHandler(StaticCommandHandler):
                     total=total,
                 )
             ],
+        )
+
+    def _validate_record_stealth_choice(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if cmd.source not in {"engine", "system"}:
+            return ValidationResult(
+                ok=False,
+                reason="record_hostile_stealth_choice is restricted to engine/system",
+            )
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
+        sub_area_id = self._non_empty_string(cmd.params.get("sub_area_id"))
+        if sub_area_id is None:
+            return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
+        choice = self._non_empty_string(cmd.params.get("choice"))
+        if choice is None:
+            return ValidationResult(ok=False, reason="choice must be a non-empty string")
+        payload = state.areas.get_hostile_state(sub_area_id)
+        if payload is None:
+            return ValidationResult(ok=False, reason=f"unknown hostile sub area: {sub_area_id}")
+        return ValidationResult(ok=True)
+
+    def _compute_record_stealth_choice(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        sub_area_id = str(cmd.params["sub_area_id"]).strip()
+        choice = str(cmd.params["choice"]).strip()
+        payload = state.areas.get_hostile_state(sub_area_id)
+        if payload is None:
+            return ExecuteResult.error(f"unknown hostile sub area: {sub_area_id}")
+        updated_payload = state.areas.copy_hostile_state(payload)
+        updated_payload["last_stealth_choice"] = choice
+        return handler_success(
+            "hostile_area",
+            "record_hostile_stealth_choice",
+            changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"hostile_tracking.{sub_area_id}",
+                    updated_payload,
+                )
+            ],
+            metadata={"sub_area_id": sub_area_id, "choice": choice},
+        )
+
+    def _validate_mark_spotted(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if cmd.source not in {"engine", "system"}:
+            return ValidationResult(
+                ok=False,
+                reason="mark_hostile_spotted is restricted to engine/system",
+            )
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice is required")
+        sub_area_id = self._non_empty_string(cmd.params.get("sub_area_id"))
+        if sub_area_id is None:
+            return ValidationResult(ok=False, reason="sub_area_id must be a non-empty string")
+        payload = state.areas.get_hostile_state(sub_area_id)
+        if payload is None:
+            return ValidationResult(ok=False, reason=f"unknown hostile sub area: {sub_area_id}")
+        return ValidationResult(ok=True)
+
+    def _compute_mark_spotted(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        sub_area_id = str(cmd.params["sub_area_id"]).strip()
+        payload = state.areas.get_hostile_state(sub_area_id)
+        if payload is None:
+            return ExecuteResult.error(f"unknown hostile sub area: {sub_area_id}")
+        if bool(payload.get("cleared", False)) or bool(payload.get("combat_active", False)):
+            return handler_success_no_delta(
+                "hostile_area",
+                "mark_hostile_spotted",
+                metadata={"sub_area_id": sub_area_id, "status": "noop"},
+            )
+
+        updated_payload = state.areas.copy_hostile_state(payload)
+        updated_payload["status"] = "spotted"
+        updated_payload["entry_mode"] = None
+        updated_payload["last_stealth_result"] = None
+        if "last_choice" in cmd.params:
+            updated_payload["last_stealth_choice"] = self._non_empty_string(
+                cmd.params.get("last_choice")
+            )
+
+        return handler_success(
+            "hostile_area",
+            "mark_hostile_spotted",
+            changes=[
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"hostile_tracking.{sub_area_id}",
+                    updated_payload,
+                )
+            ],
+            metadata={
+                "sub_area_id": sub_area_id,
+                "status": "spotted",
+                "last_choice": updated_payload.get("last_stealth_choice"),
+            },
         )
 
     @staticmethod

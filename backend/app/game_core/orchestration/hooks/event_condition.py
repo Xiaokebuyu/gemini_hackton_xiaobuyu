@@ -23,7 +23,6 @@ from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
-from app.game_core.state import StateChange
 
 logger = logging.getLogger(__name__)
 
@@ -285,12 +284,18 @@ class EventConditionHook(NoOpSettlementHook):
             patch = dict(transition.patch)
             patch.setdefault("from_state", from_state)
             patch.setdefault("reason", transition.reason)
-            context.state.events.set_state(
-                transition.event_id,
-                transition.to_state,
-                patch=patch,
-            )
-            context.record_change(StateChange(slice="events", operation="set", path=f"state.{transition.event_id}", value=transition.to_state))
+            transition_result = context.execute_command(Command(
+                type="transition_event_state",
+                params={
+                    "event_id": transition.event_id,
+                    "to_state": transition.to_state,
+                    "patch": patch,
+                },
+                source="system",
+            ))
+            if not transition_result.executed:
+                skipped_invalid_transition_count += 1
+                continue
             updated_event = context.state.events.get_event(transition.event_id) or {}
             known_events[transition.event_id] = updated_event
             reason = transition.reason or "state_changed"

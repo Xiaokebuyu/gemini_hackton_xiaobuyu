@@ -99,35 +99,26 @@ def _map_response(session: ManagedSession) -> MapPanelResponse:
 def _quest_response(session: ManagedSession) -> QuestPanelResponse:
     """Build the quest panel payload from the quest slice.
 
-    Merges content-layer titles/descriptions into runtime milestone states
-    so the frontend can display meaningful milestone information.
+    milestone_states are internal engine state and are not exposed through the
+    quest panel API (P25-12). Only active/available/completed dynamic quests
+    are shown; retired and expired quests are filtered out.
     """
 
     quest_payload = session.runtime.state.quests.snapshot()
-    raw_milestones = quest_payload.get("milestone_states", {})
 
-    # Enrich milestone states with title/description from content registry
-    enriched_milestones: dict[str, Any] = {}
-    has_quest_registry = session.runtime.world.has_registry("quests")
-    for ms_id, ms_state in raw_milestones.items():
-        entry: dict[str, Any] = dict(ms_state) if isinstance(ms_state, Mapping) else {"state": str(ms_state)}
-        if has_quest_registry:
-            template = session.runtime.world.quests.get_milestone(ms_id)
-            if template is not None:
-                entry["title"] = template.title or ms_id
-                entry["description"] = template.description or ""
-                entry["chapter_id"] = template.chapter_id or ""
-        if "title" not in entry:
-            entry["title"] = ms_id
-        enriched_milestones[ms_id] = entry
+    # Filter dynamic_quests — hide retired/expired from the frontend
+    raw_dynamic = quest_payload.get("dynamic_quests", {})
+    if not isinstance(raw_dynamic, Mapping):
+        raw_dynamic = {}
+    visible_quests: dict[str, Any] = {}
+    for qid, quest in raw_dynamic.items():
+        status = str(quest.get("status", "")).strip().lower() if isinstance(quest, Mapping) else ""
+        if status in {"retired", "expired"}:
+            continue
+        visible_quests[qid] = quest
 
     return QuestPanelResponse(
-        milestone_states=enriched_milestones,
-        dynamic_quests=normalize_dynamic_quest_panel(
-            quest_payload.get("dynamic_quests", {})
-            if isinstance(quest_payload.get("dynamic_quests", {}), Mapping)
-            else {}
-        ),
+        dynamic_quests=normalize_dynamic_quest_panel(visible_quests),
         chapter_completion=dict(quest_payload.get("chapter_completion", {})),
     )
 

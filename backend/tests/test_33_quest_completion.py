@@ -645,7 +645,7 @@ class TestMilestoneCascadeAndSSE:
 
 class TestQuestsJsonData:
     def test_success_conditions_loaded_for_all_milestones(self) -> None:
-        """All 3 milestones in goblin_slayer quests.json should have success_conditions."""
+        """All 7 milestones in goblin_slayer quests.json should have success_conditions."""
         quests_path = (
             pathlib.Path(__file__).parent.parent
             / "data"
@@ -662,7 +662,11 @@ class TestQuestsJsonData:
         assert not issues, f"QuestRegistry validation errors: {issues}"
 
         milestones = {ms.id: ms for ms in reg.list_all()}
-        expected_ids = {"ms_familiar_banter", "ms_specialist_cleaning", "ms_call_from_water_capital"}
+        expected_ids = {
+            "ms_arrival", "ms_town_life", "ms_party_encounter",
+            "ms_growing_shadow", "ms_into_the_wilds", "ms_the_hive",
+            "ms_water_capital_call",
+        }
         assert expected_ids.issubset(milestones.keys())
 
         for ms_id in expected_ids:
@@ -671,7 +675,8 @@ class TestQuestsJsonData:
                 f"Milestone {ms_id} has no success_conditions"
             )
 
-    def test_familiar_banter_conditions_types(self) -> None:
+    def test_arrival_conditions(self) -> None:
+        """ms_arrival should have npc_talked condition for guild_girl."""
         quests_path = (
             pathlib.Path(__file__).parent.parent
             / "data"
@@ -683,13 +688,13 @@ class TestQuestsJsonData:
         reg = QuestRegistry()
         reg.load(data)
 
-        ms = reg.get_milestone("ms_familiar_banter")
+        ms = reg.get_milestone("ms_arrival")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
-        assert "location_visited" in cond_types
         assert "npc_talked" in cond_types
 
-    def test_specialist_cleaning_conditions_types(self) -> None:
+    def test_the_hive_conditions_types(self) -> None:
+        """ms_the_hive should have kill_count and location_visited conditions."""
         quests_path = (
             pathlib.Path(__file__).parent.parent
             / "data"
@@ -701,13 +706,14 @@ class TestQuestsJsonData:
         reg = QuestRegistry()
         reg.load(data)
 
-        ms = reg.get_milestone("ms_specialist_cleaning")
+        ms = reg.get_milestone("ms_the_hive")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
         assert "kill_count" in cond_types
         assert "location_visited" in cond_types
 
-    def test_call_from_water_capital_conditions_types(self) -> None:
+    def test_growing_shadow_conditions_types(self) -> None:
+        """ms_growing_shadow should have npc_talked conditions."""
         quests_path = (
             pathlib.Path(__file__).parent.parent
             / "data"
@@ -719,14 +725,13 @@ class TestQuestsJsonData:
         reg = QuestRegistry()
         reg.load(data)
 
-        ms = reg.get_milestone("ms_call_from_water_capital")
+        ms = reg.get_milestone("ms_growing_shadow")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
-        assert "location_visited" in cond_types
         assert "npc_talked" in cond_types
 
     def test_next_milestones_chain_intact(self) -> None:
-        """ms_familiar_banter → ms_specialist_cleaning → ms_call_from_water_capital."""
+        """Full 7-milestone chain: arrival → town_life → encounter → shadow → wilds → hive → water_capital."""
         quests_path = (
             pathlib.Path(__file__).parent.parent
             / "data"
@@ -738,10 +743,10 @@ class TestQuestsJsonData:
         reg = QuestRegistry()
         reg.load(data)
 
-        assert "ms_specialist_cleaning" in (
-            reg.get_milestone("ms_familiar_banter").next_milestones
-        )
-        assert "ms_call_from_water_capital" in (
-            reg.get_milestone("ms_specialist_cleaning").next_milestones
-        )
-        assert reg.get_milestone("ms_call_from_water_capital").next_milestones == []
+        assert "ms_town_life" in reg.get_milestone("ms_arrival").next_milestones
+        assert "ms_party_encounter" in reg.get_milestone("ms_town_life").next_milestones
+        assert "ms_growing_shadow" in reg.get_milestone("ms_party_encounter").next_milestones
+        assert "ms_into_the_wilds" in reg.get_milestone("ms_growing_shadow").next_milestones
+        assert "ms_the_hive" in reg.get_milestone("ms_into_the_wilds").next_milestones
+        assert "ms_water_capital_call" in reg.get_milestone("ms_the_hive").next_milestones
+        assert reg.get_milestone("ms_water_capital_call").next_milestones == []

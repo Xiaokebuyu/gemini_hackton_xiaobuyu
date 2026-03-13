@@ -19,7 +19,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.game_core.content import WorldInstance
-from app.game_core.orchestration.presence import get_area_npcs, is_colocated
+from app.game_core.orchestration.presence import (
+    get_area_npcs,
+    get_npc_room,
+    is_colocated,
+)
 from app.game_core.state import StateContainer
 from app.game_core.state.quest_runtime import normalize_runtime_dynamic_quest
 
@@ -35,7 +39,9 @@ class InteractionPolicyContext:
 
     current_area: str
     current_location: str | None
+    current_room: str | None
     npc_positions: dict[str, tuple[str | None, str | None]]
+    npc_rooms: dict[str, str | None]
     npc_names: dict[str, str]
     npc_tags: dict[str, frozenset[str]]
     dynamic_quests: dict[str, dict[str, Any]]
@@ -57,6 +63,8 @@ def build_interaction_policy_context(
     current_area = (player.current_area or "").strip()
     current_location_text = (player.current_location or "").strip()
     current_location = current_location_text or None
+    current_room_text = str(getattr(player, "current_room", "") or "").strip()
+    current_room = current_room_text or None
 
     # Collect all area IDs to scan: AreaSlice runtime areas + CharacterRegistry
     # declared areas (for NPCs that exist only in content, never moved at runtime).
@@ -76,10 +84,12 @@ def build_interaction_policy_context(
     # Build npc_positions using the shared presence helper (covers both primary
     # AreaSlice data and CharacterRegistry fallback per area).
     npc_positions: dict[str, tuple[str | None, str | None]] = {}
+    npc_rooms: dict[str, str | None] = {}
     for aid in all_area_ids:
         for npc_id, sub_loc in get_area_npcs(state, world, aid).items():
             if npc_id not in npc_positions:
                 npc_positions[npc_id] = (aid, sub_loc)
+                npc_rooms[npc_id] = get_npc_room(state, world, aid, npc_id)
 
     # NPC names from CharacterRegistry
     npc_names: dict[str, str] = {}
@@ -113,7 +123,9 @@ def build_interaction_policy_context(
     return InteractionPolicyContext(
         current_area=current_area,
         current_location=current_location,
+        current_room=current_room,
         npc_positions=npc_positions,
+        npc_rooms=npc_rooms,
         npc_names=npc_names,
         npc_tags=npc_tags,
         dynamic_quests=dynamic_quests,
@@ -239,6 +251,7 @@ def _validate_npc_presence(
             "message": f"unknown character: {npc_id}",
         }
     npc_area, npc_location = context.npc_positions.get(npc_id, (None, None))
+    npc_room = context.npc_rooms.get(npc_id)
     if not npc_area:
         return {
             "code": "npc_not_available",
@@ -251,7 +264,12 @@ def _validate_npc_presence(
             "code": "npc_not_present",
             "message": f"npc is not in the current area: {npc_id}",
         }
-    if npc_area == context.current_area and is_colocated(npc_location, context.current_location):
+    if npc_area == context.current_area and is_colocated(
+        npc_location,
+        context.current_location,
+        npc_room,
+        context.current_room,
+    ):
         return None
     return {
         "code": "npc_not_present",

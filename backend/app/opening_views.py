@@ -67,6 +67,21 @@ def build_opening_narration(session: ManagedSession) -> str:
     else:
         lines.append("无论怎么开局，第一步终究得由你自己迈出去。")
 
+    # Prepend chapter/milestone story context so the fallback narration is grounded
+    # in the actual story rather than purely generic (D-P31 Phase 1d).
+    world = session.runtime.world
+    if world.has_registry("quests"):
+        target_ms_id: str | None = None
+        if session.runtime.state.has_slice("narrative_plan"):
+            target_ms_id = session.runtime.state.narrative_plan.current_target_milestone
+        if target_ms_id:
+            ms = world.quests.get_milestone(target_ms_id)
+            if ms and ms.narrative_context:
+                lines.insert(0, ms.narrative_context)
+        chapters = world.quests.chapters()
+        if chapters and chapters[0].description:
+            lines.insert(0, chapters[0].description)
+
     return " ".join(line for line in lines if line)
 
 

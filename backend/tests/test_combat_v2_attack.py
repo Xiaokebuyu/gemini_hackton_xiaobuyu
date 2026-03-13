@@ -530,3 +530,205 @@ def test_combat_defend_sets_flags() -> None:
     unit = _get_unit(updated, "ally_1")
     assert unit["defending"] is True
     assert unit["action_used"] is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: ability_mod + proficiency_bonus injection tests
+# ---------------------------------------------------------------------------
+
+def _player_unit(
+    unit_id: str,
+    side: str,
+    position: list[int],
+    *,
+    hp: int = 20,
+    ac: int = 12,
+    stats: dict[str, Any] | None = None,
+    proficiency_bonus: int = 2,
+    attacks: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a player/companion-sourced unit dict for Phase 2 tests."""
+    return {
+        "unit_id": unit_id,
+        "side": side,
+        "source": "player",  # non-monster → ability_mod + prof applied
+        "position": list(position),
+        "speed": 3,
+        "hp": hp,
+        "max_hp": hp,
+        "ac": ac,
+        "alive": True,
+        "fled": False,
+        "action_used": False,
+        "move_used": False,
+        "disengaged": False,
+        "dashed": False,
+        "defending": False,
+        "reaction_used": False,
+        "surprised": False,
+        "attacks": attacks or [
+            {
+                "name": "Sword",
+                "hit_bonus": 0,
+                "damage_dice": "1d6",
+                "damage_type": "slashing",
+                "range": 1,
+                "tags": ["MELEE"],
+            }
+        ],
+        "stats": stats or {"str": 14, "dex": 12, "con": 10, "int": 10, "wis": 10, "cha": 10},
+        "proficiency_bonus": proficiency_bonus,
+    }
+
+
+def test_player_melee_attack_adds_str_mod_and_proficiency() -> None:
+    """Player (source=player) melee attack includes STR mod + proficiency in hit total."""
+    # STR=14 → mod=+2; proficiency_bonus=2 → total bonus = hit_bonus(0) + 2 + 2 = +4
+    attacker = _player_unit("hero", "ally", [0, 0])
+    target = _unit("goblin", "enemy", [1, 0], hp=30, ac=10)
+    payload = _make_v2_payload([attacker, target], ["hero"])
+    state = _make_state(payload)
+
+    # d20=6 → raw_total = 6+0(hit_bonus)+2(str_mod)+2(prof) = 10 > AC10 → hit
+    # damage: d6=3 + str_mod(2) = 5
+    cmd = _make_cmd("combat_attack", {"sub_area_id": "room1", "target": "goblin"})
+    with mock.patch.object(random, "randint", _seq_rolls(6, 3)):
+        result = _apply(cmd, state)
+
+    assert result.executed, f"Unexpected failure: {result.errors}"
+    assert result.metadata["hit"] is True
+    assert result.metadata["damage"] == 5  # 3 (dice) + 2 (str_mod)
+
+
+def test_player_attack_modifiers_in_roll_record() -> None:
+    """Roll record for player attack includes ability_mod and proficiency_bonus entries."""
+    attacker = _player_unit("hero", "ally", [0, 0])
+    target = _unit("goblin", "enemy", [1, 0], hp=30, ac=8)
+    payload = _make_v2_payload([attacker, target], ["hero"])
+    state = _make_state(payload)
+
+    cmd = _make_cmd("combat_attack", {"sub_area_id": "room1", "target": "goblin"})
+    with mock.patch.object(random, "randint", _seq_rolls(10, 3)):
+        result = _apply(cmd, state)
+
+    assert result.executed
+    rolls = result.rolls
+    assert len(rolls) == 1
+    # DiceRoll is a dataclass — access .modifiers attribute directly
+    modifiers = {m["name"]: m["value"] for m in rolls[0].modifiers}
+    assert "ability_mod" in modifiers
+    assert modifiers["ability_mod"] == 2   # STR 14 → +2
+    assert "proficiency_bonus" in modifiers
+    assert modifiers["proficiency_bonus"] == 2
+
+
+def test_monster_attack_no_extra_mods() -> None:
+    """Monster (source=monster) attack does NOT add ability_mod or proficiency."""
+    # Existing default _unit() is source=monster with hit_bonus=3
+    attacker = _unit("goblin", "enemy", [0, 0])  # source=monster
+    target = _player_unit("hero", "ally", [1, 0])
+    payload = _make_v2_payload([attacker, target], ["goblin"])
+    state = _make_state(payload)
+
+    # d20=8 → 8 + 3 (hit_bonus) = 11 vs AC12 → miss (no extra mods)
+    cmd = _make_cmd("combat_attack", {"sub_area_id": "room1", "target": "hero"})
+    with mock.patch.object(random, "randint", _seq_rolls(8, 4)):
+        result = _apply(cmd, state)
+
+    assert result.executed
+    assert result.metadata["hit"] is False  # 11 < AC12 without extra mods
+    # Roll record has no ability_mod entry for monsters
+    rolls = result.rolls
+    assert len(rolls) == 1
+    # DiceRoll is a dataclass — access .modifiers attribute directly
+    mod_names = {m["name"] for m in rolls[0].modifiers}
+    assert "ability_mod" not in mod_names
+
+
+def test_player_ranged_attack_uses_dex_mod() -> None:
+    """Player with RANGED attack uses DEX modifier (not STR)."""
+    # DEX=16 → mod=+3; STR=8 → mod=-1 → RANGED should use DEX
+    attacker = _player_unit(
+        "ranger", "ally", [0, 0],
+        stats={"str": 8, "dex": 16, "con": 10, "int": 10, "wis": 10, "cha": 10},
+        attacks=[{
+            "name": "Longbow",
+            "hit_bonus": 0,
+            "damage_dice": "1d8",
+            "damage_type": "piercing",
+            "range": 5,
+            "tags": ["RANGED"],
+        }],
+    )
+    target = _unit("goblin", "enemy", [3, 0], hp=30, ac=10)
+    payload = _make_v2_payload([attacker, target], ["ranger"])
+    state = _make_state(payload)
+
+    # d20=5 → 5 + 0 + 3(DEX) + 2(prof) = 10 > AC10 → hit
+    # damage: 1d8=4 + DEX(3) = 7
+    cmd = _make_cmd("combat_attack", {"sub_area_id": "room1", "target": "goblin"})
+    with mock.patch.object(random, "randint", _seq_rolls(5, 4)):
+        result = _apply(cmd, state)
+
+    assert result.executed
+    assert result.metadata["hit"] is True
+    assert result.metadata["damage"] == 7  # 4 (dice) + 3 (dex_mod)
+
+
+def test_player_finesse_attack_uses_dex_when_higher() -> None:
+    """Player with FINESSE weapon uses max(STR, DEX) — DEX chosen when higher."""
+    # DEX=18 → mod=+4; STR=10 → mod=0 → FINESSE uses DEX
+    attacker = _player_unit(
+        "rogue", "ally", [0, 0],
+        stats={"str": 10, "dex": 18, "con": 10, "int": 10, "wis": 10, "cha": 10},
+        attacks=[{
+            "name": "Dagger",
+            "hit_bonus": 0,
+            "damage_dice": "1d4",
+            "damage_type": "piercing",
+            "range": 1,
+            "tags": ["FINESSE", "MELEE"],
+        }],
+    )
+    target = _unit("goblin", "enemy", [1, 0], hp=30, ac=8)
+    payload = _make_v2_payload([attacker, target], ["rogue"])
+    state = _make_state(payload)
+
+    # d20=4 → 4 + 0 + 4(DEX/FINESSE) + 2(prof) = 10 > AC8 → hit
+    # damage: 1d4=2 + DEX(4) = 6
+    cmd = _make_cmd("combat_attack", {"sub_area_id": "room1", "target": "goblin"})
+    with mock.patch.object(random, "randint", _seq_rolls(4, 2)):
+        result = _apply(cmd, state)
+
+    assert result.executed
+    assert result.metadata["hit"] is True
+    assert result.metadata["damage"] == 6  # 2 (dice) + 4 (dex_mod via FINESSE)
+
+
+def test_player_damage_minimum_one_with_negative_str() -> None:
+    """Even with negative STR mod, damage is at least 1 on a hit."""
+    # STR=4 → mod=-3; dice=1 → damage = max(1, 1 + (-3)) = 1
+    attacker = _player_unit(
+        "weakling", "ally", [0, 0],
+        stats={"str": 4, "dex": 10, "con": 10, "int": 10, "wis": 10, "cha": 10},
+        attacks=[{
+            "name": "Stick",
+            "hit_bonus": 0,
+            "damage_dice": "1d4",
+            "damage_type": "bludgeoning",
+            "range": 1,
+            "tags": ["MELEE"],
+        }],
+    )
+    target = _unit("goblin", "enemy", [1, 0], hp=30, ac=5)
+    payload = _make_v2_payload([attacker, target], ["weakling"])
+    state = _make_state(payload)
+
+    # d20=15 → 15 + 0 + (-3)(STR) + 2(prof) = 14 > AC5 → hit; dice=1, dmg = max(1, 1-3) = 1
+    cmd = _make_cmd("combat_attack", {"sub_area_id": "room1", "target": "goblin"})
+    with mock.patch.object(random, "randint", _seq_rolls(15, 1)):
+        result = _apply(cmd, state)
+
+    assert result.executed
+    assert result.metadata["hit"] is True
+    assert result.metadata["damage"] == 1  # max(1, 1 - 3) = 1

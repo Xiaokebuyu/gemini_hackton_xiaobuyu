@@ -129,7 +129,8 @@ class TestLayerBuilders:
 
         assert ctx["l1_chapter_state"] is None
         assert ctx["l7_engine_result"] is None
-        assert ctx["l6_memory_recall"] == {"hits": [], "source": "recall_tool"}
+        # No retriever injected → _build_l6 returns null source
+        assert ctx["l6_memory_recall"] == {"hits": [], "source": "null"}
 
     def test_build_npc_context_l4_only_self_disposition(self) -> None:
         """NPC L4 should only contain self relationship data."""
@@ -780,9 +781,9 @@ class TestNpcFullContext:
         builder = _builder()
         assert asyncio.run(builder.build_npc_full_context("nonexistent")) is None
 
-    def test_no_double_retriever_call(self) -> None:
-        """P19-B: build_npc_full_context no longer calls the retriever at all.
-        Knowledge retrieval moved to RecallTool (on-demand via AgentContext.metadata)."""
+    def test_retriever_called_once_in_full_context(self) -> None:
+        """P25-15-1: build_npc_full_context now calls the retriever exactly once
+        via _build_l6() (L6 direct injection reactivated)."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -792,7 +793,7 @@ class TestNpcFullContext:
             "merchant_tom", memory_retriever=retriever,
         ))
 
-        assert retriever.call_count == 0
+        assert retriever.call_count == 1
 
     def test_system_prompt_matches_expected_data(self) -> None:
         """system_prompt integrates L4 relationship data exactly as build_npc_system_prompt."""
@@ -859,9 +860,9 @@ class TestTeammateFull:
         builder = _builder()
         assert asyncio.run(builder.build_teammate_full_context("nonexistent")) is None
 
-    def test_no_double_retriever_call(self) -> None:
-        """P19-B: build_teammate_full_context no longer calls the retriever at all.
-        Knowledge retrieval moved to RecallTool (on-demand via AgentContext.metadata)."""
+    def test_retriever_called_once_in_full_context(self) -> None:
+        """P25-15-1: build_teammate_full_context now calls the retriever exactly once
+        via _build_l6() (L6 direct injection reactivated)."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -871,7 +872,7 @@ class TestTeammateFull:
             "paladin_aria", memory_retriever=retriever,
         ))
 
-        assert retriever.call_count == 0
+        assert retriever.call_count == 1
 
     def test_system_prompt_contains_teammate_data(self) -> None:
         """system_prompt integrates L4 disposition data (approval/trust)."""

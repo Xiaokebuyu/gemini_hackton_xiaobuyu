@@ -1,6 +1,6 @@
 // SSE 事件分发 hook，职责：连接 sse-client ↔ stores
 // 唯一有网络副作用的层，各 store 自身不发请求
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { audio } from '../lib/audio'
 import { streamSSE } from '../lib/sse-client'
 import { urls } from '../lib/api'
@@ -13,6 +13,7 @@ import { useStreamStore } from '../stores/streamStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePlayerStore } from '../stores/playerStore'
 import { usePartyStore } from '../stores/partyStore'
+import { useVnStore } from '../stores/vnStore'
 import type {
   CharacterEnterData,
   GmCommentData,
@@ -60,6 +61,9 @@ import type {
   HiddenObjectRevealedData,
   TrapDetectedData,
   GenericErrorEventData,
+  AiProcessingData,
+  PlayerLevelUpData,
+  QuestCreatedData,
 } from '../types/sse'
 import type { GameMode, GameOption, LocationOverview } from '../types/game'
 import type {
@@ -80,6 +84,7 @@ function formatActionSuccess(actionType: string): string {
   const labels: Record<string, string> = {
     buy: '购买成功',
     sell: '出售成功',
+    donate: '奉献完成',
     accept: '任务接受',
     accept_quest: '任务接受',
     complete: '任务完成',
@@ -133,6 +138,17 @@ function canFallbackPrivateDialogue(item: DialogueOptionItem): boolean {
     'ask_requirements',
     'ask_reward',
   ].includes(intent)
+}
+
+type GameDebugApi = {
+  runFunctionalOption: (item: DialogueOptionItem) => void
+}
+
+function readFunctionalParam(item: DialogueOptionItem, key: string): string | null {
+  const raw = item.functional?.params?.[key]
+  if (typeof raw !== 'string') return null
+  const normalized = raw.trim()
+  return normalized || null
 }
 
 function formatQuestBriefMessage(data: QuestBriefData): string {
@@ -252,6 +268,11 @@ function revealChunks(text: string): string[] {
   return Array.from(text ?? '')
 }
 
+function isLocalDevEnvironment(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+}
+
 interface SessionOverride {
   worldId?: string
   sessionId?: string
@@ -271,6 +292,9 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
   // AbortController：每次发新请求前 abort 上一个流
   const abortRef = useRef<AbortController | null>(null)
   const openingQueueRef = useRef<Promise<void>>(Promise.resolve())
+  // QF-3: buffer chat invites received while in dialogue/private_chat mode
+  const pendingChatInvitesRef = useRef<NpcWantsToChatData[]>([])
+  const runFunctionalOptionRef = useRef<(item: DialogueOptionItem) => boolean>(() => false)
 
   const handleEvent = useCallback((event: { event: string; data: unknown }) => {
     const addSystemMessage = (content: string) => {
@@ -290,10 +314,26 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       scene.setGameMode(nextMode)
     }
 
+    // True when NPC dialogue is active (VN mode renders instead of scrollable chat)
+    const isVnMode = () => {
+      const { activeNpcId, gameMode } = useSceneStore.getState()
+      return !!activeNpcId || gameMode === 'private_chat'
+    }
+
     const leaveDialogue = () => {
       const sceneState = useSceneStore.getState()
       const optionState = useOptionStore.getState()
+
+      // Drain VN queue → scrollable log before leaving
+      const vnState = useVnStore.getState()
+      const vnEntries = vnState.drainToLog()
+      if (vnEntries.length > 0) {
+        useDialogueStore.getState().batchAddToLog(vnEntries)
+      }
+      vnState.reset()
+
       scene.setActiveNpc(null)
+      scene.setVnSpeaker(null)
       scene.setGameMode('explore')
       optionState.clearOptions()
       if (sceneState.lastOverview) {
@@ -356,6 +396,10 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
               return
             }
           }
+        }
+
+        if (runFunctionalOptionRef.current(item)) {
+          return
         }
 
         const activeNpcId = useSceneStore.getState().activeNpcId
@@ -445,6 +489,11 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         ? sceneState.gameMode === 'private_chat' ? 'private_chat' : 'dialogue'
         : 'explore'
       scene.setGameMode(nextMode)
+      // QF-3: flush any buffered chat invites now that dialogue has ended
+      const pending = pendingChatInvitesRef.current.splice(0)
+      for (const invite of pending) {
+        overlay.open('chat_invite', invite)
+      }
     }
 
     const applyStreamError = (d: StreamErrorData) => {
@@ -466,7 +515,11 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
           })
           break
         }
-        dialogue.resolveStreamMessage({ type: 'gm', content: d.content })
+        if (isVnMode()) {
+          useVnStore.getState().resolveStreamMessage({ type: 'gm', content: d.content })
+        } else {
+          dialogue.resolveStreamMessage({ type: 'gm', content: d.content })
+        }
         break
       }
 
@@ -482,50 +535,85 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
             })
             break
           }
-          dialogue.resolveStreamMessage({ type: 'gm_comment', content: d.content, tone: d.tone })
+          if (isVnMode()) {
+            useVnStore.getState().showGmComment(d.content)
+          } else {
+            dialogue.resolveStreamMessage({ type: 'gm_comment', content: d.content, tone: d.tone })
+          }
         }
         break
       }
 
       case 'npc_response': {
         const d = cast<NpcResponseData>(event.data)
-        dialogue.resolveStreamMessage({
-          type: d.type === 'emote' ? 'emote' : 'npc',
-          speaker: d.npc_id,
-          content: d.content,
-        })
         if (!d.passive) {
           scene.setActivePortrait(d.npc_id)
           scene.setActiveNpc(d.npc_id)
           resolveDialogueMode()
+        }
+        if (isVnMode()) {
+          if (d.type === 'emote') {
+            useVnStore.getState().showEmote(d.npc_id, d.content)
+          } else {
+            scene.setVnSpeaker(d.npc_id)
+            useVnStore.getState().resolveStreamMessage({ type: 'npc', speaker: d.npc_id, speakerName: d.npc_id, content: d.content })
+          }
+        } else {
+          dialogue.resolveStreamMessage({
+            type: d.type === 'emote' ? 'emote' : 'npc',
+            speaker: d.npc_id,
+            content: d.content,
+          })
         }
         break
       }
 
       case 'npc_emote': {
         const d = cast<NpcEmoteData>(event.data)
-        dialogue.resolveStreamMessage({ type: 'emote', speaker: d.npc_id, content: d.action })
         if (!d.passive) {
           scene.setActivePortrait(d.npc_id)
           scene.setActiveNpc(d.npc_id)
           resolveDialogueMode()
+        }
+        if (isVnMode()) {
+          useVnStore.getState().showEmote(d.npc_id, d.action)
+        } else {
+          dialogue.resolveStreamMessage({ type: 'emote', speaker: d.npc_id, content: d.action })
         }
         break
       }
 
       case 'teammate_response': {
         const d = cast<TeammateResponseData>(event.data)
-        dialogue.resolveStreamMessage({
-          type: d.type === 'emote' ? 'teammate_emote' : 'teammate',
-          speaker: d.character_id,
-          content: d.content ?? d.action ?? '',
-        })
+        if (isVnMode()) {
+          if (d.type === 'emote') {
+            useVnStore.getState().showEmote(d.character_id, d.content ?? d.action ?? '')
+          } else {
+            scene.setVnSpeaker(d.character_id)
+            useVnStore.getState().resolveStreamMessage({
+              type: 'teammate',
+              speaker: d.character_id,
+              speakerName: d.character_id,
+              content: d.content ?? d.action ?? '',
+            })
+          }
+        } else {
+          dialogue.resolveStreamMessage({
+            type: d.type === 'emote' ? 'teammate_emote' : 'teammate',
+            speaker: d.character_id,
+            content: d.content ?? d.action ?? '',
+          })
+        }
         break
       }
 
       case 'text_chunk': {
         const d = cast<TextChunkData>(event.data)
-        dialogue.appendStreamChunk(d.text)
+        if (isVnMode()) {
+          useVnStore.getState().appendToCurrentContent(d.text)
+        } else {
+          dialogue.appendStreamChunk(d.text)
+        }
         break
       }
 
@@ -553,6 +641,9 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
           break
         }
         applyDialogueOptions(d)
+        if (isVnMode()) {
+          useVnStore.getState().setShowingOptions(true)
+        }
         break
       }
 
@@ -570,6 +661,10 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       // ── 快照触发的覆盖层 ─────────────────────────────────────────────────
       case 'shop_snapshot':
+        overlay.open('shop', event.data)
+        break
+
+      case 'offer_trade':
         overlay.open('shop', event.data)
         break
 
@@ -600,6 +695,20 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
             },
           })
         }
+        if (npcId && availableIntents.includes('donate')) {
+          nextOptions.push({
+            id: `donate-${npcId}`,
+            label: '奉献',
+            icon: '🪙',
+            action: () => {
+              overlay.open('donation', {
+                targetKind: 'npc',
+                targetId: npcId,
+                sourceName: npcName,
+              })
+            },
+          })
+        }
         options.setOptions(nextOptions, true)
         break
       }
@@ -610,13 +719,26 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       case 'quest_brief': {
         const d = cast<QuestBriefData>(event.data)
-        addSystemMessage(formatQuestBriefMessage(d))
+        const questBriefMsg = formatQuestBriefMessage(d)
+        addSystemMessage(questBriefMsg)
+        useNotificationStore.getState().add(questBriefMsg, 'info', 4000, 'quest')
+        break
+      }
+
+      case 'quest_created': {
+        const d = cast<QuestCreatedData>(event.data)
+        const title = questName(d.title, d.quest_id)
+        const msg = `新任务：${title}`
+        addSystemMessage(msg)
+        useNotificationStore.getState().add(msg, 'info', 4000, 'quest')
         break
       }
 
       case 'quest_progress': {
         const d = cast<QuestProgressData>(event.data)
-        addSystemMessage(formatQuestProgressMessage(d))
+        const questProgressMsg = formatQuestProgressMessage(d)
+        addSystemMessage(questProgressMsg)
+        useNotificationStore.getState().add(questProgressMsg, 'info', 4000, 'quest')
         break
       }
 
@@ -648,6 +770,23 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
           // browse_board: 打开公告板面板
           if (d.action_type === 'browse_board' && d.metadata?.entries) {
             overlay.open('board', d.metadata)
+            break
+          }
+          if (d.action_type === 'donate') {
+            const amount = Number(d.metadata?.amount ?? 0)
+            const remainingGold = Number(d.metadata?.remaining_gold)
+            const sourceEntry = String(d.metadata?.source_entry ?? '供奉对象').trim() || '供奉对象'
+            const message = Array.isArray(d.narrative_hints) && typeof d.narrative_hints[0] === 'string'
+              ? d.narrative_hints[0]
+              : amount > 0
+                ? `向${sourceEntry}奉献了${amount}G`
+                : formatActionSuccess(d.action_type)
+            if (Number.isFinite(remainingGold)) {
+              usePlayerStore.getState().updateFromStatus({ gold: remainingGold })
+            }
+            dialogue.addMessage({ type: 'system', content: message })
+            notif.add(message, 'success')
+            audio.playCoin()
             break
           }
           notif.add(formatActionSuccess(d.action_type), 'success')
@@ -724,13 +863,32 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'relationship_stage_changed': {
         const d = cast<RelationshipStageChangedData>(event.data)
         const name = d.npc_name ?? d.npc_id
-        addSystemMessage(`与${name}的关系提升为「${d.new_stage}」`)
+        const relMsg = `与${name}的关系提升为「${d.new_stage}」`
+        addSystemMessage(relMsg)
+        useNotificationStore.getState().add(relMsg, 'info', 3000, 'relationship')
         break
       }
 
       case 'npc_wants_to_chat': {
         const d = cast<NpcWantsToChatData>(event.data)
-        overlay.open('chat_invite', d)
+        const name = d.npc_name ?? d.npc_id
+        if (d.colocated === false) {
+          // Non-colocated: soft hint in notification + system log
+          const hint = d.npc_location
+            ? `${name}似乎有话想对你说（在${d.npc_location}）`
+            : `${name}似乎有话想对你说`
+          addSystemMessage(hint)
+          useNotificationStore.getState().add(hint, 'info', 5000, 'quest')
+        } else {
+          // Colocated: direct chat invite modal
+          // QF-3: buffer the invite if player is already in a dialogue/private chat session
+          const currentMode = useSceneStore.getState().gameMode
+          if (currentMode === 'dialogue' || currentMode === 'private_chat') {
+            pendingChatInvitesRef.current.push(d)
+          } else {
+            overlay.open('chat_invite', d)
+          }
+        }
         break
       }
 
@@ -799,13 +957,13 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
       case 'milestone_unlocked': {
         const d = cast<MilestoneUnlockedData>(event.data)
-        useNotificationStore.getState().add(`里程碑解锁：${d.milestone_id}`, 'info')
+        useNotificationStore.getState().add(`里程碑解锁：${d.milestone_id}`, 'info', 3000, 'milestone')
         break
       }
 
       case 'milestone_failed': {
         const d = cast<MilestoneFailedData>(event.data)
-        useNotificationStore.getState().add(`里程碑失败：${d.milestone_id}`, 'error')
+        useNotificationStore.getState().add(`里程碑失败：${d.milestone_id}`, 'error', 3000, 'milestone')
         break
       }
 
@@ -817,6 +975,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'combat_effects_ticked':
       case 'dynamic_quest_expired':
       case 'dynamic_sub_areas_expired':
+      case 'quest_status_changed':
         break
 
       case 'ai_osiris_error':
@@ -842,7 +1001,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         const d = cast<CompanionRecruitedData>(event.data)
         const message = formatCompanionMessage('join', d.npc_id, d.reason)
         addSystemMessage(message)
-        useNotificationStore.getState().add(message, 'success')
+        useNotificationStore.getState().add(message, 'success', 3000, 'companion')
         const npcName = useSceneStore.getState().presentNpcs.find((npc) => npc.character_id === d.npc_id)?.name
         usePartyStore.getState().addMember(d.npc_id, npcName)
         usePartyStore.getState().syncMembers(d.party_members)
@@ -857,7 +1016,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         }
         const message = formatCompanionMessage('leave', d.npc_id, d.reason)
         addSystemMessage(message)
-        useNotificationStore.getState().add(message, 'info')
+        useNotificationStore.getState().add(message, 'info', 3000, 'companion')
         usePartyStore.getState().removeMember(d.npc_id)
         usePartyStore.getState().syncMembers(d.party_members)
         break
@@ -941,6 +1100,12 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         const d = cast<LootDisplayData>(event.data)
         combat.setLoot(d)
         audio.playCoin()
+        const parts: string[] = []
+        if (d.gold > 0) parts.push(`${d.gold}G`)
+        if (d.items?.length) parts.push(d.items.map((i) => i.name).join('、'))
+        if (parts.length) {
+          useNotificationStore.getState().add(`获得: ${parts.join(' + ')}`, 'success', 4000, 'item')
+        }
         break
       }
 
@@ -969,6 +1134,36 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
         break
       }
 
+      case 'ai_processing': {
+        const d = cast<AiProcessingData>(event.data)
+        stream.setAiProcessing(d.status === 'start')
+        break
+      }
+
+      case 'player_level_up': {
+        const d = cast<PlayerLevelUpData>(event.data)
+        const newLevel = typeof d.to_level === 'number' ? d.to_level : d.new_level
+        const newFeatures = Array.isArray(d.features)
+          ? d.features
+          : Array.isArray(d.new_features)
+            ? d.new_features
+            : []
+        if (typeof newLevel !== 'number') break
+        const lvlMsg = `升级！达到 Lv.${newLevel}`
+        useNotificationStore.getState().add(lvlMsg, 'success', 6000, 'milestone')
+        usePlayerStore.getState().updateFromStatus({
+          level: newLevel,
+          asi_available: d.asi_available,
+        } as Record<string, unknown>)
+        if (d.asi_available) {
+          useNotificationStore.getState().add('可分配属性点（ASI）', 'info', 5000, 'milestone')
+        }
+        if (newFeatures.length > 0) {
+          useNotificationStore.getState().add(`新特性：${newFeatures.join('、')}`, 'info', 5000, 'milestone')
+        }
+        break
+      }
+
       default:
         // 未知事件类型，静默忽略
         break
@@ -977,8 +1172,8 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
   // ── 发请求的通用逻辑 ──────────────────────────────────────────────────────
 
-  const startStream = useCallback((url: string, body: object) => {
-    if (!worldId || !sessionId) return
+  const startStream = useCallback((url: string, body: object): Promise<void> => {
+    if (!worldId || !sessionId) return Promise.resolve()
     dialogue.clearPendingStream()
     abortRef.current?.abort()
     abortRef.current = new AbortController()
@@ -986,7 +1181,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
     stream.setStreaming(true)
     options.lock()
 
-    void streamSSE(
+    return streamSSE(
       url,
       body,
       handleEvent,
@@ -1034,19 +1229,136 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
 
   const sendNavigate = useCallback((req: NavigateRequest) => {
     if (!worldId || !sessionId) return
-    startStream(urls.navigate(worldId, sessionId), req)
+    return startStream(urls.navigate(worldId, sessionId), req)
   }, [worldId, sessionId, startStream])
 
   const sendAction = useCallback((req: StructuredActionRequest) => {
-    if (!worldId || !sessionId) return
-    startStream(urls.action(worldId, sessionId), req)
+    if (!worldId || !sessionId) return Promise.resolve()
+    return startStream(urls.action(worldId, sessionId), req)
   }, [worldId, sessionId, startStream])
+
+  const runFunctionalOption = (item: DialogueOptionItem): boolean => {
+    const functionalType = String(item.functional?.type ?? '').trim()
+    if (!functionalType) return false
+
+    const notifyError = (message: string) => {
+      useNotificationStore.getState().add(message, 'error')
+    }
+    const activeNpcId = useSceneStore.getState().activeNpcId?.trim() || null
+
+    switch (functionalType) {
+      case 'trade_browse': {
+        const npcId = readFunctionalParam(item, 'npc_id') ?? activeNpcId
+        if (!npcId) {
+          notifyError('交易选项缺少目标 NPC')
+          return true
+        }
+        void sendInteract({
+          intent: 'browse',
+          target_kind: 'npc',
+          target_id: npcId,
+        })
+        return true
+      }
+
+      case 'board_browse': {
+        const boardId = readFunctionalParam(item, 'board_id')
+        if (!boardId) {
+          notifyError('任务板选项缺少 board_id')
+          return true
+        }
+        void sendAction({
+          action_type: 'browse_board',
+          params: { board_id: boardId },
+        })
+        return true
+      }
+
+      case 'donate':
+      case 'donation': {
+        const targetKind = readFunctionalParam(item, 'target_kind') === 'interactable'
+          ? 'interactable'
+          : 'npc'
+        const targetId = readFunctionalParam(item, 'target_id') ?? activeNpcId
+        if (!targetId) {
+          notifyError('奉献选项缺少目标')
+          return true
+        }
+        overlay.open('donation', {
+          targetKind,
+          targetId,
+          sourceName: item.label ?? item.text ?? targetId,
+        })
+        return true
+      }
+
+      case 'quest_accept': {
+        const questId = readFunctionalParam(item, 'quest_id')
+        if (!questId) {
+          notifyError('接任务选项缺少 quest_id')
+          return true
+        }
+        const npcId = readFunctionalParam(item, 'npc_id') ?? activeNpcId
+        if (!npcId) {
+          notifyError('接任务选项缺少目标 NPC')
+          return true
+        }
+        void sendInteract({
+          intent: 'accept_quest',
+          target_kind: 'npc',
+          target_id: npcId,
+          quest_id: questId,
+        })
+        return true
+      }
+
+      case 'navigate': {
+        const locationId = readFunctionalParam(item, 'location_id')
+        if (locationId) {
+          void sendNavigate({ action: 'enter_sub_location', location_id: locationId })
+          return true
+        }
+        const areaId = readFunctionalParam(item, 'area_id')
+        if (areaId) {
+          void sendNavigate({ action: 'move_area', area_id: areaId })
+          return true
+        }
+        notifyError('导航选项缺少 area_id 或 location_id')
+        return true
+      }
+
+      case 'inspect_item':
+      case 'rest':
+        notifyError(`当前入口暂未接通 ${functionalType}`)
+        return true
+
+      default:
+        notifyError(`未知功能选项：${functionalType}`)
+        return true
+    }
+  }
+  runFunctionalOptionRef.current = runFunctionalOption
 
   const sendInput = useCallback((req: TextInputRequest) => {
     if (!worldId || !sessionId) return
     dialogue.addMessage({ type: 'player', content: req.text })
     startStream(urls.input(worldId, sessionId), req)
   }, [worldId, sessionId, dialogue, startStream])
+
+  useEffect(() => {
+    if (!isLocalDevEnvironment()) return
+
+    const debugTarget = globalThis as typeof globalThis & { __GAME_DEBUG__?: GameDebugApi }
+    debugTarget.__GAME_DEBUG__ = {
+      runFunctionalOption: (item: DialogueOptionItem) => {
+        runFunctionalOptionRef.current(item)
+      },
+    }
+
+    return () => {
+      delete debugTarget.__GAME_DEBUG__
+    }
+  }, [])
 
   const sendPrivateChat = useCallback((req: PrivateChatRequest) => {
     void sendInteract({

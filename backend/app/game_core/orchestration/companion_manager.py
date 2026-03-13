@@ -27,6 +27,7 @@ class CompanionManager:
 
         player_area = self._state.player.current_area
         player_loc = self._state.player.current_location
+        player_room = getattr(self._state.player, "current_room", None)
         if not player_area:
             return []
 
@@ -35,9 +36,18 @@ class CompanionManager:
             current_area = self._state.areas.find_npc_area(member_id)
             if current_area == player_area:
                 area_state = self._state.areas.get_area(player_area)
-                if area_state.npc_locations.get(member_id) == player_loc:
+                if (
+                    area_state.npc_locations.get(member_id) == player_loc
+                    and area_state.npc_rooms.get(member_id) == player_room
+                ):
                     continue
-            self._state.areas.move_npc(member_id, player_area, player_loc, source="companion")
+            self._state.areas.move_npc(
+                member_id,
+                player_area,
+                player_loc,
+                room_id=player_room,
+                source="companion",
+            )
             moved.append(member_id)
 
         return moved

@@ -6,7 +6,9 @@ from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import get_non_empty_string, handler_success
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
+from app.game_core.rules.reward_utils import build_reward_summary
 from app.game_core.state import StateChange, StateContainer
+from app.game_core.rules.handlers.board import _build_reward_changes
 
 
 class ReceptionistHandler(StaticCommandHandler):
@@ -64,13 +66,17 @@ class ReceptionistHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason=f"dynamic quest not found: {quest_id}")
 
         if cmd.type == "receptionist_accept_quest":
-            if self._resolve_board_offer(
+            board_offer = self._resolve_board_offer(
                 state,
                 area_id,
                 quest_id,
                 board_id_hint=get_non_empty_string(cmd.params, "board_id"),
-            ) is None:
-                return ValidationResult(ok=False, reason="quest not currently offerable")
+            )
+            if board_offer is None:
+                # Fallback: quest not on board but exists as available dynamic quest
+                current_status_check = str(quest_payload.get("status", "available")).lower()
+                if current_status_check != "available":
+                    return ValidationResult(ok=False, reason="quest not currently offerable")
             current_status = str(quest_payload.get("status", "available")).lower()
             if current_status in {"active", "completed"}:
                 return ValidationResult(
@@ -104,7 +110,7 @@ class ReceptionistHandler(StaticCommandHandler):
         if cmd.type == "receptionist_accept_quest":
             return self._compute_accept_quest(cmd, state)
         if cmd.type == "receptionist_report_quest":
-            return self._compute_report_quest(cmd)
+            return self._compute_report_quest(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _compute_accept_quest(
@@ -121,8 +127,8 @@ class ReceptionistHandler(StaticCommandHandler):
             quest_id,
             board_id_hint=get_non_empty_string(cmd.params, "board_id"),
         )
-        if board_id is None:
-            return ExecuteResult.error(f"quest not currently offerable: {quest_id}")
+        # board_id may be None if quest is available as a dynamic quest but not on board
+        # (B-6 relaxed accept — validated already in validate())
 
         quest_payload = state.quests.get_dynamic_quest(quest_id)
         if quest_payload is None:
@@ -153,24 +159,53 @@ class ReceptionistHandler(StaticCommandHandler):
     def _compute_report_quest(
         self,
         cmd: Command,
+        state: StateContainer,
     ) -> ExecuteResult:
         npc_id = get_non_empty_string(cmd.params, "npc_id") or ""
         quest_id = get_non_empty_string(cmd.params, "quest_id") or ""
-        return handler_success(
-            "receptionist",
-            "receptionist_report_quest",
-            changes=[
+
+        quest_payload = state.quests.get_dynamic_quest(quest_id)
+        rewards = quest_payload.get("rewards", {}) if quest_payload else {}
+        rewards_already_claimed = bool(
+            quest_payload.get("rewards_claimed") if quest_payload else False
+        )
+
+        reward_changes: list[StateChange] = []
+        reward_summary: dict = {}
+        if not rewards_already_claimed and isinstance(rewards, dict) and rewards:
+            reward_changes = _build_reward_changes(state, rewards)
+            reward_summary = build_reward_summary(rewards)
+
+        changes: list[StateChange] = [
+            StateChange(
+                "quests",
+                "set",
+                f"dynamic_quests.{quest_id}.reported",
+                True,
+            ),
+        ]
+        if reward_changes:
+            # Mark rewards claimed to prevent double-grant
+            changes.append(
                 StateChange(
                     "quests",
                     "set",
-                    f"dynamic_quests.{quest_id}.reported",
+                    f"dynamic_quests.{quest_id}.rewards_claimed",
                     True,
                 )
-            ],
+            )
+            changes.extend(reward_changes)
+
+        return handler_success(
+            "receptionist",
+            "receptionist_report_quest",
+            changes=changes,
             metadata={
                 "npc_id": npc_id,
                 "quest_id": quest_id,
                 "reported": True,
+                "reward_summary": reward_summary,
+                "rewards_claimed": bool(reward_changes),
             },
             time_cost=self._TIME_COST,
         )

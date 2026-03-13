@@ -161,6 +161,11 @@ class RecordingAgent:
         }
 
 
+def _non_processing_events(result) -> list:
+    """Return SSE events that are not ai_processing (QF-4 channel events)."""
+    return [e for e in result.sse_events if e.event_type != "ai_processing"]
+
+
 def _make_context(
     *,
     change_log: list[StateChange] | None = None,
@@ -538,7 +543,7 @@ class TestNarrativePlannerHook:
         assert context.state.narrative_plan.escalation_level == 1
         assert context.state.narrative_plan.last_run_tick == 9
         assert context.state.narrative_plan.behavior_window[-1]["reason"] == "fallback"
-        assert result.sse_events[0].event_type == "narrative_plan_updated"
+        assert _non_processing_events(result)[0].event_type == "narrative_plan_updated"
 
     def test_planner_does_not_duplicate_existing_seeded_quest(self) -> None:
         planner = RecordingPlanner(
@@ -599,7 +604,9 @@ class TestNarrativePlannerHook:
         bulletin = _latest_board_bulletin(context)
         assert bulletin is not None
         assert bulletin["board_id"] == "board"
-        assert context.state.narrative_plan.last_run_tick == 12
+        # bootstrap sets last_run_tick far in the past so the first settlement
+        # after opening bypasses the FALLBACK_INTERVAL cooldown
+        assert context.state.narrative_plan.last_run_tick < 0
         assert context.state.narrative_plan.escalation_level == 0
         assert context.state.areas.list_temporary_sub_areas("forest") == []
         assert result.sse_events == []
@@ -634,7 +641,7 @@ class TestNarrativePlannerHook:
         assert result.metadata["reason"] == "bootstrap"
         assert result.metadata["applied_count"] == 0
         assert result.metadata["planner_metadata"]["reason"] == "stable"
-        assert context.state.narrative_plan.last_run_tick == 4
+        assert context.state.narrative_plan.last_run_tick < 0
         assert context.state.areas.list_temporary_sub_areas("forest") == []
 
     def test_planner_stall_l1_publishes_hint(self) -> None:
@@ -829,7 +836,11 @@ class TestNarrativePlannerHook:
         assert created["status"] == "available"
         assert created["source"] == "narrative_planner"
         assert context.state.narrative_plan.quest_history[-1]["kind"] == "create_quest"
-        assert result.sse_events[0].event_type == "narrative_plan_updated"
+        # A-2: directive rejections now emit planner_directive_rejected SSE before
+        # the narrative_plan_updated event; check the event is present somewhere
+        sse_types = [e.event_type for e in result.sse_events]
+        assert "narrative_plan_updated" in sse_types
+        assert "planner_directive_rejected" in sse_types
 
     def test_create_quest_stores_dynamic_fields(self) -> None:
         planner = RecordingPlanner(
@@ -871,10 +882,13 @@ class TestNarrativePlannerHook:
         assert created is not None
         assert created["target_milestone"] == "ms_ext"
         assert created["urgency"] == "high"
-        assert created["objectives"] == [
-            {"type": "collect", "target": "signal_stone"},
-            {"type": "report", "target": "watchtower"},
-        ]
+        # objectives are normalized on create_quest: description + completed added, original keys preserved
+        assert len(created["objectives"]) == 2
+        assert created["objectives"][0]["completed"] is False
+        assert created["objectives"][1]["completed"] is False
+        # original legacy keys preserved for backward compat
+        assert created["objectives"][0]["type"] == "collect"
+        assert created["objectives"][1]["type"] == "report"
         assert created["rewards"] == {"xp": 120, "item": "signal_core"}
         assert created["delivery_method"] == "board"
         assert created["expiry_ticks"] == 12
@@ -943,21 +957,15 @@ class TestNarrativePlannerHook:
 
         assert result.metadata["applied_count"] == 1
         assert result.metadata["applied_kinds"] == ["create_quest"]
+        # Objectives are stored on the quest but NO EventSlice entries are created
+        created = context.state.quests.get_dynamic_quest("dq_dynamic_obj")
+        assert created is not None
+        assert len(created["objectives"]) == 3
+        # No objective events in EventSlice
         event_0 = context.state.events.get_event("dq_dq_dynamic_obj_obj_0")
         event_1 = context.state.events.get_event("dq_dq_dynamic_obj_obj_1")
-        event_2 = context.state.events.get_event("dq_dq_dynamic_obj_obj_2")
-        assert event_0 is not None
-        assert event_1 is not None
-        assert event_2 is None
-        assert event_0["conditions"][0]["type"] == "item_obtained"
-        assert event_0["conditions"][0]["params"] == {"item_id": "signal_stone"}
-        assert event_1["conditions"][0]["type"] == "location_visited"
-        assert event_1["conditions"][0]["params"] == {"area_id": "ruins"}
-        assert event_1["on_trigger"][0]["type"] == "complete_objective"
-        assert event_1["on_trigger"][0]["params"] == {
-            "quest_id": "dq_dynamic_obj",
-            "objective_index": 1,
-        }
+        assert event_0 is None
+        assert event_1 is None
 
     def test_supported_directives_update_runtime_slices(self) -> None:
         planner = RecordingPlanner(
@@ -1084,7 +1092,7 @@ class TestNarrativePlannerHook:
         assert not any(event.event_type == "dynamic_quest_expired" for event in result.sse_events)
         assert context.state.narrative_plan.quest_history == []
 
-    def test_dynamic_quest_expiry_marks_ignored(self) -> None:
+    def test_dynamic_quest_expiry_is_not_mutated_by_planner_hook(self) -> None:
         planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 0},
@@ -1105,17 +1113,11 @@ class TestNarrativePlannerHook:
         context.state.player.current_area = "void"
         result = asyncio.run(_make_full_hook(planner).execute(context))
 
-        assert any(
-            event.event_type == "dynamic_quest_expired"
-            and event.payload["quest_id"] == "dq_timed"
-            and event.payload["on_expire"] == "ignore"
-            for event in result.sse_events
-        )
-        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "expired"
-        assert context.state.narrative_plan.quest_history[-1]["kind"] == "dynamic_quest_expired"
-        assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "ignore"
+        assert not any(event.event_type == "dynamic_quest_expired" for event in result.sse_events)
+        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "active"
+        assert context.state.narrative_plan.quest_history == []
 
-    def test_dynamic_quest_expiry_escalates_and_retire(self) -> None:
+    def test_dynamic_quest_expiry_escalate_is_deferred_to_dedicated_hook(self) -> None:
         planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 0},
@@ -1136,17 +1138,12 @@ class TestNarrativePlannerHook:
         context.state.player.current_area = "void"
         result = asyncio.run(_make_full_hook(planner).execute(context))
 
-        assert context.state.narrative_plan.escalation_level == 1
-        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "retired"
-        assert any(
-            event.event_type == "dynamic_quest_expired"
-            and event.payload["quest_id"] == "dq_timed"
-            and event.payload["on_expire"] == "escalate"
-            for event in result.sse_events
-        )
-        assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "escalate"
+        assert context.state.narrative_plan.escalation_level == 0
+        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "active"
+        assert not any(event.event_type == "dynamic_quest_expired" for event in result.sse_events)
+        assert context.state.narrative_plan.quest_history == []
 
-    def test_dynamic_quest_expiry_retire(self) -> None:
+    def test_dynamic_quest_expiry_retire_is_deferred_to_dedicated_hook(self) -> None:
         planner = RecordingPlanner(NarrativePlannerDecision(directives=[]))
         context = _make_context(
             narrative_plan_payload={"last_run_tick": 0},
@@ -1167,14 +1164,9 @@ class TestNarrativePlannerHook:
         context.state.player.current_area = "void"
         result = asyncio.run(_make_full_hook(planner).execute(context))
 
-        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "retired"
-        assert any(
-            event.event_type == "dynamic_quest_expired"
-            and event.payload["quest_id"] == "dq_timed"
-            and event.payload["on_expire"] == "retire"
-            for event in result.sse_events
-        )
-        assert context.state.narrative_plan.quest_history[-1]["on_expire"] == "retire"
+        assert context.state.quests.get_dynamic_quest("dq_timed")["status"] == "active"
+        assert not any(event.event_type == "dynamic_quest_expired" for event in result.sse_events)
+        assert context.state.narrative_plan.quest_history == []
 
     def test_direct_npc_hot_injects_into_active_instance(self) -> None:
         planner = RecordingPlanner(
@@ -1231,7 +1223,10 @@ class TestNarrativePlannerHook:
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_unsupported_count"] == 1
         assert result.metadata["skipped_invalid_count"] == 1
-        assert result.sse_events == []
+        # A-2: invalid_contract directives now emit planner_directive_rejected SSE
+        rejected_events = [e for e in result.sse_events if e.event_type == "planner_directive_rejected"]
+        assert len(rejected_events) == 1  # spawn_quest_npc (invalid_contract); unknown_kind is unsupported (no SSE)
+        assert rejected_events[0].payload["kind"] == "spawn_quest_npc"
 
     def test_planner_error_returns_sse_and_preserves_state(self, caplog) -> None:
         context = _make_context(
@@ -1246,7 +1241,7 @@ class TestNarrativePlannerHook:
 
         assert result.metadata["status"] == "planner_error"
         assert result.metadata["evaluated"] is False
-        assert result.sse_events[0].event_type == "narrative_planner_error"
+        assert _non_processing_events(result)[0].event_type == "narrative_planner_error"
         assert context.state.narrative_plan.last_run_tick == 4
         assert any(
             record.message == "hook failed: narrative_planner"
@@ -2024,3 +2019,395 @@ class TestP36MilestoneDetail:
         assert result.metadata["applied_count"] == 0
         assert result.metadata["skipped_invalid_count"] == 1
         assert context.state.narrative_plan.npc_directives == []
+
+
+# ---------------------------------------------------------------------------
+# P29-A5/A6/A8/A9 Context Enhancement Tests
+# ---------------------------------------------------------------------------
+
+class TestP29ContextEnhancements:
+    """P29-A5a-d/A5e/A6b-c/A8a/A8d/A9c/A9d: Planner context field enhancements."""
+
+    # ------------------------------------------------------------------
+    # A5a: area_cluster remaining_permanent + remaining_total
+    # ------------------------------------------------------------------
+
+    def test_area_cluster_has_remaining_capacity_fields(self) -> None:
+        """area_cluster should expose remaining_permanent and remaining_total, not has_capacity."""
+        context = _make_context(
+            area_payload={"areas": {"forest": {}}},
+        )
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+        cluster = result["area_cluster"]
+        assert cluster is not None
+        assert "remaining_permanent" in cluster
+        assert "remaining_total" in cluster
+        assert "has_capacity" not in cluster
+        # Empty area: 0 dynamic subs → full remaining
+        assert cluster["remaining_permanent"] == 8
+        assert cluster["remaining_total"] == 15
+        assert cluster["total_dynamic"] == 0
+
+    # ------------------------------------------------------------------
+    # A5b: existing_npc_ids
+    # ------------------------------------------------------------------
+
+    def test_existing_npc_ids_combines_runtime_and_static_residents(self) -> None:
+        """existing_npc_ids should include both area_state.npc_locations and static resident_npcs."""
+        from app.game_core.content import WorldInstance as WI
+        world = WI("test_world_npcids")
+        maps = MapRegistry()
+        maps.load({
+            "forest": {
+                "id": "forest",
+                "sub_locations": {
+                    "tavern": {
+                        "id": "tavern",
+                        "name": "Tavern",
+                        "resident_npcs": ["innkeeper"],
+                        "interactables": [],
+                    }
+                },
+            }
+        })
+        world.register(maps)
+        context = _make_context(
+            area_payload={
+                "areas": {
+                    "forest": {
+                        "npc_locations": {
+                            "guild_girl": None,
+                            "merchant": None,
+                        }
+                    }
+                }
+            },
+        )
+        # Replace world so the map registry has resident_npcs
+        from app.game_core.orchestration.settlement import SettlementContext
+        ctx2 = SettlementContext(
+            change_log=context.change_log,
+            state=context.state,
+            world=world,
+            scene_bus=context.scene_bus,
+            _rules_engine=context._rules_engine,
+            _apply_delta=context._apply_delta,
+        )
+        result = NarrativePlannerHook()._build_planner_context(ctx2, current_tick=1)
+        npc_ids = result["existing_npc_ids"]
+        assert "guild_girl" in npc_ids
+        assert "merchant" in npc_ids
+        assert "innkeeper" in npc_ids
+        # No duplicates
+        assert len(npc_ids) == len(set(npc_ids))
+
+    # ------------------------------------------------------------------
+    # A5d: previous_directive_results includes entity_id
+    # ------------------------------------------------------------------
+
+    def test_previous_directive_results_includes_entity_id(self) -> None:
+        """entity_id should be extracted from payload_digest when present."""
+        context = _make_context(
+            narrative_plan_payload={
+                "last_planner_replay_trace": {
+                    "directive_audit": [
+                        {
+                            "kind": "create_quest",
+                            "status": "applied",
+                            "reason_code": None,
+                            "payload_digest": {
+                                "quest_id": "dq_goblin_hunt",
+                                "title": "Hunt Goblins",
+                            },
+                        },
+                        {
+                            "kind": "direct_npc",
+                            "status": "invalid_contract",
+                            "reason_code": "missing_npc_id",
+                            "payload_digest": {},
+                        },
+                    ]
+                }
+            }
+        )
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=5)
+        pdr = result["previous_directive_results"]
+        assert len(pdr) == 2
+        # First entry has quest_id → entity_id
+        assert pdr[0]["entity_id"] == "dq_goblin_hunt"
+        # Second entry has no entity in payload_digest → no entity_id key
+        assert "entity_id" not in pdr[1]
+
+    # ------------------------------------------------------------------
+    # A5e: interactable_examples + fill_area_guidance
+    # ------------------------------------------------------------------
+
+    def test_interactable_examples_extracted_from_static_sub_locations(self) -> None:
+        """interactable_examples should list interactable objects from static sub-locations."""
+        context = _make_context()  # _make_context already sets up forest/quest_hub/board
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+        examples = result["interactable_examples"]
+        assert isinstance(examples, list)
+        assert len(examples) >= 1
+        first = examples[0]
+        assert "id" in first
+        assert "name" in first
+        assert "type" in first
+        assert "tags" in first
+        assert "checks" in first
+        assert isinstance(result["fill_area_guidance"], str)
+        assert len(result["fill_area_guidance"]) > 10
+
+    # ------------------------------------------------------------------
+    # A6b/A6c: hostile_config_locations + encounter_guidance
+    # ------------------------------------------------------------------
+
+    def test_hostile_config_locations_populated_for_area_with_hostile_sublocs(self) -> None:
+        """hostile_config_locations should list sub-locations with hostile_config defined."""
+        world = WorldInstance("test_world_hostile")
+        maps = MapRegistry()
+        maps.load({
+            "ruins": {
+                "id": "ruins",
+                "sub_locations": {
+                    "outer_cloisters": {
+                        "id": "outer_cloisters",
+                        "name": "Outer Cloisters",
+                        "hostile_config": {
+                            "hostile_groups": [
+                                {"monster_ids": ["goblin", "goblin", "goblin"], "role": "patrol"}
+                            ],
+                            "stealth_dc": 12,
+                            "blocking": False,
+                        },
+                        "interactables": [],
+                    },
+                    "safe_hall": {
+                        "id": "safe_hall",
+                        "name": "Safe Hall",
+                        # No hostile_config
+                        "interactables": [],
+                    },
+                },
+            }
+        })
+        world.register(maps)
+
+        from app.game_core.state.slices import PlayerSlice
+        base_ctx = _make_context(
+            area_payload={"areas": {"ruins": {}}},
+        )
+        base_ctx.state.player.current_area = "ruins"
+
+        from app.game_core.orchestration.settlement import SettlementContext
+        ctx = SettlementContext(
+            change_log=base_ctx.change_log,
+            state=base_ctx.state,
+            world=world,
+            scene_bus=base_ctx.scene_bus,
+            _rules_engine=base_ctx._rules_engine,
+            _apply_delta=base_ctx._apply_delta,
+        )
+        result = NarrativePlannerHook()._build_planner_context(ctx, current_tick=1)
+        hc_locs = result["hostile_config_locations"]
+        assert isinstance(hc_locs, list)
+        assert len(hc_locs) == 1
+        entry = hc_locs[0]
+        assert entry["sub_location_id"] == "outer_cloisters"
+        assert "goblin" in entry["monster_ids"]
+        assert entry["stealth_dc"] == 12
+        assert entry["blocking"] is False
+        assert entry["already_planted"] is False
+        assert entry["already_cleared"] is False
+        assert isinstance(result["encounter_guidance"], str)
+
+    # ------------------------------------------------------------------
+    # A8a/A8d: supported_objective_conditions + active_quests
+    # ------------------------------------------------------------------
+
+    def test_supported_objective_conditions_present_with_required_types(self) -> None:
+        """supported_objective_conditions should list all required condition types."""
+        context = _make_context()
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+        conditions = result["supported_objective_conditions"]
+        assert isinstance(conditions, list)
+        condition_types = {c["type"] for c in conditions}
+        expected = {"npc_talked", "item_obtained", "kill_count", "location_entered", "flag_set"}
+        assert expected <= condition_types
+        assert isinstance(result["quest_objective_guidance"], str)
+
+    def test_active_quests_contains_objectives_with_condition_status(self) -> None:
+        """active_quests should expose objective details including condition fields."""
+        context = _make_context(
+            quest_payload={
+                "milestone_states": {},
+                "dynamic_quests": {
+                    "dq_patrol": {
+                        "status": "active",
+                        "title": "Patrol the Road",
+                        "summary": "Keep the road safe.",
+                        "objectives": [
+                            {
+                                "description": "Kill 3 goblins",
+                                "completed": False,
+                                "condition": {
+                                    "type": "kill_count",
+                                    "monster_id": "goblin",
+                                    "count": 3,
+                                },
+                            },
+                            {
+                                "description": "Report back",
+                                "completed": True,
+                            },
+                        ],
+                    },
+                    "dq_retired": {
+                        "status": "retired",
+                        "title": "Old Quest",
+                        "summary": "Done.",
+                        "objectives": [],
+                    },
+                },
+            }
+        )
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=2)
+        active_quests = result["active_quests"]
+        assert isinstance(active_quests, list)
+        # Only active quests, not retired
+        quest_ids = {q["quest_id"] for q in active_quests}
+        assert "dq_patrol" in quest_ids
+        assert "dq_retired" not in quest_ids
+        patrol = next(q for q in active_quests if q["quest_id"] == "dq_patrol")
+        assert patrol["title"] == "Patrol the Road"
+        assert len(patrol["objectives"]) == 2
+        first_obj = patrol["objectives"][0]
+        assert first_obj["completed"] is False
+        assert first_obj["condition"]["type"] == "kill_count"
+
+    # ------------------------------------------------------------------
+    # A9c: _ensure_milestone_outline triggers on milestone change
+    # ------------------------------------------------------------------
+
+    def test_ensure_milestone_outline_generates_fallback_without_outline_generator(self) -> None:
+        """When no outline_generator is set, a deterministic fallback outline should be built."""
+        from app.game_core.content.registries import QuestRegistry
+
+        world = WorldInstance("test_world_outline")
+        quests = QuestRegistry()
+        quests.load({
+            "milestones": {
+                "ms_explore": {
+                    "id": "ms_explore",
+                    "chapter_id": "ch1",
+                    "key_elements": ["find_the_ruins", "defeat_boss", "collect_evidence"],
+                    "involved_npcs": ["captain"],
+                    "involved_locations": ["ruins"],
+                    "narrative_context": "Explore the ancient ruins.",
+                },
+            },
+            "chapters": [{"id": "ch1"}],
+        })
+        world.register(quests)
+
+        base_ctx = _make_context(
+            narrative_plan_payload={
+                "current_target_milestone": "ms_explore",
+                "current_chapter": "ch1",
+            }
+        )
+        from app.game_core.orchestration.settlement import SettlementContext
+        ctx = SettlementContext(
+            change_log=base_ctx.change_log,
+            state=base_ctx.state,
+            world=world,
+            scene_bus=base_ctx.scene_bus,
+            _rules_engine=base_ctx._rules_engine,
+            _apply_delta=base_ctx._apply_delta,
+        )
+
+        hook = NarrativePlannerHook()  # No outline_generator injected
+        asyncio.run(hook._ensure_milestone_outline(ctx, current_tick=5))
+
+        outline = ctx.state.narrative_plan.milestone_outline
+        assert outline.get("target_milestone_id") == "ms_explore"
+        steps = outline.get("steps", [])
+        assert len(steps) == 3  # one per key_element
+        assert steps[0]["description"] == "find_the_ruins"
+        assert steps[0]["condition"]["type"] == "flag_set"
+        assert steps[0]["completed"] is False
+
+    def test_ensure_milestone_outline_skips_if_outline_already_matches(self) -> None:
+        """Should not overwrite an existing valid outline for the same milestone."""
+        existing_outline = {
+            "target_milestone_id": "ms_defend",
+            "chapter_id": "ch1",
+            "computed_at_tick": 1,
+            "steps": [{"index": 0, "description": "Defend the gate", "type": "combat",
+                        "condition": {"type": "flag_set", "flag": "ms_defend_step_0"},
+                        "related_npcs": [], "related_locations": [], "completed": False,
+                        "quest_id": None}],
+        }
+        context = _make_context(
+            narrative_plan_payload={
+                "current_target_milestone": "ms_defend",
+                "milestone_outline": existing_outline,
+            }
+        )
+        hook = NarrativePlannerHook()
+        asyncio.run(hook._ensure_milestone_outline(context, current_tick=10))
+
+        # Outline should be unchanged (same tick, same steps)
+        outline = context.state.narrative_plan.milestone_outline
+        assert outline.get("computed_at_tick") == 1  # Not overwritten
+
+    def test_build_planner_context_includes_milestone_outline_when_set(self) -> None:
+        """_build_planner_context should include milestone_outline and outline_guidance."""
+        context = _make_context(
+            narrative_plan_payload={
+                "current_target_milestone": "ms_test",
+                "milestone_outline": {
+                    "target_milestone_id": "ms_test",
+                    "chapter_id": "ch1",
+                    "computed_at_tick": 2,
+                    "steps": [
+                        {
+                            "index": 0,
+                            "description": "Talk to the elder",
+                            "type": "dialogue",
+                            "condition": {"type": "npc_talked", "npc_id": "elder"},
+                            "related_npcs": ["elder"],
+                            "related_locations": [],
+                            "completed": False,
+                            "quest_id": None,
+                        },
+                        {
+                            "index": 1,
+                            "description": "Reach the ruins",
+                            "type": "exploration",
+                            "condition": {"type": "location_entered", "area_id": "ruins", "location_id": "entrance"},
+                            "related_npcs": [],
+                            "related_locations": ["ruins"],
+                            "completed": True,
+                            "quest_id": "dq_ruins_entry",
+                        },
+                    ],
+                },
+            }
+        )
+        result = NarrativePlannerHook()._build_planner_context(context, current_tick=3)
+        milestone_ctx = result["milestone_outline"]
+        assert milestone_ctx is not None
+        assert milestone_ctx["target"] == "ms_test"
+        steps = milestone_ctx["steps"]
+        assert len(steps) == 2
+        assert steps[0]["description"] == "Talk to the elder"
+        assert steps[0]["completed"] is False
+        assert steps[1]["completed"] is True
+        # current_step is the first incomplete step
+        current = milestone_ctx["current_step"]
+        assert current is not None
+        assert current["index"] == 0
+        # outline_guidance is present
+        assert result["outline_guidance"] is not None
+        assert "step" in result["outline_guidance"]

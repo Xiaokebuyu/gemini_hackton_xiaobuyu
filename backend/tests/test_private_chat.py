@@ -419,7 +419,9 @@ class TestPrivateChatCoordinator:
 
         assert abs(result.time_cost - (1 / 6)) < 1e-9
 
-    def test_text_only_npc_response_is_invalid_agent_response(self) -> None:
+    def test_text_only_npc_response_is_gracefully_handled(self) -> None:
+        """P29-A1: NPC text without a tool is now gracefully wrapped as synthetic
+        speech instead of triggering a protocol_error."""
         coordinator, _ = _build_coordinator(
             llm_responses=[_stop_response("I should have used speak.")],
         )
@@ -430,9 +432,11 @@ class TestPrivateChatCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.completed is False
-        assert result.error == "invalid_agent_response"
-        assert result.error_reason == "text_without_tool"
+        # With A1 graceful degradation, text-only NPC response succeeds
+        assert result.completed is True
+        assert result.error is None
+        assert result.npc_result is not None
+        assert result.npc_result.metadata.get("finish_reason") == "text_fallback"
 
 
 # ------------------------------------------------------------------

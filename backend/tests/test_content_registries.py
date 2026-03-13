@@ -50,7 +50,12 @@ def test_map_registry_loads_encounter_table_new_format():
                 "id": "forest",
                 "encounter_slot_capacity": 2,
                 "encounter_table": [
-                    {"monster_ids": ["goblin", "wolf"], "weight": 1.5, "min_danger": 0.3},
+                    {
+                        "monster_ids": ["goblin", "wolf"],
+                        "weight": 1.5,
+                        "min_danger": 0.3,
+                        "map_category": "woodland",
+                    },
                     {"id": "forest_boss", "monster_ids": ["troll"], "weight": 0.5, "min_danger": 0.7},
                 ],
             },
@@ -77,6 +82,7 @@ def test_map_registry_loads_encounter_table_new_format():
     assert forest.encounter_table[0].monster_ids == ["goblin", "wolf"]
     assert forest.encounter_table[0].weight == 1.5
     assert forest.encounter_table[0].min_danger == 0.3
+    assert forest.encounter_table[0].map_category == "woodland"
 
     # invalid slot_capacity → issue
     assert "map 'wilds' has invalid encounter_slot_capacity" in issues
@@ -84,6 +90,75 @@ def test_map_registry_loads_encounter_table_new_format():
     assert any("wilds" in i and "no monster_ids" in i for i in issues)
     # invalid weight → issue
     assert any("wilds" in i and "invalid weight" in i for i in issues)
+
+
+def test_map_registry_resolves_encounter_map_category_with_explicit_then_area_fallback():
+    registry = MapRegistry()
+    registry.load(
+        {
+            "ruins_area": {
+                "id": "ruins_area",
+                "name": "Ancient Ruins",
+                "terrain_type": "underground",
+                "tags": ["dungeon", "ruins"],
+                "encounter_table": [
+                    {"id": "explicit", "monster_ids": ["goblin"], "map_category": "temple"},
+                    {"id": "fallback", "monster_ids": ["goblin"]},
+                ],
+            },
+            "town": {
+                "id": "town",
+                "name": "Frontier Town",
+                "terrain_type": "urban",
+                "encounter_table": [
+                    {"id": "street", "monster_ids": ["goblin"]},
+                ],
+            },
+        }
+    )
+
+    ruins = registry.get("ruins_area")
+    town = registry.get("town")
+    assert ruins is not None
+    assert town is not None
+
+    assert registry.resolve_encounter_map_category("ruins_area", ruins.encounter_table[0]) == "temple"
+    # tags/name semantic match beats underground -> cave fallback
+    assert registry.resolve_encounter_map_category("ruins_area", ruins.encounter_table[1]) == "ruins"
+    assert registry.resolve_encounter_map_category("town", town.encounter_table[0]) == "town_street"
+
+
+def test_map_registry_resolves_auto_sub_location_default_fallback_and_none():
+    registry = MapRegistry()
+    registry.load(
+        {
+            "town": {
+                "id": "town",
+                "sub_locations": {
+                    "gate": {"id": "gate"},
+                    "square": {"id": "square"},
+                },
+                "default_sub_location": "square",
+            },
+            "wilds": {
+                "id": "wilds",
+                "sub_locations": {
+                    "trail": {"id": "trail"},
+                    "camp": {"id": "camp"},
+                },
+                "default_sub_location": "missing_entry",
+            },
+            "void": {
+                "id": "void",
+                "sub_locations": {},
+            },
+        }
+    )
+
+    assert registry.resolve_auto_sub_location("town") == "square"
+    assert registry.resolve_auto_sub_location("wilds") == "trail"
+    assert registry.resolve_auto_sub_location("void") is None
+    assert registry.resolve_auto_sub_location("missing") is None
 
 
 def test_map_registry_encounter_profile_backward_compat():
@@ -304,6 +379,32 @@ def test_quest_registry_validates_chapter_and_milestone_links():
         "milestone 'intro' next_milestones[1] must be a non-empty string" in issues
     )
     assert "initial_events[0] has invalid event id" in issues
+
+
+def test_quest_registry_loads_milestone_rewards():
+    registry = QuestRegistry()
+    registry.load(
+        {
+            "milestones": {
+                "intro": {
+                    "id": "intro",
+                    "chapter_id": "chapter-1",
+                    "rewards": {
+                        "gold": 50,
+                        "xp": 100,
+                        "items": [{"item_id": "healing_herb", "count": 2}],
+                    },
+                }
+            },
+            "chapters": [{"id": "chapter-1"}],
+        }
+    )
+
+    milestone = registry.get_milestone("intro")
+    assert milestone is not None
+    assert milestone.rewards["gold"] == 50
+    assert milestone.rewards["xp"] == 100
+    assert milestone.rewards["items"] == [{"item_id": "healing_herb", "count": 2}]
 
 
 # ------------------------------------------------------------------
@@ -3268,3 +3369,177 @@ def test_skill_get_combat_and_exploration():
     registry2.load({"p": {"id": "p", "usable_in": []}})
     assert registry2.get_combat_skills() == []
     assert registry2.get_exploration_skills() == []
+
+
+# ---------------------------------------------------------------------------
+# A3: base_danger 数值化 + 字符串兜底 (P29-A3)
+# ---------------------------------------------------------------------------
+
+def test_map_base_danger_explicit_numeric_takes_priority():
+    """当 base_danger 字段为浮点数时直接使用，不被 danger_level 字符串覆盖。"""
+    registry = MapRegistry()
+    registry.load({
+        "zone": {
+            "id": "zone",
+            "danger_level": "high",
+            "base_danger": 0.4,
+        }
+    })
+    template = registry.get("zone")
+    assert template is not None
+    assert template.base_danger == 0.4
+    assert template.danger_level == "high"  # string field preserved separately
+
+
+def test_map_base_danger_string_fallback_converts_known_levels():
+    """当 base_danger 缺失时，danger_level 字符串应转为相应浮点值。"""
+    registry = MapRegistry()
+    registry.load({
+        "a": {"id": "a", "danger_level": "low"},
+        "b": {"id": "b", "danger_level": "medium"},
+        "c": {"id": "c", "danger_level": "high"},
+        "d": {"id": "d", "danger_level": "extreme"},
+        "e": {"id": "e", "danger_level": "none"},
+    })
+    assert registry.get("a").base_danger == 0.3
+    assert registry.get("b").base_danger == 0.6
+    assert registry.get("c").base_danger == 1.0
+    assert registry.get("d").base_danger == 1.5
+    assert registry.get("e").base_danger == 0.0
+
+
+def test_map_base_danger_unknown_string_leaves_none_no_crash():
+    """未知字符串 danger_level 不应崩溃，base_danger 保持 None。"""
+    registry = MapRegistry()
+    registry.load({
+        "zone": {"id": "zone", "danger_level": "catastrophic"},
+    })
+    template = registry.get("zone")
+    assert template is not None
+    assert template.base_danger is None
+    # must not appear in load_issues either (no error for unknown string)
+    assert not any("base_danger" in i for i in registry._load_issues)
+
+
+# ---------------------------------------------------------------------------
+# A6a: ancient_ruins sub-location hostile_config 解析 (P29-A6a)
+# ---------------------------------------------------------------------------
+
+def test_map_sub_location_hostile_config_parsed():
+    """Sub-location 的 hostile_config 应被正确解析为 HostileConfig 对象。"""
+    from app.game_core.content.registries.map_types import HostileConfig
+
+    registry = MapRegistry()
+    registry.load({
+        "dungeon": {
+            "id": "dungeon",
+            "sub_locations": {
+                "patrol_hall": {
+                    "id": "patrol_hall",
+                    "hostile_config": {
+                        "hostile_groups": [
+                            {"monster_ids": ["goblin", "goblin", "goblin"], "role": "patrol"}
+                        ],
+                        "stealth_dc": 12,
+                        "blocking": False,
+                        "ambient_description": "远处传来脚步声。",
+                    },
+                },
+                "boss_room": {
+                    "id": "boss_room",
+                    "hostile_config": {
+                        "hostile_groups": [
+                            {"monster_ids": ["hobgoblin", "goblin"], "role": "guard"}
+                        ],
+                        "stealth_dc": 16,
+                        "blocking": True,
+                        "ambient_description": "精锐护卫严阵以待。",
+                    },
+                },
+                "safe_room": {
+                    "id": "safe_room",
+                    # no hostile_config
+                },
+            },
+        }
+    })
+
+    dungeon = registry.get("dungeon")
+    assert dungeon is not None
+
+    patrol_hall = dungeon.sub_locations["patrol_hall"]
+    assert isinstance(patrol_hall.hostile_config, HostileConfig)
+    assert patrol_hall.hostile_config.stealth_dc == 12
+    assert patrol_hall.hostile_config.blocking is False
+    assert len(patrol_hall.hostile_config.hostile_groups) == 1
+    patrol_group = patrol_hall.hostile_config.hostile_groups[0]
+    assert patrol_group.monster_ids == ["goblin", "goblin", "goblin"]
+    assert patrol_group.role == "patrol"
+    assert patrol_hall.hostile_config.ambient_description == "远处传来脚步声。"
+
+    boss_room = dungeon.sub_locations["boss_room"]
+    assert isinstance(boss_room.hostile_config, HostileConfig)
+    assert boss_room.hostile_config.stealth_dc == 16
+    assert boss_room.hostile_config.blocking is True
+    boss_group = boss_room.hostile_config.hostile_groups[0]
+    assert boss_group.monster_ids == ["hobgoblin", "goblin"]
+    assert boss_group.role == "guard"
+
+    safe_room = dungeon.sub_locations["safe_room"]
+    assert safe_room.hostile_config is None
+
+
+def test_goblin_slayer_maps_json_parses_correctly():
+    """Verify the actual goblin_slayer maps.json loads without issues and
+    contains the expected base_danger values and hostile_config entries."""
+    import json
+    import os
+    from app.game_core.content.registries.map_types import HostileConfig
+
+    json_path = os.path.join(
+        os.path.dirname(__file__), "..", "data", "goblin_slayer", "v2", "maps.json"
+    )
+    with open(json_path) as f:
+        data = json.load(f)
+
+    registry = MapRegistry()
+    registry.load(data)
+
+    # No load issues expected
+    issues = registry.validate()
+    assert registry._load_issues == [], f"Unexpected load issues: {registry._load_issues}"
+
+    # A3: verify base_danger for all 4 areas
+    assert registry.get("frontier_town").base_danger == 0.2
+    assert registry.get("cow_girl_farm").base_danger == 0.3
+    assert registry.get("water_capital").base_danger == 0.6
+    assert registry.get("ancient_ruins").base_danger == 1.2
+
+    # A6a: verify hostile_config on 3 ancient_ruins sub-locations
+    ruins = registry.get("ancient_ruins")
+    assert ruins is not None
+
+    outer = ruins.sub_locations["outer_cloisters"]
+    assert isinstance(outer.hostile_config, HostileConfig)
+    assert outer.hostile_config.blocking is False
+    assert outer.hostile_config.stealth_dc == 12
+    outer_monsters = [m for g in outer.hostile_config.hostile_groups for m in g.monster_ids]
+    assert outer_monsters == ["goblin", "goblin", "goblin"]
+
+    altar = ruins.sub_locations["sacrificial_altar"]
+    assert isinstance(altar.hostile_config, HostileConfig)
+    assert altar.hostile_config.blocking is True
+    assert altar.hostile_config.stealth_dc == 14
+    altar_monsters = [m for g in altar.hostile_config.hostile_groups for m in g.monster_ids]
+    assert altar_monsters == ["hobgoblin", "goblin", "goblin"]
+
+    inner = ruins.sub_locations["inner_sanctum"]
+    assert isinstance(inner.hostile_config, HostileConfig)
+    assert inner.hostile_config.blocking is True
+    assert inner.hostile_config.stealth_dc == 16
+    inner_monsters = [m for g in inner.hostile_config.hostile_groups for m in g.monster_ids]
+    assert inner_monsters == ["goblin_rider", "hobgoblin", "goblin", "goblin"]
+
+    # Locations without hostile_config should remain None
+    assert ruins.sub_locations["forest_approach"].hostile_config is None
+    assert ruins.sub_locations["waystone_clearing"].hostile_config is None

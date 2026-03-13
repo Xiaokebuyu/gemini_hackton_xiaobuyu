@@ -87,11 +87,12 @@ class PlannerSubSystem(Protocol):
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         """Apply a single directive of *kind*.
 
-        Returns True when the directive was successfully applied, False when it
-        was rejected (e.g. invalid payload).
+        Returns True when the directive was successfully applied.
+        Returns a non-empty string (reason code) when it was rejected
+        (e.g. invalid payload, command failed).
         """
         ...
 
@@ -235,11 +236,12 @@ class PlannerDispatcher:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         """Delegate a directive to the first sub-system that handles *kind*.
 
-        Returns True when a sub-system accepted the directive, False when no
-        sub-system handles *kind*.
+        Returns True when a sub-system accepted the directive.
+        Returns a non-empty reason string when rejected (cyclic call, depth
+        overflow, no handler, or sub-system rejection).
         """
         for subsystem in self._subsystems:
             if kind not in subsystem.handles:
@@ -252,14 +254,14 @@ class PlannerDispatcher:
                     target,
                     kind,
                 )
-                return False
+                return "cyclic_call_blocked"
             if len(self._directive_stack) >= self._MAX_DIRECTIVE_DEPTH:
                 logger.debug(
                     "PlannerDispatcher.apply_directive: blocked depth overflow stack=%s kind=%r",
                     " -> ".join(self._directive_stack),
                     kind,
                 )
-                return False
+                return "depth_overflow"
             self._directive_stack.append(target)
             try:
                 return subsystem.apply_directive(
@@ -271,4 +273,4 @@ class PlannerDispatcher:
         logger.debug(
             "PlannerDispatcher.apply_directive: no sub-system handles kind=%r", kind
         )
-        return False
+        return "no_handler_for_kind"

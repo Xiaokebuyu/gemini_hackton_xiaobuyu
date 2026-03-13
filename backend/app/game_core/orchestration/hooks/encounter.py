@@ -102,6 +102,7 @@ class BasicEncounterDetector:
                     selected_template["description"]
                     or "A hostile group appears nearby."
                 ),
+                "map_category": selected_template.get("map_category"),
                 "threat_level": self._threat_level_for(
                     danger_level,
                     len(selected_template["monster_ids"]),
@@ -232,6 +233,7 @@ class BasicEncounterDetector:
             "id": cls._coerce_non_empty_string(selected.get("id")) or "",
             "monster_ids": monster_ids,
             "description": cls._coerce_non_empty_string(selected.get("description")) or "",
+            "map_category": cls._coerce_non_empty_string(selected.get("map_category")),
             "source": "encounter",
         }
 
@@ -281,7 +283,10 @@ class EncounterHook(NoOpSettlementHook):
         return True
 
     async def execute(self, context: SettlementContext) -> HookResult:
-        can_evaluate, area_id, period, danger_level = self._can_evaluate(context)
+        can_evaluate, area_id, period, danger_level = self._can_evaluate(
+            context,
+            action_log=context.action_log,
+        )
         if not can_evaluate:
             return HookResult(
                 metadata=self._noop_metadata(
@@ -400,6 +405,7 @@ class EncounterHook(NoOpSettlementHook):
                                 "moderate",
                             ),
                             "monster_count": int(encounter_result.get("monster_count", 0)),
+                            "map_category": encounter_result.get("map_category"),
                             "options": [
                                 {"action": "enter", "label": "接近（进入战斗区域）"},
                                 {"action": "retreat", "label": "原路返回"},
@@ -441,6 +447,8 @@ class EncounterHook(NoOpSettlementHook):
     @staticmethod
     def _can_evaluate(
         context: SettlementContext,
+        *,
+        action_log: list[dict[str, Any]] | None = None,
     ) -> tuple[bool, str, str, float]:
         if not context.state.has_slice("player"):
             return False, "", "", 0.0
@@ -453,7 +461,13 @@ class EncounterHook(NoOpSettlementHook):
         period = context.state.time.period
         if not area_id:
             return False, "", period, 0.0
-        if context.state.player.current_location is not None:
+        current_location = context.state.player.current_location
+        if current_location is not None and not EncounterHook._is_area_entry_bridge(
+            context,
+            area_id=area_id,
+            current_location=str(current_location),
+            action_log=action_log,
+        ):
             return False, area_id, period, 0.0
 
         if context.world.has_registry("maps"):
@@ -466,6 +480,41 @@ class EncounterHook(NoOpSettlementHook):
         if danger_level <= 0.0:
             return False, area_id, period, danger_level
         return True, area_id, period, danger_level
+
+    @classmethod
+    def _is_area_entry_bridge(
+        cls,
+        context: SettlementContext,
+        *,
+        area_id: str,
+        current_location: str,
+        action_log: list[dict[str, Any]] | None,
+    ) -> bool:
+        if not context.world.has_registry("maps"):
+            return False
+        auto_location = context.world.maps.resolve_auto_sub_location(area_id)
+        if auto_location is None or current_location != auto_location:
+            return False
+        latest_action = cls._latest_action_record(action_log)
+        if not isinstance(latest_action, Mapping):
+            return False
+        if cls._coerce_non_empty_string(latest_action.get("type")) != "move_area":
+            return False
+        raw_params = latest_action.get("params")
+        if not isinstance(raw_params, Mapping):
+            return False
+        return cls._coerce_non_empty_string(raw_params.get("area_id")) == area_id
+
+    @staticmethod
+    def _latest_action_record(
+        action_log: list[dict[str, Any]] | None,
+    ) -> Mapping[str, Any] | None:
+        if not isinstance(action_log, list):
+            return None
+        for candidate in reversed(action_log):
+            if isinstance(candidate, Mapping):
+                return candidate
+        return None
 
     @classmethod
     def _build_detector_context(
@@ -542,6 +591,11 @@ class EncounterHook(NoOpSettlementHook):
                     "weight": e.weight,
                     "min_danger": e.min_danger,
                     "description": e.description,
+                    "map_category": (
+                        context.world.maps.resolve_encounter_map_category(area_id, e)
+                        if context.world.has_registry("maps")
+                        else None
+                    ),
                 }
                 for e in encounter_table
             ],

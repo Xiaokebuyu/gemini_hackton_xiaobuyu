@@ -59,8 +59,12 @@ def extract_combat_sse(action_type: str, metadata: Any) -> list[SSEEvent]:
                 "target_alive": atk.get("target_alive"),
             }))
             if atk.get("target_alive") is False:
+                # D-10: 丰富化 unit_defeated SSE（含 name/side/source）
                 events.append(SSEEvent("unit_defeated", {
                     "unit_id": atk.get("target_id"),
+                    "name": atk.get("target_name", atk.get("target_id")),
+                    "side": atk.get("target_side", "unknown"),
+                    "source": atk.get("target_source", "unknown"),
                 }))
         # Combat-cleared detection (both handlers expose combat_cleared in metadata)
         if metadata.get("combat_cleared"):

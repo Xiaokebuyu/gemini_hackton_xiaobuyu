@@ -23,6 +23,7 @@ def resolve_item_heal_amount(item_template: Any) -> int | None:
     """Return the heal amount from an ItemTemplate, or None if not a healing item.
 
     Prefers ConsumableData.effect (canonical source) over the legacy heal_amount field.
+    Supports both ``"dice": "2d4+2"`` (rolled on call) and ``"amount": N`` (static).
     """
     if item_template is None:
         return None
@@ -30,6 +31,12 @@ def resolve_item_heal_amount(item_template: Any) -> int | None:
     if consumable_data is not None:
         effect = getattr(consumable_data, "effect", None)
         if isinstance(effect, Effect) and effect.type == "heal":
+            # Prefer dice expression (rolled each call)
+            dice_str = effect.params.get("dice")
+            if dice_str and isinstance(dice_str, str) and dice_str.strip():
+                rolled = roll_damage_dice(dice_str.strip())
+                return rolled if rolled > 0 else None
+            # Fallback to static amount
             value = coerce_int(effect.params.get("amount"))
             if value is not None and value > 0:
                 return value

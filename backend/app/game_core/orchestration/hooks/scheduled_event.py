@@ -28,14 +28,17 @@ class ScheduledEventHook(NoOpSettlementHook):
                 current_flags = {str(key): value for key, value in raw_flags.items()}
         current_area = None
         current_location = None
+        current_room = None
         if context.state.has_slice("player"):
             current_area = context.state.player.current_area
             current_location = context.state.player.current_location
+            current_room = getattr(context.state.player, "current_room", None)
         due_events = context.state.events.check_triggers(
             current_time,
             current_flags=current_flags,
             current_area=current_area,
             current_location=current_location,
+            current_room=current_room,
         )
         if not due_events:
             return HookResult(

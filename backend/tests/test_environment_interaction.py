@@ -31,12 +31,18 @@ def _world_with_maps(maps: dict[str, Any]) -> WorldInstance:
     return build_default_world("test", world_data={"maps": maps})
 
 
-def _player_slice(area: str = "town", location: str | None = None, wis: int = 10) -> PlayerSlice:
+def _player_slice(
+    area: str = "town",
+    location: str | None = None,
+    room: str | None = None,
+    wis: int = 10,
+) -> PlayerSlice:
     sl = PlayerSlice()
     sl.restore({
         "character_name": "Hero",
         "current_area": area,
         "current_location": location,
+        "current_room": room,
         "stats": {"str": 10, "dex": 10, "con": 10, "int": 10, "wis": wis, "cha": 10},
         "hp": 10, "max_hp": 10,
     })
@@ -282,6 +288,42 @@ class TestPassivePerceptionHook:
         assert state.areas.is_trap_detected("dungeon", "trapped_chest")
         assert result.sse_events[0].event_type == "trap_detected"
 
+    def test_reveals_hidden_room_interactable_on_room_entry(self) -> None:
+        world = _world_with_maps({
+            "dungeon": {
+                "id": "dungeon",
+                "name": "Dungeon",
+                "sub_locations": [
+                    {
+                        "id": "vault",
+                        "name": "Vault",
+                        "rooms": {
+                            "study": {
+                                "id": "study",
+                                "name": "Study",
+                                "interactables": [
+                                    {"id": "hidden_note", "name": "Hidden Note", "visibility_dc": 11}
+                                ],
+                            }
+                        },
+                    }
+                ],
+            }
+        })
+        state = _make_state(
+            _player_slice(area="dungeon", location="vault", room="study", wis=12),
+            _area_slice(),
+        )
+        ctx = _make_context(
+            state,
+            world,
+            change_log=[StateChange(slice="player", operation="set", path="current_room", value="study")],
+        )
+        result = asyncio.run(self._hook.execute(ctx))
+        assert result.metadata["status"] == "applied"
+        assert "hidden_note" in result.metadata["interactables_revealed"]
+        assert state.areas.is_discovery_found("dungeon", "hidden_note")
+
     def test_skips_already_found_discovery(self) -> None:
         world = self._world_with_discovery(disc_dc=1)  # dc=1 always passes
         state = _make_state(
@@ -398,6 +440,37 @@ class TestDiscoveryHandler:
         area_slice.apply_state_change(ch)
         assert area_slice.is_discovery_found("forest", "ruins")
 
+    def test_discover_applies_sub_location_reward(self) -> None:
+        world = _world_with_maps({
+            "forest": {
+                "id": "forest",
+                "name": "Forest",
+                "discoveries": [
+                    {
+                        "id": "ruins",
+                        "name": "Ancient Ruins",
+                        "dc": 1,
+                        "check_type": "perception",
+                        "reward": {
+                            "type": "sub_location",
+                            "id": "hidden_glade",
+                            "label": "Hidden Glade",
+                            "description": "A secluded glade.",
+                        },
+                    }
+                ],
+            }
+        })
+        state = self._state()
+        result = self._handler.compute(self._cmd(), state, world)
+        assert result.executed is True
+        assert result.metadata["passed"] is True
+        assert result.delta is not None
+        state.apply(result.delta)
+        ids = [entry["id"] for entry in state.areas.list_temporary_sub_areas("forest")]
+        assert "hidden_glade" in ids
+        assert result.metadata["reward_result"]["applied"][0]["type"] == "sub_location"
+
 
 # ------------------------------------------------------------------
 # TestInteractableHandler
@@ -450,9 +523,41 @@ class TestInteractableHandler:
             }
         })
 
-    def _state(self, location: str = "vault") -> StateContainer:
+    def _world_with_room_reward(self) -> WorldInstance:
+        return _world_with_maps({
+            "dungeon": {
+                "id": "dungeon",
+                "name": "Dungeon",
+                "sub_locations": [
+                    {
+                        "id": "vault",
+                        "name": "Vault",
+                        "interactables": [
+                            {"id": "lobby_statue", "name": "Lobby Statue", "type": "inspect"}
+                        ],
+                        "rooms": {
+                            "study": {
+                                "id": "study",
+                                "name": "Study",
+                                "interactables": [
+                                    {
+                                        "id": "hidden_note",
+                                        "name": "Hidden Note",
+                                        "type": "inspect",
+                                        "visibility_dc": 11,
+                                        "reward": {"type": "item", "id": "ancient_note"},
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                ],
+            }
+        })
+
+    def _state(self, location: str = "vault", room: str | None = None) -> StateContainer:
         return _make_state(
-            _player_slice(area="dungeon", location=location, wis=10),
+            _player_slice(area="dungeon", location=location, room=room, wis=10),
             _area_slice(),
         )
 
@@ -514,6 +619,32 @@ class TestInteractableHandler:
             state, world,
         )
         assert not result.ok
+
+    def test_hidden_room_interactable_requires_discovery_and_applies_item_reward(self) -> None:
+        world = self._world_with_room_reward()
+        state = self._state(room="study")
+
+        hidden = self._handler.compute(
+            Command(type="interact_object_v2", params={"interactable_id": "hidden_note"}),
+            state,
+            world,
+        )
+        assert hidden.executed is False
+        assert hidden.errors == ["interactable_not_revealed"]
+
+        state.areas.mark_discovery("dungeon", "hidden_note")
+        result = self._handler.compute(
+            Command(type="interact_object_v2", params={"interactable_id": "hidden_note"}),
+            state,
+            world,
+        )
+        assert result.executed is True
+        assert result.metadata["passed"] is True
+        assert result.metadata["room_id"] == "study"
+        assert result.delta is not None
+        state.apply(result.delta)
+        assert state.player.get_item_count("ancient_note") == 1
+        assert result.metadata["reward_result"]["applied"][0]["type"] == "item"
 
 
 # ------------------------------------------------------------------

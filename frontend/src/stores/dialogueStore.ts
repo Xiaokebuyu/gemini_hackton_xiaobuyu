@@ -16,6 +16,8 @@ interface DialogueState {
   clearPendingStream: () => void
   clearForSceneChange: () => void
   resetMessages: () => void
+  // Batch-flush VN messages into the scrollable log on dialogue exit
+  batchAddToLog: (entries: DialogueEntry[]) => void
 }
 
 export const useDialogueStore = create<DialogueState>((set) => ({
@@ -119,4 +121,17 @@ export const useDialogueStore = create<DialogueState>((set) => ({
   },
 
   resetMessages: () => set({ messages: [], pendingStreamId: null }),
+
+  // Batch-flush VN messages into both the visible message area AND the full log
+  batchAddToLog: (entries) => {
+    if (entries.length === 0) return
+    set((s) => {
+      const messages = [...s.messages, ...entries]
+      const log = [...s.log, ...entries]
+      return {
+        messages: messages.length > 150 ? messages.slice(-100) : messages,
+        log: log.length > 500 ? log.slice(-400) : log,
+      }
+    })
+  },
 }))

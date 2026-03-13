@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from app.game_core.container_access import ensure_container_state, find_accessible_container, initialize_container_loot
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
@@ -12,6 +13,7 @@ from app.game_core.rules.handler_utils import (
     handler_success,
     handler_success_no_delta,
     normalize_tags,
+    roll_damage_dice,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
@@ -32,15 +34,14 @@ class ContainerHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         if cmd.type == "open_container":
-            return self._validate_open_container(cmd, state)
+            return self._validate_open_container(cmd, state, world)
         if cmd.type == "disarm_trap":
-            return self._validate_disarm_trap(cmd, state)
+            return self._validate_disarm_trap(cmd, state, world)
         if cmd.type == "take_from_container":
-            return self._validate_take_from_container(cmd, state)
+            return self._validate_take_from_container(cmd, state, world)
         if cmd.type == "take_all":
-            return self._validate_take_all(cmd, state)
+            return self._validate_take_all(cmd, state, world)
         if cmd.type == "interact_object":
             return self._validate_interact_object(cmd, state)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
@@ -56,13 +57,13 @@ class ContainerHandler(StaticCommandHandler):
             return ExecuteResult.error(validation.reason or "validation failed")
 
         if cmd.type == "open_container":
-            return self._compute_open_container(cmd, state)
+            return self._compute_open_container(cmd, state, world)
         if cmd.type == "disarm_trap":
-            return self._compute_disarm_trap(cmd, state)
+            return self._compute_disarm_trap(cmd, state, world)
         if cmd.type == "take_from_container":
-            return self._compute_take_from_container(cmd, state)
+            return self._compute_take_from_container(cmd, state, world)
         if cmd.type == "take_all":
-            return self._compute_take_all(cmd, state)
+            return self._compute_take_all(cmd, state, world)
         if cmd.type == "interact_object":
             return self._compute_interact_object(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
@@ -71,8 +72,9 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult:
-        resolved = self._validate_container_presence(cmd, state)
+        resolved = self._validate_container_presence(cmd, state, world)
         if resolved is not None:
             return resolved
         return ValidationResult(ok=True)
@@ -81,15 +83,16 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult:
-        resolved = self._validate_container_presence(cmd, state)
+        resolved = self._validate_container_presence(cmd, state, world)
         if resolved is not None:
             return resolved
         container_id = str(cmd.params["container_id"]).strip()
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
-        _, container_state = target
+        _, container_state, _ = target
         if str(container_state.get("trap_status", "disarmed")) != "armed":
             return ValidationResult(ok=False, reason="container trap is not armed")
         if not bool(container_state.get("trap_detected", False)):
@@ -100,8 +103,9 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult:
-        resolved = self._validate_container_presence(cmd, state)
+        resolved = self._validate_container_presence(cmd, state, world)
         if resolved is not None:
             return resolved
         item_id = get_non_empty_string(cmd.params, "item_id")
@@ -111,10 +115,10 @@ class ContainerHandler(StaticCommandHandler):
         if count is None or count < 1:
             return ValidationResult(ok=False, reason="count must be an integer >= 1")
         container_id = str(cmd.params["container_id"]).strip()
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
-        _, container_state = target
+        _, container_state, _ = target
         gate = self._validate_open_unlocked_container(container_state)
         if gate is not None:
             return gate
@@ -130,15 +134,16 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult:
-        resolved = self._validate_container_presence(cmd, state)
+        resolved = self._validate_container_presence(cmd, state, world)
         if resolved is not None:
             return resolved
         container_id = str(cmd.params["container_id"]).strip()
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
-        _, container_state = target
+        _, container_state, _ = target
         gate = self._validate_open_unlocked_container(container_state)
         if gate is not None:
             return gate
@@ -148,12 +153,13 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         container_id = str(cmd.params["container_id"]).strip()
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ExecuteResult.error(f"unknown container: {container_id}")
-        area_id, container_state = target
+        area_id, container_state, _ = target
 
         items = self._container_items(container_state)
         gold = int(container_state.get("remaining_gold", 0))
@@ -205,15 +211,14 @@ class ContainerHandler(StaticCommandHandler):
                 changes.append(StateChange("player", "add", "hp", -trap_damage))
 
         if lock_status == "locked":
-            if trap_triggered:
-                changes.append(
-                    StateChange(
-                        "areas",
-                        "modify",
-                        f"container_states.{container_id}",
-                        updated_container,
-                    )
+            changes.append(
+                StateChange(
+                    "areas",
+                    "modify",
+                    f"container_states.{container_id}",
+                    updated_container,
                 )
+            )
             return handler_success(
                 "container", "open_container",
                 changes=changes,
@@ -230,7 +235,10 @@ class ContainerHandler(StaticCommandHandler):
                 },
             )
 
+        updated_container = initialize_container_loot(updated_container)
         updated_container["opened"] = True
+        items = self._container_items(updated_container)
+        gold = int(updated_container.get("remaining_gold", 0))
         changes.append(
             StateChange(
                 "areas",
@@ -259,12 +267,13 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         container_id = str(cmd.params["container_id"]).strip()
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ExecuteResult.error(f"unknown container: {container_id}")
-        area_id, container_state = target
+        area_id, container_state, _ = target
 
         dc = self._trap_disarm_dc(container_state)
         passive_total = 10 + state.player.get_skill_bonus("sleight_of_hand")
@@ -310,14 +319,15 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         container_id = str(cmd.params["container_id"]).strip()
         item_id = str(cmd.params["item_id"]).strip()
         count = int(cmd.params.get("count", 1))
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ExecuteResult.error(f"unknown container: {container_id}")
-        area_id, container_state = target
+        area_id, container_state, _ = target
 
         item_entry = self._find_container_item(container_state, item_id)
         updated_inventory = self._player_inventory_snapshot(state)
@@ -361,12 +371,13 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         container_id = str(cmd.params["container_id"]).strip()
-        target = self._resolve_container(state, container_id)
+        target = self._resolve_container(state, world, container_id)
         if target is None:
             return ExecuteResult.error(f"unknown container: {container_id}")
-        area_id, container_state = target
+        area_id, container_state, _ = target
 
         updated_inventory = self._player_inventory_snapshot(state)
         items = self._container_items(container_state)
@@ -487,6 +498,7 @@ class ContainerHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult | None:
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
@@ -498,9 +510,16 @@ class ContainerHandler(StaticCommandHandler):
                 ok=False,
                 reason="container_id must be a non-empty string",
             )
-        if self._resolve_container(state, container_id) is None:
-            return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
-        return None
+        resolved = self._resolve_container(state, world, container_id)
+        if resolved is not None:
+            return None
+        entry, error = find_accessible_container(state, world, container_id)
+        del entry
+        if error == "container_not_revealed":
+            return ValidationResult(ok=False, reason="container_not_revealed")
+        if self._current_area_container_exists(state, container_id):
+            return ValidationResult(ok=False, reason="container_not_in_current_scene")
+        return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
 
     def _validate_open_unlocked_container(
         self,
@@ -515,22 +534,51 @@ class ContainerHandler(StaticCommandHandler):
     def _resolve_container(
         self,
         state: StateContainer,
+        world: WorldInstance,
         container_id: str,
-    ) -> tuple[str, dict[str, Any]] | None:
+    ) -> tuple[str, dict[str, Any], list[StateChange]] | None:
         current_area = state.player.current_area
         if current_area and current_area in state.areas.areas:
             current_state = state.areas.get_container_state(current_area, container_id)
-            if current_state is not None:
+            if current_state is not None and self._container_state_reachable(state, current_state):
                 current_state["area_id"] = current_state.get("area_id") or current_area
-                return current_area, current_state
-        area_id = state.areas.find_container_area(container_id)
-        if area_id is None:
+                return current_area, current_state, []
+
+        entry, error = find_accessible_container(state, world, container_id)
+        if entry is None or error is not None:
             return None
-        container_state = state.areas.get_container_state(area_id, container_id)
-        if container_state is None:
-            return None
-        container_state["area_id"] = container_state.get("area_id") or area_id
-        return area_id, container_state
+        container_state, init_changes = ensure_container_state(state, entry)
+        return entry.area_id, container_state, init_changes
+
+    def _current_area_container_exists(
+        self,
+        state: StateContainer,
+        container_id: str,
+    ) -> bool:
+        current_area = state.player.current_area
+        if not current_area:
+            return False
+        return state.areas.get_container_state(current_area, container_id) is not None
+
+    def _container_state_reachable(
+        self,
+        state: StateContainer,
+        container_state: Mapping[str, Any],
+    ) -> bool:
+        current_location = state.player.current_location
+        current_room = getattr(state.player, "current_room", None)
+        location_id = get_non_empty_string(container_state, "location_id")
+        room_id = get_non_empty_string(container_state, "room_id")
+
+        if current_location is None:
+            return location_id is None
+        if location_id is not None and location_id != current_location:
+            return False
+        if current_room is None:
+            return room_id is None
+        if room_id is None:
+            return True
+        return room_id == current_room
 
     def _find_container_item(
         self,
@@ -617,6 +665,9 @@ class ContainerHandler(StaticCommandHandler):
             nested = coerce_int(trap_payload.get("damage"))
             if nested is not None and nested >= 0:
                 return nested
+            damage_expr = trap_payload.get("damage")
+            if isinstance(damage_expr, str) and damage_expr.strip():
+                return max(0, roll_damage_dice(damage_expr.strip()))
         return 0
 
     def _trap_disarm_dc(self, container_state: Mapping[str, Any]) -> int:
@@ -629,4 +680,3 @@ class ContainerHandler(StaticCommandHandler):
             if nested is not None and nested >= 0:
                 return nested
         return 12
-

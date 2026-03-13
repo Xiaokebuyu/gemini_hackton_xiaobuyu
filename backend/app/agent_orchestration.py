@@ -12,6 +12,7 @@ import logging
 import random
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
 
+from app.game_core.clue_investigation import build_clue_dialogue_options
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, TeammateFull, _profile_get
 from app.game_core.narrative.context_window import ContextWindow, WindowMessage
 from app.game_core.narrative.executor import AgenticExecutor
@@ -23,6 +24,7 @@ from app.game_core.orchestration.npc_interaction import (
     NpcInteractionCoordinator,
     NpcInteractionResult,
     RoundMessage,
+    _build_capability_boundary_prompt,
     _extract_visible_reply_text,
     _resolve_dialogue_options,
     _should_teammate_respond,
@@ -358,6 +360,7 @@ class AgentOrchestrationService:
         events = _private_chat_result_to_sse(
             result,
             action_dispatcher=session.runtime.action_dispatcher,
+            current_location=session.runtime.state.player.current_location,
         )
         if not _has_gm_comment_event(events):
             events = _insert_event_before(
@@ -492,6 +495,13 @@ class AgentOrchestrationService:
         npc_profile = world.characters.get(npc_id) if world.has_registry("characters") else None
         npc_tags = list(_profile_get(npc_profile, "tags", [])) if npc_profile is not None else []
 
+        # QF-5: Inject capability boundary so NPC knows what it can/cannot do
+        # Also inject dynamic capabilities assigned by the narrative planner
+        dynamic_caps: list[dict] = []
+        if state.has_slice("narrative_plan"):
+            dynamic_caps = state.narrative_plan.get_capabilities(npc_id)
+        system_prompt += _build_capability_boundary_prompt(self._executor, npc_tags, capabilities=dynamic_caps)
+
         # Write player message to SceneSlice
         if state.has_slice("scene"):
             state.scene.add_entry(SceneEntry(
@@ -508,6 +518,8 @@ class AgentOrchestrationService:
         }
         if memory_writer is not None:
             npc_metadata["memory_writer"] = memory_writer
+        # Inject npc_tags so tools like AssignQuestTool can check trait constraints
+        npc_metadata["npc_tags"] = npc_tags
         context = builder.build_agent_context(
             "npc",
             npc_id,
@@ -592,6 +604,28 @@ class AgentOrchestrationService:
             await _emit(SSEEvent("text_chunk", {"text": chunk}))
 
         execute_command = _make_shared_command_executor(shared, apply_delta)
+        if result.action_type == "investigate_clue":
+            clue_events = await self._run_clue_investigation_round(
+                shared,
+                result,
+                execute_command=execute_command,
+            )
+            for event in clue_events:
+                await _emit(event)
+            return collected
+        if result.action_type == "resolve_clue_option":
+            resolution_event = self._build_clue_resolution_comment_event(result)
+            if resolution_event is not None:
+                shared.scene_bus.add_entry(
+                    {
+                        "source": "GM",
+                        "content": str(resolution_event.payload.get("content", "")),
+                        "visibility": "public",
+                        "tags": [resolution_event.event_type, "clue_resolution"],
+                    }
+                )
+                await _emit(resolution_event)
+            return collected
 
         gm_events = await self._generate_gm_reaction_from_shared(
             shared,
@@ -634,6 +668,300 @@ class AgentOrchestrationService:
             await _emit(follow_up_options)
 
         return collected
+
+    async def _run_clue_investigation_round(
+        self,
+        shared: SharedContext,
+        result: PipelineResult,
+        *,
+        execute_command: Callable[[Command], ExecuteResult],
+    ) -> list[SSEEvent]:
+        metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+        interactable_id = str(metadata.get("interactable_id") or "").strip()
+        clue_payload = {
+            "clue_id": str(metadata.get("clue_id") or interactable_id).strip(),
+            "interactable_id": interactable_id,
+            "clue_name": str(metadata.get("clue_name") or metadata.get("name") or interactable_id or "线索").strip(),
+            "description": str(metadata.get("description") or "").strip(),
+            "topic": str(metadata.get("topic") or "").strip(),
+            "linked_quest_id": str(metadata.get("linked_quest_id") or "").strip(),
+            "linked_milestone": str(metadata.get("linked_milestone") or "").strip(),
+            "party_prompt_hints": list(metadata.get("party_prompt_hints", []))
+            if isinstance(metadata.get("party_prompt_hints"), list)
+            else [],
+            "options": [
+                dict(option)
+                for option in metadata.get("options", [])
+                if isinstance(option, Mapping)
+            ],
+            "first_inspect_applied": bool(metadata.get("first_inspect_applied", False)),
+            "area_id": str(metadata.get("area_id") or "").strip(),
+            "location_id": str(metadata.get("location_id") or "").strip(),
+            "room_id": str(metadata.get("room_id") or "").strip(),
+        }
+        if not clue_payload["clue_id"]:
+            clue_payload["clue_id"] = interactable_id or "scene_clue"
+
+        shared.scene_bus.add_entry(
+            {
+                "source": "ENGINE",
+                "content": clue_payload["description"] or clue_payload["clue_name"],
+                "visibility": "public",
+                "tags": ["CLUE", "clue_investigation", "party_discussion"],
+            }
+        )
+
+        events: list[SSEEvent] = []
+        gm_events = await self._generate_clue_gm_events(shared, result, clue_payload)
+        if not gm_events:
+            gm_events = [self._build_fallback_clue_comment_event(clue_payload)]
+        for event in gm_events:
+            if event.event_type in {"gm_comment", "gm_narration"}:
+                shared.scene_bus.add_entry(
+                    {
+                        "source": "GM",
+                        "content": str(event.payload.get("content", "")),
+                        "visibility": "public",
+                        "tags": [event.event_type, "clue_investigation"],
+                    }
+                )
+            events.append(event)
+
+        teammate_events = await self._generate_clue_teammate_events(
+            shared,
+            clue_payload,
+            gm_events=gm_events,
+            execute_command=execute_command,
+        )
+        for event in teammate_events:
+            if event.event_type == "teammate_response":
+                shared.scene_bus.add_entry(
+                    {
+                        "source": f"TEAMMATE:{event.payload.get('character_id', '')}",
+                        "content": str(event.payload.get("content") or event.payload.get("action") or ""),
+                        "visibility": "public",
+                        "tags": [event.event_type, "clue_investigation"],
+                    }
+                )
+            events.append(event)
+
+        if interactable_id:
+            options = build_clue_dialogue_options(interactable_id, clue_payload)
+            if options:
+                events.append(
+                    SSEEvent(
+                        event_type="dialogue_options",
+                        payload={"options": options},
+                    )
+                )
+
+        return events
+
+    async def _generate_clue_gm_events(
+        self,
+        shared: SharedContext,
+        result: PipelineResult,
+        clue_payload: Mapping[str, Any],
+    ) -> list[SSEEvent]:
+        builder = AgentContextBuilder(shared.world, shared.state)
+        context = builder.build_agent_context("gm")
+        gm_layers = builder.build_gm_context(
+            hints=[*list(result.narrative_hints), "clue_investigation"],
+        )
+        user_message = json.dumps(
+            {
+                **_result_decision_payload(result),
+                "interaction_type": "clue_investigation",
+                "clue": dict(clue_payload),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+        try:
+            agent_result = await self._executor.run_agentic(
+                role="gm",
+                context=context,
+                system_prompt=builder.build_gm_clue_prompt(),
+                user_message=user_message,
+                max_turns=2,
+                context_layers=gm_layers,
+            )
+        except Exception:
+            logger.exception("GM clue investigation Agent failed")
+            return []
+        return _gm_result_to_sse(agent_result)
+
+    async def _generate_clue_teammate_events(
+        self,
+        shared: SharedContext,
+        clue_payload: Mapping[str, Any],
+        *,
+        gm_events: list[SSEEvent],
+        execute_command: Callable[[Command], ExecuteResult],
+    ) -> list[SSEEvent]:
+        state = shared.state
+        if not state.has_slice("party"):
+            return []
+        members = state.party.members
+        if not isinstance(members, dict) or not members:
+            return []
+
+        world = shared.world
+        builder = AgentContextBuilder(world, state)
+        companion_manager = shared.companion_manager
+        current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
+        member_ids = [member_id for member_id in members if str(member_id).strip()]
+        if companion_manager is not None:
+            companion_manager.sync_members(member_ids, current_tick=current_tick)
+
+        events: list[SSEEvent] = []
+        responded_members = 0
+        gm_observation = _first_visible_gm_text(gm_events)
+        user_message = json.dumps(
+            {
+                "interaction_type": "clue_investigation",
+                "clue": dict(clue_payload),
+                "gm_observation": gm_observation,
+                "available_options": [
+                    {
+                        "id": str(option.get("id", "")),
+                        "label": str(option.get("label", "")),
+                    }
+                    for option in clue_payload.get("options", [])
+                    if isinstance(option, Mapping)
+                ],
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+        scene_entries = _decision_scene_entries(shared.scene_bus)
+
+        for member_id in member_ids:
+            if responded_members >= 2:
+                break
+            if not _should_teammate_respond(
+                world,
+                member_id,
+                scene_entries=scene_entries,
+                state=state,
+                explicit_party=True,
+            ):
+                continue
+
+            tm_prompt = await builder.build_teammate_interaction_prompt(
+                member_id,
+                group_mode=True,
+                npc_id=None,
+            )
+            if tm_prompt is None:
+                continue
+
+            instance = (
+                companion_manager.get_or_create(member_id, current_tick=current_tick)
+                if companion_manager is not None
+                else None
+            )
+            context_window = instance.context_window if instance is not None else None
+            history = _window_to_history(context_window) if context_window is not None else None
+            tm_layers = await builder.build_teammate_context(member_id)
+            tm_context = builder.build_agent_context(
+                "teammate",
+                member_id,
+                execute_command=execute_command,
+            )
+            try:
+                agent_result = await self._executor.run_agentic(
+                    role="teammate",
+                    context=tm_context,
+                    system_prompt=tm_prompt,
+                    user_message=user_message,
+                    max_turns=2,
+                    context_layers=tm_layers,
+                    conversation_history=history,
+                )
+            except Exception:
+                logger.exception("Clue teammate Agent failed: %s", member_id)
+                continue
+
+            if _is_protocol_error(agent_result):
+                _log_protocol_error(
+                    role="teammate",
+                    character_id=member_id,
+                    result=agent_result,
+                )
+                continue
+
+            teammate_events = _teammate_result_to_sse(member_id, agent_result)
+            visible_reply = _extract_visible_reply_text(agent_result)
+            if context_window is not None:
+                context_window.add_message(
+                    WindowMessage(
+                        role="user",
+                        content=user_message,
+                        token_count=_approx_tokens(user_message),
+                        metadata={},
+                    )
+                )
+                if visible_reply:
+                    context_window.add_message(
+                        WindowMessage(
+                            role="model",
+                            content=visible_reply,
+                            token_count=_approx_tokens(visible_reply),
+                            metadata={},
+                        )
+                    )
+
+            if any(event.event_type == "teammate_response" for event in teammate_events):
+                responded_members += 1
+                events.extend(teammate_events)
+                scene_entries = _decision_scene_entries(shared.scene_bus) + [
+                    {
+                        "source": f"TEAMMATE:{member_id}",
+                        "content": visible_reply,
+                        "visibility": "public",
+                        "tags": ["teammate_response", "clue_investigation"],
+                    }
+                ]
+
+        return events
+
+    def _build_fallback_clue_comment_event(
+        self,
+        clue_payload: Mapping[str, Any],
+    ) -> SSEEvent:
+        clue_name = str(clue_payload.get("clue_name") or clue_payload.get("clue_id") or "这条线索").strip()
+        return SSEEvent(
+            event_type="gm_comment",
+            payload={
+                "content": f"{clue_name}先把方向拧了出来，却还没打算把答案直接交到你手里。",
+            },
+        )
+
+    def _build_clue_resolution_comment_event(
+        self,
+        result: PipelineResult,
+    ) -> SSEEvent | None:
+        metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+        clue_name = str(metadata.get("clue_name") or metadata.get("clue_id") or "线索").strip()
+        option_label = str(metadata.get("option_label") or metadata.get("option_id") or "这个判断").strip()
+        passed = metadata.get("passed") if isinstance(metadata.get("passed"), bool) else None
+        raw_effect_types = metadata.get("effect_types")
+        effect_types = [
+            str(item).strip()
+            for item in raw_effect_types
+            if isinstance(item, str) and str(item).strip()
+        ] if isinstance(raw_effect_types, list) else []
+
+        if "unlock_sub_location" in effect_types:
+            content = f"{option_label}让{clue_name}终于露出了一条能追下去的路。"
+        elif "advance_quest" in effect_types:
+            content = f"{option_label}把{clue_name}钉进了更清楚的方向，事情往前走了一步。"
+        elif passed is False:
+            content = f"{option_label}没能把{clue_name}彻底掰开，但它至少替你排掉了一条岔路。"
+        else:
+            content = f"{option_label}暂时替{clue_name}定住了一个方向。"
+        return SSEEvent(event_type="gm_comment", payload={"content": content})
 
     async def _generate_gm_reaction(
         self,
@@ -735,11 +1063,17 @@ class AgentOrchestrationService:
             ensure_ascii=False,
             default=str,
         )
+        # Inject NPC capability context into GM prompt so it can generate
+        # functional options that match the NPC's actual abilities (2-2)
+        npc_cap_context = _build_gm_npc_capability_context(
+            shared.world, shared.state, npc_id
+        )
+        gm_system_prompt = builder.build_gm_dialogue_options_prompt() + npc_cap_context
         try:
             agent_result = await self._executor.run_agentic(
                 role="gm",
                 context=context,
-                system_prompt=builder.build_gm_dialogue_options_prompt(),
+                system_prompt=gm_system_prompt,
                 user_message=user_message,
                 max_turns=2,
                 context_layers=builder.build_gm_context(
@@ -2026,6 +2360,24 @@ def _build_opening_user_message(session: ManagedSession) -> str:
                 opening_quest_title = str(quest.get("title") or quest.get("summary") or "").strip()
                 if opening_quest_title:
                     break
+    # Build optional narrative context from current_target_milestone (D-P31 Phase 1c)
+    opening_narrative: dict[str, Any] | None = None
+    if session.runtime.state.has_slice("narrative_plan"):
+        ms_id = session.runtime.state.narrative_plan.current_target_milestone
+        if ms_id and session.runtime.world.has_registry("quests"):
+            ms = session.runtime.world.quests.get_milestone(ms_id)
+            if ms:
+                opening_narrative = {
+                    "milestone_title": ms.title,
+                    "narrative_context": ms.narrative_context,
+                    "key_elements": ms.key_elements,
+                }
+                if ms.chapter_id:
+                    ch = session.runtime.world.quests.get_chapter(ms.chapter_id)
+                    if ch:
+                        opening_narrative["chapter_title"] = ch.title
+                        opening_narrative["chapter_description"] = ch.description
+
     payload = {
         "current_area": session.runtime.state.player.current_area,
         "current_location": session.runtime.state.player.current_location,
@@ -2033,33 +2385,130 @@ def _build_opening_user_message(session: ManagedSession) -> str:
         "sub_locations": sub_locations[:3],
         "exits": exits[:3],
         "opening_quest": opening_quest_title or None,
+        "opening_narrative": opening_narrative,
     }
     return json.dumps(payload, ensure_ascii=False)
+
+
+# ------------------------------------------------------------------
+# GM NPC capability context helper
+# ------------------------------------------------------------------
+
+
+def _build_gm_npc_capability_context(
+    world: Any,
+    state: Any,
+    focus_npc_id: str,
+) -> str:
+    """Build a capability summary string for GM prompt injection.
+
+    Returns a section describing the focused NPC's static tools and dynamic
+    capabilities, plus a brief list of nearby NPCs with their functional tags.
+    Returns empty string if no capability data is available.
+    """
+    lines: list[str] = []
+
+    # --- Focused NPC capabilities ---
+    char_registry = world.has_registry("characters") if hasattr(world, "has_registry") else False
+    npc_profile = world.characters.get(focus_npc_id) if char_registry else None
+    npc_name = str(_profile_get(npc_profile, "name", focus_npc_id)) if npc_profile else focus_npc_id
+    npc_tags: list[str] = list(_profile_get(npc_profile, "tags", [])) if npc_profile else []
+
+    # Static tool availability derived from NPC tags
+    static_tools: list[str] = []
+    if "merchant" in npc_tags or "shop" in npc_tags:
+        static_tools.append("trade_browse（可交易）")
+    if "quest_giver" in npc_tags or "guild" in npc_tags:
+        static_tools.append("offer_quest（发布任务）")
+
+    # Dynamic capabilities from narrative plan
+    dynamic_caps: list[dict] = []
+    if hasattr(state, "has_slice") and state.has_slice("narrative_plan"):
+        dynamic_caps = state.narrative_plan.get_capabilities(focus_npc_id)
+
+    if static_tools or dynamic_caps:
+        lines.append(f"\n## 当前 NPC 的能力（生成选项时必须参考）")
+        lines.append(f"NPC: {focus_npc_id} ({npc_name})")
+        if static_tools:
+            lines.append("静态工具: " + "、".join(static_tools))
+        if dynamic_caps:
+            cap_parts = [
+                f"{c.get('capability_id', '?')}（{c.get('instruction', '')})"
+                + (f", functional={c['functional']}" if c.get("functional") else "")
+                for c in dynamic_caps
+            ]
+            lines.append("动态能力: " + "、".join(cap_parts))
+        lines.append("只推荐 NPC 真正能做到的功能选项。不要推荐 NPC 没有的能力（如交易、教学等）。")
+
+    # --- Nearby NPC brief capabilities ---
+    nearby_lines: list[str] = []
+    if hasattr(state, "has_slice") and state.has_slice("areas") and state.has_slice("player"):
+        area_id = state.player.current_area or ""
+        if area_id and area_id in state.areas.areas:
+            npc_locations = dict(state.areas.areas[area_id].npc_locations)
+            for nearby_id in npc_locations:
+                if nearby_id == focus_npc_id:
+                    continue
+                nearby_profile = world.characters.get(nearby_id) if char_registry else None
+                if nearby_profile is None:
+                    continue
+                nearby_name = str(_profile_get(nearby_profile, "name", nearby_id))
+                nearby_tags: list[str] = list(_profile_get(nearby_profile, "tags", []))
+                nearby_caps: list[dict] = []
+                if hasattr(state, "has_slice") and state.has_slice("narrative_plan"):
+                    nearby_caps = state.narrative_plan.get_capabilities(nearby_id)
+                nearby_functional_tags: list[str] = []
+                if "merchant" in nearby_tags or "shop" in nearby_tags:
+                    nearby_functional_tags.append("trade_browse")
+                for cap in nearby_caps:
+                    if cap.get("functional"):
+                        nearby_functional_tags.append(cap["functional"])
+                if nearby_functional_tags:
+                    tag_str = ", ".join(sorted(set(nearby_functional_tags)))
+                    nearby_lines.append(f"- {nearby_id} ({nearby_name}): {tag_str}")
+
+    if nearby_lines:
+        lines.append("\n## 附近其他 NPC")
+        lines.extend(nearby_lines)
+
+    return "\n".join(lines) if lines else ""
 
 
 def _private_chat_result_to_sse(
     result: PrivateChatResult,
     *,
     action_dispatcher: Any = None,
+    current_location: str | None = None,
 ) -> list[SSEEvent]:
     """Convert 4-step private chat result → ordered SSE events.
 
     Order: scene_change (optional) → NPC response → GM inner monologue
            (optional, introspective) → dialogue options.
+
+    QF-1: Only emit transition:"fade" on the first entry into a private scene.
+    Subsequent messages in the same private scene only emit a scene_change
+    without the transition to avoid repeated black-screen animations.
     """
     events: list[SSEEvent] = []
     # Scene change (private sub-area created)
+    # QF-1: skip transition:"fade" if player is already in a private scene
+    already_in_private = (
+        isinstance(current_location, str)
+        and current_location.startswith("_private_")
+    )
     if result.scene_id:
+        scene_payload: dict[str, Any] = {
+            "location_id": result.scene_id,
+            "location_name": result.scene_name,
+            "background": "private",
+            "ambient_preset": None,
+            "ambient_override": None,
+        }
+        if not already_in_private:
+            scene_payload["transition"] = "fade"
         events.append(SSEEvent(
             event_type="scene_change",
-            payload={
-                "location_id": result.scene_id,
-                "location_name": result.scene_name,
-                "background": "private",
-                "transition": "fade",
-                "ambient_preset": None,
-                "ambient_override": None,
-            },
+            payload=scene_payload,
         ))
     if result.npc_result is not None:
         events.extend(_npc_result_to_sse(result.npc_id, result.npc_result))
@@ -2214,3 +2663,13 @@ def _first_gm_comment_event(result: AgentResult | None) -> SSEEvent | None:
                 payload["tone"] = tone.strip()
             return SSEEvent(event_type="gm_comment", payload=payload)
     return None
+
+
+def _first_visible_gm_text(events: list[SSEEvent]) -> str:
+    for event in events:
+        if event.event_type not in {"gm_comment", "gm_narration"}:
+            continue
+        content = str(event.payload.get("content") or "").strip()
+        if content:
+            return content
+    return ""

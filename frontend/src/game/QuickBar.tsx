@@ -30,17 +30,17 @@ export default function QuickBar({ worldId, sessionId }: Props) {
   }
 
   return (
-    <div className="flex-shrink-0 flex items-center justify-between pt-1.5 border-t border-gray-700/30">
+    <div className="flex-shrink-0 flex items-center justify-between pt-1.5 border-t border-stone-700/30">
       <div className="flex gap-2">
         <button
           onClick={() => { audio.playClick(); overlay.open('log') }}
-          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
         >
           LOG
         </button>
         <button
           onClick={() => { audio.playClick(); overlay.open('menu') }}
-          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
         >
           MENU
         </button>
@@ -51,14 +51,14 @@ export default function QuickBar({ worldId, sessionId }: Props) {
         <button
           onClick={toggleMute}
           title={muted ? '取消静音' : '静音'}
-          className="text-gray-400 hover:text-gray-200 text-xs px-2 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+          className="text-gray-400 hover:text-gray-200 text-xs px-2 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
         >
           {muted ? '🔇' : '🔊'}
         </button>
         <button
           onClick={handleSave}
           disabled={isStreaming}
-          className="text-gray-400 hover:text-gray-200 disabled:opacity-40 text-xs px-3 py-1 rounded border border-gray-700 hover:border-gray-500 transition-colors"
+          className="text-gray-400 hover:text-gray-200 disabled:opacity-40 text-xs px-3 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
         >
           SAVE
         </button>

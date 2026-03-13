@@ -10,6 +10,7 @@ from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
 from app.game_core.rules.handlers import CompanionHandler
+from app.game_core.rules.handlers.world_state import WorldStateHandler
 from app.game_core.state import StateChange, StateContainer
 from app.game_core.state.slices import SceneSlice
 from app.game_core.state.slices.party import PartySlice
@@ -52,6 +53,7 @@ def _make_context(
 
     engine = RulesEngine()
     engine.register(CompanionHandler())
+    engine.register(WorldStateHandler())
 
     def _apply_delta(delta) -> None:
         if delta is None:
@@ -81,6 +83,7 @@ def _make_context_no_relations(change_log: list | None = None) -> SettlementCont
     scene_bus = SceneBus(scene_slice)
     engine = RulesEngine()
     engine.register(CompanionHandler())
+    engine.register(WorldStateHandler())
 
     def _apply_delta(delta) -> None:
         if delta is None:

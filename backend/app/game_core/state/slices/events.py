@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Mapping
 
+from app.game_core.location_utils import location_condition_met, normalize_condition_mapping
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
 
@@ -117,6 +118,7 @@ class EventSlice(StateSlice):
         current_flags: dict[str, Any] | None = None,
         current_area: str | None = None,
         current_location: str | None = None,
+        current_room: str | None = None,
     ) -> list[dict[str, Any]]:
         """Evaluate pending events and return those whose trigger conditions are met.
 
@@ -133,6 +135,7 @@ class EventSlice(StateSlice):
                 current_flags,
                 current_area,
                 current_location,
+                current_room,
             ):
                 due.append(dict(event))
             else:
@@ -150,13 +153,15 @@ class EventSlice(StateSlice):
         current_flags: dict[str, Any] | None,
         current_area: str | None,
         current_location: str | None,
+        current_room: str | None,
     ) -> bool:
         condition = event.get("trigger_condition")
         if not isinstance(condition, Mapping):
             # Legacy fallback: honour trigger_tick if present
             tt = event.get("trigger_tick")
             return isinstance(tt, int) and tt <= current_abs
-        condition_type = condition.get("type", "")
+        normalized_condition = normalize_condition_mapping(condition)
+        condition_type = normalized_condition.get("type", "")
         if condition_type == "absolute_tick":
             tick = condition.get("tick")
             return isinstance(tick, int) and tick <= current_abs
@@ -173,24 +178,30 @@ class EventSlice(StateSlice):
             period = condition.get("period")
             return isinstance(period, str) and period.strip() == str(current_time.get("period", "")).strip()
         if condition_type == "location_entered":
-            area_id = condition.get("area_id")
-            location_id = condition.get("location_id")
-            if area_id is None and location_id is None:
-                return False
-            area_ok = True
-            if area_id is not None:
-                area_ok = isinstance(area_id, str) and area_id.strip() == (current_area or "")
-            location_ok = True
-            if location_id is not None:
-                location_ok = isinstance(location_id, str) and location_id.strip() == (current_location or "")
-            return area_ok and location_ok
+            return location_condition_met(
+                "location_entered",
+                normalized_condition,
+                current_area=current_area,
+                current_location=current_location,
+                current_room=current_room,
+                current_flags=current_flags,
+            )
+        if condition_type == "location_visited":
+            return location_condition_met(
+                "location_visited",
+                normalized_condition,
+                current_area=current_area,
+                current_location=current_location,
+                current_room=current_room,
+                current_flags=current_flags,
+            )
         if condition_type == "flag_set":
             if current_flags is None:
                 return False
-            key = condition.get("key") or condition.get("flag_key")
+            key = normalized_condition.get("key") or normalized_condition.get("flag_key")
             if not isinstance(key, str) or not key.strip():
                 return False
-            expected = condition.get("value", True)
+            expected = normalized_condition.get("value", True)
             return current_flags.get(key.strip()) == expected
         return False
 
@@ -251,6 +262,12 @@ class EventSlice(StateSlice):
         if change.path.startswith("active_events.") and isinstance(change.value, Mapping):
             _, event_id = change.path.split(".", 1)
             self.activate(event_id, dict(change.value))
+            return
+        if change.path.startswith("event_state.") and isinstance(change.value, Mapping):
+            _, event_id = change.path.split(".", 1)
+            to_state = str(change.value.get("to_state", ""))
+            patch = dict(change.value.get("patch", {}))
+            self.set_state(event_id, to_state, patch=patch)
             return
         if change.path == "rumors" and isinstance(change.value, Mapping):
             self.add_rumor(dict(change.value))

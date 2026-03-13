@@ -47,6 +47,7 @@ class OpeningBootstrapQuestAgent:
                     "title": f"Lead: {milestone_name}",
                     "summary": f"Follow the new lead tied to {milestone_id}.",
                     "requires_report": True,
+                    "delivery_method": "board",
                     "metadata": {
                         "source_milestone": milestone_id,
                         "urgency": "medium",
@@ -54,28 +55,6 @@ class OpeningBootstrapQuestAgent:
                 },
             }
         ]
-
-        board_offer = self._first_area_board(context)
-        if board_offer is not None:
-            directives.append(
-                {
-                    "kind": "publish_bulletin",
-                    "payload": {
-                        "board_id": board_offer["board_id"],
-                        "area_id": board_offer["area_id"],
-                        "location": {
-                            "area_id": board_offer["area_id"],
-                            "sub_location": board_offer["sub_location"],
-                        },
-                        "title": "New Lead Posted",
-                        "content": f"A fresh lead is available: {milestone_name}.",
-                        "metadata": {
-                            "quest_id": quest_id,
-                            "source_milestone": milestone_id,
-                        },
-                    },
-                }
-            )
 
         return {
             "directives": directives,

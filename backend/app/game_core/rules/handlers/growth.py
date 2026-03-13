@@ -125,10 +125,13 @@ class GrowthHandler(StaticCommandHandler):
         bonus = coerce_int(cmd.params.get("bonus"))
         if bonus not in {1, 2}:
             return ValidationResult(ok=False, reason="bonus must be 1 or 2")
-        if int(state.player.level) not in self._ASI_LEVELS:
+        remaining_points = int(getattr(state.player, "asi_points_remaining", 0))
+        if remaining_points < 1:
+            return ValidationResult(ok=False, reason="no ASI points available")
+        if bonus > remaining_points:
             return ValidationResult(
                 ok=False,
-                reason="ASI can only be applied at levels 4/8/12/16/19",
+                reason=f"bonus exceeds remaining ASI points: {bonus} > {remaining_points}",
             )
         current_value = coerce_int(state.player.stats.get(stat))
         if current_value is None:
@@ -281,6 +284,8 @@ class GrowthHandler(StaticCommandHandler):
         new_proficiency_bonus = self._resolve_proficiency_bonus(target_level)
         new_max_hp = int(state.player.max_hp) + hp_gain_total
         new_hp = min(new_max_hp, int(state.player.hp) + hp_gain_total)
+        gained_asi_points = self._count_crossed_asi_levels(current_level, target_level) * 2
+        new_asi_points_remaining = int(getattr(state.player, "asi_points_remaining", 0)) + gained_asi_points
         resource_changes, updated_resource_keys = self._resolve_resource_changes(
             class_template, target_level, state,
         )
@@ -294,6 +299,7 @@ class GrowthHandler(StaticCommandHandler):
                 StateChange("player", "set", "max_hp", new_max_hp),
                 StateChange("player", "set", "hp", new_hp),
                 StateChange("player", "set", "class_features", new_features),
+                StateChange("player", "set", "asi_points_remaining", new_asi_points_remaining),
                 *resource_changes,
             ],
             metadata={
@@ -303,6 +309,9 @@ class GrowthHandler(StaticCommandHandler):
                 "added_features": added_features,
                 "new_proficiency_bonus": new_proficiency_bonus,
                 "updated_resources": updated_resource_keys,
+                "gained_asi_points": gained_asi_points,
+                "asi_points_remaining": new_asi_points_remaining,
+                "asi_available": new_asi_points_remaining > 0,
             },
             omit_empty_delta=False,
         )
@@ -316,17 +325,22 @@ class GrowthHandler(StaticCommandHandler):
         bonus = int(cmd.params["bonus"])
         from_value = int(state.player.stats.get(stat, 0))
         to_value = from_value + bonus
+        remaining_before = int(getattr(state.player, "asi_points_remaining", 0))
+        remaining_after = max(0, remaining_before - bonus)
         return handler_success(
             "growth",
             "apply_asi",
             changes=[
                 StateChange("player", "add", f"stats.{stat}", bonus),
+                StateChange("player", "set", "asi_points_remaining", remaining_after),
             ],
             metadata={
                 "stat": stat,
                 "bonus": bonus,
                 "from_value": from_value,
                 "to_value": to_value,
+                "asi_points_remaining": remaining_after,
+                "asi_available": remaining_after > 0,
             },
             omit_empty_delta=False,
         )
@@ -606,6 +620,17 @@ class GrowthHandler(StaticCommandHandler):
     def _resolve_proficiency_bonus(level: int) -> int:
         return 2 + ((max(1, level) - 1) // 4)
 
+    def _count_crossed_asi_levels(
+        self,
+        current_level: int,
+        target_level: int,
+    ) -> int:
+        return sum(
+            1
+            for level in self._ASI_LEVELS
+            if current_level < level <= target_level
+        )
+
     @staticmethod
     def _merge_features(existing: list[str], additions: list[str]) -> list[str]:
         merged = list(existing)
@@ -709,4 +734,3 @@ class GrowthHandler(StaticCommandHandler):
             return None
         normalized = value.strip()
         return normalized or None
-

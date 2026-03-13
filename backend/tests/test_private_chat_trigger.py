@@ -20,6 +20,7 @@ from app.game_core.orchestration.hooks.private_chat_trigger import (
 )
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.handlers.world_state import WorldStateHandler
 from app.game_core.state import StateContainer
 from app.game_core.state.slices import SceneSlice
 from app.game_core.state.slices import (
@@ -67,7 +68,9 @@ def _make_context(
     area_id: str = "test_area",
     current_area: str = "test_area",
     player_location: str | None = "campfire",
+    player_room: str | None = None,
     area_npc_locations: dict[str, str | None] | None = None,
+    area_npc_rooms: dict[str, str | None] | None = None,
     party_members: dict[str, dict[str, object]] | None = None,
     include_scene_tags: bool = True,
     scene_tags: list[str] | None = None,
@@ -99,13 +102,15 @@ def _make_context(
         player.restore({
             "current_area": current_area,
             "current_location": player_location,
+            "current_room": player_room,
         })
         state.register(player)
 
     if include_area:
         if area_npc_locations is None:
             if dispositions:
-                area_npc_locations = {npc_id: "npc_area_spot" for npc_id in dispositions}
+                # Default: NPCs placed at player_location so they are co-located
+                area_npc_locations = {npc_id: player_location for npc_id in dispositions}
             else:
                 area_npc_locations = {}
         area = AreaSlice()
@@ -113,6 +118,7 @@ def _make_context(
             "areas": {
                 area_id: {
                     "npc_locations": area_npc_locations,
+                    "npc_rooms": area_npc_rooms or {},
                 },
             },
         })
@@ -148,13 +154,21 @@ def _make_context(
     if world is None:
         world = _world_empty()
 
+    engine = RulesEngine()
+    engine.register(WorldStateHandler())
+
+    def _apply_delta(delta) -> None:
+        if delta is None:
+            return
+        state.apply(delta)
+
     return SettlementContext(
         change_log=[],
         state=state,
         world=world,
         scene_bus=SceneBus(scene_slice),
-        _rules_engine=RulesEngine(),
-        _apply_delta=lambda delta: None,
+        _rules_engine=engine,
+        _apply_delta=_apply_delta,
         action_log=effective_action_log,
     )
 
@@ -415,7 +429,13 @@ class TestPrivateChatTriggerHook:
         assert result.metadata.get("skipped") == "already_in_private_chat"
 
     def test_npc_scene_filter_only_reachable_npcs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Only NPCs in current area locations or party are considered."""
+        """Only co-located NPCs (same sub-location as player) and party members are considered.
+
+        npc_local is in the same area but a different sub-location (inn_bench vs campfire)
+        so it is NOT co-located and will NOT trigger under the co-location filter.
+        npc_remote is not in the area at all, also skipped.
+        npc_party is a party member, always treated as co-located.
+        """
         _force_random(monkeypatch, 0.0)
         ctx = _make_context(
             dispositions={
@@ -432,7 +452,9 @@ class TestPrivateChatTriggerHook:
         )
         result = asyncio.run(_hook().execute(ctx))
         triggered_ids = {event.payload["npc_id"] for event in result.sse_events}
-        assert triggered_ids == {"npc_local", "npc_party"}
+        # npc_local is in area but not co-located (inn_bench != campfire) → filtered out
+        # npc_party is always co-located (party member)
+        assert triggered_ids == {"npc_party"}
 
     def test_stage_pre_filter_blocks_non_chatable_stage(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """stranger/cold/hostile/nemesis/enemy should bypass evaluator."""
@@ -489,3 +511,108 @@ class TestPrivateChatTriggerHook:
         result = asyncio.run(_hook().execute(ctx))
         assert result.sse_events == []
         assert result.metadata.get("skipped") == "not_final_rest_slot"
+
+    def test_different_room_does_not_count_as_colocated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Player in a room only receives triggers from NPCs in the same room."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_roommate": {"romance": 70}},
+            player_location="guild_hall",
+            player_room="office",
+            area_npc_locations={"npc_roommate": "guild_hall"},
+            area_npc_rooms={"npc_roommate": "counter"},
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert result.sse_events == []
+
+
+# ------------------------------------------------------------------
+# A7: Co-location tests
+# ------------------------------------------------------------------
+
+
+class TestA7CoLocationFilter:
+    """Tests for co-location filtering added in A7."""
+
+    def test_colocated_npc_event_has_colocated_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """NPC in same sub-location as player → colocated=True in SSE payload."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_same_loc": {"romance": 70}},
+            area_npc_locations={"npc_same_loc": "campfire"},  # same as player_location
+            player_location="campfire",
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert len(result.sse_events) == 1
+        payload = result.sse_events[0].payload
+        assert payload["colocated"] is True
+        assert "npc_location" not in payload
+
+    def test_noncolocated_npc_does_not_trigger(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NPC in different sub-location → no event (co-location filter blocks trigger).
+
+        Non-colocated NPCs are excluded from trigger candidates to prevent the UX problem
+        of a player receiving a chat request from an NPC they can't reach (which would
+        result in a 'npc_not_present' error when trying to respond).
+        """
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_elsewhere": {"romance": 70}},
+            area_npc_locations={"npc_elsewhere": "inn_bench"},  # different from player_location
+            player_location="campfire",
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert len(result.sse_events) == 0
+
+    def test_party_member_always_colocated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Party members always count as co-located regardless of explicit location."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"party_npc": {"trust": 60}},
+            area_npc_locations={},  # not explicitly in area locations
+            party_members={"party_npc": {"role": "ally"}},
+            player_location="campfire",
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert len(result.sse_events) == 1
+        payload = result.sse_events[0].payload
+        assert payload["colocated"] is True
+
+    def test_mixed_colocated_and_noncolocated_npcs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two NPCs: one co-located, one not — only co-located NPC triggers."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={
+                "npc_here": {"romance": 70},
+                "npc_far": {"romance": 70},
+            },
+            area_npc_locations={
+                "npc_here": "campfire",   # same as player_location → triggers
+                "npc_far": "stable",      # different from player_location → filtered out
+            },
+            player_location="campfire",
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert len(result.sse_events) == 1
+        payload = result.sse_events[0].payload
+        assert payload["npc_id"] == "npc_here"
+        assert payload["colocated"] is True
+
+    def test_npc_with_none_location_and_player_at_area_root(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both NPC location and player location are None (area root) → colocated."""
+        _force_random(monkeypatch, 0.0)
+        ctx = _make_context(
+            dispositions={"npc_root": {"romance": 70}},
+            area_npc_locations={"npc_root": None},  # area main scene
+            player_location=None,                    # also at area main scene
+        )
+        result = asyncio.run(_hook().execute(ctx))
+        assert len(result.sse_events) == 1
+        payload = result.sse_events[0].payload
+        assert payload["colocated"] is True

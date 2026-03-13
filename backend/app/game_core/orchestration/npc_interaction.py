@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Literal, Mapping
 
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
-from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, _profile_get
+from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, _extract_role_data, _profile_get
 from app.game_core.narrative.context_window import ContextWindow, WindowMessage
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.instance_manager import NPCInstance
@@ -189,6 +189,43 @@ class NpcInteractionCoordinator:
             visibility="public",
             tags=["SKILL_CHECK"],
         ))
+
+    def _format_check_constraint(self, check_result: Mapping[str, Any]) -> str:
+        """Generate structured behavioral constraint text from a skill check result."""
+        skill = str(check_result.get("skill", "unknown"))
+        dc = check_result.get("dc", "?")
+        total = check_result.get("total", 0)
+        passed = bool(check_result.get("passed", False))
+
+        # Skill-specific phrasing
+        _PASS_EFFECTS = {
+            "persuasion": "让步、透露信息或改变态度",
+            "intimidation": "表现出畏惧、退缩或妥协",
+            "deception": "相信对方的话，不再怀疑",
+        }
+        _FAIL_EFFECTS = {
+            "persuasion": "更加警觉、不耐烦或怀疑",
+            "intimidation": "表现出愤怒或不屑",
+            "deception": "识破谎言，更加不信任",
+        }
+
+        skill_lower = skill.lower()
+        if passed:
+            effect = _PASS_EFFECTS.get(skill_lower, "做出有利于对方的反应")
+            return (
+                f"\n\n## 当前检定结果（必须遵守）\n"
+                f"玩家对你发起了【{skill}】检定（DC {dc}），掷出 {total}，**成功**。\n"
+                f"你必须在本轮回复中体现被影响的效果：{effect}。\n"
+                f"你可以表现得不情愿，但最终结果必须顺从检定结果。"
+            )
+        else:
+            effect = _FAIL_EFFECTS.get(skill_lower, "维持原有立场不变")
+            return (
+                f"\n\n## 当前检定结果（必须遵守）\n"
+                f"玩家对你发起了【{skill}】检定（DC {dc}），掷出 {total}，**失败**。\n"
+                f"你不应被影响。你可以{effect}。\n"
+                f"不得因为玩家的话术好就改变立场——骰子已经决定了结果。"
+            )
 
     def _team_scene_entries(self) -> list[dict[str, Any]]:
         if not self._state.has_slice("scene"):
@@ -358,12 +395,32 @@ class NpcInteractionCoordinator:
         self._write_public_player_message(player_message)
         self._write_skill_check_observation(check_result)
 
+        # Inject check constraint into NPC system prompt to enforce dice results
+        if check_result:
+            system_prompt += self._format_check_constraint(check_result)
+
+        # QF-5: Inject capability boundary so NPC knows what it can/cannot do
+        # Also inject dynamic capabilities assigned by the narrative planner
+        _ni_dynamic_caps: list[dict] = []
+        if self._state.has_slice("narrative_plan"):
+            _ni_dynamic_caps = self._state.narrative_plan.get_capabilities(npc_id)
+        system_prompt += _build_capability_boundary_prompt(self._executor, npc_tags, capabilities=_ni_dynamic_caps)
+
         npc_metadata: dict[str, Any] = {
             "memory_retriever": self._memory_retriever,
             "world": self._world,
         }
         if self._memory_writer is not None:
             npc_metadata["memory_writer"] = self._memory_writer
+
+        # Inject npc_tags so tools like AssignQuestTool can check trait constraints
+        npc_metadata["npc_tags"] = npc_tags
+
+        # Inject role_data for tool-level constraint validation (S5-04)
+        role_data = _extract_role_data(npc_tags, npc_id, self._state, self._world)
+        if role_data is not None:
+            npc_metadata["role_data"] = role_data
+
         npc_context = builder.build_agent_context(
             "npc",
             npc_id,
@@ -426,7 +483,7 @@ class NpcInteractionCoordinator:
                     token_count=_approx_tokens(npc_speech), metadata={},
                 ))
             if should1 or should2:
-                graphize_candidates = context_window.pop_oldest_for_graphize()
+                graphize_candidates = context_window.collect_for_graphize()
 
         # Build shared user_message for GM + Teammate (Steps 3-4)
         observation_msg = json.dumps(
@@ -857,6 +914,20 @@ def _finalize_dialogue_options(
         if isinstance(count, int) and count > 0:
             entry["count"] = count
 
+        functional = raw.get("functional")
+        if isinstance(functional, Mapping):
+            func_type = str(functional.get("type") or "").strip()
+            raw_params = functional.get("params", {})
+            if func_type:
+                entry["functional"] = {
+                    "type": func_type,
+                    "params": (
+                        dict(raw_params)
+                        if isinstance(raw_params, Mapping)
+                        else {}
+                    ),
+                }
+
         check = raw.get("check")
         if isinstance(check, Mapping):
             skill = str(check.get("skill") or check.get("type") or "").strip()
@@ -875,6 +946,73 @@ def _finalize_dialogue_options(
         normalized.append(entry)
 
     return normalized
+
+
+def _build_capability_boundary_prompt(
+    executor: AgenticExecutor,
+    npc_tags: list[str],
+    capabilities: list[dict] = (),
+) -> str:
+    """Build Chinese capability boundary section for NPC system prompt (QF-5).
+
+    Generates a concise "你可以/你不可以" summary from the actual tool list so
+    the NPC knows its own boundaries and can tell players what it cannot do.
+
+    ``capabilities`` is an optional list of dynamic CapabilityDescriptor dicts
+    (from NarrativePlanSlice.get_capabilities) to inject as special abilities.
+    """
+    registry = getattr(executor, "tool_registry", None)
+    tools = registry.get_tools_for("npc", traits=npc_tags) if registry is not None else []
+    tool_names = {t.name for t in tools}
+
+    # Fixed base capabilities every NPC always has
+    can_do: list[str] = ["说话", "表达情感", "记住信息", "回忆过去的对话"]
+
+    # Tool → Chinese description mapping
+    _TOOL_CAN_DO: dict[str, str] = {
+        "offer_trade": "展示商品和交易",
+        "offer_quest": "发布和介绍任务",
+        "reveal_secret": "分享隐秘信息",
+        "join_party": "邀请加入队伍",
+    }
+    for tool_name, description in _TOOL_CAN_DO.items():
+        if tool_name in tool_names:
+            can_do.append(description)
+
+    # Inject dynamic capability instructions into can_do
+    for cap in capabilities:
+        instruction = str(cap.get("instruction", "")).strip()
+        if instruction:
+            can_do.append(instruction)
+
+    # Build cannot-do list from defaults not in can_do
+    _DEFAULT_CANNOT_DO: list[str] = ["交易", "接取任务", "传授技能", "治疗", "锻造装备"]
+    can_do_raw = set(can_do)
+    cannot_do = [x for x in _DEFAULT_CANNOT_DO if x not in can_do_raw and x + "和交易" not in can_do_raw]
+    # Suppress items already covered by richer can_do entries
+    if "展示商品和交易" in can_do_raw:
+        cannot_do = [x for x in cannot_do if x != "交易"]
+    if "发布和介绍任务" in can_do_raw:
+        cannot_do = [x for x in cannot_do if x != "接取任务"]
+
+    lines = [
+        "\n## 你当前的能力",
+        f"你可以：{'、'.join(can_do)}。",
+    ]
+    if cannot_do:
+        lines.append(f"你不可以：{'、'.join(cannot_do)}。")
+    lines.append("如果玩家要求你做不到的事，请如实说明，并建议他去找合适的人。")
+
+    # Append special dynamic capabilities section if any
+    if capabilities:
+        lines.append("\n## 你的特殊能力（由公会/上级分配）")
+        for cap in capabilities:
+            cap_id = str(cap.get("capability_id", "")).strip()
+            instruction = str(cap.get("instruction", "")).strip()
+            if cap_id and instruction:
+                lines.append(f"- **{cap_id}**: {instruction}")
+
+    return "\n".join(lines)
 
 
 def _resolve_dialogue_check_dc(

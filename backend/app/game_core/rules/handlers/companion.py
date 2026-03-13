@@ -18,6 +18,7 @@ class CompanionHandler(StaticCommandHandler):
         "recruit_companion",
         "dismiss_companion",
         "force_leave_companion",
+        "restore_companion_after_combat",
     )
 
     MAX_PARTY_SIZE = 4
@@ -34,6 +35,8 @@ class CompanionHandler(StaticCommandHandler):
             return self._validate_dismiss(cmd, state)
         if cmd.type == "force_leave_companion":
             return self._validate_force_leave(cmd, state)
+        if cmd.type == "restore_companion_after_combat":
+            return self._validate_restore_after_combat(cmd, state)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -48,6 +51,8 @@ class CompanionHandler(StaticCommandHandler):
             return self._compute_dismiss(cmd, state)
         if cmd.type == "force_leave_companion":
             return self._compute_force_leave(cmd, state)
+        if cmd.type == "restore_companion_after_combat":
+            return self._compute_restore_after_combat(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_recruit(
@@ -117,6 +122,31 @@ class CompanionHandler(StaticCommandHandler):
             return ValidationResult(ok=False, reason="reason must be a non-empty string")
         return self._validate_dismiss(cmd, state)
 
+    def _validate_restore_after_combat(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if cmd.source not in {"engine", "system"}:
+            return ValidationResult(
+                ok=False,
+                reason="restore_companion_after_combat is restricted to engine/system",
+            )
+        npc_id = self._require_npc_id(cmd.params)
+        if npc_id is None:
+            return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+        if not state.has_slice("party"):
+            return ValidationResult(ok=False, reason="no_party_slice")
+        if npc_id not in (state.party.members or {}):
+            return ValidationResult(ok=False, reason="not_member")
+        try:
+            restored_hp = int(cmd.params.get("restored_hp"))
+        except (TypeError, ValueError):
+            return ValidationResult(ok=False, reason="restored_hp must be an integer")
+        if restored_hp <= 0:
+            return ValidationResult(ok=False, reason="restored_hp must be positive")
+        return ValidationResult(ok=True)
+
     def _compute_recruit(
         self,
         cmd: Command,
@@ -143,6 +173,10 @@ class CompanionHandler(StaticCommandHandler):
         if state.has_slice("player") and state.has_slice("areas"):
             player_area = state.player.current_area
             if player_area:
+                player_room = get_non_empty_string(
+                    {"room_id": getattr(state.player, "current_room", None)},
+                    "room_id",
+                )
                 changes.append(
                     StateChange(
                         slice="areas",
@@ -151,6 +185,7 @@ class CompanionHandler(StaticCommandHandler):
                         value={
                             "area_id": player_area,
                             "location_id": state.player.current_location,
+                            "room_id": player_room,
                             "source": "companion",
                         },
                     )
@@ -203,6 +238,46 @@ class CompanionHandler(StaticCommandHandler):
         state: StateContainer,
     ) -> ExecuteResult:
         return self._compute_dismiss(cmd, state)
+
+    def _compute_restore_after_combat(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        npc_id = self._require_npc_id(cmd.params) or ""
+        try:
+            restored_hp = int(cmd.params.get("restored_hp"))
+        except (TypeError, ValueError):
+            return ExecuteResult.error("restored_hp must be an integer")
+        member = state.party.members.get(npc_id)
+        if not isinstance(member, Mapping):
+            return ExecuteResult.error("not_member")
+        max_hp_raw = member.get("max_hp")
+        try:
+            max_hp = int(max_hp_raw) if max_hp_raw is not None else None
+        except (TypeError, ValueError):
+            max_hp = None
+        if max_hp is not None and max_hp > 0:
+            restored_hp = min(restored_hp, max_hp)
+
+        updated_member = dict(member)
+        updated_member["hp"] = restored_hp
+
+        return self._success(
+            cmd,
+            changes=[
+                StateChange(
+                    slice="party",
+                    operation="set",
+                    path=f"members.{npc_id}",
+                    value=updated_member,
+                )
+            ],
+            event_type="companion_restored_after_combat",
+            npc_id=npc_id,
+            reason="combat_recovery",
+            party_members=list((state.party.members or {}).keys()),
+        )
 
     def _success(
         self,

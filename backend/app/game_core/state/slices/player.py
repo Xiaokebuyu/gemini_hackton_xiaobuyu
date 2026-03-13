@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Mapping
@@ -9,6 +10,8 @@ from uuid import uuid4
 
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
+
+logger = logging.getLogger(__name__)
 
 
 EQUIPMENT_SLOTS = [
@@ -92,6 +95,7 @@ class PlayerSlice(StateSlice):
         self.character_class = ""
         self.subclass: str | None = None
         self.class_features: list[str] = []
+        self.asi_points_remaining = 0
         self.gold = 0
         self.current_area = ""
         self.current_location: str | None = None
@@ -99,6 +103,7 @@ class PlayerSlice(StateSlice):
         self.equipment: dict[str, dict[str, Any] | None] = {
             slot: None for slot in EQUIPMENT_SLOTS
         }
+        self.current_room: str | None = None
         self.guild_rank = "porcelain"
         self.guild_reputation = 0
         self.spell_slots: dict[int, dict[str, int]] = {}
@@ -125,10 +130,13 @@ class PlayerSlice(StateSlice):
         self.class_features = [
             str(feature) for feature in payload.get("class_features", [])
         ]
+        self.asi_points_remaining = int(payload.get("asi_points_remaining", 0))
         self.gold = int(payload.get("gold", 0))
         self.current_area = str(payload.get("current_area", ""))
         raw_location = payload.get("current_location")
         self.current_location = str(raw_location) if raw_location is not None else None
+        raw_room = payload.get("current_room")
+        self.current_room = str(raw_room) if raw_room is not None else None
         self.inventory = [
             self._coerce_stack(item)
             for item in payload.get("inventory", [])
@@ -195,9 +203,12 @@ class PlayerSlice(StateSlice):
             "character_class": self.character_class,
             "subclass": self.subclass,
             "class_features": list(self.class_features),
+            "asi_points_remaining": self.asi_points_remaining,
+            "asi_available": self.asi_points_remaining > 0,
             "gold": self.gold,
             "current_area": self.current_area,
             "current_location": self.current_location,
+            "current_room": self.current_room,
             "inventory": [item.snapshot() for item in self.inventory],
             "equipment": deepcopy(self.equipment),
             "guild_rank": self.guild_rank,
@@ -215,6 +226,10 @@ class PlayerSlice(StateSlice):
         if stat not in self.stats:
             raise KeyError(f"unknown stat: {stat}")
         return (int(self.stats[stat]) - 10) // 2
+
+    @property
+    def asi_available(self) -> bool:
+        return self.asi_points_remaining > 0
 
     def get_skill_bonus(self, skill: str) -> int:
         stat = SKILL_TO_STAT.get(skill, "int")
@@ -500,6 +515,8 @@ class PlayerSlice(StateSlice):
             issues.append("hp must be between 0 and max_hp")
         if not isinstance(self.gold, int) or self.gold < 0:
             issues.append("gold must be >= 0")
+        if not isinstance(self.asi_points_remaining, int) or self.asi_points_remaining < 0:
+            issues.append("asi_points_remaining must be >= 0")
 
         if not isinstance(self.equipment, dict):
             issues.append("equipment must be a dict")
@@ -573,9 +590,20 @@ class PlayerSlice(StateSlice):
             self._dirty = True
             return
 
+        if change.path == "current_room":
+            self.current_room = (
+                str(change.value) if change.value is not None else None
+            )
+            self._dirty = True
+            return
+
         if change.path == "inventory":
             if not isinstance(change.value, list):
-                raise ValueError("inventory change must be a list")
+                logger.warning(
+                    "apply_state_change: inventory change must be a list, skipping: %s",
+                    change.path,
+                )
+                return
             self.inventory = [self._coerce_stack(item) for item in change.value]
             self._dirty = True
             return
@@ -672,6 +700,7 @@ class PlayerSlice(StateSlice):
         "gold": int,
         "level": int,
         "xp": int,
+        "asi_points_remaining": int,
         "proficiency_bonus": int,
         "character_class": str,
         "subclass": str,
@@ -693,4 +722,5 @@ class PlayerSlice(StateSlice):
                 count=int(item.get("count", 1)),
                 tags=[str(tag) for tag in item.get("tags", [])],
             )
-        raise ValueError(f"invalid item stack: {item!r}")
+        logger.warning("_coerce_stack: invalid item stack, using empty fallback: %r", item)
+        return ItemStack(item_id="", count=0, tags=[])

@@ -255,6 +255,79 @@ class TestWorldStateHandler:
         _apply(result, state)
         assert state.quests.dynamic_quests["dyn_1"]["status"] == "completed"
 
+    def test_advance_quest_dynamic_claim_rewards_grants_once(self) -> None:
+        state = _make_state()
+        state.quests.dynamic_quests["dyn_1"]["rewards"] = {
+            "gold": 15,
+            "xp": 25,
+        }
+        result = _execute(
+            Command(
+                type="advance_quest",
+                params={
+                    "quest_id": "dyn_1",
+                    "to_state": "completed",
+                    "quest_kind": "dynamic",
+                    "claim_rewards": True,
+                },
+            ),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is True
+        _apply(result, state)
+        assert state.quests.dynamic_quests["dyn_1"]["status"] == "completed"
+        assert state.quests.dynamic_quests["dyn_1"]["rewards_claimed"] is True
+        assert state.player.gold == 15
+        assert state.player.xp == 25
+
+        repeat = _execute(
+            Command(
+                type="advance_quest",
+                params={
+                    "quest_id": "dyn_1",
+                    "to_state": "completed",
+                    "quest_kind": "dynamic",
+                    "claim_rewards": True,
+                },
+            ),
+            state,
+            _make_world(),
+        )
+        assert repeat.executed is True
+        _apply(repeat, state)
+        assert state.player.gold == 15
+        assert state.player.xp == 25
+
+    def test_advance_quest_milestone_completion_grants_rewards(self) -> None:
+        state = _make_state()
+        state.quests.milestone_states["ms_1"].state = "ACTIVE"
+        world = _make_world()
+        milestone = world.quests.get_milestone("ms_1")
+        assert milestone is not None
+        milestone.rewards = {
+            "gold": 20,
+            "xp": 40,
+            "items": [{"item_id": "healing_herb", "count": 1}],
+        }
+
+        result = _execute(
+            Command(
+                type="advance_quest",
+                params={"quest_id": "ms_1", "to_state": "COMPLETED"},
+            ),
+            state,
+            world,
+        )
+
+        assert result.executed is True
+        _apply(result, state)
+        assert state.quests.get_milestone_state("ms_1") == "COMPLETED"
+        assert state.player.gold == 20
+        assert state.player.xp == 40
+        assert state.player.get_item_count("healing_herb") == 1
+
     def test_advance_quest_rejects_invalid_dynamic_transition(self) -> None:
         result = _execute(
             Command(
@@ -359,6 +432,34 @@ class TestWorldStateHandler:
         assert result.delta is not None
         pending = result.delta.changes[0].value
         assert pending["trigger_condition"] == {"type": "location_entered", "area_id": "forest"}
+
+    def test_schedule_event_normalizes_room_location_aliases(self) -> None:
+        result = _execute(
+            Command(
+                type="schedule_event",
+                params={
+                    "event_id": "evt_room",
+                    "trigger_condition": {
+                        "type": "location_entered",
+                        "area_id": "forest",
+                        "sub_location": "camp",
+                        "room_id": "tent",
+                    },
+                },
+            ),
+            _make_state(),
+            _make_world(),
+        )
+
+        assert result.executed is True
+        assert result.delta is not None
+        pending = result.delta.changes[0].value
+        assert pending["trigger_condition"] == {
+            "type": "location_entered",
+            "area_id": "forest",
+            "location_id": "camp",
+            "room_id": "tent",
+        }
 
     def test_schedule_event_accepts_flag_set_condition(self) -> None:
         result = _execute(

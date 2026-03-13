@@ -11,11 +11,14 @@ from app.game_core.orchestration.hooks import (
     EncounterHook,
     EventConditionHook,
     GmNarrationHook,
+    MilestoneCompletionHook,
     MilestoneUnlockHook,
     NarrativePlannerHook,
     NpcScheduleHook,
     PassivePerceptionHook,
     PrivateChatTriggerHook,
+    QuestExpiryHook,
+    QuestObjectiveTrackingHook,
     RelationshipHook,
     SceneBusResetHook,
     ScheduledEventHook,
@@ -23,6 +26,7 @@ from app.game_core.orchestration.hooks import (
     SharedExperienceHook,
     StatusEffectHook,
     TimeAdvanceHook,
+    XpAdvancementHook,
 )
 from app.game_core.orchestration.tick_coordinator import TickCoordinator
 
@@ -35,6 +39,8 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("move_area", "move_area"),
     ("enter_sub_location", "enter_sub_location"),
     ("leave_sub_location", "leave_sub_location"),
+    ("enter_room", "enter_room"),
+    ("leave_room", "leave_room"),
     ("pick_up", "pick_up"),
     ("drop", "drop"),
     ("equip", "equip"),
@@ -47,6 +53,10 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("choose_subclass", "choose_subclass"),
     ("create_character", "create_character"),
     ("set_flag", "set_flag"),
+    ("remove_flag", "remove_flag"),
+    ("schedule_npc_move", "schedule_npc_move"),
+    ("transition_event_state", "transition_event_state"),
+    ("change_relationship_stage", "change_relationship_stage"),
     ("modify_disposition", "modify_disposition"),
     ("modify_approval", "modify_approval"),
     ("advance_quest", "advance_quest"),
@@ -76,10 +86,13 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
     ("discover", "discover"),
     ("passive_scan", "passive_scan"),
     ("interact_object_v2", "interact_object_v2"),
+    ("investigate_clue", "investigate_clue"),
+    ("resolve_clue_option", "resolve_clue_option"),
     ("browse_board", "browse_board"),
     ("board_accept_quest", "board_accept_quest"),
     ("board_complete_quest", "board_complete_quest"),
     ("board_retire_quest", "board_retire_quest"),
+    ("donate", "donate"),
     ("accept_quest", "receptionist_accept_quest"),
     ("report_quest", "receptionist_report_quest"),
     # v2 SRPG combat commands
@@ -100,7 +113,10 @@ DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     EncounterHook,
     PassivePerceptionHook,  # P45
     EventConditionHook,
+    MilestoneCompletionHook,
     MilestoneUnlockHook,
+    QuestObjectiveTrackingHook,  # P56 — auto-track objectives with structured conditions
+    XpAdvancementHook,           # P58 — XP threshold check → level_up SSE
     NpcScheduleHook,
     SharedExperienceHook,   # P62
     CampfireHook,           # NEW (P63)
@@ -108,6 +124,7 @@ DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     PrivateChatTriggerHook,
     DirectiveTriggerHook,   # P76 — directive → NPC chat invitation
     TimeAdvanceHook,
+    QuestExpiryHook,        # A-6 (S3-02): retire dynamic quests past expiry_ticks
     DynamicSubAreaExpiryHook,
     GmNarrationHook,
     SceneBusResetHook,

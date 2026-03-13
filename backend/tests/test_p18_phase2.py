@@ -31,7 +31,7 @@ from app.game_core.planning.pacing_controller import PacingControllerSubSystem
 from app.game_core.planning.quest_manager import QuestManagerSubSystem
 from app.game_core.planning.subsystem import PlannerDispatcher
 from app.game_core.planning.world_builder import WorldBuilderSubSystem
-from app.game_core.rules import RulesEngine
+from app.game_core.rules import RulesEngine, register_default_rules_handlers
 from app.game_core.state import StateContainer
 from app.game_core.state.slices import (
     AreaSlice,
@@ -115,6 +115,7 @@ def _make_context(
     state.register(scene)
 
     rules_engine = RulesEngine()
+    register_default_rules_handlers(rules_engine)
 
     def _apply(delta: Any) -> None:
         state.apply(delta)
@@ -291,8 +292,8 @@ def test_bootstrap_appends_bulletin_when_board_exists() -> None:
     # Both create_quest and publish_bulletin should be applied
     assert "create_quest" in result.metadata["applied_kinds"]
     assert "publish_bulletin" in result.metadata["applied_kinds"]
-    assert result.metadata["applied_count"] == 3
-    assert result.metadata["replay_round_count"] == 2
+    assert result.metadata["applied_count"] == 2
+    assert result.metadata["replay_round_count"] == 1
 
 
 # ------------------------------------------------------------------
@@ -428,6 +429,48 @@ def test_format_planner_context_omits_danger_level_when_zero() -> None:
     assert "Danger level" not in result
 
 
+def test_format_planner_context_includes_completed_and_report_ready_quests() -> None:
+    ctx: dict[str, Any] = {
+        "narrative_plan": {
+            "current_chapter": "ch1",
+            "escalation_level": 0,
+            "ticks_since_milestone_progress": 0,
+            "current_target_milestone": None,
+            "pacing_frozen": False,
+        },
+        "quests": {
+            "available_milestones": [],
+            "dynamic_quests": {},
+            "report_ready_dynamic_quests": [
+                {
+                    "quest_id": "dq_ready",
+                    "title": "Report Back",
+                    "summary": "Return to the guild.",
+                    "completed_objectives": ["Cleared the ruins"],
+                    "rewards": {"gold": 12},
+                }
+            ],
+            "completed_dynamic_quests": [
+                {
+                    "quest_id": "dq_done",
+                    "title": "Done Deal",
+                    "summary": "A finished lead.",
+                    "can_report": False,
+                    "rewards": {"xp": 25},
+                }
+            ],
+        },
+        "current_tick": 5,
+    }
+
+    result = _format_planner_context(ctx)
+
+    assert "可汇报任务" in result
+    assert "Report Back (dq_ready)" in result
+    assert "已完成的动态任务" in result
+    assert "Done Deal (dq_done)" in result
+
+
 def test_build_planner_context_includes_story_facts() -> None:
     """_build_planner_context injects story_facts from NarrativePlanSlice."""
     context = _make_context()
@@ -448,6 +491,40 @@ def test_build_planner_context_includes_danger_level() -> None:
     result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
 
     assert result["danger_level"] == 3.0
+
+
+def test_build_planner_context_includes_completed_and_report_ready_dynamic_quests() -> None:
+    context = _make_context(
+        quest_payload={
+            "dynamic_quests": {
+                "dq_completed": {
+                    "status": "completed",
+                    "title": "Recovered Relic",
+                    "summary": "The relic is back in town.",
+                    "objectives": [{"description": "Recover the relic"}],
+                    "rewards": {"gold": 15, "xp": 40},
+                },
+                "dq_report": {
+                    "status": "completed",
+                    "title": "Report to Guild",
+                    "summary": "Return and report.",
+                    "requires_report": True,
+                    "reported": False,
+                    "objectives": [{"description": "Clear the goblin nest"}],
+                    "rewards": {"gold": 20},
+                },
+            }
+        }
+    )
+
+    result = NarrativePlannerHook()._build_planner_context(context, current_tick=1)
+
+    completed = result["quests"]["completed_dynamic_quests"]
+    report_ready = result["quests"]["report_ready_dynamic_quests"]
+    assert {item["quest_id"] for item in completed} == {"dq_completed", "dq_report"}
+    assert [item["quest_id"] for item in report_ready] == ["dq_report"]
+    assert report_ready[0]["can_report"] is True
+    assert report_ready[0]["completed_objectives"] == ["Clear the goblin nest"]
 
 
 # ------------------------------------------------------------------

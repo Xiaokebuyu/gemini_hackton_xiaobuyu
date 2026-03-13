@@ -133,7 +133,7 @@ class TestPlantEncounter:
         assert hostile["created_at_tick"] == 5
 
     def test_plant_encounter_missing_area_fails(self) -> None:
-        """plant_encounter returns False when area_id does not exist in state."""
+        """plant_encounter returns a rejection reason when area_id does not exist in state."""
         context = _make_context(player_area="frontier_town")
         builder = _make_builder()
 
@@ -148,10 +148,10 @@ class TestPlantEncounter:
             current_tick=1,
         )
 
-        assert ok is False
+        assert ok is not True  # Returns a rejection reason string
 
     def test_plant_encounter_missing_monsters_fails(self) -> None:
-        """plant_encounter returns False for empty or missing monster_ids."""
+        """plant_encounter returns a rejection reason for empty or missing monster_ids."""
         context = _make_context(player_area="frontier_town")
         builder = _make_builder()
 
@@ -166,7 +166,7 @@ class TestPlantEncounter:
             context,
             current_tick=1,
         )
-        assert ok_empty is False
+        assert ok_empty is not True  # Returns a rejection reason string
 
         # Missing key
         ok_missing = builder.apply_directive(
@@ -178,7 +178,7 @@ class TestPlantEncounter:
             context,
             current_tick=1,
         )
-        assert ok_missing is False
+        assert ok_missing is not True  # Returns a rejection reason string
 
     def test_plant_encounter_no_sse_emitted(self) -> None:
         """plant_encounter should NOT emit any SSE events (encounter activates on arrival)."""

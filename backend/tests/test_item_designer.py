@@ -435,7 +435,7 @@ def test_design_reward_rejects_closed_quest_and_invalid_payload() -> None:
         },
         context,
         current_tick=9,
-    ) is False
+    ) is not True  # Returns a rejection reason string
     assert subsystem.apply_directive(
         "design_reward",
         {
@@ -445,7 +445,7 @@ def test_design_reward_rejects_closed_quest_and_invalid_payload() -> None:
         },
         context,
         current_tick=9,
-    ) is False
+    ) is not True  # Returns a rejection reason string
     assert subsystem.apply_directive(
         "design_reward",
         {
@@ -455,7 +455,7 @@ def test_design_reward_rejects_closed_quest_and_invalid_payload() -> None:
         },
         context,
         current_tick=9,
-    ) is False
+    ) is not True  # Returns a rejection reason string
 
 
 def test_reward_candidates_respect_level_and_class_guardrails() -> None:
@@ -623,7 +623,7 @@ def test_curate_shop_reuses_existing_stock_row_and_validates_item_ids() -> None:
         },
         context,
         current_tick=10,
-    ) is False
+    ) is not True  # Returns a rejection reason string
 
 
 def test_reward_view_reads_canonical_rewards_when_legacy_alias_missing() -> None:

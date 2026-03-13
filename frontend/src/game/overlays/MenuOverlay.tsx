@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOverlayStore } from '../../stores/overlayStore'
+import { usePlayerStore } from '../../stores/playerStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { saveSession } from '../../lib/api'
 
 export default function MenuOverlay() {
   const overlay = useOverlayStore()
   const { worldId, sessionId, clearSession } = useSessionStore()
+  const asiAvailable = usePlayerStore((s) => s.asiAvailable)
   const navigate = useNavigate()
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
@@ -29,7 +31,12 @@ export default function MenuOverlay() {
 
   const menuItems = [
     { label: '继续游戏', action: overlay.close, style: 'text-gray-200' },
-    { label: '📊 角色面板', action: () => overlay.open('character'), style: 'text-gray-400' },
+    {
+      label: '📊 角色面板',
+      action: () => overlay.open('character'),
+      style: 'text-gray-400',
+      badge: asiAvailable ? 'ASI' : null,
+    },
     { label: '👥 队伍', action: () => overlay.open('party'), style: 'text-gray-400' },
     { label: '🎒 背包', action: () => overlay.open('inventory'), style: 'text-gray-400' },
     { label: '🗺 地图', action: () => overlay.open('map'), style: 'text-gray-400' },
@@ -43,13 +50,18 @@ export default function MenuOverlay() {
           <h2 className="text-amber-400 font-bold text-center">菜单</h2>
         </div>
         <div className="flex flex-col">
-          {menuItems.map(({ label, action, style }) => (
+          {menuItems.map(({ label, action, style, badge }) => (
             <button
               key={label}
               onClick={action}
-              className={`px-6 py-3 text-left hover:bg-gray-800 transition-colors border-b border-gray-800 ${style}`}
+              className={`flex items-center justify-between px-6 py-3 text-left hover:bg-gray-800 transition-colors border-b border-gray-800 ${style}`}
             >
-              {label}
+              <span>{label}</span>
+              {badge && (
+                <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                  {badge}
+                </span>
+              )}
             </button>
           ))}
           <button

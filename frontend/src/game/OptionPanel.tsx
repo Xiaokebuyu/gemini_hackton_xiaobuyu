@@ -3,6 +3,7 @@ import { useOptionStore } from '../stores/optionStore'
 import { useSceneStore } from '../stores/sceneStore'
 import { usePartyStore } from '../stores/partyStore'
 import { audio } from '../lib/audio'
+import type { GameOption, LocationOverview } from '../types/game'
 import type { InteractRequest } from '../types/api'
 import type { OverviewHandlers } from '../stores/optionStore'
 
@@ -11,9 +12,67 @@ interface Props {
   overviewHandlers: OverviewHandlers
 }
 
+// Dynamic category label — 'location' tab title changes based on player position
+function getCategoryLabel(cat: string, overview: LocationOverview | null): string {
+  switch (cat) {
+    case 'talk': return '交谈'
+    case 'room': return '房间'
+    case 'location':
+      if (!overview) return '地点'
+      if (!overview.location_id) return overview.area_name ?? '地点'
+      return overview.location_name ?? '地点'
+    case 'action': return '行动'
+    case 'gear': return '装备'
+    case 'leave': return '离开'
+    default: return cat
+  }
+}
+
+// Border/hover colors per category
+const CATEGORY_BUTTON_CLASS: Record<string, string> = {
+  talk: 'border-sky-600/30 hover:border-sky-500/50',
+  room: 'border-teal-600/30 hover:border-teal-500/50',
+  location: 'border-amber-600/30 hover:border-amber-500/50',
+  action: 'border-emerald-600/30 hover:border-emerald-500/50',
+  gear: 'border-purple-600/30 hover:border-purple-500/50',
+  leave: 'border-gray-500/30 hover:border-gray-400/50',
+}
+
+// Category ordering for display
+const CATEGORY_ORDER: GameOption['category'][] = ['talk', 'room', 'location', 'action', 'gear', 'leave']
+
+interface CategorySectionProps {
+  label: string
+  opts: GameOption[]
+  buttonClass: string
+}
+
+function CategorySection({ label, opts, buttonClass }: CategorySectionProps) {
+  if (opts.length === 0) return null
+  return (
+    <div className="mb-1.5">
+      <div className="text-xs text-gray-500 px-0.5 mb-1">{label}</div>
+      <div className="grid grid-cols-2 gap-2">
+        {opts.map((opt) => (
+          <button
+            key={opt.id}
+            onClick={() => { audio.playClick(); opt.action() }}
+            disabled={opt.disabled ?? false}
+            className={`text-left bg-stone-900/60 hover:bg-stone-800/60 rounded-lg px-3 py-2 text-sm transition-all border ${buttonClass} text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            {opt.icon && <span className="mr-1.5">{opt.icon}</span>}
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
   const [text, setText] = useState('')
   const [channelScope, setChannelScope] = useState<'public' | 'party'>('public')
+  const [activeTab, setActiveTab] = useState<GameOption['category']>('talk')
   const { options, isLocked } = useOptionStore()
   const activeNpcId = useSceneStore((s) => s.activeNpcId)
   const gameMode = useSceneStore((s) => s.gameMode)
@@ -26,6 +85,19 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
       setChannelScope('public')
     }
   }, [hasParty, activeNpcId, gameMode])
+
+  useEffect(() => {
+    // When options change, auto-select the first non-empty category tab
+    const grouped: Record<string, GameOption[]> = { talk: [], room: [], location: [], action: [], gear: [], leave: [] }
+    for (const opt of options) {
+      const cat = opt.category ?? 'action'
+      grouped[cat].push(opt)
+    }
+    const nonEmptyCategories = CATEGORY_ORDER.filter(cat => (grouped[cat as string]?.length ?? 0) > 0)
+    if (nonEmptyCategories.length > 0 && !nonEmptyCategories.includes(activeTab)) {
+      setActiveTab(nonEmptyCategories[0])
+    }
+  }, [options])
 
   const handleSend = () => {
     const trimmed = text.trim()
@@ -68,14 +140,19 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
     }
   }
 
-  return (
-    <div className="flex-shrink-0 border-t border-gray-700/50 pt-2">
-      {/* 选项按钮列表 */}
-      {isLocked ? (
-        <div className="text-gray-500 text-sm py-1 px-1">思考中...</div>
-      ) : openingInProgress ? (
-        <div className="text-amber-200/80 text-sm py-1 px-1">开场演出中...</div>
-      ) : options.length > 0 || activeNpcId ? (
+  // ── Options rendering ──────────────────────────────────────────────────────
+
+  const renderOptions = () => {
+    if (isLocked) {
+      return <div className="text-gray-500 text-sm py-1 px-1">思考中...</div>
+    }
+    if (openingInProgress) {
+      return <div className="text-amber-200/80 text-sm py-1 px-1">开场演出中...</div>
+    }
+
+    // VN mode / dialogue mode: flat list with "end dialogue" button (unchanged UX)
+    if (activeNpcId) {
+      return (
         <div className="flex flex-wrap gap-1.5 mb-2 max-h-28 overflow-y-auto">
           {options.map((opt) => (
             <button
@@ -88,16 +165,78 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
               {opt.label}
             </button>
           ))}
-          {activeNpcId && (
-            <button
-              onClick={handleLeaveDialogue}
-              className="text-left px-3 py-1.5 rounded-lg bg-gray-700/60 hover:bg-gray-600 border border-gray-500/50 text-gray-400 hover:text-gray-200 text-sm transition-colors"
-            >
-              <span className="mr-1.5">🚪</span>结束对话
-            </button>
-          )}
+          <button
+            onClick={handleLeaveDialogue}
+            className="text-left px-3 py-1.5 rounded-lg bg-gray-700/60 hover:bg-gray-600 border border-gray-500/50 text-gray-400 hover:text-gray-200 text-sm transition-colors"
+          >
+            <span className="mr-1.5">🚪</span>结束对话
+          </button>
         </div>
-      ) : null}
+      )
+    }
+
+    // Exploration mode: tabbed categorized grid
+    if (options.length > 0) {
+      // Group by category; options without category fall into 'action'
+      const grouped: Record<string, GameOption[]> = {
+        talk: [],
+        room: [],
+        location: [],
+        action: [],
+        gear: [],
+        leave: [],
+      }
+      for (const opt of options) {
+        const cat = opt.category ?? 'action'
+        grouped[cat].push(opt)
+      }
+
+      const lastOverview = useSceneStore.getState().lastOverview
+
+      return (
+        <div className="mb-2">
+          {/* Tab row */}
+          <div className="flex gap-1 mb-2 border-b border-gray-700/40 pb-1">
+            {CATEGORY_ORDER.map((cat) => {
+              const catKey = cat as string
+              const isEmpty = (grouped[catKey]?.length ?? 0) === 0
+              const isActive = activeTab === cat
+              return (
+                <button
+                  key={catKey}
+                  onClick={() => setActiveTab(cat)}
+                  disabled={isEmpty}
+                  className={
+                    isActive
+                      ? 'text-amber-300 border-b-2 border-amber-500 px-3 py-1 text-sm font-medium'
+                      : 'text-gray-500 hover:text-gray-300 px-3 py-1 text-sm disabled:opacity-30 disabled:cursor-not-allowed'
+                  }
+                >
+                  {getCategoryLabel(catKey, lastOverview)}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Active tab content */}
+          <div className="max-h-32 overflow-y-auto">
+            <CategorySection
+              label=""
+              opts={grouped[activeTab as string] ?? []}
+              buttonClass={CATEGORY_BUTTON_CLASS[activeTab as string]}
+            />
+          </div>
+        </div>
+      )
+    }
+
+    return null
+  }
+
+  return (
+    <div className="flex-shrink-0 border-t border-gray-700/50 pt-2">
+      {/* 选项区域 */}
+      {renderOptions()}
 
       {/* 自由输入框 */}
       <div className="flex gap-2">

@@ -19,7 +19,7 @@ function getGradient(key: string): string {
 }
 
 export default function SceneBackground() {
-  const { backgroundKey, currentArea, currentLocation } = useSceneStore()
+  const { backgroundKey, dynamicBackgroundUrl, currentArea, currentLocation, currentRoom } = useSceneStore()
   const { worldId, sessionId } = useSessionStore()
   const [generatedUrl, setGeneratedUrl] = useState<string>('')
   const [isLoading, setIsLoading] = useState(false)
@@ -28,9 +28,10 @@ export default function SceneBackground() {
   useEffect(() => {
     if (!currentArea || !worldId || !sessionId) return
     if (getBackground(currentArea, currentLocation)) return  // 已有静态图，跳过
+    if (dynamicBackgroundUrl) return  // 已有动态子地点背景 URL，跳过生成
     setGeneratedUrl('')
     setIsLoading(true)
-    fetchSceneImage(worldId, sessionId, currentArea, currentLocation)
+    fetchSceneImage(worldId, sessionId, currentArea, currentLocation, currentRoom)
       .then((result) => {
         if (result.image_url) {
           setGeneratedUrl(result.image_url)
@@ -38,10 +39,11 @@ export default function SceneBackground() {
       })
       .catch(() => {})  // 静默失败，保持 CSS 渐变
       .finally(() => setIsLoading(false))
-  }, [currentArea, currentLocation, worldId, sessionId])
+  }, [currentArea, currentLocation, currentRoom, worldId, sessionId, dynamicBackgroundUrl])
 
   const staticUrl = backgroundKey ? getBackground(currentArea, currentLocation) : ''
-  const imgUrl = staticUrl || generatedUrl
+  // Priority: dynamic sub-location URL > static asset > AI-generated
+  const imgUrl = dynamicBackgroundUrl || staticUrl || generatedUrl
   const gradient = getGradient(backgroundKey || currentArea)
 
   return (

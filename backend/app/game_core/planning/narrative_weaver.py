@@ -1,6 +1,6 @@
 """NarrativeWeaver sub-system — lifecycle maintenance.
 
-Handles: directive GC, dynamic-quest expiry, temporary NPC despawn,
+Handles: directive GC, temporary NPC despawn,
 and auto-escalation safety net.
 
 Decision record: D-P20c (narrative.md)
@@ -27,9 +27,8 @@ class NarrativeWeaverSubSystem:
 
     Runs on every "tick_settlement" event via evaluate() and:
     1. Prunes consumed / expired directives from NarrativePlanSlice.
-    2. Expires dynamic quests whose expiry_ticks have elapsed.
-    3. Despawns temporary quest NPCs whose despawn_tick has passed.
-    4. Emits an escalate directive when the auto-escalation safety net fires.
+    2. Despawns temporary quest NPCs whose despawn_tick has passed.
+    3. Emits an escalate directive when the auto-escalation safety net fires.
     """
 
     _HANDLES: ClassVar[frozenset[str]] = frozenset()  # pure evaluate-driven
@@ -90,8 +89,8 @@ class NarrativeWeaverSubSystem:
             )
         )
 
-        # 2. Dynamic quest expiry
-        self._expire_dynamic_quests(context, current_tick=current_tick)
+        # 2. Dynamic quest expiry is handled by QuestExpiryHook; NarrativeWeaver
+        # reacts to the resulting semantic events but no longer mutates quest state.
 
         # 3. Temporary NPC despawn
         self._despawn_expired_quest_npcs(context, current_tick=current_tick)

@@ -307,11 +307,11 @@ def test_curate_shop_unknown_npc() -> None:
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a rejection reason string
 
 
 def test_curate_shop_no_shop_state() -> None:
-    """curate_shop returns False when shop state is not yet initialized."""
+    """curate_shop returns a rejection reason when shop state is not yet initialized."""
     world = _make_world_with_blacksmith()
     context = _make_context(shop_states={}, world=world)
     designer = _make_designer()
@@ -323,7 +323,7 @@ def test_curate_shop_no_shop_state() -> None:
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a rejection reason string
 
 
 def test_curate_shop_sse_emitted() -> None:

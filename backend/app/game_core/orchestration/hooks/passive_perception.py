@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.game_core.environment_access import list_current_scene_interactables
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
@@ -36,6 +37,7 @@ class PassivePerceptionHook(NoOpSettlementHook):
             if slice_name == "player" and getattr(change, "path", "") in {
                 "current_area",
                 "current_location",
+                "current_room",
             }:
                 return False
         return True
@@ -82,42 +84,47 @@ class PassivePerceptionHook(NoOpSettlementHook):
                             },
                         ))
 
-        # 2+3. Sub-location interactables — visibility_dc and trap detect_dc
+        # 2+3. Current reachable scene interactables — hidden objects and traps
         if sub_loc_id and area_id:
-            sub_loc = context.world.maps.get_sub_location(area_id, sub_loc_id)
-            if sub_loc is not None:
-                for iact in sub_loc.interactables:
-                    if not iact.id:
-                        continue
+            for iact in list_current_scene_interactables(context.state, context.world):
+                if not iact.interactable_id:
+                    continue
 
-                    # visibility_dc check (hidden interactable reveal)
-                    if iact.visibility_dc is not None:
-                        if not context.state.areas.is_discovery_found(area_id, iact.id):
-                            if passive >= iact.visibility_dc:
-                                context.state.areas.mark_discovery(area_id, iact.id)
-                                interactables_revealed.append(iact.id)
-                                sse_events.append(SSEEvent(
-                                    event_type="hidden_object_revealed",
-                                    payload={
-                                        "area_id": area_id,
-                                        "interactable_id": iact.id,
-                                        "name": iact.name,
-                                    },
-                                ))
+                if iact.visibility_dc is not None:
+                    if not context.state.areas.is_discovery_found(area_id, iact.interactable_id):
+                        if passive >= iact.visibility_dc:
+                            context.state.areas.mark_discovery(area_id, iact.interactable_id)
+                            interactables_revealed.append(iact.interactable_id)
+                            sse_events.append(SSEEvent(
+                                event_type="hidden_object_revealed",
+                                payload={
+                                    "area_id": area_id,
+                                    "interactable_id": iact.interactable_id,
+                                    "name": iact.name,
+                                },
+                            ))
 
-                    # trap detect_dc check
-                    if iact.container_data is not None and iact.container_data.trap is not None:
-                        if not context.state.areas.is_trap_detected(area_id, iact.id):
-                            if passive >= iact.container_data.trap.detect_dc:
-                                context.state.areas.mark_trap_detected(area_id, iact.id)
-                                traps_detected.append(iact.id)
-                                sse_events.append(SSEEvent(
-                                    event_type="trap_detected",
-                                    payload={
-                                        "area_id": area_id,
-                                        "interactable_id": iact.id,
-                                    },
-                                ))
+                trap = None
+                if isinstance(iact.container_data, dict):
+                    raw_trap = iact.container_data.get("trap")
+                    trap = raw_trap if isinstance(raw_trap, dict) else None
+                else:
+                    trap = getattr(iact.container_data, "trap", None)
+                if trap is None:
+                    continue
+
+                detect_dc = int(getattr(trap, "detect_dc", trap.get("detect_dc", 15) if isinstance(trap, dict) else 15))
+                if not context.state.areas.is_trap_detected(area_id, iact.interactable_id):
+                    if passive >= detect_dc:
+                        context.state.areas.mark_trap_detected(area_id, iact.interactable_id)
+                        traps_detected.append(iact.interactable_id)
+                        sse_events.append(SSEEvent(
+                            event_type="trap_detected",
+                            payload={
+                                "area_id": area_id,
+                                "interactable_id": iact.interactable_id,
+                            },
+                        ))
 
         # 4. Dynamic sub-area discovery (plant_environmental, discovery_mode="check")
         dynamic_sub_areas_found: list[str] = []

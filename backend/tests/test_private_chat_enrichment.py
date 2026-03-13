@@ -120,7 +120,7 @@ def test_gm_introspective_prompt_exists() -> None:
 
 def test_gm_introspective_prompt_tone() -> None:
     assert "pass_turn" in GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT
-    assert "introspective" in GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT
+    assert "reflective" in GM_PRIVATE_CHAT_INTROSPECTIVE_PROMPT.lower()
 
 
 # ------------------------------------------------------------------

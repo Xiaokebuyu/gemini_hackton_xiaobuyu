@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from app.game_core.scene_interactables import duplicate_facility_target
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -29,12 +33,16 @@ class AreaState:
     temporary_sub_areas: list[dict[str, Any]] = field(default_factory=list)
     discovered_items: set[str] = field(default_factory=set)
     npc_locations: dict[str, str | None] = field(default_factory=dict)
+    npc_rooms: dict[str, str | None] = field(default_factory=dict)
     npc_presence_sources: dict[str, str] = field(default_factory=dict)
+    discovered_rooms: set[str] = field(default_factory=set)
     container_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     interactable_states: dict[str, dict[str, Any]] = field(default_factory=dict)
     board_bulletins: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     hostile_tracking: dict[str, dict[str, Any]] = field(default_factory=dict)
     permanent_hostile_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    dynamic_rooms: list[dict[str, Any]] = field(default_factory=list)
+    scoped_interactable_overlays: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -45,7 +53,9 @@ class AreaState:
             "temporary_sub_areas": [dict(item) for item in self.temporary_sub_areas],
             "discovered_items": sorted(self.discovered_items),
             "npc_locations": dict(self.npc_locations),
+            "npc_rooms": dict(self.npc_rooms),
             "npc_presence_sources": dict(self.npc_presence_sources),
+            "discovered_rooms": sorted(self.discovered_rooms),
             "board_bulletins": {
                 board_id: [dict(entry) for entry in entries]
                 for board_id, entries in self.board_bulletins.items()
@@ -59,6 +69,11 @@ class AreaState:
             "permanent_hostile_slots": {
                 key: AreaSlice._copy_permanent_slot_bucket(value)
                 for key, value in self.permanent_hostile_slots.items()
+            },
+            "dynamic_rooms": [dict(item) for item in self.dynamic_rooms],
+            "scoped_interactable_overlays": {
+                key: [dict(item) for item in entries]
+                for key, entries in self.scoped_interactable_overlays.items()
             },
         }
 
@@ -77,7 +92,11 @@ class AreaSlice(StateSlice):
         self.areas = {}
         if isinstance(raw_areas, Mapping):
             for area_id, area_payload in raw_areas.items():
-                self.areas[str(area_id)] = self._coerce_area_state(area_payload)
+                normalized_area_id = str(area_id)
+                self.areas[normalized_area_id] = self._coerce_area_state(
+                    normalized_area_id,
+                    area_payload,
+                )
         self.clear_dirty()
 
     def serialize(self) -> dict[str, Any]:
@@ -331,7 +350,11 @@ class AreaSlice(StateSlice):
     def upsert_hostile(self, sub_area_id: str, state: dict[str, Any]) -> None:
         area_id = str(state.get("area_id", "")).strip()
         if not area_id:
-            raise ValueError("hostile state must include area_id")
+            logger.warning(
+                "upsert_hostile: hostile state must include area_id, sub_area_id=%s, skipping",
+                sub_area_id,
+            )
+            return
         area = self.get_area(area_id)
         area.hostile_tracking[sub_area_id] = self._normalize_hostile_payload(state)
         self._dirty = True
@@ -518,6 +541,8 @@ class AreaSlice(StateSlice):
     def update_npc_location(self, character_id: str, location_id: str | None) -> None:
         for area in self.areas.values():
             if character_id in area.npc_locations:
+                if area.npc_locations.get(character_id) != location_id:
+                    area.npc_rooms.pop(character_id, None)
                 area.npc_locations[character_id] = location_id
                 self._dirty = True
                 return
@@ -538,14 +563,20 @@ class AreaSlice(StateSlice):
         character_id: str,
         area_id: str,
         location_id: str | None,
+        room_id: str | None = None,
         source: str = "resident",
     ) -> None:
         for area in self.areas.values():
             area.npc_locations.pop(character_id, None)
+            area.npc_rooms.pop(character_id, None)
             area.npc_presence_sources.pop(character_id, None)
 
         target_area = self.get_area(area_id)
         target_area.npc_locations[character_id] = location_id
+        if location_id is not None and room_id is not None:
+            target_area.npc_rooms[character_id] = room_id
+        else:
+            target_area.npc_rooms.pop(character_id, None)
         target_area.npc_presence_sources[character_id] = source
         self._dirty = True
 
@@ -555,12 +586,184 @@ class AreaSlice(StateSlice):
             if character_id in area.npc_locations:
                 area.npc_locations.pop(character_id, None)
                 removed = True
+            if character_id in area.npc_rooms:
+                area.npc_rooms.pop(character_id, None)
+                removed = True
             if character_id in area.npc_presence_sources:
                 area.npc_presence_sources.pop(character_id, None)
                 removed = True
         if removed:
             self._dirty = True
         return removed
+
+    # ── 5b. NPC rooms ─────────────────────────────────────────────────────────
+
+    def set_npc_room(self, area_id: str, character_id: str, room_id: str | None) -> None:
+        """Set which room within a sub_location an NPC is currently in."""
+        area = self.get_area(area_id)
+        if room_id is None:
+            area.npc_rooms.pop(character_id, None)
+        else:
+            area.npc_rooms[character_id] = room_id
+        self._dirty = True
+
+    def get_npc_room(self, area_id: str, character_id: str) -> str | None:
+        """Return the room ID for an NPC in the given area, or None."""
+        area = self.areas.get(area_id)
+        if area is None:
+            return None
+        return area.npc_rooms.get(character_id)
+
+    # ── 5c. Discovered rooms ──────────────────────────────────────────────────
+
+    def mark_room_discovered(
+        self, area_id: str, sub_loc_id: str, room_id: str,
+    ) -> None:
+        """Record that a room within a sub_location has been discovered."""
+        room_key = f"{sub_loc_id}__{room_id}"
+        self.get_area(area_id).discovered_rooms.add(room_key)
+        self._dirty = True
+
+    def is_room_discovered(
+        self, area_id: str, sub_loc_id: str, room_id: str,
+    ) -> bool:
+        """Return True if the room has been discovered."""
+        room_key = f"{sub_loc_id}__{room_id}"
+        area = self.areas.get(area_id)
+        if area is None:
+            return False
+        return room_key in area.discovered_rooms
+
+    def get_discovered_rooms(self, area_id: str) -> set[str]:
+        """Return a defensive copy of the discovered room keys for an area."""
+        area = self.areas.get(area_id)
+        if area is None:
+            return set()
+        return set(area.discovered_rooms)
+
+    # ── 5d. Dynamic rooms ─────────────────────────────────────────────────────
+
+    def add_dynamic_room(self, area_id: str, room_dict: dict[str, Any]) -> None:
+        """Append a dynamic room entry to the specified area."""
+        self.get_area(area_id).dynamic_rooms.append(dict(room_dict))
+        self._dirty = True
+
+    def list_dynamic_rooms(
+        self, area_id: str, sub_loc_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return dynamic rooms for an area, optionally filtered by sub_loc_id."""
+        area = self.areas.get(area_id)
+        if area is None:
+            return []
+        rooms = [dict(item) for item in area.dynamic_rooms]
+        if sub_loc_id is not None:
+            rooms = [r for r in rooms if r.get("sub_loc_id") == sub_loc_id]
+        return rooms
+
+    def count_dynamic_rooms(self, area_id: str, sub_loc_id: str) -> int:
+        """Return the number of dynamic rooms for a specific sub_location."""
+        return len(self.list_dynamic_rooms(area_id, sub_loc_id))
+
+    # ── 5e. Scene-scoped interactable overlays ───────────────────────────────
+
+    @staticmethod
+    def interactable_scope_key(location_id: str, room_id: str | None = None) -> str:
+        normalized_location = str(location_id).strip()
+        normalized_room = str(room_id).strip() if room_id is not None else ""
+        if not normalized_location:
+            raise ValueError("location_id must be non-empty")
+        return (
+            f"{normalized_location}__{normalized_room}"
+            if normalized_room
+            else normalized_location
+        )
+
+    def list_scoped_interactable_overlays(
+        self,
+        area_id: str,
+        location_id: str,
+        room_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        area = self.areas.get(area_id)
+        if area is None:
+            return []
+        key = self.interactable_scope_key(location_id, room_id)
+        entries = area.scoped_interactable_overlays.get(key, [])
+        if not isinstance(entries, list):
+            return []
+        return [
+            dict(item)
+            for item in entries
+            if isinstance(item, Mapping)
+        ]
+
+    def count_scoped_interactable_overlays(
+        self,
+        area_id: str,
+        location_id: str,
+        room_id: str | None = None,
+    ) -> int:
+        return len(self.list_scoped_interactable_overlays(area_id, location_id, room_id))
+
+    def set_scoped_interactable_overlays(
+        self,
+        area_id: str,
+        scope_key: str,
+        entries: list[dict[str, Any]],
+    ) -> None:
+        normalized = [
+            dict(item)
+            for item in entries
+            if isinstance(item, Mapping) and str(item.get("id", "")).strip()
+        ]
+        self.get_area(area_id).scoped_interactable_overlays[scope_key] = normalized
+        self._dirty = True
+
+    def upsert_scoped_interactable_overlays(
+        self,
+        area_id: str,
+        location_id: str,
+        interactables: list[dict[str, Any]],
+        *,
+        room_id: str | None = None,
+        max_entries: int = 4,
+    ) -> list[dict[str, Any]]:
+        key = self.interactable_scope_key(location_id, room_id)
+        area = self.get_area(area_id)
+        existing = [
+            dict(item)
+            for item in area.scoped_interactable_overlays.get(key, [])
+            if isinstance(item, Mapping)
+        ]
+        by_id = {
+            str(item.get("id", "")).strip(): index
+            for index, item in enumerate(existing)
+            if str(item.get("id", "")).strip()
+        }
+        for raw_item in interactables:
+            if not isinstance(raw_item, Mapping):
+                continue
+            normalized = dict(raw_item)
+            interactable_id = str(normalized.get("id", "")).strip()
+            if not interactable_id:
+                continue
+            existing_index = by_id.get(interactable_id)
+            if existing_index is not None:
+                merged = dict(existing[existing_index])
+                merged.update(normalized)
+                existing[existing_index] = merged
+                continue
+            if len(existing) >= max_entries:
+                logger.warning(
+                    "upsert_scoped_interactable_overlays: capacity exceeded (%d), truncating remaining entries",
+                    max_entries,
+                )
+                break
+            existing.append(normalized)
+            by_id[interactable_id] = len(existing) - 1
+        area.scoped_interactable_overlays[key] = existing
+        self._dirty = True
+        return [dict(item) for item in existing]
 
     # ── 6. Temporary sub-areas ───────────────────────────────────────────────
 
@@ -615,12 +818,12 @@ class AreaSlice(StateSlice):
     def has_cluster_capacity(self, area_id: str, tier: str = "any") -> bool:
         counts = self.count_dynamic_sub_areas(area_id)
         if tier == "permanent":
-            return counts["permanent"] < 3
+            return counts["permanent"] < 8
         if tier == "timed":
             return counts["timed"] < 5
         if tier == "temporary":
             return counts["temporary"] < 3
-        return counts["total"] < 6
+        return counts["total"] < 15
 
     def tick_expiry(self, area_id: str, elapsed: int = 1) -> list[str]:
         """Decrement positive expiry values and remove expired sub-areas.
@@ -681,6 +884,32 @@ class AreaSlice(StateSlice):
                         issues.append(
                             f"area '{area_id}' board_bulletins '{board_id}' must be a list"
                         )
+            if not isinstance(area.scoped_interactable_overlays, dict):
+                issues.append(
+                    f"area '{area_id}' scoped_interactable_overlays must be a dict"
+                )
+            else:
+                for scope_key, entries in area.scoped_interactable_overlays.items():
+                    if not isinstance(scope_key, str):
+                        issues.append(
+                            f"area '{area_id}' scoped_interactable_overlays key must be a string"
+                        )
+                        continue
+                    if not isinstance(entries, list):
+                        issues.append(
+                            f"area '{area_id}' scoped_interactable_overlays '{scope_key}' must be a list"
+                        )
+                        continue
+                    for index, item in enumerate(entries):
+                        if not isinstance(item, Mapping):
+                            issues.append(
+                                f"area '{area_id}' scoped_interactable_overlays '{scope_key}' entry {index} must be a mapping"
+                            )
+                            continue
+                        if not self._coerce_non_empty_string(item.get("id")):
+                            issues.append(
+                                f"area '{area_id}' scoped_interactable_overlays '{scope_key}' entry {index} missing id"
+                            )
             if not isinstance(area.container_states, dict):
                 issues.append(f"area '{area_id}' container_states must be a dict")
             if not isinstance(area.interactable_states, dict):
@@ -791,42 +1020,87 @@ class AreaSlice(StateSlice):
                 self.remove_npc_presence(character_id)
                 return
             if change.operation not in {"set", "modify"}:
-                raise ValueError(
-                    f"unsupported npc presence state change: {change.operation} {change.path}"
+                logger.warning(
+                    "apply_state_change: unsupported npc presence state change, skipping: %s",
+                    change.path,
                 )
+                return
             if not isinstance(change.value, Mapping):
-                raise ValueError("npc presence payload must be a mapping")
+                logger.warning(
+                    "apply_state_change: npc presence payload must be a mapping, skipping: %s",
+                    change.path,
+                )
+                return
             area_id = self._coerce_non_empty_string(change.value.get("area_id"))
             if area_id is None:
-                raise ValueError("npc presence payload must include area_id")
+                logger.warning(
+                    "apply_state_change: npc presence payload must include area_id, skipping: %s",
+                    change.path,
+                )
+                return
             location_id = change.value.get("location_id")
             normalized_location = (
                 self._coerce_non_empty_string(location_id)
                 if location_id is not None else None
             )
+            room_id = change.value.get("room_id")
+            normalized_room = (
+                self._coerce_non_empty_string(room_id)
+                if room_id is not None else None
+            )
+            if normalized_room is not None and normalized_location is None:
+                logger.warning(
+                    "apply_state_change: npc presence room_id requires location_id, skipping: %s",
+                    change.path,
+                )
+                return
             source = self._coerce_non_empty_string(change.value.get("source")) or "resident"
-            self.move_npc(character_id, area_id, normalized_location, source=source)
+            self.move_npc(
+                character_id,
+                area_id,
+                normalized_location,
+                room_id=normalized_room,
+                source=source,
+            )
             return
         if change.path.startswith("board_bulletins."):
             if change.operation != "append":
-                raise ValueError("board_bulletins only supports append operation")
+                logger.warning(
+                    "apply_state_change: board_bulletins only supports append operation, skipping: %s",
+                    change.path,
+                )
+                return
             if not isinstance(change.value, Mapping):
-                raise ValueError("bulletin entry must be a mapping")
+                logger.warning(
+                    "apply_state_change: bulletin entry must be a mapping, skipping: %s",
+                    change.path,
+                )
+                return
             _, board_id = change.path.split(".", 1)
             area_id = str(change.value.get("area_id", "")).strip()
             if not area_id:
-                raise ValueError("bulletin must include area_id")
+                logger.warning(
+                    "apply_state_change: bulletin must include area_id, skipping: %s",
+                    change.path,
+                )
+                return
             payload = dict(change.value)
             payload.pop("area_id", None)
             self.add_board_bulletin(area_id, board_id, payload)
             return
         if change.path.startswith("hostile_tracking."):
             if change.operation not in {"set", "modify"}:
-                raise ValueError(
-                    f"unsupported hostile state change: {change.operation} {change.path}"
+                logger.warning(
+                    "apply_state_change: unsupported hostile state change, skipping: %s",
+                    change.path,
                 )
+                return
             if not isinstance(change.value, Mapping):
-                raise ValueError("hostile state change payload must be a mapping")
+                logger.warning(
+                    "apply_state_change: hostile state change payload must be a mapping, skipping: %s",
+                    change.path,
+                )
+                return
             _, sub_area_id = change.path.split(".", 1)
             self.upsert_hostile(sub_area_id, dict(change.value))
             return
@@ -869,18 +1143,64 @@ class AreaSlice(StateSlice):
             return
         if field_name == "temporary_sub_areas":
             if change.operation not in {"set", "modify"}:
-                raise ValueError(
-                    f"unsupported temporary sub-area change: {change.operation} {change.path}"
+                logger.warning(
+                    "apply_state_change: unsupported temporary sub-area change, skipping: %s",
+                    change.path,
                 )
+                return
             if not isinstance(change.value, list):
-                raise ValueError("temporary sub-area payload must be a list")
+                logger.warning(
+                    "apply_state_change: temporary sub-area payload must be a list, skipping: %s",
+                    change.path,
+                )
+                return
             normalized: list[dict[str, Any]] = []
             for item in change.value:
                 if not isinstance(item, Mapping):
-                    raise ValueError("temporary sub-area entries must be mappings")
+                    logger.warning(
+                        "apply_state_change: temporary sub-area entries must be mappings, skipping entry in: %s",
+                        change.path,
+                    )
+                    continue
                 normalized.append(dict(item))
             self.get_area(area_id).temporary_sub_areas = normalized
             self._dirty = True
+            return
+        if field_name.startswith("scoped_interactable_overlay."):
+            if change.operation not in {"set", "modify"}:
+                logger.warning(
+                    "apply_state_change: unsupported scoped interactable overlay change, skipping: %s",
+                    change.path,
+                )
+                return
+            if not isinstance(change.value, list):
+                logger.warning(
+                    "apply_state_change: scoped interactable overlay payload must be a list, skipping: %s",
+                    change.path,
+                )
+                return
+            scope_key = field_name.split(".", 1)[1]
+            normalized_entries = [
+                dict(item)
+                for item in change.value
+                if isinstance(item, Mapping)
+            ]
+            if change.operation == "set":
+                self.set_scoped_interactable_overlays(area_id, scope_key, normalized_entries)
+            else:
+                location_id, room_id = self._split_interactable_scope_key(scope_key)
+                if location_id is None:
+                    logger.warning(
+                        "apply_state_change: invalid scoped interactable overlay key, skipping: %s",
+                        change.path,
+                    )
+                    return
+                self.upsert_scoped_interactable_overlays(
+                    area_id,
+                    location_id,
+                    normalized_entries,
+                    room_id=room_id,
+                )
             return
         if field_name == "board_bulletins":
             if change.operation not in {"set", "modify"}:
@@ -901,6 +1221,36 @@ class AreaSlice(StateSlice):
             if discovery_id:
                 self.mark_discovery(area_id, discovery_id)
             return
+        if field_name.startswith("npc_room.") and change.operation in {"set", "modify"}:
+            npc_id = field_name.split(".", 1)[1]
+            if npc_id:
+                room_value = (
+                    self._coerce_non_empty_string(change.value)
+                    if change.value is not None
+                    else None
+                )
+                self.set_npc_room(area_id, npc_id, room_value)
+            return
+        if field_name.startswith("discovered_room.") and change.operation in {"set", "add"}:
+            # path: discovered_room.{sub_loc_id}.{room_id}
+            rest = field_name.split(".", 1)[1]
+            if rest:
+                # compound key: sub_loc_id__room_id
+                parts = rest.split(".", 1)
+                if len(parts) == 2:
+                    sub_loc_id, room_id = parts
+                    room_key = f"{sub_loc_id}__{room_id}"
+                else:
+                    room_key = rest
+                if room_key:
+                    self.get_area(area_id).discovered_rooms.add(room_key)
+                    self._dirty = True
+            return
+        if field_name == "dynamic_room" and change.operation == "add":
+            if not isinstance(change.value, Mapping):
+                raise ValueError("dynamic_room entry must be a mapping")
+            self.add_dynamic_room(area_id, dict(change.value))
+            return
         raise ValueError(
             f"unsupported area state change: {change.operation} {change.path}"
         )
@@ -908,9 +1258,9 @@ class AreaSlice(StateSlice):
     # ── 8. Normalization & coercion helpers ──────────────────────────────────
 
     @staticmethod
-    def _coerce_area_state(raw: Any) -> AreaState:
+    def _coerce_area_state(area_id: str, raw: Any) -> AreaState:
         if isinstance(raw, AreaState):
-            return AreaState(
+            state = AreaState(
                 exploration=raw.exploration,
                 danger_level=raw.danger_level,
                 properties=dict(raw.properties),
@@ -918,9 +1268,12 @@ class AreaSlice(StateSlice):
                 temporary_sub_areas=[dict(item) for item in raw.temporary_sub_areas],
                 discovered_items=set(raw.discovered_items),
                 npc_locations=dict(raw.npc_locations),
+                npc_rooms=dict(raw.npc_rooms),
                 npc_presence_sources=dict(raw.npc_presence_sources),
+                discovered_rooms=set(raw.discovered_rooms),
                 container_states={k: dict(v) for k, v in raw.container_states.items()},
                 interactable_states={k: dict(v) for k, v in raw.interactable_states.items()},
+                dynamic_rooms=[dict(item) for item in raw.dynamic_rooms],
                 board_bulletins={
                     str(key): [dict(entry) for entry in entries if isinstance(entry, Mapping)]
                     for key, entries in raw.board_bulletins.items()
@@ -933,10 +1286,16 @@ class AreaSlice(StateSlice):
                     k: AreaSlice._normalize_permanent_slot_bucket(v, default_max_slots=0)
                     for k, v in raw.permanent_hostile_slots.items()
                 },
+                scoped_interactable_overlays={
+                    str(key): [dict(item) for item in value if isinstance(item, Mapping)]
+                    for key, value in raw.scoped_interactable_overlays.items()
+                },
             )
+            AreaSlice._migrate_duplicate_facilities(area_id, state)
+            return state
         if not isinstance(raw, Mapping):
             raise ValueError(f"invalid area state: {raw!r}")
-        return AreaState(
+        state = AreaState(
             exploration=str(raw.get("exploration", "undiscovered")),
             danger_level=float(raw.get("danger_level", 1.0)),
             properties=dict(raw.get("properties", {})),
@@ -951,9 +1310,16 @@ class AreaSlice(StateSlice):
                 str(key): (str(value) if value is not None else None)
                 for key, value in raw.get("npc_locations", {}).items()
             },
+            npc_rooms={
+                str(key): (str(value) if value is not None else None)
+                for key, value in raw.get("npc_rooms", {}).items()
+            },
             npc_presence_sources={
                 str(key): str(value)
                 for key, value in raw.get("npc_presence_sources", {}).items()
+            },
+            discovered_rooms={
+                str(item) for item in raw.get("discovered_rooms", [])
             },
             container_states={
                 str(key): dict(value)
@@ -964,6 +1330,10 @@ class AreaSlice(StateSlice):
                 for key, value in raw.get("interactable_states", {}).items()
                 if isinstance(value, Mapping)
             },
+            dynamic_rooms=[
+                dict(item) for item in raw.get("dynamic_rooms", [])
+                if isinstance(item, Mapping)
+            ],
             board_bulletins=AreaSlice._coerce_board_bulletins(
                 raw.get("board_bulletins", {})
             ),
@@ -979,7 +1349,12 @@ class AreaSlice(StateSlice):
                 )
                 for key, value in raw.get("permanent_hostile_slots", {}).items()
             },
+            scoped_interactable_overlays=AreaSlice._coerce_scoped_interactable_overlays(
+                raw.get("scoped_interactable_overlays", {})
+            ),
         )
+        AreaSlice._migrate_duplicate_facilities(area_id, state)
+        return state
 
     @staticmethod
     def _coerce_board_bulletins(raw_board_bulletins: Any) -> dict[str, list[dict[str, Any]]]:
@@ -993,6 +1368,194 @@ class AreaSlice(StateSlice):
                 dict(entry) for entry in entries if isinstance(entry, Mapping)
             ]
         return board_bulletins
+
+    @staticmethod
+    def _coerce_scoped_interactable_overlays(
+        raw_overlays: Any,
+    ) -> dict[str, list[dict[str, Any]]]:
+        overlays: dict[str, list[dict[str, Any]]] = {}
+        if not isinstance(raw_overlays, Mapping):
+            return overlays
+        for scope_key, entries in raw_overlays.items():
+            if not isinstance(entries, list):
+                continue
+            normalized_entries = [
+                dict(item)
+                for item in entries
+                if isinstance(item, Mapping) and str(item.get("id", "")).strip()
+            ]
+            if normalized_entries:
+                overlays[str(scope_key)] = normalized_entries
+        return overlays
+
+    @staticmethod
+    def _split_interactable_scope_key(scope_key: str) -> tuple[str | None, str | None]:
+        normalized = str(scope_key).strip()
+        if not normalized:
+            return None, None
+        if "__" not in normalized:
+            return normalized, None
+        location_id, room_id = normalized.split("__", 1)
+        location_id = location_id.strip()
+        room_id = room_id.strip()
+        if not location_id:
+            return None, None
+        return location_id, room_id or None
+
+    @classmethod
+    def _migrate_duplicate_facilities(cls, area_id: str, state: AreaState) -> None:
+        if not state.temporary_sub_areas:
+            return
+        surviving: list[dict[str, Any]] = []
+        for raw_sub_area in state.temporary_sub_areas:
+            if not isinstance(raw_sub_area, Mapping):
+                continue
+            sub_area = dict(raw_sub_area)
+            sub_area_id = cls._coerce_non_empty_string(sub_area.get("id"))
+            if sub_area_id is None:
+                continue
+            target = duplicate_facility_target(area_id, sub_area_id)
+            if target is None:
+                surviving.append(sub_area)
+                continue
+            cls._merge_duplicate_sub_area_into_overlay(area_id, state, sub_area, target)
+        state.temporary_sub_areas = surviving
+
+    @classmethod
+    def _merge_duplicate_sub_area_into_overlay(
+        cls,
+        area_id: str,
+        state: AreaState,
+        sub_area: dict[str, Any],
+        target: Mapping[str, Any],
+    ) -> None:
+        location_id = cls._coerce_non_empty_string(target.get("location_id"))
+        if location_id is None:
+            return
+        room_id = cls._coerce_non_empty_string(target.get("room_id"))
+        scope_key = cls.interactable_scope_key(location_id, room_id)
+        bucket = [
+            dict(item)
+            for item in state.scoped_interactable_overlays.get(scope_key, [])
+            if isinstance(item, Mapping)
+        ]
+        cls._merge_overlay_entries(
+            bucket,
+            cls._build_duplicate_overlay_entries(area_id, sub_area, target),
+        )
+        if bucket:
+            state.scoped_interactable_overlays[scope_key] = bucket
+
+    @classmethod
+    def _build_duplicate_overlay_entries(
+        cls,
+        area_id: str,
+        sub_area: Mapping[str, Any],
+        target: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        canonical_id = cls._coerce_non_empty_string(target.get("interactable_id"))
+        if (
+            canonical_id is not None
+            or cls._coerce_non_empty_string(sub_area.get("description")) is not None
+            or cls._coerce_non_empty_string(sub_area.get("label")) is not None
+        ):
+            synthesized = cls._overlay_from_sub_area(sub_area, default_id=canonical_id)
+            if synthesized is not None:
+                entries.append(synthesized)
+        raw_interactables = sub_area.get("interactables", [])
+        if isinstance(raw_interactables, list):
+            for raw_item in raw_interactables:
+                remapped = cls._remap_duplicate_overlay_entry(area_id, raw_item)
+                if remapped is not None:
+                    entries.append(remapped)
+        return entries
+
+    @classmethod
+    def _overlay_from_sub_area(
+        cls,
+        sub_area: Mapping[str, Any],
+        *,
+        default_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        overlay_id = default_id or cls._coerce_non_empty_string(sub_area.get("id"))
+        if overlay_id is None:
+            return None
+        name = (
+            cls._coerce_non_empty_string(sub_area.get("label"))
+            or cls._coerce_non_empty_string(sub_area.get("name"))
+            or overlay_id
+        )
+        description = str(sub_area.get("description", "")).strip()
+        overlay: dict[str, Any] = {
+            "id": overlay_id,
+            "name": name,
+            "description": description,
+            "type": "inspect",
+            "tags": [
+                str(tag).strip()
+                for tag in sub_area.get("tags", [])
+                if str(tag).strip()
+            ] if isinstance(sub_area.get("tags"), list) else [],
+        }
+        return overlay
+
+    @classmethod
+    def _remap_duplicate_overlay_entry(
+        cls,
+        area_id: str,
+        raw_item: Any,
+    ) -> dict[str, Any] | None:
+        if isinstance(raw_item, Mapping):
+            normalized = dict(raw_item)
+            original_id = cls._coerce_non_empty_string(normalized.get("id"))
+            if original_id is None:
+                return None
+            target = duplicate_facility_target(area_id, original_id)
+            canonical_id = cls._coerce_non_empty_string(
+                target.get("interactable_id")
+            ) if isinstance(target, Mapping) else None
+            if canonical_id is not None:
+                normalized["id"] = canonical_id
+                normalized.setdefault("type", "inspect")
+            return normalized
+        if isinstance(raw_item, str):
+            interactable_id = raw_item.strip()
+            if not interactable_id:
+                return None
+            target = duplicate_facility_target(area_id, interactable_id)
+            canonical_id = cls._coerce_non_empty_string(
+                target.get("interactable_id")
+            ) if isinstance(target, Mapping) else None
+            resolved_id = canonical_id or interactable_id
+            return {"id": resolved_id, "name": resolved_id, "description": "", "type": "inspect"}
+        return None
+
+    @staticmethod
+    def _merge_overlay_entries(
+        bucket: list[dict[str, Any]],
+        new_entries: list[dict[str, Any]],
+    ) -> None:
+        by_id = {
+            str(item.get("id", "")).strip(): index
+            for index, item in enumerate(bucket)
+            if str(item.get("id", "")).strip()
+        }
+        for raw_entry in new_entries:
+            if not isinstance(raw_entry, Mapping):
+                continue
+            entry = dict(raw_entry)
+            entry_id = str(entry.get("id", "")).strip()
+            if not entry_id:
+                continue
+            existing_index = by_id.get(entry_id)
+            if existing_index is not None:
+                merged = dict(bucket[existing_index])
+                merged.update(entry)
+                bucket[existing_index] = merged
+                continue
+            bucket.append(entry)
+            by_id[entry_id] = len(bucket) - 1
 
     def copy_hostile_state(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return self._copy_hostile_payload(payload)

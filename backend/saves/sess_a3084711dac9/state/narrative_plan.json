@@ -1,0 +1,335 @@
+{
+  "actor_knowledge": {},
+  "behavior_window": [],
+  "chapter_completion": 0.0,
+  "context_windows_data": {
+    "__gm__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__item_designer_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__narrative_weaver_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__npc_director_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__planner_blackboard__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__quest_manager_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__world_builder_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    }
+  },
+  "current_chapter": "",
+  "current_target_milestone": null,
+  "escalation_level": 0,
+  "last_planner_replay_trace": {
+    "blackboard_summary": {
+      "applied_directive_count": 0,
+      "applied_kinds": [],
+      "directive_audit": [],
+      "planner_metadata": {},
+      "requested_directive_count": 0,
+      "skipped_invalid_count": 0,
+      "skipped_unsupported_count": 0,
+      "source": "blackboard",
+      "story_fact_count": 0
+    },
+    "current_tick": 8,
+    "directive_audit": [
+      {
+        "kind": "create_quest",
+        "payload_digest": {
+          "kind": "create_quest",
+          "payload_keys": [
+            "metadata",
+            "quest_id",
+            "requires_report",
+            "summary",
+            "title"
+          ],
+          "quest_id": "dq_ms_arrival"
+        },
+        "reason_code": null,
+        "round_index": 0,
+        "source": "subsystem",
+        "status": "applied",
+        "subsystem": "quest_manager"
+      },
+      {
+        "kind": "publish_bulletin",
+        "payload_digest": {
+          "area_id": "frontier_town",
+          "board_id": "quest_board",
+          "kind": "publish_bulletin",
+          "payload_keys": [
+            "area_id",
+            "board_id",
+            "content",
+            "location",
+            "metadata",
+            "title"
+          ]
+        },
+        "reason_code": null,
+        "round_index": 0,
+        "source": "subsystem",
+        "status": "applied",
+        "subsystem": "quest_manager"
+      }
+    ],
+    "hook_priority": 66,
+    "reason": "bootstrap",
+    "round_count": 1,
+    "rounds": [
+      {
+        "accepted_event_count": 1,
+        "applied_directive_count": 2,
+        "applied_directive_kinds": [
+          "create_quest",
+          "publish_bulletin"
+        ],
+        "event_kinds": [
+          "bootstrap",
+          "area_sparse"
+        ],
+        "inline_event_transition_count": 0,
+        "new_change_count": 0,
+        "requested_directive_count": 2,
+        "round_index": 0,
+        "skipped_invalid_count": 0,
+        "skipped_unsupported_count": 0,
+        "subsystems": [
+          {
+            "accepted_event_count": 1,
+            "applied_directive_count": 2,
+            "applied_kinds": [
+              "create_quest",
+              "publish_bulletin"
+            ],
+            "directive_audit": [
+              {
+                "kind": "create_quest",
+                "payload_digest": {
+                  "kind": "create_quest",
+                  "payload_keys": [
+                    "metadata",
+                    "quest_id",
+                    "requires_report",
+                    "summary",
+                    "title"
+                  ],
+                  "quest_id": "dq_ms_arrival"
+                },
+                "reason_code": null,
+                "round_index": 0,
+                "source": "subsystem",
+                "status": "applied",
+                "subsystem": "quest_manager"
+              },
+              {
+                "kind": "publish_bulletin",
+                "payload_digest": {
+                  "area_id": "frontier_town",
+                  "board_id": "quest_board",
+                  "kind": "publish_bulletin",
+                  "payload_keys": [
+                    "area_id",
+                    "board_id",
+                    "content",
+                    "location",
+                    "metadata",
+                    "title"
+                  ]
+                },
+                "reason_code": null,
+                "round_index": 0,
+                "source": "subsystem",
+                "status": "applied",
+                "subsystem": "quest_manager"
+              }
+            ],
+            "event_kinds": [
+              "bootstrap"
+            ],
+            "metadata": {
+              "provider": "opening_bootstrap_agent",
+              "status": "quest_seeded"
+            },
+            "name": "quest_manager",
+            "requested_directive_count": 2,
+            "skipped_invalid_count": 0,
+            "skipped_unsupported_count": 0,
+            "story_fact_count": 0
+          },
+          {
+            "accepted_event_count": 0,
+            "applied_directive_count": 0,
+            "applied_kinds": [],
+            "directive_audit": [],
+            "event_kinds": [
+              "area_sparse"
+            ],
+            "metadata": {},
+            "name": "world_builder",
+            "requested_directive_count": 0,
+            "skipped_invalid_count": 0,
+            "skipped_unsupported_count": 0,
+            "story_fact_count": 0
+          }
+        ]
+      }
+    ],
+    "stop_reason": "bootstrap_complete"
+  },
+  "last_run_tick": 0,
+  "next_scheduled_tick": null,
+  "npc_capabilities": {},
+  "npc_directives": [
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_arrival",
+          "source_milestone": "ms_arrival"
+        },
+        "notice": "New Lead Posted",
+        "quest_id": "dq_ms_arrival",
+        "source_milestone": "ms_arrival"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "guild_girl",
+      "priority": "medium",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_arrival",
+          "source_milestone": "ms_arrival"
+        },
+        "notice": "New Lead Posted",
+        "quest_id": "dq_ms_arrival",
+        "source_milestone": "ms_arrival"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "guild_quartermaster",
+      "priority": "medium",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_arrival",
+          "source_milestone": "ms_arrival"
+        },
+        "notice": "New Lead Posted",
+        "quest_id": "dq_ms_arrival",
+        "source_milestone": "ms_arrival"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "goblin_slayer",
+      "priority": "medium",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_arrival",
+          "source_milestone": "ms_arrival"
+        },
+        "notice": "New Lead Posted",
+        "quest_id": "dq_ms_arrival",
+        "source_milestone": "ms_arrival"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "high_elf_archer",
+      "priority": "medium",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_arrival",
+          "source_milestone": "ms_arrival"
+        },
+        "notice": "New Lead Posted",
+        "quest_id": "dq_ms_arrival",
+        "source_milestone": "ms_arrival"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "dwarf_shaman",
+      "priority": "medium",
+      "source": "narrative_planner"
+    },
+    {
+      "consumed": false,
+      "directive": {
+        "board_id": "quest_board",
+        "kind": "bulletin_awareness",
+        "metadata": {
+          "quest_id": "dq_ms_arrival",
+          "source_milestone": "ms_arrival"
+        },
+        "notice": "New Lead Posted",
+        "quest_id": "dq_ms_arrival",
+        "source_milestone": "ms_arrival"
+      },
+      "expires_at_tick": 32,
+      "issued_at_tick": 8,
+      "linked_quest_id": null,
+      "npc_id": "lizard_priest",
+      "priority": "medium",
+      "source": "narrative_planner"
+    }
+  ],
+  "pacing_frozen": false,
+  "play_style_tags": [],
+  "quest_history": [
+    {
+      "kind": "create_quest",
+      "quest_id": "dq_ms_arrival",
+      "tick": 8
+    }
+  ],
+  "story_facts": [],
+  "strategy_notes": "",
+  "temporary_npcs": {},
+  "ticks_since_milestone_progress": 0
+}

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class NpcDirectorSubSystem:
     """PlannerSubSystem responsible for NPC directive and spawn directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"direct_npc", "spawn_quest_npc"})
+    _HANDLES: frozenset[str] = frozenset({"direct_npc", "spawn_quest_npc", "assign_capability", "revoke_capability"})
 
     def __init__(
         self,
@@ -77,12 +77,16 @@ class NpcDirectorSubSystem:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         if kind == "direct_npc":
             return self._apply_direct_npc(payload, context, current_tick=current_tick)
         if kind == "spawn_quest_npc":
             return self._apply_spawn_quest_npc(payload, context, current_tick=current_tick)
-        return False
+        if kind == "assign_capability":
+            return self._apply_assign_capability(payload, context, current_tick=current_tick)
+        if kind == "revoke_capability":
+            return self._apply_revoke_capability(payload, context, current_tick=current_tick)
+        return "unsupported_kind"
 
     # ------------------------------------------------------------------
     # Handler: direct_npc
@@ -94,7 +98,7 @@ class NpcDirectorSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -105,13 +109,13 @@ class NpcDirectorSubSystem:
             )
         )
         if not result.executed:
-            return False
+            return "; ".join(result.errors) if result.errors else "command_failed"
         if self._instance_manager is not None:
             metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
             npc_id = coerce_non_empty_string(metadata.get("npc_id"))
             stored_directive = metadata.get("stored_directive")
             if npc_id is None or not isinstance(stored_directive, Mapping):
-                return False
+                return "missing_npc_or_directive_in_metadata"
             self._instance_manager.inject_directive(
                 npc_id,
                 stored_directive,
@@ -129,7 +133,7 @@ class NpcDirectorSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -139,7 +143,57 @@ class NpcDirectorSubSystem:
                 source="narrative_planner",
             )
         )
-        return result.executed
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: assign_capability
+    # ------------------------------------------------------------------
+
+    def _apply_assign_capability(
+        self,
+        payload: dict[str, Any],
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_assign_capability",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: revoke_capability
+    # ------------------------------------------------------------------
+
+    def _apply_revoke_capability(
+        self,
+        payload: dict[str, Any],
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_revoke_capability",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
 
     async def _evaluate_with_agent(
         self,

@@ -17,6 +17,9 @@ import NotificationLayer from '../game/NotificationLayer'
 import PlayerHud from '../game/PlayerHud'
 import SceneTransitionOverlay from '../game/SceneTransitionOverlay'
 import DiceRollOverlay from '../game/combat/DiceRollOverlay'
+import { runInteractablePrimaryAction } from '../game/sceneActionAdapters'
+import VnDialogueLayer from '../game/vn/VnDialogueLayer'
+import VnPortraitLayer from '../game/vn/VnPortraitLayer'
 import type { OverviewHandlers } from '../stores/optionStore'
 import type { InteractRequest, NavigateRequest, StructuredActionRequest } from '../types/api'
 
@@ -32,6 +35,7 @@ const ItemDetailOverlay = lazy(() => import('../game/overlays/ItemDetailOverlay'
 const PartyPanel        = lazy(() => import('../game/overlays/PartyPanel'))
 const ChatInviteModal   = lazy(() => import('../game/overlays/ChatInviteModal'))
 const BoardOverlay      = lazy(() => import('../game/overlays/BoardOverlay'))
+const DonationOverlay   = lazy(() => import('../game/overlays/DonationOverlay'))
 const CombatLayer       = lazy(() => import('../game/combat/CombatLayer'))
 const EncounterPanel    = lazy(() => import('../game/combat/EncounterPanel'))
 
@@ -48,6 +52,7 @@ export default function GamePage() {
   const worldId = storedWorldId ?? routeWorldId ?? null
   const sessionId = storedSessionId ?? routeSessionId ?? null
   const gameMode = useSceneStore((s) => s.gameMode)
+  const activeNpcId = useSceneStore((s) => s.activeNpcId)
   const openingInProgress = useSceneStore((s) => s.openingInProgress)
   const clearPortraits = useSceneStore((s) => s.clearPortraits)
   const setOpeningInProgress = useSceneStore((s) => s.setOpeningInProgress)
@@ -62,7 +67,7 @@ export default function GamePage() {
   const sendRef = useRef<{
     sendInteract: (req: InteractRequest) => void
     sendNavigate: (req: NavigateRequest) => void
-    sendAction: (req: StructuredActionRequest) => void
+    sendAction: (req: StructuredActionRequest) => Promise<void> | void
   }>({
     sendInteract: () => {},
     sendNavigate: () => {},
@@ -70,6 +75,8 @@ export default function GamePage() {
   })
   const sendOpeningRef = useRef<() => void>(() => {})
   const openingRequestRef = useRef<string | null>(null)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
 
   // 稳定的 handlers 对象（useRef.current，整个生命周期不变）
   const overviewHandlers = useRef<OverviewHandlers>({
@@ -77,21 +84,19 @@ export default function GamePage() {
       sendRef.current.sendInteract({ intent: 'talk', target_kind: 'npc', target_id: npcId }),
     onEnterSubLocation: (locationId) =>
       sendRef.current.sendNavigate({ action: 'enter_sub_location', location_id: locationId }),
-    onInteractWith: (interactableId) =>
-      sendRef.current.sendInteract({
-        intent: 'examine',
-        target_kind: 'object',
-        target_id: interactableId,
+    onInteractWith: (interactable) =>
+      runInteractablePrimaryAction(interactable, {
+        sendAction: sendRef.current.sendAction,
+        openDonation: (target) => useOverlayStore.getState().open('donation', target),
       }),
     onMoveTo: (areaId) =>
       sendRef.current.sendNavigate({ action: 'move_area', area_id: areaId }),
-    onBrowseBoard: (boardId) =>
-      sendRef.current.sendAction({
-        action_type: 'browse_board',
-        params: { board_id: boardId },
-      }),
     onLeaveSubLocation: () =>
       sendRef.current.sendNavigate({ action: 'leave_sub_location' }),
+    onEnterRoom: (roomId) =>
+      sendRef.current.sendAction({ action_type: 'enter_room', params: { room_id: roomId } }),
+    onLeaveRoom: () =>
+      sendRef.current.sendAction({ action_type: 'leave_room', params: {} }),
     onRestShort: () =>
       sendRef.current.sendAction({ action_type: 'rest_short', params: {} }),
     onRestLong: () =>
@@ -114,6 +119,9 @@ export default function GamePage() {
         params: { area_id: currentArea },
       })
     },
+    onOpenInventory: () => useOverlayStore.getState().open('inventory'),
+    onUseItem: (itemId: string) =>
+      sendRef.current.sendAction({ action_type: 'use_item', params: { item_id: itemId } }),
   }).current
 
   const {
@@ -224,7 +232,7 @@ export default function GamePage() {
         return panel
       })
 
-    if (phase === 'opening_ready') {
+    if (phaseRef.current === 'opening_ready') {
       loadCharacter
         .then(() => {
           if (!cancelled) {
@@ -270,10 +278,10 @@ export default function GamePage() {
     return () => {
       cancelled = true
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 一次性初始化，phase 通过 phaseRef 读取，不应触发重跑
   }, [
     worldId,
     sessionId,
-    phase,
     navigate,
     overviewHandlers,
     clearPortraits,
@@ -309,19 +317,21 @@ export default function GamePage() {
       case 'menu':
         return <MenuOverlay />
       case 'character':
-        return <CharacterPanel />
+        return <CharacterPanel sendAction={sendAction} />
       case 'map':
         return <MapPanel sendNavigate={sendNavigate} />
       case 'quests':
         return <QuestPanel />
       case 'inventory':
-        return <InventoryPanel />
+        return <InventoryPanel sendInteract={sendInteract} />
       case 'shop':
         return <ShopOverlay sendInteract={sendInteract} />
       case 'item_detail':
         return <ItemDetailOverlay />
       case 'board':
         return <BoardOverlay sendAction={sendAction} />
+      case 'donation':
+        return <DonationOverlay sendAction={sendAction} />
       case 'party':
         return (
           <PartyPanel
@@ -342,17 +352,21 @@ export default function GamePage() {
 
       <PlayerHud />
 
-      {/* Layer 1: 角色立绘（战斗模式下隐藏） */}
-      {gameMode !== 'combat' && <PortraitLayer />}
+      {/* Layer 1: 角色立绘（战斗模式下隐藏；VN 模式下换用 VnPortraitLayer） */}
+      {gameMode !== 'combat' && (
+        activeNpcId ? <VnPortraitLayer /> : <PortraitLayer />
+      )}
 
       {/* Layer 2: 对话区域（战斗/遭遇模式下隐藏） */}
       {gameMode !== 'combat' && gameMode !== 'encounter' && (
-        <DialogueArea
-          worldId={worldId!}
-          sessionId={sessionId!}
-          sendInteract={sendInteract}
-          overviewHandlers={overviewHandlers}
-        />
+        activeNpcId
+          ? <VnDialogueLayer overviewHandlers={overviewHandlers} sendInteract={sendInteract} />
+          : <DialogueArea
+              worldId={worldId!}
+              sessionId={sessionId!}
+              sendInteract={sendInteract}
+              overviewHandlers={overviewHandlers}
+            />
       )}
 
       {/* Layer 3: 浮动通知 */}

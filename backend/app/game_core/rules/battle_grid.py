@@ -23,15 +23,29 @@ class EnvironmentModifiers:
     or used as constraints on line-of-sight distance.
 
     Attributes:
-        hit_modifier:       Flat bonus/penalty applied to *all* attack rolls.
-        ranged_hit_modifier: Additional penalty applied only to ranged attacks
-                             (stacked on top of hit_modifier).
-        max_visibility:     Maximum LoS distance (cells).  None means no cap.
+        hit_modifier:           Flat bonus/penalty applied to *all* attack rolls.
+        ranged_hit_modifier:    Additional penalty applied only to ranged attacks
+                                (stacked on top of hit_modifier).
+        max_visibility:         Maximum LoS distance (cells).  None means no cap.
+        damage_type_modifiers:  Tuple of (damage_type, multiplier) pairs that
+                                scale outgoing damage by type.  E.g. rain reduces
+                                fire damage to 0.5× and boosts thunder to 1.5×.
     """
 
     hit_modifier: int = 0
     ranged_hit_modifier: int = 0
     max_visibility: int | None = None
+    damage_type_modifiers: tuple[tuple[str, float], ...] = ()
+
+    def get_damage_modifier(self, damage_type: str) -> float:
+        """Return the damage multiplier for the given damage type.
+
+        Returns 1.0 when no modifier is registered for the type.
+        """
+        for dt, mod in self.damage_type_modifiers:
+            if dt == damage_type:
+                return mod
+        return 1.0
 
 
 def compute_environment_modifiers(
@@ -42,33 +56,39 @@ def compute_environment_modifiers(
 
     Conditions and effects (stackable):
 
-    | Condition          | Effect                                    |
-    |--------------------|-------------------------------------------|
-    | weather="rain"     | hit_modifier = -1                         |
-    | weather="fog"      | hit_modifier = -2, max_visibility = 3     |
-    | time_of_day="night"| ranged_hit_modifier = -2                  |
-    | otherwise          | no modifier                               |
+    | Condition          | Effect                                                  |
+    |--------------------|---------------------------------------------------------|
+    | weather="rain"     | hit_modifier=-1; fire×0.5, thunder×1.5                 |
+    | weather="fog"      | hit_modifier=-2, max_visibility=3                       |
+    | time_of_day="night"| ranged_hit_modifier=-2, max_visibility=4 (if not fog)  |
+    | otherwise          | no modifier                                             |
 
     Multiple conditions stack independently.  For example, night + rain
-    produces hit_modifier=-1 and ranged_hit_modifier=-2.
+    produces hit_modifier=-1, ranged_hit_modifier=-2, fire damage halved.
     """
     hit_mod = 0
     ranged_hit_mod = 0
     max_vis: int | None = None
+    damage_mods: list[tuple[str, float]] = []
 
     if weather == "rain":
         hit_mod += -1
+        damage_mods.extend([("fire", 0.5), ("thunder", 1.5)])
     elif weather == "fog":
         hit_mod += -2
         max_vis = 3
 
     if time_of_day == "night":
         ranged_hit_mod += -2
+        # Night reduces visibility to 4 cells unless fog already set a tighter cap
+        if max_vis is None or max_vis > 4:
+            max_vis = 4
 
     return EnvironmentModifiers(
         hit_modifier=hit_mod,
         ranged_hit_modifier=ranged_hit_mod,
         max_visibility=max_vis,
+        damage_type_modifiers=tuple(damage_mods),
     )
 
 
@@ -87,18 +107,21 @@ class TerrainType:
     range_bonus: int
     blocks_los: bool
     speed_penalty: int
+    damage_immunities: frozenset[str] = frozenset()  # damage types immune to on this terrain
 
 
-#: Registry of all 8 terrain types, keyed by single-character code.
+#: Registry of all 9 terrain types, keyed by single-character code.
 TERRAIN_REGISTRY: dict[str, TerrainType] = {
-    "G": TerrainType(code="G", name="grass",    move_cost=1, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=0),
-    "F": TerrainType(code="F", name="forest",   move_cost=2, ac_bonus=2, range_bonus=0, blocks_los=False, speed_penalty=0),
-    "H": TerrainType(code="H", name="hill",     move_cost=2, ac_bonus=0, range_bonus=1, blocks_los=False, speed_penalty=0),
-    "S": TerrainType(code="S", name="swamp",    move_cost=3, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=2),
-    "W": TerrainType(code="W", name="water",    move_cost=0, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=0),
-    "R": TerrainType(code="R", name="stone",    move_cost=1, ac_bonus=1, range_bonus=0, blocks_los=False, speed_penalty=0),
-    "B": TerrainType(code="B", name="wall",     move_cost=0, ac_bonus=0, range_bonus=0, blocks_los=True,  speed_penalty=0),
-    "M": TerrainType(code="M", name="mountain", move_cost=0, ac_bonus=0, range_bonus=0, blocks_los=True,  speed_penalty=0),
+    "G": TerrainType(code="G", name="grass",         move_cost=1, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=0),
+    "F": TerrainType(code="F", name="forest",        move_cost=2, ac_bonus=2, range_bonus=0, blocks_los=False, speed_penalty=0),
+    "H": TerrainType(code="H", name="hill",          move_cost=2, ac_bonus=0, range_bonus=1, blocks_los=False, speed_penalty=0),
+    "S": TerrainType(code="S", name="swamp",         move_cost=3, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=2),
+    "W": TerrainType(code="W", name="water",         move_cost=0, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=0),
+    "R": TerrainType(code="R", name="stone",         move_cost=1, ac_bonus=1, range_bonus=0, blocks_los=False, speed_penalty=0),
+    "B": TerrainType(code="B", name="wall",          move_cost=0, ac_bonus=0, range_bonus=0, blocks_los=True,  speed_penalty=0),
+    "M": TerrainType(code="M", name="mountain",      move_cost=0, ac_bonus=0, range_bonus=0, blocks_los=True,  speed_penalty=0),
+    "D": TerrainType(code="D", name="shallow_water", move_cost=2, ac_bonus=0, range_bonus=0, blocks_los=False, speed_penalty=0,
+                     damage_immunities=frozenset({"fire"})),
 }
 
 _FALLBACK_TERRAIN = TERRAIN_REGISTRY["G"]
@@ -262,7 +285,8 @@ class BattleGrid:
                     continue
                 if self._is_blocked_by_unit(nc, nr, units, side):
                     continue
-                new_cost = cost + self.move_cost(nc, nr)
+                terrain = self.at(nc, nr)
+                new_cost = cost + terrain.move_cost + terrain.speed_penalty
                 if new_cost > move_points:
                     continue
                 if new_cost < dist.get((nc, nr), move_points + 1):

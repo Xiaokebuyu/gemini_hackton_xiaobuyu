@@ -206,13 +206,13 @@ def test_update_quest_ignores_non_active() -> None:
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a rejection reason string
     quest = context.state.quests.dynamic_quests["dq_available"]
     assert "current_step" not in quest
 
 
 def test_update_quest_ignores_retired() -> None:
-    """update_quest returns False when quest status is retired."""
+    """update_quest returns a rejection reason when quest status is retired."""
     context = _make_context(
         dynamic_quests={
             "dq_retired": {"status": "retired", "title": "Done", "summary": "", "objectives": []},
@@ -227,11 +227,11 @@ def test_update_quest_ignores_retired() -> None:
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a rejection reason string
 
 
 def test_update_quest_ignores_unknown_quest() -> None:
-    """update_quest returns False when quest_id is not in dynamic_quests."""
+    """update_quest returns a rejection reason when quest_id is not in dynamic_quests."""
     context = _make_context(dynamic_quests={})
     manager = _make_manager()
 
@@ -242,11 +242,11 @@ def test_update_quest_ignores_unknown_quest() -> None:
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a rejection reason string
 
 
 def test_update_quest_missing_quest_id_returns_false() -> None:
-    """update_quest returns False when quest_id is absent."""
+    """update_quest returns a rejection reason when quest_id is absent."""
     context = _make_context(dynamic_quests={"dq_x": _active_quest()})
     manager = _make_manager()
 
@@ -257,7 +257,7 @@ def test_update_quest_missing_quest_id_returns_false() -> None:
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a rejection reason string
 
 
 # ---------------------------------------------------------------------------

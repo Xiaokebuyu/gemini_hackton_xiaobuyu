@@ -31,6 +31,8 @@ class NarrativePlanSlice(StateSlice):
         self.actor_knowledge: dict[str, Any] = {}
         self.context_windows_data: dict[str, Any] = {}
         self.last_planner_replay_trace: dict[str, Any] = {}
+        self.npc_capabilities: dict[str, list[dict[str, Any]]] = {}
+        self.milestone_outline: dict[str, Any] = {}
 
     def restore(self, payload: Mapping[str, Any]) -> None:
         self.current_chapter = str(payload.get("current_chapter", ""))
@@ -79,6 +81,17 @@ class NarrativePlanSlice(StateSlice):
         self.last_planner_replay_trace = (
             dict(raw_trace) if isinstance(raw_trace, Mapping) else {}
         )
+        raw_caps = payload.get("npc_capabilities")
+        self.npc_capabilities = {}
+        if isinstance(raw_caps, Mapping):
+            for npc_id, raw_list in raw_caps.items():
+                if isinstance(npc_id, str) and isinstance(raw_list, list):
+                    self.npc_capabilities[npc_id] = [
+                        dict(item) for item in raw_list
+                        if isinstance(item, Mapping)
+                    ]
+        raw_outline = payload.get("milestone_outline")
+        self.milestone_outline = dict(raw_outline) if isinstance(raw_outline, Mapping) else {}
         self.clear_dirty()
 
     def serialize(self) -> dict[str, Any]:
@@ -107,6 +120,11 @@ class NarrativePlanSlice(StateSlice):
             "actor_knowledge": dict(self.actor_knowledge),
             "context_windows_data": dict(self.context_windows_data),
             "last_planner_replay_trace": dict(self.last_planner_replay_trace),
+            "npc_capabilities": {
+                npc_id: [dict(cap) for cap in caps]
+                for npc_id, caps in self.npc_capabilities.items()
+            },
+            "milestone_outline": self._snapshot_milestone_outline(),
         }
 
     def record_behavior(self, entry: dict[str, Any]) -> None:
@@ -201,6 +219,152 @@ class NarrativePlanSlice(StateSlice):
         self.pacing_frozen = frozen
         self._dirty = True
 
+    # ------------------------------------------------------------------
+    # NPC capability management
+    # ------------------------------------------------------------------
+
+    def assign_capability(self, npc_id: str, cap_dict: dict[str, Any]) -> None:
+        """Assign (or replace by capability_id) a capability for an NPC."""
+        npc_id = str(npc_id)
+        cap_id = str(cap_dict.get("capability_id", ""))
+        existing = self.npc_capabilities.get(npc_id, [])
+        # Replace existing entry with the same capability_id
+        filtered = [c for c in existing if str(c.get("capability_id", "")) != cap_id]
+        filtered.append(dict(cap_dict))
+        self.npc_capabilities[npc_id] = filtered
+        self._dirty = True
+
+    def revoke_capability(self, npc_id: str, capability_id: str) -> bool:
+        """Remove a capability from an NPC. Returns True if something was removed."""
+        npc_id = str(npc_id)
+        capability_id = str(capability_id)
+        existing = self.npc_capabilities.get(npc_id, [])
+        filtered = [c for c in existing if str(c.get("capability_id", "")) != capability_id]
+        if len(filtered) == len(existing):
+            return False
+        if filtered:
+            self.npc_capabilities[npc_id] = filtered
+        else:
+            self.npc_capabilities.pop(npc_id, None)
+        self._dirty = True
+        return True
+
+    def get_capabilities(self, npc_id: str) -> list[dict[str, Any]]:
+        """Return defensive copy of capabilities for npc_id."""
+        caps = self.npc_capabilities.get(str(npc_id), [])
+        return [dict(c) for c in caps]
+
+    def prune_expired_capabilities(self, current_tick: int) -> int:
+        """Remove expired capability entries. Returns count of removed capabilities."""
+        pruned = 0
+        to_remove: list[str] = []
+        for npc_id, caps in self.npc_capabilities.items():
+            before_count = len(caps)
+            active = [
+                c for c in caps
+                if int(c.get("expiry_tick", 0)) == 0
+                or int(c.get("expiry_tick", 0)) > current_tick
+            ]
+            pruned += before_count - len(active)
+            if active:
+                self.npc_capabilities[npc_id] = active
+            else:
+                to_remove.append(npc_id)
+        for npc_id in to_remove:
+            self.npc_capabilities.pop(npc_id, None)
+        if pruned > 0:
+            self._dirty = True
+        return pruned
+
+    # ------------------------------------------------------------------
+    # Milestone outline management
+    # ------------------------------------------------------------------
+
+    def _snapshot_milestone_outline(self) -> dict[str, Any]:
+        """Return a deep defensive copy of milestone_outline."""
+        if not self.milestone_outline:
+            return {}
+        result: dict[str, Any] = {}
+        for k, v in self.milestone_outline.items():
+            if k == "steps" and isinstance(v, list):
+                result[k] = [dict(step) for step in v if isinstance(step, dict)]
+            else:
+                result[k] = v
+        return result
+
+    def set_milestone_outline(self, outline: dict[str, Any]) -> None:
+        """Replace the current milestone outline.
+
+        Expected structure::
+
+            {
+                "target_milestone_id": str,
+                "chapter_id": str,
+                "computed_at_tick": int,
+                "steps": [
+                    {
+                        "index": int,
+                        "description": str,
+                        "type": str,
+                        "condition": dict | None,
+                        "related_npcs": list[str],
+                        "related_locations": list[str],
+                        "completed": bool,
+                        "quest_id": str | None,
+                    },
+                    ...
+                ]
+            }
+        """
+        if not isinstance(outline, Mapping):
+            return
+        stored: dict[str, Any] = {}
+        for k, v in outline.items():
+            if k == "steps" and isinstance(v, list):
+                stored[k] = [dict(step) for step in v if isinstance(step, dict)]
+            else:
+                stored[k] = v
+        self.milestone_outline = stored
+        self._dirty = True
+
+    def mark_outline_step_completed(self, step_index: int) -> None:
+        """Mark the step at *step_index* as completed.
+
+        Silently ignores out-of-range indices or missing steps list.
+        """
+        steps = self.milestone_outline.get("steps")
+        if not isinstance(steps, list):
+            return
+        for step in steps:
+            if isinstance(step, dict) and step.get("index") == step_index:
+                step["completed"] = True
+                self._dirty = True
+                return
+
+    def set_outline_step_quest_id(self, step_index: int, quest_id: str) -> None:
+        """Write quest_id back to the outline step at *step_index*.
+
+        Silently ignores out-of-range indices or missing steps list.
+        """
+        steps = self.milestone_outline.get("steps")
+        if not isinstance(steps, list):
+            return
+        for step in steps:
+            if isinstance(step, dict) and step.get("index") == step_index:
+                step["quest_id"] = str(quest_id)
+                self._dirty = True
+                return
+
+    def get_current_outline_step(self) -> dict[str, Any] | None:
+        """Return a defensive copy of the first incomplete step, or None."""
+        steps = self.milestone_outline.get("steps")
+        if not isinstance(steps, list):
+            return None
+        for step in steps:
+            if isinstance(step, dict) and not step.get("completed", False):
+                return dict(step)
+        return None
+
     def validate(self) -> list[str]:
         issues: list[str] = []
         if not isinstance(self.chapter_completion, (int, float)):
@@ -242,6 +406,18 @@ class NarrativePlanSlice(StateSlice):
                     issues.append("temporary_npcs keys must be non-empty strings")
                 if not isinstance(profile, Mapping):
                     issues.append(f"temporary_npcs[{npc_id}] must be a dict")
+        if not isinstance(self.npc_capabilities, dict):
+            issues.append("npc_capabilities must be a dict")
+        else:
+            for npc_id, caps in self.npc_capabilities.items():
+                if not isinstance(npc_id, str) or not npc_id:
+                    issues.append("npc_capabilities keys must be non-empty strings")
+                if not isinstance(caps, list):
+                    issues.append(f"npc_capabilities[{npc_id}] must be a list")
+                else:
+                    for i, cap in enumerate(caps):
+                        if not isinstance(cap, dict):
+                            issues.append(f"npc_capabilities[{npc_id}][{i}] must be a dict")
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
@@ -336,6 +512,38 @@ class NarrativePlanSlice(StateSlice):
                 return
         if change.path == "last_planner_replay_trace" and isinstance(change.value, Mapping):
             self.set_last_planner_replay_trace(dict(change.value))
+            return
+        if change.path == "npc_capabilities" and change.operation in {"set", "modify"} and isinstance(change.value, Mapping):
+            self.npc_capabilities = {
+                str(npc_id): [dict(c) for c in caps if isinstance(c, Mapping)]
+                for npc_id, caps in change.value.items()
+                if isinstance(npc_id, str) and isinstance(caps, list)
+            }
+            self._dirty = True
+            return
+        if change.path == "npc_capabilities.assign" and isinstance(change.value, Mapping):
+            self.assign_capability(
+                str(change.value.get("npc_id", "")),
+                dict(change.value),
+            )
+            return
+        if change.path == "npc_capabilities.revoke" and change.operation == "remove" and isinstance(change.value, Mapping):
+            self.revoke_capability(
+                str(change.value.get("npc_id", "")),
+                str(change.value.get("capability_id", "")),
+            )
+            return
+        if change.path == "milestone_outline" and isinstance(change.value, Mapping):
+            self.set_milestone_outline(dict(change.value))
+            return
+        if change.path == "milestone_outline.step_completed":
+            self.mark_outline_step_completed(int(change.value))
+            return
+        if change.path == "milestone_outline.step_quest_id" and isinstance(change.value, Mapping):
+            step_index = change.value.get("step_index")
+            quest_id = change.value.get("quest_id")
+            if step_index is not None and quest_id is not None:
+                self.set_outline_step_quest_id(int(step_index), str(quest_id))
             return
         if change.operation in {"set", "modify"} and change.path in self._SIMPLE_FIELDS:
             coerce = self._SIMPLE_FIELDS[change.path]

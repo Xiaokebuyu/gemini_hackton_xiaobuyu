@@ -24,6 +24,7 @@ from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.hooks.rest_phase import resolve_rest_phase
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
+from app.game_core.rules.models import Command
 
 if TYPE_CHECKING:
     from app.game_core.content import WorldInstance
@@ -109,25 +110,64 @@ class NullPrivateChatTriggerEvaluator:
         return False, ""
 
 
-def _collect_reachable_npcs(context: SettlementContext) -> set[str]:
-    """Return NPC ids reachable by player at current tick."""
+def _collect_reachable_npcs(
+    context: SettlementContext,
+) -> tuple[set[str], dict[str, str | None]]:
+    """Return (colocated_npc_ids, area_npc_locations) for the player's current area.
+
+    *colocated_npc_ids* — NPCs truly sharing the player's sub-location (and room
+    where applicable), plus party members who travel with the player.
+
+    *area_npc_locations* — mapping of npc_id → sub_location for all NPCs present
+    in the area (used for building the ``npc_location`` field in non-colocated
+    SSE events).
+    """
     if not (context.state.has_slice("player") and context.state.has_slice("areas")):
-        return set()
+        return set(), {}
 
     player_area = context.state.player.current_area
     if not player_area:
-        return set()
+        return set(), {}
 
-    area_snap = context.state.areas.snapshot()
-    area_data = area_snap.get("areas", {}).get(player_area, {})
-    npc_locations = area_data.get("npc_locations")
+    player_location: str | None = (context.state.player.current_location or "").strip() or None
+    player_room: str | None = (
+        str(getattr(context.state.player, "current_room", "") or "").strip() or None
+    )
+
+    # Import here to avoid circular imports at module load time
+    from app.game_core.orchestration.presence import (  # noqa: PLC0415
+        get_area_npcs,
+        get_npc_room,
+        is_colocated,
+    )
+
+    npc_locations = get_area_npcs(context.state, context.world, player_area)
     if not isinstance(npc_locations, dict):
-        return set()
+        return set(), {}
 
-    reachable_npc_ids = set(npc_locations.keys())
+    colocated: set[str] = set()
+    for npc_id, npc_sub_loc in npc_locations.items():
+        npc_loc = (npc_sub_loc or "").strip() or None
+        npc_room = get_npc_room(context.state, context.world, player_area, npc_id)
+        if is_colocated(npc_loc, player_location, npc_room, player_room):
+            colocated.add(npc_id)
+
+    # Party members: check colocation like any other NPC.
+    # They may be tracked in party.members but not in npc_locations;
+    # add them to the area_npc dict so directive_trigger can see them,
+    # but only add to colocated if they pass the room check.
     if context.state.has_slice("party"):
-        reachable_npc_ids.update(context.state.party.get_members().keys())
-    return reachable_npc_ids
+        for member_id in context.state.party.get_members().keys():
+            if member_id not in npc_locations:
+                # Party member not in npc_locations — assume they are
+                # at the player's sub-location (they travel together).
+                npc_locations[member_id] = player_location
+            member_loc = (npc_locations.get(member_id) or "").strip() or None
+            member_room = get_npc_room(context.state, context.world, player_area, member_id)
+            if is_colocated(member_loc, player_location, member_room, player_room):
+                colocated.add(member_id)
+
+    return colocated, dict(npc_locations)
 
 
 def _is_rest_tick(scene_bus: SceneBus) -> bool:
@@ -186,8 +226,8 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
         if rest_phase.rest_action_type == "rest_long" and not rest_phase.is_final_rest_slot:
             return HookResult(metadata={"skipped": "not_final_rest_slot"})
 
-        reachable_npc_ids = _collect_reachable_npcs(context)
-        if not reachable_npc_ids:
+        colocated_npc_ids, area_npc_locations = _collect_reachable_npcs(context)
+        if not colocated_npc_ids:
             return HookResult(metadata={"skipped": "no_reachable_npcs"})
 
         current_tick: int = (
@@ -204,7 +244,7 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
         sse_events: list[SSEEvent] = []
 
         for npc_id, dispositions in dispositions_map.items():
-            if npc_id not in reachable_npc_ids:
+            if npc_id not in colocated_npc_ids:
                 continue
 
             cooldown_key = f"private_chat_cooldown_{npc_id}"
@@ -216,7 +256,11 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
                     continue    # still in cooldown
                 # Expired — clear stale flag
                 if context.state.flags.has(cooldown_key):
-                    context.state.flags.remove(cooldown_key)
+                    context.execute_command(Command(
+                        type="remove_flag",
+                        params={"key": cooldown_key},
+                        source="system",
+                    ))
 
             stage = stages_map.get(npc_id, "acquaintance")
             if stage in _NON_CHAT_STAGES:
@@ -234,9 +278,13 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
             if random.random() > chance:
                 continue
 
-            # Set cooldown flag (direct mutation — same pattern as NpcScheduleHook)
+            # Set cooldown flag via command (architecture-compliant)
             if has_flags:
-                context.state.flags.set(cooldown_key, current_tick + COOLDOWN_TICKS)
+                context.execute_command(Command(
+                    type="set_flag",
+                    params={"key": cooldown_key, "value": current_tick + COOLDOWN_TICKS},
+                    source="system",
+                ))
 
             npc_name = _get_npc_name(context.world, npc_id)
             sse_events.append(SSEEvent(
@@ -245,10 +293,13 @@ class PrivateChatTriggerHook(NoOpSettlementHook):
                     "npc_id": npc_id,
                     "npc_name": npc_name,
                     "reason": reason,
+                    "colocated": True,
                 },
             ))
             logger.debug(
-                "PrivateChatTriggerHook: %s wants to chat (reason=%s)", npc_id, reason,
+                "PrivateChatTriggerHook: %s wants to chat (reason=%s)",
+                npc_id,
+                reason,
             )
 
         return HookResult(

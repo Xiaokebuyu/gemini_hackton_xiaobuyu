@@ -68,6 +68,7 @@ export interface DialogueOptionItem {
   item_id?: string
   count?: number
   dispatch?: DialogueOptionDispatch
+  functional?: { type: string; params: Record<string, string> }
 }
 
 export interface DialogueOptionsData {
@@ -109,6 +110,7 @@ export interface SceneChangeData {
   transition: string
   ambient_preset: string | null
   ambient_override: string | null
+  background_url?: string  // data URL for dynamic sub-location backgrounds
 }
 
 export interface TimeAdvancedData {
@@ -135,6 +137,11 @@ export interface RelationshipStageChangedData {
 export interface NpcWantsToChatData {
   npc_id: string
   npc_name?: string
+  reason?: string
+  colocated?: boolean
+  linked_quest_id?: string
+  npc_location?: string
+  npc_room?: string
 }
 
 export interface CompanionRecruitedData {
@@ -451,4 +458,28 @@ export interface MilestoneUnlockedData {
 export interface MilestoneFailedData {
   milestone_id: string
   failure_fallback: string
+}
+
+export interface AiProcessingData {
+  system: string  // "planner" | "osiris"
+  status: 'start' | 'done'
+}
+
+export interface PlayerLevelUpData {
+  to_level?: number
+  from_level?: number
+  features?: string[]
+  hp_gain?: number
+  asi_available?: boolean
+  new_level?: number
+  old_level?: number
+  xp_gained?: number
+  new_features?: string[]
+}
+
+export interface QuestCreatedData {
+  quest_id: string
+  status: string
+  title: string
+  summary: string
 }

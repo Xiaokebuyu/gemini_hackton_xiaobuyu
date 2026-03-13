@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from app.game_core.adapters.planner_system import PlannerBlackboardPort
+from app.game_core.environment_access import list_visible_scene_interactables
 from app.game_core.orchestration.event_engine import _normalize_mapping, run_inline_event_check
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.rules.models import Command
@@ -19,6 +20,7 @@ from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.planning.directive_contracts import (
     SUPPORTED_PLANNER_DIRECTIVE_KINDS,
     DirectiveValidationResult,
+    expand_planner_directive,
     is_unsupported_directive_reason,
     normalize_planner_directive,
     validate_planner_directive,
@@ -28,6 +30,7 @@ from app.game_core.planning.semantic_events import (
     planner_event_snapshot,
 )
 from app.game_core.state import StateChange
+from app.game_core.state.quest_runtime import normalize_runtime_dynamic_quest
 
 from app.game_core.planning.subsystem import PlannerEvent
 
@@ -80,6 +83,26 @@ class NarrativePlannerDecision:
 
 class NarrativePlannerProvider(Protocol):
     async def plan(self, context: dict[str, Any]) -> Any:
+        ...
+
+
+class MilestoneOutlineGeneratorPort(Protocol):
+    """Injectable port for milestone outline generation (A9b/A9c).
+
+    Implemented by ``app.narrators.MilestoneOutlineGenerator``.
+    The Protocol lives in game_core so the hook can remain import-clean.
+    """
+
+    async def generate(
+        self,
+        *,
+        milestone_template: dict[str, Any],
+        target_milestone_id: str,
+        chapter_id: str,
+        current_tick: int,
+        game_state_summary: dict[str, Any] | None = None,
+        supported_condition_types: list[str] | None = None,
+    ) -> dict[str, Any]:
         ...
 
 
@@ -188,7 +211,7 @@ def _detect_completed_milestones_sse(
 class NarrativePlannerHook(NoOpSettlementHook):
     HOOK_PRIORITY = 66
     HOOK_NAME = "narrative_planner"
-    FALLBACK_INTERVAL = 6
+    FALLBACK_INTERVAL = 4  # A-7 (S1-09/10/11): shortened from 6 to 4 for faster reaction
     _MAX_REPLAY_ROUNDS = 5
     _BOOTSTRAP_DIRECTIVES = {
         "create_quest",
@@ -204,6 +227,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         "events",
         "relations",
         "party",
+        "time",  # A-7 (S1-09/10/11): time slice changes (day/slot transitions) should trigger
     }
     _SUPPORTED_DIRECTIVES = {
         *SUPPORTED_PLANNER_DIRECTIVE_KINDS,
@@ -214,9 +238,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
         *,
         blackboard: PlannerBlackboardPort | None = None,
         dispatcher: PlannerDispatcher | None = None,
+        outline_generator: MilestoneOutlineGeneratorPort | None = None,
     ) -> None:
         self.blackboard = blackboard if blackboard is not None else planner
         self._dispatcher = dispatcher
+        # Injectable outline generator (A9c) — None means deterministic fallback
+        # inside NarrativePlanSlice.set_milestone_outline (A9f behavior).
+        self._outline_generator = outline_generator
         # Scratch buffer for SSE events; written by WorldBuilderSubSystem (via reference),
         # drained by execute() at the end of each planning cycle.
         self._pending_sse: list[SSEEvent] = []
@@ -283,6 +311,12 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 metadata=self._noop_metadata(reason="no_planner"),
             )
 
+        # Auto-select current_target_milestone before outline generation
+        self._auto_select_target_milestone(context)
+
+        # A9c: check if current milestone changed and outline needs (re)generation
+        await self._ensure_milestone_outline(context, current_tick=current_tick)
+
         reason = "trigger" if triggered else "fallback"
         replay = await self._run_replay(
             context,
@@ -311,6 +345,11 @@ class NarrativePlannerHook(NoOpSettlementHook):
             post_dispatch_context["planner_events"] = planner_event_summaries
             post_dispatch_context["replay_trace"] = replay_trace
             self._inject_runtime_refs(post_dispatch_context, context)
+            # QF-4: signal that planner LLM is starting
+            self._pending_sse.append(SSEEvent(
+                event_type="ai_processing",
+                payload={"system": "planner", "status": "start"},
+            ))
             try:
                 raw_decision = await self.blackboard.plan(post_dispatch_context)
             except Exception as exc:
@@ -342,9 +381,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 return HookResult(
                     sse_events=[
                         SSEEvent(
+                            event_type="ai_processing",
+                            payload={"system": "planner", "status": "done"},
+                        ),
+                        SSEEvent(
                             event_type="narrative_planner_error",
                             payload={"error": str(exc)},
-                        )
+                        ),
                     ],
                     metadata={
                         "status": "planner_error",
@@ -365,6 +408,11 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "replay_applied_directive_count": replay_applied_count,
                     },
                 )
+            # QF-4: signal that planner LLM finished
+            self._pending_sse.append(SSEEvent(
+                event_type="ai_processing",
+                payload={"system": "planner", "status": "done"},
+            ))
             blackboard_decision = self._normalize_decision(raw_decision)
             blackboard_apply_summary = self._apply_directive_batch(
                 blackboard_decision.directives,
@@ -530,6 +578,11 @@ class NarrativePlannerHook(NoOpSettlementHook):
         replay_trace = replay["trace"]
         planner_event_summaries = replay["planner_event_summaries"]
 
+        # Defensive: ensure target milestone is set after replay applied any
+        # planner_create_quest directives (Fix 1 may have already set it via
+        # StateChange, but replay applies deltas so it's safe to call again).
+        self._auto_select_target_milestone(context)
+
         blackboard_decision = NarrativePlannerDecision()
         blackboard_metadata: dict[str, Any] = {}
         blackboard_apply_summary = self._empty_apply_summary()
@@ -636,6 +689,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
         }
         bootstrap_commit_payload: dict[str, Any] = {
             "last_planner_replay_trace": replay_trace,
+            # Bypass FALLBACK_INTERVAL cooldown on first settlement after opening
+            "last_run_tick": -(current_tick + 100),
         }
         if blackboard_decision.strategy_notes:
             bootstrap_commit_payload["strategy_notes"] = blackboard_decision.strategy_notes
@@ -667,6 +722,42 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "replay_applied_directive_count": applied_count,
             },
         )
+
+    def _auto_select_target_milestone(self, context: SettlementContext) -> None:
+        """Auto-select current_target_milestone when stale, completed, or missing.
+
+        Called at the start of execute() before _ensure_milestone_outline so the
+        outline generator always has a valid target to work with.
+
+        Priority: ACTIVE > AVAILABLE; ties broken by MilestoneTemplate.sequence.
+        No-ops when the current target is still ACTIVE.
+        """
+        if not context.state.has_slice("narrative_plan") or not context.state.has_slice("quests"):
+            return
+        current_ms = context.state.narrative_plan.current_target_milestone
+        # If the current target is still ACTIVE, nothing to do
+        if current_ms:
+            ms_state = context.state.quests.get_milestone_state(current_ms)
+            if ms_state == "ACTIVE":
+                return
+        # Collect candidates: (priority, sequence, ms_id)
+        candidates: list[tuple[int, int, str]] = []
+        for ms_id, ms in context.state.quests.milestone_states.items():
+            if ms.state not in ("ACTIVE", "AVAILABLE"):
+                continue
+            seq = 0
+            if context.world.has_registry("quests"):
+                tmpl = context.world.quests.get_milestone(ms_id)
+                if tmpl is not None:
+                    seq = tmpl.sequence
+            priority = 0 if ms.state == "ACTIVE" else 1
+            candidates.append((priority, seq, ms_id))
+        if not candidates:
+            return
+        candidates.sort()
+        best_id = candidates[0][2]
+        if best_id != current_ms:
+            context.state.narrative_plan.set_target_milestone(best_id)
 
     def _has_trigger_change(self, change_log: list[StateChange]) -> bool:
         for change in change_log:
@@ -715,14 +806,24 @@ class NarrativePlannerHook(NoOpSettlementHook):
             elif state_name == "COMPLETED":
                 completed_milestones.append(milestone_id)
 
+        # A-4 (S1-06/S6-05): richer quest entries with objectives, rewards, area_id
         dynamic_quests = {
             quest_id: {
                 "status": self._string_or_empty(quest.get("status")),
                 "title": self._string_or_empty(quest.get("title")),
                 "summary": self._string_or_empty(quest.get("summary")),
+                "objectives": list(quest.get("objectives", [])) if isinstance(quest.get("objectives"), list) else [],
+                "rewards": dict(quest.get("rewards", {})) if isinstance(quest.get("rewards"), dict) else {},
+                "area_id": quest.get("area_id"),
+                "giver_npc": quest.get("giver_npc"),
             }
             for quest_id, quest in context.state.quests.dynamic_quests.items()
         }
+        completed_dynamic_quests, report_ready_dynamic_quests = (
+            self._build_completed_dynamic_quest_summaries(
+                context.state.quests.dynamic_quests
+            )
+        )
 
         play_style_tags: list[str] = []
         if hasattr(context.state.narrative_plan, "play_style_tags"):
@@ -731,25 +832,83 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 play_style_tags = [str(tag) for tag in raw_play_style_tags]
 
         area_npcs: list[str] = []
+        area_npc_summaries: list[dict[str, Any]] = []
         area_boards: list[dict[str, str]] = []
         area_cluster = None
+        all_area_ids: list[str] = []
+        current_sub_area_ids: list[str] = []
+        existing_npc_ids: list[str] = []  # A5b: all NPC IDs present in current area
+        interactable_examples: list[dict[str, Any]] = []  # A5e: static interactable examples
+        hostile_config_locations: list[dict[str, Any]] = []  # A6b: hostile sub-loc configs
         if context.state.has_slice("areas") and context.state.has_slice("player"):
+            # Collect all known area_ids for planner reference
+            all_area_ids = list(context.state.areas.areas.keys())
             area_id = context.state.player.current_area
             if area_id and area_id in context.state.areas.areas:
                 counts = context.state.areas.count_dynamic_sub_areas(area_id)
+                total_dynamic = counts.get("total", 0)
+                permanent_dynamic = counts.get("permanent", 0)
+                # A5a: explicit capacity headroom instead of boolean
                 area_cluster = {
                     "area_id": area_id,
-                    "has_capacity": context.state.areas.has_cluster_capacity(
-                        area_id
-                    ),
-                    "total_dynamic": counts.get("total", 0),
+                    "total_dynamic": total_dynamic,
+                    "remaining_permanent": max(0, 8 - permanent_dynamic),
+                    "remaining_total": max(0, 15 - total_dynamic),
                 }
                 area_state = context.state.areas.areas[area_id]
-                area_npcs = [
+                # Collect sub_area_ids for current area
+                if context.world.has_registry("maps"):
+                    area_template = context.world.maps.get(area_id)
+                    if area_template is not None:
+                        current_sub_area_ids.extend(area_template.sub_locations.keys())
+                for temp_sub in area_state.temporary_sub_areas:
+                    if isinstance(temp_sub, Mapping):
+                        sub_id = str(temp_sub.get("id", "")).strip()
+                        if sub_id and sub_id not in current_sub_area_ids:
+                            current_sub_area_ids.append(sub_id)
+                # A-4 (S1-06/S6-05): enrich NPC summaries with name, tags, approval, trust
+                area_npc_ids = [
                     str(npc_id)
                     for npc_id in area_state.npc_locations.keys()
                     if self._coerce_non_empty_string(npc_id) is not None
                 ]
+                area_npcs_summaries: list[dict[str, Any]] = []
+                for npc_id in area_npc_ids:
+                    npc_entry: dict[str, Any] = {"id": npc_id}
+                    if context.world.has_registry("characters"):
+                        tmpl = context.world.characters.get(npc_id)
+                        if tmpl is not None:
+                            npc_entry["name"] = str(tmpl.name)
+                            raw_tags = getattr(tmpl, "tags", None)
+                            npc_entry["tags"] = (
+                                list(raw_tags) if isinstance(raw_tags, (list, set, frozenset))
+                                else []
+                            )
+                            npc_current_area = getattr(tmpl, "area_id", None)
+                            if npc_current_area:
+                                npc_entry["area_id"] = str(npc_current_area)
+                    if context.state.has_slice("relations"):
+                        npc_entry["approval"] = (
+                            context.state.relations.get_disposition(npc_id, "approval") or 0
+                        )
+                        npc_entry["trust"] = (
+                            context.state.relations.get_disposition(npc_id, "trust") or 0
+                        )
+                    area_npcs_summaries.append(npc_entry)
+                # backward-compat: area_npcs stays as list[str], new area_npc_summaries is rich
+                area_npcs = area_npc_ids
+                area_npc_summaries = area_npcs_summaries
+                # A5b: build deduplicated existing_npc_ids (runtime presence + static residents)
+                npc_id_set: set[str] = set(area_npc_ids)
+                if context.world.has_registry("maps"):
+                    _area_tmpl_for_npc = context.world.maps.get(area_id)
+                    if _area_tmpl_for_npc is not None:
+                        for sub_tmpl_npc in _area_tmpl_for_npc.sub_locations.values():
+                            for resident_npc in getattr(sub_tmpl_npc, "resident_npcs", []):
+                                if isinstance(resident_npc, str) and resident_npc.strip():
+                                    npc_id_set.add(resident_npc.strip())
+                existing_npc_ids = sorted(npc_id_set)
+
                 if context.world.has_registry("maps"):
                     area_tmpl = context.world.maps.get(area_id)
                     if area_tmpl is not None:
@@ -763,11 +922,63 @@ class NarrativePlannerHook(NoOpSettlementHook):
                                 raw_tags = getattr(interactable, "tags", [])
                                 if not isinstance(raw_tags, list):
                                     continue
-                                if "quest_source" not in raw_tags:
-                                    continue
-                                area_boards.append({
-                                    "id": board_id,
-                                    "sub_location": str(sub_id),
+                                if "quest_source" in raw_tags:
+                                    area_boards.append({
+                                        "id": board_id,
+                                        "sub_location": str(sub_id),
+                                    })
+                            # A5e: collect interactable examples from static sub-locs (cap=3 total)
+                            if len(interactable_examples) < 3:
+                                for ia in getattr(sub_tmpl, "interactables", []):
+                                    if len(interactable_examples) >= 3:
+                                        break
+                                    ia_id = self._coerce_non_empty_string(
+                                        getattr(ia, "id", None)
+                                    )
+                                    if ia_id is None:
+                                        continue
+                                    ia_checks = getattr(ia, "checks", [])
+                                    checks_serialized = []
+                                    for ch in ia_checks:
+                                        if hasattr(ch, "__dict__"):
+                                            checks_serialized.append({
+                                                k: v for k, v in ch.__dict__.items()
+                                            })
+                                        elif isinstance(ch, Mapping):
+                                            checks_serialized.append(dict(ch))
+                                    interactable_examples.append({
+                                        "id": ia_id,
+                                        "name": str(getattr(ia, "name", "")),
+                                        "description": str(getattr(ia, "description", "")),
+                                        "type": str(getattr(ia, "type", "inspect")),
+                                        "tags": list(getattr(ia, "tags", [])),
+                                        "checks": checks_serialized,
+                                    })
+                            # A6b: collect hostile_config sub-locations
+                            hc = getattr(sub_tmpl, "hostile_config", None)
+                            if hc is not None:
+                                existing_hs = context.state.areas.get_hostile_state(str(sub_id))
+                                already_planted = (
+                                    existing_hs is not None
+                                    and str(existing_hs.get("status", "")) != "cleared"
+                                )
+                                already_cleared = (
+                                    existing_hs is not None
+                                    and str(existing_hs.get("status", "")) == "cleared"
+                                )
+                                monster_ids_flat = [
+                                    mid
+                                    for grp in getattr(hc, "hostile_groups", [])
+                                    for mid in getattr(grp, "monster_ids", [])
+                                ]
+                                hostile_config_locations.append({
+                                    "sub_location_id": str(sub_id),
+                                    "sub_location_name": str(getattr(sub_tmpl, "name", str(sub_id))),
+                                    "monster_ids": monster_ids_flat,
+                                    "stealth_dc": getattr(hc, "stealth_dc", 12),
+                                    "blocking": getattr(hc, "blocking", True),
+                                    "already_planted": already_planted,
+                                    "already_cleared": already_cleared,
                                 })
 
         scene_snapshot = context.scene_bus.snapshot()
@@ -806,6 +1017,115 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 }
                 for rule in rules[:5]
             ]
+        # A-3 (S1-04/S1-05/S1-08): inject last round's directive_audit as feedback loop
+        previous_directive_results: list[dict[str, Any]] = []
+        last_trace = context.state.narrative_plan.last_planner_replay_trace
+        if isinstance(last_trace, dict):
+            raw_audit = last_trace.get("directive_audit", [])
+            if isinstance(raw_audit, list):
+                for entry in raw_audit[-10:]:
+                    if not isinstance(entry, dict):
+                        continue
+                    # A5d: include entity_id for better feedback loop visibility
+                    pdr_entry: dict[str, Any] = {
+                        "kind": str(entry.get("kind", "")),
+                        "status": str(entry.get("status", "")),
+                        "reason_code": entry.get("reason_code"),
+                    }
+                    payload_digest = entry.get("payload_digest")
+                    if isinstance(payload_digest, Mapping):
+                        entity_id = payload_digest.get("entity_id") or payload_digest.get(
+                            "npc_id"
+                        ) or payload_digest.get("quest_id")
+                        if entity_id is not None:
+                            pdr_entry["entity_id"] = entity_id
+                    previous_directive_results.append(pdr_entry)
+
+        # A8d: active_quests with objective progress (replaces available_quest_ids/active_quest_ids)
+        active_quests: list[dict[str, Any]] = []
+        active_statuses = {"in_progress", "active", "accepted"}
+        for q_id, q_data in context.state.quests.dynamic_quests.items():
+            if not isinstance(q_data, Mapping):
+                continue
+            if str(q_data.get("status", "")).strip().lower() not in active_statuses:
+                continue
+            raw_objectives = q_data.get("objectives", [])
+            objectives_summary: list[dict[str, Any]] = []
+            if isinstance(raw_objectives, list):
+                for obj in raw_objectives:
+                    if not isinstance(obj, Mapping):
+                        continue
+                    obj_entry: dict[str, Any] = {
+                        "description": self._string_or_empty(obj.get("description")),
+                        "completed": bool(obj.get("completed", False)),
+                    }
+                    condition = obj.get("condition")
+                    if isinstance(condition, Mapping):
+                        obj_entry["condition"] = dict(condition)
+                    objectives_summary.append(obj_entry)
+            active_quests.append({
+                "quest_id": str(q_id),
+                "title": self._string_or_empty(q_data.get("title")),
+                "objectives": objectives_summary,
+            })
+
+        # A8a: supported objective condition types (guidance for Planner)
+        supported_objective_conditions: list[dict[str, Any]] = [
+            {
+                "type": "npc_talked",
+                "params": {"npc_id": "character_id"},
+                "desc": "与指定NPC对话",
+            },
+            {
+                "type": "item_obtained",
+                "params": {"item_id": "物品ID", "count": 1},
+                "desc": "获得指定物品",
+            },
+            {
+                "type": "kill_count",
+                "params": {"monster_id": "怪物ID", "count": 3},
+                "desc": "击杀指定数量怪物",
+            },
+            {
+                "type": "location_entered",
+                "params": {"area_id": "区域ID", "location_id": "子地点ID"},
+                "desc": "进入指定地点",
+            },
+            {
+                "type": "flag_set",
+                "params": {"flag": "flag_name"},
+                "desc": "特定标记被设置",
+            },
+        ]
+
+        # A9d: current milestone outline for planner context
+        milestone_outline_ctx: dict[str, Any] | None = None
+        raw_outline = context.state.narrative_plan.milestone_outline
+        if isinstance(raw_outline, Mapping) and raw_outline.get("steps"):
+            steps = raw_outline.get("steps", [])
+            if isinstance(steps, list):
+                milestone_outline_ctx = {
+                    "target": raw_outline.get("target_milestone_id"),
+                    "steps": [
+                        {
+                            "index": s.get("index"),
+                            "description": s.get("description", ""),
+                            "type": s.get("type", ""),
+                            "completed": bool(s.get("completed", False)),
+                            "quest_id": s.get("quest_id"),
+                        }
+                        for s in steps
+                        if isinstance(s, Mapping)
+                    ],
+                    "current_step": next(
+                        (
+                            dict(s) for s in steps
+                            if isinstance(s, Mapping) and not s.get("completed", False)
+                        ),
+                        None,
+                    ),
+                }
+
         system_entries_digest = self._build_system_entries_digest(scene_snapshot)
         visible_command_types = [
             entry["command_type"]
@@ -819,7 +1139,6 @@ class NarrativePlannerHook(NoOpSettlementHook):
             rest_phase_snapshot["is_quiet_rest_slot"] = is_quiet_rest_slot(context, rest_phase)
         return {
             "current_tick": current_tick,
-            "maps": getattr(context.world, "maps", None) if context.world.has_registry("maps") else None,
             "time": {
                 "day": context.state.time.day,
                 "slot": context.state.time.slot,
@@ -837,9 +1156,14 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "active_milestones": active_milestones,
                 "completed_milestones": completed_milestones,
                 "dynamic_quests": dynamic_quests,
+                "completed_dynamic_quests": completed_dynamic_quests,
+                "report_ready_dynamic_quests": report_ready_dynamic_quests,
             },
             "area_npcs": area_npcs,
+            "area_npc_summaries": area_npc_summaries,
             "area_boards": area_boards,
+            # A5b: deduplicated NPC IDs present in current area (runtime + static residents)
+            "existing_npc_ids": existing_npc_ids,
             "party": [
                 {"id": str(member_id)}
                 for member_id in getattr(context.state.party, "members", {}).keys()
@@ -885,6 +1209,238 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "target_milestone_detail": self._build_target_milestone_detail(context),
             "story_facts": list(context.state.narrative_plan.story_facts),
             "danger_level": self._get_area_danger(context),
+            "previous_directive_results": previous_directive_results,
+            "all_area_ids": all_area_ids,
+            "current_sub_area_ids": current_sub_area_ids,
+            # Phase 3 (P26-3-4a): player level/xp for planner difficulty guidance
+            "player_level": (
+                context.state.player.level
+                if context.state.has_slice("player")
+                else 1
+            ),
+            "player_xp": (
+                context.state.player.xp
+                if context.state.has_slice("player")
+                else 0
+            ),
+            # B-5 (P28): discoverable rooms hidden from player + dynamic room capacity
+            "discoverable_rooms_hidden": self._build_discoverable_rooms_hidden(context),
+            "dynamic_location_capacity": self._build_dynamic_location_capacity(context),
+            "static_room_ids": self._build_static_room_ids(context),
+            "scene_interactable_capacity": self._build_scene_interactable_capacity(context),
+            # A5e: interactable template examples + fill_area authoring guidance
+            "interactable_examples": interactable_examples,
+            "fill_area_guidance": (
+                "fill_area 的 interactables 字段需含完整定义："
+                "每个 interactable 必须包含 id/name/description/type/tags/checks。"
+                "只有真正新增可进入空间时才使用 fill_area，"
+                "不要为已有核心设施再造平行子地点。"
+                "参考 interactable_examples 中的静态模板结构。"
+            ),
+            "fill_location_guidance": (
+                "fill_location 用于给现有 location/room 增加微交互。"
+                "payload 需含 area_id/location_id/interactables，可选 room_id。"
+                "每个 interactable 至少包含 id/name/description/type/tags/checks，"
+                "功能型设施可补 functional.type。单场景 overlay 上限 4 个。"
+            ),
+            # A6b/A6c: hostile sub-location configs + encounter placement guidance
+            "hostile_config_locations": hostile_config_locations,
+            "encounter_guidance": (
+                "hostile_config_locations 列出了设计上应有敌人的子地点。"
+                "对于 already_planted=false 且 already_cleared=false 的条目，"
+                "应使用 planner_plant_encounter 指令放置敌人。"
+                "参数：area_id, sub_area_id=子地点ID, monster_ids=怪物列表, "
+                "threat_level, blocking, stealth_dc, map_category='ruins', expiry_ticks=-1（不过期）。"
+            ),
+            # A8a/A8d: quest objective condition guidance + active quest progress
+            "supported_objective_conditions": supported_objective_conditions,
+            "quest_objective_guidance": (
+                "每个 objective 必须包含 condition 字段（含 type 和对应 params），"
+                "否则无法自动追踪完成。type 必须从 supported_objective_conditions 中选择。"
+            ),
+            "active_quests": active_quests,
+            # A9d: current milestone outline for structured planning
+            "milestone_outline": milestone_outline_ctx,
+            "outline_guidance": (
+                "milestone_outline.steps 是当前里程碑的叙事规划。"
+                "创建任务时必须关联到某个 step（通过 step_index），"
+                "并使用该 step 的 condition 作为任务目标。"
+                "优先推进 current_step，不要跳过未完成的步骤。"
+            ) if milestone_outline_ctx else None,
+        }
+
+    async def _ensure_milestone_outline(
+        self,
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> None:
+        """A9c: Generate (or skip) a new milestone outline when the target changes.
+
+        Calls the injectable ``_outline_generator`` if present; otherwise builds
+        a deterministic fallback from key_elements (A9f).
+        Errors are caught and logged — they must not derail the planning cycle.
+        """
+        if not context.state.has_slice("narrative_plan"):
+            return
+        current_ms = context.state.narrative_plan.current_target_milestone
+        if not current_ms:
+            return
+        existing_outline = context.state.narrative_plan.milestone_outline
+        if (
+            isinstance(existing_outline, Mapping)
+            and existing_outline.get("target_milestone_id") == current_ms
+        ):
+            # Already have a valid outline for this milestone — skip
+            return
+
+        outline_ctx = self._build_outline_context(context, current_ms, current_tick)
+        if not outline_ctx["milestone_template"]:
+            # No template data — cannot build meaningful outline
+            return
+
+        if self._outline_generator is not None:
+            try:
+                new_outline = await self._outline_generator.generate(
+                    milestone_template=outline_ctx["milestone_template"],
+                    target_milestone_id=current_ms,
+                    chapter_id=outline_ctx["chapter_id"],
+                    current_tick=current_tick,
+                    game_state_summary=outline_ctx.get("game_state_summary"),
+                    supported_condition_types=outline_ctx.get("supported_condition_types"),
+                )
+                context.state.narrative_plan.set_milestone_outline(new_outline)
+            except Exception:
+                logger.exception(
+                    "narrative_planner: failed to generate milestone outline (milestone_id=%s)",
+                    current_ms,
+                )
+                # Fall through to deterministic fallback
+                fallback = self._build_fallback_outline_from_template(
+                    milestone_template=outline_ctx["milestone_template"],
+                    target_milestone_id=current_ms,
+                    chapter_id=outline_ctx["chapter_id"],
+                    current_tick=current_tick,
+                )
+                context.state.narrative_plan.set_milestone_outline(fallback)
+        else:
+            # A9f: No LLM — build deterministic fallback from key_elements
+            fallback = self._build_fallback_outline_from_template(
+                milestone_template=outline_ctx["milestone_template"],
+                target_milestone_id=current_ms,
+                chapter_id=outline_ctx["chapter_id"],
+                current_tick=current_tick,
+            )
+            context.state.narrative_plan.set_milestone_outline(fallback)
+
+    def _build_outline_context(
+        self,
+        context: "SettlementContext",
+        target_milestone_id: str,
+        current_tick: int,
+    ) -> dict[str, Any]:
+        """Build the input package for milestone outline generation."""
+        chapter_id = context.state.narrative_plan.current_chapter or ""
+        milestone_template: dict[str, Any] = {}
+        if context.world.has_registry("quests"):
+            tmpl = context.world.quests.get_milestone(target_milestone_id)
+            if tmpl is not None:
+                milestone_template = {
+                    "key_elements": list(tmpl.key_elements),
+                    "involved_npcs": list(tmpl.involved_npcs),
+                    "involved_locations": list(tmpl.involved_locations),
+                    "narrative_context": tmpl.narrative_context,
+                    "success_conditions": list(
+                        getattr(tmpl, "success_conditions", None) or []
+                    ),
+                }
+        game_state_summary: dict[str, Any] = {
+            "current_tick": current_tick,
+            "chapter_id": chapter_id,
+        }
+        if context.state.has_slice("player"):
+            game_state_summary["player_area"] = context.state.player.current_area
+            game_state_summary["player_level"] = getattr(context.state.player, "level", 1)
+        active_quest_titles = [
+            str(q.get("title", ""))
+            for q in context.state.quests.dynamic_quests.values()
+            if isinstance(q, Mapping)
+            and str(q.get("status", "")).strip().lower()
+            in {"active", "in_progress", "accepted"}
+        ]
+        if active_quest_titles:
+            game_state_summary["active_quest_titles"] = active_quest_titles[:5]
+        if context.state.has_slice("party"):
+            members = list(getattr(context.state.party, "members", {}).keys())
+            if members:
+                game_state_summary["party_members"] = [str(m) for m in members[:4]]
+        return {
+            "milestone_template": milestone_template,
+            "target_milestone_id": target_milestone_id,
+            "chapter_id": chapter_id,
+            "game_state_summary": game_state_summary,
+            "supported_condition_types": [
+                "npc_talked",
+                "item_obtained",
+                "kill_count",
+                "location_entered",
+                "flag_set",
+            ],
+        }
+
+    @staticmethod
+    def _build_fallback_outline_from_template(
+        *,
+        milestone_template: dict[str, Any],
+        target_milestone_id: str,
+        chapter_id: str,
+        current_tick: int,
+    ) -> dict[str, Any]:
+        """A9f: Deterministic fallback outline from key_elements.
+
+        One step per key_element, with a ``flag_set`` condition as placeholder.
+        """
+        key_elements = milestone_template.get("key_elements") or []
+        if not isinstance(key_elements, list):
+            key_elements = [str(key_elements)]
+        involved_npcs = list(milestone_template.get("involved_npcs") or [])
+        involved_locations = list(milestone_template.get("involved_locations") or [])
+        steps: list[dict[str, Any]] = []
+        for idx, elem in enumerate(key_elements[:10]):
+            steps.append({
+                "index": idx,
+                "description": str(elem),
+                "type": "exploration",
+                "condition": {
+                    "type": "flag_set",
+                    "flag": f"{target_milestone_id}_step_{idx}",
+                },
+                "related_npcs": involved_npcs[:2],
+                "related_locations": involved_locations[:2],
+                "completed": False,
+                "quest_id": None,
+            })
+        if not steps:
+            steps = [
+                {
+                    "index": 0,
+                    "description": f"推进里程碑：{target_milestone_id}",
+                    "type": "exploration",
+                    "condition": {
+                        "type": "flag_set",
+                        "flag": f"{target_milestone_id}_step_0",
+                    },
+                    "related_npcs": involved_npcs[:2],
+                    "related_locations": involved_locations[:2],
+                    "completed": False,
+                    "quest_id": None,
+                }
+            ]
+        return {
+            "target_milestone_id": target_milestone_id,
+            "chapter_id": chapter_id,
+            "computed_at_tick": current_tick,
+            "steps": steps,
         }
 
     @staticmethod
@@ -1080,38 +1636,60 @@ class NarrativePlannerHook(NoOpSettlementHook):
         round_index: int,
     ) -> dict[str, Any]:
         summary = self._empty_apply_summary()
-        summary["requested_count"] = len(directives)
-
         for raw_directive in directives:
-            validation = validate_planner_directive(
-                raw_directive,
-                allowed_directives=allowed_directives,
-            )
-            if not validation.ok:
-                status = (
-                    "unsupported"
-                    if is_unsupported_directive_reason(validation.reason_code)
-                    else "invalid_contract"
+            expanded_directives = expand_planner_directive(raw_directive)
+            summary["requested_count"] += len(expanded_directives)
+            for expanded_directive in expanded_directives:
+                validation = validate_planner_directive(
+                    expanded_directive,
+                    allowed_directives=allowed_directives,
                 )
-                if status == "unsupported":
-                    summary["skipped_unsupported_count"] += 1
-                else:
-                    summary["skipped_invalid_count"] += 1
-                summary["directive_audit"].append(
-                    self._directive_audit_entry(
+                if not validation.ok:
+                    status = (
+                        "unsupported"
+                        if is_unsupported_directive_reason(validation.reason_code)
+                        else "invalid_contract"
+                    )
+                    if status == "unsupported":
+                        summary["skipped_unsupported_count"] += 1
+                    else:
+                        summary["skipped_invalid_count"] += 1
+                    audit_entry = self._directive_audit_entry(
                         source=source,
                         subsystem_name=subsystem_name,
                         round_index=round_index,
                         validation=validation,
                         status=status,
                     )
-                )
-                continue
+                    summary["directive_audit"].append(audit_entry)
+                    if status == "invalid_contract":
+                        logger.warning(
+                            "planner directive validation failed (invalid_contract): "
+                            "subsystem=%s kind=%s reason=%s",
+                            subsystem_name or "?",
+                            validation.kind or "?",
+                            validation.reason_code or "?",
+                            extra={
+                                "kind": validation.kind,
+                                "status": status,
+                                "reason_code": validation.reason_code,
+                                "subsystem": subsystem_name,
+                            },
+                        )
+                        self._pending_sse.append(SSEEvent(
+                            event_type="planner_directive_rejected",
+                            payload={
+                                "kind": audit_entry["kind"],
+                                "status": audit_entry["status"],
+                                "reason_code": audit_entry["reason_code"],
+                                "payload_digest": audit_entry["payload_digest"],
+                            },
+                        ))
+                    continue
 
-            if self._dispatcher is None:
-                summary["skipped_invalid_count"] += 1
-                summary["directive_audit"].append(
-                    self._directive_audit_entry(
+                if self._dispatcher is None:
+                    summary["skipped_invalid_count"] += 1
+                    rejected_entry = self._directive_audit_entry(
                         source=source,
                         subsystem_name=subsystem_name,
                         round_index=round_index,
@@ -1119,40 +1697,66 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         status="subsystem_rejected",
                         reason_code="missing_dispatcher",
                     )
-                )
-                continue
+                    summary["directive_audit"].append(rejected_entry)
+                    logger.warning(
+                        "planner directive rejected: missing_dispatcher (kind=%s, subsystem=%s)",
+                        validation.kind, subsystem_name,
+                    )
+                    self._pending_sse.append(SSEEvent(
+                        event_type="planner_directive_rejected",
+                        payload={
+                            "kind": rejected_entry["kind"],
+                            "status": rejected_entry["status"],
+                            "reason_code": rejected_entry["reason_code"],
+                            "payload_digest": rejected_entry["payload_digest"],
+                        },
+                    ))
+                    continue
 
-            applied = self._dispatcher.apply_directive(
-                validation.kind,
-                validation.payload,
-                context,
-                current_tick=current_tick,
-            )
-            if not applied:
-                summary["skipped_invalid_count"] += 1
+                applied = self._dispatcher.apply_directive(
+                    validation.kind,
+                    validation.payload,
+                    context,
+                    current_tick=current_tick,
+                )
+                if applied is not True:
+                    summary["skipped_invalid_count"] += 1
+                    reason_code = applied if isinstance(applied, str) else "dispatcher_rejected"
+                    dispatcher_rejected_entry = self._directive_audit_entry(
+                        source=source,
+                        subsystem_name=subsystem_name,
+                        round_index=round_index,
+                        validation=validation,
+                        status="subsystem_rejected",
+                        reason_code=reason_code,
+                    )
+                    summary["directive_audit"].append(dispatcher_rejected_entry)
+                    logger.warning(
+                        "planner directive rejected: %s (kind=%s, subsystem=%s)",
+                        reason_code, validation.kind, subsystem_name,
+                    )
+                    self._pending_sse.append(SSEEvent(
+                        event_type="planner_directive_rejected",
+                        payload={
+                            "kind": dispatcher_rejected_entry["kind"],
+                            "status": dispatcher_rejected_entry["status"],
+                            "reason_code": dispatcher_rejected_entry["reason_code"],
+                            "payload_digest": dispatcher_rejected_entry["payload_digest"],
+                        },
+                    ))
+                    continue
+
+                summary["applied_count"] += 1
+                summary["applied_kinds"].append(validation.kind)
                 summary["directive_audit"].append(
                     self._directive_audit_entry(
                         source=source,
                         subsystem_name=subsystem_name,
                         round_index=round_index,
                         validation=validation,
-                        status="subsystem_rejected",
-                        reason_code="dispatcher_rejected",
+                        status="applied",
                     )
                 )
-                continue
-
-            summary["applied_count"] += 1
-            summary["applied_kinds"].append(validation.kind)
-            summary["directive_audit"].append(
-                self._directive_audit_entry(
-                    source=source,
-                    subsystem_name=subsystem_name,
-                    round_index=round_index,
-                    validation=validation,
-                    status="applied",
-                )
-            )
 
         return summary
 
@@ -1254,6 +1858,20 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 continue
             target[str(key)] = value
         summary["metadata"] = target
+
+    @classmethod
+    def _result_has_meaningful_output(
+        cls,
+        *,
+        apply_summary: Mapping[str, Any] | None,
+        applied_story_facts: int,
+        strategy_notes: Any,
+    ) -> bool:
+        if isinstance(apply_summary, Mapping) and int(apply_summary.get("applied_count", 0) or 0) > 0:
+            return True
+        if applied_story_facts > 0:
+            return True
+        return bool(cls._string_or_empty(strategy_notes))
 
     @classmethod
     def _metadata_string(
@@ -1379,8 +1997,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 dispatch_results = []
                 if self._dispatcher is not None:
                     dispatch_results = await self._dispatcher.dispatch(dispatch_event, context)
-                if dispatch_results:
-                    accepted_event_count += 1
+                event_accepted = False
                 for result in dispatch_results:
                     subsystem_name = self._metadata_string(
                         getattr(result, "metadata", {}),
@@ -1398,7 +2015,6 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     )
                     if event_kind and event_kind not in subsystem_summary["event_kinds"]:
                         subsystem_summary["event_kinds"].append(event_kind)
-                    subsystem_summary["accepted_event_count"] += 1
                     self._merge_subsystem_metadata(
                         subsystem_summary,
                         _normalize_mapping(getattr(result, "metadata", {})),
@@ -1460,6 +2076,16 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         )
                     subsystem_summary["story_fact_count"] += applied_story_facts
                     story_fact_count += applied_story_facts
+                    result_accepted = self._result_has_meaningful_output(
+                        apply_summary=apply_summary,
+                        applied_story_facts=applied_story_facts,
+                        strategy_notes=getattr(result, "strategy_notes", ""),
+                    )
+                    if result_accepted:
+                        subsystem_summary["accepted_event_count"] += 1
+                        event_accepted = True
+                if event_accepted:
+                    accepted_event_count += 1
 
             inline_payloads = run_inline_event_check(
                 state=context.state,
@@ -1639,6 +2265,167 @@ class NarrativePlannerHook(NoOpSettlementHook):
             return 0.0
         return context.state.areas.areas[area_id].danger_level
 
+    @staticmethod
+    def _build_discoverable_rooms_hidden(context: SettlementContext) -> list[dict[str, Any]]:
+        """List rooms that are discoverable but not yet discovered by the player."""
+        if not context.state.has_slice("areas") or not context.state.has_slice("player"):
+            return []
+        if not context.world.has_registry("maps"):
+            return []
+        area_id = context.state.player.current_area
+        if not area_id:
+            return []
+        hidden: list[dict[str, Any]] = []
+        area_tmpl = context.world.maps.get(area_id)
+        if area_tmpl is None:
+            return []
+        for sub_loc_id, sub_loc in area_tmpl.sub_locations.items():
+            for room_id, room_tmpl in getattr(sub_loc, "rooms", {}).items():
+                if not getattr(room_tmpl, "discoverable", False):
+                    continue
+                if context.state.areas.is_room_discovered(area_id, sub_loc_id, room_id):
+                    continue
+                hidden.append({
+                    "area_id": area_id,
+                    "location_id": str(sub_loc_id),
+                    "room_id": str(room_id),
+                    "name": getattr(room_tmpl, "name", str(room_id)),
+                })
+        return hidden
+
+    @staticmethod
+    def _build_dynamic_location_capacity(context: SettlementContext) -> dict[str, Any]:
+        """Return dynamic room counts per sub_location for the current area."""
+        if not context.state.has_slice("areas") or not context.state.has_slice("player"):
+            return {}
+        area_id = context.state.player.current_area
+        if not area_id:
+            return {}
+        result: dict[str, Any] = {}
+        if not context.world.has_registry("maps"):
+            return {}
+        area_tmpl = context.world.maps.get(area_id)
+        if area_tmpl is None:
+            return {}
+        for sub_loc_id in area_tmpl.sub_locations.keys():
+            count = context.state.areas.count_dynamic_rooms(area_id, str(sub_loc_id))
+            result[str(sub_loc_id)] = {"dynamic_rooms": count, "max_dynamic_rooms": 5}
+        return result
+
+    @staticmethod
+    def _build_static_room_ids(context: SettlementContext) -> dict[str, list[str]]:
+        """Return static room IDs per sub_location for the current area."""
+        if not context.state.has_slice("player") or not context.world.has_registry("maps"):
+            return {}
+        area_id = context.state.player.current_area
+        if not area_id:
+            return {}
+        area_tmpl = context.world.maps.get(area_id)
+        if area_tmpl is None:
+            return {}
+        result: dict[str, list[str]] = {}
+        for sub_loc_id, sub_tmpl in area_tmpl.sub_locations.items():
+            room_ids = list(sub_tmpl.rooms.keys())
+            if room_ids:
+                result[str(sub_loc_id)] = room_ids
+        return result
+
+    @staticmethod
+    def _build_scene_interactable_capacity(context: SettlementContext) -> dict[str, Any]:
+        if not context.state.has_slice("areas") or not context.state.has_slice("player"):
+            return {}
+        area_id = str(context.state.player.current_area or "").strip()
+        location_id = str(context.state.player.current_location or "").strip()
+        room_id = str(getattr(context.state.player, "current_room", None) or "").strip()
+        if not area_id or not location_id:
+            return {}
+        overlay_count = context.state.areas.count_scoped_interactable_overlays(
+            area_id,
+            location_id,
+            room_id or None,
+        )
+        merged_count = len(list_visible_scene_interactables(context.state, context.world))
+        return {
+            "area_id": area_id,
+            "location_id": location_id,
+            "room_id": room_id or None,
+            "merged_interactables": merged_count,
+            "overlay_count": overlay_count,
+            "max_overlay_count": 4,
+            "remaining_overlay_slots": max(0, 4 - overlay_count),
+        }
+
+    @classmethod
+    def _build_completed_dynamic_quest_summaries(
+        cls,
+        dynamic_quests: Mapping[str, Any],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        completed: list[tuple[int, str, dict[str, Any]]] = []
+        report_ready: list[tuple[int, str, dict[str, Any]]] = []
+        for raw_quest_id, raw_quest in dynamic_quests.items():
+            quest_id = cls._coerce_non_empty_string(raw_quest_id)
+            if quest_id is None or not isinstance(raw_quest, Mapping):
+                continue
+            runtime_quest = normalize_runtime_dynamic_quest(quest_id, raw_quest)
+            status = cls._string_or_empty(runtime_quest.get("status")).strip().lower()
+            if status != "completed":
+                continue
+            summary = cls._summarize_completed_dynamic_quest(
+                quest_id=quest_id,
+                raw_quest=raw_quest,
+                runtime_quest=runtime_quest,
+            )
+            sort_key = cls._coerce_int(raw_quest.get("created_at_tick")) or -1
+            completed.append((sort_key, quest_id, summary))
+            if bool(runtime_quest.get("can_report")):
+                report_ready.append((sort_key, quest_id, summary))
+
+        completed.sort(key=lambda item: (-item[0], item[1]))
+        report_ready.sort(key=lambda item: (-item[0], item[1]))
+        return (
+            [dict(summary) for _, _, summary in completed[:5]],
+            [dict(summary) for _, _, summary in report_ready[:3]],
+        )
+
+    @classmethod
+    def _summarize_completed_dynamic_quest(
+        cls,
+        *,
+        quest_id: str,
+        raw_quest: Mapping[str, Any],
+        runtime_quest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        completed_objectives: list[str] = []
+        raw_objectives = raw_quest.get("objectives", [])
+        if isinstance(raw_objectives, list):
+            for raw_objective in raw_objectives:
+                if isinstance(raw_objective, Mapping):
+                    description = cls._coerce_non_empty_string(
+                        raw_objective.get("description")
+                    )
+                else:
+                    description = cls._coerce_non_empty_string(raw_objective)
+                if description is not None:
+                    completed_objectives.append(description)
+
+        rewards = (
+            dict(raw_quest.get("rewards", {}))
+            if isinstance(raw_quest.get("rewards"), Mapping)
+            else {}
+        )
+
+        return {
+            "quest_id": quest_id,
+            "title": cls._string_or_empty(raw_quest.get("title")),
+            "status": cls._string_or_empty(runtime_quest.get("status")),
+            "summary": cls._string_or_empty(raw_quest.get("summary")),
+            "requires_report": bool(runtime_quest.get("requires_report")),
+            "reported": bool(runtime_quest.get("reported")),
+            "can_report": bool(runtime_quest.get("can_report")),
+            "completed_objectives": completed_objectives,
+            "rewards": rewards,
+        }
+
     @classmethod
     def _normalize_decision(cls, raw: Any) -> NarrativePlannerDecision:
         if isinstance(raw, NarrativePlannerDecision):
@@ -1736,6 +2523,15 @@ class NarrativePlannerHook(NoOpSettlementHook):
             return None
         normalized = value.strip()
         return normalized or None
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @classmethod
     def _string_or_empty(cls, value: Any) -> str:

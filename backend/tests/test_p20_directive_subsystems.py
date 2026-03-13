@@ -138,7 +138,7 @@ def _make_dispatcher_with_all(
     """Build a PlannerDispatcher with all 4 sub-systems registered."""
     pending_sse: list[SSEEvent] = sse_collector if sse_collector is not None else []
     dispatcher = PlannerDispatcher()
-    quest_manager = QuestManagerSubSystem(dispatcher=dispatcher)
+    quest_manager = QuestManagerSubSystem(dispatcher=dispatcher, sse_collector=pending_sse)
     dispatcher.register(quest_manager)
     dispatcher.register(NpcDirectorSubSystem(instance_manager=instance_manager))
     dispatcher.register(WorldBuilderSubSystem(sse_collector=pending_sse))
@@ -171,7 +171,7 @@ def test_create_quest_adds_to_dynamic_quests():
 
 
 def test_create_quest_rejects_duplicate():
-    """create_quest returns False when quest_id already exists."""
+    """create_quest returns a rejection reason when quest_id already exists."""
     context = _make_context(
         quest_payload={"dynamic_quests": {"dq_existing": {"status": "active", "title": "Existing", "summary": ""}}}
     )
@@ -184,7 +184,7 @@ def test_create_quest_rejects_duplicate():
         current_tick=1,
     )
 
-    assert ok is False
+    assert ok is not True  # Returns a rejection reason string
 
 
 def test_create_quest_records_history_and_change():
@@ -203,6 +203,29 @@ def test_create_quest_records_history_and_change():
     assert any(e["kind"] == "create_quest" and e["quest_id"] == "dq_hist" for e in history)
     # StateChange should have been recorded
     assert any(c.slice == "quests" and "dq_hist" in c.path for c in context.change_log)
+
+
+def test_create_quest_emits_frontend_visible_sse() -> None:
+    """create_quest emits quest SSE so the UI can refresh the quest panel immediately."""
+    context = _make_context()
+    dispatcher, pending_sse = _make_dispatcher_with_all()
+
+    ok = dispatcher.apply_directive(
+        "create_quest",
+        {"quest_id": "dq_signal", "title": "Signal", "summary": "Track the signal."},
+        context,
+        current_tick=4,
+    )
+
+    assert ok is True
+    sse_types = [event.event_type for event in pending_sse]
+    assert "quest_created" in sse_types
+    assert "quest_status_changed" in sse_types
+    created_payload = next(
+        event.payload for event in pending_sse if event.event_type == "quest_created"
+    )
+    assert created_payload["quest_id"] == "dq_signal"
+    assert created_payload["status"] == "available"
 
 
 def test_create_quest_creates_milestone_events():
@@ -239,7 +262,7 @@ def test_create_quest_creates_milestone_events():
 
 
 def test_create_quest_creates_objective_events():
-    """create_quest creates dormant objective events for non-optional objectives."""
+    """create_quest stores objectives on the quest but does NOT create EventSlice entries."""
     context = _make_context()
     dispatcher, _ = _make_dispatcher_with_all()
 
@@ -256,10 +279,15 @@ def test_create_quest_creates_objective_events():
         current_tick=1,
     )
 
+    # Objectives are stored on the quest itself
+    created = context.state.quests.get_dynamic_quest("dq_obj_test")
+    assert created is not None
+    assert len(created["objectives"]) == 2
+    # No EventSlice entries for objectives (Path B removed)
     event0 = context.state.events.get_event("dq_dq_obj_test_obj_0")
     event1 = context.state.events.get_event("dq_dq_obj_test_obj_1")
-    assert event0 is not None
-    assert event1 is not None
+    assert event0 is None
+    assert event1 is None
 
 
 def test_publish_bulletin_adds_entry():
@@ -319,7 +347,8 @@ def test_publish_bulletin_notifies_resident_npcs():
             "title": "Urgent Quest",
             "content": "Danger!",
             "location": {"area_id": "frontier_town", "sub_location": "guild_hall"},
-            "metadata": {"quest_id": "dq_urgent"},
+            # No quest_id in metadata — avoids quest existence validation
+            "metadata": {"source": "test"},
         },
         context,
         current_tick=1,
@@ -425,7 +454,7 @@ def test_direct_npc_injects_to_instance_manager():
 
 
 def test_direct_npc_rejects_missing_directive():
-    """direct_npc returns False when no directive is provided."""
+    """direct_npc returns a rejection reason when no directive is provided."""
     context = _make_context()
     npc_director = NpcDirectorSubSystem()
 
@@ -436,7 +465,7 @@ def test_direct_npc_rejects_missing_directive():
         current_tick=1,
     )
 
-    assert result is False
+    assert result is not True  # Returns a string reason code, not True
     assert context.state.narrative_plan.npc_directives == []
 
 
@@ -486,7 +515,7 @@ def test_spawn_quest_npc_auto_generates_id():
 
 
 def test_spawn_quest_npc_rejects_existing_npc():
-    """spawn_quest_npc rejects a npc_id that is already present in areas."""
+    """spawn_quest_npc returns a rejection reason for a npc_id already present in areas."""
     context = _make_context(
         area_payload={"areas": {"frontier_town": {"npc_locations": {"guard_captain": True}}}}
     )
@@ -499,7 +528,7 @@ def test_spawn_quest_npc_rejects_existing_npc():
         current_tick=1,
     )
 
-    assert ok is False
+    assert ok is not True  # Returns a rejection reason string
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +578,62 @@ def test_plant_environmental_emits_sse():
     assert pending_sse[0].event_type == "environment_changed"
     assert pending_sse[0].payload["change_type"] == "plant_environmental"
     assert pending_sse[0].payload["area_id"] == "frontier_town"
+
+
+def test_plant_environmental_in_scene_context_translates_to_clue_interactable() -> None:
+    world = WorldInstance("test_world")
+    maps = MapRegistry()
+    maps.load(
+        {
+            "frontier_town": {
+                "id": "frontier_town",
+                "name": "边境小镇",
+                "default_sub_location": "adventurer_guild",
+                "sub_locations": {
+                    "adventurer_guild": {
+                        "id": "adventurer_guild",
+                        "name": "冒险者公会",
+                        "default_room": "guild_counter",
+                        "rooms": {
+                            "guild_counter": {
+                                "id": "guild_counter",
+                                "name": "受付柜台",
+                            }
+                        },
+                    }
+                },
+            }
+        }
+    )
+    world.register(maps)
+    context = _make_context(area_payload={"areas": {"frontier_town": {}}}, world=world)
+    context.state.player.current_location = "adventurer_guild"
+    context.state.player.current_room = "guild_counter"
+    pending_sse: list[SSEEvent] = []
+    world_builder = WorldBuilderSubSystem(sse_collector=pending_sse)
+
+    ok = world_builder.apply_directive(
+        "plant_environmental",
+        {
+            "area_id": "frontier_town",
+            "clue_id": "blood_smear",
+            "description": "墙边有一抹新鲜血迹。",
+        },
+        context,
+        current_tick=3,
+    )
+
+    assert ok is True
+    assert context.state.areas.list_temporary_sub_areas("frontier_town") == []
+    overlays = context.state.areas.list_scoped_interactable_overlays(
+        "frontier_town",
+        "adventurer_guild",
+        "guild_counter",
+    )
+    assert len(overlays) == 1
+    assert overlays[0]["id"] == "blood_smear"
+    assert overlays[0]["functional"]["type"] == "investigate_clue"
+    assert pending_sse[0].payload["change_type"] == "fill_location"
 
 
 def test_fill_area_creates_permanent_sub_area():
@@ -612,8 +697,8 @@ def test_world_builder_rejects_invalid_area_id():
         current_tick=1,
     )
 
-    assert ok_plant is False
-    assert ok_fill is False
+    assert ok_plant is not True  # Returns a rejection reason string
+    assert ok_fill is not True   # Returns a rejection reason string
     assert pending_sse == []
 
 
@@ -642,7 +727,7 @@ def test_escalate_adjusts_level_and_danger():
 
 
 def test_escalate_rejects_out_of_range():
-    """escalate returns False when |delta| > 3."""
+    """escalate returns a rejection reason when |delta| > 3."""
     context = _make_context()
     pacing = PacingControllerSubSystem()
 
@@ -650,9 +735,9 @@ def test_escalate_rejects_out_of_range():
     ok_low = pacing.apply_directive("escalate", {"delta": -4}, context, current_tick=1)
     ok_bool = pacing.apply_directive("escalate", {"delta": True}, context, current_tick=1)
 
-    assert ok_high is False
-    assert ok_low is False
-    assert ok_bool is False
+    assert ok_high is not True  # Returns a rejection reason string
+    assert ok_low is not True   # Returns a rejection reason string
+    assert ok_bool is not True  # Returns a rejection reason string
     assert context.state.narrative_plan.escalation_level == 0  # unchanged
 
 
@@ -671,13 +756,13 @@ def test_adjust_pacing_sets_frozen():
 
 
 def test_adjust_pacing_rejects_non_bool():
-    """adjust_pacing returns False when frozen is not a bool."""
+    """adjust_pacing returns a rejection reason when frozen is not a bool."""
     context = _make_context()
     pacing = PacingControllerSubSystem()
 
     ok = pacing.apply_directive("adjust_pacing", {"frozen": "true"}, context, current_tick=1)
 
-    assert ok is False
+    assert ok is not True  # Returns a rejection reason string
 
 
 # ---------------------------------------------------------------------------
@@ -806,7 +891,8 @@ def test_publish_bulletin_cross_system_direct_npc():
             "title": "Caravan Job",
             "content": "Need guards for caravan.",
             "location": {"area_id": "frontier_town", "sub_location": "market"},
-            "metadata": {"quest_id": "dq_caravan"},
+            # No quest_id — avoids quest existence validation (A-1 change)
+            "metadata": {"source": "test"},
         },
         context,
         current_tick=3,

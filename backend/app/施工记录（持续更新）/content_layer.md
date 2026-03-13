@@ -11,7 +11,7 @@
 | `ContentRegistry` ABC | [完成] | 含 `_coerce_dict_mapping` 共享方法 |
 | `WorldInstance` | [完成] | typed properties + 三步加载顺序 |
 | `TagRegistry` | [骨架] | 能 load/get/list_all，无语义校验 |
-| `MapRegistry` | [Phase1] | 连通性/区域/encounter weight/多起点 warning + 查询方法；R-4 补 get_sub_location() |
+| `MapRegistry` | [Phase1+P29] | 连通性/区域/encounter weight/多起点 warning + 查询方法；R-4 补 get_sub_location()；P29-A3 加 string→float danger_level 兜底；P29-A6a 古代遗迹 3 子地点 hostile_config 数据 |
 | `CharacterRegistry` | [Phase2] | name/tags/class/faction + shop_inventory 验证 + 查询方法 |
 | `ItemRegistry` | [F-A完成] | typed sub-struct（WeaponData/ArmorData/ConsumableData）+ 7 查询方法 |
 | `MonsterRegistry` | [F-C完成] | CR/creature_type/abilities/attacks/resistances + 平衡 warning + 查询方法；F-C 补齐 ai_personality/flee_threshold/xp_reward + MonsterAttack.damage_dice/hit_bonus/damage_type |
@@ -752,3 +752,124 @@ ordered_groups = [
 
 5. **`tests/test_content_registries.py`**：
    - 新增 8 个测试（每方法 1 个函数，含正向 + 空结果/miss 断言）
+
+---
+
+## [P28 Track B-1] maps.json 子地点簇扩展（2026-03-12）
+
+**测试基线**：2602 → 2654 passed（+52 新测试）
+
+**背景**：P28 Wave 2 内容数据深化。frontier_town 现有 6 个子地点中 3 个（blacksmith_shop/town_square/north_gate）无 rooms；tavern/adventurer_guild/mother_earth_temple 各需补充 rooms。新增 3 个子地点（market_plaza/training_ground/back_alley）。cow_girl_farm 3 个子地点全部缺 rooms。
+
+**改动**（`data/goblin_slayer/v2/maps.json`）：
+
+1. **adventurer_guild** +2 rooms（archive_room dc=10, basement_armory dc=12）→ 5 rooms total
+2. **mother_earth_temple** +2 rooms（herb_garden 非 discoverable, confession_room dc=0）→ 4 rooms total
+3. **tavern** +3 rooms（kitchen dc=0, wine_cellar dc=8, back_yard 非 discoverable）→ 5 rooms total
+4. **blacksmith_shop** 新建 4 rooms（forge/display_wall/quench_yard/hidden_vault dc=14），default_room=forge
+5. **town_square** 新建 4 rooms（fountain_plaza/notice_board/merchant_corner/old_well dc=10），default_room=fountain_plaza
+6. **north_gate** 新建 3 rooms（guard_post/watchtower dc=0/supply_depot），default_room=guard_post
+7. **market_plaza** 新增子地点，4 rooms（open_market/tea_house dc=0/fortune_teller dc=8/back_stall dc=12），default_room=open_market
+8. **training_ground** 新增子地点，3 rooms（sparring_ring/equipment_shed dc=0/archery_range），default_room=sparring_ring
+9. **back_alley** 新增子地点，3 rooms（narrow_path/dead_end dc=8[informant]/sewer_entrance dc=14），default_room=narrow_path
+10. **cow_girl_farm/main_house** +2 rooms（living_room[cow_girl]/dining_area），default_room=living_room
+11. **cow_girl_farm/gs_warehouse** +2 rooms（storage_area/workbench），default_room=storage_area
+12. **cow_girl_farm/farm_field** +2 rooms（pasture/well_area），default_room=pasture
+
+**验收数据**：
+- frontier_town：9 sub_locations，35 rooms，17 discoverable
+- cow_girl_farm：3 sub_locations，6 rooms
+
+**新建测试**：`tests/test_p28_maps_rooms.py`（52 个测试，涵盖全部新 rooms 结构验证）
+
+**设计决策**：
+- rooms 格式沿用 dict（与 P27 现有 rooms 一致，MapRegistry 也支持 list 格式但统一用 dict）
+- traveling_merchant / informant 写入 resident_npcs — MapRegistry 只做字符串列表，不校验 NPC 存在性；Agent 3 并行添加这两个 NPC
+- discoverable 共 17 个（设计文档描述 16，实际按数据表格推算为 17，以数据表格为准）
+
+### [D-P28b] P28 Wave 2 Track B-2 — quests + characters + classes 数据填充
+
+**完成时间**：2026-03-12
+
+**变更内容**：
+
+#### quests.json — 7 里程碑完整重写
+- **章节**：ch2 改为"边境的暗流"
+- **7 个新里程碑**（旧 7 个全部替换）：
+  - ms_arrival（序列1）：npc_talked[guild_girl]；xp:100, gold:50
+  - ms_town_life（序列2）：location_visited×3；xp:200, gold:100
+  - ms_party_encounter（序列3）：npc_talked×2 + level_reached[2]；xp:300, gold:150
+  - ms_growing_shadow（序列4）：npc_talked×2；xp:400, gold:200, items:[healing_potion×2]
+  - ms_into_the_wilds（序列5）：location_visited[ancient_ruins]；xp:300, gold:100
+  - ms_the_hive（序列6）：location_visited + kill_count[goblin≥8]；xp:800, gold:500, items:[quality_healing_potion]
+  - ms_water_capital_call（序列7）：npc_talked[cow_girl] + level_reached[3]；xp:500, gold:300
+- **rewards.items 格式**：dict 数组 `[{"item_id":"...","count":N}]`（board.py 只支持 Mapping 格式）
+- **新条件类型**：`level_reached` — Wave 3 实现，当前 EventEngine 遇到未知类型返回 False（不 crash）
+
+#### items.json — 新增 quality_healing_potion
+- 用于 ms_the_hive 奖励，uncommon，heal 4d4+4
+
+#### tags.json — 新增标签
+- `investigation`、`tension`、`revelation`（quests.json 使用）
+- `worldly`、`shady`（新 NPC 使用）
+
+#### characters.json — 3 新 NPC + 5 schedule 更新
+**新 NPC**：
+- `traveling_merchant`：market_plaza，tags:[merchant,commoner,worldly]，有 shop_inventory
+- `informant`：back_alley，tags:[commoner,shady]，无 faction_id
+- `tavern_waitress`：tavern，tags:[commoner,warm]
+
+**schedule 更新**（5 个）：
+- priestess：dawn+day=mother_earth_temple, dusk=adventurer_guild, night=mother_earth_temple
+- dwarf_shaman：dawn=adventurer_guild, day+dusk=tavern, night=adventurer_guild
+- lizard_priest：dawn+day=mother_earth_temple, dusk+night=adventurer_guild（location_id 也从 guild_hall 改为 adventurer_guild）
+- high_elf_archer：dawn=training_ground, day=market_plaza, dusk=adventurer_guild, night=tavern
+- goblin_slayer：已正确（无需改动）
+
+**注意**：Edit 工具在替换 high_elf_archer 段落时引入了 U+201C/U+201D 曲引号作为 JSON 结构引号，通过全文替换 + 转义内容层曲引号修复。
+
+#### classes.json — 6 职业初始装备
+- fighter: cheap_shortsword + round_shield + dirty_chain_mail + healing_potion×2; equipped: main_hand/off_hand/chest
+- priest: sturdy_spear + quilted_gambeson + healing_potion×3 + holy_water_flask; equipped: main_hand/chest
+- ranger: scouts_hand_axe + leather_armor + healing_potion×2 + hempen_rope + exploration_torch; equipped: main_hand/chest
+- wizard: sturdy_spear + quilted_gambeson + healing_potion×2; equipped: main_hand/chest
+- martial_artist: leather_armor + healing_potion×2 + bandage_roll; equipped: chest
+- scout: throwing_dagger + leather_armor + healing_potion×2 + hempen_rope; equipped: main_hand/chest
+- 全部 starting_gold: 50
+
+**测试变更**：
+- `tests/test_33_quest_completion.py` — TestQuestsJsonData 类全部更新为新里程碑 ID 和链路
+- 测试基线：2602 → 2671（+69）
+
+---
+
+### [D-C-P29-A3] P29-A3: base_danger 数值化（2026-03-13）
+
+**问题**：`maps.json` 的 4 个区域只有语义字符串 `danger_level: "high"`，没有 `base_danger` 数值 → `HostileAreaHandler` 的危险等级一律 fallback 1.0，战斗触发和区域风险感失真。
+
+**改动**：
+1. `data/goblin_slayer/v2/maps.json` — 4 区域加 `base_danger` 字段：
+   - frontier_town: 0.2, cow_girl_farm: 0.3, water_capital: 0.6, ancient_ruins: 1.2
+2. `app/game_core/content/registries/maps.py` — `_build_template()` 加 string→float fallback：
+   - 当 `base_danger` 缺失时，按 `danger_level` 字符串转换：none=0.0, low=0.3, medium=0.6, high=1.0, extreme=1.5
+   - 未知字符串不崩溃，base_danger 保持 None
+
+**测试**：`tests/test_content_registries.py` 新增 3 个测试（numeric priority / string fallback / unknown string no crash）。
+
+---
+
+### [D-C-P29-A6a] P29-A6a: 遗迹固定敌人 hostile_config 数据（2026-03-13）
+
+**问题**：`ancient_ruins` 的内部子地点没有 `hostile_config` → Planner 无法知道哪些子地点应放置固定敌人，战斗无法按设计触发。
+
+**改动**：`data/goblin_slayer/v2/maps.json` — ancient_ruins 3 个核心子地点加 `hostile_config`：
+
+| 子地点 | monster_ids | stealth_dc | blocking | role |
+|--------|------------|------------|----------|------|
+| outer_cloisters | goblin×3 | 12 | false | patrol（哨兵，可潜行绕过） |
+| sacrificial_altar | hobgoblin+goblin×2 | 14 | true | guard（祭坛守卫，必须清除） |
+| inner_sanctum | goblin_rider+hobgoblin+goblin×2 | 16 | true | guard（Boss 房精锐） |
+
+**验证**：`_build_hostile_config()` + `_build_hostile_group()` 在 maps.py 已有完整实现，无需修改；SubLocationTemplate.hostile_config 字段已存在。
+
+**测试**：`tests/test_content_registries.py` 新增 2 个测试（sub_location hostile_config 解析 / goblin_slayer maps.json 实际文件验证）。

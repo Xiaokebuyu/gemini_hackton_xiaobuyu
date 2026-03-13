@@ -78,7 +78,7 @@ class QuestManagerSubSystem:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         if kind == "create_quest":
             return self._apply_create_quest(payload, context, current_tick=current_tick)
         if kind == "publish_bulletin":
@@ -87,7 +87,7 @@ class QuestManagerSubSystem:
             return self._apply_retire_quest(payload, context, current_tick=current_tick)
         if kind == "update_quest":
             return self._apply_update_quest(payload, context, current_tick=current_tick)
-        return False
+        return "unsupported_kind"
 
     # ------------------------------------------------------------------
     # Handler: create_quest
@@ -99,7 +99,7 @@ class QuestManagerSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -109,7 +109,44 @@ class QuestManagerSubSystem:
                 source="narrative_planner",
             )
         )
-        return result.executed
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        if self._sse_collector is not None:
+            from app.game_core.orchestration.models import SSEEvent
+
+            metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+            quest_id = (
+                coerce_non_empty_string(metadata.get("quest_id"))
+                or coerce_non_empty_string(params.get("quest_id"))
+            )
+            quest_snapshot = (
+                context.state.quests.get_dynamic_quest(quest_id)
+                if quest_id is not None and context.state.has_slice("quests")
+                else None
+            )
+            if isinstance(quest_snapshot, Mapping):
+                status = string_or_empty(quest_snapshot.get("status"))
+                title = string_or_empty(quest_snapshot.get("title"))
+                summary = string_or_empty(quest_snapshot.get("summary"))
+                self._sse_collector.append(SSEEvent(
+                    event_type="quest_created",
+                    payload={
+                        "quest_id": quest_id,
+                        "status": status,
+                        "title": title,
+                        "summary": summary,
+                    },
+                ))
+                self._sse_collector.append(SSEEvent(
+                    event_type="quest_status_changed",
+                    payload={
+                        "quest_id": quest_id,
+                        "new_status": status,
+                        "title": title,
+                        "summary": summary,
+                    },
+                ))
+        return True
 
     # ------------------------------------------------------------------
     # Handler: publish_bulletin
@@ -121,7 +158,7 @@ class QuestManagerSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -132,7 +169,7 @@ class QuestManagerSubSystem:
             )
         )
         if not result.executed:
-            return False
+            return "; ".join(result.errors) if result.errors else "command_failed"
         metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
         board_id = coerce_non_empty_string(metadata.get("board_id"))
         area_id = coerce_non_empty_string(metadata.get("area_id"))
@@ -140,7 +177,7 @@ class QuestManagerSubSystem:
         quest_id = coerce_non_empty_string(metadata.get("quest_id"))
         notify_resident_npcs = bool(metadata.get("notify_resident_npcs", True))
         if board_id is None or area_id is None:
-            return False
+            return "missing_board_or_area_id"
         if notify_resident_npcs:
             for npc_id in self._resident_npcs_for_board(
                 context=context,
@@ -177,7 +214,7 @@ class QuestManagerSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -187,7 +224,9 @@ class QuestManagerSubSystem:
                 source="narrative_planner",
             )
         )
-        return result.executed
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
 
     # ------------------------------------------------------------------
     # Handler: update_quest
@@ -199,7 +238,7 @@ class QuestManagerSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -210,7 +249,7 @@ class QuestManagerSubSystem:
             )
         )
         if not result.executed:
-            return False
+            return "; ".join(result.errors) if result.errors else "command_failed"
         if self._sse_collector is not None:
             from app.game_core.orchestration.models import SSEEvent
 

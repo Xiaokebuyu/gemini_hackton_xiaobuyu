@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.game_core.state.base import StateSlice
 from app.game_core.state.delta import StateChange
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -253,17 +256,27 @@ class QuestSlice(StateSlice):
         remove: bool,
     ) -> None:
         if not path_parts:
-            raise ValueError("nested quest change requires path parts")
+            logger.warning("_apply_nested_dynamic_change: nested quest change requires path parts, skipping")
+            return
         key = path_parts[0]
         is_leaf = len(path_parts) == 1
 
         if isinstance(container, list):
             try:
                 index = int(key)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"invalid list index in quest path: {key}") from exc
+            except (TypeError, ValueError):
+                logger.warning(
+                    "_apply_nested_dynamic_change: invalid list index in quest path: %r, skipping",
+                    key,
+                )
+                return
             if not (0 <= index < len(container)):
-                raise ValueError(f"quest list index out of range: {index}")
+                logger.warning(
+                    "_apply_nested_dynamic_change: quest list index out of range: %d (len=%d), skipping",
+                    index,
+                    len(container),
+                )
+                return
             if is_leaf:
                 if remove:
                     container.pop(index)
@@ -279,7 +292,11 @@ class QuestSlice(StateSlice):
             return
 
         if not isinstance(container, dict):
-            raise ValueError(f"quest nested container must be dict/list, got {type(container)!r}")
+            logger.warning(
+                "_apply_nested_dynamic_change: quest nested container must be dict/list, got %r, skipping",
+                type(container),
+            )
+            return
 
         if is_leaf:
             if remove:

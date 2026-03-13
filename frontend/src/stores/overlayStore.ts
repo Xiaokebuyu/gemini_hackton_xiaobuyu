@@ -11,6 +11,7 @@ export type OverlayType =
   | 'shop'
   | 'item_detail'
   | 'board'
+  | 'donation'
   | 'chat_invite'
   | 'party'
 

@@ -137,6 +137,8 @@ export interface CharacterPanelData {
   stats: Record<string, number>
   proficiency_bonus: number
   gold: number
+  asi_available?: boolean
+  asi_points_remaining?: number
   class_features: Array<string | { name: string; description?: string }>
   equipment: Record<string, unknown>
   [k: string]: unknown
@@ -169,7 +171,6 @@ export interface MapPanelData {
 }
 
 export interface QuestPanelData {
-  milestone_states: Record<string, unknown>
   dynamic_quests: Record<string, unknown>
   chapter_completion: Record<string, number>
 }

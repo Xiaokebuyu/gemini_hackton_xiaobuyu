@@ -1,0 +1,20 @@
+{
+  "flags": {
+    "directive_trigger_cooldown_guild_girl": 14,
+    "directive_trigger_cooldown_guild_quartermaster": 15,
+    "narrative.first_time_guild_entry_witnessed_by_silver_rank": true,
+    "narrative_escalation_level": 2,
+    "reunited_with_cow_girl_day_1": true,
+    "talked_to_guild_girl": true,
+    "visited_area_cow_girl_farm": true,
+    "visited_area_frontier_town": true,
+    "visited_location_cow_girl_farm__farm_field": true,
+    "visited_location_cow_girl_farm__main_house": true,
+    "visited_location_frontier_town__adventurer_guild": true,
+    "visited_room_cow_girl_farm__farm_field__pasture": true,
+    "visited_room_cow_girl_farm__main_house__farm_kitchen": true,
+    "visited_room_cow_girl_farm__main_house__living_room": true,
+    "visited_room_frontier_town__adventurer_guild__guild_counter": true,
+    "visited_room_frontier_town__adventurer_guild__guild_hall": true
+  }
+}

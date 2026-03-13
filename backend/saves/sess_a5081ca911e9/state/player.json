@@ -1,0 +1,84 @@
+{
+  "ac": 20,
+  "active_effects": [],
+  "asi_available": false,
+  "asi_points_remaining": 0,
+  "character_class": "fighter",
+  "character_id": "pc_d2ef2dcb0c62",
+  "character_name": "笑不语",
+  "class_features": [
+    "versatility",
+    "fighting_style",
+    "second_wind",
+    "guild_membership"
+  ],
+  "class_resources": {},
+  "concentration": null,
+  "current_area": "frontier_town",
+  "current_location": "adventurer_guild",
+  "current_room": "guild_hall",
+  "equipment": {
+    "ammo": null,
+    "amulet": null,
+    "belt": null,
+    "boots": null,
+    "chest": {
+      "item_id": "dirty_chain_mail"
+    },
+    "cloak": null,
+    "gloves": null,
+    "head": null,
+    "main_hand": {
+      "item_id": "cheap_shortsword"
+    },
+    "off_hand": {
+      "item_id": "round_shield"
+    },
+    "ranged": null,
+    "ring_l": null,
+    "ring_r": null
+  },
+  "gold": 115,
+  "guild_rank": "porcelain",
+  "guild_reputation": 0,
+  "hp": 10,
+  "inventory": [
+    {
+      "count": 1,
+      "item_id": "cheap_shortsword",
+      "tags": []
+    },
+    {
+      "count": 1,
+      "item_id": "round_shield",
+      "tags": []
+    },
+    {
+      "count": 1,
+      "item_id": "dirty_chain_mail",
+      "tags": []
+    },
+    {
+      "count": 2,
+      "item_id": "healing_potion",
+      "tags": []
+    }
+  ],
+  "known_spells": [],
+  "level": 1,
+  "max_hp": 10,
+  "prepared_spells": [],
+  "proficiency_bonus": 2,
+  "save_proficiencies": [],
+  "spell_slots": {},
+  "stats": {
+    "cha": 15,
+    "con": 11,
+    "dex": 14,
+    "int": 16,
+    "str": 13,
+    "wis": 9
+  },
+  "subclass": "None",
+  "xp": 200
+}

@@ -121,46 +121,48 @@ class TestContextWindow:
 
 
 # ------------------------------------------------------------------
-# TestPopOldestForGraphize
+# TestCollectForGraphize — replaces removed pop_oldest_for_graphize
 # ------------------------------------------------------------------
 
 
-class TestPopOldestForGraphize:
-    def test_pop_removes_oldest_messages(self) -> None:
+class TestCollectForGraphize:
+    def test_collect_returns_ungraphized_messages(self) -> None:
+        """collect_for_graphize returns all un-graphized messages."""
         cw = ContextWindow(actor_id="npc_01")
-        for i in range(9):
+        for i in range(5):
             cw.add_message(_msg(content=str(i), tokens=10))
-        popped = cw.pop_oldest_for_graphize(fraction=1 / 3)
-        assert len(popped) == 3
-        assert popped[0].content == "0"
-        assert popped[1].content == "1"
-        assert popped[2].content == "2"
-        assert len(cw.messages) == 6
+        collected = cw.collect_for_graphize()
+        assert len(collected) == 5
+        assert collected[0].content == "0"
+        assert collected[4].content == "4"
 
-    def test_pop_recomputes_current_tokens(self) -> None:
-        cw = ContextWindow(actor_id="npc_01")
-        for _ in range(6):
-            cw.add_message(_msg(tokens=10))   # total = 60
-        cw.pop_oldest_for_graphize(fraction=1 / 2)  # remove 3 → 30 left
-        assert cw.current_tokens == 30
-
-    def test_pop_marks_is_graphized(self) -> None:
+    def test_collect_does_not_remove_messages(self) -> None:
+        """collect_for_graphize marks messages but keeps them in the window."""
         cw = ContextWindow(actor_id="npc_01")
         for _ in range(6):
             cw.add_message(_msg(tokens=10))
-        popped = cw.pop_oldest_for_graphize(fraction=0.5)
-        assert all(m.is_graphized for m in popped)
-        assert all(not m.is_graphized for m in cw.messages)
+        cw.collect_for_graphize()
+        assert len(cw.messages) == 6
+        assert cw.current_tokens == 60
 
-    def test_pop_empty_window_returns_empty(self) -> None:
+    def test_collect_marks_is_graphized(self) -> None:
+        """Messages returned by collect_for_graphize are marked is_graphized=True."""
         cw = ContextWindow(actor_id="npc_01")
-        assert cw.pop_oldest_for_graphize() == []
+        for _ in range(4):
+            cw.add_message(_msg(tokens=10))
+        collected = cw.collect_for_graphize()
+        assert all(m.is_graphized for m in collected)
+        assert all(m.is_graphized for m in cw.messages)
+
+    def test_collect_empty_window_returns_empty(self) -> None:
+        cw = ContextWindow(actor_id="npc_01")
+        assert cw.collect_for_graphize() == []
         assert cw.current_tokens == 0
 
-    def test_pop_at_least_one_message(self) -> None:
-        """Even with tiny fraction, at least one message is popped."""
+    def test_collect_skips_already_graphized(self) -> None:
+        """Second call to collect_for_graphize returns empty (all already marked)."""
         cw = ContextWindow(actor_id="npc_01")
         cw.add_message(_msg(tokens=10))
-        popped = cw.pop_oldest_for_graphize(fraction=0.001)
-        assert len(popped) == 1
-        assert len(cw.messages) == 0
+        cw.collect_for_graphize()  # first call marks everything
+        second = cw.collect_for_graphize()
+        assert second == []

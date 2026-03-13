@@ -45,7 +45,7 @@ class DynamicSubAreaManager:
             ),
             "discovery_dc": self._coerce_int(spec.get("discovery_dc"), default=0),
             "hostile_config": spec.get("hostile_config"),
-            "interactables": list(self._normalize_sequence(spec.get("interactables", []))),
+            "interactables": list(self._normalize_interactables(spec.get("interactables", []))),
             "resident_npcs": list(self._normalize_sequence(spec.get("resident_npcs", []))),
             "linked_quest_id": self._coerce_optional_string(spec.get("linked_quest_id")),
             "linked_milestone": self._coerce_optional_string(spec.get("linked_milestone")),
@@ -71,7 +71,7 @@ class DynamicSubAreaManager:
 
     def _max_permanent(self, area_id: str) -> int:
         del area_id
-        return 3
+        return 8
 
     @staticmethod
     def _coerce_non_empty_string(value: Any, *, default: str | None = "") -> str:
@@ -101,3 +101,26 @@ class DynamicSubAreaManager:
         if not isinstance(value, (list, tuple, set)):
             return []
         return [str(item).strip() for item in value if str(item).strip()]
+
+    @classmethod
+    def _normalize_interactables(cls, value: Any) -> list[Any]:
+        """Normalize interactables list, preserving dict objects.
+
+        Unlike _normalize_sequence (which stringifies everything), this method
+        preserves dict elements so that downstream handlers can access fields
+        like id/name/description/type/tags/checks. Plain string entries are
+        kept as-is for backward compatibility.
+        """
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        result: list[Any] = []
+        for item in value:
+            if isinstance(item, dict):
+                # Keep the dict as-is (interactable object with id/name/etc.)
+                if item:
+                    result.append(item)
+            else:
+                text = str(item).strip()
+                if text:
+                    result.append(text)
+        return result

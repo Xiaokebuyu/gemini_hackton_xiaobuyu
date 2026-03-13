@@ -276,3 +276,106 @@ def test_collect_planner_events_supports_windowed_replay_rounds() -> None:
     ]
     assert all(event.round_index == 1 for event in events)
     assert all(event.emitter.startswith("planner_replay") for event in events)
+
+
+def test_collect_planner_events_emits_room_events_from_action_log() -> None:
+    context = _make_context(
+        action_log=[{"type": "enter_room", "params": {"room_id": "study"}, "executed": True}],
+    )
+    context.state.player.current_location = "tavern"
+    context.state.player.current_room = "study"
+
+    events = collect_planner_events(context, current_tick=context.state.time.absolute_tick())
+
+    assert [event.kind for event in events] == [
+        "room_entered",
+        "scene_changed",
+        "location_sparse",
+        "area_sparse",
+        "tick_settlement",
+    ]
+    assert events[0].payload["room_id"] == "study"
+    assert events[1].payload["room_id"] == "study"
+
+
+def test_collect_planner_events_emits_room_left_from_change_log() -> None:
+    context = _make_context(
+        change_log=[StateChange("player", "set", "current_room", None)],
+    )
+    context.state.player.current_location = "tavern"
+    context.state.player.current_room = None
+
+    events = collect_planner_events(context, current_tick=context.state.time.absolute_tick())
+
+    assert [event.kind for event in events] == [
+        "room_left",
+        "scene_changed",
+        "area_sparse",
+        "tick_settlement",
+    ]
+    assert events[0].payload["room_id"] is None
+
+
+def test_collect_planner_events_emits_location_sparse_on_sub_location_entry() -> None:
+    context = _make_context(
+        action_log=[{"type": "enter_sub_location", "params": {"location_id": "inn"}, "executed": True}],
+    )
+    context.state.player.current_location = "inn"
+
+    events = collect_planner_events(context, current_tick=context.state.time.absolute_tick())
+
+    assert [event.kind for event in events] == [
+        "sub_location_entered",
+        "scene_changed",
+        "location_sparse",
+        "area_sparse",
+        "tick_settlement",
+    ]
+    sparse = next(event for event in events if event.kind == "location_sparse")
+    assert sparse.payload["location_id"] == "inn"
+    assert sparse.payload["merged_interactable_count"] == 0
+    assert sparse.payload["remaining_overlay_slots"] == 4
+
+
+def test_collect_planner_events_emits_clue_events_from_action_log() -> None:
+    context = _make_context(
+        action_log=[
+            {
+                "type": "investigate_clue",
+                "params": {"interactable_id": "blood_trail_clue"},
+                "clue_id": "blood_trail",
+                "topic": "missing_person_case",
+                "linked_quest_id": "dq_missing_girl",
+                "linked_milestone": "ms_find_first_lead",
+                "option_ids": ["examine", "follow"],
+                "executed": True,
+            },
+            {
+                "type": "resolve_clue_option",
+                "params": {"interactable_id": "blood_trail_clue", "option_id": "follow"},
+                "clue_id": "blood_trail",
+                "topic": "missing_person_case",
+                "linked_quest_id": "dq_missing_girl",
+                "linked_milestone": "ms_find_first_lead",
+                "effect_types": ["unlock_sub_location", "advance_quest"],
+                "passed": True,
+                "executed": True,
+            },
+        ],
+    )
+
+    events = collect_planner_events(context, current_tick=context.state.time.absolute_tick())
+
+    assert [event.kind for event in events] == [
+        "clue_investigated",
+        "clue_resolved",
+        "area_sparse",
+        "tick_settlement",
+    ]
+    investigated = events[0]
+    resolved = events[1]
+    assert investigated.payload["clue_id"] == "blood_trail"
+    assert investigated.payload["option_ids"] == ["examine", "follow"]
+    assert resolved.payload["option_id"] == "follow"
+    assert resolved.payload["effect_types"] == ["unlock_sub_location", "advance_quest"]
+    assert resolved.payload["passed"] is True

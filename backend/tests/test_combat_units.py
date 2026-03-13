@@ -7,7 +7,9 @@ from typing import Any
 
 import pytest
 
+from app.game_core.content import WorldInstance
 from app.game_core.content.registries.characters import CharacterTemplate, NpcAttack
+from app.game_core.content.registries.items import ItemRegistry
 from app.game_core.content.registries.monsters import MonsterAttack, MonsterTemplate
 from app.game_core.rules.combat_units import (
     assign_positions,
@@ -17,6 +19,7 @@ from app.game_core.rules.combat_units import (
     build_monster_unit,
     build_player_unit,
     build_turn_order,
+    compute_attack_ability_mod,
     resolve_surprise,
     roll_initiative,
 )
@@ -174,6 +177,140 @@ class TestBuildPlayerUnit:
         assert atk["damage_dice"] == "1d8"
         assert atk["damage_type"] == "slashing"
         assert "MELEE" in atk["tags"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — registry-backed weapon loading tests
+# ---------------------------------------------------------------------------
+
+def _make_world_with_items(items_data: dict) -> WorldInstance:
+    """Build a WorldInstance with just an ItemRegistry for weapon tests."""
+    world = WorldInstance("test_world")
+    registry = ItemRegistry()
+    registry.load(items_data)
+    world.register(registry)
+    return world
+
+
+def _make_equipment_with_item_id(item_id: str) -> dict[str, Any]:
+    """Build an equipment dict with only item_id set (mimics real equip behavior)."""
+    equipment = {slot: None for slot in [
+        "head", "chest", "gloves", "boots", "cloak", "amulet",
+        "ring_l", "ring_r", "main_hand", "off_hand", "ranged", "ammo", "belt",
+    ]}
+    equipment["main_hand"] = {"item_id": item_id}
+    return equipment
+
+
+class TestBuildPlayerUnitRegistry:
+    """Phase 1: weapon data loaded from ItemRegistry, not inline equipment fields."""
+
+    def test_weapon_damage_dice_from_registry(self) -> None:
+        """Equipment slot has only item_id; damage_dice comes from ItemRegistry."""
+        world = _make_world_with_items({
+            "shortsword": {
+                "id": "shortsword",
+                "name": "Short Sword",
+                "damage_dice": "1d6",
+                "damage_type": "piercing",
+                "range": 1,
+            },
+        })
+        state = _make_player_state(equipment=_make_equipment_with_item_id("shortsword"))
+        unit = build_player_unit(state, world)
+
+        atk = unit["attacks"][0]
+        assert atk["damage_dice"] == "1d6"
+        assert atk["damage_type"] == "piercing"
+        assert atk["name"] == "Short Sword"
+        # hit_bonus starts at 0 (Phase 2 adds ability_mod + prof on top)
+        assert atk["hit_bonus"] == 0
+
+    def test_finesse_tag_propagated(self) -> None:
+        """FINESSE property in weapon_data.properties → FINESSE tag in attack."""
+        world = _make_world_with_items({
+            "rapier": {
+                "id": "rapier",
+                "name": "Rapier",
+                "damage_dice": "1d8",
+                "damage_type": "piercing",
+                "range": 1,
+                "properties": ["finesse"],
+            },
+        })
+        state = _make_player_state(equipment=_make_equipment_with_item_id("rapier"))
+        unit = build_player_unit(state, world)
+
+        atk = unit["attacks"][0]
+        assert "FINESSE" in atk["tags"]
+        assert "MELEE" in atk["tags"]
+
+    def test_ranged_weapon_gets_ranged_tag(self) -> None:
+        """Weapon with range > 2 gets RANGED tag and drops MELEE."""
+        world = _make_world_with_items({
+            "shortbow": {
+                "id": "shortbow",
+                "name": "Short Bow",
+                "damage_dice": "1d6",
+                "damage_type": "piercing",
+                "range": 5,
+            },
+        })
+        state = _make_player_state(equipment=_make_equipment_with_item_id("shortbow"))
+        unit = build_player_unit(state, world)
+
+        atk = unit["attacks"][0]
+        assert "RANGED" in atk["tags"]
+        assert "MELEE" not in atk["tags"]
+
+    def test_world_none_fallback_to_slot_fields(self) -> None:
+        """world=None falls back to reading weapon stats from equipment slot dict."""
+        equipment = _make_equipment_with_item_id("longsword")
+        equipment["main_hand"] = {
+            "item_id": "longsword",
+            "name": "Longsword",
+            "hit_bonus": 2,
+            "damage_dice": "1d8",
+            "damage_type": "slashing",
+            "range": 1,
+            "tags": ["MELEE"],
+        }
+        state = _make_player_state(equipment=equipment)
+        unit = build_player_unit(state, world=None)
+
+        atk = unit["attacks"][0]
+        assert atk["damage_dice"] == "1d8"
+        assert atk["hit_bonus"] == 2
+        assert atk["name"] == "Longsword"
+
+    def test_item_not_in_registry_fallback_to_slot_fields(self) -> None:
+        """Item not in registry falls back to slot dict fields."""
+        world = _make_world_with_items({})  # empty registry
+        equipment = _make_equipment_with_item_id("mystery_sword")
+        equipment["main_hand"] = {
+            "item_id": "mystery_sword",
+            "name": "Mystery Sword",
+            "damage_dice": "2d6",
+            "damage_type": "slashing",
+            "range": 1,
+            "tags": [],
+        }
+        state = _make_player_state(equipment=equipment)
+        unit = build_player_unit(state, world)
+
+        atk = unit["attacks"][0]
+        assert atk["damage_dice"] == "2d6"
+        assert atk["name"] == "Mystery Sword"
+
+    def test_unarmed_when_no_main_hand(self) -> None:
+        """No main_hand → unarmed attack regardless of world."""
+        world = _make_world_with_items({})
+        state = _make_player_state()  # equipment has no main_hand
+        unit = build_player_unit(state, world)
+
+        atk = unit["attacks"][0]
+        assert atk["name"] == "Unarmed Strike"
+        assert "UNARMED" in atk["tags"]
 
 
 # ---------------------------------------------------------------------------
@@ -544,3 +681,52 @@ class TestAssignPositionsFromSpawns:
         assert allies[1]["position"] == [1, 2]
         assert enemies[0]["position"] == [6, 3]
         assert enemies[1]["position"] == [7, 3]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: compute_attack_ability_mod tests
+# ---------------------------------------------------------------------------
+
+class TestComputeAttackAbilityMod:
+    """Unit tests for compute_attack_ability_mod()."""
+
+    def test_melee_uses_str(self) -> None:
+        """Default (no special tags) → STR modifier."""
+        stats = {"str": 16, "dex": 12}  # STR mod = +3, DEX mod = +1
+        result = compute_attack_ability_mod(stats, ["MELEE"])
+        assert result == 3
+
+    def test_ranged_uses_dex(self) -> None:
+        """RANGED tag → DEX modifier."""
+        stats = {"str": 16, "dex": 14}  # STR mod = +3, DEX mod = +2
+        result = compute_attack_ability_mod(stats, ["RANGED"])
+        assert result == 2
+
+    def test_finesse_uses_max(self) -> None:
+        """FINESSE tag → max(STR mod, DEX mod)."""
+        # DEX higher: str=10(+0), dex=16(+3)
+        result_dex = compute_attack_ability_mod({"str": 10, "dex": 16}, ["FINESSE"])
+        assert result_dex == 3
+        # STR higher: str=16(+3), dex=10(+0)
+        result_str = compute_attack_ability_mod({"str": 16, "dex": 10}, ["FINESSE"])
+        assert result_str == 3
+        # Equal: str=14(+2), dex=14(+2)
+        result_eq = compute_attack_ability_mod({"str": 14, "dex": 14}, ["FINESSE"])
+        assert result_eq == 2
+
+    def test_negative_ability_mod(self) -> None:
+        """Weak character (STR 8) → negative modifier (-1)."""
+        stats = {"str": 8, "dex": 10}
+        result = compute_attack_ability_mod(stats, ["MELEE"])
+        assert result == -1
+
+    def test_no_tags_defaults_to_str(self) -> None:
+        """Empty tag list → STR modifier (default melee)."""
+        stats = {"str": 14, "dex": 12}
+        result = compute_attack_ability_mod(stats, [])
+        assert result == 2
+
+    def test_missing_stats_default_to_10(self) -> None:
+        """Missing stat keys default to 10 (modifier 0)."""
+        result = compute_attack_ability_mod({}, ["MELEE"])
+        assert result == 0

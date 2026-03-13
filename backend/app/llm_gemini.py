@@ -139,7 +139,23 @@ class GeminiLlmAdapter:
         tool_calls: list[dict[str, Any]] = []
         raw_model_parts: list[dict[str, Any]] = []
 
+        # Guard against empty/None candidates (safety filter, overload, timeout)
+        if not response.candidates:
+            return LlmResponse(
+                text="",
+                finish_reason="error",
+                metadata={
+                    "provider": "gemini",
+                    "profile": self._profile_name,
+                    "model": self._model,
+                    "error": "empty_candidates",
+                },
+            )
+
         for candidate in response.candidates:
+            # Inner guard: skip candidates with no content parts
+            if not candidate.content or not candidate.content.parts:
+                continue
             for part in candidate.content.parts:
                 raw_part: dict[str, Any] = {}
                 # Preserve thought_signature for Gemini 3 multi-turn context integrity

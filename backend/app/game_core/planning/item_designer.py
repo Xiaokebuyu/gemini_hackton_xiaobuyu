@@ -107,13 +107,13 @@ class ItemDesignerSubSystem:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         if kind == "design_reward":
             return self._apply_design_reward(payload, context, current_tick=current_tick)
         if kind == "curate_shop":
             return self._apply_curate_shop(payload, context, current_tick=current_tick)
         logger.debug("ItemDesignerSubSystem: unsupported directive %r", kind)
-        return False
+        return "unsupported_kind"
 
     # ------------------------------------------------------------------
     # design_reward
@@ -125,7 +125,7 @@ class ItemDesignerSubSystem:
         context: "SettlementContext",
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -136,8 +136,30 @@ class ItemDesignerSubSystem:
             )
         )
         if not result.executed:
-            logger.debug("design_reward rejected: %s", result.errors)
-        return result.executed
+            reason = "; ".join(result.errors) if result.errors else "command_failed"
+            logger.debug("design_reward rejected: %s", reason)
+            return reason
+
+        # C-6: W6-3 — emit SSE event on successful design_reward
+        if self._sse_collector is not None:
+            from app.game_core.orchestration.models import SSEEvent
+
+            reward_items = payload.get("reward_items", [])
+            item_ids = [
+                r.get("item_id")
+                for r in reward_items
+                if isinstance(r, Mapping) and r.get("item_id")
+            ]
+            self._sse_collector.append(
+                SSEEvent(
+                    event_type="reward_designed",
+                    payload={
+                        "quest_id": payload.get("linked_quest_id") or payload.get("quest_id"),
+                        "items": item_ids,
+                    },
+                )
+            )
+        return True
 
     @classmethod
     def _normalize_reward_items(cls, raw_items: Any) -> list[dict[str, Any]]:
@@ -189,7 +211,7 @@ class ItemDesignerSubSystem:
         context: "SettlementContext",
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -200,8 +222,9 @@ class ItemDesignerSubSystem:
             )
         )
         if not result.executed:
-            logger.debug("curate_shop rejected: %s", result.errors)
-            return False
+            reason = "; ".join(result.errors) if result.errors else "command_failed"
+            logger.debug("curate_shop rejected: %s", reason)
+            return reason
 
         if self._sse_collector is not None:
             from app.game_core.orchestration.models import SSEEvent

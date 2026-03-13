@@ -25,6 +25,24 @@ export interface SubLocation {
   source?: string
 }
 
+export interface Room {
+  id: string
+  name: string
+  discoverable: boolean
+  discovered: boolean
+}
+
+export interface PrimaryAction {
+  action_type: string
+  params?: Record<string, unknown>
+}
+
+export interface DonationTarget {
+  targetKind: 'npc' | 'interactable'
+  targetId: string
+  sourceName: string
+}
+
 export interface Interactable {
   id: string
   name: string
@@ -33,6 +51,8 @@ export interface Interactable {
   container_status: string | null
   trapped_hint: boolean
   tags?: string[]
+  interaction_kind?: 'board' | 'donation' | 'container' | 'generic'
+  primary_action?: PrimaryAction | null
 }
 
 export interface Exit {
@@ -44,11 +64,15 @@ export interface Exit {
 
 export interface LocationOverview {
   area_id: string
+  area_name?: string           // 区域显示名（后端补充）
   location_id: string | null
+  location_name?: string       // 当前子地点显示名（后端补充）
   present_npcs: PresentNpc[]
   sub_locations: SubLocation[]
   interactables: Interactable[]
   exits: Exit[]
+  rooms: Room[]
+  current_room: string | null
 }
 
 export type GameMode = 'explore' | 'dialogue' | 'private_chat' | 'combat' | 'encounter'
@@ -80,6 +104,7 @@ export interface GameOption {
   icon?: string
   action: () => void
   disabled?: boolean
+  category?: 'talk' | 'room' | 'location' | 'action' | 'gear' | 'leave'
 }
 
 export interface PortraitSlot {
@@ -87,4 +112,14 @@ export interface PortraitSlot {
   characterId: string
   isActive: boolean
   isCompanion?: boolean
+}
+
+// Visual novel mode message — separate from DialogueEntry to avoid polluting exploration log
+export interface VnMessage {
+  id: string
+  type: 'npc' | 'gm' | 'gm_comment' | 'teammate' | 'player'
+  speaker?: string        // character_id
+  speakerName?: string    // display name
+  content: string
+  tone?: string
 }

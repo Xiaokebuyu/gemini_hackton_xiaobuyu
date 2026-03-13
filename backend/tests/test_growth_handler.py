@@ -70,6 +70,7 @@ def _make_state(
     subclass: str | None = None,
     class_features: list[str] | None = None,
     stats: dict[str, int] | None = None,
+    asi_points_remaining: int = 0,
 ) -> StateContainer:
     state = StateContainer()
     player = PlayerSlice()
@@ -84,6 +85,7 @@ def _make_state(
             "proficiency_bonus": 2,
             "subclass": subclass,
             "class_features": class_features or ["Second Wind"],
+            "asi_points_remaining": asi_points_remaining,
             "stats": stats
             or {
                 "str": 12,
@@ -204,6 +206,7 @@ class TestGrowthHandler:
         assert state.player.max_hp == 19
         assert state.player.hp == 19
         assert "Action Surge" in state.player.class_features
+        assert state.player.asi_points_remaining == 0
 
     def test_level_up_rejects_target_above_available_level(self) -> None:
         result = _make_engine().execute(
@@ -215,8 +218,25 @@ class TestGrowthHandler:
         assert result.executed is False
         assert result.errors == ["target level exceeds available level: 3 > 2"]
 
-    def test_apply_asi_updates_stat_at_valid_level(self) -> None:
-        state = _make_state(level=4)
+    def test_level_up_grants_asi_points_when_crossing_asi_level(self) -> None:
+        state = _make_state(level=3, xp=3000)
+        result = _make_engine().execute(
+            Command(type="level_up"),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is True
+        assert result.metadata["to_level"] == 4
+        assert result.metadata["gained_asi_points"] == 2
+        assert result.metadata["asi_points_remaining"] == 2
+        assert result.metadata["asi_available"] is True
+        _apply(result, state)
+        assert state.player.asi_points_remaining == 2
+        assert state.player.asi_available is True
+
+    def test_apply_asi_updates_stat_and_spends_points(self) -> None:
+        state = _make_state(level=5, asi_points_remaining=2)
         result = _make_engine().execute(
             Command(type="apply_asi", params={"stat": "str", "bonus": 2}),
             state,
@@ -226,10 +246,34 @@ class TestGrowthHandler:
         assert result.executed is True
         assert result.metadata["from_value"] == 12
         assert result.metadata["to_value"] == 14
+        assert result.metadata["asi_points_remaining"] == 0
         _apply(result, state)
         assert state.player.stats["str"] == 14
+        assert state.player.asi_points_remaining == 0
 
-    def test_apply_asi_rejects_invalid_level(self) -> None:
+    def test_apply_asi_allows_spending_after_leaving_asi_level(self) -> None:
+        state = _make_state(level=5, asi_points_remaining=2)
+        first = _make_engine().execute(
+            Command(type="apply_asi", params={"stat": "str", "bonus": 1}),
+            state,
+            _make_world(),
+        )
+        assert first.executed is True
+        _apply(first, state)
+        assert state.player.stats["str"] == 13
+        assert state.player.asi_points_remaining == 1
+
+        second = _make_engine().execute(
+            Command(type="apply_asi", params={"stat": "dex", "bonus": 1}),
+            state,
+            _make_world(),
+        )
+        assert second.executed is True
+        _apply(second, state)
+        assert state.player.stats["dex"] == 13
+        assert state.player.asi_points_remaining == 0
+
+    def test_apply_asi_rejects_when_no_points_available(self) -> None:
         result = _make_engine().execute(
             Command(type="apply_asi", params={"stat": "str", "bonus": 1}),
             _make_state(level=3),
@@ -237,7 +281,17 @@ class TestGrowthHandler:
         )
 
         assert result.executed is False
-        assert result.errors == ["ASI can only be applied at levels 4/8/12/16/19"]
+        assert result.errors == ["no ASI points available"]
+
+    def test_apply_asi_rejects_bonus_exceeding_remaining_points(self) -> None:
+        result = _make_engine().execute(
+            Command(type="apply_asi", params={"stat": "str", "bonus": 2}),
+            _make_state(level=5, asi_points_remaining=1),
+            _make_world(),
+        )
+
+        assert result.executed is False
+        assert result.errors == ["bonus exceeds remaining ASI points: 2 > 1"]
 
     def test_choose_subclass_rejects_when_level_too_low(self) -> None:
         result = _make_engine().execute(

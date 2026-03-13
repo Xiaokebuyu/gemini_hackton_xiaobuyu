@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { GameOption, LocationOverview } from '../types/game'
+import { describeInteractableAction } from '../game/sceneActionAdapters'
+import type { GameOption, Interactable, LocationOverview, Room } from '../types/game'
 import type { DialogueOptionItem } from '../types/sse'
 
 interface OptionState {
@@ -18,20 +19,33 @@ interface OptionState {
 export interface OverviewHandlers {
   onTalkToNpc: (npcId: string, npcName: string) => void
   onEnterSubLocation: (locationId: string) => void
-  onInteractWith: (interactableId: string, interactableName: string) => void
-  onBrowseBoard: (boardId: string, boardName: string) => void
+  onInteractWith: (interactable: Interactable) => void
   onMoveTo: (areaId: string) => void
   onLeaveSubLocation: () => void
+  onEnterRoom: (roomId: string) => void
+  onLeaveRoom: () => void
   onRestShort: () => void
   onRestLong: () => void
   onSetCamp: () => void
   onNightWatch: () => void
+  onOpenInventory: () => void
+  onUseItem: (itemId: string) => void
 }
 
 const NPC_ICON: Record<string, string> = {
   main: '👤',
   secondary: '👤',
   passerby: '🧑',
+}
+
+// Icon map for functional dialogue options (2-4 GM Functional Options)
+const FUNCTIONAL_ICON: Record<string, string> = {
+  trade_browse: '🛒',
+  quest_accept: '📋',
+  board_browse: '📜',
+  navigate: '🚶',
+  inspect_item: '🔍',
+  rest: '🛏️',
 }
 
 const SUB_LOCATION_TYPE_ICON: Record<string, string> = {
@@ -94,10 +108,15 @@ export const useOptionStore = create<OptionState>((set) => ({
       .map<GameOption | null>((item) => {
         const label = formatDialogueOptionLabel(item)
         if (!label) return null
+        // Functional options get a type-specific icon so players can identify
+        // them as UI-triggering actions, not just plain dialogue lines
+        const functionalIcon = item.functional?.type
+          ? FUNCTIONAL_ICON[item.functional.type]
+          : undefined
         return {
           id: String(item.id ?? label),
           label,
-          icon: item.icon,
+          icon: functionalIcon ?? item.icon,
           action: () => onSelect(item),
         }
       })
@@ -109,7 +128,7 @@ export const useOptionStore = create<OptionState>((set) => ({
   buildFromOverview: (overview, handlers) => {
     const opts: GameOption[] = []
 
-    // NPC 交互
+    // NPC 交互 → talk
     for (const npc of overview.present_npcs) {
       const isCompanion = npc.is_companion ?? npc.role === 'companion'
       const roleIcon = NPC_ICON[npc.role] ?? '👤'
@@ -118,10 +137,11 @@ export const useOptionStore = create<OptionState>((set) => ({
         label: isCompanion ? `与${npc.name}交谈` : `和${npc.name}说话`,
         icon: isCompanion ? '⚔' : roleIcon,
         action: () => handlers.onTalkToNpc(npc.character_id, npc.name),
+        category: 'talk',
       })
     }
 
-    // 子地点（过滤掉当前所在位置）
+    // 子地点（过滤掉当前所在位置）→ location
     for (const loc of overview.sub_locations) {
       if (!loc.available || loc.id === overview.location_id) continue
       opts.push({
@@ -129,61 +149,111 @@ export const useOptionStore = create<OptionState>((set) => ({
         label: `进入${loc.name}`,
         icon: SUB_LOCATION_TYPE_ICON[loc.type] ?? '🚪',
         action: () => handlers.onEnterSubLocation(loc.id),
+        category: 'location',
       })
     }
 
-    // 可交互物
+    // Room 导航（在 sub_location 内才有 rooms）→ room
+    const rooms: Room[] = overview.rooms ?? []
+    if (overview.location_id && rooms.length > 0) {
+      for (const room of rooms) {
+        if (room.id === overview.current_room) {
+          continue
+        } else if (room.discovered || !room.discoverable) {
+          opts.push({
+            id: `enter-room-${room.id}`,
+            label: `前往${room.name}`,
+            icon: '🚪',
+            action: () => handlers.onEnterRoom(room.id),
+            category: 'room',
+          })
+        } else {
+          opts.push({
+            id: `room-locked-${room.id}`,
+            label: '??? (未发现)',
+            icon: '🔒',
+            action: () => {},
+            disabled: true,
+            category: 'room',
+          })
+        }
+      }
+    }
+
+    // 可交互物 → action
     for (const iact of overview.interactables) {
-      const isBoard = Array.isArray(iact.tags) && iact.tags.includes('quest_source')
+      const actionMeta = describeInteractableAction(iact)
       opts.push({
         id: `interact-${iact.id}`,
-        label: isBoard ? `查看${iact.name}` : iact.name,
-        icon: isBoard ? '📜' : '📋',
-        action: isBoard
-          ? () => handlers.onBrowseBoard(iact.id, iact.name)
-          : () => handlers.onInteractWith(iact.id, iact.name),
+        label: actionMeta.label,
+        icon: actionMeta.icon,
+        action: () => handlers.onInteractWith(iact),
+        category: 'action',
       })
     }
 
-    // 休息 / 扎营动作
+    // 休息 / 扎营动作 + 背包 → gear
     opts.push(
       {
         id: 'rest-short',
         label: '短休',
         icon: '🛏️',
         action: () => handlers.onRestShort(),
+        category: 'gear',
       },
       {
         id: 'rest-long',
         label: '长休',
         icon: '🌙',
         action: () => handlers.onRestLong(),
+        category: 'gear',
       },
       {
         id: 'set-camp',
         label: '扎营',
         icon: '⛺',
         action: () => handlers.onSetCamp(),
+        category: 'gear',
       },
       {
         id: 'night-watch',
         label: '值守',
         icon: '👁️',
         action: () => handlers.onNightWatch(),
+        category: 'gear',
       },
     )
+    opts.push({
+      id: 'open-inventory',
+      label: '打开背包',
+      icon: '🎒',
+      action: () => handlers.onOpenInventory(),
+      category: 'gear',
+    })
 
-    // 如果在子地点内，显示"离开"
+    // 在 room 中：离开房间 → room
+    if (overview.current_room) {
+      opts.push({
+        id: 'leave-room',
+        label: '离开房间',
+        icon: '🚪',
+        action: () => handlers.onLeaveRoom(),
+        category: 'room',
+      })
+    }
+
+    // 如果在子地点内，显示"离开" → leave
     if (overview.location_id) {
       opts.push({
         id: 'leave-sub-location',
         label: '离开，回到外面',
         icon: '🚪',
         action: () => handlers.onLeaveSubLocation(),
+        category: 'leave',
       })
     }
 
-    // 区域出口
+    // 区域出口 → leave
     for (const exit of overview.exits) {
       if (exit.blocked) continue
       opts.push({
@@ -191,6 +261,7 @@ export const useOptionStore = create<OptionState>((set) => ({
         label: `前往${exit.name}`,
         icon: '🚶',
         action: () => handlers.onMoveTo(exit.target_area_id),
+        category: 'leave',
       })
     }
 

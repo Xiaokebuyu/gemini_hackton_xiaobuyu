@@ -32,9 +32,11 @@ function buildPortraits(npcs: PresentNpc[]): PortraitSlot[] {
 }
 
 interface SceneState {
-  backgroundKey: string          // 资源 key，格式 "area_id" 或 "area_id/location_id"
+  backgroundKey: string          // 资源 key，格式 "area_id" 或 "area_id/location_id" 或 "area_id/location_id/room_id"
+  dynamicBackgroundUrl: string | null  // data URL for dynamic sub-location backgrounds (from scene_change SSE)
   currentArea: string
   currentLocation: string | null
+  currentRoom: string | null     // 当前所在 room（三层嵌套）
   presentNpcs: PresentNpc[]
   gameMode: GameMode
   openingInProgress: boolean
@@ -45,6 +47,7 @@ interface SceneState {
   transitionKey: number          // 每次 transitionTo() 自增，触发动画
   lastOverview: LocationOverview | null  // 最近一次 overview 快照（用于退出对话重建选项）
   activeNpcId: string | null             // 当前对话 NPC ID（对话上下文指示器）
+  vnSpeakerId: string | null             // VN 模式当前发言角色 ID（用于立绘高亮）
 
   updateFromOverview: (overview: LocationOverview) => void
   transitionTo: (data: SceneChangeData) => void
@@ -55,12 +58,15 @@ interface SceneState {
   addOpeningPortrait: (characterId: string, position: PortraitSlot['position']) => void
   clearPortraits: () => void
   setActiveNpc: (npcId: string | null) => void
+  setVnSpeaker: (id: string | null) => void
 }
 
 export const useSceneStore = create<SceneState>((set) => ({
   backgroundKey: '',
+  dynamicBackgroundUrl: null,
   currentArea: '',
   currentLocation: null,
+  currentRoom: null,
   presentNpcs: [],
   gameMode: 'explore',
   openingInProgress: false,
@@ -71,16 +77,24 @@ export const useSceneStore = create<SceneState>((set) => ({
   transitionKey: 0,
   lastOverview: null,
   activeNpcId: null,
+  vnSpeakerId: null,
 
   updateFromOverview: (overview) => {
+    const currentRoom = overview.current_room ?? null
     const key = overview.location_id
-      ? `${overview.area_id}/${overview.location_id}`
+      ? currentRoom
+        ? `${overview.area_id}/${overview.location_id}/${currentRoom}`
+        : `${overview.area_id}/${overview.location_id}`
       : overview.area_id
     set((s) => ({
       currentArea: overview.area_id,
       currentLocation: overview.location_id,
+      currentRoom,
       presentNpcs: overview.present_npcs,
       backgroundKey: key,
+      // Keep dynamicBackgroundUrl if it was set by transitionTo for this location;
+      // clear only if we're moving to a non-dynamic location (no dynamic url expected)
+      dynamicBackgroundUrl: s.dynamicBackgroundUrl,
       portraits: s.openingInProgress ? s.portraits : buildPortraits(overview.present_npcs),
       activePortraitId: s.openingInProgress ? s.activePortraitId : null,
       lastOverview: overview,
@@ -93,6 +107,8 @@ export const useSceneStore = create<SceneState>((set) => ({
       currentLocation: data.location_id,
       locationName: data.location_name,
       transitionKey: s.transitionKey + 1,
+      // dynamicBackgroundUrl: use SSE-supplied data URL if present, else clear
+      dynamicBackgroundUrl: data.background_url ?? null,
       // backgroundKey 和 currentArea 在 updateFromOverview 里由 location_overview 更新
     })),
 
@@ -118,4 +134,5 @@ export const useSceneStore = create<SceneState>((set) => ({
 
   clearPortraits: () => set({ portraits: [], activePortraitId: null }),
   setActiveNpc: (npcId) => set({ activeNpcId: npcId }),
+  setVnSpeaker: (id) => set({ vnSpeakerId: id }),
 }))

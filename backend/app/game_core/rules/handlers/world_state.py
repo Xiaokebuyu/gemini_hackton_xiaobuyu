@@ -6,9 +6,12 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from app.game_core.content import WorldInstance
+from app.game_core.location_utils import normalize_condition_mapping, validate_location_params
+from app.game_core.orchestration.presence import resolve_npc_room, room_exists
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import coerce_float, coerce_int, get_non_empty_string
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
+from app.game_core.rules.reward_utils import build_reward_changes, build_reward_summary
 from app.game_core.state import StateChange, StateContainer, StateDelta
 
 
@@ -24,6 +27,10 @@ class WorldStateHandler(StaticCommandHandler):
         "add_knowledge",
         "modify_completion",
         "adjust_danger",
+        "schedule_npc_move",
+        "transition_event_state",
+        "change_relationship_stage",
+        "remove_flag",
     )
 
     _DISPOSITION_DIMENSIONS = frozenset({"approval", "trust", "fear", "romance"})
@@ -74,6 +81,14 @@ class WorldStateHandler(StaticCommandHandler):
             return self._validate_modify_completion(cmd, state, world)
         if cmd.type == "adjust_danger":
             return self._validate_adjust_danger(cmd, state, world)
+        if cmd.type == "schedule_npc_move":
+            return self._validate_schedule_npc_move(cmd, state, world)
+        if cmd.type == "transition_event_state":
+            return self._validate_transition_event_state(cmd, state)
+        if cmd.type == "change_relationship_stage":
+            return self._validate_change_relationship_stage(cmd, state)
+        if cmd.type == "remove_flag":
+            return self._validate_remove_flag_key(cmd, state)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -95,17 +110,25 @@ class WorldStateHandler(StaticCommandHandler):
         if cmd.type == "add_knowledge":
             return self._compute_add_knowledge(cmd)
         if cmd.type == "advance_quest":
-            return self._compute_advance_quest(cmd, state)
+            return self._compute_advance_quest(cmd, state, world)
         if cmd.type == "schedule_event":
             return self._compute_schedule_event(cmd, state)
         if cmd.type == "create_rumor":
             return self._compute_create_rumor(cmd, state)
         if cmd.type == "modify_location":
-            return self._compute_modify_location(cmd)
+            return self._compute_modify_location(cmd, world)
         if cmd.type == "modify_completion":
             return self._compute_modify_completion(cmd)
         if cmd.type == "adjust_danger":
             return self._compute_adjust_danger(cmd)
+        if cmd.type == "schedule_npc_move":
+            return self._compute_schedule_npc_move(cmd, state, world)
+        if cmd.type == "transition_event_state":
+            return self._compute_transition_event_state(cmd)
+        if cmd.type == "change_relationship_stage":
+            return self._compute_change_relationship_stage(cmd)
+        if cmd.type == "remove_flag":
+            return self._compute_remove_flag(cmd)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_set_flag(
@@ -267,6 +290,13 @@ class WorldStateHandler(StaticCommandHandler):
             return ValidationResult(
                 ok=False,
                 reason="tick is only supported for milestone transitions",
+            )
+        if "claim_rewards" in cmd.params and not isinstance(cmd.params.get("claim_rewards"), bool):
+            return ValidationResult(ok=False, reason="claim_rewards must be a boolean")
+        if bool(cmd.params.get("claim_rewards")) and to_state != "completed":
+            return ValidationResult(
+                ok=False,
+                reason="claim_rewards is only supported for dynamic quest completion",
             )
         return ValidationResult(ok=True)
 
@@ -527,6 +557,7 @@ class WorldStateHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         quest_id = str(cmd.params["quest_id"]).strip()
         to_state_raw = str(cmd.params["to_state"]).strip()
@@ -534,7 +565,19 @@ class WorldStateHandler(StaticCommandHandler):
 
         if quest_kind == "dynamic":
             dynamic_quest = state.quests.get_dynamic_quest(quest_id) or {}
+            current_state = str(dynamic_quest.get("status", "available")).strip().lower()
             dynamic_quest["status"] = to_state_raw.lower()
+            claim_rewards = bool(cmd.params.get("claim_rewards"))
+            rewards_already_claimed = bool(dynamic_quest.get("rewards_claimed", False))
+            reward_changes: list[StateChange] = []
+            reward_summary: dict[str, Any] = {}
+            claimed_now = False
+            if claim_rewards and to_state_raw.lower() == "completed" and not rewards_already_claimed:
+                rewards = dynamic_quest.get("rewards", {})
+                dynamic_quest["rewards_claimed"] = True
+                reward_changes = build_reward_changes(state, rewards)
+                reward_summary = build_reward_summary(rewards)
+                claimed_now = True
             return self._success(
                 cmd,
                 StateChange(
@@ -543,11 +586,30 @@ class WorldStateHandler(StaticCommandHandler):
                     path=f"dynamic_quests.{quest_id}",
                     value=dynamic_quest,
                 ),
+                *reward_changes,
+                metadata={
+                    "quest_kind": "dynamic",
+                    "from_state": current_state,
+                    "to_state": to_state_raw.lower(),
+                    "reward_summary": reward_summary,
+                    "rewards_claimed": claimed_now,
+                },
             )
 
+        current_milestone = state.quests.get_milestone(quest_id)
+        current_state = current_milestone.state.upper() if current_milestone is not None else ""
         payload: dict[str, Any] = {"state": to_state_raw.upper()}
         if "tick" in cmd.params:
             payload["tick"] = int(cmd.params["tick"])
+        reward_changes: list[StateChange] = []
+        reward_summary: dict[str, Any] = {}
+        claimed_now = False
+        if current_state != "COMPLETED" and payload["state"] == "COMPLETED":
+            milestone_template = world.quests.get_milestone(quest_id) if world.has_registry("quests") else None
+            rewards = getattr(milestone_template, "rewards", {})
+            reward_changes = build_reward_changes(state, rewards)
+            reward_summary = build_reward_summary(rewards)
+            claimed_now = bool(reward_changes or reward_summary)
         return self._success(
             cmd,
             StateChange(
@@ -556,6 +618,14 @@ class WorldStateHandler(StaticCommandHandler):
                 path=f"milestone_states.{quest_id}",
                 value=payload,
             ),
+            *reward_changes,
+            metadata={
+                "quest_kind": "milestone",
+                "from_state": current_state,
+                "to_state": payload["state"],
+                "reward_summary": reward_summary,
+                "rewards_claimed": claimed_now,
+            },
         )
 
     def _compute_modify_completion(self, cmd: Command) -> ExecuteResult:
@@ -613,7 +683,7 @@ class WorldStateHandler(StaticCommandHandler):
             return {"type": "absolute_tick", "tick": direct_tick}
         raw = params.get("trigger_condition")
         if isinstance(raw, Mapping):
-            return {str(k): v for k, v in raw.items()}
+            return normalize_condition_mapping(raw)
         return {"type": "absolute_tick", "tick": 0}
 
     def _compute_create_rumor(
@@ -650,7 +720,7 @@ class WorldStateHandler(StaticCommandHandler):
             ),
         )
 
-    def _compute_modify_location(self, cmd: Command) -> ExecuteResult:
+    def _compute_modify_location(self, cmd: Command, world: WorldInstance) -> ExecuteResult:
         area_id = str(cmd.params["area_id"]).strip()
         if "key" in cmd.params:
             key = str(cmd.params["key"]).strip()
@@ -665,6 +735,15 @@ class WorldStateHandler(StaticCommandHandler):
             )
 
         location_id = self._get_optional_non_empty_string(cmd.params.get("location_id"))
+
+        # Resolve default room from data source
+        default_room: str | None = None
+        if location_id and world.has_registry("maps"):
+            sub_loc = world.maps.get_sub_location(area_id, location_id)
+            if sub_loc is not None:
+                raw_dr = getattr(sub_loc, "default_room", "")
+                default_room = raw_dr.strip() or None
+
         return self._success(
             cmd,
             StateChange(
@@ -678,6 +757,12 @@ class WorldStateHandler(StaticCommandHandler):
                 operation="set",
                 path="current_location",
                 value=location_id,
+            ),
+            StateChange(
+                slice="player",
+                operation="set",
+                path="current_room",
+                value=default_room,
             ),
         )
 
@@ -694,15 +779,186 @@ class WorldStateHandler(StaticCommandHandler):
             ),
         )
 
-    def _success(self, cmd: Command, *changes: StateChange) -> ExecuteResult:
+    # ------------------------------------------------------------------
+    # schedule_npc_move
+    # ------------------------------------------------------------------
+
+    def _validate_schedule_npc_move(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ValidationResult:
+        if not state.has_slice("areas"):
+            return ValidationResult(ok=False, reason="areas slice required")
+        npc_id = get_non_empty_string(cmd.params, "npc_id")
+        if npc_id is None:
+            return ValidationResult(ok=False, reason="npc_id required")
+        area_id = get_non_empty_string(cmd.params, "area_id")
+        if area_id is None:
+            return ValidationResult(ok=False, reason="area_id required")
+        location_id = get_non_empty_string(cmd.params, "location_id")
+        room_id = get_non_empty_string(cmd.params, "room_id")
+        if room_id is not None and location_id is None:
+            return ValidationResult(ok=False, reason="room_id requires location_id")
+        if (
+            room_id is not None
+            and not room_exists(state, world, area_id, location_id, room_id)
+        ):
+            return ValidationResult(ok=False, reason=f"unknown room_id: {room_id}")
+        return ValidationResult(ok=True)
+
+    def _compute_schedule_npc_move(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ExecuteResult:
+        npc_id = str(cmd.params["npc_id"]).strip()
+        area_id = str(cmd.params["area_id"]).strip()
+        location_id = cmd.params.get("location_id")
+        normalized_location = (
+            str(location_id).strip()
+            if location_id is not None and str(location_id).strip()
+            else None
+        )
+        requested_room_id = get_non_empty_string(cmd.params, "room_id")
+        resolved_room_id = resolve_npc_room(
+            state,
+            world,
+            area_id=area_id,
+            location_id=normalized_location,
+            npc_id=npc_id,
+            requested_room_id=requested_room_id,
+        )
+        source = str(cmd.params.get("source", "schedule")).strip()
+        value: dict[str, Any] = {"area_id": area_id, "source": source}
+        if normalized_location is not None:
+            value["location_id"] = normalized_location
+        if resolved_room_id is not None:
+            value["room_id"] = resolved_room_id
+        return self._success(
+            cmd,
+            StateChange(
+                slice="areas",
+                operation="set",
+                path=f"npc_presence.{npc_id}",
+                value=value,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # transition_event_state
+    # ------------------------------------------------------------------
+
+    def _validate_transition_event_state(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if not state.has_slice("events"):
+            return ValidationResult(ok=False, reason="events slice required")
+        event_id = get_non_empty_string(cmd.params, "event_id")
+        if event_id is None:
+            return ValidationResult(ok=False, reason="event_id required")
+        to_state = get_non_empty_string(cmd.params, "to_state")
+        if to_state is None:
+            return ValidationResult(ok=False, reason="to_state required")
+        return ValidationResult(ok=True)
+
+    def _compute_transition_event_state(self, cmd: Command) -> ExecuteResult:
+        event_id = str(cmd.params["event_id"]).strip()
+        to_state = str(cmd.params["to_state"]).strip()
+        patch = cmd.params.get("patch") or {}
+        return self._success(
+            cmd,
+            StateChange(
+                slice="events",
+                operation="set",
+                path=f"event_state.{event_id}",
+                value={"to_state": to_state, "patch": dict(patch)},
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # change_relationship_stage
+    # ------------------------------------------------------------------
+
+    def _validate_change_relationship_stage(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if not state.has_slice("relations"):
+            return ValidationResult(ok=False, reason="relations slice required")
+        npc_id = get_non_empty_string(cmd.params, "npc_id")
+        if npc_id is None:
+            return ValidationResult(ok=False, reason="npc_id required")
+        stage = get_non_empty_string(cmd.params, "stage")
+        if stage is None:
+            return ValidationResult(ok=False, reason="stage required")
+        return ValidationResult(ok=True)
+
+    def _compute_change_relationship_stage(self, cmd: Command) -> ExecuteResult:
+        npc_id = str(cmd.params["npc_id"]).strip()
+        stage = str(cmd.params["stage"]).strip()
+        return self._success(
+            cmd,
+            StateChange(
+                slice="relations",
+                operation="set",
+                path=f"relationship_stages.{npc_id}",
+                value=stage,
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # remove_flag
+    # ------------------------------------------------------------------
+
+    def _validate_remove_flag_key(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ValidationResult:
+        if not state.has_slice("flags"):
+            return ValidationResult(ok=False, reason="flags slice required")
+        key = get_non_empty_string(cmd.params, "key")
+        if key is None:
+            return ValidationResult(ok=False, reason="key required")
+        return ValidationResult(ok=True)
+
+    def _compute_remove_flag(self, cmd: Command) -> ExecuteResult:
+        key = str(cmd.params["key"]).strip()
+        return self._success(
+            cmd,
+            StateChange(
+                slice="flags",
+                operation="remove",
+                path=f"flags.{key}",
+                value=None,
+            ),
+        )
+
+    def _success(
+        self,
+        cmd: Command,
+        *changes: StateChange,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> ExecuteResult:
+        payload = {
+            "handler": "world_state",
+            "command": cmd.type,
+            **(dict(metadata) if metadata is not None else {}),
+        }
         return ExecuteResult(
             executed=True,
             delta=StateDelta(
                 changes=list(changes),
                 reason=cmd.type,
-                metadata={"handler": "world_state", "command": cmd.type},
+                metadata=payload,
             ),
-            metadata={"handler": "world_state", "command": cmd.type},
+            metadata=payload,
         )
 
     def _enforce_source_policy(self, cmd: Command) -> ValidationResult:
@@ -780,11 +1036,11 @@ class WorldStateHandler(StaticCommandHandler):
             if period is None:
                 return "trigger_condition.period must be a non-empty string"
             return None
-        if condition_type == "location_entered":
-            area_id = cls._get_optional_non_empty_string(raw_condition.get("area_id"))
-            location_id = cls._get_optional_non_empty_string(raw_condition.get("location_id"))
-            if area_id is None and location_id is None:
-                return "trigger_condition.location_entered requires area_id or location_id"
+        if condition_type in {"location_entered", "location_visited"}:
+            normalized_condition = normalize_condition_mapping(raw_condition)
+            _, error = validate_location_params(normalized_condition)
+            if error is not None:
+                return f"trigger_condition.{condition_type} {error}"
             return None
         if condition_type == "flag_set":
             key = cls._get_optional_non_empty_string(raw_condition.get("key"))

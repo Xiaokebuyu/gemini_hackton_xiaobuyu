@@ -17,7 +17,7 @@ _BATTLE_MAPS_JSON = (
     / "data" / "goblin_slayer" / "v2" / "battle_maps.json"
 )
 
-_VALID_TERRAIN_CHARS = frozenset("GFHSWRBM")
+_VALID_TERRAIN_CHARS = frozenset("GFHSWRBMD")
 
 
 def _load_registry() -> BattleMapRegistry:
@@ -34,11 +34,14 @@ def _load_registry() -> BattleMapRegistry:
 class TestBattleMapRegistryLoad:
     def test_load_battle_maps_registry_category_count(self) -> None:
         reg = _load_registry()
-        assert len(reg.list_all()) == 5
+        assert len(reg.list_all()) == 10
 
     def test_load_battle_maps_registry_known_categories(self) -> None:
         reg = _load_registry()
-        for cat in ("cave", "ruins", "plains", "woodland", "hills"):
+        for cat in (
+            "cave", "ruins", "plains", "woodland", "hills",
+            "swamp", "town_street", "temple", "bridge", "camp",
+        ):
             tmpl = reg.get(cat)
             assert tmpl is not None, f"category '{cat}' missing"
             assert isinstance(tmpl, BattleMapTemplate)
@@ -287,3 +290,99 @@ class TestBattleMapRegistryValidation:
     def test_registry_name(self) -> None:
         reg = BattleMapRegistry()
         assert reg.name == "battle_maps"
+
+    def test_shallow_water_char_accepted(self) -> None:
+        """Terrain char 'D' (shallow_water) must be accepted by the registry."""
+        reg = BattleMapRegistry()
+        reg.load({
+            "wetlands": {
+                "variants": [{
+                    "name": "浅水区",
+                    "size": [4, 2],
+                    "terrain": ["GDDG", "GDDG"],
+                    "player_spawn": [[0, 0], [0, 1], [1, 0]],
+                    "enemy_spawn": [[3, 0], [3, 1], [2, 0]],
+                    "tags": ["wetlands", "outdoor"],
+                }]
+            }
+        })
+        issues = reg.validate()
+        assert issues == [], f"shallow_water 'D' should be valid: {issues}"
+
+
+# ---------------------------------------------------------------------------
+# New categories: F-1 five new battle map categories
+# ---------------------------------------------------------------------------
+
+class TestNewMapCategories:
+    """Verify the 5 new map categories (F-1) are correctly loaded."""
+
+    def test_new_categories_all_loaded(self) -> None:
+        reg = _load_registry()
+        for cat in ("swamp", "town_street", "temple", "bridge", "camp"):
+            tmpl = reg.get(cat)
+            assert tmpl is not None, f"new category '{cat}' missing"
+            assert len(tmpl.variants) == 2, f"'{cat}' should have 2 variants"
+
+    def test_new_categories_no_load_issues(self) -> None:
+        reg = _load_registry()
+        assert reg.validate() == []
+
+    def test_select_by_tags_swamp(self) -> None:
+        reg = _load_registry()
+        variant = reg.select_by_tags(["swamp"], rng=random.Random(0))
+        assert variant is not None
+        assert "swamp" in variant.tags
+
+    def test_select_by_tags_temple_indoor(self) -> None:
+        reg = _load_registry()
+        # temple variants are tagged "indoor"
+        variant = reg.select_by_tags(["temple"], rng=random.Random(0))
+        assert variant is not None
+        assert "temple" in variant.tags
+        assert "indoor" in variant.tags
+
+    def test_select_by_tags_bridge(self) -> None:
+        reg = _load_registry()
+        variant = reg.select_by_tags(["bridge"], rng=random.Random(0))
+        assert variant is not None
+        assert "bridge" in variant.tags
+
+    def test_select_by_tags_camp(self) -> None:
+        reg = _load_registry()
+        variant = reg.select_by_tags(["camp"], rng=random.Random(0))
+        assert variant is not None
+        assert "camp" in variant.tags
+
+    def test_select_by_tags_town_street(self) -> None:
+        reg = _load_registry()
+        variant = reg.select_by_tags(["town_street"], rng=random.Random(0))
+        assert variant is not None
+        assert "town_street" in variant.tags
+
+    def test_new_categories_spawn_no_overlap(self) -> None:
+        reg = _load_registry()
+        for cat in ("swamp", "town_street", "temple", "bridge", "camp"):
+            tmpl = reg.get(cat)
+            assert tmpl is not None
+            for var in tmpl.variants:
+                ps = set(var.player_spawn)
+                es = set(var.enemy_spawn)
+                overlap = ps & es
+                assert not overlap, (
+                    f"category '{cat}' variant '{var.name}' "
+                    f"has spawn overlap: {overlap}"
+                )
+
+    def test_new_categories_three_spawns_each(self) -> None:
+        reg = _load_registry()
+        for cat in ("swamp", "town_street", "temple", "bridge", "camp"):
+            tmpl = reg.get(cat)
+            assert tmpl is not None
+            for var in tmpl.variants:
+                assert len(var.player_spawn) == 3, (
+                    f"'{cat}/{var.name}' player_spawn expected 3"
+                )
+                assert len(var.enemy_spawn) == 3, (
+                    f"'{cat}/{var.name}' enemy_spawn expected 3"
+                )

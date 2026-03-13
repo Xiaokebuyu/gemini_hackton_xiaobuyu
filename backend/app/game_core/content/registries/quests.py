@@ -36,6 +36,7 @@ class MilestoneTemplate:
     success_conditions: list[MilestoneCondition] = field(default_factory=list)
     failure_conditions: list[MilestoneCondition] = field(default_factory=list)
     failure_fallback: str | None = None
+    rewards: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -309,6 +310,16 @@ class QuestRegistry(ContentRegistry):
             if failure_fallback_raw and str(failure_fallback_raw).strip()
             else None
         )
+        rewards_raw = raw.get("rewards", {})
+        rewards: dict[str, Any] = {}
+        if rewards_raw is None:
+            rewards = {}
+        elif isinstance(rewards_raw, Mapping):
+            rewards = dict(rewards_raw)
+        else:
+            self._load_issues.append(
+                f"milestone '{item_id}' has invalid rewards"
+            )
 
         return MilestoneTemplate(
             id=item_id,
@@ -327,6 +338,7 @@ class QuestRegistry(ContentRegistry):
             success_conditions=success_conditions,
             failure_conditions=failure_conditions,
             failure_fallback=failure_fallback,
+            rewards=rewards,
         )
 
     def _build_conditions(

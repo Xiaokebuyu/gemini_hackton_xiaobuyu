@@ -10,6 +10,7 @@ from app.game_core.orchestration.hooks import NpcScheduleHook
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import RulesEngine
+from app.game_core.rules.handlers.world_state import WorldStateHandler
 from app.game_core.state import StateContainer
 from app.game_core.state.slices import AreaSlice, PartySlice, SceneSlice, TimeSlice
 
@@ -43,16 +44,37 @@ def _make_world(
                 "forest": {
                     "id": "forest",
                     "sub_locations": {
-                        "camp": {"id": "camp"},
-                        "hut": {"id": "hut"},
+                        "camp": {
+                            "id": "camp",
+                            "default_room": "tent",
+                            "rooms": {
+                                "tent": {"id": "tent"},
+                                "firepit": {"id": "firepit"},
+                            },
+                        },
+                        "hut": {
+                            "id": "hut",
+                            "default_room": "main_room",
+                            "rooms": {
+                                "main_room": {"id": "main_room"},
+                            },
+                        },
                     },
                 },
                 "town": {
                     "id": "town",
-                    "sub_locations": [
-                        {"id": "square"},
-                        {"id": "inn"},
-                    ],
+                    "sub_locations": {
+                        "square": {
+                            "id": "square",
+                            "default_room": "plaza_edge",
+                            "rooms": {"plaza_edge": {"id": "plaza_edge"}},
+                        },
+                        "inn": {
+                            "id": "inn",
+                            "default_room": "common_room",
+                            "rooms": {"common_room": {"id": "common_room"}},
+                        },
+                    },
                 },
                 "wilds": {"id": "wilds"},
             }
@@ -119,7 +141,11 @@ def _make_context(
                         "npc_locations": {
                             "npc_alpha": "camp",
                             "companion_1": "camp",
-                        }
+                        },
+                        "npc_rooms": {
+                            "npc_alpha": "tent",
+                            "companion_1": "tent",
+                        },
                     },
                     "town": {"npc_locations": {}},
                     "wilds": {"npc_locations": {}},
@@ -137,6 +163,14 @@ def _make_context(
     scene_slice.restore({})
     state.register(scene_slice)
 
+    engine = RulesEngine()
+    engine.register(WorldStateHandler())
+
+    def _apply_delta(delta) -> None:
+        if delta is None:
+            return
+        state.apply(delta)
+
     return SettlementContext(
         change_log=[],
         state=state,
@@ -145,8 +179,8 @@ def _make_context(
             include_maps=include_maps,
         ),
         scene_bus=SceneBus(scene_slice),
-        _rules_engine=RulesEngine(),
-        _apply_delta=lambda delta: None,
+        _rules_engine=engine,
+        _apply_delta=_apply_delta,
     )
 
 
@@ -205,8 +239,11 @@ class TestNpcScheduleHook:
         assert result.metadata["provider_metadata"]["branch"] == "schedule"
         assert context.state.areas.find_npc_area("npc_alpha") == "town"
         assert context.state.areas.get_area("town").npc_locations["npc_alpha"] == "square"
+        assert context.state.areas.get_area("town").npc_rooms["npc_alpha"] == "plaza_edge"
+        assert "npc_alpha" not in context.state.areas.get_area("forest").npc_rooms
         assert context.state.areas.find_npc_area("npc_beta") == "town"
         assert context.state.areas.get_area("town").npc_locations["npc_beta"] == "square"
+        assert context.state.areas.get_area("town").npc_rooms["npc_beta"] == "plaza_edge"
         assert result.sse_events[0].event_type == "npc_schedule_updated"
         assert context.scene_bus.snapshot()["entries"] == []
 
@@ -224,9 +261,11 @@ class TestNpcScheduleHook:
         # npc_alpha dawn schedule → forest/camp
         assert context.state.areas.find_npc_area("npc_alpha") == "forest"
         assert context.state.areas.get_area("forest").npc_locations["npc_alpha"] == "camp"
+        assert context.state.areas.get_area("forest").npc_rooms["npc_alpha"] == "tent"
         # npc_beta dawn schedule → town/inn
         assert context.state.areas.find_npc_area("npc_beta") == "town"
         assert context.state.areas.get_area("town").npc_locations["npc_beta"] == "inn"
+        assert context.state.areas.get_area("town").npc_rooms["npc_beta"] == "common_room"
 
     def test_default_provider_is_noop_when_target_area_unavailable(self) -> None:
         context = _make_context(slot=17)
@@ -257,6 +296,7 @@ class TestNpcScheduleHook:
         assert context.state.areas.find_npc_area("npc_alpha") == "town"
         assert "npc_alpha" not in context.state.areas.get_area("forest").npc_locations
         assert context.state.areas.get_area("town").npc_locations["npc_alpha"] == "square"
+        assert context.state.areas.get_area("town").npc_rooms["npc_alpha"] == "plaza_edge"
         assert result.metadata["status"] == "applied"
         assert result.metadata["moved_npc_count"] == 1
         assert result.metadata["updated_area_count"] == 1
@@ -273,6 +313,28 @@ class TestNpcScheduleHook:
         assert result.metadata["moved_npc_count"] == 1
         assert context.state.areas.find_npc_area("npc_alpha") == "forest"
         assert context.state.areas.get_area("forest").npc_locations["npc_alpha"] == "hut"
+        assert context.state.areas.get_area("forest").npc_rooms["npc_alpha"] == "main_room"
+
+    def test_explicit_room_move_updates_room_and_clears_old_room(self) -> None:
+        context = _make_context(slot=17)
+        provider = StaticProvider(
+            {
+                "moves": [
+                    {
+                        "character_id": "npc_alpha",
+                        "area_id": "town",
+                        "location_id": "inn",
+                        "room_id": "common_room",
+                    }
+                ]
+            }
+        )
+
+        result = asyncio.run(NpcScheduleHook(provider=provider).execute(context))
+
+        assert result.metadata["moved_npc_count"] == 1
+        assert "npc_alpha" not in context.state.areas.get_area("forest").npc_rooms
+        assert context.state.areas.get_area("town").npc_rooms["npc_alpha"] == "common_room"
 
     def test_area_is_inferred_from_template_when_npc_not_placed(self) -> None:
         context = _make_context(slot=17)

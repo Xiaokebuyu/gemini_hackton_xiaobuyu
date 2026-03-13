@@ -123,49 +123,49 @@ class ContextWindow:
         self.graphize_counter = 0
         return candidates
 
-    def pop_oldest_for_graphize(self, fraction: float = 1 / 3) -> list[WindowMessage]:
-        """Remove and return the oldest ``fraction`` of messages.
-
-        Deprecated: kept for backward compatibility with InstanceManager eviction.
-        Prefer collect_for_graphize() for the new graphize-counter-driven path.
-
-        Marks each returned message ``is_graphized = True``.
-        """
-        if not self.messages:
-            return []
-        n = max(1, int(len(self.messages) * fraction))
-        to_graphize = self.messages[:n]
-        self.messages = self.messages[n:]
-        self.current_tokens = sum(m.token_count for m in self.messages)
-        for msg in to_graphize:
-            msg.is_graphized = True
-        return to_graphize
-
     # ----------------------------------------------------------------
     # Serialisation
     # ----------------------------------------------------------------
 
-    def export_messages(self) -> list[dict[str, Any]]:
-        """Serialize all messages to a JSON-compatible list."""
-        return [
-            {
-                "role": m.role,
-                "content": m.content,
-                "token_count": m.token_count,
-                "metadata": dict(m.metadata),
-                "is_graphized": m.is_graphized,
-            }
-            for m in self.messages
-        ]
+    def export_messages(self) -> dict[str, Any]:
+        """Serialize the context window to a JSON-compatible dict.
 
-    def import_messages(self, data: list[dict[str, Any]]) -> None:
-        """Restore messages from a previously exported list.
-
-        Replaces the current message list and recalculates current_tokens.
-        graphize_counter is NOT restored — starts fresh after a reload.
+        Returns a dict with keys:
+            - ``messages``: serialized WindowMessage list
+            - ``graphize_counter``: current graphize counter (for persistence)
         """
+        return {
+            "messages": [
+                {
+                    "role": m.role,
+                    "content": m.content,
+                    "token_count": m.token_count,
+                    "metadata": dict(m.metadata),
+                    "is_graphized": m.is_graphized,
+                }
+                for m in self.messages
+            ],
+            "graphize_counter": self.graphize_counter,
+        }
+
+    def import_messages(self, data: dict[str, Any] | list[dict[str, Any]]) -> None:
+        """Restore messages from a previously exported dict or legacy list.
+
+        Accepts both the new dict format (from export_messages) and the
+        legacy list format (plain list of message dicts) for backward compat.
+
+        Restores graphize_counter from the dict format; defaults to 0 for
+        legacy list format.
+        """
+        if isinstance(data, dict):
+            raw_messages = data.get("messages") or []
+            self.graphize_counter = int(data.get("graphize_counter", 0))
+        else:
+            raw_messages = data or []
+            self.graphize_counter = 0
+
         self.messages = []
-        for entry in (data or []):
+        for entry in raw_messages:
             if not isinstance(entry, dict):
                 continue
             role = str(entry.get("role", "user"))
@@ -181,7 +181,6 @@ class ContextWindow:
                 is_graphized=is_graphized,
             ))
         self.current_tokens = sum(m.token_count for m in self.messages)
-        self.graphize_counter = 0
 
     def snapshot(self) -> dict[str, Any]:
         """Return a JSON-serialisable summary snapshot."""

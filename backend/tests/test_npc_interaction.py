@@ -489,7 +489,9 @@ class TestNpcInteractionCoordinator:
         assert result.completed is False
         assert result.error == "agent_failed"
 
-    def test_text_only_npc_response_is_reported_as_invalid_agent_response(self) -> None:
+    def test_text_only_npc_response_is_gracefully_handled(self) -> None:
+        """P29-A1: NPC text without a tool is now gracefully wrapped as synthetic
+        speech instead of triggering invalid_agent_response."""
         coordinator, _ = _build_coordinator([
             _stop_response("I should have used speak."),
         ])
@@ -500,9 +502,10 @@ class TestNpcInteractionCoordinator:
             execute_command=_noop_executor,
         ))
 
-        assert result.completed is False
-        assert result.error == "invalid_agent_response"
-        assert result.error_reason == "text_without_tool"
+        assert result.completed is True
+        assert result.error is None
+        assert result.npc_result is not None
+        assert result.npc_result.metadata.get("finish_reason") == "text_fallback"
 
 
 # ------------------------------------------------------------------
@@ -712,6 +715,31 @@ class TestStaticDialogueOptions:
         assert options[0]["check"]["skill"] == "persuasion"
         assert isinstance(options[0]["check"]["dc"], int)
         assert 5 <= options[0]["check"]["dc"] <= 25
+
+    def test_finalize_dialogue_options_preserves_functional_payload(self) -> None:
+        world = self._world()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+
+        options = _finalize_dialogue_options(
+            world,
+            state,
+            "merchant_tom",
+            [
+                {
+                    "text": "看看补给",
+                    "message": "让我看看你的货物。",
+                    "functional": {
+                        "type": "trade_browse",
+                        "params": {"npc_id": "merchant_tom"},
+                    },
+                }
+            ],
+        )
+
+        assert len(options) == 1
+        assert options[0]["functional"]["type"] == "trade_browse"
+        assert options[0]["functional"]["params"] == {"npc_id": "merchant_tom"}
 
 
 # ------------------------------------------------------------------

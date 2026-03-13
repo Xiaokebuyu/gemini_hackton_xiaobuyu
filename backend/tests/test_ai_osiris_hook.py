@@ -238,6 +238,11 @@ def _make_context(
     )
 
 
+def _non_processing_events(result) -> list:
+    """Return SSE events that are not ai_processing (QF-4 channel events)."""
+    return [e for e in result.sse_events if e.event_type != "ai_processing"]
+
+
 class TestAIOsirisHook:
     def test_should_skip_without_meaningful_changes(self) -> None:
         hook = AIOsirisHook()
@@ -321,7 +326,7 @@ class TestAIOsirisHook:
             "branch": "flags",
             "command_count": 1,
         }
-        assert result.sse_events[0].event_type == "ai_osiris_applied"
+        assert _non_processing_events(result)[0].event_type == "ai_osiris_applied"
         assert context.state.flags.get("quest_started") is True
         assert context.state.flags.get("osiris_ack_quest_started") is True
 
@@ -371,7 +376,7 @@ class TestAIOsirisHook:
             "provider": "default_evaluator",
             "reason": "stable",
         }
-        assert result.sse_events == []
+        assert _non_processing_events(result) == []
 
     def test_default_evaluator_stays_noop_for_player_only_changes(self) -> None:
         context = _make_context(
@@ -394,7 +399,7 @@ class TestAIOsirisHook:
             "provider": "default_evaluator",
             "reason": "stable",
         }
-        assert result.sse_events == []
+        assert _non_processing_events(result) == []
 
     def test_execute_passes_stable_summary_snapshot_and_rules_context(self) -> None:
         evaluator = RecordingEvaluator(
@@ -443,12 +448,13 @@ class TestAIOsirisHook:
         assert snapshot["chapter_completion"] == 0.0
         assert snapshot["active_flags"] == {"quest_started": True}
         assert snapshot["faction_standings"] == {"guild": 3}
-        assert len(snapshot["nearby_npcs"]) == 1
-        assert snapshot["nearby_npcs"][0]["id"] == "npc_guard"
+        # With sub-location filtering active (player at "camp"),
+        # npc_guard has no location_id (None) so it's excluded from nearby
+        assert len(snapshot["nearby_npcs"]) == 0
         assert snapshot["scene_presence"] == {
             "area_id": "forest",
             "location_id": "camp",
-            "present_character_ids": ["player_char", "npc_guard"],
+            "present_character_ids": ["player_char"],
         }
 
         assert rules_context["command_source"] == "ai_osiris"
@@ -497,8 +503,9 @@ class TestAIOsirisHook:
         assert result.metadata["executed_count"] == 1
         assert result.metadata["failed_count"] == 0
         assert result.metadata["decision_reasoning"] == "set a flag"
-        assert result.sse_events[0].event_type == "ai_osiris_applied"
-        assert result.sse_events[0].payload["command_types"] == ["set_flag"]
+        non_proc = _non_processing_events(result)
+        assert non_proc[0].event_type == "ai_osiris_applied"
+        assert non_proc[0].payload["command_types"] == ["set_flag"]
         assert context.scene_bus.snapshot()["entries"] == []
 
     def test_visible_change_false_skips_visible_render(self) -> None:
@@ -679,7 +686,7 @@ class TestAIOsirisHook:
         assert result.metadata["requested_count"] == 1
         assert result.metadata["normalized_count"] == 0
         assert result.metadata["skipped_invalid_count"] == 1
-        assert result.sse_events == []
+        assert _non_processing_events(result) == []
 
     def test_minimal_semantic_validation_rejects_empty_schedule_event(self) -> None:
         evaluator = RecordingEvaluator(
@@ -758,7 +765,7 @@ class TestAIOsirisHook:
         assert result.metadata["truncated_count"] == 2
         assert context.state.flags.get("flag_4") == 4
         assert context.state.flags.get("flag_5") is None
-        assert result.sse_events[0].payload["command_types"] == [
+        assert _non_processing_events(result)[0].payload["command_types"] == [
             "set_flag",
             "set_flag",
             "set_flag",
@@ -821,8 +828,8 @@ class TestAIOsirisHook:
         assert result.metadata["evaluated"] is False
         assert result.metadata["truncated_count"] == 0
         assert result.metadata["allowed_command_enforced"] is True
-        assert result.sse_events[0].event_type == "ai_osiris_error"
-        assert result.sse_events[0].payload["error"] == "llm unavailable"
+        assert _non_processing_events(result)[0].event_type == "ai_osiris_error"
+        assert _non_processing_events(result)[0].payload["error"] == "llm unavailable"
         assert any(
             record.message == "hook failed: ai_osiris"
             and getattr(record, "hook_name", "") == "ai_osiris"
@@ -902,11 +909,13 @@ class TestAIOsirisHook:
 
     def test_nearby_npcs_uses_dynamic_positions(self) -> None:
         evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
+        # Place dynamic NPC at "camp" (same location as player) so sub-location
+        # filtering includes it.
         context = _make_context(
             change_log=[
                 StateChange(slice="flags", operation="set", path="flags.x", value=1)
             ],
-            area_npc_locations={"npc_dynamic": "tavern"},
+            area_npc_locations={"npc_dynamic": "camp"},
         )
 
         asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
@@ -914,16 +923,18 @@ class TestAIOsirisHook:
         nearby = evaluator.calls[0]["snapshot"]["nearby_npcs"]
         assert len(nearby) == 1
         assert nearby[0]["id"] == "npc_dynamic"
-        assert nearby[0]["location_id"] == "tavern"
+        assert nearby[0]["location_id"] == "camp"
 
     def test_nearby_npcs_merges_dynamic_and_static(self) -> None:
         evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
+        # Place npc_guard at "camp" (same sub-location as player) so
+        # sub-location filtering includes it. npc_far is in a different area.
         context = _make_context(
             change_log=[
                 StateChange(slice="flags", operation="set", path="flags.x", value=1)
             ],
             include_characters=True,
-            area_npc_locations={"npc_guard": "watchtower"},
+            area_npc_locations={"npc_guard": "camp"},
         )
 
         asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
@@ -934,16 +945,19 @@ class TestAIOsirisHook:
         assert "npc_far" not in ids  # npc_far is in "city", not "forest"
         # npc_guard comes from dynamic source with location_id
         guard = next(npc for npc in nearby if npc["id"] == "npc_guard")
-        assert guard["location_id"] == "watchtower"
+        assert guard["location_id"] == "camp"
         assert guard["name"] == "Guard"
 
     def test_nearby_npcs_includes_disposition(self) -> None:
         evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
+        # Place npc_guard at "camp" (same sub-location as player) so
+        # sub-location filtering includes it, allowing disposition test.
         context = _make_context(
             change_log=[
                 StateChange(slice="flags", operation="set", path="flags.x", value=1)
             ],
             include_characters=True,
+            area_npc_locations={"npc_guard": "camp"},
         )
         # Set disposition data on the relations slice
         context.state.relations.npc_dispositions["npc_guard"] = {"trust": 40, "respect": 60}
@@ -954,7 +968,8 @@ class TestAIOsirisHook:
         guard = next(npc for npc in nearby if npc["id"] == "npc_guard")
         assert guard["disposition"] == {"trust": 40, "respect": 60}
 
-    def test_nearby_npcs_scene_local_has_priority(self) -> None:
+    def test_nearby_npcs_scene_local_only_when_sublocation_known(self) -> None:
+        """When player has a known sub_location, only NPCs at that sub_location are returned."""
         evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
         context = _make_context(
             change_log=[
@@ -972,13 +987,11 @@ class TestAIOsirisHook:
         asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
 
         nearby = evaluator.calls[0]["snapshot"]["nearby_npcs"]
+        # With sub_location filtering: only npc_guard (at watchtower) is included
+        # npc_far and companion_1 are at plaza — excluded
         assert nearby[0]["id"] == "npc_guard"
         assert nearby[0]["location_id"] == "watchtower"
-        assert [npc["id"] for npc in nearby] == [
-            "npc_guard",
-            "npc_far",
-            "companion_1",
-        ]
+        assert [npc["id"] for npc in nearby] == ["npc_guard"]
 
     def test_summary_actions_populated_from_action_log(self) -> None:
         action_records = [
@@ -1091,7 +1104,7 @@ class TestAIOsirisHook:
         assert result.metadata["quiet_rest_slot"] is True
         assert result.metadata["executed_count"] == 0
         assert result.metadata["requested_count"] == 0
-        assert result.sse_events == []
+        assert _non_processing_events(result) == []
         assert context.scene_bus.snapshot()["entries"] == []
 
     def test_snapshot_player_curated_fields(self) -> None:

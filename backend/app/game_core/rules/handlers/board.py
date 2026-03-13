@@ -5,11 +5,24 @@ from __future__ import annotations
 from typing import Any
 
 from app.game_core.content import WorldInstance
-from app.game_core.content.registries.map_types import InteractableTemplate
+from app.game_core.environment_access import find_current_interactable
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import get_non_empty_string, handler_success
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
+from app.game_core.rules.reward_utils import (
+    build_reward_changes,
+    build_reward_summary,
+)
+from app.game_core.scene_interactables import functional_type
 from app.game_core.state import StateChange, StateContainer
+
+
+def _build_reward_changes(
+    state: StateContainer,
+    rewards: Any,
+) -> list[StateChange]:
+    """Backward-compatible wrapper around the shared reward helper."""
+    return build_reward_changes(state, rewards)
 
 
 class BoardHandler(StaticCommandHandler):
@@ -43,14 +56,16 @@ class BoardHandler(StaticCommandHandler):
         if not location_id:
             return ValidationResult(ok=False, reason="current sub-location required")
 
-        if self._find_sub_location_interactable(
-            world, area_id, str(location_id), board_id
-        ) is None:
-            return ValidationResult(ok=False, reason="board interactable not found")
-
         if cmd.type in {"board_accept_quest", "board_complete_quest", "board_retire_quest"}:
             if get_non_empty_string(cmd.params, "quest_id") is None:
                 return ValidationResult(ok=False, reason="quest_id required")
+
+        board_entry, visible = find_current_interactable(state, world, board_id)
+        if board_entry is None or not visible:
+            return ValidationResult(ok=False, reason="board interactable not found")
+        resolved_function = functional_type(board_entry.functional)
+        if resolved_function not in {None, "board_browse"} and "quest_source" not in board_entry.tags:
+            return ValidationResult(ok=False, reason="board interactable not found")
 
         return ValidationResult(ok=True)
 
@@ -118,6 +133,14 @@ class BoardHandler(StaticCommandHandler):
         if current_status in {"active", "completed"}:
             return ExecuteResult.error(f"quest cannot be accepted in status: {current_status}")
 
+        # Phase 3 (P26-3-2): level wall — reject if player level below quest minimum
+        min_level = int(quest_payload.get("min_level", 1))
+        if min_level > 1 and state.has_slice("player"):
+            if state.player.level < min_level:
+                return ExecuteResult.error(
+                    f"player level {state.player.level} below quest minimum {min_level}"
+                )
+
         updated = dict(quest_payload)
         updated["status"] = "active"
 
@@ -159,13 +182,21 @@ class BoardHandler(StaticCommandHandler):
             return ExecuteResult.error(f"dynamic quest not found: {quest_id}")
 
         current_status = str(quest_payload.get("status", "available")).lower()
-        if current_status != "active":
+        if current_status not in ("ready_to_report", "completed"):
             return ExecuteResult.error(
-                f"quest cannot be completed in status: {current_status}"
+                f"quest not ready to report (current status: {current_status})"
             )
 
         updated = dict(quest_payload)
         updated["status"] = "completed"
+        updated["rewards_claimed"] = True
+
+        # Build reward changes (gold / xp / items via StateDelta)
+        rewards = quest_payload.get("rewards", {})
+        reward_changes = _build_reward_changes(state, rewards)
+
+        # Summarise reward for SSE / metadata consumption
+        reward_summary = build_reward_summary(rewards)
 
         return handler_success(
             "board",
@@ -176,9 +207,14 @@ class BoardHandler(StaticCommandHandler):
                     "modify",
                     f"dynamic_quests.{quest_id}",
                     updated,
-                )
+                ),
+                *reward_changes,
             ],
-            metadata={"board_id": board_id, "quest_id": quest_id},
+            metadata={
+                "board_id": board_id,
+                "quest_id": quest_id,
+                "reward_summary": reward_summary,
+            },
             time_cost=self._TIME_COST,
         )
 
@@ -222,21 +258,6 @@ class BoardHandler(StaticCommandHandler):
             time_cost=self._TIME_COST,
         )
 
-    def _find_sub_location_interactable(
-        self,
-        world: WorldInstance,
-        area_id: str,
-        location_id: str,
-        interactable_id: str,
-    ) -> InteractableTemplate | None:
-        sub_loc = world.maps.get_sub_location(area_id, location_id)
-        if sub_loc is None:
-            return None
-        for interactable in sub_loc.interactables:
-            if interactable.id == interactable_id:
-                return interactable
-        return None
-
     def _get_board_bulletins(
         self,
         state: StateContainer,
@@ -252,6 +273,14 @@ class BoardHandler(StaticCommandHandler):
         entries: list[dict[str, Any]],
         state: StateContainer,
     ) -> list[dict[str, Any]]:
+        # Phase 3 (P26-3-3): read player level once for level_locked computation
+        player_level = 1
+        if state.has_slice("player"):
+            try:
+                player_level = int(state.player.level)
+            except (TypeError, ValueError):
+                player_level = 1
+
         enriched: list[dict[str, Any]] = []
         for entry in entries:
             copy_entry = dict(entry)
@@ -261,8 +290,14 @@ class BoardHandler(StaticCommandHandler):
                 copy_entry["quest_status"] = (
                     quest_payload.get("status", "unknown") if quest_payload else "unknown"
                 )
+                # Expose min_level and level_locked for frontend display
+                min_level = int(quest_payload.get("min_level", 1)) if quest_payload else 1
+                copy_entry["min_level"] = min_level
+                copy_entry["level_locked"] = min_level > 1 and player_level < min_level
             else:
                 copy_entry["quest_status"] = "unknown"
+                copy_entry["min_level"] = 1
+                copy_entry["level_locked"] = False
             enriched.append(copy_entry)
         return enriched
 

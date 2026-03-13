@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.game_core import ManagedSession
+from app.game_core.environment_access import (
+    list_visible_scene_interactables,
+    resolve_room_name,
+    room_display_entries,
+)
 from app.game_core.orchestration.presence import get_area_npc_sources, get_area_npcs, is_colocated
+from app.game_core.orchestration.presence import get_npc_room
+from app.game_core.scene_interactables import build_primary_action, classify_interaction_kind
+
+if TYPE_CHECKING:
+    from app.asset_resolver import AssetResolver
 
 
 def build_location_overview(session: ManagedSession) -> dict[str, Any]:
@@ -17,8 +27,10 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
     player = session.runtime.state.player
     current_area_id = (player.current_area or "").strip()
     current_location_id = (player.current_location or "").strip() or None
+    current_room_id = (getattr(player, "current_room", None) or "").strip() or None
 
-    area_state = session.runtime.state.areas.areas.get(current_area_id)
+    area_slice = getattr(session.runtime.state, "areas", None)
+    area_state = area_slice.areas.get(current_area_id) if area_slice is not None else None
 
     area_template = None
     if session.runtime.world.has_registry("maps"):
@@ -36,8 +48,16 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
     area_npcs = get_area_npcs(session.runtime.state, session.runtime.world, current_area_id)
     npc_sources = get_area_npc_sources(session.runtime.state, current_area_id)
     for npc_id, npc_sub_loc in area_npcs.items():
-        # Filter by current player position
-        if not is_colocated(npc_sub_loc, current_location_id):
+        # Filter by current player position (sub_location + room)
+        npc_room: str | None = None
+        if current_room_id is not None:
+            npc_room = get_npc_room(
+                session.runtime.state,
+                session.runtime.world,
+                current_area_id,
+                npc_id,
+            )
+        if not is_colocated(npc_sub_loc, current_location_id, npc_room, current_room_id):
             continue
 
         npc_template = None
@@ -151,44 +171,57 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
             sub_locations.append(entry)
             seen_sub_location_ids.add(sub_area_id)
 
-    # ── interactables (current sub_location only) ─────────────────────────────
+    # ── interactables (current reachable scene only) ──────────────────────────
 
     interactables: list[dict[str, Any]] = []
-    if current_location_id is not None and area_template is not None:
-        loc_template = area_template.sub_locations.get(current_location_id)
-        if loc_template is not None:
-            interactable_states = (
-                area_state.interactable_states if area_state is not None else {}
+    for entry in list_visible_scene_interactables(session.runtime.state, session.runtime.world):
+        container_status: str | None = None
+        trapped_hint = False
+        if entry.container_data is not None and area_slice is not None:
+            container_state = area_slice.get_container_state(
+                current_area_id,
+                entry.interactable_id,
             )
-            for iact in getattr(loc_template, "interactables", []):
-                iact_id = str(getattr(iact, "id", "")).strip()
-                if not iact_id:
-                    continue
+            if isinstance(container_state, dict):
+                if bool(container_state.get("opened") or container_state.get("looted")):
+                    container_status = "opened"
+                elif str(container_state.get("lock_status", "unlocked")) == "locked":
+                    container_status = "locked"
+                else:
+                    container_status = "closed"
+                trapped_hint = bool(container_state.get("trap_detected", False))
+            else:
+                locked = _container_locked(entry.container_data)
+                container_status = "locked" if locked else "closed"
 
-                requires_check = getattr(iact, "visibility_dc", None) is not None
+        interactables.append({
+            "id": entry.interactable_id,
+            "name": entry.name,
+            "description_hint": entry.description,
+            "requires_check": bool(entry.checks) or entry.visibility_dc is not None,
+            "container_status": container_status,
+            "trapped_hint": trapped_hint,
+            "tags": list(entry.tags),
+            "interaction_kind": classify_interaction_kind(
+                functional=entry.functional,
+                is_container=entry.container_data is not None,
+            ),
+            "primary_action": build_primary_action(
+                entry.interactable_id,
+                functional=entry.functional,
+            ),
+        })
 
-                container_data = getattr(iact, "container_data", None)
-                container_status: str | None = None
-                trapped_hint = False
-                if container_data is not None:
-                    iact_state = interactable_states.get(iact_id, {})
-                    iact_state = iact_state if isinstance(iact_state, dict) else {}
-                    fallback_status = "locked" if container_data.locked else "closed"
-                    container_status = str(
-                        iact_state.get("container_status", fallback_status)
-                    ).strip()
-                    # Only surface trap hint if player has already discovered it
-                    trapped_hint = bool(iact_state.get("trap_discovered", False))
+    # ── rooms (current sub_location's rooms) ──────────────────────────────────
 
-                interactables.append({
-                    "id": iact_id,
-                    "name": str(getattr(iact, "name", iact_id)),
-                    "description_hint": str(getattr(iact, "description", "")),
-                    "requires_check": requires_check,
-                    "container_status": container_status,
-                    "trapped_hint": trapped_hint,
-                    "tags": list(getattr(iact, "tags", [])),
-                })
+    rooms: list[dict[str, Any]] = []
+    if current_location_id is not None:
+        rooms = room_display_entries(
+            session.runtime.state,
+            session.runtime.world,
+            current_area_id,
+            current_location_id,
+        )
 
     # ── exits ─────────────────────────────────────────────────────────────────
 
@@ -210,27 +243,71 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
                 "blocked": bool(connection.blocked),
             })
 
-    return {
+    payload: dict[str, Any] = {
         "area_id": current_area_id,
+        "area_name": area_template.name if area_template else current_area_id,
         "location_id": current_location_id,
+        "current_room": current_room_id,
         "present_npcs": present_npcs,
         "sub_locations": sub_locations,
+        "rooms": rooms,
         "interactables": interactables,
         "exits": exits,
     }
+
+    if current_location_id is not None:
+        loc_tmpl = (
+            area_template.sub_locations.get(current_location_id)
+            if area_template is not None
+            else None
+        )
+        if loc_tmpl is not None:
+            raw_loc_name = getattr(loc_tmpl, "name", "")
+            if raw_loc_name:
+                payload["location_name"] = str(raw_loc_name).strip()
+        else:
+            # dynamic sub-area fallback
+            for raw in (area_state.temporary_sub_areas if area_state is not None else []):
+                if isinstance(raw, dict) and raw.get("id") == current_location_id:
+                    payload["location_name"] = str(
+                        raw.get("label") or raw.get("name") or current_location_id
+                    )
+                    break
+    if current_room_id is not None and current_location_id is not None:
+        payload["room_name"] = resolve_room_name(
+            session.runtime.state,
+            session.runtime.world,
+            current_area_id,
+            current_location_id,
+            current_room_id,
+        )
+
+    return payload
 
 
 def build_scene_change(
     session: ManagedSession,
     transition: str = "fade",
+    asset_resolver: "AssetResolver | None" = None,
 ) -> dict[str, Any]:
-    """Build a scene_change payload for navigation transitions."""
+    """Build a scene_change payload for navigation transitions.
+
+    When ``asset_resolver`` is supplied and the player is entering a dynamic
+    (temporary) sub-location that already has a cached background image, the
+    payload will include a ``background_url`` field containing a data URL.
+    This is a synchronous cache-only check — it never triggers generation.
+    """
     player = session.runtime.state.player
     current_area_id = (player.current_area or "").strip()
     current_location_id = (player.current_location or "").strip() or None
+    current_room_id = (getattr(player, "current_room", None) or "").strip() or None
 
     location_name = current_area_id
-    if current_location_id is not None:
+    is_dynamic_sub_location = False
+
+    if current_location_id is not None and current_room_id is not None:
+        background = f"locations/{current_area_id}/{current_location_id}/{current_room_id}.png"
+    elif current_location_id is not None:
         background = f"locations/{current_area_id}/{current_location_id}.png"
     else:
         background = f"locations/{current_area_id}.png"
@@ -245,7 +322,14 @@ def build_scene_change(
                     raw_name = getattr(loc_template, "name", "")
                     if raw_name:
                         location_name = str(raw_name).strip() or location_name
+                    if current_room_id is not None:
+                        room_template = loc_template.rooms.get(current_room_id)
+                        if room_template is not None:
+                            raw_room_name = getattr(room_template, "name", "")
+                            if raw_room_name:
+                                location_name = str(raw_room_name).strip() or location_name
                 else:
+                    # Not a static sub-location — check dynamic (temporary) sub-areas
                     area_state = session.runtime.state.areas.areas.get(current_area_id)
                     if area_state is not None:
                         for raw_sub_area in area_state.temporary_sub_areas:
@@ -257,13 +341,60 @@ def build_scene_change(
                             raw_name = raw_sub_area.get("name") or raw_sub_area.get("label")
                             if raw_name:
                                 location_name = str(raw_name).strip() or location_name
+                            is_dynamic_sub_location = True
                             break
+    if current_location_id is not None and current_room_id is not None:
+        resolved_room_name = resolve_room_name(
+            session.runtime.state,
+            session.runtime.world,
+            current_area_id,
+            current_location_id,
+            current_room_id,
+        )
+        if resolved_room_name:
+            location_name = resolved_room_name
 
-    return {
+    payload: dict[str, Any] = {
         "location_id": current_location_id,
+        "room_id": current_room_id,
         "location_name": location_name,
         "background": background,
         "transition": transition,
         "ambient_preset": None,
         "ambient_override": None,
     }
+
+    # Attach cached background image URL for dynamic sub-locations
+    if is_dynamic_sub_location and current_location_id is not None and asset_resolver is not None:
+        background_url = _lookup_cached_background(
+            current_location_id, session, asset_resolver
+        )
+        if background_url is not None:
+            payload["background_url"] = background_url
+
+    return payload
+
+
+def _container_locked(container_data: Any) -> bool:
+    if isinstance(container_data, dict):
+        return bool(container_data.get("locked", False))
+    return bool(getattr(container_data, "locked", False))
+
+
+def _lookup_cached_background(
+    sub_area_id: str,
+    session: ManagedSession,
+    resolver: "AssetResolver",
+) -> str | None:
+    """Synchronous cache-only lookup for a dynamic sub-area background.
+
+    Reads the current in-game time period from state and checks the
+    AssetResolver LRU cache.  Returns a data URL on hit, None on miss.
+    """
+    from app.image_prefetch import get_cached_background_url
+
+    time_period = "day"
+    if session.runtime.state.has_slice("time"):
+        time_period = str(session.runtime.state.time.period or "day")
+
+    return get_cached_background_url(sub_area_id, time_period, resolver)

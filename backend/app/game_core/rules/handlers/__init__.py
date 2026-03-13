@@ -3,9 +3,11 @@
 from app.game_core.rules.handlers.companion import CompanionHandler
 from app.game_core.rules.handlers.combat import CombatHandler
 from app.game_core.rules.handlers.board import BoardHandler
+from app.game_core.rules.handlers.clue import ClueHandler
 from app.game_core.rules.handlers.container import ContainerHandler
 from app.game_core.rules.handlers.crime import CrimeHandler
 from app.game_core.rules.handlers.discovery import DiscoveryHandler
+from app.game_core.rules.handlers.donation import DonationHandler
 from app.game_core.rules.handlers.economy import EconomyHandler
 from app.game_core.rules.handlers.encounter import EncounterHandler
 from app.game_core.rules.handlers.growth import GrowthHandler
@@ -31,9 +33,11 @@ __all__ = [
     "CompanionHandler",
     "CombatHandler",
     "BoardHandler",
+    "ClueHandler",
     "ContainerHandler",
     "CrimeHandler",
     "DiscoveryHandler",
+    "DonationHandler",
     "EconomyHandler",
     "EncounterHandler",
     "GrowthHandler",

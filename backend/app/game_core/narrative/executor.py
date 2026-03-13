@@ -158,12 +158,34 @@ class AgenticExecutor:
                                 "finish_reason": "pass_turn",
                             },
                         )
+                    if final_text:
+                        # Graceful degradation: NPC returned plain text without
+                        # calling the speak tool. Wrap it as a synthetic speech
+                        # ToolResult so downstream _extract_visible_reply_text()
+                        # can extract it normally.
+                        synthetic_speech = ToolResult(
+                            ok=True,
+                            message=final_text,
+                            metadata={
+                                "status": "ok",
+                                "event_type": "speech",
+                                "synthetic": True,
+                            },
+                        )
+                        return AgentResult(
+                            text="",
+                            tool_results=all_results + [synthetic_speech],
+                            turns_used=turn + 1,
+                            metadata={
+                                "status": "completed",
+                                "finish_reason": "text_fallback",
+                            },
+                        )
                     return self._protocol_error_result(
                         role=role,
                         turns_used=turn + 1,
-                        reason="text_without_tool" if final_text else "empty_response",
+                        reason="empty_response",
                         tool_results=all_results,
-                        text=final_text,
                     )
                 if role == "teammate":
                     if final_text:

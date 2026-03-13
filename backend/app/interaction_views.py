@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 _INTENT_ORDER = (
     "talk",
     "greet",
+    "donate",
     "browse",
     "buy",
     "sell",
@@ -180,6 +181,8 @@ def build_talk_snapshot_payload(
     available_intents = {"talk", "greet"}
     if npc_id in context.shop_states:
         available_intents.update({"browse", "buy", "sell", "inspect_item"})
+    if "donation" in context.npc_service_ids.get(npc_id, []):
+        available_intents.add("donate")
     if context.dynamic_quest_views:
         available_intents.update({
             "ask_quest", "ask_progress", "ask_location",

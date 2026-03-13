@@ -69,6 +69,7 @@ def _make_context(
     danger_level: float = 1.0,
     slot: int = 18,
     world: WorldInstance | None = None,
+    action_log: list[dict[str, object]] | None = None,
 ) -> SettlementContext:
     world = world or _make_world()
     state = StateContainer()
@@ -129,6 +130,7 @@ def _make_context(
         scene_bus=scene_bus,
         _rules_engine=rules_engine,
         _apply_delta=_apply_delta,
+        action_log=list(action_log or []),
     )
 
 
@@ -164,6 +166,103 @@ class TestEncounterHook:
         assert zero_danger.metadata["status"] == "noop"
         assert zero_danger.metadata["evaluated"] is False
         assert zero_danger.metadata["danger_level"] == 0.0
+
+    def test_move_area_into_auto_sub_location_still_probes(self) -> None:
+        world = _make_world(
+            forest_map={
+                "id": "forest",
+                "default_sub_location": "approach",
+                "sub_locations": {
+                    "approach": {"id": "approach"},
+                },
+                "encounter_slot_capacity": 1,
+                "encounter_table": [
+                    {"id": "forest:ambient", "monster_ids": ["goblin"], "weight": 1.0},
+                ],
+            }
+        )
+        context = _make_context(
+            location_id="approach",
+            world=world,
+            action_log=[{"type": "move_area", "params": {"area_id": "forest"}}],
+            danger_level=0.4,
+        )
+        detector = StaticDetector(
+            {
+                "should_check": True,
+                "command_params": {"force_triggered": False},
+                "metadata": {"mode": "bridge"},
+            }
+        )
+
+        result = asyncio.run(EncounterHook(detector=detector).execute(context))
+
+        assert len(detector.calls) == 1
+        assert result.metadata["status"] == "checked"
+        assert result.metadata["checked"] is True
+        assert result.metadata["detector_metadata"] == {"mode": "bridge"}
+
+    def test_enter_sub_location_does_not_bridge_random_probe(self) -> None:
+        world = _make_world(
+            forest_map={
+                "id": "forest",
+                "default_sub_location": "approach",
+                "sub_locations": {
+                    "approach": {"id": "approach"},
+                },
+                "encounter_slot_capacity": 1,
+                "encounter_table": [
+                    {"id": "forest:ambient", "monster_ids": ["goblin"], "weight": 1.0},
+                ],
+            }
+        )
+        context = _make_context(
+            location_id="approach",
+            world=world,
+            action_log=[{"type": "enter_sub_location", "params": {"location_id": "approach"}}],
+        )
+        detector = StaticDetector(
+            {
+                "should_check": True,
+                "command_params": {"force_triggered": False},
+                "metadata": {"mode": "bridge"},
+            }
+        )
+
+        result = asyncio.run(EncounterHook(detector=detector).execute(context))
+
+        assert detector.calls == []
+        assert result.metadata["status"] == "noop"
+        assert result.metadata["evaluated"] is False
+
+    def test_auto_sub_location_without_move_area_window_still_skips(self) -> None:
+        world = _make_world(
+            forest_map={
+                "id": "forest",
+                "default_sub_location": "approach",
+                "sub_locations": {
+                    "approach": {"id": "approach"},
+                },
+                "encounter_slot_capacity": 1,
+                "encounter_table": [
+                    {"id": "forest:ambient", "monster_ids": ["goblin"], "weight": 1.0},
+                ],
+            }
+        )
+        context = _make_context(location_id="approach", world=world)
+        detector = StaticDetector(
+            {
+                "should_check": True,
+                "command_params": {"force_triggered": False},
+                "metadata": {"mode": "bridge"},
+            }
+        )
+
+        result = asyncio.run(EncounterHook(detector=detector).execute(context))
+
+        assert detector.calls == []
+        assert result.metadata["status"] == "noop"
+        assert result.metadata["evaluated"] is False
 
     def test_default_detector_triggers_in_high_risk_window(self) -> None:
         context = _make_context()
@@ -478,6 +577,31 @@ class TestEncounterHook:
         assert payload["threat_level"] == hostile["threat_level"]
         assert context.scene_bus.snapshot()["entries"] == []
 
+    def test_default_detector_resolves_map_category_from_area_fallback(self) -> None:
+        world = _make_world(
+            forest_map={
+                "id": "forest",
+                "terrain_type": "underground",
+                "tags": ["ruins", "hostile"],
+                "encounter_slot_capacity": 1,
+                "encounter_table": [
+                    {"id": "forest:ruins", "monster_ids": ["goblin"], "weight": 1.0},
+                ],
+            }
+        )
+        context = _make_context(danger_level=1.0, slot=18, world=world)
+
+        result = asyncio.run(EncounterHook().execute(context))
+
+        assert result.metadata["status"] == "triggered"
+        assert result.metadata["encounter_result"]["map_category"] == "ruins"
+        hostile = context.state.areas.get_hostile_state(
+            result.metadata["encounter_result"]["sub_area_id"]
+        )
+        assert hostile is not None
+        assert hostile["map_category"] == "ruins"
+        assert result.sse_events[0].payload["map_category"] == "ruins"
+
     def test_detector_error_returns_sse_without_mutating_state(self) -> None:
         context = _make_context()
 
@@ -497,7 +621,7 @@ class TestEncounterHook:
 
         assert result.metadata["status"] == "command_failed"
         assert result.metadata["checked"] is True
-        assert result.metadata["encounter_result"] == {}
+        assert result.metadata["encounter_result"]["executed"] is False
         assert context.state.areas.get_area("forest").hostile_tracking == {}
         assert context.state.areas.get_area("forest").permanent_hostile_slots["forest"] == {
             "max_slots": 1,

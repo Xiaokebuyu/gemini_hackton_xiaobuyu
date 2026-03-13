@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.game_core.narrative.context import AgentContext
@@ -10,6 +11,8 @@ from app.game_core.narrative.registry import RoleToolRegistry
 from app.game_core.narrative.tools import AgentTool
 from app.game_core.rules.models import Command
 from app.game_core.state.slices.scene import SceneEntry
+
+logger = logging.getLogger(__name__)
 
 _DISPOSITION_DIMENSIONS = frozenset({"approval", "trust", "fear", "romance"})
 
@@ -361,7 +364,11 @@ class RememberTool(_CharacterTool):
 
 
 class OfferQuestTool(_CharacterTool):
-    """Offer a quest to the player."""
+    """Offer a quest to the player. Receptionist NPCs only."""
+
+    @property
+    def applicable_traits(self) -> list[str]:
+        return ["receptionist"]
 
     @property
     def name(self) -> str:
@@ -403,6 +410,20 @@ class OfferQuestTool(_CharacterTool):
                 metadata={"status": "invalid_params"},
             )
 
+        # Validate quest availability via role_data bulletin board (S5-04 constraint guard).
+        # role_data is the canonical truth source injected by _extract_receptionist_data();
+        # direct state.quests access is intentionally removed to respect RoleStateProxy.
+        role_data = context.metadata.get("role_data") if isinstance(context.metadata, dict) else None
+        if role_data is not None and role_data.get("role") == "receptionist":
+            bulletins = role_data.get("bulletins", [])
+            bulletin_ids = {b.get("quest_id") for b in bulletins if isinstance(b, dict)}
+            if quest_id not in bulletin_ids:
+                return ToolResult(
+                    ok=False,
+                    message=f"Quest '{quest_id}' is not available on the bulletin board.",
+                    metadata={"status": "quest_not_available"},
+                )
+
         to_state = params.get("to_state", "AVAILABLE")
         if not isinstance(to_state, str) or not to_state.strip():
             to_state = "AVAILABLE"
@@ -422,6 +443,245 @@ class OfferQuestTool(_CharacterTool):
         return ToolResult(
             ok=True,
             message=f"Quest {quest_id} offered.",
+            commands=[command],
+            metadata={"status": "ok", "quest_id": quest_id},
+        )
+
+
+# ------------------------------------------------------------------
+# NPC: accept_quest
+# ------------------------------------------------------------------
+
+
+class AcceptQuestTool(_CharacterTool):
+    """Accept a quest for the player. Receptionist NPCs only."""
+
+    @property
+    def applicable_traits(self) -> list[str]:
+        return ["receptionist"]
+
+    @property
+    def name(self) -> str:
+        return "accept_quest"
+
+    @property
+    def description(self) -> str:
+        return "Accept a quest on behalf of the player, transitioning it to active."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "quest_id": {
+                    "type": "string",
+                    "description": "The quest to accept.",
+                },
+            },
+            "required": ["quest_id"],
+        }
+
+    @property
+    def allowed_roles(self) -> list[str]:
+        return ["npc"]
+
+    async def execute(
+        self, params: dict[str, Any], context: AgentContext,
+    ) -> ToolResult:
+        character_id = self._get_character_id(context)
+        if not character_id:
+            return self._no_character_id()
+
+        quest_id = self._require_text(params, "quest_id")
+        if not quest_id:
+            return ToolResult(
+                ok=False,
+                message="quest_id is required.",
+                metadata={"status": "invalid_params"},
+            )
+
+        # Validate via role_data (canonical truth source injected by
+        # _extract_receptionist_data). Direct state.quests access is
+        # intentionally avoided to respect RoleStateProxy.
+        role_data = context.metadata.get("role_data") if isinstance(context.metadata, dict) else None
+        if role_data is None or role_data.get("role") != "receptionist":
+            return ToolResult(
+                ok=False,
+                message="accept_quest requires receptionist role_data.",
+                metadata={"status": "missing_role_data"},
+            )
+
+        bulletins = role_data.get("bulletins", [])
+        bulletin_ids = {b.get("quest_id") for b in bulletins if isinstance(b, dict)}
+        active_quest_ids = {
+            q.get("quest_id")
+            for q in role_data.get("active_quests", [])
+            if isinstance(q, dict)
+        }
+
+        if quest_id in active_quest_ids:
+            return ToolResult(
+                ok=False,
+                message=f"Quest '{quest_id}' is already active.",
+                metadata={"status": "quest_already_active"},
+            )
+        if quest_id not in bulletin_ids:
+            return ToolResult(
+                ok=False,
+                message=f"Quest '{quest_id}' is not available on the bulletin board.",
+                metadata={"status": "quest_not_available"},
+            )
+
+        command = Command(
+            type="receptionist_accept_quest",
+            params={"npc_id": character_id, "quest_id": quest_id},
+            source="npc",
+        )
+        result = context.run_command(command)
+        if not result.executed:
+            return ToolResult(
+                ok=False,
+                message=result.errors[0] if result.errors else "command failed",
+                metadata={"status": "command_failed"},
+            )
+        return ToolResult(
+            ok=True,
+            message=f"Quest {quest_id} accepted.",
+            commands=[command],
+            metadata={"status": "ok", "quest_id": quest_id},
+        )
+
+
+# ------------------------------------------------------------------
+# NPC: assign_quest (non-receptionist quest creation)
+# ------------------------------------------------------------------
+
+
+class AssignQuestTool(_CharacterTool):
+    """Create and assign a quest to the player directly (non-receptionist NPCs only)."""
+
+    @property
+    def name(self) -> str:
+        return "assign_quest"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Create a new quest and assign it to the player directly. "
+            "Do NOT use this if you are a receptionist — use offer_quest instead."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "quest_id": {
+                    "type": "string",
+                    "description": "Unique identifier for the quest.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Short display title for the quest.",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Brief description of what the quest entails.",
+                },
+                "objectives": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of objective descriptions.",
+                },
+            },
+            "required": ["quest_id", "title", "summary"],
+        }
+
+    @property
+    def applicable_traits(self) -> list[str]:
+        return []
+
+    @property
+    def allowed_roles(self) -> list[str]:
+        return ["npc"]
+
+    async def execute(
+        self, params: dict[str, Any], context: AgentContext,
+    ) -> ToolResult:
+        character_id = self._get_character_id(context)
+        if not character_id:
+            return self._no_character_id()
+
+        # Receptionist NPCs should use offer_quest instead
+        npc_tags: list[str] = []
+        if isinstance(context.metadata, dict):
+            raw_tags = context.metadata.get("npc_tags", [])
+            if isinstance(raw_tags, list):
+                npc_tags = [str(t) for t in raw_tags]
+        if "receptionist" in npc_tags:
+            return ToolResult(
+                ok=False,
+                message="Receptionist NPCs should use offer_quest to manage bulletin board quests.",
+                metadata={"status": "wrong_tool"},
+            )
+
+        quest_id = self._require_text(params, "quest_id")
+        if not quest_id:
+            return ToolResult(
+                ok=False,
+                message="quest_id is required.",
+                metadata={"status": "invalid_params"},
+            )
+
+        title = self._require_text(params, "title")
+        if not title:
+            return ToolResult(
+                ok=False,
+                message="title is required.",
+                metadata={"status": "invalid_params"},
+            )
+
+        summary = self._require_text(params, "summary")
+        if not summary:
+            return ToolResult(
+                ok=False,
+                message="summary is required.",
+                metadata={"status": "invalid_params"},
+            )
+
+        raw_objectives = params.get("objectives", [])
+        objectives: list[dict[str, Any]] = []
+        if isinstance(raw_objectives, list):
+            objectives = [
+                {"description": str(obj), "completed": False}
+                for obj in raw_objectives
+                if obj and isinstance(obj, str)
+            ]
+
+        command = Command(
+            type="planner_create_quest",
+            source="npc",
+            params={
+                "quest_id": quest_id,
+                "title": title,
+                "summary": summary,
+                "objectives": objectives,
+                "delivery_method": "npc",
+                "metadata": {
+                    "giver_npc": character_id,
+                },
+            },
+        )
+        result = context.run_command(command)
+        if not result.executed:
+            return ToolResult(
+                ok=False,
+                message=result.errors[0] if result.errors else "command failed",
+                metadata={"status": "command_failed"},
+            )
+        return ToolResult(
+            ok=True,
+            message=f"Quest '{title}' assigned to player.",
             commands=[command],
             metadata={"status": "ok", "quest_id": quest_id},
         )
@@ -467,6 +727,9 @@ class OfferTradeTool(_CharacterTool):
             shop_data = dict(
                 context.state.relations.shop_states.get(character_id, {})
             )
+
+        if not shop_data:
+            logger.warning("OfferTradeTool: no shop_state for %s", character_id)
 
         return ToolResult(
             ok=True,
@@ -1147,6 +1410,8 @@ _NPC_TOOLS: list[type[_CharacterTool]] = [
     RememberTool,
     RecallTool,
     OfferQuestTool,
+    AcceptQuestTool,
+    AssignQuestTool,
     OfferTradeTool,
     RefuseTool,
     RevealSecretTool,

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from app.game_core.content import WorldInstance
 from app.game_core.orchestration.scene_bus import SceneBus
-from app.game_core.rules import RulesEngine
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateChange, StateContainer, StateDelta
+
+if TYPE_CHECKING:
+    from app.game_core.rules import RulesEngine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -30,7 +35,13 @@ class SettlementContext:
     def execute_command(self, cmd: Command) -> ExecuteResult:
         result = self._rules_engine.execute(cmd, self.state, self.world)
         if result.executed and result.delta is not None:
-            self._apply_delta(result.delta)
+            try:
+                self._apply_delta(result.delta)
+            except (ValueError, KeyError, TypeError) as exc:
+                logger.warning(
+                    "execute_command: state apply failed for %s: %s", cmd.type, exc
+                )
+                return ExecuteResult.error(f"state_apply_failed: {exc}")
         return result
 
     def record_change(self, change: StateChange) -> None:

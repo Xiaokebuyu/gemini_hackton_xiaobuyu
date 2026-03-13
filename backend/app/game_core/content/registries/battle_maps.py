@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 from app.game_core.content.base import ContentRegistry
 
-_VALID_TERRAIN_CHARS = frozenset("GFHSWRBM")
+_VALID_TERRAIN_CHARS = frozenset("GFHSWRBMD")
 
 
 @dataclass(slots=True, frozen=True)

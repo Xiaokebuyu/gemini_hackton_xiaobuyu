@@ -11,10 +11,9 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any
 
-from app.game_core.orchestration.shared_context import SharedContext
-
 if TYPE_CHECKING:
     from app.game_core.content.world import WorldInstance
+    from app.game_core.orchestration.shared_context import SharedContext
     from app.game_core.state.base import StateContainer
 
 
@@ -25,7 +24,7 @@ class ContextAssembler:
         """Build the engine-facing full context payload."""
         state = shared.state
         world = shared.world
-        current_area, current_location = self._resolve_location(state)
+        current_area, current_location, current_room = self._resolve_location(state)
         area_states = self._get_area_states_snapshot(state)
         current_area_state = self._get_current_area_state(area_states, current_area)
         return {
@@ -40,6 +39,7 @@ class ContextAssembler:
                 world,
                 current_area,
                 current_location,
+                current_room,
                 current_area_state,
             ),
             "l4_dynamic_state": self._build_dynamic_state(state),
@@ -72,12 +72,12 @@ class ContextAssembler:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _resolve_location(state: StateContainer) -> tuple[str, str | None]:
-        """Extract current area and sub-location from PlayerSlice."""
+    def _resolve_location(state: StateContainer) -> tuple[str, str | None, str | None]:
+        """Extract current area, sub-location, and room from PlayerSlice."""
         if not state.has_slice("player"):
-            return "", None
+            return "", None, None
         player = state.player
-        return player.current_area, player.current_location
+        return player.current_area, player.current_location, getattr(player, "current_room", None)
 
     @staticmethod
     def _get_area_states_snapshot(state: StateContainer) -> dict[str, dict[str, Any]]:
@@ -206,6 +206,7 @@ class ContextAssembler:
         world: WorldInstance,
         current_area: str,
         current_location: str | None,
+        current_room: str | None,
         current_area_state: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """L3: sub-location details + current exploration hints."""
@@ -254,7 +255,7 @@ class ContextAssembler:
                     dict(item) for item in raw_sub_areas if isinstance(item, dict)
                 ]
 
-        return {
+        result = {
             "location_id": current_location,
             "template": template,
             "is_dynamic": is_dynamic,
@@ -262,6 +263,9 @@ class ContextAssembler:
             "discovered_items": discovered_items,
             "dynamic_sub_areas": dynamic_sub_areas,
         }
+        if current_room is not None:
+            result["room_id"] = current_room
+        return result
 
     @staticmethod
     def _build_dynamic_state(state: StateContainer) -> dict[str, Any]:

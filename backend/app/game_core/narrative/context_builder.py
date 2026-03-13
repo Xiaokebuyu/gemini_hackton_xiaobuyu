@@ -147,6 +147,19 @@ next actionable player dialogue options.
 - Use `action` only for structured exits or clear non-verbal dialogue actions.
 - Keep every option immediately clickable from the player's perspective.
 
+## Functional option rules
+- The context may include a list of NPC capabilities. Only recommend actions \
+the NPC can actually perform.
+- When an option maps to a concrete game function (trade, quest board, rest, \
+navigation), include a `functional` field: {"type": "<type>", "params": {…}}
+- Valid functional types: trade_browse, quest_accept, board_browse, navigate, \
+inspect_item, rest
+- Do NOT invent functional actions for NPCs who lack those capabilities. \
+A merchant NPC should not get quest_accept; a guild receptionist should not \
+get trade_browse unless the context shows they have it.
+- If another nearby NPC has the needed capability, suggest going to that NPC \
+instead (no functional field needed — just use text/message).
+
 ## Option style
 - Short, concrete, and specific to the current exchange.
 - Avoid repeating what the NPC just said.
@@ -180,6 +193,13 @@ mood, and the first obvious thing the player can do.
 - Use `check` only if the opening beat genuinely calls for an immediate skill check.
 - If an option is clearly directed at a nearby NPC, include `npc_id`.
 - For `talk_first_npc`, you may include a short starter `message`.
+
+## Story context
+If opening_chapter and opening_milestone are provided in context, weave their
+narrative_context and key_elements into your narration naturally. This is the
+story the player is stepping into — ground the scene in it without exposition-dumping.
+The opening_chapter.description gives you the arc; the opening_milestone provides
+the immediate atmosphere and key narrative beats to establish.
 
 ## Style
 - Natural opening, not an exposition dump.
@@ -238,6 +258,30 @@ The player addressed their companions. You can see who answered and who did not.
 
 ## Language
 Match the language of the conversation.\
+"""
+
+GM_CLUE_INVESTIGATION_PROMPT = """\
+You are the Game Master narrator for a clue-investigation beat in a dark-fantasy CRPG.
+
+## Your role right now
+The player just inspected a scene clue. You have the clue text, scene context, and any related quest hooks.
+
+## What to do
+- Always call `comment` once.
+- Give one concise observational push: point toward a plausible interpretation, but do NOT reveal the final answer.
+- Keep some uncertainty alive so the party still has room to think and argue.
+- Do NOT invent a scene transition.
+- Do NOT use `suggest_options`; the runtime already owns the clickable clue choices.
+- Do NOT use `describe_environment` or `pass_turn`.
+- Use `narrate` only if the clue inspection causes a visible, immediate environmental change.
+
+## Style
+- Brief and sharp.
+- Hint at direction, not certainty.
+- Don't restate the clue text verbatim.
+
+## Language
+Match the language of the clue context.\
 """
 
 TEAMMATE_INTERACTION_PROMPT_TEMPLATE = """\
@@ -410,13 +454,13 @@ class AgentContextBuilder:
 
     def build_gm_context(self, *, hints: list[str] | None = None) -> dict[str, Any]:
         """GM: 全知视角，L0-L5 + L7 完整。"""
-        current_area, current_location = self._resolve_location()
+        current_area, current_location, current_room = self._resolve_location()
         area_state = self._get_area_state(current_area)
         return {
             "l0_world_constants": self._build_l0(),
             "l1_chapter_state": self._build_l1_full(),
             "l2_area_environment": self._build_l2(current_area, area_state),
-            "l3_location_details": self._build_l3(current_area, current_location, area_state),
+            "l3_location_details": self._build_l3(current_area, current_location, current_room, area_state),
             "l4_dynamic_state": self._build_l4_gm(),
             "l5_scene_bus": self._build_l5_gm(),
             "l6_memory_recall": None,
@@ -427,16 +471,16 @@ class AgentContextBuilder:
         self, npc_id: str, *, memory_retriever: MemoryRetriever | None = None
     ) -> dict[str, Any]:
         """NPC: 角色视角，L0 + L2-L6，L1 不可见。"""
-        current_area, current_location = self._resolve_location()
+        current_area, current_location, current_room = self._resolve_location()
         area_state = self._get_area_state(current_area)
         return {
             "l0_world_constants": self._build_l0(),
             "l1_chapter_state": None,
             "l2_area_environment": self._build_l2(current_area, area_state),
-            "l3_location_details": self._build_l3(current_area, current_location, area_state),
+            "l3_location_details": self._build_l3(current_area, current_location, current_room, area_state),
             "l4_dynamic_state": self._build_l4_npc(npc_id),
             "l5_scene_bus": self._build_l5_role("npc", npc_id),
-            "l6_memory_recall": {"hits": [], "source": "recall_tool"},
+            "l6_memory_recall": await self._build_l6(npc_id, memory_retriever, "npc"),
             "l7_engine_result": None,
         }
 
@@ -448,9 +492,9 @@ class AgentContextBuilder:
         companion_instance: CompanionInstance | None = None,
     ) -> dict[str, Any]:
         """队友: 队伍视角，L0 + L1(部分) + L2-L6。"""
-        current_area, current_location = self._resolve_location()
+        current_area, current_location, current_room = self._resolve_location()
         area_state = self._get_area_state(current_area)
-        l6: dict[str, Any] = {"hits": [], "source": "recall_tool"}
+        l6 = await self._build_l6(char_id, memory_retriever, "teammate")
         companion_summary = _build_companion_memory_context(companion_instance)
         if companion_summary:
             l6["companion_memory"] = companion_summary
@@ -458,7 +502,7 @@ class AgentContextBuilder:
             "l0_world_constants": self._build_l0(),
             "l1_chapter_state": self._build_l1_teammate(),
             "l2_area_environment": self._build_l2(current_area, area_state),
-            "l3_location_details": self._build_l3(current_area, current_location, area_state),
+            "l3_location_details": self._build_l3(current_area, current_location, current_room, area_state),
             "l4_dynamic_state": self._build_l4_teammate(char_id),
             "l5_scene_bus": self._build_l5_role("teammate", char_id),
             "l6_memory_recall": l6,
@@ -533,6 +577,13 @@ class AgentContextBuilder:
         if isinstance(tags, list):
             role_data = _extract_role_data(tags, npc_id, self._state, self._world)
 
+        # B-5: inject recent story_facts from NarrativePlanSlice if available
+        story_facts: list[dict[str, Any]] = []
+        if self._state.has_slice("narrative_plan"):
+            raw_facts = getattr(self._state.narrative_plan, "story_facts", None)
+            if isinstance(raw_facts, list):
+                story_facts = raw_facts[-5:]  # cap at 5 most recent facts
+
         system_prompt = _build_npc_prompt_text(
             profile,
             disposition=l4.get("disposition", {}),
@@ -544,6 +595,7 @@ class AgentContextBuilder:
             is_private=is_private,
             is_passive=is_passive,
             role_data=role_data,
+            story_facts=story_facts if story_facts else None,
         )
         return NpcFullContext(system_prompt=system_prompt, layers=layers)
 
@@ -610,10 +662,36 @@ class AgentContextBuilder:
         """Return the GM prompt for explicit party-chat commentary fallback."""
         return GM_PARTY_CHAT_PROMPT
 
+    def build_gm_clue_prompt(self) -> str:
+        """Return the GM prompt for clue-investigation commentary."""
+        return GM_CLUE_INVESTIGATION_PROMPT
+
     def build_gm_opening_context(self) -> dict[str, Any]:
         """GM opening context — same 7 layers, with an explicit opening hint."""
         context = self.build_gm_context(hints=["opening_scene"])
         context["l7_engine_result"]["opening"] = True
+        # Inject chapter/milestone narrative so the LLM can ground the opening scene
+        # in the story context rather than producing a generic description (D-P31 Phase 1b).
+        if self._world.has_registry("quests"):
+            target_ms_id: str | None = None
+            if self._state.has_slice("narrative_plan"):
+                target_ms_id = self._state.narrative_plan.current_target_milestone
+            if target_ms_id:
+                ms = self._world.quests.get_milestone(target_ms_id)
+                if ms:
+                    context["l7_engine_result"]["opening_milestone"] = {
+                        "title": ms.title,
+                        "narrative_context": ms.narrative_context,
+                        "key_elements": ms.key_elements,
+                        "involved_npcs": ms.involved_npcs,
+                    }
+                    if ms.chapter_id:
+                        ch = self._world.quests.get_chapter(ms.chapter_id)
+                        if ch:
+                            context["l7_engine_result"]["opening_chapter"] = {
+                                "title": ch.title,
+                                "description": ch.description,
+                            }
         return context
 
     async def build_teammate_interaction_prompt(
@@ -732,11 +810,11 @@ class AgentContextBuilder:
     # Private: location resolution
     # ----------------------------------------------------------------
 
-    def _resolve_location(self) -> tuple[str, str | None]:
+    def _resolve_location(self) -> tuple[str, str | None, str | None]:
         if not self._state.has_slice("player"):
-            return "", None
+            return "", None, None
         player = self._state.player
-        return player.current_area, player.current_location
+        return player.current_area, player.current_location, getattr(player, "current_room", None)
 
     def _resolve_npc_profile(self, npc_id: str) -> Any | None:
         npc_id = npc_id.strip()
@@ -908,6 +986,7 @@ class AgentContextBuilder:
         self,
         area_id: str,
         location_id: str | None,
+        room_id: str | None,
         area_state: dict[str, Any] | None,
     ) -> dict[str, Any]:
         template: dict[str, Any] | None = None
@@ -955,6 +1034,8 @@ class AgentContextBuilder:
             "discovered_items": discovered_items,
             "dynamic_sub_areas": _dynamic_sub_areas,
         }
+        if room_id is not None:
+            result["room_id"] = room_id
         if is_dynamic and isinstance(template, dict):
             result["content_hints"] = template.get("content_hints", "")
             result["interactables"] = list(template.get("interactables", []))
@@ -1118,9 +1199,14 @@ class AgentContextBuilder:
         if retriever is None:
             return {"hits": [], "source": "null"}
         keywords = self._extract_scene_keywords(actor_id, role)
+        current_area = (
+            self._state.player.snapshot().get("current_area", "")
+            if self._state.has_slice("player")
+            else ""
+        )
         context: dict[str, Any] = {
             "world": self._world,
-            "current_area": self._state.player.snapshot().get("current_area", ""),
+            "current_area": current_area,
         }
         return await retriever.retrieve(
             actor_id=actor_id,
@@ -1137,13 +1223,14 @@ class AgentContextBuilder:
         keywords: list[str] = [actor_id]
 
         # Current area and location
-        player_snap = self._state.player.snapshot()
-        area_id = player_snap.get("current_area", "")
-        if area_id:
-            keywords.append(area_id)
-        location = player_snap.get("current_location", "")
-        if location:
-            keywords.append(location)
+        if self._state.has_slice("player"):
+            player_snap = self._state.player.snapshot()
+            area_id = player_snap.get("current_area", "")
+            if area_id:
+                keywords.append(area_id)
+            location = player_snap.get("current_location", "")
+            if location:
+                keywords.append(location)
 
         # Active quest milestones
         if self._state.has_slice("quests"):
@@ -1239,11 +1326,32 @@ def _extract_receptionist_data(state: StateContainer) -> dict[str, Any]:
         if area_id:
             for _board_id, entries in state.areas.get_all_board_bulletins(area_id).items():
                 for entry in entries:
-                    bulletins.append({
-                        "quest_id": entry.get("quest_id", ""),
+                    quest_id = entry.get("quest_id", "")
+                    bulletin: dict[str, Any] = {
+                        "quest_id": quest_id,
                         "title": entry.get("title", ""),
                         "summary": entry.get("summary", ""),
-                    })
+                    }
+                    # Enrich with objectives/rewards from dynamic quest data.
+                    # Skip bulletin entries whose quest has no corresponding
+                    # dynamic_quest — prevents NPC from offering unacceptable quests.
+                    if quest_id and state.has_slice("quests"):
+                        qdata = state.quests.get_dynamic_quest(quest_id)
+                        if not isinstance(qdata, dict):
+                            continue  # skip orphaned bulletin
+                        objectives = qdata.get("objectives")
+                        if isinstance(objectives, list):
+                            bulletin["objectives"] = [
+                                str(obj.get("description", obj) if isinstance(obj, dict) else obj)
+                                for obj in objectives
+                            ]
+                        rewards = qdata.get("rewards")
+                        if isinstance(rewards, dict) and rewards:
+                            bulletin["rewards"] = rewards
+                        difficulty = qdata.get("difficulty")
+                        if difficulty is not None:
+                            bulletin["difficulty"] = difficulty
+                    bulletins.append(bulletin)
 
     active_quests: list[dict[str, str]] = []
     if state.has_slice("quests"):
@@ -1261,19 +1369,38 @@ def _extract_receptionist_data(state: StateContainer) -> dict[str, Any]:
     }
 
 
-def _extract_merchant_data(npc_id: str, state: StateContainer) -> dict[str, Any]:
-    """Extract shop inventory for merchant NPCs."""
+def _extract_merchant_data(
+    npc_id: str,
+    state: StateContainer,
+    world: WorldInstance | None = None,
+) -> dict[str, Any]:
+    """Extract shop inventory for merchant NPCs.
+
+    Enriches each item with name, type, rarity, and description from the
+    ItemRegistry when world is provided.
+    """
     inventory: list[dict[str, Any]] = []
     if state.has_slice("relations"):
         shop = state.relations.get_shop_state(npc_id)
         if isinstance(shop, dict):
             for item in shop.get("current_stock", []):
                 if isinstance(item, dict):
-                    inventory.append({
-                        "item_id": item.get("item_id", ""),
+                    item_id = item.get("item_id", "")
+                    entry: dict[str, Any] = {
+                        "item_id": item_id,
                         "price": item.get("base_price", 0),
                         "stock": item.get("remaining"),  # None = unlimited
-                    })
+                    }
+                    # Enrich with catalog data if world is available
+                    if item_id and world is not None and world.has_registry("items"):
+                        template = world.items.get(item_id)
+                        if template is not None:
+                            entry["name"] = str(getattr(template, "name", item_id) or item_id)
+                            entry["type"] = str(getattr(template, "type", "") or "")
+                            entry["rarity"] = str(getattr(template, "rarity", "") or "")
+                            raw_desc = str(getattr(template, "description", "") or "")
+                            entry["description"] = raw_desc[:50] if raw_desc else ""
+                    inventory.append(entry)
     return {
         "role": "merchant",
         "inventory": inventory,
@@ -1281,6 +1408,19 @@ def _extract_merchant_data(npc_id: str, state: StateContainer) -> dict[str, Any]
 
 
 _GUARD_FLAG_PREFIXES = ("guard_", "travel_", "permit_", "lockdown_")
+
+
+def _danger_label(level: float) -> str:
+    """Map a numeric danger level to a human-readable label."""
+    if level <= 0.5:
+        return "安全"
+    if level <= 1.5:
+        return "低风险"
+    if level <= 3.0:
+        return "中等危险"
+    if level <= 5.0:
+        return "高度危险"
+    return "极度危险"
 
 
 def _resolve_npc_area_and_location(
@@ -1470,11 +1610,13 @@ def _extract_guard_data(
                 "value": value,
             })
 
+    danger_label = _danger_label(float(danger_level)) if danger_level is not None else None
     return {
         "role": "guard",
         "area_id": area_id,
         "location_id": location_id,
         "danger_level": danger_level,
+        "danger_label": danger_label,
         "pending_events": pending_events,
         "access_flags": access_flags,
     }
@@ -1492,7 +1634,7 @@ def _extract_role_data(
     if "receptionist" in tag_set:
         return _extract_receptionist_data(state)
     if "merchant" in tag_set:
-        return _extract_merchant_data(npc_id, state)
+        return _extract_merchant_data(npc_id, state, world)
     if "temple_keeper" in tag_set:
         return _extract_temple_keeper_data(npc_id, state, world)
     if "guard" in tag_set:
@@ -1515,7 +1657,21 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         ]
         if bulletins:
             for b in bulletins:
-                lines.append(f"- 【{b.get('title', '?')}】{b.get('summary', '')}")
+                bulletin_line = f"- 【{b.get('title', '?')}】{b.get('summary', '')}"
+                objectives = b.get("objectives")
+                if isinstance(objectives, list) and objectives:
+                    obj_str = "；".join(str(o) for o in objectives[:3])
+                    bulletin_line += f"（目标：{obj_str}）"
+                rewards = b.get("rewards")
+                if isinstance(rewards, dict) and rewards:
+                    reward_parts = []
+                    if rewards.get("gold"):
+                        reward_parts.append(f"{rewards['gold']}金")
+                    if rewards.get("xp"):
+                        reward_parts.append(f"{rewards['xp']}经验")
+                    if reward_parts:
+                        bulletin_line += f" 奖励:{'/'.join(reward_parts)}"
+                lines.append(bulletin_line)
         else:
             lines.append("- （当前公告板上没有可接取的任务）")
         lines.append("")
@@ -1544,10 +1700,23 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
             for item in inventory:
                 stock = item.get("stock")
                 stock_str = "无限" if stock is None else str(stock)
-                lines.append(
-                    f"- {item.get('item_id', '?')} — "
+                item_name = str(item.get("name", "") or "").strip()
+                item_id = item.get("item_id", "?")
+                display_name = f"{item_name}（{item_id}）" if item_name else item_id
+                item_type = str(item.get("type", "") or "").strip()
+                item_rarity = str(item.get("rarity", "") or "").strip()
+                item_desc = str(item.get("description", "") or "").strip()
+                detail = (
+                    f"- {display_name} — "
                     f"价格:{item.get('price', '?')} 库存:{stock_str}"
                 )
+                if item_type:
+                    detail += f" 类型:{item_type}"
+                if item_rarity:
+                    detail += f" 稀有度:{item_rarity}"
+                if item_desc:
+                    detail += f" 简介:{item_desc}"
+                lines.append(detail)
         else:
             lines.append("- （当前没有库存）")
         lines.append("")
@@ -1616,8 +1785,12 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         danger_level = role_data.get("danger_level")
         lines.append(f"- 驻守区域: {area_id or '（未知）'}")
         lines.append(f"- 当前岗位: {location_id or '（未知）'}")
+        danger_label = role_data.get("danger_label")
         if danger_level is not None:
-            lines.append(f"- 当前危险度: {danger_level}")
+            if danger_label:
+                lines.append(f"- 当前危险度: {danger_level}（{danger_label}）")
+            else:
+                lines.append(f"- 当前危险度: {danger_level}")
         else:
             lines.append("- 当前危险度: （未知）")
         lines.append("")
@@ -1658,6 +1831,7 @@ def _build_npc_prompt_text(
     is_private: bool = False,
     is_passive: bool = False,
     role_data: dict[str, Any] | None = None,
+    story_facts: list[dict[str, Any]] | None = None,
 ) -> str:
     """Format NPC system prompt string from resolved profile + relationship data."""
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
@@ -1754,8 +1928,29 @@ def _build_npc_prompt_text(
                 + "\n".join(f"- {s}" for s in eligible)
             )
 
-    # knowledge_block is no longer pre-injected — NPC uses recall tool to query on demand
+    # knowledge_block: story_facts from NarrativePlanSlice injected as world knowledge (B-5)
     knowledge_block = ""
+    if story_facts:
+        fact_lines = []
+        for fact in story_facts:
+            if isinstance(fact, dict):
+                content = str(fact.get("content") or fact.get("fact") or "").strip()
+                if not content:
+                    # try subject/predicate/object format
+                    subj = str(fact.get("subject", "")).strip()
+                    pred = str(fact.get("predicate", "")).strip()
+                    obj = str(fact.get("object", "")).strip()
+                    if subj and pred:
+                        content = f"{subj} {pred} {obj}".strip()
+                if content:
+                    fact_lines.append(f"- {content}")
+            elif isinstance(fact, str) and fact.strip():
+                fact_lines.append(f"- {fact.strip()}")
+        if fact_lines:
+            knowledge_block = (
+                "\n\n## Relevant world knowledge\n"
+                + "\n".join(fact_lines)
+            )
 
     # Build narrative-planner directive block (P1-B)
     directive_block = ""

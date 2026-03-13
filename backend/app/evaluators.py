@@ -58,6 +58,12 @@ dispositions / flags / events / knowledge.
 - You may NOT modify player HP, gold, inventory, or location directly.
 - Keep consequences proportional — small actions produce small ripples.
 
+## Locality constraints
+- Only characters listed in present_character_ids can directly witness and react to player actions
+- modify_disposition MUST only target NPCs in present_character_ids — actions cannot be "seen" by absent NPCs
+- If a consequence should affect distant NPCs, use create_rumor with appropriate delay, not direct modify_disposition
+- "nearby" means same sub_location, not just same area
+
 ## Tick-specific guidance
 - travel ticks: prefer danger, rumors, delayed events, or encounter preparation.
 - rest ticks: prefer delayed world changes, companion approval shifts, or new pending events.

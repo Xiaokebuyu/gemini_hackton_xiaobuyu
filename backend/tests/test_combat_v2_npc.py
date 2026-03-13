@@ -398,3 +398,33 @@ def test_npc_turn_with_invalid_decision_fallback() -> None:
 
     assert result.executed, f"failed: {result.errors}"
     assert result.metadata["decision_source"] == "rules_ai"
+
+
+def test_npc_turn_metadata_echoes_decision_provider_and_tier() -> None:
+    """combat_npc_turn metadata includes optional decision_provider/decision_tier."""
+    enemy = _unit("goblin_rider", "enemy", [0, 0], personality="aggressive")
+    ally = _unit("player", "ally", [1, 0], source="player", ac=8)
+    payload = _make_v2_payload([enemy, ally], ["goblin_rider", "player"], current_turn_index=0)
+    state = _make_state(payload)
+
+    override_decision = {
+        "move_to": None,
+        "action": "attack",
+        "target_id": "player",
+        "attack_index": 0,
+    }
+    with mock.patch("app.game_core.rules.handlers.combat.random.randint", return_value=15):
+        result = _apply(
+            _make_engine_cmd({
+                "sub_area_id": "room1",
+                "decision": override_decision,
+                "decision_provider": "enemy_llm",
+                "decision_tier": "boss",
+            }),
+            state,
+        )
+
+    assert result.executed, f"failed: {result.errors}"
+    assert result.metadata["decision_source"] == "override"
+    assert result.metadata["decision_provider"] == "enemy_llm"
+    assert result.metadata["decision_tier"] == "boss"

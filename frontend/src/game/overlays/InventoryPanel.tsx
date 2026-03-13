@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useOverlayStore } from '../../stores/overlayStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { getInventory } from '../../lib/api'
-import type { InventoryItem, InventoryPanelData } from '../../types/api'
+import type { InventoryItem, InventoryPanelData, InteractRequest } from '../../types/api'
 
 const SLOT_LABELS: [string, string][] = [
   ['head', '头'],
@@ -20,22 +20,87 @@ const SLOT_LABELS: [string, string][] = [
   ['belt', '腰带'],
 ]
 
+// Map item type → preferred equipment slot
+const ITEM_TYPE_TO_SLOT: Record<string, string> = {
+  weapon: 'main_hand',
+  sword: 'main_hand',
+  axe: 'main_hand',
+  dagger: 'main_hand',
+  staff: 'main_hand',
+  mace: 'main_hand',
+  bow: 'ranged',
+  crossbow: 'ranged',
+  shield: 'off_hand',
+  armor: 'chest',
+  helmet: 'head',
+  gloves: 'gloves',
+  boots: 'boots',
+  cloak: 'cloak',
+  amulet: 'amulet',
+  ring: 'ring_l',
+  belt: 'belt',
+  ammo: 'ammo',
+}
+
+// Slot names that indicate an item is equippable
+const EQUIPPABLE_SLOTS = new Set(SLOT_LABELS.map(([s]) => s))
+
+function autoSlotFor(item: InventoryItem): string | null {
+  const type = String(item.type ?? '').toLowerCase()
+  // If item carries an explicit slot field, use it directly
+  if (item.slot && typeof item.slot === 'string' && EQUIPPABLE_SLOTS.has(item.slot as string)) {
+    return item.slot as string
+  }
+  return ITEM_TYPE_TO_SLOT[type] ?? null
+}
+
+function isEquippable(item: InventoryItem): boolean {
+  return autoSlotFor(item) !== null
+}
+
+function isConsumable(item: InventoryItem): boolean {
+  const type = String(item.type ?? '').toLowerCase()
+  return ['potion', 'scroll', 'food', 'consumable'].includes(type)
+}
+
 function itemName(item: InventoryItem): string {
   return String(item.name ?? item.item_id ?? '?')
 }
 
-export default function InventoryPanel() {
+interface Props {
+  sendInteract?: (req: InteractRequest) => void
+}
+
+export default function InventoryPanel({ sendInteract }: Props) {
   const { close } = useOverlayStore()
   const { worldId, sessionId } = useSessionStore()
   const [data, setData] = useState<InventoryPanelData | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const loadData = () => {
     if (!worldId || !sessionId) return
     getInventory(worldId, sessionId)
       .then(setData)
       .catch((err: Error) => setError(err.message))
+  }
+
+  useEffect(() => {
+    loadData()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doEquip = (item: InventoryItem) => {
+    if (!sendInteract) return
+    const slot = autoSlotFor(item)
+    if (!slot) return
+    close()
+    sendInteract({ intent: 'equip', item_id: item.item_id, target_id: slot })
+  }
+
+  const doUnequip = (slot: string) => {
+    if (!sendInteract) return
+    close()
+    sendInteract({ intent: 'unequip', target_id: slot })
+  }
 
   const isEmpty =
     data &&
@@ -69,11 +134,19 @@ export default function InventoryPanel() {
                 {SLOT_LABELS.map(([slot, label]) => {
                   const item = data.equipment[slot]
                   return (
-                    <div key={slot} className="bg-gray-800 rounded px-2 py-1 flex gap-1.5">
+                    <div key={slot} className="bg-gray-800 rounded px-2 py-1 flex gap-1.5 items-center">
                       <span className="text-gray-500 text-xs flex-shrink-0">[{label}]</span>
-                      <span className="text-gray-300 truncate text-xs">
+                      <span className="text-gray-300 truncate text-xs flex-1">
                         {item ? itemName(item) : '—'}
                       </span>
+                      {item && sendInteract && (
+                        <button
+                          onClick={() => doUnequip(slot)}
+                          className="text-xs text-orange-400 hover:text-orange-300 border border-orange-700/50 rounded px-1.5 py-0.5 flex-shrink-0"
+                        >
+                          卸
+                        </button>
+                      )}
                     </div>
                   )
                 })}
@@ -95,6 +168,22 @@ export default function InventoryPanel() {
                       )}
                       {item.count > 1 && (
                         <span className="text-gray-400 text-xs">x{item.count}</span>
+                      )}
+                      {isConsumable(item) && sendInteract && (
+                        <button
+                          onClick={() => { close(); sendInteract({ intent: 'use_item', item_id: item.item_id }) }}
+                          className="text-xs text-green-400 hover:text-green-300 border border-green-700/50 rounded px-1.5 py-0.5"
+                        >
+                          使用
+                        </button>
+                      )}
+                      {isEquippable(item) && sendInteract && (
+                        <button
+                          onClick={() => doEquip(item)}
+                          className="text-xs text-sky-400 hover:text-sky-300 border border-sky-700/50 rounded px-1.5 py-0.5"
+                        >
+                          装备
+                        </button>
                       )}
                     </div>
                   </div>

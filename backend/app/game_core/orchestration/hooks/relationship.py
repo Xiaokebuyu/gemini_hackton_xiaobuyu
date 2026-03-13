@@ -8,7 +8,6 @@ from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
-from app.game_core.state import StateChange
 
 
 # Ordered positive relationship stages (ascending).
@@ -132,15 +131,13 @@ class RelationshipHook(NoOpSettlementHook):
                 new_stage = _next_negative_stage(old_stage, dispositions)
             if new_stage is None:
                 continue
-            context.state.relations.set_relationship_stage(npc_id, new_stage)
-            context.record_change(
-                StateChange(
-                    slice="relations",
-                    operation="set",
-                    path=f"relationship_stages.{npc_id}",
-                    value=new_stage,
-                )
-            )
+            stage_result = context.execute_command(Command(
+                type="change_relationship_stage",
+                params={"npc_id": npc_id, "stage": new_stage},
+                source="system",
+            ))
+            if not stage_result.executed:
+                continue
             transitions.append(
                 {"npc_id": npc_id, "old_stage": old_stage, "new_stage": new_stage}
             )

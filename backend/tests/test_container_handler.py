@@ -21,6 +21,8 @@ def _make_state(
     hp: int = 12,
     gold: int = 0,
     inventory: list[dict] | None = None,
+    location: str | None = None,
+    room: str | None = None,
 ) -> StateContainer:
     state = StateContainer()
 
@@ -29,6 +31,8 @@ def _make_state(
         {
             "character_id": "pc_1",
             "current_area": "forest",
+            "current_location": location,
+            "current_room": room,
             "hp": hp,
             "max_hp": 12,
             "gold": gold,
@@ -69,6 +73,48 @@ def _make_engine() -> RulesEngine:
     engine = RulesEngine()
     engine.register(ContainerHandler())
     return engine
+
+
+def _make_world_with_static_container() -> WorldInstance:
+    from app.game_core.bootstrap import build_default_world
+
+    return build_default_world(
+        "test_world",
+        world_data={
+            "maps": {
+                "forest": {
+                    "id": "forest",
+                    "name": "Forest",
+                    "sub_locations": {
+                        "camp": {
+                            "id": "camp",
+                            "name": "Camp",
+                            "rooms": {
+                                "tent": {
+                                    "id": "tent",
+                                    "name": "Tent",
+                                    "interactables": [
+                                        {
+                                            "id": "crate",
+                                            "name": "Tent Crate",
+                                            "type": "container",
+                                            "container_data": {
+                                                "locked": False,
+                                                "loot": {
+                                                    "gold": "3",
+                                                    "items": [{"item_id": "gem", "count": 2}],
+                                                },
+                                            },
+                                        }
+                                    ],
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    )
 
 
 def _apply(result, state: StateContainer) -> None:
@@ -275,6 +321,49 @@ class TestContainerHandler:
         assert container_state["remaining_items"] == []
         assert container_state["remaining_gold"] == 0
         assert container_state["looted"] is True
+
+    def test_open_container_lazily_initializes_static_template_loot(self) -> None:
+        state = _make_state(
+            container_state={},
+            location="camp",
+            room="tent",
+        )
+        state.areas.restore({"areas": {"forest": {}}})
+        result = _make_engine().execute(
+            Command(type="open_container", params={"container_id": "crate"}),
+            state,
+            _make_world_with_static_container(),
+        )
+
+        assert result.executed is True
+        assert result.metadata["status"] == "opened"
+        _apply(result, state)
+        container_state = state.areas.get_container_state("forest", "crate")
+        assert container_state is not None
+        assert container_state["opened"] is True
+        assert container_state["loot_initialized"] is True
+        assert container_state["remaining_gold"] == 3
+        assert container_state["remaining_items"] == [{"item_id": "gem", "count": 2, "tags": []}]
+
+    def test_open_container_rejects_other_room_container_state(self) -> None:
+        state = _make_state(
+            container_state={
+                "opened": False,
+                "lock_status": "unlocked",
+                "location_id": "camp",
+                "room_id": "office",
+            },
+            location="camp",
+            room="tent",
+        )
+        result = _make_engine().execute(
+            Command(type="open_container", params={"container_id": "crate"}),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is False
+        assert result.errors == ["container_not_in_current_scene"]
 
 
 class TestInteractObject:

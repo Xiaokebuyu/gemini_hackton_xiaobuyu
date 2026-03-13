@@ -54,6 +54,7 @@ def disposition_to_emotion(approval: int, trust: int) -> str:
 class SceneImageRequest(BaseModel):
     area_id: str
     location_id: str | None = None
+    room_id: str | None = None
 
 
 class PortraitImageRequest(BaseModel):
@@ -74,16 +75,17 @@ async def generate_scene_image(
     session = await _load_session_or_404(world_id, session_id)
     area_id = request.area_id.strip()
     location_id = (request.location_id or "").strip() or None
+    room_id = (request.room_id or "").strip() or None
 
     period = "day"
     if session.runtime.state.has_slice("time"):
         period = str(session.runtime.state.time.period)
 
-    path = scene_cache_path(world_id, area_id, location_id, period)
+    path = scene_cache_path(world_id, area_id, location_id, period, room_id=room_id)
     if path.exists():
         return _success_response(path, "cached")
 
-    prompt = _build_scene_prompt(session, area_id=area_id, location_id=location_id, period=period)
+    prompt = _build_scene_prompt(session, area_id=area_id, location_id=location_id, room_id=room_id, period=period)
     if prompt is None:
         return _fallback_response("unknown scene")
 
@@ -137,8 +139,12 @@ def scene_cache_path(
     area_id: str,
     location_id: str | None,
     period: str,
+    *,
+    room_id: str | None = None,
 ) -> Path:
     loc = location_id or "_main"
+    if room_id:
+        return CACHE_DIR / "scenes" / world_id / area_id / loc / room_id / f"{period}.png"
     return CACHE_DIR / "scenes" / world_id / area_id / loc / f"{period}.png"
 
 
@@ -166,6 +172,7 @@ def _build_scene_prompt(
     *,
     area_id: str,
     location_id: str | None,
+    room_id: str | None = None,
     period: str,
 ) -> str | None:
     if not area_id:
@@ -175,6 +182,8 @@ def _build_scene_prompt(
     area_description = ""
     location_name = ""
     location_description = ""
+    room_name = ""
+    room_description = ""
 
     if session.runtime.world.has_registry("maps"):
         area_template = session.runtime.world.maps.get(area_id)
@@ -188,10 +197,19 @@ def _build_scene_prompt(
                 return None
             location_name = sub_location.name or location_id
             location_description = sub_location.description or ""
+            if room_id is not None:
+                room_template = sub_location.rooms.get(room_id)
+                if room_template is not None:
+                    room_name = room_template.name or room_id
+                    room_description = room_template.description or ""
 
     location_line = ""
     if location_id is not None:
         location_line = f"Focus on the sub-location {location_name}. {location_description} "
+
+    room_line = ""
+    if room_id is not None and room_name:
+        room_line = f"Specific room: {room_name}. {room_description} "
 
     period_hint = _PERIOD_HINTS.get(period, "")
     return (
@@ -202,6 +220,7 @@ def _build_scene_prompt(
         f"Area: {area_name}. "
         f"{area_description} "
         f"{location_line}"
+        f"{room_line}"
         f"{period_hint} "
         "Style: polished anime illustration, detailed fantasy background, "
         "color-rich, immersive, suitable for a JRPG dialogue scene."
@@ -280,7 +299,9 @@ async def _generate_and_save(prompt: str, path: Path) -> bool:
             logger.warning("model returned no image for %s", path.name)
             return False
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_bytes(data)
+        tmp_path.rename(path)
         return True
     except Exception:
         logger.exception("image generation failed: %s", path.name)
@@ -303,9 +324,19 @@ async def _generate_and_save_with_ref(prompt: str, ref_path: Path, out_path: Pat
         logger.exception("image sdk or PIL import failed")
         return False
 
-    client = genai.Client(api_key=api_key)
+    # Validate reference image before use
+    if not ref_path.exists() or ref_path.stat().st_size == 0:
+        logger.warning("reference image missing or empty: %s", ref_path)
+        return False
     try:
         base_img = Image.open(ref_path)
+        base_img.load()
+    except Exception:
+        logger.exception("reference image corrupted: %s", ref_path)
+        return False
+
+    client = genai.Client(api_key=api_key)
+    try:
         async with _GENERATION_SEMAPHORE:
             response = await client.aio.models.generate_content(
                 model=_IMAGE_MODEL,
@@ -317,7 +348,9 @@ async def _generate_and_save_with_ref(prompt: str, ref_path: Path, out_path: Pat
             logger.warning("model returned no image for %s", out_path.name)
             return False
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(data)
+        tmp_path = out_path.with_suffix(".tmp")
+        tmp_path.write_bytes(data)
+        tmp_path.rename(out_path)
         return True
     except Exception:
         logger.exception("emotion variant generation failed: %s", out_path.name)

@@ -213,6 +213,8 @@ _TICK_KIND_CONVERSATION = frozenset(
         "party_chat_turn",
         "free_chat_turn",
         "private_chat_turn",
+        "investigate_clue",
+        "resolve_clue_option",
     }
 )
 _TICK_KIND_COMBAT = frozenset(
@@ -253,6 +255,7 @@ _ACTION_VERBS: dict[str, str] = {
     # Skill checks
     "skill_check": "", "saving_throw": "saving throw",
     "contest": "contested", "investigate": "investigated",
+    "investigate_clue": "investigated clue", "resolve_clue_option": "followed clue lead",
     # Inventory
     "pick_up": "picked up", "drop": "dropped",
     "equip": "equipped", "unequip": "unequipped",
@@ -308,6 +311,8 @@ _ACTION_CATEGORY_TAGS: dict[str, list[str]] = {
     # Skill checks
     "skill_check": ["SKILL_CHECK"], "saving_throw": ["SKILL_CHECK"],
     "contest": ["SKILL_CHECK"], "investigate": ["SKILL_CHECK", "EXPLORATION"],
+    "investigate_clue": ["DIALOGUE", "INVESTIGATION", "CLUE"],
+    "resolve_clue_option": ["INVESTIGATION", "CLUE"],
     # Inventory
     "pick_up": ["INVENTORY"], "drop": ["INVENTORY"],
     "equip": ["INVENTORY"], "unequip": ["INVENTORY"],
@@ -535,12 +540,20 @@ class AIOsirisHook(NoOpSettlementHook):
     async def execute(self, context: SettlementContext) -> HookResult:
         summary = self._build_summary(context)
         snapshot = self._build_snapshot(context)
+        # Extract present_character_ids for locality check during validation
+        present_ids: list[str] = list(
+            snapshot.get("scene_presence", {}).get("present_character_ids", [])
+        )
         rules_context = self._build_rules_context(context)
         rest_phase = resolve_rest_phase(context)
         quiet_rest_slot = is_quiet_rest_slot(context, rest_phase)
         evaluate_started = time.perf_counter()
         raw_consequence_count = 0
 
+        # QF-4: signal that Osiris evaluator is starting
+        sse_events_pre: list[SSEEvent] = [
+            SSEEvent(event_type="ai_processing", payload={"system": "osiris", "status": "start"})
+        ]
         try:
             raw_decision = await self._evaluator.evaluate(summary, snapshot, rules_context)
             if isinstance(raw_decision, AIOsirisDecision):
@@ -561,10 +574,12 @@ class AIOsirisHook(NoOpSettlementHook):
             )
             return HookResult(
                 sse_events=[
+                    *sse_events_pre,
+                    SSEEvent(event_type="ai_processing", payload={"system": "osiris", "status": "done"}),
                     SSEEvent(
                         event_type="ai_osiris_error",
                         payload={"error": str(exc)},
-                    )
+                    ),
                 ],
                 metadata={
                     "status": "evaluator_error",
@@ -622,6 +637,15 @@ class AIOsirisHook(NoOpSettlementHook):
             if not self._passes_minimal_semantic_validation(command):
                 skipped_invalid_count += 1
                 continue
+            # Locality check: modify_disposition must only target present NPCs
+            if command.type == "modify_disposition" and present_ids:
+                target = command.params.get("npc_id") or command.params.get("target")
+                if target and target not in present_ids:
+                    skipped_invalid_count += 1
+                    logger.debug(
+                        "AIOsirisHook: blocked modify_disposition for absent NPC %s", target
+                    )
+                    continue
             if len(commands) >= self.MAX_CONSEQUENCES:
                 truncated_count += 1
                 continue
@@ -670,7 +694,11 @@ class AIOsirisHook(NoOpSettlementHook):
             failed_count=failed_count,
         )
 
-        sse_events: list[SSEEvent] = []
+        # QF-4: signal that Osiris evaluator finished
+        sse_events: list[SSEEvent] = [
+            *sse_events_pre,
+            SSEEvent(event_type="ai_processing", payload={"system": "osiris", "status": "done"}),
+        ]
         if executed_count > 0:
             sse_events.append(
                 SSEEvent(
@@ -747,10 +775,16 @@ class AIOsirisHook(NoOpSettlementHook):
         rest_phase_snapshot = rest_phase.snapshot() if rest_phase is not None else None
         if rest_phase_snapshot is not None:
             rest_phase_snapshot["is_quiet_rest_slot"] = is_quiet_rest_slot(context, rest_phase)
+        # Phase 3: also pass current_room for room-level NPC locality
+        current_room: str | None = None
+        if context.state.has_slice("player"):
+            raw_room = context.state.player.current_room
+            current_room = (raw_room or "").strip() or None
         nearby_npcs = cls._build_nearby_npcs(
             context,
             location["area_id"],
             location.get("location_id"),
+            current_room=current_room,
         )
         faction_standings: dict[str, Any] = {}
         if context.state.has_slice("relations"):
@@ -929,10 +963,12 @@ class AIOsirisHook(NoOpSettlementHook):
     ) -> dict[str, Any]:
         current_area = ""
         current_location = None
+        current_room = None
         player_id = ""
         if context.state.has_slice("player"):
             current_area = context.state.player.current_area
             current_location = context.state.player.current_location
+            current_room = getattr(context.state.player, "current_room", None)
             player_id = cls._coerce_string(context.state.player.character_id)
         present_character_ids: list[str] = []
         if player_id:
@@ -947,6 +983,7 @@ class AIOsirisHook(NoOpSettlementHook):
         return {
             "area_id": current_area,
             "location_id": current_location,
+            "room_id": current_room,
             "present_character_ids": present_character_ids,
         }
 
@@ -1075,8 +1112,10 @@ class AIOsirisHook(NoOpSettlementHook):
                 "time_slots_elapsed",
                 "period_reached",
                 "location_entered",
+                "location_visited",
                 "flag_set",
-            ]
+            ],
+            "location_keys": ["area_id", "location_id", "sub_location", "sub_location_id", "room_id"],
         }
 
     @staticmethod
@@ -1433,10 +1472,11 @@ class AIOsirisHook(NoOpSettlementHook):
     @staticmethod
     def _build_location(context: SettlementContext) -> dict[str, Any]:
         if not context.state.has_slice("player"):
-            return {"area_id": "", "location_id": None}
+            return {"area_id": "", "location_id": None, "room_id": None}
         return {
             "area_id": context.state.player.current_area,
             "location_id": context.state.player.current_location,
+            "room_id": getattr(context.state.player, "current_room", None),
         }
 
     @classmethod
@@ -1445,6 +1485,7 @@ class AIOsirisHook(NoOpSettlementHook):
         context: SettlementContext,
         current_area: str,
         current_location: str | None = None,
+        current_room: str | None = None,
     ) -> list[dict[str, Any]]:
         if not current_area:
             return []
@@ -1456,11 +1497,30 @@ class AIOsirisHook(NoOpSettlementHook):
             if isinstance(current_location, str)
             else None
         )
+        normalized_room = (
+            current_room.strip()
+            if isinstance(current_room, str)
+            else None
+        )
 
         def is_scene_local(raw_location: str | None) -> bool:
             if normalized_location is None:
                 return not raw_location
             return raw_location == normalized_location
+
+        # Build npc_rooms lookup once (only needed when player is in a room)
+        npc_rooms_lookup: dict[str, str | None] = {}
+        if normalized_room is not None and context.state.has_slice("areas"):
+            area_state_for_rooms = context.state.areas.areas.get(current_area)
+            if area_state_for_rooms is not None:
+                npc_rooms_lookup = dict(area_state_for_rooms.npc_rooms)
+
+        def is_room_local(npc_id: str) -> bool:
+            """Return True if NPC is in the same room as the player (or player not in a room)."""
+            if normalized_room is None:
+                return True
+            npc_room = (npc_rooms_lookup.get(npc_id) or "").strip() or None
+            return npc_room == normalized_room
 
         area_local: list[tuple[str, str | None]] = []
         area_other: list[tuple[str, str | None]] = []
@@ -1481,11 +1541,22 @@ class AIOsirisHook(NoOpSettlementHook):
                         area_other.append((str(npc_id), normalized_npc_location))
                     seen_ids.add(str(npc_id))
 
-        # 2. 动态源：Scene-local 优先，其次按其他动态来源补齐
-        for npc_id, location_id in area_local + area_other:
-            nearby.append(
-                cls._build_npc_entry(context, npc_id, location_id=location_id)
-            )
+        # 2. 动态源：有子地点时只返回同 sub_location 的 NPC；否则返回所有同区 NPC
+        #    Phase 3: 进一步按 room 过滤（仅当玩家在 room 中时）
+        if normalized_location is not None:
+            # Sub-location known: only include scene-local NPCs (further filtered by room)
+            for npc_id, location_id in area_local:
+                if not is_room_local(npc_id):
+                    continue
+                nearby.append(
+                    cls._build_npc_entry(context, npc_id, location_id=location_id)
+                )
+        else:
+            # No sub-location: include all area NPCs (original behavior)
+            for npc_id, location_id in area_local + area_other:
+                nearby.append(
+                    cls._build_npc_entry(context, npc_id, location_id=location_id)
+                )
 
         # 2. 静态补源：CharacterRegistry 模板 area_id
         if context.world.has_registry("characters"):
@@ -1507,9 +1578,16 @@ class AIOsirisHook(NoOpSettlementHook):
                 else:
                     static_other.append(char_id)
 
-        # 3. 静态源：Scene-local 优先，其次补齐其它同区 NPC
-        for char_id in static_local + static_other:
-            nearby.append(cls._build_npc_entry(context, char_id))
+        # 3. 静态源：有子地点时只返回同 sub_location 的 NPC；否则补齐其它同区 NPC
+        #    Phase 3: 静态补源无 room 信息 → 有 room 过滤时不加入静态补源
+        if normalized_location is not None:
+            for char_id in static_local:
+                if not is_room_local(char_id):
+                    continue
+                nearby.append(cls._build_npc_entry(context, char_id))
+        else:
+            for char_id in static_local + static_other:
+                nearby.append(cls._build_npc_entry(context, char_id))
 
         return nearby
 
@@ -1574,6 +1652,7 @@ class AIOsirisHook(NoOpSettlementHook):
         return {
             "current_area": str(normalized_location.get("area_id", "")),
             "current_location": normalized_location.get("location_id"),
+            "current_room": normalized_location.get("room_id"),
             "nearby_npc_count": nearby_count,
             "has_player": snapshot.get("player") is not None,
             "has_party": snapshot.get("party") is not None,

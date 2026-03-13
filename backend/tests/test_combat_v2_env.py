@@ -189,19 +189,19 @@ def test_environment_modifiers_fog_visibility() -> None:
 
 
 def test_environment_modifiers_night_ranged() -> None:
-    """Night applies ranged_hit_modifier=-2, no general hit penalty."""
+    """Night applies ranged_hit_modifier=-2 and max_visibility=4 (F-4)."""
     mods = compute_environment_modifiers("clear", "night")
     assert mods.hit_modifier == 0
     assert mods.ranged_hit_modifier == -2
-    assert mods.max_visibility is None
+    assert mods.max_visibility == 4  # night limits vision to 4 cells (F-4)
 
 
 def test_environment_modifiers_night_and_rain_stack() -> None:
-    """Night + rain stack: hit_modifier=-1, ranged_hit_modifier=-2."""
+    """Night + rain stack: hit_modifier=-1, ranged_hit_modifier=-2, max_visibility=4 (F-4)."""
     mods = compute_environment_modifiers("rain", "night")
     assert mods.hit_modifier == -1
     assert mods.ranged_hit_modifier == -2
-    assert mods.max_visibility is None
+    assert mods.max_visibility == 4  # rain doesn't set visibility, night does (F-4)
 
 
 def test_environment_modifiers_night_and_fog_stack() -> None:

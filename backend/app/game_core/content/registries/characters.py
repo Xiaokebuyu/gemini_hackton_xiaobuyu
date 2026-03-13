@@ -100,6 +100,8 @@ class CharacterTemplate:
     attacks: list[NpcAttack] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
     secrets: list[SecretEntry] = field(default_factory=list)
+    # 战斗 AI 个性：aggressive / defensive / protective / tactical
+    ai_personality: str | None = None
 
 
 # ------------------------------------------------------------------
@@ -282,6 +284,15 @@ class CharacterRegistry(ContentRegistry):
                 else:
                     schedule[str(k)] = str(v)
 
+        # -- AI personality (combat AI) --
+        raw_ai_personality = raw.get("ai_personality")
+        ai_personality: str | None = None
+        if raw_ai_personality is not None:
+            val = self._coerce_non_empty_string(raw_ai_personality)
+            if val is not None:
+                ai_personality = val
+            else:
+                self._load_issues.append(f"character '{char_id}' has invalid ai_personality")
 
         return CharacterTemplate(
             id=str(raw_id or char_id),
@@ -317,6 +328,7 @@ class CharacterRegistry(ContentRegistry):
             attacks=attacks,
             skills=skills,
             secrets=secrets,
+            ai_personality=ai_personality,
         )
 
     def _build_npc_attacks(self, char_id: str, raw: dict[str, Any]) -> list[NpcAttack]:

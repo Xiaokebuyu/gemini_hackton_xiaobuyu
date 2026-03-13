@@ -25,6 +25,7 @@ from app.game_core.bootstrap import (
     build_runtime_for_world,
 )
 from app.game_core.content import WorldInstance
+from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook
 from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
 from app.game_core.orchestration.models import SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
@@ -104,6 +105,62 @@ class SavedSessionInfo:
     last_played: float
     phase: str
     summary: SessionSummary
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap post-processing helpers
+# ---------------------------------------------------------------------------
+
+_CONDITION_TYPE_LABELS: dict[str, str] = {
+    "npc_talked": "与{npc_id}对话",
+    "location_visited": "前往{area_id}",
+    "flag_set": "完成标志{flag}",
+    "item_obtained": "获得物品{item_id}",
+    "kill_count": "击杀{enemy_type} x{count}",
+    "time_elapsed": "等待{ticks}回合",
+}
+
+
+def _condition_description(cond: Any) -> str:
+    """Map a MilestoneCondition to a human-readable Chinese description."""
+    cond_type = str(getattr(cond, "type", "") or "")
+    params = dict(getattr(cond, "params", {}) or {})
+    template = _CONDITION_TYPE_LABELS.get(cond_type, "")
+    if template:
+        try:
+            return template.format_map(params)
+        except (KeyError, ValueError):
+            pass
+    # Fallback: type + params raw
+    if params:
+        param_str = ", ".join(f"{k}={v}" for k, v in params.items())
+        return f"{cond_type}({param_str})"
+    return cond_type or "未知条件"
+
+
+def _sync_bulletin_title(
+    session: "ManagedSession",
+    quest_id: str,
+    title: str,
+    content: str,
+) -> None:
+    """Scan all board_bulletins and update entries matching quest_id."""
+    if not session.runtime.state.has_slice("areas"):
+        return
+    for area_state in session.runtime.state.areas.areas.values():
+        bulletins = getattr(area_state, "board_bulletins", {})
+        if not isinstance(bulletins, dict):
+            continue
+        for board_id, entries in bulletins.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("quest_id") == quest_id:
+                    entry["title"] = title
+                    if content:
+                        entry["content"] = content
 
 
 class GameRuntime:
@@ -421,6 +478,14 @@ class GameRuntime:
             history = export_fn()
             if history:
                 windows_data[str(history_key)] = history
+        # Save GM narrator history (key "__gm__")
+        gm_hook = self._find_gm_narration_hook(session)
+        if gm_hook is not None:
+            gm_export_fn = getattr(gm_hook._narrator, "export_history", None)
+            if callable(gm_export_fn):
+                gm_history = gm_export_fn()
+                if gm_history:
+                    windows_data["__gm__"] = gm_history
         if windows_data:
             session.runtime.state.narrative_plan.set_context_windows_data(windows_data)
 
@@ -442,7 +507,7 @@ class GameRuntime:
                 for actor_id, messages in planner_data.items():
                     if actor_id.startswith("__"):
                         continue
-                    if isinstance(messages, list):
+                    if isinstance(messages, (list, dict)):
                         instance = get_fn(actor_id)
                         if instance is not None:
                             instance.context_window.import_messages(messages)
@@ -452,6 +517,17 @@ class GameRuntime:
             if isinstance(key, str) and key.startswith("__")
         }
         if history_payloads:
+            # Restore GM narrator history (key "__gm__")
+            gm_payload = history_payloads.get("__gm__")
+            if gm_payload is not None and isinstance(gm_payload, (list, dict)) and gm_payload:
+                for hook in runtime.tick_coordinator.settlement_hooks:
+                    if not isinstance(hook, GmNarrationHook):
+                        continue
+                    gm_import_fn = getattr(hook._narrator, "import_history", None)
+                    if callable(gm_import_fn):
+                        gm_import_fn(gm_payload)
+                    break
+            # Restore planner/blackboard/subsystem histories
             for hook in runtime.tick_coordinator.settlement_hooks:
                 if not isinstance(hook, NarrativePlannerHook):
                     continue
@@ -461,11 +537,13 @@ class GameRuntime:
                     else {}
                 )
                 for history_key, payload in history_payloads.items():
+                    if history_key == "__gm__":
+                        continue  # already handled above
                     participant = participants.get(history_key)
                     if participant is None:
                         continue
                     import_fn = getattr(participant, "import_history", None)
-                    if callable(import_fn) and isinstance(payload, list):
+                    if callable(import_fn) and isinstance(payload, (list, dict)):
                         import_fn(payload)
                 break
 
@@ -553,6 +631,7 @@ class GameRuntime:
         """Seed opening quests without advancing the normal tick lifecycle."""
         hook = self._resolve_bootstrap_planner_hook(session)
         if hook is None:
+            logger.warning("[bootstrap] hook is None — skipping")
             return []
         try:
             result = await hook.bootstrap(self._build_bootstrap_context(session))
@@ -568,12 +647,98 @@ class GameRuntime:
                     },
                 )
             ]
-        if persist and (
-            int(result.metadata.get("applied_count", 0) or 0) > 0
-            or int(result.metadata.get("story_fact_count", 0) or 0) > 0
-        ):
+
+        applied_count = int(result.metadata.get("applied_count", 0) or 0)
+        story_fact_count = int(result.metadata.get("story_fact_count", 0) or 0)
+        target_ms = (
+            session.runtime.state.narrative_plan.current_target_milestone
+            if session.runtime.state.has_slice("narrative_plan")
+            else None
+        )
+        last_run = (
+            session.runtime.state.narrative_plan.last_run_tick
+            if session.runtime.state.has_slice("narrative_plan")
+            else "N/A"
+        )
+        logger.info(
+            "[bootstrap] done: applied=%d, story_facts=%d, target_ms=%s, "
+            "last_run_tick=%s, dq_count=%d",
+            applied_count,
+            story_fact_count,
+            target_ms,
+            last_run,
+            len(session.runtime.state.quests.dynamic_quests)
+            if session.runtime.state.has_slice("quests") else 0,
+        )
+
+        # Pre-initialize shop state for all merchants (C-1: W1-2 Shop Bootstrap)
+        self._bootstrap_shops(session)
+
+        # Rewrite seeded quest titles/descriptions using MilestoneTemplate data
+        # so the player sees correct titles. Also enrich with objectives/rewards
+        # and sync bulletin board entries (D-P31 Phase 1a).
+        if session.runtime.world.has_registry("quests"):
+            for q_data in session.runtime.state.quests.dynamic_quests.values():
+                if not isinstance(q_data, dict):
+                    continue
+                ms_id = (q_data.get("metadata") or {}).get("source_milestone")
+                if not ms_id:
+                    continue
+                tmpl = session.runtime.world.quests.get_milestone(ms_id)
+                if tmpl is None:
+                    continue
+                quest_id = q_data.get("quest_id", "")
+                # 标题/描述覆盖
+                if tmpl.title:
+                    q_data["title"] = tmpl.title
+                if tmpl.description:
+                    q_data["summary"] = tmpl.description
+                # 从 success_conditions 生成 objectives（带 condition 绑定以支持自动跟踪）
+                if tmpl.success_conditions and not q_data.get("objectives"):
+                    q_data["objectives"] = [
+                        {
+                            "description": _condition_description(cond),
+                            "completed": False,
+                            "condition": {"type": cond.type, "params": dict(cond.params)},
+                        }
+                        for cond in tmpl.success_conditions
+                        if not cond.optional
+                    ]
+                # 奖励
+                if tmpl.rewards and not q_data.get("rewards"):
+                    q_data["rewards"] = dict(tmpl.rewards)
+                # 同步委托板条目标题（auto-publish 时用的是英文原标题）
+                if quest_id and tmpl.title:
+                    _sync_bulletin_title(session, quest_id, tmpl.title, tmpl.description or "")
+
+        if persist and (applied_count > 0 or story_fact_count > 0):
             await self.save_session(session)
         return list(result.sse_events)
+
+    def _bootstrap_shops(self, session: ManagedSession) -> None:
+        """Pre-initialize shop state for all merchants with shop_inventory."""
+        world = session.runtime.world
+        state = session.runtime.state
+        if not state.has_slice("relations"):
+            return
+        if not world.has_registry("characters"):
+            return
+        from app.game_core.rules.models import Command
+        for template in world.characters.list_all():
+            if not template.shop_inventory:
+                continue
+            npc_id = template.id
+            existing = state.relations.get_shop_state(npc_id)
+            if existing:
+                continue  # already has shop_state (restored session)
+            cmd = Command(
+                type="refresh_shop",
+                params={"npc_id": npc_id},
+                source="system",
+            )
+            result = session.runtime.rules_engine.execute(cmd, state, world)
+            if result.executed:
+                state.apply(result.delta)
 
     def _build_bootstrap_context(self, session: ManagedSession) -> SettlementContext:
         return SettlementContext(
@@ -590,9 +755,10 @@ class GameRuntime:
         self,
         session: ManagedSession,
     ) -> NarrativePlannerHook | None:
-        hook = self._find_narrative_planner_hook(session)
-        if hook is not None and getattr(hook, "_dispatcher", None) is not None:
-            return hook
+        # Opening seed must remain deterministic. Reusing the live runtime
+        # planner hook lets agentic blackboard/subsystems participate during
+        # bootstrap, which can produce unrelated invalid-contract noise before
+        # normal play even starts.
         return build_narrative_planner_hook(
             build_opening_bootstrap_planner_system(),
             state=session.runtime.state,
@@ -640,16 +806,29 @@ class GameRuntime:
                 return hook
         return None
 
+    @staticmethod
+    def _find_gm_narration_hook(
+        session: ManagedSession,
+    ) -> GmNarrationHook | None:
+        for hook in session.runtime.tick_coordinator.settlement_hooks:
+            if isinstance(hook, GmNarrationHook):
+                return hook
+        return None
+
     def _resolve_starting_location_id(
         self,
         area_template: Any,
     ) -> str | None:
-        default_location = self._normalized_string(
-            getattr(area_template, "default_location", None)
-        )
-        if default_location is not None:
-            return default_location
         sub_locations = area_template.sub_locations
+        if not sub_locations:
+            return None
+        # Prefer AreaTemplate.default_sub_location (new field)
+        default_location = self._normalized_string(
+            getattr(area_template, "default_sub_location", None)
+        )
+        if default_location is not None and default_location in sub_locations:
+            return default_location
+        # Fallback: first sub_location key
         for key in sub_locations:
             normalized = self._normalized_string(key)
             if normalized is not None:

@@ -66,3 +66,9 @@ class RetireQuestPlan:
 class FillAreaPlan:
     area_id: str
     payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class FillLocationPlan:
+    area_id: str
+    payload: dict[str, Any] = field(default_factory=dict)

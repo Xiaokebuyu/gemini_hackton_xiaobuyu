@@ -37,6 +37,8 @@ _SEMANTIC_TAGS: dict[str, list[str]] = {
     "navigate":      ["NAVIGATION"],
     "skill_check":   ["SKILL_CHECK"],
     "advance_quest": ["QUEST_PROGRESS"],
+    "investigate_clue": ["DIALOGUE", "INVESTIGATION", "CLUE"],
+    "resolve_clue_option": ["INVESTIGATION", "CLUE"],
 }
 
 
@@ -436,6 +438,42 @@ class TickCoordinator:
         outcome = raw_metadata.get("outcome")
         if isinstance(outcome, Mapping):
             record["outcome"] = dict(outcome)
+        for key in (
+            "clue_id",
+            "interactable_id",
+            "clue_name",
+            "topic",
+            "linked_quest_id",
+            "linked_milestone",
+            "option_id",
+            "option_label",
+        ):
+            value = raw_metadata.get(key)
+            if isinstance(value, str) and value.strip():
+                record[key] = value.strip()
+        passed = raw_metadata.get("passed")
+        if isinstance(passed, bool):
+            record["passed"] = passed
+        effect_types = raw_metadata.get("effect_types")
+        if isinstance(effect_types, list):
+            normalized = [
+                str(item).strip()
+                for item in effect_types
+                if isinstance(item, str) and str(item).strip()
+            ]
+            if normalized:
+                record["effect_types"] = normalized
+        raw_options = raw_metadata.get("options")
+        if isinstance(raw_options, list):
+            option_ids = []
+            for item in raw_options:
+                if not isinstance(item, Mapping):
+                    continue
+                option_id = str(item.get("id") or "").strip()
+                if option_id:
+                    option_ids.append(option_id)
+            if option_ids:
+                record["option_ids"] = option_ids
 
     def _append_pending_action_record(self, record: Mapping[str, Any]) -> None:
         normalized = self._public_action_record(record)

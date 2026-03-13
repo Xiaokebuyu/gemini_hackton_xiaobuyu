@@ -7,6 +7,7 @@ interface PlayerState {
   hp: number
   maxHp: number
   gold: number
+  asiAvailable: boolean
   area: string
   location: string | null
   day: number
@@ -24,6 +25,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   hp: 0,
   maxHp: 0,
   gold: 0,
+  asiAvailable: false,
   area: '',
   location: null,
   day: 1,
@@ -47,6 +49,13 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       hp: Number(player.current_hp ?? player.hp ?? 0),
       maxHp: Number(player.max_hp ?? player.maxHp ?? 0),
       gold: Number(player.gold ?? 0),
+      asiAvailable: Boolean(
+        player.asi_available ?? (
+          typeof player.asi_points_remaining === 'number'
+            ? Number(player.asi_points_remaining) > 0
+            : state.asiAvailable
+        )
+      ),
       area: String(player.current_area ?? ''),
       location: player.current_location != null ? String(player.current_location) : null,
       day: Number(player.day ?? state.day),
@@ -60,8 +69,14 @@ export const usePlayerStore = create<PlayerState>((set) => ({
       hp: Number(data.hp ?? state.hp),
       maxHp: Number(data.max_hp ?? state.maxHp),
       gold: Number(data.gold ?? state.gold),
+      asiAvailable: data.asi_available != null
+        ? Boolean(data.asi_available)
+        : data.asi_points_remaining != null
+          ? Number(data.asi_points_remaining) > 0
+          : state.asiAvailable,
       day: Number(data.day ?? state.day),
       slot: Number(data.slot ?? state.slot),
       period: String(data.period ?? state.period),
+      level: data.level != null ? Number(data.level) : state.level,
     })),
 }))

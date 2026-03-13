@@ -1260,3 +1260,544 @@ SSE 事件类型映射：
 #### 架构状态
 
 combat.py 当前 1254 行，仅含 v2 SRPG 命令：`start_combat` + 7 个战旗命令（`combat_move`/`combat_end_turn`/`combat_disengage`/`combat_dash`/`combat_attack`/`combat_defend`/`combat_npc_turn`）。combat_sse.py 提供标准化 SSE 转换，TickCoordinator 自动注入。
+
+---
+
+### [P23-E] 轨道 E：战斗 AI + 数据（2026-03-11）
+
+**范围**：W3-5（队友 ai_personality）、W4-4（preferred_terrain 消费）、W6-8（近战 AI 改进 B1-08/09/10）
+
+#### E-1: W3-5 队友 ai_personality 传入
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/content/registries/characters.py` | `CharacterTemplate` 新增 `ai_personality: str \| None = None`；`_build_template()` 解析该字段 |
+| `app/game_core/rules/combat_units.py` | `build_companion_unit()` 的 `ai_personality` 参数从 `None` 改为 `template.ai_personality or "aggressive"` |
+| `data/goblin_slayer/v2/characters.json` | 为 7 个 `combat_capable: true` 角色添加 `ai_personality`：priestess=protective, goblin_slayer=aggressive, high_elf_archer=cowardly, dwarf_shaman=defensive, lizard_priest=aggressive, town_guard=defensive, north_gate_warden=defensive |
+
+设计决策：`high_elf_archer` 设为 `cowardly`（AI策略"保持远程距离"，选最远距离武器，是弓手正确行为而非负面标签）。
+
+#### E-2: W4-4 消费 preferred_terrain
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/rules/combat_units.py` | `build_monster_unit()` 末尾追加 `unit["preferred_terrain"] = list(template.preferred_terrain)` |
+| `app/game_core/rules/battle_ai.py` | `_find_move_toward_target()` 近战和远程路径均新增 preferred_terrain 加权（name→code map，匹配则 score -1.0） |
+
+传递链：`MonsterTemplate.preferred_terrain` → `build_monster_unit()` → `unit["preferred_terrain"]` → `_find_move_toward_target()` 消费。
+
+#### E-3: W6-8 近战 AI 改进
+
+| 文件 | 改动 | 对应问题 |
+|------|------|---------|
+| `app/game_core/rules/battle_ai.py` | `_find_move_toward_target()` 近战路径候选格评分：`cover_bonus=-1.0`（`ac_bonus > 0`）+ `swamp_penalty=+2.0`（`move_cost >= 3`） | B1-08 偏好掩体，B1-09 回避沼泽 |
+| `app/game_core/rules/battle_ai.py` | `_evaluate_targets()` `_score()` 追加 `cover_penalty=-2.0`（目标在 `ac_bonus >= 2` 地形时）| B1-10 目标掩体惩罚 |
+
+评分公式（近战候选格）：`score = move_cost + cover_bonus + swamp_penalty + preferred_bonus`，越低越优先。B1-10 阈值为 `ac_bonus >= 2`（森林），石地（ac_bonus=1）不触发。
+
+#### 测试
+
+新建 `tests/test_track_e_combat_ai.py`（11 个纯同步测试）：覆盖 ai_personality 传递、preferred_terrain 字段、近战掩体偏好、沼泽回避、目标掩体惩罚。
+
+---
+
+### [P23-轨道 F] 地形 + 地图深化（F-1 ~ F-5）（2026-03-11）
+
+**计划文件**：`/home/xiaokebuyu/.claude/plans/cozy-dazzling-locket.md`（轨道 F 章节）
+**问题单**：W4-5（补地图）、W4-2（speed_penalty）、W4-7（浅水地形）、W4-8（夜间视野）、W4-3（天气伤害修正）
+
+#### 改动范围
+
+| 文件 | 内容 |
+|------|------|
+| `app/game_core/rules/battle_grid.py` | 多处增量修改（见下） |
+| `app/game_core/content/registries/battle_maps.py` | `_VALID_TERRAIN_CHARS` 新增 `"D"` |
+| `data/goblin_slayer/v2/battle_maps.json` | 新增 5 类地图（各 2 变体） |
+| `tests/test_battle_grid.py` | 更新既有测试 + 新增 20 个针对性测试 |
+| `tests/test_battle_maps.py` | 更新既有测试 + 新增 9 个新地图分类测试 |
+| `tests/test_combat_v2_env.py` | 更新 2 个既有测试（night max_visibility 语义变更） |
+
+#### F-1：补 5 类缺失地图（W4-5）
+
+新增 5 个 category 至 `battle_maps.json`，共 10 变体，全部 8×6，spawn 点均在可通行格：
+
+| Category | 变体 1 | 变体 2 | 标签 |
+|----------|--------|--------|------|
+| `swamp` | 沼泽荒地（G+S） | 泥沼密林（F+S） | swamp/outdoor |
+| `town_street` | 小镇广场（R+B+G） | 狭窄巷道（B+R） | town_street/outdoor/urban/narrow |
+| `temple` | 神殿大厅（R+B，带柱） | 祭坛走廊（全 R + 外 B 墙） | temple/indoor |
+| `bridge` | 木桥（G 桥 + W） | 石桥（R 桥 + B 栏 + W） | bridge/outdoor/linear |
+| `camp` | 营地（G+B+R） | 驿站（F+G+R+B） | camp/outdoor |
+
+`select_by_tags()` 可通过各 category 标签名检索到对应变体。
+
+#### F-2：speed_penalty 消耗（W4-2）
+
+修改 `BattleGrid.reachable_cells()`，在计算进入格子的移动消耗时追加 `speed_penalty`：
+```python
+# 改前：
+new_cost = cost + self.move_cost(nc, nr)
+# 改后：
+terrain = self.at(nc, nr)
+new_cost = cost + terrain.move_cost + terrain.speed_penalty
+```
+
+沼泽（S）总消耗 = 3（move_cost）+ 2（speed_penalty）= 5，以此实现 W4-2 要求的"进入沼泽后几乎耗尽移动力"语义。
+
+**设计决策**：`speed_penalty` 视为额外移动消耗叠加（不修改 `move_cost` 字段本身），简洁且与 `A*` 路径代价保持一致（A* 仍用 `move_cost`，用于大致路径规划，两者语义不冲突）。
+
+#### F-3：浅水地形 "D"（W4-7）
+
+`TerrainType` 新增 `damage_immunities: frozenset[str] = frozenset()` 字段（`frozen=True` dataclass，用 frozenset 保持不可变性）。
+
+新地形注册：
+```python
+"D": TerrainType(code="D", name="shallow_water", move_cost=2, ac_bonus=0,
+                 range_bonus=0, blocks_los=False, speed_penalty=0,
+                 damage_immunities=frozenset({"fire"}))
+```
+
+特性：可通行（move_cost=2）、无 AC/range 加成、不遮挡 LoS、站在浅水中对火焰伤害免疫。
+
+**轨道 D 消费**：`combat.py` 在伤害计算时读取目标单位所在格的 `damage_immunities`，如 `damage_type in target_terrain.damage_immunities` 则伤害归零。
+
+`battle_maps.py` `_VALID_TERRAIN_CHARS` 更新为 `frozenset("GFHSWRBMD")`。
+
+#### F-4：夜间视野 max_visibility=4（W4-8）
+
+`compute_environment_modifiers()` 在 `time_of_day="night"` 时新增 `max_visibility` 设置：
+```python
+if time_of_day == "night":
+    ranged_hit_mod += -2
+    if max_vis is None or max_vis > 4:
+        max_vis = 4  # 夜间视野 4 格；若浓雾更紧（3），保留浓雾值
+```
+
+浓雾（max_vis=3）比夜间（4）更严格，通过 `or max_vis > 4` 条件确保浓雾+夜间时取更紧的 3。
+
+**设计决策**：保持 `-2 flat`（固定值）而非 `-10%`（设计文档 B3-03），与 D&D 5e 固定修正风格一致。设计文档偏差在本施工记录中说明。
+
+**既有测试更新**：`test_environment_modifiers_night_ranged` 和 `test_environment_modifiers_night_and_rain_stack` 的 `max_visibility is None` 断言更新为 `== 4`。
+
+#### F-5：天气伤害修正 damage_type_modifiers（W4-3）
+
+`EnvironmentModifiers` 新增字段：
+```python
+damage_type_modifiers: tuple[tuple[str, float], ...] = ()
+```
+
+helper 方法：
+```python
+def get_damage_modifier(self, damage_type: str) -> float:
+    for dt, mod in self.damage_type_modifiers:
+        if dt == damage_type:
+            return mod
+    return 1.0
+```
+
+`compute_environment_modifiers()` 在 `weather="rain"` 时设置：
+```python
+damage_mods.extend([("fire", 0.5), ("thunder", 1.5)])
+```
+
+**frozen dataclass + immutable container**：`damage_type_modifiers` 用 `tuple[tuple[str, float], ...]` 而非 `dict`，完全满足 frozen dataclass 的不可变约束，同时允许 `get_damage_modifier()` 高效线性查找。
+
+**轨道 D 消费**：`combat.py` 在命中后伤害计算阶段调用 `env_mods.get_damage_modifier(damage_type)`，乘以原始伤害值后再应用到目标 HP。
+
+#### 测试基线
+
++20 新测试（`test_battle_grid.py`）+ +9 新测试（`test_battle_maps.py`）= 29 个新测试；更新 2 个既有测试（`test_combat_v2_env.py`）。所有 84 个 battle_grid/battle_maps 相关测试全部通过。
+
+### [D-P23-B] P23 轨道 B：BoardHandler + ReceptionistHandler 奖励发放
+
+**日期**：2026-03-11
+
+**改动**：
+
+**`board.py`**：
+- 新增模块级 `_build_reward_changes(state, rewards)` — 将 quest rewards（gold/xp/items）转为 StateChange 列表
+- `_compute_board_complete_quest()` — 完成时追加 reward_changes + 设置 `rewards_claimed=True` + 在 metadata 写 `reward_summary`
+
+**`receptionist.py`**：
+- `_compute_report_quest(cmd, state)` 新增 state 参数 — 读取 quest rewards，检查 rewards_claimed 防重，发奖后设 rewards_claimed flag
+- `validate()` 放宽 receptionist_accept_quest：quest 不在公告板但 status=="available" 也可接取（B-6）
+- `_compute_accept_quest()` 对应调整：board_id 可为 None（accepted via dynamic_quests fallback）
+
+**StateChange 路径**：gold/xp 用绝对值 set（handler 层计算增量），inventory 用整个 snapshot set（与 InventoryHandler 一致）
+
+### [D-P23-D] P23 轨道 D：战斗流程全面升级
+
+**日期**：2026-03-11
+
+**改动**：
+
+**`app/game_core/rules/battle_grid.py`**（部分来自轨道 F 交叉依赖）：
+- `EnvironmentModifiers` 新增 `damage_type_modifiers: tuple[tuple[str, float], ...]` 字段
+- 新增 `get_damage_modifier(damage_type)` 方法（查表，默认 1.0）
+- `compute_environment_modifiers()` — rain 时 fire×0.5/thunder×1.5；night 时 max_visibility=4（if None or 4 < existing）
+
+**`app/game_core/rules/handlers/combat.py`**：
+- D-5 (W3-7)：`_validate_start_combat()` 新增 MAX_ENEMY_UNITS=5 校验
+- D-7 (W4-3)：`_compute_combat_attack()` 在命中后应用 `env_mods.get_damage_modifier(damage_type)` 天气乘数
+- D-7 (W4-3)：同上应用地形免疫（`target_terrain.damage_immunities`，shallow_water 免火焰）
+- D-8 (W4-8)：远程攻击超出 `env_mods.max_visibility` 自动未命中（夜间/浓雾）
+- D-10 (W4-6)：`_compute_combat_attack()` metadata 追加 `target_name/target_side/target_source`
+- D-4 (B1-02)：`_compute_combat_attack()` 和 `_compute_combat_npc_turn()` metadata 追加 `player_defeated`
+- D-7/D-8：`_compute_combat_npc_turn()` 对应同步升级
+
+**`app/game_core/orchestration/combat_sse.py`**：
+- D-10 (W4-6)：`unit_defeated` SSE 事件追加 `name/side/source` 字段
+
+**`app/deps.py`**：
+- 新增 `_llm_provider` 模块级变量（在 `_build_game_runtime()` 中赋值）
+- 新增 `get_llm_provider()` 函数（供 router 层调用）
+- 恢复 `planner_system_factory = None` 初始化（Track A 部分改动遗漏）
+
+**`app/combat_helpers.py`**（新建）：
+- `COMBAT_ACTION_TO_COMMAND` — 前端 action→v2 command 映射表（无 FastAPI 依赖，可单测）
+- `get_current_unit(payload)` — 从 v2 payload 提取当前回合单位
+- `compute_companion_decision(session, unit, payload, llm_provider)` — 队友 LLM AI 决策
+- `restore_fallen_companions(session, payload, save_fn)` — 战后恢复队友 HP 到 50%
+
+**`app/routers/combat.py`**：
+- D-1 (W3-1)：从 `combat_helpers.COMBAT_ACTION_TO_COMMAND` 引入映射，`combat_action()` 在执行前转换 action_type→v2 command
+- D-2 (W3-2)：新增 `/combat/move` 和 `/combat/end_turn` 端点 + `CombatMoveRequest` 模型
+- D-3 (W3-3)：新增 `_auto_advance_npc_turns()` — 玩家行动后自动推进所有 NPC 回合直到玩家回合；移除死调用 `advance_combat_round`
+- D-6 (W4-1)：`_compute_companion_decision()` 路由器包装 — 注入 LLM provider，委托 combat_helpers
+- D-9 (W3-6)：`_restore_fallen_companions()` 路由器包装 — 胜利后恢复倒地队友 HP 到 50%；委托 combat_helpers
+
+**新增测试**（`tests/test_combat_track_d.py`，21 个）：
+- D-1: `COMBAT_ACTION_TO_COMMAND` 覆盖率 + 未知 action passthrough
+- D-2: `CombatMoveRequest` 模型 + move endpoint 验证
+- D-3: `get_current_unit` 3 个边界用例
+- D-4: `player_defeated` metadata 设置 / 未设置
+- D-5: 超 5 敌人被拒绝 / 恰好 5 个被接受
+- D-7: rain fire×0.5 / thunder×1.5 / clear 无修正（3 测试）
+- D-8: night max_visibility=4 阻断距离 5 远程 / 允许距离 3 远程
+- D-10: `unit_defeated` SSE name/side/source（3 场景）
+- D-9: fallen companion 恢复到 50% / 存活队友不受影响
+- D-6: `compute_companion_decision` 无 LLM 返回 None
+
+**设计决策**：
+- 映射逻辑放在 `combat_helpers.py`（无 FastAPI 依赖）而非 `routers/combat.py`，确保可单元测试
+- `_restore_fallen_companions` 直接调用 `party.add_member()` 而非 StateChange（受控例外：router 层编排写入）
+- `shove` → `combat_attack`，`flee` → `combat_disengage`（handler 通过 params 区分语义）
+- 夜间视野 max_visibility=4 仅限远程攻击（is_ranged）；近战不受视野限制
+
+---
+
+## [D-S504] S5-04 NPC Tool Call 约束守护
+
+**完成时间**：2026-03-11
+
+### 问题
+
+NPC 角色约束（merchant/receptionist/temple_keeper/guard）仅靠 prompt 注入，tool call 层面缺少参数校验。任意 NPC 均可调用 `offer_quest`，且不校验 quest_id 合法性。
+
+### 解决方案："放过嘴，管住手"
+
+**两步**：
+1. 在 `npc_interaction.py` 中把 `role_data` 注入到 `AgentContext.metadata["role_data"]`
+2. 在 `OfferQuestTool.execute()` 中校验 `quest_id` 合法性
+
+### 具体实现
+
+**`app/game_core/orchestration/npc_interaction.py`**：
+- 新增 `_extract_role_data` 到 import（与 `context_builder.py` 同层，合法）
+- `execute_interaction()` 的 `npc_metadata` 构建块后追加：
+  ```python
+  role_data = _extract_role_data(npc_tags, npc_id, self._state, self._world)
+  if role_data is not None:
+      npc_metadata["role_data"] = role_data
+  ```
+
+**`app/game_core/narrative/character_tools.py`**：
+- `OfferQuestTool` 新增 `applicable_traits = ["receptionist"]`（第一道防线：RoleToolRegistry 过滤）
+- `OfferQuestTool.execute()` 新增第二道防线：当 `metadata.role_data.role == "receptionist"` 时，校验 quest_id 是否在 `bulletins` 中；不在则 fallback 检查 `dynamic_quests` 是否 `status == "available"`；两者都不符合则返回 `quest_not_available`
+- `OfferTradeTool.execute()` 补 `logger.warning` 当 shop_data 为空时
+
+### 影响分析
+
+- 只有 `guild_girl` 有 `receptionist` tag，其他 NPC 不受影响
+- 无 `role_data` 的 NPC 完全跳过校验（向后兼容）
+- OfferTradeTool 是只读展示，warning 不影响返回值
+
+### 测试
+
+`tests/test_s504_tool_constraints.py`：8 个测试，全部通过
+
+---
+
+## [D-P29a] P29 Batch A 关键管线修复（A4/A8b/A8c/A9e）
+
+**日期**：2026-03-13
+
+### 问题
+
+Live 测试暴露了四个相互关联的系统性缺陷：
+
+1. **A4**：`planner_fill_area` 创建动态子地点时，`resident_npcs` 存入 dict 但没有生成 `npc_presence` StateChange，导致 NPC 没有真正进入区域的 `npc_locations`。
+2. **A8b**：Planner 创建任务时，objective 有 `type`（如 `talk_to`/`reach_location`）但没有 `condition` 字段，导致 `QuestObjectiveTrackingHook` 无法自动追踪完成状态。
+3. **A8c**：`_objective_target_to_params()` 中 `location_entered`/`location_visited` 分支：若 target 的 `area_id` 和 `location_id` 都为 None（如只有 `sub_location_id`），返回 `None` 而非 passthrough，导致条件参数丢失。
+4. **A9e**：`planner_create_quest` 没有 `step_index` 参数，无法将任务关联到 milestone outline 的某个步骤；`QuestObjectiveTrackingHook` 完成时也没有回写 outline step completed 状态。
+
+### 实施
+
+**`app/game_core/rules/handlers/planner.py`**：
+
+1. **A4 - `_compute_sub_area_command()`**：
+   - `temporary.append(created)` 之后，遍历 `created["resident_npcs"]`
+   - 为每个有效 NPC ID 追加 `StateChange("areas", "set", f"npc_presence.{npc_id_str}", {...})`
+   - source="planner"，location_id = sub_area_id（动态子地点的 id）
+   - 返回值 metadata 增加 `npc_presence_count` 字段
+
+2. **A8b - `_compute_create_quest()` objectives 归一化阶段**：
+   - 在 `normalized_objectives.append(entry)` 之前，对每个 dict objective 检查：有 `type` 但无有效 `condition`
+   - 用 `_objective_to_condition_type(obj_type)` + `_objective_target_to_params()` 自动生成 condition
+   - 无法生成时向 `entry["metadata_warnings"]` 添加说明（不报错）
+
+3. **A8c - `_objective_target_to_params()`**：
+   - `location_entered`/`location_visited` 分支中，`if area_id is None and location_id is None: return None` 改为 passthrough
+   - 改为 `return {str(key): value for key, value in target.items()}`
+
+4. **A9e - `_compute_create_quest()` + `NarrativePlanSlice`**：
+   - `_compute_create_quest()` 读取 `step_index = coerce_int(cmd.params.get("step_index"))`
+   - 如果 `step_index >= 0` 且 state 有 `narrative_plan` slice，追加 `StateChange("narrative_plan", "set", "milestone_outline.step_quest_id", {"step_index": step_index, "quest_id": quest_id})`
+   - `NarrativePlanSlice` 增加 `set_outline_step_quest_id(step_index, quest_id)` 方法
+   - `apply_state_change` 增加 `milestone_outline.step_quest_id` 路径处理
+
+**`app/game_core/orchestration/hooks/quest_objective_tracking.py`**：
+
+- 当所有 objectives 完成、quest status 推进时，检查 `quest["metadata"]["step_index"]`
+- 若有有效 step_index 且 state 有 `narrative_plan`，调用 `context.state.narrative_plan.mark_outline_step_completed(step_index)`（直接写入，受控例外）
+
+### 测试
+
+`tests/test_planner_command_handlers.py` 新增 11 个测试（共 19 个）：
+
+- `test_fill_area_with_resident_npcs_emits_npc_presence_changes`
+- `test_fill_area_without_resident_npcs_emits_no_npc_presence`
+- `test_fill_area_resident_npc_source_is_planner`
+- `test_create_quest_auto_generates_condition_for_talk_objective`
+- `test_create_quest_auto_generates_condition_for_location_objective`
+- `test_create_quest_preserves_explicit_condition_unchanged`
+- `test_objective_target_to_params_passthrough_location_with_only_sub_location`
+- `test_objective_target_to_params_normal_location_preserved`
+- `test_create_quest_with_step_index_writes_back_to_outline`
+- `test_create_quest_without_step_index_does_not_modify_outline`
+- `test_quest_objective_tracking_hook_marks_outline_step_on_completion`
+
+全部 19 个测试通过。
+
+
+---
+
+### [D-P29-A5e] PlannerWorldHandler interactable 管线修复
+
+**实施日期**：2026-03-13
+
+**变更文件**：`app/game_core/rules/handlers/planner.py`
+
+**问题**：`_compute_sub_area_command()` 构建 `created` dict 时，`interactables` 字段调用 `_normalize_string_list()`，该函数通过 `coerce_non_empty_string()` 把 dict 元素转成字符串（如 `"{'id': 'altar', 'name': '...'}"`），导致下游 `InteractableHandler._find_dynamic_interactable()` 无法按 id 匹配。
+
+**修复**：
+- 新增 `_normalize_interactable_list()` 函数：保留 dict 元素，plain string 元素仍走 `coerce_non_empty_string()`
+- `_compute_sub_area_command()` 中 `"interactables"` 字段从 `_normalize_string_list` 改为 `_normalize_interactable_list`
+- `"resident_npcs"`、`"tags"` 等其他字段保持使用 `_normalize_string_list`（不含 dict，无需改动）
+
+---
+
+### [D-precious-wishing-meteor-P2] PlannerWorldHandler 验证加固（Phase 2）
+
+**实施日期**：2026-03-13
+
+**变更文件**：`app/game_core/rules/handlers/planner.py`
+
+**背景**：planner LLM 生成的 directive 会触发约 70 处 `raise ValueError/KeyError`，导致 narrative_planner hook 崩溃。Phase 2 修复 PlannerWorldHandler 中已确认的 4 条崩溃路径，让错误回路走 `ExecuteResult.error` 而非 exception。
+
+**修复内容**：
+
+**2a. planner_fill_location 容量检查移至 compute()**
+- `validate()` 的容量投影基于 validate 时刻的快照；若状态在 validate 后变化，`upsert_scoped_interactable_overlays` 仍可能 raise
+- 修复：`_compute_fill_location()` 中用与 `upsert` 相同的遍历逻辑重新计算最终 slot 数，超出 4 则返回 `ExecuteResult.error("scene interactable overlay capacity exceeded")`，不依赖 state 层的 raise
+
+**2b. planner_fill_area interactables/resident_npcs 列表防御**
+- `_compute_sub_area_command()` 中 `created` dict 的 interactables 和 resident_npcs 字段增加 `isinstance(…, list)` 兜底，确保非 list 输入（如 None 或 string）coerce 为空 list
+
+**2c. planner_plant_encounter area_id 非空守卫**
+- `_compute_plant_encounter()` 开头改为 `coerce_non_empty_string()`，若为空/None 则返回 `ExecuteResult.error("area_id must be a non-empty string")`，而非塞入空字符串进 hostile_tracking entry
+
+**2d. planner_fill_room Mapping 防御检查**
+- `_compute_fill_room()` 在 emit StateChange 前添加 `isinstance(room_dict, Mapping)` 断言；当前 room_dict 始终是 dict，但明确守卫未来 refactor 引入的类型变化
+
+**测试**：`tests/test_planner_command_handlers.py` 新增 9 个测试（共 32 个）：
+- `test_fill_location_compute_rejects_overflow_when_4_existing`
+- `test_fill_location_compute_allows_update_of_existing_id_when_full`
+- `test_fill_location_compute_rejects_when_mix_of_new_and_existing_overflows`
+- `test_fill_area_interactables_non_list_coerced_to_empty`
+- `test_fill_area_interactables_string_coerced_to_empty`
+- `test_plant_encounter_compute_rejects_empty_area_id`
+- `test_plant_encounter_compute_rejects_none_area_id`
+- `test_plant_encounter_compute_succeeds_with_valid_area_id`
+- `test_fill_room_compute_produces_mapping_entry`
+
+全部 32 个测试通过（含 9 个新增）。
+
+**测试**：见 narrative.md [D-P29-A5e] — `tests/test_p29_a5e_interactable_pipeline.py`
+
+---
+
+### [D-R39] precious-wishing-meteor Phase 3：PlannerNpcHandler + PlannerQuestHandler 验证加固
+
+**文件**：`app/game_core/rules/handlers/planner.py`
+
+**根因**：三条崩溃路径未在 handler 层拦截，导致合法 delta 流入 state 层触发 raise。
+
+**3a. planner_spawn_quest_npc room_id/location_id 一致性**
+- `_compute_spawn_quest_npc()` 在调用 `resolve_npc_room()` 后，若返回了 `resolved_room_id` 但 `location_id` 为 None/空，则清除 `resolved_room_id = None`
+- 原因：`AreaSlice.apply_state_change()` 强制要求 room_id 与 location_id 同时存在或同时缺失
+- 修复位置：`resolve_npc_room()` 调用之后，`name = ...` 赋值之前
+
+**3b. planner_publish_bulletin area_id 空字符串守卫**
+- `_compute_publish_bulletin()` 中 `_resolve_area_id()` 可能因 `location.area_id` 为空白字符串而返回空字符串（非 None）
+- 修复：在 compute() 中对返回值再次调用 `coerce_non_empty_string()`，若结果为 None 返回 `ExecuteResult.error("area_id must be a non-empty string")`
+- `validate()` 的检查已覆盖主路径，但 compute() 的守卫提供第二道防线
+
+**3c. planner_direct_npc expires_at_tick 向下 clamp**
+- `_compute_direct_npc()` 中新增：`if expires_at_tick < current_tick: expires_at_tick = current_tick`
+- 防止 LLM 传入过去时间点（负数情形已被上方 `< 0` 的现有检查拒绝；此处处理"小于当前 tick 但非负"的情形）
+
+**测试**：`tests/test_planner_command_handlers.py` 新增 9 个测试（共 41 个）：
+- `test_spawn_quest_npc_clears_room_when_location_id_absent`
+- `test_spawn_quest_npc_room_cleared_means_area_apply_succeeds`
+- `test_spawn_quest_npc_with_location_retains_resolved_room`
+- `test_publish_bulletin_compute_rejects_empty_area_id_string`
+- `test_publish_bulletin_compute_succeeds_with_valid_area_id`
+- `test_direct_npc_expires_at_tick_clamped_when_less_than_current`
+- `test_direct_npc_expires_at_tick_negative_value_clamped`
+- `test_direct_npc_expires_at_tick_future_value_preserved`
+- `test_direct_npc_expires_at_tick_equal_current_tick_preserved`
+
+全部 41 个测试通过（含 9 个新增）。
+
+---
+
+## D-P4: AreaSlice apply_state_change 韧性化
+
+**日期**：2026-03-13
+**文件**：`app/game_core/state/slices/area.py`
+**新测试**：`tests/test_area_slice_resilience.py`（23 个测试）
+
+### 背景
+
+`apply_state_change()` 中有约 15 个 `raise ValueError`，分布在 planner 可达的路径上。
+当 Planner LLM 生成格式不合规的 directive 时，这些 raise 会让整个 `narrative_planner` hook 崩溃，LLM 看不到错误反馈。
+
+Phase 1 已在 `execute_command()` 加了安全网 catch；Phase 4 从根本上把这些 raise 软化为 `logger.warning + return`（跳过），防止误用崩溃。
+
+### 改动（15 处 + 1 个 capacity break）
+
+**新增**（文件顶部）：
+```python
+import logging
+logger = logging.getLogger(__name__)
+```
+
+**npc_presence 路径（4 个 raise → warning + return）**：
+- 不支持的 operation（不在 `{"set", "modify"}`）
+- value 不是 Mapping
+- value 中缺少 area_id
+- room_id 非空但 location_id 为空
+
+**board_bulletins 路径（3 个 raise → warning + return）**：
+- operation 不是 `"append"`
+- value 不是 Mapping
+- value 中 area_id 为空字符串
+
+**hostile_tracking 路径（3 个 raise → warning + return）**：
+- apply_state_change 中 operation 不在 `{"set", "modify"}`
+- apply_state_change 中 value 不是 Mapping
+- `upsert_hostile()` 中 area_id 为空（直接在方法体内修改，而非 apply_state_change）
+
+**temporary_sub_areas 路径（3 个 raise → warning / continue）**：
+- operation 不在 `{"set", "modify"}`
+- value 不是 list
+- 列表中的单个 entry 不是 Mapping → `continue`（跳过该条目，而非崩溃，其余有效条目仍应用）
+
+**scoped_interactable_overlays 路径（2 个 raise → warning + return，1 个 capacity raise → break）**：
+- operation 不在 `{"set", "modify"}`
+- value 不是 list
+- `upsert_scoped_interactable_overlays()` 中容量超限 → `break`（截断而不是 raise）
+
+### 保留的 raise（Category C）
+
+以下 raise 属于编程错误探测，不是 planner 可达路径，**未修改**：
+- `line 1089`（现在偏移后的行）：`"area change path must include area id"`
+- `line 1191`（兜底）：`"unsupported area state change"`
+- `container_states` / `interactable_states` 路径的 raise（非 planner 路径）
+- `mark_cleared` / `remove_item_from_container` 的 raise（战斗路径）
+- `board_bulletins`（整体替换，非 `.` 前缀路径）已有单独守卫，保持不变
+
+### 测试设计（23 个）
+
+分 5 个 TestCase 类：
+- `TestNpcPresenceResilience`（5）
+- `TestBoardBulletinsResilience`（4）
+- `TestHostileTrackingResilience`（5）
+- `TestTemporarySubAreasResilience`（4）
+- `TestScopedInteractableOverlaysResilience`（5）
+
+每个 TestCase 包含：
+- 各无效输入场景（warning 消息验证 + 不触发状态变更）
+- 有效输入场景（仍然正常工作）
+- capacity truncation 场景（不 raise，只 break）
+
+全部 23 个测试通过，原有 28 个 area_slice 测试全部通过，无回归。
+
+---
+
+## D-P5: PlayerSlice + QuestSlice 韧性化
+
+**日期**：2026-03-13
+**文件**：`app/game_core/state/slices/player.py`、`app/game_core/state/slices/quests.py`
+**新测试**：`tests/test_player_quest_slice_resilience.py`（14 个测试）
+
+### 背景
+
+Phase 1 的 `execute_command()` 安全网已防止崩溃传播；Phase 5 从根本上把 planner 可达路径上的 `raise` 软化为 `logger.warning + return/fallback`，与 Phase 4（AreaSlice）保持一致。
+
+### 改动
+
+**两个文件共同变更**：
+- 新增 `import logging` 和 `logger = logging.getLogger(__name__)` 到文件顶部（位于 local imports 之后）
+
+**`player.py`（2 处）**：
+
+1. **`apply_state_change` inventory 路径（L601 附近）**：
+   - `raise ValueError("inventory change must be a list")` → `logger.warning(...) + return`
+   - 非 list 输入时跳过整个 inventory 替换，旧 inventory 保持不变
+
+2. **`_coerce_stack` 静态方法（末尾）**：
+   - `raise ValueError(f"invalid item stack: {item!r}")` → `logger.warning(...) + return ItemStack(item_id="", count=0, tags=[])`
+   - 无效 item 降级为空 ItemStack，而非让整个 inventory 替换失败
+
+**`quests.py`（4 处，均在 `_apply_nested_dynamic_change`）**：
+
+1. `path_parts` 为空 → `logger.warning(...) + return`
+2. list 容器中的 key 无法转 int → `logger.warning(...) + return`
+3. list 容器 index 越界 → `logger.warning(...) + return`
+4. container 既非 dict 也非 list → `logger.warning(...) + return`
+
+### 保留的 raise
+
+- `quests.py:215` `raise ValueError(f"unsupported quest state change: ...")` — 顶层路由兜底，编程错误探测，不在 planner 正常路径上，**未修改**
+- `quests.py:224` `raise ValueError(f"...missing dynamic quest...")` — 要求 quest 存在，非 LLM 格式错误，**未修改**
+
+### 测试设计（14 个）
+
+- PlayerSlice inventory 非 list：3 个（warn + 不变 / 不 raise / 含 list 中无效 item 使用 fallback）
+- `_coerce_stack` 无效输入：4 个（int / string / None → 空 ItemStack / list 中混入无效 item）
+- QuestSlice `_apply_nested_dynamic_change`：5 个（空 path / bad index / 越界 / 非 dict-list / 不 raise）
+- 通过 `apply_state_change` 的集成路径：2 个（bad index / valid change 仍工作）
+
+全部 14 个测试通过，原有测试基线无回归（3022 passed）。

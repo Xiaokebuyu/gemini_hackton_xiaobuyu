@@ -30,6 +30,7 @@ from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
 from app.game_core.narrative.models import AgentResult
 from app.game_core.orchestration.npc_interaction import (
+    _build_capability_boundary_prompt,
     _extract_visible_reply_text,
     _resolve_dialogue_options,
 )
@@ -167,6 +168,13 @@ class PrivateChatCoordinator:
         npc_profile = self._world.characters.get(npc_id) if self._world.has_registry("characters") else None
         npc_tags = list(_profile_get(npc_profile, "tags", [])) if npc_profile is not None else []
 
+        # QF-5: Inject capability boundary so NPC knows what it can/cannot do
+        # Also inject dynamic capabilities assigned by the narrative planner
+        _pc_dynamic_caps: list[dict] = []
+        if self._state.has_slice("narrative_plan"):
+            _pc_dynamic_caps = self._state.narrative_plan.get_capabilities(npc_id)
+        system_prompt += _build_capability_boundary_prompt(self._executor, npc_tags, capabilities=_pc_dynamic_caps)
+
         # Create private scene sub-area
         area_id = self._state.player.current_area if self._state.has_slice("player") else ""
         scene_result = self._create_private_scene(npc_id, area_id)
@@ -260,7 +268,7 @@ class PrivateChatCoordinator:
                     token_count=_approx_tokens(npc_speech), metadata={},
                 ))
             if should1 or should2:
-                graphize_candidates = context_window.pop_oldest_for_graphize()
+                graphize_candidates = context_window.collect_for_graphize()
 
         # ---- Step 2.5: GM 内心旁白（默认 pass_turn，仅在特殊时刻说话）------
         gm_result: AgentResult | None = None

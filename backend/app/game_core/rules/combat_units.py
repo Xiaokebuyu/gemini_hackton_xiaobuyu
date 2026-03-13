@@ -8,11 +8,14 @@ No application layer imports.
 from __future__ import annotations
 
 import random
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.game_core.content.registries.characters import CharacterTemplate, NpcAttack
 from app.game_core.content.registries.monsters import MonsterAttack, MonsterTemplate
 from app.game_core.state import StateContainer
+
+if TYPE_CHECKING:
+    from app.game_core.content.world import WorldInstance
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +30,24 @@ def _ability_modifier(score: int) -> int:
 def _get_stat(stats: dict[str, int], name: str, default: int = 10) -> int:
     """Return stat value with fallback to default."""
     return int(stats.get(name, default))
+
+
+def compute_attack_ability_mod(stats: dict[str, int], attack_tags: list[str]) -> int:
+    """Return the ability modifier that applies to an attack roll / damage roll.
+
+    Rules:
+    - RANGED tag  → DEX modifier
+    - FINESSE tag → max(STR modifier, DEX modifier)
+    - otherwise   → STR modifier
+    """
+    str_mod = _ability_modifier(_get_stat(stats, "str"))
+    dex_mod = _ability_modifier(_get_stat(stats, "dex"))
+
+    if "RANGED" in attack_tags:
+        return dex_mod
+    if "FINESSE" in attack_tags:
+        return max(str_mod, dex_mod)
+    return str_mod
 
 
 # ---------------------------------------------------------------------------
@@ -132,11 +153,83 @@ def _default_monster_attack() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Registry-backed weapon attack builder (Phase 1)
+# ---------------------------------------------------------------------------
+
+# Map WeaponData.properties (lowercase) → attack tag (uppercase)
+_PROPERTY_TO_TAG: dict[str, str] = {
+    "finesse": "FINESSE",
+    "ranged": "RANGED",
+    "thrown": "THROWN",
+    "light": "LIGHT",
+    "heavy": "HEAVY",
+    "two_handed": "TWO_HANDED",
+    "versatile": "VERSATILE",
+}
+
+
+def _build_weapon_attack_from_registry(
+    item_id: str,
+    equipment_slot: dict[str, Any],
+    world: WorldInstance | None,
+) -> dict[str, Any]:
+    """Build a weapon attack dict preferring ItemRegistry data over slot dict.
+
+    Priority:
+    1. ItemRegistry WeaponData (when world and registry entry are available)
+    2. Legacy fields stored directly in the equipment slot dict
+    3. Safe defaults (hit_bonus=0, damage_dice="1d6")
+    """
+    # Attempt registry lookup
+    if world is not None and world.has_registry("items"):
+        template = world.items.get(item_id)
+        if template is not None and template.weapon_data is not None:
+            wd = template.weapon_data
+            tags: list[str] = ["MELEE"]
+            for prop in wd.properties:
+                prop_lower = prop.lower()
+                tag = _PROPERTY_TO_TAG.get(prop_lower)
+                if tag:
+                    tags.append(tag)
+            # Upgrade MELEE → RANGED when range > 2 or RANGED property present
+            if wd.range > 2 or "RANGED" in tags:
+                tags = [t for t in tags if t != "MELEE"]
+                if "RANGED" not in tags:
+                    tags.append("RANGED")
+            return {
+                "name": template.name or item_id,
+                "hit_bonus": 0,  # Phase 2 will add ability_mod + prof_bonus on top
+                "damage_dice": wd.damage_dice,
+                "damage_type": wd.damage_type,
+                "range": wd.range,
+                "tags": tags,
+            }
+
+    # Fallback: use whatever fields are stored in the equipment slot dict
+    return {
+        "name": str(equipment_slot.get("name", item_id)),
+        "hit_bonus": int(equipment_slot.get("hit_bonus", 0)),
+        "damage_dice": str(equipment_slot.get("damage_dice", "1d6")),
+        "damage_type": str(equipment_slot.get("damage_type", "physical")),
+        "range": int(equipment_slot.get("range", 1)),
+        "tags": list(equipment_slot.get("tags", [])),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public builders
 # ---------------------------------------------------------------------------
 
-def build_player_unit(state: StateContainer) -> dict[str, Any]:
-    """Build the player unit dict from live state."""
+def build_player_unit(
+    state: StateContainer,
+    world: WorldInstance | None = None,
+) -> dict[str, Any]:
+    """Build the player unit dict from live state.
+
+    When *world* is provided, weapon stats are looked up from the ItemRegistry
+    (canonical source).  Falls back to the equipment dict fields (legacy) when
+    world is absent or the registry has no entry for the equipped item.
+    """
     player = state.player
     stats = {
         "str": _get_stat(player.stats, "str"),
@@ -149,15 +242,10 @@ def build_player_unit(state: StateContainer) -> dict[str, Any]:
 
     # Build attack from main_hand equipment, or fall back to unarmed
     main_hand = player.equipment.get("main_hand")
+    attacks: list[dict[str, Any]]
     if isinstance(main_hand, dict) and main_hand.get("item_id"):
-        weapon_attack: dict[str, Any] = {
-            "name": str(main_hand.get("name", main_hand["item_id"])),
-            "hit_bonus": int(main_hand.get("hit_bonus", 0)),
-            "damage_dice": str(main_hand.get("damage_dice", "1d6")),
-            "damage_type": str(main_hand.get("damage_type", "physical")),
-            "range": int(main_hand.get("range", 1)),
-            "tags": list(main_hand.get("tags", [])),
-        }
+        item_id: str = str(main_hand["item_id"])
+        weapon_attack = _build_weapon_attack_from_registry(item_id, main_hand, world)
         attacks = [weapon_attack]
     else:
         attacks = [_unarmed_attack()]
@@ -241,7 +329,7 @@ def build_companion_unit(
         stats=stats,
         speed=3,
         attacks=attacks,
-        ai_personality=None,
+        ai_personality=template.ai_personality or "aggressive",
         flee_threshold=0.0,
         flee_chance=0.0,
         proficiency_bonus=template.proficiency_bonus,
@@ -282,7 +370,7 @@ def build_monster_unit(
     if not attacks:
         attacks = [_default_monster_attack()]
 
-    return _base_unit(
+    unit = _base_unit(
         unit_id=f"{monster_id}_{index}",
         side="enemy",
         source="monster",
@@ -300,6 +388,9 @@ def build_monster_unit(
         monster_id=monster_id,
         character_id=None,
     )
+    # preferred_terrain: list of terrain names the monster prefers to occupy
+    unit["preferred_terrain"] = list(template.preferred_terrain)
+    return unit
 
 
 # ---------------------------------------------------------------------------

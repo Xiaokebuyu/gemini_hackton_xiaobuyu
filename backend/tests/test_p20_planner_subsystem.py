@@ -121,14 +121,15 @@ def test_dispatcher_register_and_route():
     asyncio.run(_run())
 
 
-def test_dispatcher_unhandled_kind_returns_false():
-    """apply_directive returns False when no sub-system handles the kind."""
+def test_dispatcher_unhandled_kind_returns_rejection():
+    """apply_directive returns a rejection reason when no sub-system handles the kind."""
     dispatcher = PlannerDispatcher()
     ss = _AcceptAllSubSystem("a", frozenset({"create_quest"}))
     dispatcher.register(ss)
 
     result = dispatcher.apply_directive("unknown_kind", {}, None, current_tick=0)
-    assert result is False
+    assert result is not True  # Returns a string reason code, not True
+    assert isinstance(result, str)
     assert ss.apply_calls == []
 
 

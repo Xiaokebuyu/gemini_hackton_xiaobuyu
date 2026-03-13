@@ -32,6 +32,7 @@ from app.deps import (
     get_interaction_service,
 )
 from app.game_core import ManagedSession
+from app.game_core.location_utils import scene_position
 from app.game_core.result_semantics import outcome_passed
 from app.game_core.adapters.presentation import format_sse_event
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
@@ -43,6 +44,7 @@ from app.opening_views import (
     build_opening_narration,
     build_opening_status_snapshot,
 )
+from app.image_prefetch import get_asset_resolver, prefetch_sub_area_backgrounds
 from app.scene_views import build_location_overview, build_scene_change
 from app.utterance_orchestration import (
     UtteranceOrchestrator,
@@ -106,11 +108,15 @@ async def navigate(
         result = await _execute_structured_action(session, structured_request)
         await queue.put(_build_action_result_event(result, action))
         if result.executed:
+            # Non-blocking prefetch: generate background images for any new
+            # temporary sub-areas that were created during this tick.
+            _schedule_sub_area_prefetch(result, session)
             if action == "leave_sub_location":
                 previous_location = _non_empty_string(before_location)
                 if previous_location is not None:
                     await _reset_hostile_to_spotted(session, previous_location)
-            await queue.put(SSEEvent("scene_change", build_scene_change(session)))
+            resolver = get_asset_resolver()
+            await queue.put(SSEEvent("scene_change", build_scene_change(session, asset_resolver=resolver)))
         for event in result.sse_events:
             await queue.put(event)
         if result.executed:
@@ -138,6 +144,22 @@ def _error_payload(exc: Exception) -> dict[str, Any]:
         detail = exc.detail
         return detail if isinstance(detail, dict) else {"message": str(detail)}
     return {"message": str(exc)}
+
+
+def _schedule_sub_area_prefetch(result: PipelineResult, session: ManagedSession) -> None:
+    """Fire non-blocking background-image generation for new temporary sub-areas.
+
+    Reads the current in-game time period from session state and delegates to
+    prefetch_sub_area_backgrounds().  Failures are silently logged inside the
+    per-task coroutine — this call always returns immediately.
+    """
+    time_period = "day"
+    try:
+        if session.runtime.state.has_slice("time"):
+            time_period = str(session.runtime.state.time.period or "day")
+    except Exception:
+        pass  # defensive — time slice access failure must not disrupt navigation
+    prefetch_sub_area_backgrounds(result, time_period=time_period)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +225,15 @@ def _non_empty_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _player_scene_position(session: ManagedSession) -> tuple[str, str | None, str | None]:
+    player = session.runtime.state.player
+    return scene_position(
+        player.current_area,
+        player.current_location,
+        getattr(player, "current_room", None),
+    )
 
 
 def _result_executed(result: PipelineResult) -> bool:
@@ -640,6 +671,7 @@ async def action_stream(
         raise _api_error(400, "unknown_action", f"unknown action: {action_type}")
 
     async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
+        before_position = _player_scene_position(session)
         async def _after_engine(result: PipelineResult) -> None:
             await _emit_roll_events(queue, result=result, session=session)
             await queue.put(_build_action_result_event(result, request.action_type))
@@ -650,6 +682,12 @@ async def action_stream(
             event_sink=queue.put,
             after_engine=_after_engine,
         )
+        if result.executed:
+            after_position = _player_scene_position(session)
+            if after_position != before_position:
+                _schedule_sub_area_prefetch(result, session)
+                resolver = get_asset_resolver()
+                await queue.put(SSEEvent("scene_change", build_scene_change(session, asset_resolver=resolver)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.executed))
 
@@ -700,12 +738,19 @@ async def input_stream(
             await _emit_roll_events(queue, result=result, session=session)
             await queue.put(_build_action_result_event(result, action_type))
 
+        before_position = _player_scene_position(session)
         result = await _execute_structured_action(
             session,
             StructuredActionRequest(action_type=action_type, params=params),
             event_sink=queue.put,
             after_engine=_after_engine,
         )
+        if result.executed:
+            after_position = _player_scene_position(session)
+            if after_position != before_position:
+                _schedule_sub_area_prefetch(result, session)
+                resolver = get_asset_resolver()
+                await queue.put(SSEEvent("scene_change", build_scene_change(session, asset_resolver=resolver)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.executed))
 
@@ -752,12 +797,19 @@ async def opening_stream(
         agent_svc = get_agent_orchestration()
         if agent_svc is not None:
             opening_sequence = await agent_svc.generate_opening_sequence(session)
+            logger.info("[opening] LLM opening_sequence: narration=%s, comment=%s",
+                        opening_sequence.narration_event is not None if opening_sequence else "N/A",
+                        opening_sequence.comment_event is not None if opening_sequence else "N/A")
+        else:
+            logger.info("[opening] agent_svc is None — using deterministic fallback")
 
         narration_event = opening_sequence.narration_event if opening_sequence is not None else None
         if narration_event is not None:
             await queue.put(narration_event)
         else:
             narration = build_opening_narration(session).strip()
+            logger.info("[opening] fallback narration len=%d, preview=%.100s",
+                        len(narration), narration[:100] if narration else "(empty)")
             if narration:
                 await queue.put(SSEEvent("gm_narration", {"content": narration}))
 
@@ -773,17 +825,8 @@ async def opening_stream(
             await queue.put(SSEEvent("character_enter", payload))
 
         await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
-        options_event = (
-            opening_sequence.dialogue_options_event
-            if opening_sequence is not None
-            else None
-        )
-        if options_event is not None:
-            await queue.put(options_event)
-        else:
-            opening_options = build_opening_dialogue_options(session)
-            if opening_options:
-                await queue.put(SSEEvent("dialogue_options", {"options": opening_options}))
+        # Opening dialogue_options removed — location_overview provides all
+        # scene-based options via buildFromOverview (room-aware NPC filtering).
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         session.phase = "active"
         await get_admin_coordinator().save_session(session)

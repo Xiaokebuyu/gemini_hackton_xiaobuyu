@@ -1,0 +1,134 @@
+{
+  "actor_knowledge": {},
+  "behavior_window": [
+    {
+      "action_type": "browse_board",
+      "location": "adventurer_guild",
+      "tick": 8
+    }
+  ],
+  "chapter_completion": 0.0,
+  "context_windows_data": {
+    "__gm__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__item_designer_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__narrative_weaver_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__npc_director_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__planner_blackboard__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__quest_manager_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__world_builder_agent__": {
+      "graphize_counter": 0,
+      "messages": []
+    }
+  },
+  "current_chapter": "",
+  "current_target_milestone": "ms_arrival",
+  "escalation_level": 0,
+  "last_planner_replay_trace": {
+    "blackboard_summary": {
+      "applied_directive_count": 0,
+      "applied_kinds": [],
+      "directive_audit": [],
+      "planner_metadata": {},
+      "requested_directive_count": 0,
+      "skipped_invalid_count": 0,
+      "skipped_unsupported_count": 0,
+      "source": "blackboard",
+      "story_fact_count": 0
+    },
+    "current_tick": 8,
+    "directive_audit": [],
+    "hook_priority": 66,
+    "reason": "bootstrap",
+    "round_count": 1,
+    "rounds": [
+      {
+        "accepted_event_count": 0,
+        "applied_directive_count": 0,
+        "applied_directive_kinds": [],
+        "event_kinds": [
+          "bootstrap",
+          "area_sparse"
+        ],
+        "inline_event_transition_count": 0,
+        "new_change_count": 0,
+        "requested_directive_count": 0,
+        "round_index": 0,
+        "skipped_invalid_count": 0,
+        "skipped_unsupported_count": 0,
+        "subsystems": [
+          {
+            "accepted_event_count": 0,
+            "applied_directive_count": 0,
+            "applied_kinds": [],
+            "directive_audit": [],
+            "event_kinds": [
+              "bootstrap"
+            ],
+            "metadata": {
+              "provider": "opening_bootstrap_agent",
+              "reason": "already_seeded",
+              "status": "noop"
+            },
+            "name": "quest_manager",
+            "requested_directive_count": 0,
+            "skipped_invalid_count": 0,
+            "skipped_unsupported_count": 0,
+            "story_fact_count": 0
+          },
+          {
+            "accepted_event_count": 0,
+            "applied_directive_count": 0,
+            "applied_kinds": [],
+            "directive_audit": [],
+            "event_kinds": [
+              "area_sparse"
+            ],
+            "metadata": {},
+            "name": "world_builder",
+            "requested_directive_count": 0,
+            "skipped_invalid_count": 0,
+            "skipped_unsupported_count": 0,
+            "story_fact_count": 0
+          }
+        ]
+      }
+    ],
+    "stop_reason": "bootstrap_complete"
+  },
+  "last_run_tick": -108,
+  "milestone_outline": {},
+  "next_scheduled_tick": null,
+  "npc_capabilities": {},
+  "npc_directives": [],
+  "pacing_frozen": false,
+  "play_style_tags": [],
+  "quest_history": [
+    {
+      "kind": "create_quest",
+      "quest_id": "dq_ms_arrival",
+      "tick": 8
+    }
+  ],
+  "story_facts": [],
+  "strategy_notes": "",
+  "temporary_npcs": {},
+  "ticks_since_milestone_progress": 0
+}

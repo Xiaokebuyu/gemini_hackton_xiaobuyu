@@ -109,6 +109,15 @@ def _make_state_with_bulletins(world: WorldInstance) -> StateContainer:
             "summary": "帮农夫找回走失的羊",
         },
     )
+    # Corresponding dynamic quests must exist for bulletins to be visible
+    state.quests.dynamic_quests["goblin_cave_q1"] = {
+        "quest_id": "goblin_cave_q1", "status": "available",
+        "title": "哥布林巢穴讨伐", "summary": "清剿附近洞窟的哥布林群落",
+    }
+    state.quests.dynamic_quests["lost_sheep_q2"] = {
+        "quest_id": "lost_sheep_q2", "status": "available",
+        "title": "寻找丢失的羊群", "summary": "帮农夫找回走失的羊",
+    }
     return state
 
 

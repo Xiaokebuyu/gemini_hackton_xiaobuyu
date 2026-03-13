@@ -191,6 +191,8 @@ def test_session_create_resume_list_and_delete_flow(monkeypatch) -> None:
     assert "day" in resumed_payload["player"]
     assert "slot" in resumed_payload["player"]
     assert "period" in resumed_payload["player"]
+    assert resumed_payload["player"]["asi_available"] is False
+    assert resumed_payload["player"]["asi_points_remaining"] == 0
     assert missing_resume.status_code == 404
     assert missing_resume.json()["detail"]["code"] == "session_not_found"
     assert deleted.status_code == 204
@@ -237,6 +239,8 @@ def test_character_creation_options_and_character_flow(monkeypatch) -> None:
     assert "day" in created_payload["player"]
     assert "slot" in created_payload["player"]
     assert "period" in created_payload["player"]
+    assert created_payload["player"]["asi_available"] is False
+    assert created_payload["player"]["asi_points_remaining"] == 0
     assert invalid.status_code == 400
     assert invalid.json()["detail"]["code"] == "invalid_character_creation"
 
@@ -266,7 +270,7 @@ def test_inventory_map_and_quest_panels_after_character_creation(monkeypatch) ->
     assert any(area["id"] == "training_grounds" for area in map_payload["areas"])
     assert quests.status_code == 200
     quest_payload = quests.json()
-    assert "report_in" in quest_payload["milestone_states"]
+    assert "milestone_states" not in quest_payload
     assert "dq_report_in" in quest_payload["dynamic_quests"]
     intro_quest = quest_payload["dynamic_quests"]["dq_report_in"]
     assert intro_quest["ui_state"] == "available"
@@ -322,8 +326,6 @@ def test_quest_panel_returns_dynamic_quests_in_stable_order(monkeypatch) -> None
         "dq_available",
         "dq_completed_done",
         "dq_failed",
-        "dq_retired",
-        "dq_expired",
         "dq_unknown",
     ]
 
@@ -538,6 +540,49 @@ def test_resume_after_character_creation_returns_full_restore_payload(monkeypatc
     assert "merchant" in payload["location_visual"]["present_character_ids"]
     assert payload["resume_narration"]
     assert "report_in" not in payload["resume_narration"]
+    assert payload["player"]["asi_available"] is False
+    assert payload["player"]["asi_points_remaining"] == 0
+
+
+def test_character_panel_reflects_apply_asi_changes(monkeypatch) -> None:
+    runtime = _runtime()
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+
+        session = asyncio.run(_load_session(session_id))
+        assert session is not None
+        session.runtime.state.player.level = 4
+        session.runtime.state.player.asi_points_remaining = 2
+        session.runtime.state.player.stats["str"] = 16
+        session.runtime.state.player._dirty = True
+        asyncio.run(_save_session(session))
+
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "apply_asi", "params": {"stat": "str", "bonus": 1}},
+        )
+        panel = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/character")
+        resumed = client.post(f"/api/game/goblin_slayer/sessions/{session_id}/resume")
+
+    assert streamed.status_code == 200
+    action_result = _action_result_payload(streamed)
+    assert action_result["executed"] is True
+    assert action_result["action_type"] == "apply_asi"
+
+    assert panel.status_code == 200
+    panel_payload = panel.json()["player"]
+    assert panel_payload["stats"]["str"] == 17
+    assert panel_payload["asi_points_remaining"] == 1
+    assert panel_payload["asi_available"] is True
+
+    assert resumed.status_code == 200
+    resumed_payload = resumed.json()["player"]
+    assert resumed_payload["stats"]["str"] == 17
+    assert resumed_payload["asi_points_remaining"] == 1
+    assert resumed_payload["asi_available"] is True
 
 
 def test_world_bootstrap_validates_before_caching() -> None:
@@ -757,6 +802,271 @@ def test_action_stream_executes_real_structured_actions(monkeypatch) -> None:
     assert invalid_request.json()["detail"]["code"] == "invalid_action_request"
     assert unknown_action.status_code == 400
     assert unknown_action.json()["detail"]["code"] == "unknown_action"
+
+
+def test_action_stream_move_area_auto_sub_location_can_emit_encounter_spotted(
+    monkeypatch,
+) -> None:
+    runtime = GameRuntime(
+        save_store=SaveStore(NullPersistencePort()),
+    )
+    world_data = copy.deepcopy(_shell_world_seed("goblin_slayer"))
+    world_data["maps"]["guild_hall"]["connections"] = [
+        {"target": "ancient_ruins", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["ancient_ruins"] = {
+        "id": "ancient_ruins",
+        "name": "Ancient Ruins",
+        "base_danger": 1.0,
+        "terrain_type": "forest",
+        "sub_locations": {
+            "forest_approach": {"id": "forest_approach", "name": "Forest Approach"},
+        },
+        "default_sub_location": "forest_approach",
+        "encounter_slot_capacity": 1,
+        "encounter_table": [
+            {
+                "id": "ancient_ruins_patrol",
+                "monster_ids": ["goblin", "goblin"],
+                "weight": 1.0,
+                "map_category": "ruins",
+            }
+        ],
+    }
+    world_data["monsters"]["goblin"] = {
+        "id": "goblin",
+        "name": "Goblin",
+        "hp": 7,
+        "ac": 13,
+        "attack_bonus": 4,
+        "damage": "1d6+2",
+    }
+    runtime.get_world("goblin_slayer", world_data=world_data)
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        session = asyncio.run(_load_session(session_id))
+        assert session is not None
+        session.runtime.state.time.restore({"day": 1, "slot": 18, "accumulated": 0.0})
+        asyncio.run(_save_session(session))
+
+        streamed = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "move_area", "params": {"area_id": "ancient_ruins"}},
+        )
+        scene = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/scene")
+
+    assert streamed.status_code == 200
+    events = _parse_sse(streamed)
+    encounter = _sse_event(events, "encounter_spotted")
+    overview = _sse_event(events, "location_overview")
+    assert encounter is not None
+    assert encounter["area_id"] == "ancient_ruins"
+    assert encounter["source"] == "encounter"
+    assert overview is not None
+    assert overview["location_id"] == "forest_approach"
+    assert scene.status_code == 200
+    scene_payload = scene.json()
+    assert scene_payload["location_id"] == "forest_approach"
+    assert scene_payload["current_room"] is None
+
+
+def test_action_stream_room_navigation_round_trip(monkeypatch) -> None:
+    runtime = GameRuntime(
+        save_store=SaveStore(NullPersistencePort()),
+    )
+    world_data = copy.deepcopy(_shell_world_seed("goblin_slayer"))
+    world_data["maps"]["guild_hall"]["connections"] = [
+        {"target": "training_grounds", "travel_slots": 1, "blocked": False},
+        {"target": "frontier", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["training_grounds"]["connections"] = [
+        {"target": "guild_hall", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["frontier"]["connections"] = [
+        {"target": "guild_hall", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["guild_hall"]["sub_locations"]["counter"]["rooms"] = {
+        "back_office": {
+            "id": "back_office",
+            "name": "Back Office",
+            "discoverable": False,
+            "discovery_dc": 0,
+            "resident_npcs": [],
+        }
+    }
+    runtime.get_world("goblin_slayer", world_data=world_data)
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+        entered_counter = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
+            json={"action": "enter_sub_location", "location_id": "counter"},
+        )
+        scene = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/scene")
+
+        assert entered_counter.status_code == 200
+        entered_counter_overview = _sse_event(_parse_sse(entered_counter), "location_overview")
+        assert entered_counter_overview is not None
+        assert entered_counter_overview["location_id"] == "counter"
+        assert scene.status_code == 200
+        scene_payload = scene.json()
+        assert scene_payload["current_room"] is None
+        assert scene_payload["rooms"], "expected at least one visible room in the starting location"
+        room_id = scene_payload["rooms"][0]["id"]
+
+        entered = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "enter_room", "params": {"room_id": room_id}},
+        )
+        left = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "leave_room", "params": {}},
+        )
+
+    assert entered.status_code == 200
+    entered_events = _parse_sse(entered)
+    entered_result = _sse_event(entered_events, "action_result")
+    assert entered_result is not None
+    assert entered_result["executed"] is True
+    assert entered_result["action_type"] == "enter_room"
+    entered_scene_change = _sse_event(entered_events, "scene_change")
+    assert entered_scene_change is not None
+    assert entered_scene_change["room_id"] == room_id
+    entered_overview = _sse_event(entered_events, "location_overview")
+    assert entered_overview is not None
+    assert entered_overview["current_room"] == room_id
+
+    assert left.status_code == 200
+    left_events = _parse_sse(left)
+    left_result = _sse_event(left_events, "action_result")
+    assert left_result is not None
+    assert left_result["executed"] is True
+    assert left_result["action_type"] == "leave_room"
+    left_scene_change = _sse_event(left_events, "scene_change")
+    assert left_scene_change is not None
+    assert left_scene_change["room_id"] is None
+    left_overview = _sse_event(left_events, "location_overview")
+    assert left_overview is not None
+    assert left_overview["current_room"] is None
+
+
+def test_scene_endpoint_clears_room_state_across_sub_location_and_area_changes(monkeypatch) -> None:
+    runtime = GameRuntime(
+        save_store=SaveStore(NullPersistencePort()),
+    )
+    world_data = copy.deepcopy(_shell_world_seed("goblin_slayer"))
+    world_data["maps"]["guild_hall"]["connections"] = [
+        {"target": "training_grounds", "travel_slots": 1, "blocked": False},
+        {"target": "frontier", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["training_grounds"]["connections"] = [
+        {"target": "guild_hall", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["frontier"]["connections"] = [
+        {"target": "guild_hall", "travel_slots": 1, "blocked": False},
+    ]
+    world_data["maps"]["guild_hall"]["sub_locations"]["counter"]["rooms"] = {
+        "back_office": {
+            "id": "back_office",
+            "name": "Back Office",
+            "discoverable": False,
+            "discovery_dc": 0,
+            "resident_npcs": [],
+        }
+    }
+    world_data["maps"]["guild_hall"]["sub_locations"]["board"]["rooms"] = {
+        "records": {
+            "id": "records",
+            "name": "Records Room",
+            "discoverable": False,
+            "discovery_dc": 0,
+            "resident_npcs": [],
+        }
+    }
+    world_data["maps"]["training_grounds"]["sub_locations"]["yard"]["rooms"] = {
+        "shed": {
+            "id": "shed",
+            "name": "Supply Shed",
+            "discoverable": False,
+            "discovery_dc": 0,
+            "resident_npcs": [],
+        }
+    }
+    runtime.get_world("goblin_slayer", world_data=world_data)
+    monkeypatch.setattr(api_main.app.state, "game_runtime", runtime, raising=False)
+
+    with TestClient(api_main.app) as client:
+        session_id = _create_session(client)
+        _create_character(client, session_id)
+
+        entered_counter = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
+            json={"action": "enter_sub_location", "location_id": "counter"},
+        )
+        counter_scene = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/scene")
+        entered_counter_room = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "enter_room", "params": {"room_id": "back_office"}},
+        )
+        counter_room_scene = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/scene")
+        switched_board = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
+            json={"action": "enter_sub_location", "location_id": "board"},
+        )
+        board_scene = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/scene")
+        entered_board_room = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/action/stream",
+            json={"action_type": "enter_room", "params": {"room_id": "records"}},
+        )
+        moved_training = client.post(
+            f"/api/game/goblin_slayer/sessions/{session_id}/navigate",
+            json={"action": "move_area", "area_id": "training_grounds"},
+        )
+        yard_scene = client.get(f"/api/game/goblin_slayer/sessions/{session_id}/scene")
+
+    entered_counter_overview = _sse_event(_parse_sse(entered_counter), "location_overview")
+    assert entered_counter.status_code == 200
+    assert entered_counter_overview is not None
+    assert entered_counter_overview["location_id"] == "counter"
+    assert entered_counter_overview["current_room"] is None
+    assert counter_scene.status_code == 200
+    counter_scene_payload = counter_scene.json()
+    assert counter_scene_payload["location_id"] == "counter"
+    assert counter_scene_payload["current_room"] is None
+    assert [room["id"] for room in counter_scene_payload["rooms"]] == ["back_office"]
+
+    assert _action_result_payload(entered_counter_room)["executed"] is True
+    assert counter_room_scene.status_code == 200
+    assert counter_room_scene.json()["current_room"] == "back_office"
+
+    switched_board_overview = _sse_event(_parse_sse(switched_board), "location_overview")
+    assert switched_board.status_code == 200
+    assert switched_board_overview is not None
+    assert switched_board_overview["location_id"] == "board"
+    assert switched_board_overview["current_room"] is None
+    assert board_scene.status_code == 200
+    board_scene_payload = board_scene.json()
+    assert board_scene_payload["location_id"] == "board"
+    assert board_scene_payload["current_room"] is None
+    assert [room["id"] for room in board_scene_payload["rooms"]] == ["records"]
+
+    assert _action_result_payload(entered_board_room)["executed"] is True
+
+    moved_training_overview = _sse_event(_parse_sse(moved_training), "location_overview")
+    assert moved_training.status_code == 200
+    assert moved_training_overview is not None
+    assert moved_training_overview["location_id"] == "yard"
+    assert moved_training_overview["current_room"] is None
+    assert yard_scene.status_code == 200
+    yard_scene_payload = yard_scene.json()
+    assert yard_scene_payload["location_id"] == "yard"
+    assert yard_scene_payload["current_room"] is None
+    assert [room["id"] for room in yard_scene_payload["rooms"]] == ["shed"]
 
 
 def test_action_stream_emits_dice_roll_for_skill_checks(monkeypatch) -> None:

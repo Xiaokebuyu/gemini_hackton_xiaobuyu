@@ -1,0 +1,19 @@
+{
+  "character_name": "TestHero",
+  "created_at": 1773426205.8565998,
+  "game_day": 1,
+  "game_slot": 8,
+  "last_played": 1773426236.8485339,
+  "phase": "active",
+  "saved_at": 1773426236.8485339,
+  "session_id": "sess_86f953c69c20",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "TestHero"
+  },
+  "world_id": "goblin_slayer"
+}

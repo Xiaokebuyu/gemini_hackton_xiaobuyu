@@ -17,6 +17,7 @@ class EncounterEntry:
     weight: float = 1.0                            # 加权随机选择权重
     min_danger: float = 0.0                        # 触发所需最低危险度
     description: str = ""
+    map_category: str | None = None                # battle_maps category hint / fallback override
 
 
 @dataclass(slots=True)
@@ -64,6 +65,7 @@ class InteractableTemplate:
     reward: dict[str, Any] | None = None    # {type: "quest_hook"/"item"/"info"/"sub_location", id: "..."}
     one_time: bool = False                   # True = 交互一次后标记已用
     tags: list[str] = field(default_factory=list)
+    functional: dict[str, Any] | None = None  # {type: "board_browse"/"donation", params?: {...}}
     container_data: ContainerData | None = None  # 仅 type="container" 时有值
 
 
@@ -124,6 +126,20 @@ class SubAreaClusterConfig:
 
 
 @dataclass(slots=True)
+class RoomTemplate:
+    """房间静态模板（公会大厅内的具体区域等）。"""
+
+    id: str = ""
+    name: str = ""
+    description: str = ""
+    tags: list[str] = field(default_factory=list)
+    discoverable: bool = False               # True = 需要主动发现才可进入
+    discovery_dc: int = 0                    # 0 = 询问即可知道；>0 = 需要检定
+    resident_npcs: list[str] = field(default_factory=list)  # character_id 列表
+    interactables: list[InteractableTemplate] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class SubLocationTemplate:
     """子地点静态模板（酒馆、商店、副本入口等）。"""
 
@@ -136,3 +152,5 @@ class SubLocationTemplate:
     resident_npcs: list[str] = field(default_factory=list)  # character_id 列表
     interactables: list[InteractableTemplate] = field(default_factory=list)
     hostile_config: HostileConfig | None = None
+    rooms: dict[str, RoomTemplate] = field(default_factory=dict)   # room_id → RoomTemplate
+    default_room: str = ""                   # 进入此子地点时玩家自动放置的房间 ID

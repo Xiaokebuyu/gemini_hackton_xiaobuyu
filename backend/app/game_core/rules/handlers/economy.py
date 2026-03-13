@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 from typing import Any, Mapping
+
+logger = logging.getLogger(__name__)
 
 from app.game_core.content import WorldInstance
 from app.game_core.content.registries.characters import ShopEntry
@@ -404,6 +408,7 @@ class EconomyHandler(StaticCommandHandler):
                 rotating_slots,
                 state,
                 world,
+                npc_id=npc_id,
             )
         )
 
@@ -487,6 +492,8 @@ class EconomyHandler(StaticCommandHandler):
         rotating_slots: int,
         state: StateContainer,
         world: WorldInstance,
+        *,
+        npc_id: str = "",
     ) -> list[dict[str, Any]]:
         if not isinstance(rotating_pool, list) or rotating_slots <= 0:
             return []
@@ -509,7 +516,12 @@ class EconomyHandler(StaticCommandHandler):
             return []
 
         count = min(rotating_slots, len(eligible))
-        start = self._current_tick(state) % len(eligible)
+        # C-5: W6-2 — per-NPC deterministic-but-varied rotation.
+        # Same npc_id + tick → same selection; different ticks → varied (not simple mod cycle).
+        current_tick = self._current_tick(state)
+        seed_str = f"{npc_id}:{current_tick}"
+        seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)  # noqa: S324
+        start = seed % len(eligible)
         selected: list[dict[str, Any]] = []
         for offset in range(count):
             index = (start + offset) % len(eligible)
@@ -655,6 +667,8 @@ class EconomyHandler(StaticCommandHandler):
             entry_fallback = self._coerce_non_negative_int(entry.get("price"))
             if entry_fallback is not None:
                 return entry_fallback
+        # C-6: W6-3 — warn when item has no price (helps diagnose misconfigured items)
+        logger.warning("item %r has no base_price, defaulting to 0", item_id)
         return 0
 
     def _player_inventory_snapshot(self, state: StateContainer) -> list[dict[str, Any]]:

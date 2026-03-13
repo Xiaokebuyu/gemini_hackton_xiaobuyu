@@ -9,8 +9,10 @@ import pytest
 
 from app.game_core.rules.battle_grid import (
     BattleGrid,
+    EnvironmentModifiers,
     TerrainType,
     TERRAIN_REGISTRY,
+    compute_environment_modifiers,
 )
 
 
@@ -49,9 +51,9 @@ def _make_unit(
 # Terrain registry tests
 # ---------------------------------------------------------------------------
 
-def test_registry_has_all_eight_types():
+def test_registry_has_all_nine_types():
     codes = set(TERRAIN_REGISTRY.keys())
-    assert codes == {"G", "F", "H", "S", "W", "R", "B", "M"}
+    assert codes == {"G", "F", "H", "S", "W", "R", "B", "M", "D"}
 
 
 def test_terrain_type_is_frozen():
@@ -385,7 +387,7 @@ def test_from_map_data_column_mismatch():
 
 
 def test_from_map_data_preserves_terrain_codes():
-    codes = "GFHSWRBM"
+    codes = "GFHSWRBMD"
     data = {
         "width": len(codes),
         "height": 1,
@@ -394,3 +396,143 @@ def test_from_map_data_preserves_terrain_codes():
     grid = BattleGrid.from_map_data(data)
     for col, code in enumerate(codes):
         assert grid.at(col, 0).code == code
+
+
+# ---------------------------------------------------------------------------
+# F-2: speed_penalty consumed in reachable_cells
+# ---------------------------------------------------------------------------
+
+def test_speed_penalty_reduces_reachable_range():
+    """Swamp (move_cost=3, speed_penalty=2) should cost 5 total per step."""
+    # Row: G S G — entering swamp at (1,0) from (0,0) should cost 3+2=5
+    grid = _make_grid(["GSG"])
+    # With move_points=4: cannot reach swamp cell (cost 5 > 4)
+    reachable = grid.reachable_cells((0, 0), 4)
+    assert (0, 0) in reachable
+    assert (1, 0) not in reachable, "Swamp at cost 5 should be out of range with 4 move_points"
+    assert (2, 0) not in reachable
+
+def test_speed_penalty_reachable_with_sufficient_points():
+    """With 5 move_points, the swamp cell should be reachable."""
+    grid = _make_grid(["GSG"])
+    reachable = grid.reachable_cells((0, 0), 5)
+    assert (1, 0) in reachable
+    assert reachable[(1, 0)] == 5  # 3 move_cost + 2 speed_penalty
+
+
+# ---------------------------------------------------------------------------
+# F-3: shallow_water terrain (D)
+# ---------------------------------------------------------------------------
+
+def test_shallow_water_is_passable():
+    """Shallow water (D) is passable with move_cost=2."""
+    t = TERRAIN_REGISTRY["D"]
+    assert t.move_cost == 2
+    assert t.name == "shallow_water"
+    assert not t.blocks_los
+
+
+def test_shallow_water_fire_immune():
+    """Shallow water terrain grants fire immunity."""
+    t = TERRAIN_REGISTRY["D"]
+    assert "fire" in t.damage_immunities
+
+
+def test_shallow_water_no_thunder_immunity():
+    """Shallow water does NOT grant immunity to non-fire damage types."""
+    t = TERRAIN_REGISTRY["D"]
+    assert "thunder" not in t.damage_immunities
+    assert "physical" not in t.damage_immunities
+
+
+def test_terrain_type_damage_immunities_default_empty():
+    """All non-shallow-water terrains default to empty immunities."""
+    for code, t in TERRAIN_REGISTRY.items():
+        if code != "D":
+            assert t.damage_immunities == frozenset(), (
+                f"{code} should have no immunities by default"
+            )
+
+
+def test_terrain_type_frozen_immunities():
+    """TerrainType is frozen; damage_immunities is a frozenset (immutable)."""
+    t = TERRAIN_REGISTRY["D"]
+    assert isinstance(t.damage_immunities, frozenset)
+    with pytest.raises((AttributeError, TypeError)):
+        t.damage_immunities = frozenset()  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# F-4: night max_visibility = 4
+# ---------------------------------------------------------------------------
+
+def test_night_sets_max_visibility_4():
+    """Night time should produce max_visibility=4."""
+    mods = compute_environment_modifiers(weather="clear", time_of_day="night")
+    assert mods.max_visibility == 4
+
+
+def test_night_also_sets_ranged_hit_penalty():
+    """Night still applies ranged_hit_modifier=-2."""
+    mods = compute_environment_modifiers(weather="clear", time_of_day="night")
+    assert mods.ranged_hit_modifier == -2
+
+
+def test_fog_max_visibility_tighter_than_night():
+    """Fog (max_visibility=3) should override night (4) since 3 < 4."""
+    mods = compute_environment_modifiers(weather="fog", time_of_day="night")
+    assert mods.max_visibility == 3  # fog is tighter
+
+
+def test_day_no_max_visibility():
+    """Daytime with no weather should have no visibility cap."""
+    mods = compute_environment_modifiers(weather="clear", time_of_day="day")
+    assert mods.max_visibility is None
+
+
+# ---------------------------------------------------------------------------
+# F-5: damage_type_modifiers in EnvironmentModifiers
+# ---------------------------------------------------------------------------
+
+def test_rain_fire_damage_half():
+    """Rain reduces fire damage by 50%."""
+    mods = compute_environment_modifiers(weather="rain", time_of_day="day")
+    assert mods.get_damage_modifier("fire") == 0.5
+
+
+def test_rain_thunder_damage_boosted():
+    """Rain boosts thunder damage by 150%."""
+    mods = compute_environment_modifiers(weather="rain", time_of_day="day")
+    assert mods.get_damage_modifier("thunder") == 1.5
+
+
+def test_no_rain_no_damage_modifier():
+    """Without rain, get_damage_modifier returns 1.0 for all types."""
+    mods = compute_environment_modifiers(weather="clear", time_of_day="day")
+    assert mods.get_damage_modifier("fire") == 1.0
+    assert mods.get_damage_modifier("thunder") == 1.0
+    assert mods.get_damage_modifier("physical") == 1.0
+
+
+def test_environment_modifiers_is_frozen():
+    """EnvironmentModifiers is a frozen dataclass."""
+    mods = EnvironmentModifiers()
+    with pytest.raises((AttributeError, TypeError)):
+        mods.hit_modifier = 5  # type: ignore[misc]
+
+
+def test_damage_type_modifiers_default_empty():
+    """Default EnvironmentModifiers has no damage type modifiers."""
+    mods = EnvironmentModifiers()
+    assert mods.damage_type_modifiers == ()
+    assert mods.get_damage_modifier("fire") == 1.0
+
+
+def test_night_rain_stacks_modifiers():
+    """Night + rain should stack both ranged penalty and fire/thunder modifiers."""
+    mods = compute_environment_modifiers(weather="rain", time_of_day="night")
+    assert mods.hit_modifier == -1
+    assert mods.ranged_hit_modifier == -2
+    assert mods.get_damage_modifier("fire") == 0.5
+    assert mods.get_damage_modifier("thunder") == 1.5
+    assert mods.max_visibility == 4  # night sets it since rain doesn't

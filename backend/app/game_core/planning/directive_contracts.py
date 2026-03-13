@@ -15,19 +15,30 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Collection, Mapping
 
+from app.game_core.clue_investigation import (
+    CLUE_FUNCTIONAL_TYPE,
+    normalize_clue_definition,
+    validate_clue_definition,
+)
 from app.game_core.planning.models import (
     AdjustPacingPlan,
     CreateQuestPlan,
     DirectNpcPlan,
     EscalatePlan,
     FillAreaPlan,
+    FillLocationPlan,
     PlanningDirective,
     PlantEnvironmentalPlan,
     PublishBulletinPlan,
     RetireQuestPlan,
     SpawnQuestNpcPlan,
 )
-from app.game_core.planning.utils import coerce_non_empty_string, normalize_mapping
+from app.game_core.planning.capabilities import VALID_FUNCTIONAL_TYPES
+from app.game_core.planning.utils import (
+    coerce_non_empty_string,
+    normalize_mapping,
+    string_or_empty,
+)
 
 
 SUPPORTED_PLANNER_DIRECTIVE_KINDS = frozenset(
@@ -40,10 +51,16 @@ SUPPORTED_PLANNER_DIRECTIVE_KINDS = frozenset(
         "retire_quest",
         "spawn_quest_npc",
         "plant_environmental",
+        "plant_encounter",
         "fill_area",
+        "fill_location",
         "update_quest",
         "design_reward",
         "curate_shop",
+        "discover_room",
+        "fill_room",
+        "assign_capability",
+        "revoke_capability",
     }
 )
 
@@ -54,6 +71,8 @@ _DIGEST_ID_KEYS = (
     "npc_id",
     "board_id",
     "area_id",
+    "location_id",
+    "room_id",
     "sub_area_id",
 )
 
@@ -100,6 +119,8 @@ def normalize_planner_directive(
         return "plant_environmental", _merge_payload({"area_id": raw.area_id}, raw.payload)
     if isinstance(raw, FillAreaPlan):
         return "fill_area", _merge_payload({"area_id": raw.area_id}, raw.payload)
+    if isinstance(raw, FillLocationPlan):
+        return "fill_location", _merge_payload({"area_id": raw.area_id}, raw.payload)
     if not isinstance(raw, Mapping):
         return None
     kind = coerce_non_empty_string(raw.get("kind"))
@@ -152,6 +173,24 @@ def validate_planner_directive(
     )
 
 
+def expand_planner_directive(raw: Any) -> list[Any]:
+    """Expand one legacy planner directive into canonical runtime directives.
+
+    This is intentionally narrow and only covers confirmed legacy world-builder
+    payloads that would otherwise pass contract validation but silently lose
+    most of their content at apply time.
+    """
+
+    normalized = normalize_planner_directive(raw)
+    if normalized is None:
+        return [raw]
+    kind, payload = normalized
+    expanded_payloads = _expand_legacy_payloads(kind, payload)
+    if not expanded_payloads:
+        return [{"kind": kind, "payload": payload}]
+    return [{"kind": kind, "payload": item} for item in expanded_payloads]
+
+
 def build_payload_digest(kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     digest: dict[str, Any] = {
         "kind": str(kind).strip(),
@@ -180,6 +219,8 @@ def _validate_contract(
     normalized = dict(payload)
 
     if kind in {"create_quest", "retire_quest", "update_quest"}:
+        if kind == "create_quest":
+            _normalize_legacy_create_quest_payload(normalized)
         quest_id = coerce_non_empty_string(normalized.get("quest_id"))
         if quest_id is None:
             return False, normalized, "missing_quest_id"
@@ -194,6 +235,7 @@ def _validate_contract(
         return True, normalized, None
 
     if kind == "publish_bulletin":
+        _normalize_legacy_publish_bulletin_payload(normalized)
         board_id = coerce_non_empty_string(normalized.get("board_id"))
         if board_id is None:
             return False, normalized, "missing_board_id"
@@ -204,6 +246,7 @@ def _validate_contract(
         return True, normalized, None
 
     if kind == "direct_npc":
+        _normalize_legacy_direct_npc_payload(normalized)
         npc_id = coerce_non_empty_string(normalized.get("npc_id"))
         if npc_id is None:
             return False, normalized, "missing_npc_id"
@@ -233,6 +276,18 @@ def _validate_contract(
         if area_id is None:
             return False, normalized, "missing_area_id"
         normalized["area_id"] = area_id
+        location_id = coerce_non_empty_string(normalized.get("location_id"))
+        if location_id is not None:
+            normalized["location_id"] = location_id
+        else:
+            normalized.pop("location_id", None)
+        room_id = coerce_non_empty_string(normalized.get("room_id"))
+        if room_id is not None:
+            if location_id is None:
+                return False, normalized, "room_id_requires_location_id"
+            normalized["room_id"] = room_id
+        else:
+            normalized.pop("room_id", None)
         npc_id = coerce_non_empty_string(normalized.get("npc_id"))
         if npc_id is not None:
             normalized["npc_id"] = npc_id
@@ -249,12 +304,75 @@ def _validate_contract(
             sub_area_id = coerce_non_empty_string(normalized.get("id"))
             if sub_area_id is not None:
                 normalized["id"] = sub_area_id
+            if (
+                sub_area_id is None
+                and coerce_non_empty_string(normalized.get("label")) is None
+                and coerce_non_empty_string(normalized.get("description")) is None
+                and not _has_legacy_fill_area_entries(normalized)
+            ):
+                return False, normalized, "missing_sub_area_content"
+        elif (
+            coerce_non_empty_string(normalized.get("clue_id")) is None
+            and coerce_non_empty_string(normalized.get("description")) is None
+            and not _has_legacy_environmental_entries(normalized)
+        ):
+            return False, normalized, "missing_environmental_content"
+        return True, normalized, None
+
+    if kind == "plant_encounter":
+        _normalize_legacy_plant_encounter_payload(normalized)
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is None:
+            return False, normalized, "missing_area_id"
+        sub_area_id = coerce_non_empty_string(normalized.get("sub_area_id"))
+        if sub_area_id is None:
+            return False, normalized, "missing_sub_area_id"
+        monster_ids = normalized.get("monster_ids")
+        if not isinstance(monster_ids, list):
+            if _looks_like_legacy_scene_encounter(normalized):
+                return False, normalized, "legacy_scene_encounter_not_supported"
+            return False, normalized, "missing_monster_ids"
+        normalized_monster_ids = [
+            monster_id
+            for item in monster_ids
+            if (monster_id := coerce_non_empty_string(item)) is not None
+        ]
+        if not normalized_monster_ids:
+            if _looks_like_legacy_scene_encounter(normalized):
+                return False, normalized, "legacy_scene_encounter_not_supported"
+            return False, normalized, "missing_monster_ids"
+        normalized["area_id"] = area_id
+        normalized["sub_area_id"] = sub_area_id
+        normalized["monster_ids"] = normalized_monster_ids
+        map_category = coerce_non_empty_string(normalized.get("map_category"))
+        if map_category is not None:
+            normalized["map_category"] = map_category
+        map_tags = normalized.get("map_tags")
+        if map_tags is not None:
+            if not isinstance(map_tags, list):
+                return False, normalized, "invalid_map_tags"
+            normalized["map_tags"] = [
+                tag
+                for item in map_tags
+                if (tag := coerce_non_empty_string(item)) is not None
+            ]
+        raw_expiry_ticks = normalized.get("expiry_ticks")
+        if raw_expiry_ticks is not None:
+            try:
+                normalized["expiry_ticks"] = int(raw_expiry_ticks)
+            except (TypeError, ValueError):
+                return False, normalized, "invalid_expiry_ticks"
         return True, normalized, None
 
     if kind == "escalate":
-        delta = normalized.get("delta")
-        if not isinstance(delta, int) or isinstance(delta, bool):
+        raw_delta = normalized.get("delta")
+        if isinstance(raw_delta, bool):
             return False, normalized, "invalid_delta"
+        try:
+            delta = int(raw_delta)
+        except (TypeError, ValueError):
+            return False, normalized, "invalid_delta"
+        normalized["delta"] = delta
         if delta < -3 or delta > 3:
             return False, normalized, "delta_out_of_range"
         return True, normalized, None
@@ -262,6 +380,8 @@ def _validate_contract(
     if kind == "adjust_pacing":
         frozen = normalized.get("frozen")
         if not isinstance(frozen, bool):
+            if normalized.get("pacing_factor") is not None:
+                return False, normalized, "legacy_pacing_factor_not_supported"
             return False, normalized, "invalid_frozen"
         return True, normalized, None
 
@@ -294,6 +414,134 @@ def _validate_contract(
         normalized["npc_id"] = npc_id
         return True, normalized, None
 
+    if kind == "discover_room":
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is None:
+            return False, normalized, "missing_area_id"
+        normalized["area_id"] = area_id
+        location_id = coerce_non_empty_string(normalized.get("location_id"))
+        if location_id is None:
+            return False, normalized, "missing_location_id"
+        normalized["location_id"] = location_id
+        room_id = coerce_non_empty_string(normalized.get("room_id"))
+        if room_id is None:
+            return False, normalized, "missing_room_id"
+        normalized["room_id"] = room_id
+        return True, normalized, None
+
+    if kind == "fill_room":
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is None:
+            return False, normalized, "missing_area_id"
+        normalized["area_id"] = area_id
+        location_id = coerce_non_empty_string(normalized.get("location_id"))
+        if location_id is None:
+            return False, normalized, "missing_location_id"
+        normalized["location_id"] = location_id
+        room_id = coerce_non_empty_string(normalized.get("room_id"))
+        if room_id is None:
+            return False, normalized, "missing_room_id"
+        normalized["room_id"] = room_id
+        name = coerce_non_empty_string(normalized.get("name"))
+        if name is None:
+            return False, normalized, "missing_name"
+        normalized["name"] = name
+        # Optional fields
+        discoverable = normalized.get("discoverable")
+        if discoverable is not None:
+            if not isinstance(discoverable, bool):
+                return False, normalized, "invalid_discoverable"
+            normalized["discoverable"] = discoverable
+        else:
+            normalized["discoverable"] = False
+        raw_expiry = normalized.get("expiry_ticks")
+        if raw_expiry is not None:
+            try:
+                normalized["expiry_ticks"] = int(raw_expiry)
+            except (TypeError, ValueError):
+                return False, normalized, "invalid_expiry_ticks"
+        return True, normalized, None
+
+    if kind == "fill_location":
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is None:
+            return False, normalized, "missing_area_id"
+        normalized["area_id"] = area_id
+        location_id = coerce_non_empty_string(normalized.get("location_id"))
+        if location_id is None:
+            return False, normalized, "missing_location_id"
+        normalized["location_id"] = location_id
+        room_id = coerce_non_empty_string(normalized.get("room_id"))
+        if room_id is not None:
+            normalized["room_id"] = room_id
+        else:
+            normalized.pop("room_id", None)
+        interactables = normalized.get("interactables")
+        if not isinstance(interactables, list) or not interactables:
+            return False, normalized, "missing_interactables"
+        normalized["interactables"] = [
+            dict(item)
+            for item in interactables
+            if isinstance(item, Mapping) and coerce_non_empty_string(item.get("id")) is not None
+        ]
+        if not normalized["interactables"]:
+            return False, normalized, "missing_interactables"
+        for interactable in normalized["interactables"]:
+            functional = normalize_mapping(interactable.get("functional"))
+            if coerce_non_empty_string(functional.get("type")) != CLUE_FUNCTIONAL_TYPE:
+                continue
+            clue = normalize_clue_definition(
+                functional,
+                interactable_id=coerce_non_empty_string(interactable.get("id")),
+                name=string_or_empty(interactable.get("name")),
+                description=string_or_empty(interactable.get("description")),
+            )
+            error = validate_clue_definition(clue)
+            if error is not None:
+                return False, normalized, f"invalid_clue_interactable:{error}"
+        return True, normalized, None
+
+    if kind == "assign_capability":
+        npc_id = coerce_non_empty_string(normalized.get("npc_id"))
+        if npc_id is None:
+            return False, normalized, "missing_npc_id"
+        normalized["npc_id"] = npc_id
+        capability_id = coerce_non_empty_string(normalized.get("capability_id"))
+        if capability_id is None:
+            return False, normalized, "missing_capability_id"
+        normalized["capability_id"] = capability_id
+        instruction = coerce_non_empty_string(normalized.get("instruction"))
+        if instruction is None:
+            return False, normalized, "missing_instruction"
+        normalized["instruction"] = instruction
+        functional = normalized.get("functional")
+        if functional is not None:
+            functional_str = str(functional)
+            if functional_str not in VALID_FUNCTIONAL_TYPES:
+                return False, normalized, "invalid_functional"
+            normalized["functional"] = functional_str
+        raw_expiry = normalized.get("expiry_ticks")
+        if raw_expiry is not None:
+            try:
+                expiry_ticks = int(raw_expiry)
+            except (TypeError, ValueError):
+                return False, normalized, "invalid_expiry_ticks"
+            if expiry_ticks < 0:
+                return False, normalized, "invalid_expiry_ticks"
+            normalized["expiry_ticks"] = expiry_ticks
+        return True, normalized, None
+
+    if kind == "revoke_capability":
+        npc_id = coerce_non_empty_string(normalized.get("npc_id"))
+        if npc_id is None:
+            return False, normalized, "missing_npc_id"
+        normalized["npc_id"] = npc_id
+        capability_id = coerce_non_empty_string(normalized.get("capability_id"))
+        if capability_id is None:
+            return False, normalized, "missing_capability_id"
+        normalized["capability_id"] = capability_id
+        return True, normalized, None
+
     return True, normalized, None
 
 
@@ -306,3 +554,293 @@ def _merge_payload(
     for key, value in base.items():
         result[str(key)] = value
     return result
+
+
+def _normalize_legacy_create_quest_payload(payload: dict[str, Any]) -> None:
+    """Compat shim for older planner outputs that still use legacy quest keys."""
+
+    quest_id = coerce_non_empty_string(payload.get("quest_id"))
+    legacy_id = coerce_non_empty_string(payload.get("id"))
+    if quest_id is None and legacy_id is not None:
+        payload["quest_id"] = legacy_id
+    summary = coerce_non_empty_string(payload.get("summary"))
+    legacy_description = coerce_non_empty_string(payload.get("description"))
+    if summary is None and legacy_description is not None:
+        payload["summary"] = legacy_description
+
+
+def _normalize_legacy_publish_bulletin_payload(payload: dict[str, Any]) -> None:
+    """Compat shim for older planner outputs that put quest_id at the root."""
+
+    quest_id = coerce_non_empty_string(payload.get("quest_id"))
+    if quest_id is None:
+        return
+    metadata = normalize_mapping(payload.get("metadata"))
+    if coerce_non_empty_string(metadata.get("quest_id")) is None:
+        metadata["quest_id"] = quest_id
+    payload["metadata"] = metadata
+
+
+def _normalize_legacy_direct_npc_payload(payload: dict[str, Any]) -> None:
+    """Compat shim for older planner outputs that inline directive fields at root."""
+
+    directive = payload.get("directive")
+    if isinstance(directive, Mapping) and directive:
+        return
+    reserved_keys = {
+        "npc_id",
+        "directive",
+        "priority",
+        "expires_at_tick",
+        "linked_quest_id",
+        "current_tick",
+    }
+    legacy_directive = {
+        str(key): value
+        for key, value in payload.items()
+        if str(key) not in reserved_keys
+    }
+    if legacy_directive:
+        if coerce_non_empty_string(legacy_directive.get("kind")) is None:
+            legacy_directive["kind"] = "talk" if bool(legacy_directive.get("interactable")) else "react"
+        payload["directive"] = legacy_directive
+
+
+def _normalize_legacy_plant_encounter_payload(payload: dict[str, Any]) -> None:
+    """Compat shim for older planner outputs that still use location_id."""
+
+    sub_area_id = coerce_non_empty_string(payload.get("sub_area_id"))
+    legacy_location_id = coerce_non_empty_string(payload.get("location_id"))
+    if sub_area_id is None and legacy_location_id is not None:
+        payload["sub_area_id"] = legacy_location_id
+
+
+def _expand_legacy_payloads(kind: str, payload: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    if kind == "fill_area":
+        return _expand_legacy_fill_area_payloads(payload)
+    if kind == "plant_environmental":
+        return _expand_legacy_environmental_payloads(payload)
+    return None
+
+
+def _expand_legacy_fill_area_payloads(payload: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    if coerce_non_empty_string(payload.get("id")) is not None:
+        return None
+    raw_locations = payload.get("locations")
+    if isinstance(raw_locations, list) and raw_locations:
+        expanded = [
+            item
+            for raw_item in raw_locations
+            if (item := _normalize_legacy_fill_area_entry(payload, raw_item)) is not None
+        ]
+        if expanded:
+            return expanded
+    raw_elements = payload.get("elements")
+    if isinstance(raw_elements, list) and raw_elements:
+        expanded = [
+            item
+            for raw_item in raw_elements
+            if (item := _normalize_legacy_fill_area_entry(payload, raw_item)) is not None
+        ]
+        if expanded:
+            return expanded
+    return None
+
+
+def _expand_legacy_environmental_payloads(payload: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    if coerce_non_empty_string(payload.get("clue_id")) is not None:
+        return None
+    raw_elements = payload.get("elements")
+    if not isinstance(raw_elements, list) or not raw_elements:
+        return None
+    expanded = [
+        item
+        for raw_item in raw_elements
+        if (item := _normalize_legacy_environmental_entry(payload, raw_item)) is not None
+    ]
+    return expanded or None
+
+
+def _normalize_legacy_fill_area_entry(
+    base_payload: Mapping[str, Any],
+    raw_item: Any,
+) -> dict[str, Any] | None:
+    item = normalize_mapping(raw_item)
+    if not item:
+        return None
+    entry_id = (
+        coerce_non_empty_string(item.get("id"))
+        or coerce_non_empty_string(item.get("location_id"))
+        or coerce_non_empty_string(item.get("sub_area_id"))
+    )
+    label = (
+        coerce_non_empty_string(item.get("label"))
+        or coerce_non_empty_string(item.get("name"))
+        or coerce_non_empty_string(item.get("title"))
+    )
+    description = string_or_empty(item.get("description") or item.get("summary"))
+    if entry_id is None and label is None and not description:
+        return None
+
+    normalized = _legacy_payload_base(base_payload)
+    if entry_id is not None:
+        normalized["id"] = entry_id
+    if label is not None:
+        normalized["label"] = label
+    if description:
+        normalized["description"] = description
+    tags = _merge_string_lists(item.get("tags"), item.get("traits"))
+    if item.get("interactive") is True or item.get("interactable") is True:
+        tags.append("interactive")
+    if tags:
+        normalized["tags"] = tags
+    sub_area_type = coerce_non_empty_string(item.get("type"))
+    if sub_area_type is not None:
+        normalized["type"] = sub_area_type
+    interactables = _normalize_interactable_list(item.get("interactables"))
+    if interactables:
+        normalized["interactables"] = interactables
+    resident_npcs = _normalize_string_list(item.get("resident_npcs"))
+    if resident_npcs:
+        normalized["resident_npcs"] = resident_npcs
+    linked_quest_id = coerce_non_empty_string(item.get("linked_quest_id"))
+    if linked_quest_id is not None:
+        normalized["linked_quest_id"] = linked_quest_id
+    linked_milestone = coerce_non_empty_string(item.get("linked_milestone"))
+    if linked_milestone is not None:
+        normalized["linked_milestone"] = linked_milestone
+    raw_expiry = item.get("expiry_ticks")
+    if raw_expiry is None:
+        raw_expiry = item.get("persistence")
+    if raw_expiry is not None:
+        try:
+            normalized["expiry_ticks"] = int(raw_expiry)
+        except (TypeError, ValueError):
+            pass
+    return normalized
+
+
+def _normalize_legacy_environmental_entry(
+    base_payload: Mapping[str, Any],
+    raw_item: Any,
+) -> dict[str, Any] | None:
+    item = normalize_mapping(raw_item)
+    if not item:
+        return None
+    clue_id = (
+        coerce_non_empty_string(item.get("clue_id"))
+        or coerce_non_empty_string(item.get("id"))
+    )
+    description = (
+        string_or_empty(item.get("description"))
+        or string_or_empty(item.get("summary"))
+        or string_or_empty(item.get("name"))
+    )
+    if clue_id is None and not description:
+        return None
+
+    normalized = _legacy_payload_base(base_payload)
+    if clue_id is not None:
+        normalized["clue_id"] = clue_id
+    if description:
+        normalized["description"] = description
+    tags = _merge_string_lists(item.get("tags"), item.get("traits"))
+    if tags:
+        normalized["tags"] = tags
+    discovery_mode = coerce_non_empty_string(item.get("discovery_mode"))
+    if discovery_mode is not None:
+        normalized["discovery_mode"] = discovery_mode
+    dc = item.get("dc")
+    if dc is not None:
+        normalized["dc"] = dc
+    linked_quest_id = coerce_non_empty_string(item.get("linked_quest_id"))
+    if linked_quest_id is not None:
+        normalized["linked_quest_id"] = linked_quest_id
+    linked_milestone = coerce_non_empty_string(item.get("linked_milestone"))
+    if linked_milestone is not None:
+        normalized["linked_milestone"] = linked_milestone
+    raw_expiry = item.get("expiry_ticks")
+    if raw_expiry is None:
+        raw_expiry = item.get("persistence")
+    if raw_expiry is not None:
+        try:
+            normalized["expiry_ticks"] = int(raw_expiry)
+        except (TypeError, ValueError):
+            pass
+    return normalized
+
+
+def _legacy_payload_base(payload: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = normalize_mapping(payload)
+    normalized.pop("locations", None)
+    normalized.pop("elements", None)
+    normalized.pop("location_id", None)
+    return normalized
+
+
+def _has_legacy_fill_area_entries(payload: Mapping[str, Any]) -> bool:
+    raw_locations = payload.get("locations")
+    raw_elements = payload.get("elements")
+    return (
+        isinstance(raw_locations, list)
+        and bool(raw_locations)
+    ) or (
+        isinstance(raw_elements, list)
+        and bool(raw_elements)
+    )
+
+
+def _has_legacy_environmental_entries(payload: Mapping[str, Any]) -> bool:
+    raw_elements = payload.get("elements")
+    return isinstance(raw_elements, list) and bool(raw_elements)
+
+
+def _looks_like_legacy_scene_encounter(payload: Mapping[str, Any]) -> bool:
+    return (
+        payload.get("participants") is not None
+        or payload.get("encounter_id") is not None
+        or payload.get("trigger_condition") is not None
+    )
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        normalized = coerce_non_empty_string(item)
+        if normalized is not None:
+            result.append(normalized)
+    return result
+
+
+def _normalize_interactable_list(value: Any) -> list[Any]:
+    """Normalize an interactables list, preserving dict objects.
+
+    Unlike _normalize_string_list (which coerces everything to strings via
+    coerce_non_empty_string), this function keeps dict elements intact so that
+    downstream handlers can access interactable fields (id, name, description,
+    type, tags, checks). Plain string entries are still kept for backward
+    compatibility.
+    """
+    if not isinstance(value, list):
+        return []
+    result: list[Any] = []
+    for item in value:
+        if isinstance(item, dict):
+            if item:
+                result.append(item)
+        else:
+            normalized = coerce_non_empty_string(item)
+            if normalized is not None:
+                result.append(normalized)
+    return result
+
+
+def _merge_string_lists(*values: Any) -> list[str]:
+    merged: list[str] = []
+    for value in values:
+        for item in _normalize_string_list(value):
+            if item not in merged:
+                merged.append(item)
+    return merged

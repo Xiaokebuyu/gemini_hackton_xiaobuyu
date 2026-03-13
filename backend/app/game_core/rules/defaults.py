@@ -6,11 +6,13 @@ from app.game_core.rules.base import CommandHandler
 from app.game_core.rules.engine import RulesEngine
 from app.game_core.rules.handlers import (
     BoardHandler,
+    ClueHandler,
     CombatHandler,
     CompanionHandler,
     ContainerHandler,
     CrimeHandler,
     DiscoveryHandler,
+    DonationHandler,
     EconomyHandler,
     EncounterHandler,
     GrowthHandler,
@@ -34,6 +36,7 @@ from app.game_core.rules.handlers import (
 
 DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
     CompanionHandler,
+    ClueHandler,
     CombatHandler,
     SkillCheckHandler,
     NavigationHandler,
@@ -45,6 +48,7 @@ DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
     EncounterHandler,
     ContainerHandler,
     WorldStateHandler,
+    DonationHandler,
     PlannerQuestHandler,
     PlannerNpcHandler,
     PlannerWorldHandler,

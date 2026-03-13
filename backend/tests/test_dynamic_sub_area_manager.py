@@ -55,7 +55,8 @@ def test_dynamic_sub_area_manager_respects_cluster_capacity() -> None:
     areas = AreaSlice()
     areas.restore({"areas": {"forest": {}}})
     manager = DynamicSubAreaManager(areas)
-    for idx in range(6):
+    # Total capacity is now 15 (B-4 increase from 6)
+    for idx in range(15):
         assert manager.create("forest", {"id": f"temp_{idx}"}) is not None
 
     assert manager.create("forest", {"id": "overflow"}) is None
@@ -65,7 +66,8 @@ def test_dynamic_sub_area_manager_respects_permanent_limit() -> None:
     areas = AreaSlice()
     areas.restore({"areas": {"forest": {}}})
     manager = DynamicSubAreaManager(areas)
-    for idx in range(3):
+    # Permanent capacity is now 8 (B-4 increase from 3)
+    for idx in range(8):
         assert manager.create(
             "forest",
             {"id": f"perm_{idx}", "tier": "permanent"},

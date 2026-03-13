@@ -127,7 +127,7 @@ def decide_monster_turn(
        c. Can move closer? → move + hold
     6. Fallback → hold
     """
-    personality = str(unit.get("personality", "aggressive"))
+    personality = _resolve_personality(unit)
 
     # Step 1: flee check
     if _should_flee(unit):
@@ -236,6 +236,14 @@ def _find_unit(units: list[dict[str, Any]], uid: str) -> dict[str, Any] | None:
     return None
 
 
+def _resolve_personality(unit: dict[str, Any]) -> str:
+    personality = unit.get("ai_personality")
+    if personality is None:
+        personality = unit.get("personality")
+    normalized = str(personality or "aggressive").strip().lower()
+    return normalized or "aggressive"
+
+
 def _should_flee(unit: dict[str, Any]) -> bool:
     """Return True when the unit should attempt to flee.
 
@@ -243,7 +251,7 @@ def _should_flee(unit: dict[str, Any]) -> bool:
     threshold AND a probability check passes (cowardly monsters flee more
     readily than aggressive ones).
     """
-    personality = str(unit.get("personality", "aggressive"))
+    personality = _resolve_personality(unit)
     hp = int(unit.get("hp", 1))
     max_hp = int(unit.get("max_hp", 1))
     if max_hp <= 0:
@@ -398,7 +406,11 @@ def _evaluate_targets(
 
         in_range_bonus = 3.0 if dist <= effective_range else 0.0
 
-        return distance_score + low_hp_bonus + in_range_bonus
+        # B1-10: targets in high-cover terrain are harder to hit → deprioritize
+        target_terrain = grid.at(t_pos[0], t_pos[1])
+        cover_penalty = -2.0 if target_terrain.ac_bonus >= 2 else 0.0
+
+        return distance_score + low_hp_bonus + in_range_bonus + cover_penalty
 
     return sorted(targets, key=_score, reverse=True)
 
@@ -432,9 +444,28 @@ def _find_move_toward_target(
         side=my_side,
     )
 
+    # Terrain name → TERRAIN_REGISTRY code mapping for preferred_terrain lookup
+    _TERRAIN_NAME_TO_CODE: dict[str, str] = {
+        "grass": "G", "forest": "F", "hill": "H", "swamp": "S",
+        "water": "W", "rock": "R", "building": "B", "mountain": "M",
+    }
+
     if weapon_range <= 1:
-        # Melee: find adjacent cells of the target that are passable + reachable
-        candidates: list[tuple[int, int, int]] = []  # (dist_to_my_pos, col, row)
+        # Melee: find adjacent cells of the target that are passable + reachable.
+        # Score each candidate: lower is better.
+        #   base = move_cost
+        #   cover_bonus    = -1.0  if cell has AC bonus (forest/cover) → prefer it
+        #   swamp_penalty  = +2.0  if cell has high move_cost (swamp) → avoid it
+        #   preferred_bonus = -1.0 if cell matches unit's preferred_terrain
+        preferred = unit.get("preferred_terrain")  # list[str] or None
+        preferred_codes: set[str] = set()
+        if isinstance(preferred, list):
+            for pname in preferred:
+                code = _TERRAIN_NAME_TO_CODE.get(str(pname).lower())
+                if code:
+                    preferred_codes.add(code)
+
+        candidates: list[tuple[float, int, int]] = []  # (score, col, row)
         for dc, dr in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nc, nr = t_pos[0] + dc, t_pos[1] + dr
             cell = (nc, nr)
@@ -443,18 +474,38 @@ def _find_move_toward_target(
                 return None
             if cell in reachable and grid.is_passable(nc, nr):
                 move_cost = reachable[cell]
-                candidates.append((move_cost, nc, nr))
+                cell_terrain = grid.at(nc, nr)
+                # B1-08: prefer cells with AC bonus (cover)
+                cover_bonus = -1.0 if cell_terrain.ac_bonus > 0 else 0.0
+                # B1-09: avoid cells with high move cost (swamp)
+                swamp_penalty = 2.0 if cell_terrain.move_cost >= 3 else 0.0
+                # E-2: preferred terrain bonus
+                pref_bonus = -1.0 if cell_terrain.code in preferred_codes else 0.0
+                candidates.append((move_cost + cover_bonus + swamp_penalty + pref_bonus, nc, nr))
 
         if not candidates:
             # Not reachable this turn — find closest reachable cell toward target
             return _move_closer(my_pos, t_pos, reachable, grid)
 
-        # Pick the adjacent cell with the lowest movement cost (closest)
+        # Pick the adjacent cell with the lowest score
         candidates.sort()
         return (candidates[0][1], candidates[0][2])
 
     else:
-        # Ranged: find cells in weapon range of target that are reachable
+        # Ranged: find cells in weapon range of target that are reachable.
+        # preferred_terrain is resolved once (shared with melee block above)
+        preferred = unit.get("preferred_terrain")
+        preferred_codes_ranged: set[str] = set()
+        if isinstance(preferred, list):
+            _TERRAIN_MAP: dict[str, str] = {
+                "grass": "G", "forest": "F", "hill": "H", "swamp": "S",
+                "water": "W", "rock": "R", "building": "B", "mountain": "M",
+            }
+            for pname in preferred:
+                code = _TERRAIN_MAP.get(str(pname).lower())
+                if code:
+                    preferred_codes_ranged.add(code)
+
         attack_cells: list[tuple[float, int, int]] = []
         for cell, cost in reachable.items():
             if cell == my_pos:
@@ -465,7 +516,9 @@ def _find_move_toward_target(
             if dist_to_target <= effective:
                 # Prefer hill terrain (range_bonus > 0), then prefer lower cost
                 hill_bonus = -1.0 if cell_terrain.range_bonus > 0 else 0.0
-                attack_cells.append((hill_bonus + cost, cell[0], cell[1]))
+                # E-2: preferred terrain bonus
+                pref_bonus = -1.0 if cell_terrain.code in preferred_codes_ranged else 0.0
+                attack_cells.append((hill_bonus + pref_bonus + cost, cell[0], cell[1]))
 
         if not attack_cells:
             return _move_closer(my_pos, t_pos, reachable, grid)

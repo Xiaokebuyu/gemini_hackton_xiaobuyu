@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from app.game_core.container_access import ensure_container_state, find_accessible_container
 from app.game_core.content import WorldInstance
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
@@ -26,11 +27,10 @@ class CrimeHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         if cmd.type == "steal":
-            return self._validate_steal(cmd, state)
+            return self._validate_steal(cmd, state, world)
         if cmd.type == "lockpick":
-            return self._validate_lockpick(cmd, state)
+            return self._validate_lockpick(cmd, state, world)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -44,15 +44,16 @@ class CrimeHandler(StaticCommandHandler):
             return ExecuteResult.error(validation.reason or "validation failed")
 
         if cmd.type == "steal":
-            return self._compute_steal(cmd, state)
+            return self._compute_steal(cmd, state, world)
         if cmd.type == "lockpick":
-            return self._compute_lockpick(cmd, state)
+            return self._compute_lockpick(cmd, state, world)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_steal(
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult:
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
@@ -82,10 +83,16 @@ class CrimeHandler(StaticCommandHandler):
                 reason="container_id/container is required",
             )
 
-        resolved = self._resolve_container(state, container_id)
+        resolved = self._resolve_container(state, world, container_id)
         if resolved is None:
+            entry, error = find_accessible_container(state, world, container_id)
+            del entry
+            if error == "container_not_revealed":
+                return ValidationResult(ok=False, reason="container_not_revealed")
+            if self._current_area_container_exists(state, container_id):
+                return ValidationResult(ok=False, reason="container_not_in_current_scene")
             return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
-        _, container_state = resolved
+        _, container_state, _ = resolved
 
         if not bool(container_state.get("opened", False)):
             return ValidationResult(ok=False, reason="container must be opened")
@@ -106,6 +113,7 @@ class CrimeHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ValidationResult:
         if not state.has_slice("player"):
             return ValidationResult(ok=False, reason="player slice is required")
@@ -123,10 +131,16 @@ class CrimeHandler(StaticCommandHandler):
             if dc is None or dc < 0:
                 return ValidationResult(ok=False, reason="dc must be an integer >= 0")
 
-        resolved = self._resolve_container(state, container_id)
+        resolved = self._resolve_container(state, world, container_id)
         if resolved is None:
+            entry, error = find_accessible_container(state, world, container_id)
+            del entry
+            if error == "container_not_revealed":
+                return ValidationResult(ok=False, reason="container_not_revealed")
+            if self._current_area_container_exists(state, container_id):
+                return ValidationResult(ok=False, reason="container_not_in_current_scene")
             return ValidationResult(ok=False, reason=f"unknown container: {container_id}")
-        _, container_state = resolved
+        _, container_state, _ = resolved
         if str(container_state.get("lock_status", "unlocked")) != "locked":
             return ValidationResult(ok=False, reason="container is not locked")
         return ValidationResult(ok=True)
@@ -135,14 +149,15 @@ class CrimeHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         item_id = str(cmd.params["item_id"]).strip()
         count = int(cmd.params.get("count", 1))
         container_id = self._resolve_container_id(cmd.params) or ""
-        resolved = self._resolve_container(state, container_id)
+        resolved = self._resolve_container(state, world, container_id)
         if resolved is None:
             return ExecuteResult.error(f"unknown container: {container_id}")
-        area_id, container_state = resolved
+        area_id, container_state, _ = resolved
 
         dc = coerce_int(cmd.params.get("dc", 12)) or 12
         passive_total = self._stealth_total(state)
@@ -203,12 +218,13 @@ class CrimeHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: WorldInstance,
     ) -> ExecuteResult:
         container_id = self._resolve_container_id(cmd.params) or ""
-        resolved = self._resolve_container(state, container_id)
+        resolved = self._resolve_container(state, world, container_id)
         if resolved is None:
             return ExecuteResult.error(f"unknown container: {container_id}")
-        area_id, container_state = resolved
+        area_id, container_state, _ = resolved
 
         dc = coerce_int(cmd.params.get("dc"))
         if dc is None:
@@ -256,22 +272,50 @@ class CrimeHandler(StaticCommandHandler):
     def _resolve_container(
         self,
         state: StateContainer,
+        world: WorldInstance,
         container_id: str,
-    ) -> tuple[str, dict[str, Any]] | None:
+    ) -> tuple[str, dict[str, Any], list[StateChange]] | None:
         current_area = state.player.current_area if state.has_slice("player") else ""
         if current_area and current_area in state.areas.areas:
             current_state = state.areas.get_container_state(current_area, container_id)
-            if current_state is not None:
+            if current_state is not None and self._container_state_reachable(state, current_state):
                 current_state["area_id"] = current_state.get("area_id") or current_area
-                return current_area, current_state
-        area_id = state.areas.find_container_area(container_id)
-        if area_id is None:
+                return current_area, current_state, []
+        entry, error = find_accessible_container(state, world, container_id)
+        if entry is None or error is not None:
             return None
-        container_state = state.areas.get_container_state(area_id, container_id)
-        if container_state is None:
-            return None
-        container_state["area_id"] = container_state.get("area_id") or area_id
-        return area_id, container_state
+        container_state, init_changes = ensure_container_state(state, entry)
+        return entry.area_id, container_state, init_changes
+
+    def _current_area_container_exists(
+        self,
+        state: StateContainer,
+        container_id: str,
+    ) -> bool:
+        current_area = state.player.current_area if state.has_slice("player") else ""
+        if not current_area:
+            return False
+        return state.areas.get_container_state(current_area, container_id) is not None
+
+    def _container_state_reachable(
+        self,
+        state: StateContainer,
+        container_state: Mapping[str, Any],
+    ) -> bool:
+        current_location = state.player.current_location
+        current_room = getattr(state.player, "current_room", None)
+        location_id = get_non_empty_string(container_state, "location_id")
+        room_id = get_non_empty_string(container_state, "room_id")
+
+        if current_location is None:
+            return location_id is None
+        if location_id is not None and location_id != current_location:
+            return False
+        if current_room is None:
+            return room_id is None
+        if room_id is None:
+            return True
+        return room_id == current_room
 
     def _find_container_item(
         self,

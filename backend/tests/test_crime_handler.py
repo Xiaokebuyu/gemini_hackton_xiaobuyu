@@ -20,6 +20,8 @@ def _make_state(
     container_state: dict,
     inventory: list[dict] | None = None,
     stats: dict[str, int] | None = None,
+    location: str | None = None,
+    room: str | None = None,
 ) -> StateContainer:
     state = StateContainer()
 
@@ -28,6 +30,8 @@ def _make_state(
         {
             "character_id": "pc_1",
             "current_area": "forest",
+            "current_location": location,
+            "current_room": room,
             "inventory": inventory or [],
             "stats": stats
             or {
@@ -174,3 +178,23 @@ class TestCrimeHandler:
         assert result.delta is None
         assert result.metadata["status"] == "failed"
         assert result.metadata["passed"] is False
+
+    def test_lockpick_rejects_container_in_other_room(self) -> None:
+        state = _make_state(
+            container_state={
+                "opened": False,
+                "lock_status": "locked",
+                "location_id": "camp",
+                "room_id": "office",
+            },
+            location="camp",
+            room="tent",
+        )
+        result = _make_engine().execute(
+            Command(type="lockpick", params={"container_id": "crate"}),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is False
+        assert result.errors == ["container_not_in_current_scene"]

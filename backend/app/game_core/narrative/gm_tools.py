@@ -10,6 +10,21 @@ from app.game_core.narrative.models import ToolResult
 from app.game_core.narrative.registry import RoleToolRegistry
 from app.game_core.narrative.tools import AgentTool
 
+# ------------------------------------------------------------------
+# Functional option types
+# ------------------------------------------------------------------
+
+#: Valid functional interaction types that GM can embed in dialogue options.
+#: Each type maps to a front-end UI action that executes alongside the narrative.
+_VALID_FUNCTIONAL_TYPES: frozenset[str] = frozenset({
+    "trade_browse",
+    "quest_accept",
+    "board_browse",
+    "navigate",
+    "inspect_item",
+    "rest",
+})
+
 
 # ------------------------------------------------------------------
 # Base
@@ -267,6 +282,24 @@ class SuggestOptionsTool(_GmTool):
                             "action": {"type": "string"},
                             "npc_id": {"type": "string"},
                             "message": {"type": "string"},
+                            "functional": {
+                                "type": "object",
+                                "description": (
+                                    "Optional UI action to trigger alongside narrative. "
+                                    f"type must be one of: {sorted(_VALID_FUNCTIONAL_TYPES)}"
+                                ),
+                                "properties": {
+                                    "type": {
+                                        "type": "string",
+                                        "description": "Functional interaction type.",
+                                    },
+                                    "params": {
+                                        "type": "object",
+                                        "description": "Type-specific parameters.",
+                                    },
+                                },
+                                "required": ["type"],
+                            },
                         },
                         "required": ["text"],
                     },
@@ -320,6 +353,19 @@ class SuggestOptionsTool(_GmTool):
 
         entry: dict[str, Any] = {"text": text.strip()}
 
+        # Validate and preserve functional field before routing check/action
+        functional = opt.get("functional")
+        if functional is not None:
+            if isinstance(functional, dict):
+                func_type = functional.get("type")
+                if isinstance(func_type, str) and func_type in _VALID_FUNCTIONAL_TYPES:
+                    func_params = functional.get("params", {})
+                    entry["functional"] = {
+                        "type": func_type,
+                        "params": dict(func_params) if isinstance(func_params, dict) else {},
+                    }
+            # Invalid functional is silently dropped — the option itself is still valid
+
         check = opt.get("check")
         if isinstance(check, dict):
             skill = check.get("skill")
@@ -347,7 +393,17 @@ class SuggestOptionsTool(_GmTool):
                 entry["message"] = message.strip()
             return entry
 
-        # option has text but neither valid check nor action
+        # option with functional but without check or action: functional is the primary intent
+        if "functional" in entry:
+            npc_id = opt.get("npc_id")
+            if isinstance(npc_id, str) and npc_id.strip():
+                entry["npc_id"] = npc_id.strip()
+            message = opt.get("message")
+            if isinstance(message, str) and message.strip():
+                entry["message"] = message.strip()
+            return entry
+
+        # option has text but neither valid check, action, nor functional
         npc_id = opt.get("npc_id")
         if isinstance(npc_id, str) and npc_id.strip():
             entry["npc_id"] = npc_id.strip()

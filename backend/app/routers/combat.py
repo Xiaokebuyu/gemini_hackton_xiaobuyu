@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
 
 from fastapi import APIRouter
@@ -13,6 +14,7 @@ from app.deps import (
     _execute_structured_action,
     _load_session_or_404,
     get_admin_coordinator,
+    get_llm_provider,
 )
 from app.game_core import ManagedSession
 from app.game_core.orchestration.models import PipelineResult, SSEEvent
@@ -22,8 +24,17 @@ from app.routers.gameplay import (
     _build_stream_end_event,
     _stream_with_lock,
 )
+from app.combat_helpers import (
+    COMBAT_ACTION_TO_COMMAND as _COMBAT_ACTION_TO_COMMAND,
+    compute_companion_decision as _compute_companion_decision_helper,
+    compute_enemy_decision as _compute_enemy_decision_helper,
+    get_current_unit as _get_current_unit,
+    resolve_enemy_ai_tier as _resolve_enemy_ai_tier,
+    restore_fallen_companions as _restore_fallen_companions_helper,
+)
 from app.scene_views import build_location_overview, build_scene_change
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -45,9 +56,17 @@ _ENCOUNTER_CHOICE_ALIASES = {
     "stealth_pass": "sneak_through",
 }
 
+_MAX_NPC_ADVANCE = 20  # 安全上限，防止无限循环
+
 
 class CombatActionRequest(BaseModel):
     action_type: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class CombatMoveRequest(BaseModel):
+    """Request body for /combat/move."""
+    target: list[int]  # [col, row]
     params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -106,9 +125,12 @@ async def combat_action(
                 raise _api_error(409, "combat_not_active", "no available combat target")
             params["target"] = target
 
+        # D-1: Translate frontend action_type to v2 command type
+        v2_command = _COMBAT_ACTION_TO_COMMAND.get(action_type, action_type)
+
         before_player_hp = int(session.runtime.state.player.hp)
         structured = StructuredActionRequest(
-            action_type=action_type,
+            action_type=v2_command,
             params=params,
         )
         result = await _execute_structured_action(session, structured)
@@ -118,28 +140,19 @@ async def combat_action(
             await _deactivate_combat(
                 session,
                 sub_area_id=sub_area_id,
-                payload=after_payload,
                 status="player_defeated",
             )
             after_payload = _get_hostile_payload(session, sub_area_id)
 
+        # D-3: Auto-advance NPC turns (replaces dead advance_combat_round call)
         if (
             result.executed
             and after_payload is not None
             and bool(after_payload.get("combat_active", False))
+            and int(session.runtime.state.player.hp) > 0
         ):
-            round_result = await _execute_command(
-                session,
-                Command(
-                    type="advance_combat_round",
-                    params={"sub_area_id": sub_area_id},
-                    source="system",
-                ),
-            )
-            if round_result.executed:
-                refreshed_payload = _get_hostile_payload(session, sub_area_id)
-                if refreshed_payload is not None:
-                    after_payload = refreshed_payload
+            await _auto_advance_npc_turns(session, sub_area_id, queue)
+            after_payload = _get_hostile_payload(session, sub_area_id)
 
         await _emit_roll_events(
             queue,
@@ -180,7 +193,10 @@ async def combat_action(
             )
             loot_payload = None
             if end_result == "victory":
-                loot_payload = await _generate_loot(session, payload=after_payload or before_payload)
+                # D-9: Restore fallen companions to 50% HP after victory
+                before_payload_for_restore = after_payload or before_payload
+                await _restore_fallen_companions(session, before_payload_for_restore)
+                loot_payload = await _generate_loot(session, payload=before_payload_for_restore)
             await queue.put(
                 SSEEvent(
                     "combat_end",
@@ -196,6 +212,149 @@ async def combat_action(
             if loot_payload is not None:
                 await queue.put(SSEEvent("loot_display", loot_payload))
 
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+        await queue.put(_build_stream_end_event("completed", result.executed))
+
+    return await _stream_with_lock(world_id, session_id, _execute)
+
+
+# D-2: /combat/move endpoint (W3-2)
+@router.post("/api/game/{world_id}/sessions/{session_id}/combat/move")
+async def combat_move(
+    world_id: str,
+    session_id: str,
+    request: CombatMoveRequest,
+):
+    """Move a unit on the combat grid."""
+    session = await _load_session_or_404(world_id, session_id)
+    if _find_active_combat(session) is None:
+        raise _api_error(409, "combat_not_active", "no active combat")
+
+    async def _execute(
+        session: ManagedSession,
+        queue: Any,
+    ) -> None:
+        active = _find_active_combat(session)
+        if active is None:
+            raise _api_error(409, "combat_not_active", "no active combat")
+        sub_area_id, before_payload = active
+        params = dict(request.params)
+        params.setdefault("sub_area_id", sub_area_id)
+        params["target"] = list(request.target)
+
+        before_player_hp = int(session.runtime.state.player.hp)
+        structured = StructuredActionRequest(
+            action_type="combat_move",
+            params=params,
+        )
+        result = await _execute_structured_action(session, structured)
+        after_payload = _get_hostile_payload(session, sub_area_id)
+
+        # D-3: Auto-advance NPC turns after player move
+        if (
+            result.executed
+            and after_payload is not None
+            and bool(after_payload.get("combat_active", False))
+            and int(session.runtime.state.player.hp) > 0
+        ):
+            await _auto_advance_npc_turns(session, sub_area_id, queue)
+            after_payload = _get_hostile_payload(session, sub_area_id)
+
+        await _emit_roll_events(
+            queue,
+            result,
+            session,
+            fallback_player_ac=max(10, int(session.runtime.state.player.ac)),
+        )
+        await queue.put(_combat_action_result_event("combat_move", result))
+        await _emit_status_updates(
+            queue,
+            before_payload=before_payload,
+            after_payload=after_payload,
+            before_player_hp=before_player_hp,
+            after_player_hp=int(session.runtime.state.player.hp),
+            player_max_hp=int(session.runtime.state.player.max_hp),
+            cause="move",
+        )
+        if result.executed and after_payload is not None and bool(after_payload.get("combat_active", False)):
+            await queue.put(
+                SSEEvent(
+                    "combat_update",
+                    _build_combat_update_payload(
+                        session,
+                        sub_area_id=sub_area_id,
+                        payload=after_payload,
+                    ),
+                )
+            )
+        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
+        await queue.put(_build_stream_end_event("completed", result.executed))
+
+    return await _stream_with_lock(world_id, session_id, _execute)
+
+
+# D-2: /combat/end_turn endpoint (W3-2)
+@router.post("/api/game/{world_id}/sessions/{session_id}/combat/end_turn")
+async def combat_end_turn(
+    world_id: str,
+    session_id: str,
+):
+    """End the current unit's turn."""
+    session = await _load_session_or_404(world_id, session_id)
+    if _find_active_combat(session) is None:
+        raise _api_error(409, "combat_not_active", "no active combat")
+
+    async def _execute(
+        session: ManagedSession,
+        queue: Any,
+    ) -> None:
+        active = _find_active_combat(session)
+        if active is None:
+            raise _api_error(409, "combat_not_active", "no active combat")
+        sub_area_id, before_payload = active
+
+        before_player_hp = int(session.runtime.state.player.hp)
+        result = await _execute_command(
+            session,
+            Command(
+                type="combat_end_turn",
+                params={"sub_area_id": sub_area_id},
+                source="system",
+            ),
+        )
+        after_payload = _get_hostile_payload(session, sub_area_id)
+
+        # D-3: Auto-advance NPC turns after player ends turn
+        if (
+            result.executed
+            and after_payload is not None
+            and bool(after_payload.get("combat_active", False))
+            and int(session.runtime.state.player.hp) > 0
+        ):
+            await _auto_advance_npc_turns(session, sub_area_id, queue)
+            after_payload = _get_hostile_payload(session, sub_area_id)
+
+        await queue.put(_combat_action_result_event("combat_end_turn", result))
+        await _emit_status_updates(
+            queue,
+            before_payload=before_payload,
+            after_payload=after_payload,
+            before_player_hp=before_player_hp,
+            after_player_hp=int(session.runtime.state.player.hp),
+            player_max_hp=int(session.runtime.state.player.max_hp),
+            cause="end_turn",
+        )
+        if result.executed and after_payload is not None and bool(after_payload.get("combat_active", False)):
+            await queue.put(
+                SSEEvent(
+                    "combat_update",
+                    _build_combat_update_payload(
+                        session,
+                        sub_area_id=sub_area_id,
+                        payload=after_payload,
+                    ),
+                )
+            )
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.executed))
 
@@ -362,19 +521,24 @@ async def encounter_action(
                 await queue.put(SSEEvent("location_overview", build_location_overview(session)))
                 await queue.put(_build_stream_end_event("completed", False))
                 return
-            updated = session.runtime.state.areas.copy_hostile_state(payload)
-            updated["last_stealth_choice"] = choice
-            session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-            await get_admin_coordinator().save_session(session)
+            mark_result = await _execute_command(
+                session,
+                Command(
+                    type="record_hostile_stealth_choice",
+                    params={"sub_area_id": sub_area_id, "choice": choice},
+                    source="system",
+                ),
+            )
             await queue.put(
                 _manual_action_result(
                     choice,
-                    executed=True,
+                    executed=mark_result.executed,
+                    errors=list(mark_result.errors),
                     metadata={"sub_area_id": sub_area_id},
                 )
             )
             await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-            await queue.put(_build_stream_end_event("completed", True))
+            await queue.put(_build_stream_end_event("completed", mark_result.executed))
             return
 
         if choice == "retreat":
@@ -386,11 +550,17 @@ async def encounter_action(
                 ),
             )
             if leave_result.executed:
-                await _reset_hostile_to_spotted(
+                reset_result = await _reset_hostile_to_spotted(
                     session,
                     sub_area_id=sub_area_id,
                     last_choice=choice,
                 )
+                if not reset_result.executed:
+                    logger.warning(
+                        "failed to reset hostile %s after retreat: %s",
+                        sub_area_id,
+                        list(reset_result.errors),
+                    )
             await queue.put(
                 _manual_action_result(
                     choice,
@@ -636,33 +806,36 @@ async def _reset_hostile_to_spotted(
     *,
     sub_area_id: str,
     last_choice: str | None = None,
-) -> None:
+) -> PipelineResult:
     payload = _get_hostile_payload(session, sub_area_id)
     if payload is None or bool(payload.get("cleared", False)):
-        return
+        return PipelineResult(executed=True, errors=[], metadata={"status": "noop_cleared"})
     if bool(payload.get("combat_active", False)):
-        return
-    updated = session.runtime.state.areas.copy_hostile_state(payload)
-    updated["status"] = "spotted"
-    updated["entry_mode"] = None
-    updated["last_stealth_result"] = None
-    updated["last_stealth_choice"] = last_choice
-    session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-    await get_admin_coordinator().save_session(session)
+        return PipelineResult(executed=True, errors=[], metadata={"status": "noop_active"})
+    return await _execute_command(
+        session,
+        Command(
+            type="mark_hostile_spotted",
+            params={"sub_area_id": sub_area_id, "last_choice": last_choice},
+            source="system",
+        ),
+    )
 
 
 async def _deactivate_combat(
     session: ManagedSession,
     *,
     sub_area_id: str,
-    payload: Mapping[str, Any],
     status: str,
-) -> None:
-    updated = session.runtime.state.areas.copy_hostile_state(payload)
-    updated["status"] = status
-    updated["combat_active"] = False
-    session.runtime.state.areas.upsert_hostile(sub_area_id, updated)
-    await get_admin_coordinator().save_session(session)
+) -> PipelineResult:
+    return await _execute_command(
+        session,
+        Command(
+            type="combat_finalize_status",
+            params={"sub_area_id": sub_area_id, "status": status},
+            source="system",
+        ),
+    )
 
 
 async def _generate_loot(
@@ -955,3 +1128,168 @@ def _non_empty_string(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+# ---------------------------------------------------------------------------
+# D-3: NPC auto-advance helpers (W3-3, W4-1)
+# ---------------------------------------------------------------------------
+# Pure logic delegated to combat_helpers (no FastAPI dependency there).
+# _get_current_unit is imported from combat_helpers above.
+
+
+async def _compute_companion_decision(
+    session: ManagedSession,
+    unit: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Pre-compute a companion combat decision via LLM AI (D-6).
+
+    Thin router wrapper — injects LLM provider from deps, then delegates to
+    combat_helpers.compute_companion_decision for the actual AI call.
+    """
+    return await _compute_companion_decision_helper(
+        session=session,
+        unit=unit,
+        payload=payload,
+        llm_provider=get_llm_provider(),
+    )
+
+
+async def _compute_enemy_decision(
+    session: ManagedSession,
+    unit: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    decision_tier: str,
+) -> dict[str, Any] | None:
+    """Pre-compute one elite/boss enemy combat decision via LLM AI."""
+    return await _compute_enemy_decision_helper(
+        session=session,
+        unit=unit,
+        payload=payload,
+        decision_tier=decision_tier,
+        llm_provider=get_llm_provider(),
+    )
+
+
+async def _emit_npc_turn_events(
+    queue: Any,
+    npc_result: PipelineResult,
+    session: ManagedSession,
+    sub_area_id: str,
+    before_hp: int,
+) -> None:
+    """Emit SSE events generated by one NPC turn (rolls + status updates)."""
+    after_payload = _get_hostile_payload(session, sub_area_id)
+    await _emit_roll_events(
+        queue,
+        npc_result,
+        session,
+        fallback_player_ac=max(10, int(session.runtime.state.player.ac)),
+    )
+    await _emit_status_updates(
+        queue,
+        before_payload=after_payload or {},
+        after_payload=after_payload,
+        before_player_hp=before_hp,
+        after_player_hp=int(session.runtime.state.player.hp),
+        player_max_hp=int(session.runtime.state.player.max_hp),
+        cause="npc_action",
+    )
+
+
+async def _auto_advance_npc_turns(
+    session: ManagedSession,
+    sub_area_id: str,
+    queue: Any,
+) -> None:
+    """Auto-execute all NPC turns until it's the player's turn or combat ends.
+
+    Called after each player action (D-3 / W3-3).
+    """
+    for _ in range(_MAX_NPC_ADVANCE):
+        payload = _get_hostile_payload(session, sub_area_id)
+        if payload is None or not bool(payload.get("combat_active", False)):
+            break
+
+        current_unit = _get_current_unit(payload)
+        if current_unit is None:
+            break
+        unit_source = str(current_unit.get("source", ""))
+        if unit_source == "player":
+            break  # player's turn — stop advancing
+
+        # Pre-compute companion decision if it's a companion's turn
+        decision_params: dict[str, Any] = {"sub_area_id": sub_area_id}
+        if unit_source == "companion":
+            companion_decision = await _compute_companion_decision(
+                session, current_unit, payload
+            )
+            if companion_decision is not None:
+                decision_params["decision"] = companion_decision
+                decision_params["decision_provider"] = "companion_llm"
+        elif unit_source == "monster":
+            decision_tier = _resolve_enemy_ai_tier(
+                session=session,
+                unit=current_unit,
+                payload=payload,
+                sub_area_id=sub_area_id,
+            )
+            if decision_tier is not None:
+                enemy_decision = await _compute_enemy_decision(
+                    session,
+                    current_unit,
+                    payload,
+                    decision_tier=decision_tier,
+                )
+                if enemy_decision is not None:
+                    decision_params["decision"] = enemy_decision
+                    decision_params["decision_provider"] = "enemy_llm"
+                    decision_params["decision_tier"] = decision_tier
+
+        before_hp = int(session.runtime.state.player.hp)
+        npc_result = await _execute_command(
+            session,
+            Command(type="combat_npc_turn", params=decision_params, source="system"),
+        )
+
+        await _emit_npc_turn_events(queue, npc_result, session, sub_area_id, before_hp)
+
+        if not npc_result.executed:
+            break
+
+        # D-4: Detect player death from NPC attack
+        if int(session.runtime.state.player.hp) <= 0:
+            updated_payload = _get_hostile_payload(session, sub_area_id)
+            if updated_payload is not None:
+                await _deactivate_combat(
+                    session,
+                    sub_area_id=sub_area_id,
+                    status="player_defeated",
+                )
+            await queue.put(SSEEvent("combat_end", {
+                "result": "defeat",
+                "sub_area_id": sub_area_id,
+            }))
+            break
+
+
+# ---------------------------------------------------------------------------
+# D-9: Fallen companion restoration after victory (W3-6)
+# ---------------------------------------------------------------------------
+
+
+async def _restore_fallen_companions(
+    session: ManagedSession,
+    payload: Mapping[str, Any],
+) -> list[str]:
+    """Restore fallen companions to 50% max HP after a combat victory.
+
+    Thin router wrapper — injects the internal command executor, then delegates to
+    combat_helpers.restore_fallen_companions.
+    """
+    return await _restore_fallen_companions_helper(
+        session,
+        payload,
+        execute_command_fn=lambda cmd: _execute_command(session, cmd),
+    )

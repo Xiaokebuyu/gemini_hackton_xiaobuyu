@@ -156,7 +156,6 @@ class QuestPanelResponse(BaseModel):
     ``ui_state`` and ``badge`` are derived read-model values.
     """
 
-    milestone_states: dict[str, Any] = Field(default_factory=dict)
     dynamic_quests: dict[str, Any] = Field(
         default_factory=dict,
         description=(

@@ -82,6 +82,7 @@ def test_move_npc_removes_from_old_npc_locations_too():
 
     old_area = s.areas["area1"]
     assert "npc_y" not in old_area.npc_locations
+    assert "npc_y" not in old_area.npc_rooms
     assert "npc_y" not in old_area.npc_presence_sources
 
 
@@ -263,6 +264,29 @@ def test_companion_handler_recruit_uses_companion_source():
     assert area.npc_presence_sources.get("npc_recruit") == "companion"
 
 
+def test_companion_handler_recruit_inherits_player_room():
+    area_slice = _make_slice()
+    state = _make_companion_state(area_slice)
+    state.player.current_location = "adventurer_guild"
+    state.player.current_room = "guild_counter"
+    world = _FakeWorldWithChar()
+    engine = RulesEngine()
+    engine.register(CompanionHandler())
+
+    result = engine.execute(
+        Command(type="recruit_companion", params={"npc_id": "npc_recruit"}),
+        state,
+        world,
+    )
+    assert result.delta is not None
+    state.apply(result.delta)
+
+    area = area_slice.areas.get("frontier_town")
+    assert area is not None
+    assert area.npc_locations.get("npc_recruit") == "adventurer_guild"
+    assert area.npc_rooms.get("npc_recruit") == "guild_counter"
+
+
 def test_build_location_overview_exposes_recruitable_flag():
     area_slice = _make_slice()
     area_slice.move_npc("npc_recruit", "frontier_town", None, source="resident")
@@ -313,6 +337,237 @@ def test_build_location_overview_exposes_recruitable_flag():
     overview = build_location_overview(session)
     assert overview["present_npcs"][0]["character_id"] == "npc_recruit"
     assert overview["present_npcs"][0]["recruitable"] is True
+
+
+def test_build_location_overview_exposes_current_room_room_flags_and_room_filtered_npcs():
+    area_slice = _make_slice()
+    area_slice.move_npc("npc_hall", "frontier_town", "guild", source="resident")
+    area_slice.move_npc("npc_office", "frontier_town", "guild", source="resident")
+    area_slice.set_npc_room("frontier_town", "npc_hall", "hall")
+    area_slice.set_npc_room("frontier_town", "npc_office", "office")
+    area_slice.mark_room_discovered("frontier_town", "guild", "office")
+
+    class _Player:
+        current_area = "frontier_town"
+        current_location = "guild"
+        current_room = "hall"
+
+    class _Relations:
+        npc_dispositions: dict = {}
+        relationship_stages: dict = {}
+
+    class _NpcTemplate:
+        def __init__(self, npc_id: str, name: str) -> None:
+            self.id = npc_id
+            self.name = name
+            self.tags: list[str] = []
+            self.shop = None
+            self.shop_inventory = None
+
+    class _Characters:
+        def __init__(self) -> None:
+            self._templates = {
+                "npc_hall": _NpcTemplate("npc_hall", "Hall NPC"),
+                "npc_office": _NpcTemplate("npc_office", "Office NPC"),
+            }
+
+        def get(self, npc_id: str):
+            return self._templates.get(npc_id)
+
+        def list_all(self):
+            return list(self._templates.values())
+
+    room_hall = SimpleNamespace(name="Hall", discoverable=False)
+    room_office = SimpleNamespace(name="Office", discoverable=True)
+    room_vault = SimpleNamespace(name="Vault", discoverable=True)
+    guild = SimpleNamespace(
+        name="Guild",
+        type="visit",
+        interactables=[],
+        rooms={
+            "hall": room_hall,
+            "office": room_office,
+            "vault": room_vault,
+        },
+    )
+    area_template = SimpleNamespace(
+        name="Frontier Town",
+        sub_locations={"guild": guild},
+        connections=[],
+    )
+
+    class _Maps:
+        def get(self, area_id: str):
+            if area_id == "frontier_town":
+                return area_template
+            return None
+
+    class _World:
+        def has_registry(self, name: str) -> bool:
+            return name in {"maps", "characters"}
+
+        @property
+        def maps(self):
+            return _Maps()
+
+        @property
+        def characters(self):
+            return _Characters()
+
+    runtime = SimpleNamespace(
+        state=SimpleNamespace(
+            player=_Player(),
+            areas=area_slice,
+            relations=_Relations(),
+            has_slice=lambda name: False,
+        ),
+        world=_World(),
+    )
+    session = SimpleNamespace(runtime=runtime)
+
+    overview = build_location_overview(session)
+    assert overview["current_room"] == "hall"
+    assert [npc["character_id"] for npc in overview["present_npcs"]] == ["npc_hall"]
+
+    rooms = {room["id"]: room for room in overview["rooms"]}
+    assert rooms["hall"] == {
+        "id": "hall",
+        "name": "Hall",
+        "discoverable": False,
+        "discovered": True,
+    }
+    assert rooms["office"] == {
+        "id": "office",
+        "name": "Office",
+        "discoverable": True,
+        "discovered": True,
+    }
+    assert rooms["vault"] == {
+        "id": "vault",
+        "name": "Vault",
+        "discoverable": True,
+        "discovered": False,
+    }
+
+
+def test_build_location_overview_isolates_room_interactables_and_surfaces_dynamic_rooms():
+    area_slice = _make_slice()
+    area_slice.restore({"areas": {"frontier_town": {}}})
+    area_slice.mark_discovery("frontier_town", "hall_chest")
+    area_slice.init_container(
+        "frontier_town",
+        "hall_chest",
+        {
+            "area_id": "frontier_town",
+            "location_id": "guild",
+            "room_id": "hall",
+            "lock_status": "unlocked",
+            "trap_detected": True,
+        },
+    )
+    area_slice.add_dynamic_room(
+        "frontier_town",
+        {
+            "sub_loc_id": "guild",
+            "room_id": "archive",
+            "name": "Archive",
+            "discoverable": False,
+            "source": "narrative_planner",
+        },
+    )
+
+    class _Player:
+        current_area = "frontier_town"
+        current_location = "guild"
+        current_room = "hall"
+
+    class _Relations:
+        npc_dispositions: dict = {}
+        relationship_stages: dict = {}
+
+    hall = SimpleNamespace(
+        name="Hall",
+        discoverable=False,
+        interactables=[
+            SimpleNamespace(
+                id="hall_chest",
+                name="Hall Chest",
+                description="A chest beside the wall.",
+                visibility_dc=None,
+                checks=[],
+                tags=["container"],
+                container_data=SimpleNamespace(locked=False, trap=SimpleNamespace(detect_dc=10)),
+            ),
+            SimpleNamespace(
+                id="secret_switch",
+                name="Secret Switch",
+                description="Hidden in the molding.",
+                visibility_dc=12,
+                checks=[],
+                tags=["hidden"],
+                container_data=None,
+            ),
+        ],
+    )
+    guild = SimpleNamespace(
+        name="Guild",
+        type="visit",
+        interactables=[
+            SimpleNamespace(
+                id="lobby_statue",
+                name="Lobby Statue",
+                description="A statue in the lobby.",
+                visibility_dc=None,
+                checks=[],
+                tags=[],
+                container_data=None,
+            )
+        ],
+        rooms={"hall": hall},
+    )
+    area_template = SimpleNamespace(
+        name="Frontier Town",
+        sub_locations={"guild": guild},
+        connections=[],
+    )
+
+    class _Maps:
+        def get(self, area_id: str):
+            return area_template if area_id == "frontier_town" else None
+
+        def get_sub_location(self, area_id: str, loc_id: str):
+            if area_id == "frontier_town" and loc_id == "guild":
+                return guild
+            return None
+
+    class _World:
+        def has_registry(self, name: str) -> bool:
+            return name == "maps"
+
+        @property
+        def maps(self):
+            return _Maps()
+
+    runtime = SimpleNamespace(
+        state=SimpleNamespace(
+            player=_Player(),
+            areas=area_slice,
+            relations=_Relations(),
+            has_slice=lambda name: False,
+        ),
+        world=_World(),
+    )
+    session = SimpleNamespace(runtime=runtime)
+
+    overview = build_location_overview(session)
+
+    assert overview["room_name"] == "Hall"
+    ids = [item["id"] for item in overview["interactables"]]
+    assert ids == ["hall_chest"]
+    assert overview["interactables"][0]["trapped_hint"] is True
+    rooms = {room["id"]: room for room in overview["rooms"]}
+    assert rooms["archive"]["dynamic"] is True
+    assert rooms["archive"]["source"] == "narrative_planner"
 
 
 # ---------------------------------------------------------------------------

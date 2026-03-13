@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from app.game_core.environment_access import list_visible_scene_interactables
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.planning.subsystem import PlannerEvent
 from app.game_core.state import StateChange
@@ -27,6 +28,8 @@ _SCENE_EVENT_KINDS = {
     "area_entered",
     "sub_location_entered",
     "sub_location_left",
+    "room_entered",
+    "room_left",
     "scene_changed",
 }
 _WORLD_EVENT_KINDS = {
@@ -40,9 +43,12 @@ _WORLD_EVENT_KINDS = {
     "world_event_state_changed",
     "rest_completed",
     "combat_resolved",
+    "clue_investigated",
+    "clue_resolved",
 }
 _HEALTH_EVENT_KINDS = {
     "area_sparse",
+    "location_sparse",
     "stagnation_threshold_reached",
 }
 _AUTO_ESCALATION_THRESHOLDS = [4, 7, 10, 13, 16]
@@ -243,7 +249,7 @@ def _events_from_action(
         if area_id is None:
             return []
         seen_action_markers.add(f"area:{area_id}")
-        seen_action_markers.add(f"scene:{area_id}:")
+        seen_action_markers.add(_scene_marker(area_id, None, None))
         return [
             _event(
                 kind="area_entered",
@@ -267,6 +273,7 @@ def _events_from_action(
                 payload={
                     "area_id": area_id,
                     "location_id": None,
+                    "room_id": None,
                     "action_type": action_type,
                 },
             ),
@@ -281,8 +288,8 @@ def _events_from_action(
         if location_id is None:
             return []
         area_id = _current_area_id(context) or ""
-        seen_action_markers.add(f"scene:{area_id}:{location_id}")
-        return [
+        seen_action_markers.add(_scene_marker(area_id, location_id, None))
+        events = [
             _event(
                 kind="sub_location_entered",
                 tick=current_tick,
@@ -293,6 +300,7 @@ def _events_from_action(
                 payload={
                     "area_id": area_id,
                     "location_id": location_id,
+                    "room_id": None,
                     "action_type": action_type,
                 },
             ),
@@ -306,14 +314,27 @@ def _events_from_action(
                 payload={
                     "area_id": area_id,
                     "location_id": location_id,
+                    "room_id": None,
                     "action_type": action_type,
                 },
             ),
         ]
+        sparse = _location_sparse_event_for_scene(
+            context,
+            area_id=area_id,
+            location_id=location_id,
+            room_id=None,
+            action_type=action_type,
+            current_tick=current_tick,
+            round_index=round_index,
+        )
+        if sparse is not None:
+            events.append(sparse)
+        return events
 
     if action_type == "leave_sub_location":
         area_id = _current_area_id(context) or ""
-        seen_action_markers.add(f"scene:{area_id}:")
+        seen_action_markers.add(_scene_marker(area_id, None, None))
         return [
             _event(
                 kind="sub_location_left",
@@ -325,6 +346,7 @@ def _events_from_action(
                 payload={
                     "area_id": area_id,
                     "location_id": None,
+                    "room_id": None,
                     "action_type": action_type,
                 },
             ),
@@ -338,6 +360,94 @@ def _events_from_action(
                 payload={
                     "area_id": area_id,
                     "location_id": None,
+                    "room_id": None,
+                    "action_type": action_type,
+                },
+            ),
+        ]
+
+    if action_type == "enter_room":
+        room_id = _non_empty_string(params.get("room_id")) or _non_empty_string(params.get("room"))
+        location_id = _current_location_id(context)
+        if room_id is None or location_id is None:
+            return []
+        area_id = _current_area_id(context) or ""
+        seen_action_markers.add(_scene_marker(area_id, location_id, room_id))
+        events = [
+            _event(
+                kind="room_entered",
+                tick=current_tick,
+                source="action_log",
+                emitter="action_log",
+                round_index=round_index,
+                dedupe_key=f"room_entered:{area_id}:{location_id}:{room_id}",
+                payload={
+                    "area_id": area_id,
+                    "location_id": location_id,
+                    "room_id": room_id,
+                    "action_type": action_type,
+                },
+            ),
+            _event(
+                kind="scene_changed",
+                tick=current_tick,
+                source="action_log",
+                emitter="action_log",
+                round_index=round_index,
+                dedupe_key=f"scene_changed:{area_id}:{location_id}:{room_id}",
+                payload={
+                    "area_id": area_id,
+                    "location_id": location_id,
+                    "room_id": room_id,
+                    "action_type": action_type,
+                },
+            ),
+        ]
+        sparse = _location_sparse_event_for_scene(
+            context,
+            area_id=area_id,
+            location_id=location_id,
+            room_id=room_id,
+            action_type=action_type,
+            current_tick=current_tick,
+            round_index=round_index,
+        )
+        if sparse is not None:
+            events.append(sparse)
+        return events
+
+    if action_type == "leave_room":
+        location_id = _current_location_id(context)
+        if location_id is None:
+            return []
+        area_id = _current_area_id(context) or ""
+        seen_action_markers.add(_scene_marker(area_id, location_id, None))
+        return [
+            _event(
+                kind="room_left",
+                tick=current_tick,
+                source="action_log",
+                emitter="action_log",
+                round_index=round_index,
+                dedupe_key=f"room_left:{area_id}:{location_id}",
+                payload={
+                    "area_id": area_id,
+                    "location_id": location_id,
+                    "room_id": None,
+                    "action_type": action_type,
+                },
+            ),
+            _event(
+                kind="scene_changed",
+                tick=current_tick,
+                source="action_log",
+                emitter="action_log",
+                round_index=round_index,
+                dedupe_key=f"scene_changed:{area_id}:{location_id}:",
+                payload={
+                    "area_id": area_id,
+                    "location_id": location_id,
+                    "room_id": None,
                     "action_type": action_type,
                 },
             ),
@@ -362,6 +472,67 @@ def _events_from_action(
                 payload={
                     "npc_id": npc_id,
                     "shop_state": shop_state or {},
+                    "action_type": action_type,
+                },
+            )
+        ]
+
+    if action_type == "investigate_clue":
+        clue_id = _non_empty_string(raw_action.get("clue_id")) or _non_empty_string(params.get("clue_id"))
+        interactable_id = (
+            _non_empty_string(raw_action.get("interactable_id"))
+            or _non_empty_string(params.get("interactable_id"))
+        )
+        dedupe_suffix = clue_id or interactable_id
+        if dedupe_suffix is None:
+            return []
+        return [
+            _event(
+                kind="clue_investigated",
+                tick=current_tick,
+                source="action_log",
+                emitter="action_log",
+                round_index=round_index,
+                dedupe_key=f"clue_investigated:{dedupe_suffix}:{current_tick}",
+                payload={
+                    "clue_id": clue_id or interactable_id,
+                    "interactable_id": interactable_id,
+                    "topic": _string(raw_action.get("topic")),
+                    "linked_quest_id": _string(raw_action.get("linked_quest_id")),
+                    "linked_milestone": _string(raw_action.get("linked_milestone")),
+                    "option_ids": _string_list(raw_action.get("option_ids")),
+                    "action_type": action_type,
+                },
+            )
+        ]
+
+    if action_type == "resolve_clue_option":
+        clue_id = _non_empty_string(raw_action.get("clue_id")) or _non_empty_string(params.get("clue_id"))
+        interactable_id = (
+            _non_empty_string(raw_action.get("interactable_id"))
+            or _non_empty_string(params.get("interactable_id"))
+        )
+        option_id = _non_empty_string(raw_action.get("option_id")) or _non_empty_string(params.get("option_id"))
+        dedupe_suffix = clue_id or interactable_id
+        if dedupe_suffix is None:
+            return []
+        return [
+            _event(
+                kind="clue_resolved",
+                tick=current_tick,
+                source="action_log",
+                emitter="action_log",
+                round_index=round_index,
+                dedupe_key=f"clue_resolved:{dedupe_suffix}:{option_id or ''}:{current_tick}",
+                payload={
+                    "clue_id": clue_id or interactable_id,
+                    "interactable_id": interactable_id,
+                    "option_id": option_id,
+                    "topic": _string(raw_action.get("topic")),
+                    "linked_quest_id": _string(raw_action.get("linked_quest_id")),
+                    "linked_milestone": _string(raw_action.get("linked_milestone")),
+                    "effect_types": _string_list(raw_action.get("effect_types")),
+                    "passed": raw_action.get("passed") if isinstance(raw_action.get("passed"), bool) else None,
                     "action_type": action_type,
                 },
             )
@@ -524,11 +695,38 @@ def _events_from_change(
     if change.path == "current_location":
         area_id = _current_area_id(context) or ""
         location_id = _non_empty_string(change.value)
-        scene_marker = f"scene:{area_id}:{location_id or ''}"
+        scene_marker = _scene_marker(area_id, location_id, None)
         if scene_marker in seen_action_markers:
             return []
         if location_id is None:
-            return []
+            return [
+                _event(
+                    kind="sub_location_left",
+                    tick=current_tick,
+                    source="change_log",
+                    emitter=_change_emitter(round_index),
+                    round_index=round_index,
+                    dedupe_key=f"sub_location_left:{area_id}",
+                    payload={
+                        "area_id": area_id,
+                        "location_id": None,
+                        "room_id": None,
+                    },
+                ),
+                _event(
+                    kind="scene_changed",
+                    tick=current_tick,
+                    source="change_log",
+                    emitter=_change_emitter(round_index),
+                    round_index=round_index,
+                    dedupe_key=f"scene_changed:{area_id}:",
+                    payload={
+                        "area_id": area_id,
+                        "location_id": None,
+                        "room_id": None,
+                    },
+                ),
+            ]
         return [
             _event(
                 kind="sub_location_entered",
@@ -540,6 +738,7 @@ def _events_from_change(
                 payload={
                     "area_id": area_id,
                     "location_id": location_id,
+                    "room_id": None,
                 },
             ),
             _event(
@@ -552,6 +751,74 @@ def _events_from_change(
                 payload={
                     "area_id": area_id,
                     "location_id": location_id,
+                    "room_id": None,
+                },
+            ),
+        ]
+
+    if change.path == "current_room":
+        area_id = _current_area_id(context) or ""
+        location_id = _current_location_id(context)
+        if location_id is None:
+            return []
+        room_id = _non_empty_string(change.value)
+        scene_marker = _scene_marker(area_id, location_id, room_id)
+        if scene_marker in seen_action_markers:
+            return []
+        if room_id is None:
+            return [
+                _event(
+                    kind="room_left",
+                    tick=current_tick,
+                    source="change_log",
+                    emitter=_change_emitter(round_index),
+                    round_index=round_index,
+                    dedupe_key=f"room_left:{area_id}:{location_id}",
+                    payload={
+                        "area_id": area_id,
+                        "location_id": location_id,
+                        "room_id": None,
+                    },
+                ),
+                _event(
+                    kind="scene_changed",
+                    tick=current_tick,
+                    source="change_log",
+                    emitter=_change_emitter(round_index),
+                    round_index=round_index,
+                    dedupe_key=f"scene_changed:{area_id}:{location_id}:",
+                    payload={
+                        "area_id": area_id,
+                        "location_id": location_id,
+                        "room_id": None,
+                    },
+                ),
+            ]
+        return [
+            _event(
+                kind="room_entered",
+                tick=current_tick,
+                source="change_log",
+                emitter=_change_emitter(round_index),
+                round_index=round_index,
+                dedupe_key=f"room_entered:{area_id}:{location_id}:{room_id}",
+                payload={
+                    "area_id": area_id,
+                    "location_id": location_id,
+                    "room_id": room_id,
+                },
+            ),
+            _event(
+                kind="scene_changed",
+                tick=current_tick,
+                source="change_log",
+                emitter=_change_emitter(round_index),
+                round_index=round_index,
+                dedupe_key=f"scene_changed:{area_id}:{location_id}:{room_id}",
+                payload={
+                    "area_id": area_id,
+                    "location_id": location_id,
+                    "room_id": room_id,
                 },
             ),
         ]
@@ -704,6 +971,51 @@ def _area_sparse_event(
             "area_id": area_id,
             "has_capacity": has_capacity,
             "total_dynamic": counts.get("total", 0),
+        },
+    )
+
+
+def _location_sparse_event_for_scene(
+    context: SettlementContext,
+    *,
+    area_id: str,
+    location_id: str,
+    room_id: str | None,
+    action_type: str,
+    current_tick: int,
+    round_index: int,
+) -> PlannerEvent | None:
+    if not (context.state.has_slice("areas") and context.state.has_slice("player")):
+        return None
+    player = context.state.player
+    current_area = str(player.current_area or "").strip()
+    current_location = str(player.current_location or "").strip() or None
+    current_room = str(getattr(player, "current_room", None) or "").strip() or None
+    if (current_area, current_location, current_room) != (area_id, location_id, room_id):
+        return None
+    merged_interactables = len(list_visible_scene_interactables(context.state, context.world))
+    overlay_count = context.state.areas.count_scoped_interactable_overlays(
+        area_id,
+        location_id,
+        room_id,
+    )
+    if merged_interactables >= 2 or overlay_count >= 4:
+        return None
+    return _event(
+        kind="location_sparse",
+        tick=current_tick,
+        source="action_log",
+        emitter="action_log",
+        round_index=round_index,
+        dedupe_key=f"location_sparse:{area_id}:{location_id}:{room_id or ''}",
+        payload={
+            "area_id": area_id,
+            "location_id": location_id,
+            "room_id": room_id,
+            "action_type": action_type,
+            "merged_interactable_count": merged_interactables,
+            "overlay_count": overlay_count,
+            "remaining_overlay_slots": max(0, 4 - overlay_count),
         },
     )
 
@@ -895,6 +1207,16 @@ def _current_area_id(context: SettlementContext) -> str | None:
     return _non_empty_string(context.state.player.current_area)
 
 
+def _current_location_id(context: SettlementContext) -> str | None:
+    if not context.state.has_slice("player"):
+        return None
+    return _non_empty_string(context.state.player.current_location)
+
+
+def _scene_marker(area_id: str, location_id: str | None, room_id: str | None) -> str:
+    return f"scene:{area_id}:{location_id or ''}:{room_id or ''}"
+
+
 def _stagnation_threshold(level: int) -> int:
     if 0 <= level < len(_AUTO_ESCALATION_THRESHOLDS):
         return _AUTO_ESCALATION_THRESHOLDS[level]
@@ -931,3 +1253,14 @@ def _string(value: Any) -> str:
 def _non_empty_string(value: Any) -> str | None:
     normalized = _string(value)
     return normalized or None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = _non_empty_string(item)
+        if text is not None:
+            normalized.append(text)
+    return normalized

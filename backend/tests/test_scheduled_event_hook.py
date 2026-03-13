@@ -21,7 +21,7 @@ def _make_context() -> SettlementContext:
     state.register(time_slice)
 
     player = PlayerSlice()
-    player.restore({"current_area": "forest", "current_location": "camp"})
+    player.restore({"current_area": "forest", "current_location": "camp", "current_room": "tent"})
     state.register(player)
 
     flags = FlagSlice()
@@ -88,6 +88,30 @@ class TestScheduledEventHook:
 
         assert result.metadata["triggered_count"] == 1
         assert context.state.events.get_event("evt_location")["state"] == "triggered"
+
+    def test_room_location_entered_pending_event_triggers(self) -> None:
+        context = _make_context()
+        context.state.events.restore(
+            {
+                "pending_events": [
+                    {
+                        "event_id": "evt_room",
+                        "event_type": "story",
+                        "trigger_condition": {
+                            "type": "location_entered",
+                            "area_id": "forest",
+                            "location_id": "camp",
+                            "room_id": "tent",
+                        },
+                    }
+                ]
+            }
+        )
+
+        result = asyncio.run(ScheduledEventHook().execute(context))
+
+        assert result.metadata["triggered_count"] == 1
+        assert context.state.events.get_event("evt_room")["state"] == "triggered"
 
     def test_flag_set_pending_event_triggers(self) -> None:
         context = _make_context()

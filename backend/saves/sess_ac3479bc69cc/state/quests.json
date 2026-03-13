@@ -1,0 +1,82 @@
+{
+  "chapter_completion": {
+    "ch2": 0.0
+  },
+  "dynamic_quests": {
+    "dq_ms_arrival": {
+      "created_at_tick": 8,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "source_milestone": "ms_arrival",
+        "urgency": "medium"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与guild_girl对话"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_arrival",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 50,
+        "xp": 100
+      },
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "来到边境小镇的冒险者公会，在柜台小姐的引导下完成冒险者登记。公会大厅里弥漫着皮革和油脂的气味，任务板上密密麻麻地钉满了委托书。",
+      "target_milestone": "ms_arrival",
+      "title": "初到边境",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_arrival": {
+      "activated_tick": 8,
+      "completed_tick": null,
+      "state": "ACTIVE"
+    },
+    "ms_growing_shadow": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_into_the_wilds": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_party_encounter": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_the_hive": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_town_life": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_water_capital_call": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

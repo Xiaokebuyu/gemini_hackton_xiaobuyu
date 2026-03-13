@@ -66,7 +66,8 @@ class TestNavigationHandler:
         assert command is not None
         assert command.type == "move_area"
 
-    def test_move_area_accepts_to_alias_and_clears_location(self) -> None:
+    def test_move_area_accepts_to_alias_and_auto_places_in_sub_location(self) -> None:
+        # "forest" has sub_locations={"camp": ...} so player lands at "camp" automatically
         state = _make_state(area="town", location="inn")
         result = _make_engine().execute(
             Command(type="move_area", params={"to": "forest"}),
@@ -78,9 +79,10 @@ class TestNavigationHandler:
         assert result.time_cost == 1.0
         assert result.metadata["from_area"] == "town"
         assert result.metadata["to_area"] == "forest"
+        assert result.metadata["to_location"] == "camp"
         _apply(result, state)
         assert state.player.current_area == "forest"
-        assert state.player.current_location is None
+        assert state.player.current_location == "camp"
 
     def test_move_area_rejects_from_mismatch(self) -> None:
         result = _make_engine().execute(

@@ -33,6 +33,7 @@ export default function BoardOverlay({ sendAction }: Props) {
 
   const available = (data.entries ?? []).filter((e) => e.quest_status === 'available')
   const active = (data.entries ?? []).filter((e) => e.quest_status === 'active')
+  const reportable = (data.entries ?? []).filter((e) => e.quest_status === 'ready_to_report')
 
   return (
     <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
@@ -76,16 +77,10 @@ export default function BoardOverlay({ sendAction }: Props) {
                   <p className="text-amber-300 text-sm font-medium mb-1">{entry.title}</p>
                   <div className="flex gap-2 mt-2">
                     <button
-                      onClick={() => doAction('board_complete_quest', entry.quest_id)}
-                      className="text-xs text-green-400 hover:text-green-300 border border-green-700/50 rounded px-3 py-1"
-                    >
-                      完成
-                    </button>
-                    <button
                       onClick={() => doAction('board_retire_quest', entry.quest_id)}
                       className="text-xs text-red-400 hover:text-red-300 border border-red-700/50 rounded px-3 py-1"
                     >
-                      撤销
+                      放弃委托
                     </button>
                   </div>
                 </div>
@@ -93,7 +88,26 @@ export default function BoardOverlay({ sendAction }: Props) {
             </div>
           )}
 
-          {available.length === 0 && active.length === 0 && (
+          {/* 可汇报 */}
+          {reportable.length > 0 && (
+            <div>
+              <p className="text-gray-500 text-xs mb-2">── 可汇报 ──</p>
+              {reportable.map((entry) => (
+                <div key={entry.quest_id} className="mb-3 p-3 bg-gray-800/60 rounded-lg border border-green-700/30">
+                  <p className="text-green-300 text-sm font-medium mb-1">{entry.title}</p>
+                  <p className="text-gray-400 text-xs mb-2">目标已达成，可领取报酬</p>
+                  <button
+                    onClick={() => doAction('board_complete_quest', entry.quest_id)}
+                    className="text-xs text-green-400 hover:text-green-300 border border-green-700/50 rounded px-3 py-1"
+                  >
+                    汇报完成
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {available.length === 0 && active.length === 0 && reportable.length === 0 && (
             <p className="text-gray-500 text-sm text-center py-4">暂无委托</p>
           )}
         </div>

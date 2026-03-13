@@ -35,30 +35,6 @@ const STATUS_LABELS: Record<QuestStatus, string> = {
   closed: '已结束',
 }
 
-type MilestoneStatus = 'ACTIVE' | 'AVAILABLE' | 'COMPLETED' | 'LOCKED' | 'FAILED'
-
-const MS_ICONS: Record<string, string> = {
-  ACTIVE: '🔶',
-  AVAILABLE: '🔸',
-  COMPLETED: '✅',
-  FAILED: '❌',
-  LOCKED: '🔒',
-}
-
-const MS_LABELS: Record<string, string> = {
-  ACTIVE: '进行中',
-  AVAILABLE: '可接取',
-  COMPLETED: '已完成',
-  FAILED: '已失败',
-  LOCKED: '未解锁',
-}
-
-function msStatus(v: Record<string, unknown>): MilestoneStatus {
-  const s = String(v.state ?? 'LOCKED').toUpperCase()
-  if (s === 'ACTIVE' || s === 'AVAILABLE' || s === 'COMPLETED' || s === 'FAILED') return s
-  return 'LOCKED'
-}
-
 export default function QuestPanel() {
   const { close } = useOverlayStore()
   const { worldId, sessionId } = useSessionStore()
@@ -85,19 +61,10 @@ export default function QuestPanel() {
     }
   }
 
-  const milestones = data
-    ? Object.entries(data.milestone_states).filter(([, ms]) => {
-        const m = ms as Record<string, unknown>
-        const s = String(m.state ?? 'LOCKED').toUpperCase()
-        return s !== 'LOCKED'
-      }).map(([k, v]) => [k, v as Record<string, unknown>] as const)
-    : []
-
   const chapters = data ? Object.entries(data.chapter_completion) : []
   const hasContent =
     chapters.length > 0 ||
-    milestones.length > 0 ||
-    (data && Object.values(grouped).some((g) => g.length > 0))
+    Boolean(data && Object.values(grouped).some((g) => g.length > 0))
 
   return (
     <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
@@ -135,29 +102,6 @@ export default function QuestPanel() {
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
-
-            {milestones.length > 0 && (
-              <div>
-                <p className="text-gray-500 text-xs mb-1.5">── 里程碑 ──</p>
-                {milestones.map(([key, ms]) => {
-                  const status = msStatus(ms)
-                  return (
-                    <div key={key} className="mb-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs">{MS_ICONS[status] ?? '🔒'}</span>
-                        <span className="text-gray-200 text-sm">
-                          {typeof ms.title === 'string' && ms.title ? ms.title : key}
-                        </span>
-                        <span className="text-gray-600 text-xs ml-auto">{MS_LABELS[status] ?? '未知'}</span>
-                      </div>
-                      {typeof ms.description === 'string' && ms.description && (
-                        <p className="text-gray-400 text-xs ml-5 mt-0.5">{ms.description}</p>
-                      )}
-                    </div>
-                  )
-                })}
               </div>
             )}
 

@@ -214,6 +214,20 @@ class UtteranceOrchestrator:
             if not completed:
                 reason = "dialogue_failed"
         elif utterance.scope == "private" and utterance.focus_target is not None:
+            # Validate co-location before entering private chat: the NPC must be
+            # in the same sub-location (and room, if applicable) as the player.
+            issue = validate_presence(
+                build_interaction_policy_context(session.runtime.state, session.runtime.world),
+                "npc",
+                utterance.focus_target.id,
+                utterance.intent,
+            )
+            if issue is not None:
+                return UtteranceExecutionResult(
+                    completed=False,
+                    reason="interaction_rejected",
+                    events=[*events, _interaction_rejected_event(utterance, issue)],
+                )
             turn_kind = "private_chat_turn"
             turn_npc_id = utterance.focus_target.id
             agent_events = await self._agent_orchestration.run_private_chat(

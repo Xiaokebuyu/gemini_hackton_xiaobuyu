@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from app.game_core.orchestration.scene_bus import SceneBus
-from app.game_core.rules import RulesEngine
+from app.game_core.rules import RulesEngine, register_default_rules_handlers
 from app.game_core.state import StateChange
 from app.game_core.state.slices.narrative_plan import NarrativePlanSlice
 
@@ -109,11 +109,8 @@ def test_narrative_planner_execute_prunes_consumed_directives() -> None:
     """After execute(), consumed directives should be removed from the slice."""
     from app.game_core.bootstrap import build_default_world, build_runtime_for_world
     from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
-    from app.game_core.orchestration.scene_bus import SceneBus
     from app.game_core.orchestration.settlement import SettlementContext
-    from app.game_core.rules import RulesEngine
     from app.game_core.state import StateChange
-    from app.game_core.state.slices import SceneSlice
 
     world = build_default_world("test", world_data={})
     runtime = build_runtime_for_world(world)
@@ -131,16 +128,30 @@ def test_narrative_planner_execute_prunes_consumed_directives() -> None:
     # build_runtime_for_world already registers scene; reuse it
     scene_bus = SceneBus(state.scene)
 
-    # Create context with a trigger change so the hook doesn't skip
+    # Create context with a trigger change so the hook doesn't skip.
+    # Use the normal rules chain so NarrativeWeaver's planner_prune_npc_directives
+    # command applies through Command -> Handler -> StateDelta.
+    rules_engine = RulesEngine()
+    register_default_rules_handlers(rules_engine)
+    change_log = [
+        StateChange(slice="quests", operation="set", path="x", value="y")
+    ]
+
+    def _apply_delta(delta) -> None:
+        if delta is None:
+            return
+        state.apply(delta)
+        change_log.extend(delta.changes)
+        for change in delta.changes:
+            scene_bus.record_state_change(change)
+
     ctx = SettlementContext(
-        change_log=[
-            StateChange(slice="quests", operation="set", path="x", value="y")
-        ],
+        change_log=change_log,
         state=state,
         world=world,
         scene_bus=scene_bus,
-        _rules_engine=RulesEngine(),
-        _apply_delta=lambda d: None,
+        _rules_engine=rules_engine,
+        _apply_delta=_apply_delta,
     )
 
     # Use a mock planner that returns an empty decision

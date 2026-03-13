@@ -1,6 +1,6 @@
 """WorldBuilder sub-system — environmental directive handlers.
 
-Handles: plant_environmental, fill_area.
+Handles: plant_environmental, fill_area, fill_location.
 
 Decision record: D-P20b (narrative.md)
 """
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class WorldBuilderSubSystem:
     """PlannerSubSystem responsible for environmental/world-building directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"plant_environmental", "fill_area", "plant_encounter"})
+    _HANDLES: frozenset[str] = frozenset({"plant_environmental", "fill_area", "fill_location", "plant_encounter", "discover_room", "fill_room"})
 
     def __init__(
         self,
@@ -58,6 +58,7 @@ class WorldBuilderSubSystem:
             "sub_location_entered",
             "scene_changed",
             "area_sparse",
+            "location_sparse",
             "milestone_completed",
             "quest_created",
             "world_event_available",
@@ -78,14 +79,20 @@ class WorldBuilderSubSystem:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         if kind == "plant_environmental":
             return self._apply_plant_environmental(payload, context, current_tick=current_tick)
         if kind == "fill_area":
             return self._apply_fill_area(payload, context, current_tick=current_tick)
+        if kind == "fill_location":
+            return self._apply_fill_location(payload, context, current_tick=current_tick)
         if kind == "plant_encounter":
             return self._apply_plant_encounter(payload, context, current_tick=current_tick)
-        return False
+        if kind == "discover_room":
+            return self._apply_discover_room(payload, context, current_tick=current_tick)
+        if kind == "fill_room":
+            return self._apply_fill_room(payload, context, current_tick=current_tick)
+        return "unsupported_kind"
 
     # ------------------------------------------------------------------
     # Handler: plant_environmental
@@ -97,7 +104,14 @@ class WorldBuilderSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
+        translated = self._translate_environmental_clue_payload(payload, context)
+        if translated is not None:
+            return self._apply_fill_location(
+                translated,
+                context,
+                current_tick=current_tick,
+            )
         self._preview_sub_area_create(
             area_id=coerce_non_empty_string(payload.get("area_id")),
             spec={
@@ -125,13 +139,13 @@ class WorldBuilderSubSystem:
             )
         )
         if not result.executed:
-            return False
+            return "; ".join(result.errors) if result.errors else "command_failed"
         metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
         area_id = coerce_non_empty_string(metadata.get("area_id"))
         sub_area_id = coerce_non_empty_string(metadata.get("sub_area_id"))
         sub_area_label = string_or_empty(metadata.get("sub_area_label"))
         if area_id is None or sub_area_id is None:
-            return False
+            return "missing_area_or_sub_area_id"
         self._sse_collector.append(SSEEvent(
             event_type="environment_changed",
             payload={
@@ -152,6 +166,95 @@ class WorldBuilderSubSystem:
         })
         return True
 
+    def _translate_environmental_clue_payload(
+        self,
+        payload: Mapping[str, Any],
+        context: SettlementContext,
+    ) -> dict[str, Any] | None:
+        if payload.get("interactables") or payload.get("resident_npcs"):
+            return None
+
+        area_id = coerce_non_empty_string(payload.get("area_id"))
+        clue_id = coerce_non_empty_string(payload.get("clue_id"))
+        if area_id is None or clue_id is None:
+            return None
+
+        location_id = coerce_non_empty_string(payload.get("location_id"))
+        room_id = coerce_non_empty_string(payload.get("room_id"))
+        if context.state.has_slice("player"):
+            if location_id is None:
+                location_id = coerce_non_empty_string(context.state.player.current_location)
+            if room_id is None:
+                room_id = coerce_non_empty_string(context.state.player.current_room)
+        if location_id is None and context.world.has_registry("maps"):
+            area_template = context.world.maps.get(area_id)
+            if area_template is not None:
+                location_id = coerce_non_empty_string(getattr(area_template, "default_sub_location", None))
+                if room_id is None and location_id is not None:
+                    sub_loc = area_template.sub_locations.get(location_id)
+                    if sub_loc is not None:
+                        room_id = coerce_non_empty_string(getattr(sub_loc, "default_room", None))
+        if location_id is None:
+            return None
+
+        name = (
+            coerce_non_empty_string(payload.get("label"))
+            or coerce_non_empty_string(payload.get("name"))
+            or _humanize_identifier(clue_id)
+        )
+        description = string_or_empty(payload.get("description"))
+        raw_options = payload.get("options")
+        options = raw_options if isinstance(raw_options, list) and 2 <= len(raw_options) <= 4 else [
+            {"id": "examine", "label": "仔细检查"},
+            {"id": "ask_party", "label": "听听队友判断"},
+        ]
+        raw_outcomes = payload.get("outcomes")
+        outcomes = raw_outcomes if isinstance(raw_outcomes, Mapping) else {
+            "examine": [],
+            "ask_party": [],
+        }
+        raw_hints = payload.get("content_hints", payload.get("hints"))
+        party_prompt_hints = [
+            str(item).strip()
+            for item in raw_hints
+            if isinstance(item, str) and str(item).strip()
+        ] if isinstance(raw_hints, list) else []
+        tags = [
+            str(item).strip()
+            for item in payload.get("tags", [])
+            if isinstance(item, str) and str(item).strip()
+        ]
+        for tag in ("clue", "party_discussion"):
+            if tag not in tags:
+                tags.append(tag)
+
+        clue_interactable = {
+            "id": clue_id,
+            "name": name,
+            "description": description,
+            "type": "inspect",
+            "tags": tags,
+            "functional": {
+                "type": "investigate_clue",
+                "params": {
+                    "clue_id": clue_id,
+                    "topic": coerce_non_empty_string(payload.get("topic")),
+                    "linked_quest_id": coerce_non_empty_string(payload.get("linked_quest_id")),
+                    "linked_milestone": coerce_non_empty_string(payload.get("linked_milestone")),
+                    "party_prompt_hints": party_prompt_hints,
+                    "options": options,
+                    "outcomes": outcomes,
+                    "hide_on_resolve": True,
+                },
+            },
+        }
+        return {
+            "area_id": area_id,
+            "location_id": location_id,
+            "room_id": room_id,
+            "interactables": [clue_interactable],
+        }
+
     # ------------------------------------------------------------------
     # Handler: fill_area
     # ------------------------------------------------------------------
@@ -162,7 +265,7 @@ class WorldBuilderSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         self._preview_sub_area_create(
             area_id=coerce_non_empty_string(payload.get("area_id")),
             spec={
@@ -186,13 +289,13 @@ class WorldBuilderSubSystem:
             )
         )
         if not result.executed:
-            return False
+            return "; ".join(result.errors) if result.errors else "command_failed"
         metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
         area_id = coerce_non_empty_string(metadata.get("area_id"))
         sub_area_id = coerce_non_empty_string(metadata.get("sub_area_id"))
         sub_area_label = string_or_empty(metadata.get("sub_area_label"))
         if area_id is None or sub_area_id is None:
-            return False
+            return "missing_area_or_sub_area_id"
         self._sse_collector.append(SSEEvent(
             event_type="environment_changed",
             payload={
@@ -213,6 +316,53 @@ class WorldBuilderSubSystem:
         })
         return True
 
+    def _apply_fill_location(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_fill_location",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        location_id = coerce_non_empty_string(metadata.get("location_id"))
+        room_id = coerce_non_empty_string(metadata.get("room_id"))
+        interactable_count = int(metadata.get("interactable_count", 0))
+        if area_id is None or location_id is None:
+            return "missing_area_or_location_id"
+        self._sse_collector.append(SSEEvent(
+            event_type="environment_changed",
+            payload={
+                "area_id": area_id,
+                "location_id": location_id,
+                "room_id": room_id,
+                "change_type": "fill_location",
+                "interactable_count": interactable_count,
+            },
+        ))
+        scope_label = f"{location_id}/{room_id}" if room_id is not None else location_id
+        context.scene_bus.add_entry({
+            "source": "ENGINE",
+            "content": (
+                f"[ENGINE:environment_changed] Scene interactables updated at"
+                f" {scope_label} ({interactable_count})"
+            ),
+            "visibility": "system",
+            "tags": ["environment_changed", "narrative_planner", "fill_location"],
+        })
+        return True
+
     # ------------------------------------------------------------------
     # Handler: plant_encounter
     # ------------------------------------------------------------------
@@ -223,7 +373,7 @@ class WorldBuilderSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -234,13 +384,13 @@ class WorldBuilderSubSystem:
             )
         )
         if not result.executed:
-            return False
+            return "; ".join(result.errors) if result.errors else "command_failed"
         metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
         area_id = coerce_non_empty_string(metadata.get("area_id"))
         sub_area_id = coerce_non_empty_string(metadata.get("sub_area_id"))
         entry = metadata.get("entry")
         if area_id is None or sub_area_id is None or not isinstance(entry, Mapping):
-            return False
+            return "missing_area_or_sub_area_or_entry"
         context.scene_bus.add_entry({
             "source": "ENGINE",
             "content": (
@@ -249,6 +399,102 @@ class WorldBuilderSubSystem:
             ),
             "visibility": "system",
             "tags": ["encounter_planted", "narrative_planner"],
+        })
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: discover_room
+    # ------------------------------------------------------------------
+
+    def _apply_discover_room(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_discover_room",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        location_id = coerce_non_empty_string(metadata.get("location_id"))
+        room_id = coerce_non_empty_string(metadata.get("room_id"))
+        if area_id is None or location_id is None or room_id is None:
+            return "missing_area_or_location_or_room_id"
+        self._sse_collector.append(SSEEvent(
+            event_type="room_discovered",
+            payload={
+                "area_id": area_id,
+                "location_id": location_id,
+                "room_id": room_id,
+            },
+        ))
+        context.scene_bus.add_entry({
+            "source": "ENGINE",
+            "content": (
+                f"[ENGINE:room_discovered] Room '{room_id}' discovered in"
+                f" {location_id} ({area_id})"
+            ),
+            "visibility": "system",
+            "tags": ["room_discovered", "narrative_planner"],
+        })
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: fill_room
+    # ------------------------------------------------------------------
+
+    def _apply_fill_room(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_fill_room",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        area_id = coerce_non_empty_string(metadata.get("area_id"))
+        location_id = coerce_non_empty_string(metadata.get("location_id"))
+        room_id = coerce_non_empty_string(metadata.get("room_id"))
+        name = string_or_empty(metadata.get("name"))
+        if area_id is None or location_id is None or room_id is None:
+            return "missing_area_or_location_or_room_id"
+        self._sse_collector.append(SSEEvent(
+            event_type="dynamic_room_added",
+            payload={
+                "area_id": area_id,
+                "location_id": location_id,
+                "room_id": room_id,
+                "name": name,
+            },
+        ))
+        context.scene_bus.add_entry({
+            "source": "ENGINE",
+            "content": (
+                f"[ENGINE:dynamic_room_added] New room '{name or room_id}' added to"
+                f" {location_id} in {area_id}"
+            ),
+            "visibility": "system",
+            "tags": ["dynamic_room_added", "narrative_planner"],
         })
         return True
 
@@ -317,3 +563,10 @@ class WorldBuilderSubSystem:
             strategy_notes=strategy_notes,
             metadata=metadata,
         )
+
+
+def _humanize_identifier(value: str) -> str:
+    normalized = value.replace("_", " ").replace("-", " ").strip()
+    if not normalized:
+        return value
+    return normalized.title()

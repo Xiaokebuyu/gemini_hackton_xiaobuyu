@@ -8,17 +8,21 @@ from app.game_core.orchestration.hooks.dynamic_sub_area_expiry import DynamicSub
 from app.game_core.orchestration.hooks.encounter import EncounterHook
 from app.game_core.orchestration.hooks.event_condition import EventConditionHook
 from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook
+from app.game_core.orchestration.hooks.milestone_completion import MilestoneCompletionHook
 from app.game_core.orchestration.hooks.milestone_unlock import MilestoneUnlockHook
 from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
 from app.game_core.orchestration.hooks.npc_schedule import NpcScheduleHook
 from app.game_core.orchestration.hooks.passive_perception import PassivePerceptionHook
 from app.game_core.orchestration.hooks.private_chat_trigger import PrivateChatTriggerHook
+from app.game_core.orchestration.hooks.quest_expiry import QuestExpiryHook
+from app.game_core.orchestration.hooks.quest_objective_tracking import QuestObjectiveTrackingHook
 from app.game_core.orchestration.hooks.relationship import RelationshipHook
 from app.game_core.orchestration.hooks.shared_experience import SharedExperienceHook
 from app.game_core.orchestration.hooks.scene_reset import SceneBusResetHook
 from app.game_core.orchestration.hooks.scheduled_event import ScheduledEventHook
 from app.game_core.orchestration.hooks.status_effect import StatusEffectHook
 from app.game_core.orchestration.hooks.time_advance import TimeAdvanceHook
+from app.game_core.orchestration.hooks.xp_advancement import XpAdvancementHook
 
 __all__ = [
     "AIOsirisHook",
@@ -28,12 +32,15 @@ __all__ = [
     "EncounterHook",
     "EventConditionHook",
     "GmNarrationHook",
+    "MilestoneCompletionHook",
     "MilestoneUnlockHook",
     "NarrativePlannerHook",
     "NoOpSettlementHook",
     "NpcScheduleHook",
     "PassivePerceptionHook",
     "PrivateChatTriggerHook",
+    "QuestExpiryHook",
+    "QuestObjectiveTrackingHook",
     "RelationshipHook",
     "SceneBusResetHook",
     "SharedExperienceHook",
@@ -41,4 +48,5 @@ __all__ = [
     "SettlementHook",
     "StatusEffectHook",
     "TimeAdvanceHook",
+    "XpAdvancementHook",
 ]

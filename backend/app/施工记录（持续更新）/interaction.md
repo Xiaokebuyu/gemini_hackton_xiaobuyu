@@ -126,3 +126,30 @@
 
 - `tests/test_board_handler.py`：静态命令 + 返回结构 + 验证分支
 - `tests/test_api_shell.py`：端到端 `/action/stream` 链路新增 4 条
+
+---
+
+## [D-P29B] 前端选项面板重构：五标签 + Room 导航增强 + 装备标签 + 背景图路由（2026-03-13）
+
+**背景**：P29 Batch B — 前端展示层对齐后端数据管线，区分地点探索与离开两类导航意图，新增装备管理标签。
+
+**改动**：
+
+### `app/scene_views.py`
+- `build_location_overview()` 返回新增 `area_name`（区域显示名，`area_template.name` fallback `area_id`）
+- 当 `current_location_id` 非空时，附加 `location_name`：静态 sub_location 模板 > 动态 temporary_sub_areas > 不附加
+
+### 前端改动（`frontend/src/`）
+
+| 文件 | 改动 |
+|------|------|
+| `types/game.ts` | `GameOption.category` 类型：废弃 `navigate`，新增 `location` 和 `gear`；`LocationOverview` +`area_name?`/`location_name?` |
+| `types/sse.ts` | `SceneChangeData` +`background_url?: string` |
+| `stores/optionStore.ts` | `OverviewHandlers` +`onOpenInventory`/`onUseItem`；`buildFromOverview` 重写：子地点 → `location`，休息/背包 → `gear`，Room 全量展示（当前/可进入/锁定），离开 room 在 `leave` 标签 |
+| `stores/sceneStore.ts` | +`dynamicBackgroundUrl: string | null`；`transitionTo` 从 SSE 读取并存储；`updateFromOverview` 保留已有值 |
+| `game/OptionPanel.tsx` | 五标签 `['talk','location','action','gear','leave']`；`getCategoryLabel()` 动态标签名（`location` 标签显示区域/子地点名）；新增 `gear` 紫色边框样式 |
+| `game/SceneBackground.tsx` | 背景优先级：`dynamicBackgroundUrl` > 静态资源 > AI 生成；有动态 URL 时跳过 AI 生成请求 |
+| `game/overlays/InventoryPanel.tsx` | 新增 `isConsumable()` 辅助函数；消耗品类型（potion/scroll/food/consumable）显示绿色"使用"按钮 |
+| `pages/GamePage.tsx` | `overviewHandlers` +`onOpenInventory`（打开背包覆盖层）和 `onUseItem`（发送 `use_item` action） |
+
+**测试**：后端测试基线 2908 passed（无回归）；前端 `npx tsc -b` 通过（零类型错误）

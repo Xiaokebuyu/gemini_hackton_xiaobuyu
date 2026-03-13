@@ -74,30 +74,39 @@ def test_character_template_schedule_defaults_to_none() -> None:
 
 
 def test_scheduled_destination_returns_sub_location() -> None:
-    """String schedule value → (None, location_id) — sub-location in home area."""
+    """String schedule value → (None, location_id, None)."""
     char = {"id": "bartender", "schedule": {"dusk": "tavern"}}
     dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town"})
-    assert dest == (None, "tavern")
+    assert dest == (None, "tavern", None)
 
 
 def test_scheduled_destination_returns_cross_area() -> None:
-    """Dict schedule value → (area_id, location_id) — cross-area move."""
+    """Dict schedule value → (area_id, location_id, room_id)."""
     char = {"id": "gs", "schedule": {"night": {"area": "farm", "location": "warehouse"}}}
     dest = BasicNpcScheduleProvider._scheduled_destination(char, "night", {"town", "farm"})
-    assert dest == ("farm", "warehouse")
+    assert dest == ("farm", "warehouse", None)
+
+
+def test_scheduled_destination_returns_room_aware_mapping() -> None:
+    char = {
+        "id": "guild_girl",
+        "schedule": {"day": {"location": "adventurer_guild", "room": "guild_counter"}},
+    }
+    dest = BasicNpcScheduleProvider._scheduled_destination(char, "day", {"frontier_town"})
+    assert dest == (None, "adventurer_guild", "guild_counter")
 
 
 def test_scheduled_destination_returns_none_when_no_schedule() -> None:
     char = {"id": "wanderer"}
     dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town"})
-    assert dest == (None, None)
+    assert dest == (None, None, None)
 
 
 def test_scheduled_destination_returns_none_for_missing_period() -> None:
-    """No entry for the requested period → (None, None)."""
+    """No entry for the requested period → (None, None, None)."""
     char = {"id": "guard", "schedule": {"dawn": "barracks"}}
     dest = BasicNpcScheduleProvider._scheduled_destination(char, "dusk", {"town"})
-    assert dest == (None, None)
+    assert dest == (None, None, None)
 
 
 # ------------------------------------------------------------------
@@ -116,6 +125,7 @@ def test_schedule_moves_to_sub_location() -> None:
     move = moves[0] if isinstance(moves[0], dict) else vars(moves[0])
     assert move["area_id"] == "market"
     assert move["location_id"] == "counter"
+    assert move["room_id"] is None
 
 
 def test_no_schedule_is_noop() -> None:
@@ -143,15 +153,49 @@ def test_schedule_cross_area_move() -> None:
     move = moves[0] if isinstance(moves[0], dict) else vars(moves[0])
     assert move["area_id"] == "market"
     assert move["location_id"] == "stall"
+    assert move["room_id"] is None
 
 
 def test_already_at_destination_is_noop() -> None:
     """NPC already at scheduled destination should not move."""
     provider = _make_provider()
-    characters = [{"id": "bartender", "area_id": "tavern", "schedule": {"dusk": "counter"}}]
+    characters = [
+        {
+            "id": "bartender",
+            "area_id": "tavern",
+            "schedule": {"dusk": {"location": "counter", "room": "bar"}},
+        }
+    ]
     areas = {
-        "tavern": {"npc_locations": {"bartender": "counter"}},
+        "tavern": {
+            "npc_locations": {"bartender": "counter"},
+            "npc_rooms": {"bartender": "bar"},
+        },
         "town": {"npc_locations": {}},
     }
     decision = provider.plan(_dusk_context(characters, areas=areas))
     assert decision.metadata.get("status") == "noop"
+
+
+def test_room_mismatch_produces_move() -> None:
+    provider = _make_provider()
+    characters = [
+        {
+            "id": "bartender",
+            "area_id": "tavern",
+            "schedule": {"dusk": {"location": "counter", "room": "bar"}},
+        }
+    ]
+    areas = {
+        "tavern": {
+            "npc_locations": {"bartender": "counter"},
+            "npc_rooms": {"bartender": "kitchen"},
+        }
+    }
+
+    decision = provider.plan(_dusk_context(characters, areas=areas))
+
+    assert decision.metadata.get("status") == "deterministic"
+    move = decision.moves[0] if isinstance(decision.moves[0], dict) else vars(decision.moves[0])
+    assert move["location_id"] == "counter"
+    assert move["room_id"] == "bar"

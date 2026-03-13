@@ -13,11 +13,11 @@
 | `AgentTool` ABC | [完成] | name/description/parameters/allowed_roles/execute |
 | `AgentContext` | [完成] | role + world + state + scene_entries + execute_command |
 | `AgentContextBuilder` | [完成] | 7 层上下文 + 角色可见性矩阵 + 系统提示构建（D-N13） |
-| `AgenticExecutor` | [完成] | 单轮 `run()` + 多轮 `run_agentic()` + LlmPort 注入（D-N10） |
+| `AgenticExecutor` | [更新] | 单轮 `run()` + 多轮 `run_agentic()` + LlmPort 注入（D-N10）；P29-A1 NPC 纯文本优雅降级 |
 | `RoleToolRegistry` | [完成] | gm/npc/teammate 分桶 + 同名工具按序覆盖 |
 | `ToolResult` | [完成] | success/message/commands/metadata |
 | **GM 工具（5 个）** | [完成] | describe_environment / narrate / comment / pass_turn / suggest_options（D-N08） |
-| **NPC 工具（8 个）** | [完成] | speak / emote / update_feeling / remember / offer_quest / offer_trade / refuse / reveal_secret（D-N09） |
+| **NPC 工具（8 个）** | [更新] | speak / emote / update_feeling / remember / offer_quest / offer_trade / refuse / reveal_secret（D-N09）；P29-A2 OfferQuestTool/AcceptQuestTool 改用 role_data 验证 |
 | **Teammate 工具（6 个）** | [完成] | speak / emote / express_opinion / suggest_tactic / share_memory / request_action（D-N09） |
 
 ### 叙事规划（planning/）
@@ -64,8 +64,190 @@
 |------|------|------|
 | `NarrativePlannerHook` | [更新] | D-P20a：dispatcher 参数 + context 注入；D-P20b：删除 _apply_directive + 辅助方法，移除 instance_manager/sub_area_manager 参数；D-P20c：删除 _expire_dynamic_quests/_despawn_expired_quest_npcs，激活 dispatch() 调用链 |
 | `GmNarrationHook` | [完成] | narrator 注入边界 + SceneBus 受控写入 |
+| `MilestoneCompletionHook` | [新增] | P25-14 Phase 1：自动完成 ACTIVE 里程碑（P54，在 MilestoneUnlockHook 之前） |
+| `QuestObjectiveTrackingHook` | [新增] | P25-14 Phase 2：自动追踪有结构化条件的任务目标（P56，在 MilestoneUnlockHook 之后） |
 
 ## 决策记录
+
+### [D-P29-A10] 动态子地点背景图生成集成（A10a + A10b）
+
+**变更文件：**
+- `app/image_prefetch.py` — **新文件**：`AssetResolver` 模块级单例（`get_asset_resolver()`）、`prefetch_sub_area_backgrounds(result, time_period, resolver)` 扫描 `PipelineResult.delta` 中的 `temporary_sub_areas` 变更并以 `asyncio.create_task()` 非阻塞触发背景图生成、`get_cached_background_url(sub_area_id, time_period, resolver)` 同步缓存查询（仅读 LRU，不触发生成）
+- `app/scene_views.py` — `build_scene_change()` 新增 `asset_resolver` 可选参数；玩家在动态子地点时调用 `_lookup_cached_background()` 查缓存；命中则在 payload 追加 `background_url`（`data:<mime>;base64,<b64>` 格式）
+- `app/routers/gameplay.py` — `navigate` 路由的 `_execute()` 闭包：执行成功后调用 `_schedule_sub_area_prefetch(result, session)`；`build_scene_change()` 调用改为传 `asset_resolver=resolver`；新增 `_schedule_sub_area_prefetch()` helper（读取 time_period + 调用 prefetch）
+
+**关键设计决策：**
+- 非阻塞设计：`prefetch_sub_area_backgrounds()` 同步返回，每个生成任务独立 asyncio Task；`asyncio.create_task()` 要求在 running event loop 内调用，在 navigate 路由的 async 上下文中满足此条件
+- 缓存键格式：`temp/{sub_area_id}/background/{time_period}`（与 disk cache key 独立，避免路径混淆）
+- `build_scene_change()` 只做同步缓存查询（`_cache_get`），不触发生成，保持 sync 函数语义不变
+- `is_dynamic_sub_location` flag 仅在 maps registry 存在且 `current_location_id` 不在静态 `sub_locations` 时为 `True`，避免误判静态子地点
+- fallback result（`image_base64=None`）不返回 URL（返回 None），与 AssetResolver 的不缓存 fallback 约定一致
+
+**新增测试（11 个，`tests/test_a10_image_prefetch.py`）：**
+- `prefetch_sub_area_backgrounds`：新子地点触发 task / 已缓存跳过 / 空 delta noop / 非 areas slice noop / 无 id 的 sub_area 跳过
+- `get_cached_background_url`：命中返回 data URL / 未命中返回 None / fallback 结果返回 None
+- `build_scene_change` 集成：动态子地点有缓存 → `background_url` 在 payload / 缓存未命中 → 无 `background_url` / 无 resolver → 无 `background_url`
+
+---
+
+### [D-P29-A2] NPC 任务工具权限修复
+
+**变更文件：**
+- `app/game_core/narrative/character_tools.py` — `OfferQuestTool.execute()`：删除 `state.quests` fallback（line 419-423），不在 bulletins 就直接拒绝；`AcceptQuestTool.execute()`：整段替换为 `role_data` 验证（bulletins 检查 + active_quests 去重检查），去除所有 `state.quests` 直接访问
+
+**关键设计决策：**
+- `role_data` 是通过 `_extract_receptionist_data()` 注入的规范真相源，`state.quests` 直接访问违反 `RoleStateProxy` 边界
+- `OfferQuestTool` 无 role_data 时跳过验证（backward compat for non-receptionist usage）
+- `AcceptQuestTool` 无 role_data 或非 receptionist 角色时返回 `missing_role_data` 错误（强制要求角色数据）
+
+**新增测试：**
+- `tests/test_p29_a1_a2.py` — `TestOfferQuestTool`（3 个）：bulletin 匹配成功、不在 bulletin 拒绝、无 role_data 跳过验证
+- `tests/test_p29_a1_a2.py` — `TestAcceptQuestTool`（6 个）：bulletin 匹配成功、不在 bulletin 拒绝、已 active 拒绝、无 role_data 拒绝、非 receptionist 角色拒绝、缺 quest_id
+
+**更新已有测试：**
+- `tests/test_agentic_loop.py` — `test_npc_text_only_response_is_protocol_error` 改名并更新为新行为
+- `tests/test_p28_building_tools.py` — `TestAcceptQuestTool` 两个测试更新为新语义
+- `tests/test_s504_tool_constraints.py` — `test_offer_quest_dynamic_quest_available_fallback` 改为验证新的拒绝行为
+
+---
+
+### [D-P29-A1] Private Chat NPC 优雅降级
+
+**变更文件：**
+- `app/game_core/narrative/executor.py` — `run_agentic()` NPC 路径 `text_without_tool` 分支：改为把纯文本包装成 `ToolResult(ok=True, message=text, metadata={"event_type": "speech", "synthetic": True})`，返回 `finish_reason="text_fallback"` 的 `AgentResult`，而非 `protocol_error`；NPC 空文本仍然保持 `empty_response` 错误；teammate 路径不变
+
+**关键设计决策：**
+- 下游 `_extract_visible_reply_text()` 按 `event_type == "speech"` 提取，无需修改 coordinator
+- `synthetic: True` 字段标记降级来源，供日志分析区分
+- 仅影响 NPC 角色；teammate 仍按原有协议处理（text-only = `protocol_error`）
+
+**新增测试：**
+- `tests/test_p29_a1_a2.py` — `test_a1_npc_plain_text_wrapped_as_synthetic_speech`：验证 text_fallback 和 synthetic 标记
+- `tests/test_p29_a1_a2.py` — `test_a1_npc_plain_text_extractable_by_visible_reply`：验证下游提取正常
+- `tests/test_p29_a1_a2.py` — `test_a1_npc_empty_text_still_returns_protocol_error`：空文本仍报错
+- `tests/test_p29_a1_a2.py` — `test_a1_teammate_plain_text_still_protocol_error`：teammate 不受影响
+
+---
+
+### [D-P31 Phase 1] 开场体验修复（问题 6 + 11a）
+
+**背景：** P30 接通 `current_target_milestone` 链路后，live 测试发现开场体验存在两类空白：
+1. Bootstrap 种子任务使用英文生成标题（`_display_name()` 产物），且因 `delivery_method` 字段导致任务不可见
+2. 开场叙述（LLM 路径和确定性 fallback 路径）均无故事背景，LLM 生成通用叙述而非基于剧情
+
+**变更文件：**
+
+- `app/game_core/runtime.py` — `bootstrap_opening_planner()` 后处理：`hook.bootstrap()` 完成后、`persist` 前，遍历 `state.quests.dynamic_quests`，对有 `metadata.source_milestone` 的任务从 `QuestRegistry.get_milestone()` 读取 `title`/`description`，覆写任务的 `title`/`summary` 字段，并 `pop("delivery_method")` 使任务对玩家可见
+
+- `app/game_core/narrative/context_builder.py` — `build_gm_opening_context()`：读取 `narrative_plan.current_target_milestone`，注入 `opening_milestone`（title/narrative_context/key_elements/involved_npcs）和 `opening_chapter`（title/description）到 `l7_engine_result`；`GM_OPENING_PROMPT`：在 `## Style` 前新增 `## Story context` 块，指示 LLM 利用 `opening_milestone` 和 `opening_chapter` 叙事
+
+- `app/agent_orchestration.py` — `_build_opening_user_message()`：从 `narrative_plan.current_target_milestone` 读取里程碑叙事，构建 `opening_narrative` dict（milestone_title/narrative_context/key_elements/chapter_title/chapter_description），注入 payload
+
+- `app/opening_views.py` — `build_opening_narration()`：在 `lines` 构建后、`return` 前，从 `world.quests` 读取章节描述和里程碑 `narrative_context`，用 `insert(0, ...)` 前置注入，让确定性 fallback 叙述也包含故事背景
+
+**关键设计决策：**
+- `delivery_method` 字段被移除：这是种子任务被隐藏的根因，`pop()` 是最简修复
+- `world.has_registry("quests")` + `state.has_slice("narrative_plan")` 双重保护：确保无 quests registry 或 narrative_plan slice 时静默跳过
+- `opening_narrative` 为 `None` 时原有 payload 结构不变（向后兼容）
+- `context_builder.py` 位于 `game_core/`，不得 import 应用层 — 通过 `_world.quests` 访问（WorldInstance 是 game_core 内部模块），完全合规
+
+**无新测试：** Phase 1 改动为数据注入路径，通过 live 验证（新 session 开场包含章节叙事背景、任务面板显示中文标题）。全量测试基线无变化。
+
+**更新已有测试（5 个文件）：**
+- `tests/test_agentic_loop.py` — `test_npc_text_only_response_is_protocol_error` → 改名/改义
+- `tests/test_npc_interaction.py` — `test_text_only_npc_response_is_reported_as_invalid_agent_response` → 改名/改义
+- `tests/test_private_chat.py` — `test_text_only_npc_response_is_invalid_agent_response` → 改名/改义
+- `tests/test_agent_orchestration.py` — 3 个相关测试改为验证新的成功行为
+
+---
+
+### [D-P25-5b] Phase 5b：任务目标追踪（P25-14 Phase 2）
+
+**变更文件：**
+- `app/game_core/rules/handlers/planner.py` — `_compute_create_quest()` objectives 处理：从逐个 `if isinstance` 改为 normalize 循环，string → `{"description": s, "completed": False}`，dict → 保留全部原有 key（向后兼容 type/target 等遗留字段）+ 确保 `description`/`completed` 存在 + 验证并保留合法 `condition` 字段（需含 `type` 键），去除无效 condition
+- `app/game_core/orchestration/hooks/quest_objective_tracking.py` — **新文件**：`QuestObjectiveTrackingHook`（priority=56），遍历 active 动态任务，对有 `condition` 字段的 objective 调用 `BasicEventConditionEvaluator._condition_met()`，满足时 in-place 标记 `completed=True`，全部完成时按 `requires_report` 推进 status 为 `ready_to_report` 或 `completed`
+- `app/game_core/orchestration/hooks/__init__.py` — 导出 `QuestObjectiveTrackingHook`
+- `app/game_core/orchestration/defaults.py` — 导入并注册到 `DEFAULT_SETTLEMENT_HOOK_TYPES`（位于 MilestoneUnlockHook 之后）
+
+**关键设计决策：**
+- objectives normalize 保留原有 key（向后兼容 `_build_objective_event_changes` 的 type/target 读取逻辑）
+- `condition` 字段独立于 objective 的遗留 `type` 字段，两者语义不同：遗留 `type` 用于 EventEngine 自动绑定，`condition` 用于 QuestObjectiveTrackingHook 直接评估
+- Hook 直接操作 `context.state.quests.dynamic_quests` dict（受控例外，等同 NarrativePlanSlice 直接写入），设置 `_dirty = True` 确保持久化
+
+**新增测试：**
+- `tests/test_phase5_quest_tracking.py` — `TestObjectiveConditionSchema`（3 个）：condition 保留、无效 condition 剔除、string objective 规范化
+- `tests/test_phase5_quest_tracking.py` — `TestQuestObjectiveTrackingHook`（8 个）：满足条件自动完成、未满足不变、无 condition 不触发、全完成推进 completed/ready_to_report、混合追踪、跳过非 active 任务、无 quests slice noop
+
+### [D-P25-5a] Phase 5a：面板 + Skills（P25-12 + P25-11）
+
+**变更文件：**
+- `app/routers/panels.py` — `_quest_response()` 重构：不再构建 `enriched_milestones`，`milestone_states={}` 不暴露给前端（P25-12）；filter `raw_dynamic` 去除 status 为 `retired`/`expired` 的任务，只传 `visible_quests` 给 `normalize_dynamic_quest_panel()`
+- `app/quest_views.py` — `normalize_dynamic_quest_view()` 新增 `completion_hint` 字段：status=active 且所有 objectives 的 `completed=True` 时，`requires_report=True` → "所有目标已完成，请返回汇报"，否则 → "所有目标已完成"
+- `app/narrators.py` — `_SYSTEM_PROMPT` 在"## 设计模板工具"段落之后追加"## 设计模板使用规则"（强制 create_quest/plant_encounter 前必须 read_design_skill）；5 个 subsystem prompt 中的 `（可选）可通过...` 改为 `创建新内容前，建议先通过 list_design_skills / read_design_skill 查阅...`
+
+**关键设计决策：**
+- `milestone_states` 隐藏是 frontend-layer 决定：内部状态不应直接暴露给 UI，frontend 只需要 dynamic_quests 视图
+- `completion_hint` 是只读派生字段（display-only），不持久化，仅在 quest_views 中计算
+- Skills prompt 的 `强制要求` 措辞限定于 create_quest 和 plant_encounter（内容生成密集型指令）；其余 directive 类型仅"建议"
+
+**新增测试：**
+- `tests/test_phase5_quest_tracking.py` — `TestQuestPanelFiltering`（2 个）：milestone_states 为空、retired/expired 过滤
+- `tests/test_phase5_quest_tracking.py` — `TestCompletionHint`（5 个）：全完成 hint、requires_report hint、部分完成无 hint、非 active 无 hint、无 objectives 无 hint
+- `tests/test_phase5_quest_tracking.py` — `TestSkillsPromptMandatory`（2 个）：prompt 含强制规则、subsystem prompt 已更新
+
+### [D-P25-4] Phase 4：知识积累链路（P25-17-1 + P25-05 + P25-15-1）
+
+**变更文件：**
+- `app/game_core/narrative/context_window.py` — 删除 deprecated `pop_oldest_for_graphize()` 方法；`export_messages()` 返回 `dict[str, Any]`（`{"messages": [...], "graphize_counter": N}`，原返回 list）；`import_messages()` 接受 `dict | list` — dict 还原 graphize_counter，list（旧格式）fallback 为 0
+- `app/game_core/orchestration/npc_interaction.py` — `collect_for_graphize()` 替换 `pop_oldest_for_graphize()`（line 476）
+- `app/game_core/orchestration/private_chat.py` — 同上（line 263）
+- `app/game_core/narrative/instance_manager.py` — `collect_for_graphize()` 替换 `pop_oldest_for_graphize(fraction=1.0)`（line 237）
+- `app/game_core/narrative/context_builder.py` — `build_npc_context()` 改为 `await self._build_l6(npc_id, memory_retriever, "npc")`（不再返回 stub recall_tool）；`build_teammate_context()` 同理；`_build_l6()` 和 `_extract_scene_keywords()` 加 `has_slice("player")` 守卫避免无 player slice 时异常
+- `app/narrators.py` — `export_history()` 返回类型改为 `dict[str, Any]`；两处 `import_history()` 接受 `dict | list`，dict 直接传 `import_messages()`，list 走原有 legacy 检测路径
+- `app/game_core/runtime.py` — `_restore_context_windows()` 中 `isinstance(messages, list)` 改为 `isinstance(messages, (list, dict))`；GM/planner history 恢复也同步改为 `isinstance(..., (list, dict))`
+
+**关键设计决策：**
+- `export_messages()` 改为 dict 是破坏性变更，需要同步更新所有 callers 和 tests
+- `import_messages()` 实现向后兼容（接受旧 list 格式），方便存量数据迁移
+- L6 注入（4-3）使 NPC/Teammate context 从 `{"hits": [], "source": "recall_tool"}` stub 变为实际 retriever 调用；retriever=None 时返回 `{"hits": [], "source": "null"}`
+- `_build_l6()` 和 `_extract_scene_keywords()` 加 player slice 守卫，兼容无 player slice 的测试 state
+
+**新增/更新测试：**
+- `tests/test_context_window.py` — 删除 `TestPopOldestForGraphize`（5 个），新增 `TestCollectForGraphize`（5 个）
+- `tests/test_p19_phases_bcde.py` — 更新 `test_context_window_export_import_messages`（新 dict 格式），新增 `test_context_window_graphize_counter_persisted`（counter 持久化），新增 `test_context_window_legacy_list_import`（旧 list 格式向后兼容），更新 `test_planner_history_export_import`（新 dict 格式）
+- `tests/test_context_builder.py` — 更新 l6 source 断言（`"recall_tool"` → `"null"`），更新两个 `test_no_double_retriever_call` → `test_retriever_called_once_in_full_context`（call_count 0 → 1）
+- `tests/test_s107_gm_graphize.py` — 更新 `test_gm_export_returns_empty_when_no_history`（新 dict 格式）
+- `tests/test_s107_planner_graphize.py` — 更新 `test_export_format_has_content_key`（新 dict 格式）
+
+### [D-P25-3b] Phase 3b：体验质量 — Osiris 局部性 + 检定约束（P25-08/P25-06）
+
+**变更文件：**
+- `app/evaluators.py` — `OSIRIS_SYSTEM_PROMPT` 在 `## Constraints` 之后追加 `## Locality constraints` 段落，明确 modify_disposition 只能目标在场 NPC
+- `app/game_core/orchestration/hooks/ai_osiris.py` — `_build_nearby_npcs()`：当 `normalized_location is not None` 时，只返回同 sub_location 的 NPC（`area_local` + `static_local`），不返回 `area_other` + `static_other`；`execute()`：提取 `present_ids`，在 validation loop 中对 `modify_disposition` 执行局部性检查
+- `app/game_core/orchestration/npc_interaction.py` — 新增 `_format_check_constraint()` 方法（30 行），根据检定结果生成中文约束文本（成功/失败 × persuasion/intimidation/deception + fallback）；`execute_interaction()` 在 `_write_skill_check_observation()` 之后注入约束到 `system_prompt`
+
+**关键设计决策：**
+- 局部性检查在 `execute()` 而非 `_passes_minimal_semantic_validation`（classmethod 无法访问 context）
+- `present_ids` 从 `snapshot["scene_presence"]["present_character_ids"]` 获取（snapshot 已在 execute() 最开始构建）
+- 局部性只在 `present_ids` 非空时生效，空列表时跳过（避免误屏蔽无场景数据的情况）
+- `_format_check_constraint()` 返回 str，直接追加到 system_prompt；check_result=None 时不追加
+- 更新 `tests/test_ai_osiris_hook.py` 中 5 个测试以匹配新的 sub_location 过滤行为
+- 新增 `tests/test_p25_phase3b.py`（22 个测试）
+
+### [D-P25-3a] Phase 3a：里程碑生命周期 + 进程引导（P25-14）
+
+**变更文件：**
+- `app/game_core/rules/handlers/navigation.py` — `_compute_move_area()` 追加 `visited_area_{area_id}` FlagSlice StateChange（路径格式 `flags.visited_area_X`，只在 flags slice 存在时写入）
+- `app/game_core/orchestration/event_engine.py` — `_check_location_entered()` 优先检查持久 flag `visited_area_{area_id}`，fallback 到实时位置
+- `app/game_core/orchestration/hooks/milestone_completion.py` — 新文件：`MilestoneCompletionHook`（priority=54），扫描 ACTIVE 里程碑，条件满足时通过 advance_quest 命令自动 COMPLETED
+- `app/game_core/orchestration/hooks/__init__.py` + `defaults.py` — 注册 MilestoneCompletionHook 到 DEFAULT_SETTLEMENT_HOOK_TYPES
+- `app/narrators.py` — `_SYSTEM_PROMPT` 追加"## 进程引导原则"段落
+
+**关键设计决策：**
+- `MilestoneCondition` 是 dataclass 而非 dict，`_condition_to_dict()` 转换为 `{"type": .type, "params": .params}` 供 EventEngine 评估
+- FlagSlice.apply_state_change 要求路径 `flags.key_name`，不是 `key_name`
+- navigation handler 加条件判断 `has_slice("flags")`，避免老测试中无 flags slice 时 KeyError
+- MilestoneCompletionHook priority=54 < MilestoneUnlockHook priority=55，确保同一 tick 内完成→解锁级联
 
 ### [D-N01] AgentContext 与 SettlementContext 分离
 
@@ -1887,3 +2069,739 @@ if (
 - bug 修复验证：merchant_prompt_reads_current_stock / unlimited_stock_display
 
 **测试基线**：1912 passed（+16，含 13 个新测试）
+
+### [D-P23-B] P23 轨道 B：奖励 + NPC 数据 + Views
+
+**日期**：2026-03-11
+
+**问题清单**：W1-1（奖励发放）、W2-4（NPC 真理源深化）、W5-1（面板初始导航）、W5-6（已完成任务摘要）、W6-5（story_facts NPC 注入）、W6-7（receptionist 接取放宽）
+
+**改动清单**：
+
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/rules/handlers/board.py` | B-1: `_build_reward_changes()` 模块级函数；`_compute_board_complete_quest()` 新增 gold/xp/items StateChange + rewards_claimed + reward_summary metadata |
+| `app/game_core/rules/handlers/receptionist.py` | B-1: `_compute_report_quest()` 新增奖励 StateChange + rewards_claimed 防重机制；B-6: validate 放宽 receptionist_accept_quest：quest 不在公告板但 status==available 时仍可接取 |
+| `app/game_core/narrative/context_builder.py` | B-2: `_extract_receptionist_data` 追加 objectives/rewards/difficulty；`_extract_merchant_data` 新增 world 参数，追加 name/type/rarity/description；新增 `_danger_label()` 函数；`_extract_guard_data` 追加 danger_label；`_format_role_constraint_block` 对应更新展示格式；B-5: `build_npc_full_context` 注入 story_facts → `_build_npc_prompt_text` 新增 story_facts 参数 → 渲染为 `## Relevant world knowledge` 块 |
+| `app/quest_views.py` | B-3: active quest 无 current_step 时从 objectives/summary 自动生成初始导航；B-4: completed quest 注入 completed_summary（rewards + completed_objectives） |
+
+**关键设计决策**：
+- 奖励 StateChange 路径：gold/xp 用 `StateChange("player", "set", "gold/xp", new_value)`（增量计算在 handler 层），items 用整个 inventory 快照替换（与 InventoryHandler 一致）
+- `_build_reward_changes` 暴露为模块级函数，便于 receptionist handler 复用
+- receptionist report 双重防重：检查 `rewards_claimed` flag，成功发奖后设置该 flag
+- B-3 fallback 仅在 `current_step is None` 时生效（不覆盖 LLM 设置的值）
+- B-5 story_facts cap = 5 条（取最近 N 条），如无 narrative_plan slice 静默跳过
+
+**测试覆盖（21 个新测试 in `tests/test_track_b_rewards_npc_views.py`）**：
+- B-1: board_complete grants gold/xp/items/reward_summary/rewards_claimed（4 个）
+- B-1: receptionist_report grants rewards / prevents double grant / sets flag（3 个）
+- B-2: receptionist prompt objectives/rewards（2 个）；merchant name/type/no-world（2 个）；guard label thresholds（2 个）
+- B-3: objectives → current_step；summary fallback；existing not overridden（3 个）
+- B-4: completed_summary / active no summary（2 个）
+- B-5: story_facts injected / empty state no block（2 个）
+- B-6: off-board available accepted（1 个）
+
+**测试基线**：2221 passed（+21 新测试；9 pre-existing failures from Track A changes in working tree）
+
+---
+
+## P23 轨道 C — 商店 + Prompt + 兜底（2026-03-11）
+
+**问题来源**：P23 二次审计 W1-2、W2-3、W5-3、W5-4、W6-2、W6-3
+
+### C-1（W1-2）商店 Bootstrap 初始化
+
+**问题**：`shop_state` 是 lazy init，首次浏览商店时不存在，导致商人无库存。
+
+**修改 `app/game_core/runtime.py`**：
+- `bootstrap_opening_planner()` 方法末尾（在 persist 保存之前）调用 `self._bootstrap_shops(session)`
+- 新增 `_bootstrap_shops(session)` 方法：遍历 world.characters 所有有 `shop_inventory` 的角色，对无 shop_state 的角色执行 `refresh_shop` Command，走 rules_engine.execute() + state.apply()
+- 已有 shop_state 的角色跳过（restored session 保护）
+
+**注意**：直接调 rules_engine.execute() + state.apply() 而非走 tick_coordinator，因为 bootstrap 阶段是受控例外。
+
+### C-2（W2-3）+ C-4（W5-4）Planner Prompt 扩展
+
+**修改 `app/narrators.py`**：
+- `AgenticNarrativePlanner._SYSTEM_PROMPT`：新增「设计模板工具」章节（list_design_skills / read_design_skill 说明 + 推荐用法）
+- `AgenticNarrativePlanner._SYSTEM_PROMPT`：新增「玩法风格解读」章节（5 种 play_style_tags 行为指引）
+- 所有 5 个子系统 prompt（QUEST_MANAGER / NPC_DIRECTOR / WORLD_BUILDER / NARRATIVE_WEAVER / ITEM_DESIGNER）末尾追加「（可选）可通过 list_design_skills / read_design_skill 查阅设计模板。」
+
+### C-3（W5-3）无 LLM 确定性降级
+
+**问题**：无 LLM 时整个 Planner 静默空转，bootstrap 也无法工作。
+
+**修改 `app/deps.py`**：
+- 新增 `_build_fallback_planner_system_factory()` 函数（在 `_build_game_runtime()` 之前定义）
+- 当 `llm_provider is None` 时，`else` 分支赋值 `planner_system_factory = _build_fallback_planner_system_factory()`
+- Fallback Assembly 包含：`OpeningBootstrapQuestAgent`（确定性，处理 bootstrap 事件）+ `_FallbackBlackboard` + 4 个 `_FallbackAgent`（返回空 directives + `reason: "no_llm"`）
+
+**关键设计**：bootstrap 路径不依赖 LLM，所有规划降级为 noop，但不报错。
+
+### C-5（W6-2）旋转库存受控随机
+
+**问题**：旋转库存用 `tick % len(eligible)` 选择，会简单循环，同 NPC 不同 tick 相邻可预测。
+
+**修改 `app/game_core/rules/handlers/economy.py`**：
+- 新增 `import hashlib` + `import logging; logger = logging.getLogger(__name__)`
+- `_select_rotating_entries()` 新增 `*, npc_id: str = ""` keyword 参数
+- 调用方 `_refresh_shop_state()` 传入 `npc_id=npc_id`
+- 选择起始位从 `tick % len` 改为 `int(md5(f"{npc_id}:{tick}".encode())[:8], 16) % len`
+- 同 npc_id + tick → 结果一致（确定性），不同 tick → 不简单循环
+
+### C-6（W6-3）design_reward SSE + 价格告警
+
+**修改 `app/game_core/planning/item_designer.py`**：
+- `_apply_design_reward()` 成功后，当 `_sse_collector is not None` 时追加 `SSEEvent("reward_designed", {"quest_id": ..., "items": [...]})`
+- 方法返回值从直接返回 `result.executed` 改为 failure fast（`return False` 后提前退出），再 emit SSE，再 `return True`
+
+**修改 `app/game_core/rules/handlers/economy.py`**：
+- `_base_price_for_item()` 回退到 0 之前调用 `logger.warning("item %r has no base_price, defaulting to 0", item_id)`
+
+### 额外修复（非 Track C 范围但必要）
+
+- `narrative_planner.py`：将 `get_approval(npc_id)` / `get_trust(npc_id)` 修正为 `get_disposition(npc_id, "approval")` / `get_disposition(npc_id, "trust")`（RelationSlice 无 get_approval 方法）
+- `test_track_a_planner_fullchain.py`（Track A 测试文件）：修正 3 处 bug：RelationSlice.restore 键名错误、冗余 local import 导致 UnboundLocalError、result.error → result.errors
+- `test_p20_directive_subsystems.py`：`publish_bulletin` 测试移除 metadata 中的 quest_id（Track A 新增了 quest 存在性校验）
+
+**关键文件**：
+| 文件 | 改动 |
+|------|------|
+| `app/game_core/runtime.py` | C-1: `bootstrap_opening_planner` + `_bootstrap_shops` |
+| `app/narrators.py` | C-2/C-4: 主 prompt + 5 个子系统 prompt |
+| `app/deps.py` | C-3: `_build_fallback_planner_system_factory` + else 分支 |
+| `app/game_core/rules/handlers/economy.py` | C-5: hashlib 种子；C-6: 价格告警 |
+| `app/game_core/planning/item_designer.py` | C-6: reward_designed SSE |
+
+**测试覆盖（15 个新测试 in `tests/test_p23_track_c.py`）**：
+- C-1: bootstrap 初始化 shop_state / 跳过已有 / 无 characters registry noop（3 个）
+- C-2+C-4: prompt 含设计工具说明 / play_style_tags 解读 / 子系统 prompt 含工具注（3 个）
+- C-3: fallback assembly 结构 / agent noop / blackboard noop / bootstrap 仍工作（4 个）
+- C-5: hash 种子验证 / 同 tick 一致性（2 个）
+- C-6: design_reward SSE 发射 / collector=None 不崩 / base_price 告警（3 个）
+
+**测试基线**：2280 passed（Track C +15；Track A bug fix +4；p20 fix +2；7 pre-existing failures）
+
+---
+
+## [S1-07 Phase 1] Planner ContextWindow 迁移（2026-03-11）
+
+**问题**：`AgenticNarrativePlanner` 用 `_history: list[dict]` + `_history_tokens` + `_max_history_tokens` 手动维护 FIFO 历史。这套自建机制与 NPC/Teammate 已有的 ContextWindow + graphize_counter 图谱化机制完全分离，导致：
+1. Planner 历史在驱逐后永久丢失（无图谱化沉淀）
+2. export/import 用 `{role, text}` legacy 格式，与 ContextWindow 标准格式不兼容
+
+**目标**：将 Planner 的 `_history` 替换为 `ContextWindow` 实例，统一图谱化触发路径（graphize_callback）。
+
+### 改动清单
+
+#### `app/narrators.py` — AgenticNarrativePlanner 重构
+- 新增 import：`asyncio`、`ContextWindow`、`WindowMessage`（from `game_core.narrative.context_window`）
+- **构造函数**：移除 `_history`、`_history_tokens`、`_max_history_tokens`；新增 `graphize_callback: Callable | None = None` 参数、`_context_window = ContextWindow(actor_id=history_key, max_tokens=100_000, graphize_threshold=100_000)`
+- **`_append_history()`**：改用 `_context_window.add_message()` 写入 WindowMessage；`triggered=True` 时 `asyncio.create_task(_graphize_callback(...))`
+- **`export_history()`**：返回 `_context_window.export_messages()`（新格式：content/token_count/is_graphized）
+- **`import_history()`**：检测 legacy 格式（有 `text` key 且无 `content` key）→ 自动转换；再调 `_context_window.import_messages()`
+- **`plan()`**：`conversation_history` 参数改用 `_window_to_planner_history(self._context_window)`（单轮和多轮均适用）
+
+#### 新增 `_window_to_planner_history(window)` 模块级 helper
+- 将 ContextWindow 转换为 Gemini history 格式 `[{role, parts:[{text}]}]`
+- 与 `agent_orchestration._window_to_history()` 的关键差异：**不跳过** `is_graphized=True` 的消息——Planner 需要完整 FIFO 窗口内容做对话连续性，图谱化标记不影响可见性
+
+#### `app/deps.py` — graphize_callback 注入
+- `knowledge_graph = WorldKnowledgeGraph(...)` 独立变量（原来直接传给 `KnowledgeGraphMemoryRetriever`）
+- 新增 `_make_graphize_callback(graph)` 工厂函数：返回 async 闭包，调用 `graph.write_episode()`；graph=None 时返回 None
+- `_build_planner_system()` 内：`graphize_callback = _make_graphize_callback(knowledge_graph)`，传给全部 6 个 `AgenticNarrativePlanner` 实例
+
+### 兼容设计
+
+- **Legacy 格式向后兼容**：`import_history` 检测 `{role, text}` 格式并自动转换（旧持久化数据无缝迁移）
+- **graphize 失败不阻断**：callback 内 `try/except Exception: pass`，图谱化失败不影响规划执行
+- **_graphize_callback 为 None 时静默跳过**：无 LLM 时（deps.py 无 graphize_callback）完全无副作用
+
+### 修复的现有测试（3 个）
+
+`tests/test_p19_phases_bcde.py` 中 3 个测试引用了旧 API（`_history`、`_history_tokens`、`export[]["text"]`），已更新为新 ContextWindow API：
+- `test_planner_history_append` → 改用 `_context_window.messages`
+- `test_planner_history_fifo_eviction` → 改用 `_context_window.max_tokens`
+- `test_planner_history_export_import` → 改用 `exported[0]["content"]`（新格式）
+
+### 新增测试（14 个）：`tests/test_s107_planner_graphize.py`
+
+1. `_append_history` 写入 ContextWindow（role + content 正确）
+2. token_count 最小值为 1
+3. plan() 成功后 ContextWindow 有 2 条消息
+4. parse 失败时 ContextWindow 不写入
+5. export/import round-trip（新格式）
+6. export 格式有 `content` key（无 `text` key）
+7. legacy `{role, text}` 格式 import 转换正确
+8. import([]) 不清空已有消息
+9. graphize_callback 在阈值触发时被调用
+10. callback=None 时无报错
+11. plan() 第二轮时传入上一轮 history
+12. `_window_to_planner_history` 包含 is_graphized=True 的消息
+13. FIFO eviction 在超 max_tokens 时驱逐最旧消息
+14. AgenticNarrativePlanner 的 ContextWindow 使用 100K 限制
+
+**测试基线**：2330 passed（+14 新测试，+3 修复现有测试，零回归）
+
+---
+
+## [D-S107-P2P3] GM ContextWindow + Planner 长期记忆检索（Phase 2+3）
+
+**日期**：2026-03-12
+**计划文件**：`/home/xiaokebuyu/.claude/plans/cozy-dazzling-locket.md`
+
+### Phase 2：AgenticGmNarrator ContextWindow 集成
+
+**改动文件**：`app/narrators.py`、`app/deps.py`、`app/game_core/runtime.py`
+
+**narrators.py** — `AgenticGmNarrator` 扩展：
+
+- 构造函数新增 `graphize_callback: Callable | None = None` 参数
+- 新增字段：`_graphize_callback`，`_context_window = ContextWindow(actor_id="__gm__", max_tokens=32_768, graphize_threshold=32_768)`
+- `compose()` 修改：
+  - 构建 `user_message` 后立即写入 ContextWindow（user 消息）
+  - 调用 `run_agentic()` 时传入 `conversation_history=_window_to_planner_history(self._context_window)`（复用 Phase 1 helper）
+  - LLM 返回后写入 model 消息；若触发 threshold → `collect_for_graphize()` → `asyncio.create_task(callback("__gm__", messages))`
+- 新增 `export_history() / import_history()` 持久化接口（无需 legacy 转换——GM 历史是全新格式）
+
+**deps.py** — `_build_gm_narrator()` 传入 `graphize_callback`：
+
+- 在 `gm_narrator_factory` 闭包内捕获 `_gm_graph = knowledge_graph`
+- 每次 `_build_gm_narrator()` 调用时构造新的 `graphize_callback = _make_graphize_callback(_gm_graph)` 传给 `AgenticGmNarrator`
+
+**runtime.py** — GM 历史持久化：
+
+- 新增静态方法 `_find_gm_narration_hook(session)` — 遍历 `settlement_hooks` 找 `GmNarrationHook` 实例（与 `_find_narrative_planner_hook` 同模式）
+- 新增 `GmNarrationHook` import（从 `app.game_core.orchestration.hooks.gm_narration`）
+- `_save_context_windows()`：在 planner history 保存后追加 GM narrator history（key `"__gm__"`），通过 `gm_hook._narrator.export_history()` 读取
+- `_restore_context_windows()`：从 `history_payloads["__gm__"]` 取出 GM history，找 `GmNarrationHook` 后调用 `hook._narrator.import_history(payload)`；主循环里跳过 `"__gm__"` key 防重复
+
+### Phase 3：AgenticNarrativePlanner 长期记忆检索
+
+**改动文件**：`app/narrators.py`、`app/deps.py`
+
+**narrators.py** — 新增 helper + 修改 `plan()` + formatter：
+
+- 新增 `_extract_planner_keywords(context)` 模块级 helper：
+  - 从 `narrative_plan.current_target_milestone` 提取里程碑 ID
+  - 从 `area_npcs` 提取 NPC ID（dict 用 `id` key，其他 str 化）
+  - 从 `quests.dynamic_quests`（dict 或 list 两种格式）提取 quest ID
+  - 上限 10 个关键词
+- `AgenticNarrativePlanner.__init__()` 新增 `memory_retriever: Any = None` 参数
+- `plan()` 在调用 `_context_formatter` 之前：
+  - 若有 `memory_retriever` 且关键词非空 → await `retrieve(actor_id=history_key, keywords, context={"world": ...})`
+  - 取 `hits[:5]`（cap=5）写入 `context["__long_term_memory__"]`
+  - retrieve 失败 → debug log + 跳过（不影响 plan 主流程）
+- `_format_planner_context()` 新增 `## 长期记忆` 区块：当 `ctx["__long_term_memory__"]` 存在时渲染 label + activation + description
+
+**deps.py** — `_build_planner_system()` 对全部 6 个 `AgenticNarrativePlanner` 实例追加 `memory_retriever=memory_retriever`
+
+### 关键设计决策
+
+- **retrieve() 是 async** — 用 `await` 直接调用（plan() 已是 async）
+- **context 浅拷贝** — `context = dict(context)` 保护原始 dict，不修改调用方的数据
+- **graphize 不影响 FIFO 可见性** — Phase 1 已确立：graphize 仅触发图谱写入，不从 conversation_history 中过滤消息
+- **GM history 的 key 命名**：`"__gm__"` 以 `__` 开头，与 planner 系列（`__planner_blackboard__` 等）对齐，不与 NPC window（无 `__` 前缀）冲突
+- **_restore_context_windows 跳过 `"__gm__"`**：防止 GM key 被误投递给 NarrativePlannerHook 的 `participants.get("__gm__")` 返回 None 而静默跳过
+
+### 新增测试（22 个）：`tests/test_s107_gm_graphize.py`
+
+**Phase 2（GM，10 个）**：
+1. GM narrator 有 ContextWindow（32K 限制）
+2. compose() 写入 user + model 消息
+3. 多次 compose() 累积 history
+4. 第二次 compose() 传入 conversation_history 给 executor
+5. export/import round-trip
+6. 无 history 时 export 返回 []
+7. import([]) 是 noop
+8. threshold 触发时 graphize_callback 被调用
+9. callback=None 时无报错
+10. executor 抛异常时返回 status=llm_error
+
+**Phase 3（Planner 记忆，12 个）**：
+11. `_extract_planner_keywords` 提取里程碑 ID
+12. `_extract_planner_keywords` 提取 NPC ID
+13. `_extract_planner_keywords` 提取 quest ID
+14. `_extract_planner_keywords` 上限 10
+15. `_extract_planner_keywords` 空 context 返回 []
+16. plan() 调用 retrieve() 并注入 `__long_term_memory__`
+17. 无关键词时不调用 retrieve()
+18. memory_retriever=None 时正常工作
+19. retrieve 结果 cap=5
+20. `_format_planner_context` 渲染 `## 长期记忆`
+21. 无 `__long_term_memory__` 时不渲染该区块
+22. retrieve() 抛异常时 plan() 仍返回正常结果
+
+**测试基线**：2352 passed（+22 新测试，零回归）
+
+---
+
+### [D-P25-Phase1] P25 稳定性基础（P25-03/04/07）
+
+**日期**：2026-03-12
+
+#### P25-03: Gemini 空响应防护
+
+**文件**：`app/llm_gemini.py` — `_parse_response()`
+
+- 在 `for candidate in response.candidates:` 前新增守卫：`if not response.candidates:` → 立即返回 `LlmResponse(finish_reason="error", metadata={"error": "empty_candidates"})`
+- 追加内层守卫：`if not candidate.content or not candidate.content.parts: continue`（跳过无内容候选）
+- 覆盖场景：安全过滤、服务过载、超时等 Gemini 返回空 candidates 的情况
+
+#### P25-04: 诊断日志增强
+
+**文件**：`app/game_core/orchestration/hooks/narrative_planner.py`
+
+- `missing_dispatcher` 警告：改用 `%s` 格式参数（`kind=%s, subsystem=%s`）替代 `extra=` dict，确保 kind/subsystem 出现在消息文本中
+- `dispatcher_rejected` 警告：同上
+
+#### P25-07: Planner 语言约束
+
+**文件**：`app/narrators.py` — `AgenticNarrativePlanner._SYSTEM_PROMPT`
+
+- 在 `## 可用指令` 之前追加 `## 语言与格式` 段落
+- 约束：面向玩家的文本（title/summary/objective 描述/bulletin）必须使用中文；内部标识符（quest_id/npc_id 等）保持英文 snake_case
+
+**测试**：3 个新测试（`tests/test_p25_phase1_and_2_1.py`）
+
+---
+
+### [D-P25-Phase2-1] P25-01: area_ids 补全
+
+**日期**：2026-03-12
+
+#### Step 1: 数据收集
+
+**文件**：`app/game_core/orchestration/hooks/narrative_planner.py` — `_build_planner_context()`
+
+- 新增 `all_area_ids: list[str]` — 在有 areas slice 时收集 `context.state.areas.areas.keys()`
+- 新增 `current_sub_area_ids: list[str]` — 收集当前 area 的静态子地点（from `MapRegistry.get(area_id).sub_locations.keys()`）和动态临时子地点（from `area_state.temporary_sub_areas`）
+- 两个字段追加到返回 dict
+
+#### Step 2: 渲染到 prompt
+
+**文件**：`app/narrators.py` — `_format_planner_context()`
+
+- 在 "Allowed board ids:" 之后渲染 "Allowed area_ids: ..." 和 "Sub-areas for {area_id}: ..." 两行
+- 两者缺失时不渲染（空列表条件保护）
+
+**关键设计决策**：
+- `all_area_ids` 在外层 `if context.state.has_slice("areas")` 块内收集（利用已有的 areas slice guard）
+- `current_sub_area_ids` 与 MapRegistry 交互复用已有的 `context.world.has_registry("maps")` guard，避免重复守卫
+- 动态子地点遍历兼容 Mapping 类型（与 AreaState.temporary_sub_areas 的 `list[dict[str, Any]]` 类型契约一致）
+
+**测试**：6 个新测试（`tests/test_p25_phase1_and_2_1.py`）
+
+**测试基线**：2380 passed（+9 新测试，零回归）
+
+---
+
+### [D-P25-Phase2-2] P25-02: 反馈链修复
+
+**日期**：2026-03-12
+
+#### Step 1: Dispatcher 返回拒绝原因
+
+**文件**：`app/game_core/planning/subsystem.py`
+
+- `PlannerSubSystem` Protocol：`apply_directive` 返回类型从 `bool` 改为 `bool | str`（str = 拒绝原因字符串）
+- `PlannerDispatcher.apply_directive`：返回类型同步改为 `bool | str`，具体原因：
+  - `"cyclic_call_blocked"` — 循环调用防护
+  - `"depth_overflow"` — 调用深度超限
+  - `"no_handler_for_kind"` — 无子系统处理该 kind
+  - 子系统返回值透传（可能是 `True` 或 reason string）
+
+**5 个子系统文件同步**（`app/game_core/planning/`）：
+
+- `quest_manager.py`：`apply_directive` + `_apply_create_quest` / `_apply_publish_bulletin` / `_apply_retire_quest` / `_apply_update_quest` 均改为 `bool | str`；失败时返回 `"; ".join(result.errors) or "command_failed"`；`_apply_publish_bulletin` 的 board/area 缺失返回 `"missing_board_or_area_id"`
+- `npc_director.py`：`apply_directive` + `_apply_direct_npc` / `_apply_spawn_quest_npc` 改为 `bool | str`；`_apply_direct_npc` 的 npc/directive 元数据缺失返回 `"missing_npc_or_directive_in_metadata"`
+- `world_builder.py`：`apply_directive` + 3 个 handler 改为 `bool | str`；area/sub_area 元数据缺失返回 `"missing_area_or_sub_area_id"` 或 `"missing_area_or_sub_area_or_entry"`
+- `pacing_controller.py`：`apply_directive` + `_apply_escalate` / `_apply_adjust_pacing` 改为 `bool | str`
+- `item_designer.py`：`apply_directive` + `_apply_design_reward` / `_apply_curate_shop` 改为 `bool | str`；日志记录改为先提取原因字符串再记录
+
+**注意**：`narrative_weaver.py` 的 `apply_directive` 仍返回 `False`（无 directive 命名空间，`bool` 是 `bool | str` 的子集，保持语义一致）
+
+#### Step 2: 捕获拒绝原因到 audit
+
+**文件**：`app/game_core/orchestration/hooks/narrative_planner.py` — `_apply_directive_batch()`
+
+- 改 `if not applied:` 为 `if applied is not True:`（修复空字符串误判）
+- 新增 `reason_code = applied if isinstance(applied, str) else "dispatcher_rejected"`
+- audit entry 的 `reason_code` 字段从硬编码 `"dispatcher_rejected"` 改为实际原因
+
+#### Step 3: 渲染 previous_directive_results
+
+**文件**：`app/narrators.py` — `_format_planner_context()`
+
+- 在 story_facts 段落之后追加 `## 上轮指令执行反馈` 区块
+- 渲染格式：`  - {kind}: {status}` 可选追加 `({reason_code})`
+- 末尾追加 `请根据以上反馈调整本轮指令，避免重复相同错误。`
+- `previous_directive_results` 为空时不渲染该区块
+
+**关键设计决策**：
+- 返回 `str` 而不是 `False` 使 planner audit 能捕获具体失败原因，下一轮 planner 可据此调整
+- `applied is not True` 判断正确处理字符串（非空字符串是 truthy）和 `False` 两种拒绝情形
+- 不破坏 `narrative_weaver.py` 的 `False` 返回——`False` 仍然不是 `True`，逻辑正确
+
+**测试**：6 个新测试 + 15 个现有测试更新（`tests/test_p25_phase1_and_2_1.py` + 8 个已有测试文件）
+
+**测试基线**：2386 passed（+6 新测试，零回归）
+
+### [D-P29-A9a] NarrativePlanSlice 里程碑大纲扩展
+
+**日期**：2026-03-13
+
+**设计背景**：P29-A9 里程碑大纲子系统。Planner 在发布任务前先为当前里程碑生成 5-10 步叙事大纲，通过持久化存储在 NarrativePlanSlice 中，后续 A9b/A9c/A9d/A9e 在此基础上构建生成逻辑和上下文注入。
+
+**变更文件**：
+- `app/game_core/state/slices/narrative_plan.py` — 新增 `milestone_outline: dict[str, Any]` 字段 + 3 个方法 + `apply_state_change` 两条路径 + `restore()`/`snapshot()` 覆盖
+
+**关键 API**：
+- `set_milestone_outline(outline)` — 完整替换大纲，对 `steps` 列表做深度防御性拷贝，忽略非 Mapping 输入
+- `mark_outline_step_completed(step_index)` — 按 `index` 字段查找步骤并标记 `completed=True`，静默忽略未知 index
+- `get_current_outline_step()` — 返回第一个 `completed=False` 步骤的防御性拷贝，全部完成或无大纲时返回 None
+
+**大纲结构**：
+```json
+{
+    "target_milestone_id": "str",
+    "chapter_id": "str",
+    "computed_at_tick": 0,
+    "steps": [
+        {
+            "index": 0,
+            "description": "str",
+            "type": "str",
+            "condition": {"type": "...", ...},
+            "related_npcs": [],
+            "related_locations": [],
+            "completed": false,
+            "quest_id": null
+        }
+    ]
+}
+```
+
+**`apply_state_change` 路径**：
+- `path="milestone_outline"` + value 为 Mapping → 调用 `set_milestone_outline()`
+- `path="milestone_outline.step_completed"` + value 为整数 → 调用 `mark_outline_step_completed(int(value))`
+
+**防御性设计**：
+- `snapshot()` 通过 `_snapshot_milestone_outline()` 对 steps 做深拷贝，避免外部 dict 泄漏内部引用
+- `restore()` 对非 Mapping 值 fallback 为 `{}`（注意：steps 内的子 dict 目前仅做浅拷贝 `dict(raw_outline)`；如需完整深拷贝可在后续深化中升级 restore 路径）
+
+**关键设计决策**：
+- `_snapshot_milestone_outline()` 作为私有辅助方法而非直接内联，是为了保持 `snapshot()` 方法的可读性，与现有模式一致
+- `mark_outline_step_completed` 通过 `index` 字段匹配（而非列表下标），因为步骤可能被过滤/重排，用 index 字段更健壮
+- `apply_state_change` 中 `milestone_outline.step_completed` 不检查 Mapping 类型（value 是整数），与 `milestone_outline` 路径的 Mapping 检查不同
+
+**新增测试**：
+- `tests/test_p29_a9a_milestone_outline.py` — 22 个测试：初始状态、set/mark/get 各场景（含边界）、snapshot/restore 往返、apply_state_change 两条路径
+
+**测试基线**：2801 passed（+22 新测试，零回归）
+
+---
+
+### [D-P29-A9b] MilestoneOutlineGenerator — LLM 大纲生成 + 确定性降级
+
+**实施日期**：2026-03-13
+
+**设计背景**：P29-A9b（含 A9f）。Planner 在发布任务前先为当前里程碑生成 5-10 步叙事大纲，大纲结构兼容 NarrativePlanSlice.set_milestone_outline()。包含无 LLM 确定性降级：从 key_elements 直接生成简化大纲。
+
+**修改文件**：
+- `app/narrators.py` — 新增 `_MILESTONE_OUTLINE_SYSTEM_PROMPT` 常量 + `_build_fallback_outline()` 模块级辅助函数 + `MilestoneOutlineGenerator` 类
+
+**MilestoneOutlineGenerator 设计**：
+- 构造：`MilestoneOutlineGenerator(llm=None)` — llm 可选注入，None 时走降级
+- 主方法：`async generate(*, milestone_template, target_milestone_id, chapter_id, current_tick, game_state_summary=None, supported_condition_types=None)` → `dict`
+- LLM 调用：单射 `llm.generate(system_prompt, history, [])` — 无工具，纯 JSON 输出
+- `_build_user_message()` 构建结构化 prompt（里程碑信息 + supported_condition_types）
+- `_parse_response()` 解析 + 归一化，自动剥去 markdown 代码块包装
+
+**确定性降级（A9f）**：`_build_fallback_outline()`：
+- 每个 key_element → 一个 step（max 10，min 1；空时填"完成里程碑目标"）
+- 第一步注入 involved_npcs[:2] + involved_locations[:1]
+- 条件类型：flag_set，flag_name = step_{i}_done
+
+**关键设计决策**：
+- 无状态类 — 每次 generate() 独立，无历史 window，与 AgenticNarrativePlanner 有状态模式不同
+- llm=None 直接返回 fallback，零外部依赖
+- `_build_fallback_outline` 为模块级函数（非私有方法），方便后续 A9c/A9d 独立调用
+- LLM 失败路径：exception 或 JSON 解析失败 → debug log + 返回 fallback，调用方始终得到可用大纲
+
+**新增测试**：
+- `tests/test_p29_a9b_milestone_outline_generator.py` — 25 个测试：fallback 逻辑 8个 / 无 LLM 2个 / LLM 成功 3个 / LLM 失败路径 5个 / 用户消息内容 5个 / NarrativePlanSlice 兼容性 2个
+
+**测试基线**：2876 passed（+25 新测试，零回归）
+
+---
+
+### [D-P29-A7] A7：私聊 Co-location 修复
+
+**问题**：NPC 可跨子地点/房间发起私聊请求；玩家也可对不在同一位置的 NPC 发起私聊。
+
+**变更文件**：
+- `app/game_core/orchestration/hooks/private_chat_trigger.py`
+  - `_collect_reachable_npcs()` 返回类型从 `set[str]` 改为 `tuple[set[str], dict[str, str | None]]`：
+    - 第一项 `colocated_npc_ids`：真正与玩家同子地点（含 room 维度）的 NPC；party 成员始终算 colocated
+    - 第二项 `area_npc_locations`：所在区域全部 NPC 的 `npc_id → sub_location` 映射
+  - `execute()` 中改为遍历 `all_area_npc_ids`（colocated + area 全集），不同位置的 NPC 触发兴趣度检查后仍发 SSE，但 payload 含 `colocated: false` + `npc_location` 字段
+  - 同位置 NPC 的 SSE payload 含 `colocated: true`，无 `npc_location` 字段
+- `app/game_core/orchestration/hooks/directive_trigger.py`
+  - 修复 `_collect_reachable_npcs()` 返回类型变更导致的破坏性引用
+  - 改为 `colocated_npc_ids, area_npc_locations = _collect_reachable_npcs(context)` + `all_area_npc_ids = colocated_npc_ids | set(area_npc_locations.keys())`
+- `app/utterance_orchestration.py`
+  - A7c：`scope == "private"` 分支在调用 `run_private_chat()` 之前加 `validate_presence()` 校验
+  - 不共位 → 返回 `interaction_rejected` SSEEvent，`reason="interaction_rejected"`，agent 不调用
+
+**关键设计决策**：
+- `_collect_reachable_npcs` 拆分 colocated vs. area 两个集合，让 Hook 既能判断"是否能立即私聊"（colocated），又能让跨位 NPC 出现在兴趣度筛选中（所有区域 NPC 均有资格触发 npc_wants_to_chat，但带 colocated=false 提示）
+- DirectiveTriggerHook 行为保持不变（接受区域内任意 NPC 的 directive），只修改调用接口适配新返回类型
+- utterance_orchestration A7c 的 validate_presence 复用了已有的 `_validate_npc_presence` 路径，包含 area 匹配 + sub_location co-location 检查
+
+**新增测试**：
+- `tests/test_private_chat_trigger.py` — `TestA7CoLocationFilter`（5 个）：colocated=true / colocated=false+npc_location / party 始终 colocated / 混合场景 / 双 None 场景
+- `tests/test_a7_private_chat_colocation.py` — `TestA7cPrivateChatPresenceValidation`（5 个）：不同区域被拦截 / 不同子地点被拦截 / 同位可聊 / 双 None 区域根可聊 / 拒绝事件含 npc_id
+
+**测试基线**：2835 passed，8 pre-existing failures（A1/A2 相关，不在 A7 范围）
+
+---
+
+### [D-P29-A5e] interactable 数据管线修复
+
+**实施日期**：2026-03-13
+
+**问题背景**：Planner 生成的动态子地点包含 interactables 字段（dict 对象列表，含 id/name/description/type/tags/checks），但三处 string normalization 函数用 `str()` 或 `coerce_non_empty_string()` 把 dict 压扁成字符串表示，导致下游 `InteractableHandler._find_dynamic_interactable()` 无法按 id 匹配。
+
+**变更文件**：
+
+- `app/game_core/planning/dynamic_sub_area.py`
+  - 新增 `_normalize_interactables()` 类方法：保留 dict 元素不 stringify，兼容 plain string 元素
+  - `create()` 中 `interactables` 字段改用 `_normalize_interactables()` 替代 `_normalize_sequence()`
+  - `tags`、`resident_npcs` 等字段仍使用 `_normalize_sequence()`（不受影响）
+
+- `app/game_core/planning/directive_contracts.py`
+  - 新增模块级函数 `_normalize_interactable_list()`：同样保留 dict，兼容 string
+  - `_normalize_legacy_fill_area_entry()` 中 `interactables` 字段改用 `_normalize_interactable_list()` 替代 `_normalize_string_list()`
+
+- `app/game_core/rules/handlers/planner.py`
+  - 新增模块级函数 `_normalize_interactable_list()`（与 dynamic_sub_area 保持同等逻辑）
+  - `_compute_sub_area_command()` 中 `interactables` 字段改用 `_normalize_interactable_list()` 替代 `_normalize_string_list()`
+  - `resident_npcs`、`tags` 等字段仍使用 `_normalize_string_list()`（只改 interactables）
+
+- `app/scene_views.py`（`build_location_overview()`）
+  - 已有逻辑：从 `area_template.sub_locations[current_location_id].interactables` 读取静态 interactables（dataclass 对象）
+  - 新增 fallback 分支：若当前位置是 temporary sub-area（area_template 中无匹配静态子地点），则从 `area_state.temporary_sub_areas` 中找到对应 sub_area，读取其 `interactables` list
+  - Dict 元素：按 id/name/description/tags/checks 提取为标准 overview 格式（`requires_check = bool(iact.get("checks"))`）
+  - Plain string 元素：生成最小化 interactable 记录（向后兼容）
+
+**关键设计决策**：
+- fallback 分支设计为 `if not interactables`：只在静态模板没有 interactables 时（即玩家确实在动态子地点）触发，不会双重叠加
+- `InteractableHandler._find_dynamic_interactable()` 已正确按 dict 格式处理，本次修复后 dict 能到达它
+
+**新增测试**：`tests/test_p29_a5e_interactable_pipeline.py`（8 个）：
+- `test_dynamic_sub_area_manager_preserves_interactable_dicts`：DynamicSubAreaManager 保留 dict
+- `test_dynamic_sub_area_manager_preserves_string_interactables`：plain string 仍工作
+- `test_dynamic_sub_area_manager_preserves_mixed_interactables`：混合列表
+- `test_normalize_legacy_fill_area_entry_preserves_interactable_dicts`：directive_contracts 保留 dict
+- `test_normalize_legacy_fill_area_entry_string_interactables_still_work`：legacy string 不回归
+- `test_build_location_overview_reads_interactables_from_temporary_sub_area`：dict interactables 出现在 overview
+- `test_build_location_overview_reads_string_interactables_from_temporary_sub_area`：string 形式也工作
+- `test_build_location_overview_no_interactables_when_not_in_temp_sub_area`：不在动态子地点时列表为空
+
+**测试基线**：8 passed（本次新增测试全部通过，pre-existing failures 与本次修改无关）
+
+---
+
+### [D-P29-A5a/b/d+A5e-hook+A6b/c+A8a/d+A9c/d] NarrativePlannerHook 上下文增强
+
+**实施日期**：2026-03-13
+
+**目标**：在 `_build_planner_context()` 中注入更丰富的上下文信息供 LLM Planner 决策，并接入里程碑大纲子系统。
+
+**变更文件**：`app/game_core/orchestration/hooks/narrative_planner.py`
+
+**A5a — area_cluster 容量细化**：
+- 移除 `has_capacity: bool`，改为 `remaining_permanent: int`（最多 8 个永久动态子地点，当前剩余）+ `remaining_total: int`（最多 15 个总计，当前剩余）
+- 保留 `total_dynamic` 字段不变
+
+**A5b — 显式 NPC 列表**：
+- 新增 `existing_npc_ids: list[str]` —— 当前区域的运行时 `npc_locations` 键 + 静态 `sub_locations.resident_npcs` 合并去重排序
+- 与 `area_npcs`（运行时专属）并存，便于 Planner 不重复放置已存在 NPC
+
+**A5d — 反馈回路增强**：
+- `previous_directive_results` 每条记录新增 `entity_id` 字段：从 `payload_digest` 中提取 `entity_id / npc_id / quest_id`（首个非 None 值）
+
+**A5e（hook 端）— interactable 示例注入**：
+- 新增 `interactable_examples: list[dict]`：从当前区域静态子地点中提取至多 3 个完整 interactable 对象（id/name/description/type/tags/checks 序列化）
+- 新增 `fill_area_guidance: str`：明确告知 Planner fill_area 的 interactables 需含完整结构
+
+**A6b/A6c — hostile_config 上下文 + encounter 引导**：
+- 新增 `hostile_config_locations: list[dict]`：遍历当前区域静态子地点的 `hostile_config` 字段，每条包含 sub_location_id/sub_location_name/monster_ids/stealth_dc/blocking/already_planted/already_cleared
+- `already_planted` 判断：`get_hostile_state(sub_id)` 存在且 status != "cleared"
+- `already_cleared` 判断：`get_hostile_state(sub_id)` 存在且 status == "cleared"
+- 新增 `encounter_guidance: str`：引导 Planner 对 `already_planted=false, already_cleared=false` 条目使用 `planner_plant_encounter`
+
+**A8a — 支持的 objective 条件类型**：
+- 新增 `supported_objective_conditions: list[dict]`（5 种类型：npc_talked/item_obtained/kill_count/location_entered/flag_set，每个含 type/params/desc）
+- 新增 `quest_objective_guidance: str`：强调每个 objective 必须含 condition 字段
+
+**A8d — active_quests 详情**：
+- 新增 `active_quests: list[dict]`：遍历状态为 in_progress/active/accepted 的动态任务，每条包含 quest_id/title/objectives（含 completed 和 condition）
+- 对比旧 `dynamic_quests` 字段（全量），此字段专注 active 进度便于 Planner 判断任务进展
+
+**A9c — 里程碑大纲触发（execute）**：
+- 在 `execute()` 的冷却检查通过后、`_run_replay` 之前，调用 `_ensure_milestone_outline()`
+- 检查 `current_target_milestone` 与 `milestone_outline.target_milestone_id` 是否一致
+- 不一致时：若 `_outline_generator` 注入则调用其 `generate()`；否则调用 `_build_fallback_outline_from_template()`（A9f 确定性降级）
+- 异常捕获：LLM 失败后回退到 deterministic fallback
+
+**A9d — Planner Context 注入大纲**：
+- 新增 `milestone_outline: dict | None`：当 `NarrativePlanSlice.milestone_outline` 存在时注入，包含 target/steps/current_step（第一个未完成步骤）
+- 新增 `outline_guidance: str | None`：仅在有大纲时注入，引导 Planner 关联 step_index
+
+**新增协议**：
+- `MilestoneOutlineGeneratorPort(Protocol)` — 在 hook 内定义（避免跨层 import），签名匹配 `MilestoneOutlineGenerator.generate()`
+- `NarrativePlannerHook.__init__` 新增 `outline_generator: MilestoneOutlineGeneratorPort | None = None` 可选参数
+
+**新增私有方法**：
+- `_ensure_milestone_outline(context, *, current_tick)` — A9c 触发逻辑
+- `_build_outline_context(context, target_milestone_id, current_tick)` — 构建大纲生成输入
+- `_build_fallback_outline_from_template(*, milestone_template, target_milestone_id, chapter_id, current_tick)` — A9f 确定性降级，one-step-per-key-element
+
+**新增测试**（`tests/test_narrative_planner_hook.py::TestP29ContextEnhancements`，10 个）：
+- `test_area_cluster_has_remaining_capacity_fields` — A5a
+- `test_existing_npc_ids_combines_runtime_and_static_residents` — A5b
+- `test_previous_directive_results_includes_entity_id` — A5d
+- `test_interactable_examples_extracted_from_static_sub_locations` — A5e
+- `test_hostile_config_locations_populated_for_area_with_hostile_sublocs` — A6b/c
+- `test_supported_objective_conditions_present_with_required_types` — A8a
+- `test_active_quests_contains_objectives_with_condition_status` — A8d
+- `test_ensure_milestone_outline_generates_fallback_without_outline_generator` — A9c fallback
+- `test_ensure_milestone_outline_skips_if_outline_already_matches` — A9c skip
+- `test_build_planner_context_includes_milestone_outline_when_set` — A9d
+
+**测试基线**：2908 passed, 8 skipped（pre-existing），全量通过
+
+---
+
+## D-P30：接通 current_target_milestone 完整链路（2026-03-13）
+
+**根因**：`current_target_milestone` 从未被自动设置（始终为 null），导致 A9a-A9f 里程碑大纲子系统全部空转。
+
+三层断裂：
+1. `planner_create_quest` handler 激活 milestone 但不设置 `current_target_milestone`
+2. `NarrativePlannerHook.execute()` 在 `_ensure_milestone_outline` 之前没有自动选目标
+3. Bootstrap 路径同样缺少自动选目标逻辑
+
+**Fix 1**（`app/game_core/rules/handlers/planner.py`）：
+- `_compute_create_quest()` 在 milestone AVAILABLE→ACTIVE 激活后，若 `narrative_plan.current_target_milestone` 为 null，追加 `StateChange("narrative_plan", "set", "current_target_milestone", target_milestone)`
+- 只在 null 时设置，避免覆盖 Planner 正在追踪的其他 milestone
+
+**Fix 2**（`app/game_core/orchestration/hooks/narrative_planner.py`）：
+- 新增 `_auto_select_target_milestone(context)` 方法：
+  - 当前 target 仍然 ACTIVE → no-op
+  - 否则，扫描所有 ACTIVE/AVAILABLE milestone，按 `(priority, sequence, ms_id)` 排序选最佳
+  - ACTIVE 优先（priority=0），AVAILABLE 次之（priority=1），同类按 `MilestoneTemplate.sequence` 排
+  - 直接调用 `state.narrative_plan.set_target_milestone(best_id)`（受控内部写入）
+- `execute()` 在 `_ensure_milestone_outline()` 之前调用 `_auto_select_target_milestone(context)`
+- `bootstrap()` 在 `_run_replay()` 完成后（replay 可能已 apply planner_create_quest）防御性调用一次
+
+**新增测试**（`tests/test_p30_milestone_target_chain.py`，9 个）：
+- `test_create_quest_sets_target_milestone` — Fix 1 正向路径
+- `test_create_quest_does_not_override_existing_target` — Fix 1 保护既有 target
+- `test_auto_select_picks_active_over_available` — ACTIVE 优先策略
+- `test_auto_select_uses_sequence_ordering` — sequence 排序
+- `test_auto_select_advances_after_completion` — 完成后推进到下一个 AVAILABLE
+- `test_auto_select_noop_when_target_active` — 当前 target 仍 ACTIVE 时不变
+- `test_auto_select_noop_when_no_candidates` — 无候选时保持 null
+- `test_execute_calls_auto_select_and_sets_target` — execute() 调用链验证
+- `test_bootstrap_sets_target_after_replay` — bootstrap() 调用链验证
+
+**测试基线**：2917 passed, 8 skipped（pre-existing），全量通过
+
+---
+
+## D-P31 Phase 2+3：Planner prompt/context 修复 + 代码修复 + 图片竞态修复（2026-03-13）
+
+**背景**：P30 接通 current_target_milestone 后，live 测试暴露大量运行时问题。本次修复 Phase 2（问题 2+3+7+8a-8f）和 Phase 3（问题 5+9）。
+
+### 代码修复（问题 2）
+
+**文件**: `app/game_core/orchestration/hooks/private_chat_trigger.py:218`
+
+**根因**：`all_area_npc_ids = set(area_npc_locations.keys())` 将整个 area 所有 NPC 都纳入触发候选。非共位 NPC 会发出 `npc_wants_to_chat` SSE，但玩家无法响应（NPC 不在场），导致 "npc_not_present" 报错。
+
+**修复**：改为 `set(colocated_npc_ids)`，只有与玩家同子地点的 NPC 和队友才参与触发判定。
+
+**测试更新**（`tests/test_private_chat_trigger.py`）：
+- 默认 `area_npc_locations` 从 `"npc_area_spot"` 改为 `player_location`（colocated）
+- `test_noncolocated_npc_event_has_colocated_false_and_location` → 重命名为 `test_noncolocated_npc_does_not_trigger`（改为断言 0 个事件）
+- `test_mixed_colocated_and_noncolocated_npcs` → 改为断言只有 colocated NPC 触发
+- `test_npc_scene_filter_only_reachable_npcs` → 更新期望：`npc_local`（不同子地点）不触发，只有 `npc_party` 触发
+
+### 代码修复（问题 7）
+
+**文件**: `app/game_core/orchestration/hooks/narrative_planner.py`
+
+删除 `_build_planner_context()` 返回字典中 line 1139 的重复 `"maps"` key（保留 line 1206 的那个，两者值不同但 Python dict 只保留最后一个）。
+
+### `_format_planner_context()` quest 三区间分离（问题 3 + 8e）
+
+**文件**: `app/narrators.py`
+
+将单行 `"Dynamic quests: dq_x(active), ..."` 格式改为三区间展示：
+- `## Quests you CAN update_quest (status=active):` — 带标题和 ID
+- `## Quests available for acceptance (status=available, readonly):` — 带标题和 ID
+- `## Completed/retired quests (readonly):` — 只显示 ID 和状态
+
+**意义**：防止 Planner 对非 active 任务下发 update_quest（高频拒绝根因之一）。
+
+### 容量展示格式优化（问题 8f）
+
+**文件**: `app/narrators.py:_format_planner_context()`
+
+area_cluster 展示从 `remaining_permanent=N` 改为 `permanent=N/8 available, total=N/15 available`，使 Planner 直接看到上限值，减少超容量指令。
+
+### Prompt 约束补全（问题 8a-8d）
+
+**QUEST_MANAGER**（规则 7）：明确 update_quest 只能推送 objectives/description/summary，禁止用 update_quest 改 status（应用 retire_quest）。
+
+**WORLD_BUILDER**（规则 12-13 追加）：
+- 容量约束警告：fill_area ≤ 8，plant_environmental 总数 ≤ 15，发出前必须检查 remaining_permanent/remaining_total
+- interactables 字段完整定义要求：id / name / description / type / tags
+
+**NARRATIVE_WEAVER**（规则 2 + 规则 8）：
+- adjust_pacing payload 明确为 `{"frozen": true}` 或 `{"frozen": false}`（布尔值，不是字符串）
+- 新增规则 8：escalate payload 格式 `{"delta": N}`，N 在 [-3, 3] 范围，超出被拒
+
+**NPC_DIRECTOR**（规则 8 追加）：临时 NPC 默认 24 ticks 后 despawn，需要更长生命周期时使用 despawn_in_ticks 参数。
+
+**测试修复**（`tests/test_p23_track_c.py`）：
+- `test_subsystem_prompts_spell_out_runtime_contract_examples` 中 `'{"frozen": true|false}'` → `'{"frozen": true}'`（新提示词格式）
+
+### Phase 3：图片生成竞态修复（问题 5 + 9）
+
+**文件**: `app/routers/images.py`
+
+1. `_generate_and_save_with_ref()` — 读取 ref_path 前增加验证：
+   - `ref_path.exists()` 且 `stat().st_size > 0`，否则 return False + warning
+   - `Image.open() + load()` 验证文件完整性，捕获损坏异常
+2. 两个写入函数（`_generate_and_save` + `_generate_and_save_with_ref`）均改为原子写入：先写 `.tmp` 再 `rename`，防止并发读到半完成文件。
+
+**测试基线**：2917 passed, 8 skipped（pre-existing），全量通过
+
+---
+
+## D-P31 11b：Planner 开局冷启动修复（2026-03-13）
+
+**问题**：`NarrativePlannerHook.execute()` 的冷却检查（`FALLBACK_INTERVAL=4`）在开局后阻塞 Planner 直到第 4 个 tick。
+`last_run_tick` 初始为 0，首次 settlement（tick 1）：`ticks_since_last_run = 1 - 0 = 1 < 4` → 跳过。
+
+**修复**：在 `bootstrap_opening_planner()` 的标题修复之后，设置 `last_run_tick = -100`。
+冷却检查 `max(0, 1 - (-100)) = 101 >= 4` → 首次 settlement 即通过。
+Planner 运行后正常设置 `last_run_tick = current_tick`，后续冷却恢复正常。
+
+**文件**：`app/game_core/runtime.py` — `bootstrap_opening_planner()` +2 行
+
+**测试基线**：2917 passed, 8 skipped，全量通过

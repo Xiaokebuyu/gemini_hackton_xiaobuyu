@@ -4,10 +4,17 @@
 
 :root {
   color-scheme: dark;
+  --ui-glow: rgba(245, 158, 11, 0.15);
+  --border-fantasy: rgba(245, 158, 11, 0.25);
+}
+
+@keyframes fantasy-glow {
+  0%, 100% { box-shadow: 0 0 6px var(--ui-glow); }
+  50% { box-shadow: 0 0 12px var(--ui-glow); }
 }
 
 body {
-  @apply bg-gray-950 text-gray-100 m-0 p-0;
+  @apply bg-stone-950 text-gray-100 m-0 p-0;
   font-family: 'Noto Serif SC', 'Source Han Serif', serif;
 }
 

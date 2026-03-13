@@ -19,7 +19,7 @@ export default function DialogueArea({ worldId, sessionId, sendInteract, overvie
 
   return (
     <div
-      className={`absolute bottom-0 left-0 right-0 z-10 flex flex-col bg-black/75 backdrop-blur-sm ${privateChatBorder}`}
+      className={`absolute bottom-0 left-0 right-0 z-10 flex flex-col bg-stone-950/80 backdrop-blur-sm ${privateChatBorder}`}
       style={{ height: 'min(38vh, calc(100vh - 80px))', minHeight: 'clamp(160px, 28vh, 280px)' }}
     >
       <div className="flex flex-col h-full px-3 pt-2 pb-2 gap-1 min-h-0">

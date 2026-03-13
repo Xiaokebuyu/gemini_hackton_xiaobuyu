@@ -484,16 +484,18 @@ class TestEscalateProducesWorldStateChanges:
         assert abs(danger - (danger_before - 0.05)) < 1e-6
 
     def test_escalate_invalid_delta_bool_rejected(self) -> None:
-        """escalate with a bool delta returns False."""
+        """escalate with a bool delta returns a rejection reason (not True)."""
         ctx = _make_settlement_context()
         pacing = PacingControllerSubSystem()
-        assert pacing.apply_directive("escalate", {"delta": True}, ctx, current_tick=0) is False
+        result = pacing.apply_directive("escalate", {"delta": True}, ctx, current_tick=0)
+        assert result is not True
 
     def test_escalate_out_of_range_delta_rejected(self) -> None:
-        """escalate with delta > 3 returns False."""
+        """escalate with delta > 3 returns a rejection reason (not True)."""
         ctx = _make_settlement_context()
         pacing = PacingControllerSubSystem()
-        assert pacing.apply_directive("escalate", {"delta": 4}, ctx, current_tick=0) is False
+        result = pacing.apply_directive("escalate", {"delta": 4}, ctx, current_tick=0)
+        assert result is not True
 
     def test_escalate_no_player_slice_skips_adjust_danger(self) -> None:
         """If no player slice, escalate still works - skips adjust_danger but set_flag runs."""

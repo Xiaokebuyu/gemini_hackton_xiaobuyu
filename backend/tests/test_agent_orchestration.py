@@ -608,7 +608,9 @@ class TestNpcResponse:
             for e in entries
         )
 
-    def test_generate_npc_response_text_only_returns_invalid_agent_response(self) -> None:
+    def test_generate_npc_response_text_only_returns_npc_response(self) -> None:
+        """P29-A1: Text-only NPC response is gracefully wrapped as synthetic
+        speech and produces a normal npc_response SSE event."""
         service, _ = _build_service([
             _stop_response("I should have used speak."),
         ])
@@ -621,9 +623,9 @@ class TestNpcResponse:
         ))
 
         assert len(events) == 1
-        assert events[0].event_type == "npc_response_error"
-        assert events[0].payload["code"] == "invalid_agent_response"
-        assert events[0].payload["reason"] == "text_without_tool"
+        assert events[0].event_type == "npc_response"
+        assert events[0].payload["npc_id"] == "merchant_tom"
+        assert events[0].payload["content"] == "I should have used speak."
 
 
 class TestPostActionReactions:
@@ -872,6 +874,159 @@ class TestPostActionReactions:
             e["source"] == "TEAMMATE:paladin_aria"
             for e in session.runtime.state.scene.snapshot()["entries"]
         )
+
+    def test_run_post_action_round_uses_clue_specific_round_and_caps_teammates(self) -> None:
+        class ClueExecutor:
+            def __init__(self) -> None:
+                self.roles: list[str] = []
+
+            async def run_agentic(
+                self,
+                *,
+                role: str,
+                context: Any,
+                system_prompt: str,
+                user_message: str,
+                **_: Any,
+            ) -> AgentResult:
+                self.roles.append(role)
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                ok=True,
+                                message="血迹指得很直，却还不肯把终点写在墙上。",
+                                metadata={"event_type": "gm_comment"},
+                            )
+                        ]
+                    )
+                return AgentResult(
+                    tool_results=[
+                        ToolResult(
+                            ok=True,
+                            message="这不像意外，更像有人故意把人往后门拖。",
+                            metadata={"event_type": "speech"},
+                        )
+                    ]
+                )
+
+        session = _session_for_post_action_round()
+        session.runtime.world.characters.load(
+            {
+                "ranger_lia": {
+                    "id": "ranger_lia",
+                    "name": "游侠莉娅",
+                    "personality": "善于追踪，讲话干脆。",
+                    "tags": ["human"],
+                    "response_tendency": 1.0,
+                },
+                "scholar_milo": {
+                    "id": "scholar_milo",
+                    "name": "学者米洛",
+                    "personality": "谨慎，多疑，喜欢从细节里找逻辑。",
+                    "tags": ["human"],
+                    "response_tendency": 1.0,
+                },
+            }
+        )
+        session.runtime.state.party.restore(
+            {
+                "members": {
+                    "paladin_aria": {"status": "active"},
+                    "ranger_lia": {"status": "active"},
+                    "scholar_milo": {"status": "active"},
+                },
+            }
+        )
+        service = AgentOrchestrationService(ClueExecutor())  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+            companion_manager=session.runtime.companion_manager,
+        )
+        result = PipelineResult(
+            executed=True,
+            action_type="investigate_clue",
+            commands=[
+                Command(
+                    type="investigate_clue",
+                    params={"interactable_id": "blood_trail_clue"},
+                    source="player",
+                )
+            ],
+            metadata={
+                "clue_id": "blood_trail",
+                "interactable_id": "blood_trail_clue",
+                "clue_name": "拖拽血迹",
+                "description": "血迹一直拖向后门。",
+                "options": [
+                    {"id": "examine", "label": "仔细检查"},
+                    {"id": "follow", "label": "顺着痕迹追过去"},
+                ],
+                "party_prompt_hints": ["血迹在拐角处突然变浅。"],
+            },
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            events = asyncio.run(
+                service.run_post_action_round(
+                    shared,
+                    result,
+                    session.runtime.tick_coordinator._apply_delta,
+                )
+            )
+
+        event_types = [event.event_type for event in events]
+        assert event_types[0] == "gm_comment"
+        assert "dialogue_options" in event_types
+        assert "npc_response" not in event_types
+        teammate_events = [event for event in events if event.event_type == "teammate_response"]
+        assert len(teammate_events) == 2
+        dialogue_event = next(event for event in events if event.event_type == "dialogue_options")
+        assert [option["id"] for option in dialogue_event.payload["options"]] == ["examine", "follow"]
+        assert all(
+            option["dispatch"]["payload"]["action_type"] == "resolve_clue_option"
+            for option in dialogue_event.payload["options"]
+        )
+
+    def test_run_post_action_round_uses_clue_resolution_summary_instead_of_generic_reactions(self) -> None:
+        class NoopExecutor:
+            async def run_agentic(self, **_: Any) -> AgentResult:
+                raise AssertionError("resolve_clue_option should not invoke generic agent reactions")
+
+        session = _session_for_post_action_round()
+        service = AgentOrchestrationService(NoopExecutor())  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+        result = PipelineResult(
+            executed=True,
+            action_type="resolve_clue_option",
+            metadata={
+                "clue_id": "blood_trail",
+                "clue_name": "拖拽血迹",
+                "option_id": "follow",
+                "option_label": "顺着痕迹追过去",
+                "passed": True,
+                "effect_types": ["unlock_sub_location", "advance_quest"],
+            },
+        )
+
+        events = asyncio.run(
+            service.run_post_action_round(
+                shared,
+                result,
+                session.runtime.tick_coordinator._apply_delta,
+            )
+        )
+
+        assert [event.event_type for event in events] == ["gm_comment"]
+        assert "露出了一条能追下去的路" in events[0].payload["content"]
 
     def test_run_post_action_round_drops_protocol_error_reactions(self) -> None:
         session = _session_for_post_action_round()
@@ -1719,7 +1874,9 @@ class TestRunNpcInteraction:
         option_events = [e for e in events if e.event_type == "dialogue_options"]
         assert len(option_events) == 1
 
-    def test_run_npc_interaction_invalid_agent_response_maps_to_npc_response_error(self) -> None:
+    def test_run_npc_interaction_text_only_is_gracefully_handled(self) -> None:
+        """P29-A1: Text-only NPC response in interaction produces npc_response,
+        not npc_response_error."""
         service, _ = _build_service([
             _stop_response("I should have used speak."),
         ])
@@ -1731,10 +1888,10 @@ class TestRunNpcInteraction:
             player_message="Hello",
         ))
 
-        assert len(events) == 1
-        assert events[0].event_type == "npc_response_error"
-        assert events[0].payload["code"] == "invalid_agent_response"
-        assert events[0].payload["reason"] == "text_without_tool"
+        npc_events = [e for e in events if e.event_type == "npc_response"]
+        assert len(npc_events) >= 1
+        assert npc_events[0].payload["npc_id"] == "merchant_tom"
+        assert npc_events[0].payload["content"] == "I should have used speak."
 
     def test_run_npc_interaction_adds_fallback_gm_comment(self) -> None:
         service, _ = _build_service([
@@ -1776,7 +1933,8 @@ class TestRunPublicUtterance:
 
 
 class TestRunPrivateChat:
-    def test_run_private_chat_invalid_agent_response_maps_to_npc_response_error(self) -> None:
+    def test_run_private_chat_text_only_is_gracefully_handled(self) -> None:
+        """P29-A1: Text-only NPC response in private chat succeeds gracefully."""
         service, _ = _build_service([
             _stop_response("I should have used speak."),
         ])
@@ -1788,10 +1946,10 @@ class TestRunPrivateChat:
             player_message="Can we speak in private?",
         ))
 
-        assert len(events) == 1
-        assert events[0].event_type == "npc_response_error"
-        assert events[0].payload["code"] == "invalid_agent_response"
-        assert events[0].payload["reason"] == "text_without_tool"
+        npc_events = [e for e in events if e.event_type == "npc_response"]
+        assert len(npc_events) >= 1
+        assert npc_events[0].payload["npc_id"] == "merchant_tom"
+        assert npc_events[0].payload["content"] == "I should have used speak."
 
     def test_run_private_chat_adds_introspective_fallback_comment(self) -> None:
         service, _ = _build_service([

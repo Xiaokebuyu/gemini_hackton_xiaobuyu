@@ -643,7 +643,7 @@ class _RecordingPlanner:
 
 class TestDispatchIntegration:
     def test_hook_execute_runs_weaver_lifecycle(self) -> None:
-        """NarrativeWeaver's lifecycle operations (directive GC, quest expiry, etc.) run
+        """NarrativeWeaver's remaining lifecycle operations run
         when Hook.execute() is called with a dispatcher that has NarrativeWeaver registered."""
 
         ctx = _make_settlement_context(area_id="test_area")
@@ -672,9 +672,9 @@ class TestDispatchIntegration:
 
         asyncio.run(hook.execute(ctx))
 
-        # Quest should be retired
+        # Dynamic quest expiry is now handled by QuestExpiryHook, not NarrativeWeaver
         dq = ctx.state.quests.dynamic_quests.get("dq_to_expire", {})
-        assert dq.get("status") == "retired"
+        assert dq.get("status") == "active"
 
         # Consumed directive should be removed
         directives = ctx.state.narrative_plan.npc_directives
@@ -746,21 +746,21 @@ class TestItemDesignerStub:
         result = asyncio.run(stub.evaluate(event, ctx))
         assert result.directives == []
 
-    def test_apply_directive_returns_false_for_invalid_design_reward(self) -> None:
+    def test_apply_directive_returns_rejection_for_invalid_design_reward(self) -> None:
         stub = ItemDesignerSubSystem()
         ctx = _make_settlement_context()
         result = stub.apply_directive(
             "design_reward", {"item_id": "magic_sword"}, ctx, current_tick=0
         )
-        assert result is False
+        assert result is not True  # Returns a rejection reason string
 
-    def test_apply_directive_returns_false_for_curate_shop(self) -> None:
+    def test_apply_directive_returns_rejection_for_curate_shop(self) -> None:
         stub = ItemDesignerSubSystem()
         ctx = _make_settlement_context()
         result = stub.apply_directive(
             "curate_shop", {"shop_id": "blacksmith"}, ctx, current_tick=0
         )
-        assert result is False
+        assert result is not True  # Returns a rejection reason string
 
 
 # ---------------------------------------------------------------------------
@@ -769,13 +769,12 @@ class TestItemDesignerStub:
 
 
 class TestSSEEventsReachHookResult:
-    def test_sse_from_weaver_included_in_hook_result(self) -> None:
-        """SSE events appended to sse_collector during NarrativeWeaver.evaluate()
-        are present in the Hook's HookResult after execute()."""
+    def test_expired_quest_does_not_emit_sse_from_weaver(self) -> None:
+        """Quest expiry SSE is no longer emitted from NarrativeWeaver."""
 
         ctx = _make_settlement_context(area_id="test_area")
 
-        # Add an expired quest — this will cause NarrativeWeaver to emit an SSE event
+        # Add an expired quest — expiry is now deferred to QuestExpiryHook
         ctx.state.quests.add_dynamic_quest("dq_sse_test", {
             "quest_id": "dq_sse_test",
             "status": "active",
@@ -792,9 +791,9 @@ class TestSSEEventsReachHookResult:
         hook_result = asyncio.run(hook.execute(ctx))
 
         event_types = [e.event_type for e in hook_result.sse_events]
-        assert "dynamic_quest_expired" in event_types
+        assert "dynamic_quest_expired" not in event_types
 
-    def test_sse_payload_correct_for_expired_quest(self) -> None:
+    def test_expired_quest_payload_is_unchanged_under_weaver(self) -> None:
         ctx = _make_settlement_context(area_id="test_area")
         ctx.state.quests.add_dynamic_quest("dq_payload_check", {
             "quest_id": "dq_payload_check",
@@ -815,6 +814,5 @@ class TestSSEEventsReachHookResult:
             e for e in hook_result.sse_events
             if e.event_type == "dynamic_quest_expired"
         ]
-        assert len(expired_events) == 1
-        assert expired_events[0].payload["quest_id"] == "dq_payload_check"
-        assert expired_events[0].payload["on_expire"] == "retire"
+        assert expired_events == []
+        assert ctx.state.quests.get_dynamic_quest("dq_payload_check")["status"] == "active"

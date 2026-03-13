@@ -17,11 +17,13 @@ from app.game_core.content.registries.map_types import (
     HostileGroup,
     HostileTemplate,
     InteractableTemplate,
+    RoomTemplate,
     SubAreaClusterConfig,
     SubLocationTemplate,
     TrapData,
 )
 from app.game_core.content.registries.shared_types import LootTableDef
+from app.game_core.scene_interactables import normalize_functional_binding
 
 
 @dataclass(slots=True)
@@ -45,6 +47,7 @@ class AreaTemplate:
     base_danger: float | None = None
     connections: list[Connection] = field(default_factory=list)
     sub_locations: dict[str, SubLocationTemplate] = field(default_factory=dict)
+    default_sub_location: str = ""   # 进入此区域时玩家自动放置的子地点 ID
     description: str = ""
     danger_level: str = ""                              # low / medium / high / extreme
     discoveries: list[Discovery] = field(default_factory=list)
@@ -122,6 +125,76 @@ class MapRegistry(ContentRegistry):
                 return conn
         return None
 
+    def resolve_encounter_map_category(
+        self,
+        area_id: str,
+        encounter: EncounterEntry | Mapping[str, Any] | None = None,
+    ) -> str | None:
+        """Return the preferred battle-map category for one area encounter.
+
+        Resolution order:
+        1. explicit encounter.map_category
+        2. area tag / area-id / area-name semantic match
+        3. area terrain_type fallback
+        """
+        if isinstance(encounter, EncounterEntry):
+            explicit = self._coerce_non_empty_string(encounter.map_category)
+            if explicit is not None:
+                return explicit
+        elif isinstance(encounter, Mapping):
+            explicit = self._coerce_non_empty_string(encounter.get("map_category"))
+            if explicit is not None:
+                return explicit
+
+        area = self._items.get(area_id)
+        if area is None:
+            return None
+
+        area_text = f"{area.id} {area.name}".strip().lower()
+        tag_set = {
+            str(tag).strip().lower()
+            for tag in area.tags
+            if str(tag).strip()
+        }
+        terrain_type = str(area.terrain_type or "").strip().lower()
+
+        def _matches(*keywords: str) -> bool:
+            for keyword in keywords:
+                token = keyword.strip().lower()
+                if not token:
+                    continue
+                if token in tag_set or token in area_text:
+                    return True
+            return False
+
+        if _matches("bridge"):
+            return "bridge"
+        if _matches("temple", "church") or "religious" in tag_set:
+            return "temple"
+        if _matches("camp") or "home" in tag_set:
+            return "camp"
+        if _matches("ruins", "dungeon"):
+            return "ruins"
+        if terrain_type == "urban":
+            return "town_street"
+        if terrain_type == "plains":
+            return "plains"
+        if terrain_type == "underground":
+            return "cave"
+        if terrain_type in {"forest", "woodland"}:
+            return "woodland"
+        if terrain_type in {"hill", "hills", "mountain"}:
+            return "hills"
+        if terrain_type == "swamp":
+            return "swamp"
+        if _matches("forest", "woodland"):
+            return "woodland"
+        if _matches("hill", "mountain"):
+            return "hills"
+        if _matches("swamp"):
+            return "swamp"
+        return None
+
     def get_by_region(self, region: str) -> list[AreaTemplate]:
         """Return areas matching the given region."""
         normalized = region.strip().lower()
@@ -137,6 +210,23 @@ class MapRegistry(ContentRegistry):
         if area is None:
             return None
         return area.sub_locations.get(loc_id)
+
+    def resolve_auto_sub_location(self, area_id: str) -> str | None:
+        """Return the sub-location used for automatic area entry placement."""
+        area = self.get(area_id)
+        if area is None:
+            return None
+        sub_locations = area.sub_locations
+        if not sub_locations:
+            return None
+        default = self._coerce_non_empty_string(area.default_sub_location)
+        if default is not None and default in sub_locations:
+            return default
+        for key in sub_locations:
+            normalized = self._coerce_non_empty_string(key)
+            if normalized is not None:
+                return normalized
+        return None
 
     # ------------------------------------------------------------------
     # Validation
@@ -164,7 +254,7 @@ class MapRegistry(ContentRegistry):
             self._load_issues.append(f"map '{item_id}' missing id")
             return None
 
-        # base_danger — numeric float only (danger_level string is a separate field)
+        # base_danger — numeric preferred; string danger_level is a fallback
         raw_base_danger = raw.get("base_danger")
         # backward compat: if base_danger absent, try danger_level only when numeric
         if raw_base_danger is None and isinstance(raw.get("danger_level"), (int, float)):
@@ -175,6 +265,20 @@ class MapRegistry(ContentRegistry):
             if base_danger is None or base_danger < 0:
                 self._load_issues.append(f"map '{item_id}' has invalid base_danger")
                 base_danger = None
+        # string→float fallback: convert semantic danger_level strings when no numeric value
+        if base_danger is None:
+            _DANGER_STR_MAP: dict[str, float] = {
+                "none": 0.0,
+                "low": 0.3,
+                "medium": 0.6,
+                "high": 1.0,
+                "extreme": 1.5,
+            }
+            dl_raw = raw.get("danger_level")
+            if isinstance(dl_raw, str):
+                dl_key = dl_raw.strip().lower()
+                if dl_key in _DANGER_STR_MAP:
+                    base_danger = _DANGER_STR_MAP[dl_key]
 
         # connections — merge adjacent_areas alias
         connections = self._load_connections(raw, item_id)
@@ -281,6 +385,18 @@ class MapRegistry(ContentRegistry):
 
         terrain_type = str(raw.get("terrain_type", "")).strip()
 
+        # default_sub_location — must exist in sub_locations if non-empty
+        default_sub_location = ""
+        raw_dsl = raw.get("default_sub_location")
+        if raw_dsl is not None:
+            dsl = self._coerce_non_empty_string(raw_dsl)
+            if dsl is None:
+                self._load_issues.append(
+                    f"map '{item_id}' has invalid default_sub_location"
+                )
+            else:
+                default_sub_location = dsl
+
         return AreaTemplate(
             id=entry_id,
             name=name,
@@ -288,6 +404,7 @@ class MapRegistry(ContentRegistry):
             base_danger=base_danger,
             connections=connections,
             sub_locations=sub_locations,
+            default_sub_location=default_sub_location,
             description=description,
             danger_level=danger_level,
             discoveries=discoveries,
@@ -486,6 +603,21 @@ class MapRegistry(ContentRegistry):
         if isinstance(raw_hc, Mapping):
             hostile_config = self._build_hostile_config(area_id, sid, raw_hc)
 
+        # rooms
+        rooms = self._load_rooms(area_id, sid, raw)
+
+        # default_room — must not be empty when set
+        default_room = ""
+        raw_dr = raw.get("default_room")
+        if raw_dr is not None:
+            dr = self._coerce_non_empty_string(raw_dr)
+            if dr is None:
+                self._load_issues.append(
+                    f"map '{area_id}' sub_location '{sid}' has invalid default_room"
+                )
+            else:
+                default_room = dr
+
         return SubLocationTemplate(
             id=sid,
             name=name,
@@ -496,6 +628,94 @@ class MapRegistry(ContentRegistry):
             resident_npcs=resident_npcs,
             interactables=interactables,
             hostile_config=hostile_config,
+            rooms=rooms,
+            default_room=default_room,
+        )
+
+    def _load_rooms(
+        self, area_id: str, sub_id: str, raw: dict[str, Any],
+    ) -> dict[str, RoomTemplate]:
+        raw_rooms = raw.get("rooms")
+        if raw_rooms is None:
+            return {}
+        if isinstance(raw_rooms, list):
+            result: dict[str, RoomTemplate] = {}
+            for entry in raw_rooms:
+                if not isinstance(entry, Mapping):
+                    continue
+                built = self._build_room(area_id, sub_id, entry)
+                if built is not None:
+                    result[built.id] = built
+            return result
+        if not isinstance(raw_rooms, Mapping):
+            self._load_issues.append(
+                f"map '{area_id}' sub_location '{sub_id}' has invalid rooms"
+            )
+            return {}
+        result = {}
+        for room_key, room_val in raw_rooms.items():
+            if not isinstance(room_val, Mapping):
+                self._load_issues.append(
+                    f"map '{area_id}' sub_location '{sub_id}' room '{room_key}' must be a mapping"
+                )
+                continue
+            built = self._build_room(area_id, sub_id, room_val, room_key=str(room_key))
+            if built is not None:
+                result[str(room_key)] = built
+        return result
+
+    def _build_room(
+        self, area_id: str, sub_id: str, raw: dict[str, Any],
+        room_key: str | None = None,
+    ) -> RoomTemplate | None:
+        raw_id = raw.get("id")
+        rid = self._coerce_non_empty_string(raw_id)
+        if rid is None:
+            if raw_id is not None and room_key is not None:
+                self._load_issues.append(
+                    f"map '{area_id}' sub_location '{sub_id}' room '{room_key}' has invalid id"
+                )
+            else:
+                self._load_issues.append(
+                    f"map '{area_id}' sub_location '{sub_id}' room missing id"
+                )
+            return None
+
+        name = str(raw.get("name", "")).strip()
+        description = str(raw.get("description", "")).strip()
+
+        raw_tags = raw.get("tags", [])
+        tags = [str(t) for t in raw_tags if str(t).strip()] if isinstance(raw_tags, list) else []
+
+        discoverable = bool(raw.get("discoverable", False))
+        discovery_dc_raw = raw.get("discovery_dc", 0)
+        discovery_dc = self._coerce_non_negative_int(discovery_dc_raw) or 0
+
+        raw_npcs = raw.get("resident_npcs", [])
+        resident_npcs = (
+            [str(n) for n in raw_npcs if str(n).strip()]
+            if isinstance(raw_npcs, list)
+            else []
+        )
+
+        interactables: list[InteractableTemplate] = []
+        raw_ias = raw.get("interactables", [])
+        if isinstance(raw_ias, list):
+            for idx, raw_ia in enumerate(raw_ias):
+                if isinstance(raw_ia, Mapping):
+                    ia = self._build_interactable(area_id, f"{sub_id}/{rid}", idx, raw_ia)
+                    if ia is not None:
+                        interactables.append(ia)
+
+        return RoomTemplate(
+            id=rid,
+            name=name,
+            description=description,
+            tags=tags,
+            discoverable=discoverable,
+            discovery_dc=discovery_dc,
+            resident_npcs=resident_npcs,
+            interactables=interactables,
         )
 
     def _build_interactable(
@@ -539,6 +759,8 @@ class MapRegistry(ContentRegistry):
         if isinstance(raw_reward, Mapping):
             reward = dict(raw_reward)
 
+        functional = normalize_functional_binding(raw.get("functional"))
+
         # container_data (only when type == "container")
         container_data: ContainerData | None = None
         if ia_type == "container":
@@ -556,6 +778,7 @@ class MapRegistry(ContentRegistry):
             reward=reward,
             one_time=one_time,
             tags=tags,
+            functional=functional or None,
             container_data=container_data,
         )
 
@@ -785,6 +1008,7 @@ class MapRegistry(ContentRegistry):
                 pass
 
         description = str(raw.get("description", "")).strip()
+        map_category = self._coerce_non_empty_string(raw.get("map_category"))
 
         return EncounterEntry(
             id=entry_id,
@@ -792,5 +1016,5 @@ class MapRegistry(ContentRegistry):
             weight=weight,
             min_danger=min_danger,
             description=description,
+            map_category=map_category,
         )
-

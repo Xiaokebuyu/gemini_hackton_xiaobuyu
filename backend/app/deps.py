@@ -24,14 +24,89 @@ from app.game_core.orchestration.models import PipelineResult, SSEEvent
 from app.world_seed import WORLD_CATALOG
 
 
+# Module-level LLM provider reference — set during _build_game_runtime().
+# get_llm_provider() returns this value (None when no API key is configured).
+_llm_provider: Any = None
+
+
+def _build_fallback_planner_system_factory() -> Any:
+    """Return a no-LLM planner system factory (C-3: W5-3 deterministic fallback).
+
+    The returned factory builds a PlannerSystemAssembly that:
+    - Runs bootstrap events through OpeningBootstrapQuestAgent (deterministic)
+    - Returns empty result for all other events (graceful degradation)
+    """
+    from app.game_core.adapters.planner_system import PlannerSystemAssembly
+    from app.game_core.planning.opening_bootstrap import OpeningBootstrapQuestAgent
+
+    class _FallbackBlackboard:
+        """No-op blackboard for no-LLM mode."""
+
+        @property
+        def history_key(self) -> str:
+            return "__deterministic_fallback_blackboard__"
+
+        async def plan(self, context: dict) -> dict:
+            return {
+                "directives": [],
+                "story_facts": [],
+                "strategy_notes": "",
+                "metadata": {"provider": "deterministic_fallback", "reason": "no_llm"},
+            }
+
+        def export_history(self) -> list:
+            return []
+
+        def import_history(self, data: list) -> None:
+            pass
+
+    class _FallbackAgent:
+        """No-op subsystem agent for no-LLM mode."""
+
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        @property
+        def history_key(self) -> str:
+            return f"__deterministic_fallback_{self._name}__"
+
+        async def evaluate(self, context: dict) -> dict:
+            return {
+                "directives": [],
+                "story_facts": [],
+                "strategy_notes": "",
+                "metadata": {"provider": "deterministic_fallback", "reason": "no_llm"},
+            }
+
+        def export_history(self) -> list:
+            return []
+
+        def import_history(self, data: list) -> None:
+            pass
+
+    def _factory() -> PlannerSystemAssembly:
+        return PlannerSystemAssembly(
+            blackboard=_FallbackBlackboard(),
+            quest_manager_agent=OpeningBootstrapQuestAgent(),
+            npc_director_agent=_FallbackAgent("npc_director"),
+            world_builder_agent=_FallbackAgent("world_builder"),
+            narrative_weaver_agent=_FallbackAgent("narrative_weaver"),
+            item_designer_agent=_FallbackAgent("item_designer"),
+        )
+
+    return _factory
+
+
 def _build_game_runtime() -> GameRuntime:
     """Build the singleton GameRuntime, constructing all app-layer services here."""
+    global _llm_provider
     llm_provider = None
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if api_key:
         from app.llm_gemini import GeminiLlmAdapter
 
         llm_provider = GeminiLlmAdapter()
+    _llm_provider = llm_provider
 
     # WorldKnowledgeGraph is always enabled (no API key needed).
     # Graph is seeded lazily on first query for each WorldInstance.
@@ -41,7 +116,8 @@ def _build_game_runtime() -> GameRuntime:
 
     # WorldKnowledgeGraph accepts llm_provider for write_episode + lore enrichment.
     # llm_provider may be None (no API key) — graph degrades gracefully to static mode.
-    memory_retriever = KnowledgeGraphMemoryRetriever(WorldKnowledgeGraph(llm=llm_provider))
+    knowledge_graph = WorldKnowledgeGraph(llm=llm_provider)
+    memory_retriever = KnowledgeGraphMemoryRetriever(knowledge_graph)
     instance_manager = InstanceManager()
 
     # ── app-layer service construction (composition root) ─────────────────────
@@ -85,6 +161,8 @@ def _build_game_runtime() -> GameRuntime:
     gm_narrator_factory = None
     if llm_provider is not None:
         llm = llm_provider
+        # Capture knowledge_graph reference for GM graphize callback
+        _gm_graph = knowledge_graph
 
         def _build_gm_narrator(world: Any, state: Any) -> Any:
             from app.game_core.narrative.executor import AgenticExecutor
@@ -95,9 +173,32 @@ def _build_game_runtime() -> GameRuntime:
             registry = RoleToolRegistry()
             register_gm_tools(registry)
             executor = AgenticExecutor(tool_registry=registry, llm=llm)
-            return AgenticGmNarrator(executor=executor, world=world, state=state)
+            graphize_callback = _make_graphize_callback(_gm_graph)
+            return AgenticGmNarrator(
+                executor=executor,
+                world=world,
+                state=state,
+                graphize_callback=graphize_callback,
+            )
 
         gm_narrator_factory = _build_gm_narrator
+
+    def _make_graphize_callback(graph: Any) -> Callable | None:
+        """Build an async graphize callback that writes episodes to WorldKnowledgeGraph."""
+        if graph is None:
+            return None
+
+        async def _callback(actor_id: str, messages: list) -> None:
+            try:
+                await graph.write_episode(
+                    actor_id=actor_id,
+                    messages=messages,
+                    context={},
+                )
+            except Exception:
+                pass  # graphize failures must not break planner execution
+
+        return _callback
 
     planner_system_factory = None
     if llm_provider is not None:
@@ -153,6 +254,9 @@ def _build_game_runtime() -> GameRuntime:
             weaver_llm = GeminiLlmAdapter(profile_name="narrative_weaver")
             item_llm = GeminiLlmAdapter(profile_name="item_designer")
 
+            # Build shared graphize callback and memory retriever for all planner instances
+            graphize_callback = _make_graphize_callback(knowledge_graph)
+
             return PlannerSystemAssembly(
                 blackboard=AgenticNarrativePlanner(
                     llm=blackboard_llm,
@@ -162,6 +266,8 @@ def _build_game_runtime() -> GameRuntime:
                     system_prompt=PLANNER_BLACKBOARD_PROMPT,
                     provider_name="planner_blackboard",
                     history_key="__planner_blackboard__",
+                    graphize_callback=graphize_callback,
+                    memory_retriever=memory_retriever,
                 ),
                 quest_manager_agent=AgenticNarrativePlanner(
                     llm=quest_llm,
@@ -174,6 +280,8 @@ def _build_game_runtime() -> GameRuntime:
                     history_key="__quest_manager_agent__",
                     context_formatter=_format_subsystem_context,
                     allowed_skill_categories=["quests", "social"],
+                    graphize_callback=graphize_callback,
+                    memory_retriever=memory_retriever,
                 ),
                 npc_director_agent=AgenticNarrativePlanner(
                     llm=npc_llm,
@@ -186,6 +294,8 @@ def _build_game_runtime() -> GameRuntime:
                     history_key="__npc_director_agent__",
                     context_formatter=_format_subsystem_context,
                     allowed_skill_categories=["npcs", "social"],
+                    graphize_callback=graphize_callback,
+                    memory_retriever=memory_retriever,
                 ),
                 world_builder_agent=AgenticNarrativePlanner(
                     llm=world_llm,
@@ -198,6 +308,8 @@ def _build_game_runtime() -> GameRuntime:
                     history_key="__world_builder_agent__",
                     context_formatter=_format_subsystem_context,
                     allowed_skill_categories=["areas", "environments", "encounters"],
+                    graphize_callback=graphize_callback,
+                    memory_retriever=memory_retriever,
                 ),
                 narrative_weaver_agent=AgenticNarrativePlanner(
                     llm=weaver_llm,
@@ -210,6 +322,8 @@ def _build_game_runtime() -> GameRuntime:
                     history_key="__narrative_weaver_agent__",
                     context_formatter=_format_subsystem_context,
                     allowed_skill_categories=["narrative"],
+                    graphize_callback=graphize_callback,
+                    memory_retriever=memory_retriever,
                 ),
                 item_designer_agent=AgenticNarrativePlanner(
                     llm=item_llm,
@@ -222,10 +336,15 @@ def _build_game_runtime() -> GameRuntime:
                     history_key="__item_designer_agent__",
                     context_formatter=_format_subsystem_context,
                     allowed_skill_categories=["items"],
+                    graphize_callback=graphize_callback,
+                    memory_retriever=memory_retriever,
                 ),
             )
 
         planner_system_factory = _build_planner_system
+    else:
+        # C-3: W5-3 — no LLM: use deterministic fallback (bootstrap works, regular planning noop)
+        planner_system_factory = _build_fallback_planner_system_factory()
     # ── end app-layer construction ─────────────────────────────────────────────
 
     return GameRuntime(
@@ -288,6 +407,11 @@ def get_admin_coordinator() -> AdminCoordinator:
 def get_agent_orchestration() -> AgentOrchestrationService | None:
     """Return the AgentOrchestrationService, or None if LLM is unavailable."""
     return get_game_runtime().agent_orchestration
+
+
+def get_llm_provider() -> Any:
+    """Return the shared LLM provider, or None if no API key is configured."""
+    return _llm_provider
 
 
 def get_interaction_service() -> InteractionService:

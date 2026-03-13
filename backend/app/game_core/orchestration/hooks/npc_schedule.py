@@ -10,8 +10,9 @@ from typing import Any, Mapping, Protocol
 from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
 from app.game_core.orchestration.models import HookResult, SSEEvent
+from app.game_core.orchestration.presence import room_exists
 from app.game_core.orchestration.settlement import SettlementContext
-from app.game_core.state import StateChange
+from app.game_core.rules.models import Command
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class NpcScheduleMove:
     character_id: str
     area_id: str | None = None
     location_id: str | None = None
+    room_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -84,7 +86,7 @@ class BasicNpcScheduleProvider:
         self,
         characters: list[Any],
         areas: Mapping[str, Any],
-        placements: dict[str, tuple[str, str | None]],
+        placements: dict[str, tuple[str, str | None, str | None]],
         next_period: str,
         valid_areas: set[str],
     ) -> list[dict[str, Any]]:
@@ -93,10 +95,10 @@ class BasicNpcScheduleProvider:
             character_id = self._normalize_string(character.get("id"))
             if character_id is None:
                 continue
-            sched_area, sched_loc = self._scheduled_destination(
+            sched_area, sched_loc, sched_room = self._scheduled_destination(
                 character, next_period, valid_areas
             )
-            if sched_area is None and sched_loc is None:
+            if sched_area is None and sched_loc is None and sched_room is None:
                 continue  # no schedule entry → don't move
 
             # determine target area
@@ -114,7 +116,12 @@ class BasicNpcScheduleProvider:
             existing = placements.get(character_id)
             current_area = existing[0] if existing is not None else None
             current_loc = existing[1] if existing is not None else None
-            if current_area == target_area and current_loc == sched_loc:
+            current_room = existing[2] if existing is not None else None
+            if (
+                current_area == target_area
+                and current_loc == sched_loc
+                and (sched_room is None or current_room == sched_room)
+            ):
                 continue
 
             moves.append(
@@ -122,6 +129,7 @@ class BasicNpcScheduleProvider:
                     "character_id": character_id,
                     "area_id": target_area,
                     "location_id": sched_loc,
+                    "room_id": sched_room,
                 }
             )
         return moves
@@ -131,38 +139,48 @@ class BasicNpcScheduleProvider:
         char_data: Any,
         next_period: str,
         valid_area_ids: set[str],
-    ) -> tuple[str | None, str | None]:
-        """Return (area_id, location_id) from per-character schedule, or (None, None)."""
+    ) -> tuple[str | None, str | None, str | None]:
+        """Return (area_id, location_id, room_id) from the character schedule."""
+        del valid_area_ids
         sched = char_data.get("schedule") if isinstance(char_data, dict) else None
         if not isinstance(sched, dict):
-            return (None, None)
+            return (None, None, None)
         dest = sched.get(next_period)
         if isinstance(dest, str):
             stripped = dest.strip()
             if stripped:
-                return (None, stripped)  # sub-location in home area
-            return (None, None)
+                return (None, stripped, None)  # sub-location in home area
+            return (None, None, None)
         if isinstance(dest, Mapping):
             raw_area = dest.get("area")
             raw_loc = dest.get("location")
+            raw_room = dest.get("room")
             area = raw_area.strip() if isinstance(raw_area, str) and raw_area.strip() else None
             loc = raw_loc.strip() if isinstance(raw_loc, str) and raw_loc.strip() else None
-            if area or loc:
-                return (area, loc)
-            return (None, None)
-        return (None, None)
+            room = (
+                raw_room.strip()
+                if isinstance(raw_room, str) and raw_room.strip()
+                else None
+            )
+            if room is not None and loc is None:
+                return (None, None, None)
+            if area or loc or room:
+                return (area, loc, room)
+            return (None, None, None)
+        return (None, None, None)
 
     @classmethod
     def _placements(
         cls,
         areas: Mapping[str, Any],
-    ) -> dict[str, tuple[str, str | None]]:
-        placements: dict[str, tuple[str, str | None]] = {}
+    ) -> dict[str, tuple[str, str | None, str | None]]:
+        placements: dict[str, tuple[str, str | None, str | None]] = {}
         for area_id, raw_area in areas.items():
             normalized_area_id = cls._normalize_string(area_id)
             if normalized_area_id is None or not isinstance(raw_area, Mapping):
                 continue
             raw_locations = raw_area.get("npc_locations", {})
+            raw_rooms = raw_area.get("npc_rooms", {})
             if not isinstance(raw_locations, Mapping):
                 continue
             for character_id, raw_location in raw_locations.items():
@@ -174,9 +192,17 @@ class BasicNpcScheduleProvider:
                     if raw_location is not None
                     else None
                 )
+                room_id = (
+                    cls._normalize_string(
+                        raw_rooms.get(character_id, raw_rooms.get(normalized_character_id))
+                    )
+                    if isinstance(raw_rooms, Mapping)
+                    else None
+                )
                 placements[normalized_character_id] = (
                     normalized_area_id,
                     location_id,
+                    room_id,
                 )
         return placements
 
@@ -331,8 +357,20 @@ class NpcScheduleHook(NoOpSettlementHook):
             accepted_characters.add(normalized_move.character_id)
             npc_id = normalized_move.character_id
             target_area = normalized_move.area_id or ""
-            context.state.areas.move_npc(npc_id, target_area, normalized_move.location_id, source="schedule")
-            context.record_change(StateChange(slice="areas", operation="set", path=f"npc_location.{npc_id}", value=target_area))
+            move_result = context.execute_command(Command(
+                type="schedule_npc_move",
+                params={
+                    "npc_id": npc_id,
+                    "area_id": target_area,
+                    "location_id": normalized_move.location_id,
+                    "room_id": normalized_move.room_id,
+                    "source": "schedule",
+                },
+                source="system",
+            ))
+            if not move_result.executed:
+                skipped_invalid_count += 1
+                continue
             moved_npc_ids.append(npc_id)
             updated_areas.add(normalized_move.area_id or "")
 
@@ -418,7 +456,10 @@ class NpcScheduleHook(NoOpSettlementHook):
             party_members = list(context.state.party.members.keys())
 
         areas = {
-            area_id: {"npc_locations": dict(area.npc_locations)}
+            area_id: {
+                "npc_locations": dict(area.npc_locations),
+                "npc_rooms": dict(area.npc_rooms),
+            }
             for area_id, area in context.state.areas.areas.items()
         }
         current_tick = context.state.time.absolute_tick()
@@ -485,10 +526,12 @@ class NpcScheduleHook(NoOpSettlementHook):
             character_id = cls._coerce_non_empty_string(raw_move.character_id)
             requested_area = cls._coerce_non_empty_string(raw_move.area_id)
             raw_location_id: Any = raw_move.location_id
+            raw_room_id: Any = raw_move.room_id
         elif isinstance(raw_move, Mapping):
             character_id = cls._coerce_non_empty_string(raw_move.get("character_id"))
             requested_area = cls._coerce_non_empty_string(raw_move.get("area_id"))
             raw_location_id = raw_move.get("location_id")
+            raw_room_id = raw_move.get("room_id")
         else:
             return None
 
@@ -517,13 +560,28 @@ class NpcScheduleHook(NoOpSettlementHook):
         else:
             return None
 
+        if raw_room_id is None:
+            room_id = None
+        elif isinstance(raw_room_id, str):
+            room_id = raw_room_id.strip() or None
+            if room_id is None:
+                return None
+        else:
+            return None
+
+        if room_id is not None and location_id is None:
+            return None
+
         if not cls._is_valid_location(context, area_id, location_id):
+            return None
+        if not cls._is_valid_room(context, area_id, location_id, room_id):
             return None
 
         return NpcScheduleMove(
             character_id=character_id,
             area_id=area_id,
             location_id=location_id,
+            room_id=room_id,
         )
 
     @classmethod
@@ -569,13 +627,30 @@ class NpcScheduleHook(NoOpSettlementHook):
             return True
 
         area_template = context.world.maps.get(area_id)
-        if area_template is None:
-            return False
+        if area_template is not None:
+            recognized_ids = cls._recognized_location_ids(area_template.sub_locations)
+            if recognized_ids is None or location_id in recognized_ids:
+                return True
 
-        recognized_ids = cls._recognized_location_ids(area_template.sub_locations)
-        if recognized_ids is None:
+        area_state = context.state.areas.areas.get(area_id)
+        if area_state is None:
+            return False
+        return any(
+            cls._coerce_non_empty_string(item.get("id")) == location_id
+            for item in area_state.temporary_sub_areas
+            if isinstance(item, Mapping)
+        )
+
+    @staticmethod
+    def _is_valid_room(
+        context: SettlementContext,
+        area_id: str,
+        location_id: str | None,
+        room_id: str | None,
+    ) -> bool:
+        if room_id is None:
             return True
-        return location_id in recognized_ids
+        return room_exists(context.state, context.world, area_id, location_id, room_id)
 
     @classmethod
     def _recognized_location_ids(

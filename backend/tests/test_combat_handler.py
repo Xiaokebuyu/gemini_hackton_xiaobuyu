@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.game_core.content import WorldInstance
-from app.game_core.content.registries import MapRegistry, MonsterRegistry
+from app.game_core.content.registries import BattleMapRegistry, MapRegistry, MonsterRegistry
 from app.game_core.orchestration.defaults import build_default_action_dispatcher
 from app.game_core.orchestration.models import StructuredAction
 from app.game_core.rules import Command, RulesEngine
@@ -12,7 +12,7 @@ from app.game_core.state import StateContainer
 from app.game_core.state.slices import AreaSlice, PlayerSlice, TimeSlice
 
 
-def _make_world() -> WorldInstance:
+def _make_world(*, battle_maps: dict[str, object] | None = None) -> WorldInstance:
     world = WorldInstance("test_world")
 
     maps = MapRegistry()
@@ -27,6 +27,10 @@ def _make_world() -> WorldInstance:
         }
     )
     world.register(monsters)
+    if battle_maps is not None:
+        reg = BattleMapRegistry()
+        reg.load(battle_maps)
+        world.register(reg)
 
     return world
 
@@ -179,6 +183,59 @@ class TestCombatHandler:
         assert hostile["combat_active"] is True
         # v2 units built from existing monster_ids
         assert any(u["monster_id"] == "goblin" for u in hostile["units"] if u["side"] == "enemy")
+
+    def test_start_combat_uses_map_category_from_existing_hostile(self) -> None:
+        state = _make_state()
+        state.areas.register_hostile(
+            "ambush",
+            {
+                "area_id": "forest",
+                "status": "active",
+                "cleared": False,
+                "blocking": True,
+                "monster_ids": ["goblin"],
+                "map_category": "town_street",
+            },
+        )
+        world = _make_world(
+            battle_maps={
+                "town_street": {
+                    "variants": [
+                        {
+                            "name": "Stone Street",
+                            "size": [8, 6],
+                            "terrain": [
+                                "RRRRRRRR",
+                                "RRRRRRRR",
+                                "RRRRRRRR",
+                                "RRRRRRRR",
+                                "RRRRRRRR",
+                                "RRRRRRRR",
+                            ],
+                            "player_spawn": [[0, 2], [0, 3], [1, 2]],
+                            "enemy_spawn": [[7, 2], [7, 3], [6, 3]],
+                            "tags": ["town_street", "urban"],
+                        }
+                    ]
+                }
+            }
+        )
+
+        result = _make_engine().execute(
+            Command(
+                type="start_combat",
+                source="system",
+                params={"sub_area_id": "ambush"},
+            ),
+            state,
+            world,
+        )
+
+        assert result.executed is True
+        _apply(result, state)
+        hostile = state.areas.get_hostile_state("ambush")
+        assert hostile is not None
+        assert hostile["grid"]["terrain"][0] == "RRRRRRRR"
 
     def test_start_combat_clears_stale_cleared_at_tick_when_reusing_hostile(self) -> None:
         state = _make_state()

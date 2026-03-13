@@ -6,6 +6,8 @@ import random
 from typing import Any
 
 from app.game_core.content import WorldInstance
+from app.game_core.environment_access import find_current_interactable
+from app.game_core.environment_rewards import apply_environment_reward
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
     build_dice_roll,
@@ -15,6 +17,7 @@ from app.game_core.rules.handler_utils import (
     handler_success_no_delta,
 )
 from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
+from app.game_core.scene_interactables import functional_type
 from app.game_core.state import StateChange, StateContainer
 
 
@@ -47,44 +50,41 @@ class InteractableHandler(StaticCommandHandler):
 
         area_id = state.player.current_area or ""
         location_id = state.player.current_location
+        room_id = getattr(state.player, "current_room", None)
 
         if not location_id:
             return ExecuteResult.error("not_in_sub_location")
 
-        sub_loc = world.maps.get_sub_location(area_id, location_id)
-        if sub_loc is not None:
-            template = next(
-                (i for i in sub_loc.interactables if i.id == interactable_id),
-                None,
-            )
-        else:
-            template = None
-
-        if template is None and state.has_slice("areas"):
-            # Fallback: dynamic sub-area created by plant_environmental
-            dyn = _find_dynamic_interactable(state, area_id, location_id, interactable_id)
-            if dyn is not None:
-                return _compute_dynamic(
-                    dyn, interactable_id, check_index, area_id, location_id, state
-                )
-
-        if template is None:
+        entry, visible = find_current_interactable(state, world, interactable_id)
+        if entry is None:
             return ExecuteResult.error(f"interactable_not_found: {interactable_id}")
+        if not visible:
+            return ExecuteResult.error("interactable_not_revealed")
+        special_function = functional_type(entry.functional)
+        if special_function in {"board_browse", "donation", "investigate_clue"}:
+            return ExecuteResult.error(f"specialized_action_required: {special_function}")
 
         # One-time check
-        if template.one_time and state.has_slice("areas"):
+        if entry.one_time and state.has_slice("areas"):
             if state.areas.is_interactable_used(area_id, interactable_id):
                 return ExecuteResult.error("already_used")
 
         # No checks needed (inspect-type, always succeeds)
-        if not template.checks:
+        if not entry.checks:
             changes: list[StateChange] = []
-            if template.one_time and state.has_slice("areas"):
+            if entry.one_time and state.has_slice("areas"):
                 changes.append(StateChange(
                     "areas", "set",
                     f"interactable_states.{interactable_id}",
                     {"area_id": area_id, "used": True},
                 ))
+            reward_changes, reward_result = apply_environment_reward(
+                state,
+                entry.reward,
+                area_id=area_id,
+                source=entry.source,
+            )
+            changes.extend(reward_changes)
             return handler_success(
                 "interactable", "interact_object_v2",
                 changes=changes,
@@ -94,19 +94,23 @@ class InteractableHandler(StaticCommandHandler):
                     "interactable_id": interactable_id,
                     "area_id": area_id,
                     "location_id": location_id,
-                    "reward": _reward_payload(template.reward),
+                    "room_id": room_id,
+                    "reward": _reward_payload(entry.reward),
+                    "reward_result": reward_result,
                     "check_path": None,
+                    "source": entry.source,
+                    "dynamic": entry.dynamic,
                 },
                 omit_empty_delta=False,
             )
 
         # Resolve check path
-        if check_index < 0 or check_index >= len(template.checks):
+        if check_index < 0 or check_index >= len(entry.checks):
             check_index = 0
-        check_path = template.checks[check_index]
+        check_path = entry.checks[check_index]
 
-        skill = check_path.skill or "perception"
-        dc = check_path.dc
+        skill = _string_or_default(_read_check_value(check_path, "skill"), "perception")
+        dc = _coerce_check_int(_read_check_value(check_path, "dc"), 10)
 
         try:
             modifier = state.player.get_skill_bonus(skill)
@@ -130,17 +134,20 @@ class InteractableHandler(StaticCommandHandler):
             "interactable_id": interactable_id,
             "area_id": area_id,
             "location_id": location_id,
+            "room_id": room_id,
             "skill": skill,
             "roll": raw_roll,
             "modifier": modifier,
             "total": total,
             "dc": dc,
             "check_path": check_index,
+            "source": entry.source,
+            "dynamic": entry.dynamic,
         }
 
         if not passed:
             fail_meta = dict(base_meta)
-            fail_consequence = getattr(check_path, "fail_consequence", None)
+            fail_consequence = _read_check_value(check_path, "fail_consequence")
             if fail_consequence:
                 fail_meta["fail_consequence"] = str(fail_consequence)
             return handler_success_no_delta(
@@ -151,15 +158,23 @@ class InteractableHandler(StaticCommandHandler):
             )
 
         success_changes: list[StateChange] = []
-        if template.one_time and state.has_slice("areas"):
+        if entry.one_time and state.has_slice("areas"):
             success_changes.append(StateChange(
                 "areas", "set",
                 f"interactable_states.{interactable_id}",
                 {"area_id": area_id, "used": True},
             ))
+        reward_changes, reward_result = apply_environment_reward(
+            state,
+            entry.reward,
+            area_id=area_id,
+            source=entry.source,
+        )
+        success_changes.extend(reward_changes)
 
         success_meta = dict(base_meta)
-        success_meta["reward"] = _reward_payload(template.reward)
+        success_meta["reward"] = _reward_payload(entry.reward)
+        success_meta["reward_result"] = reward_result
 
         return handler_success(
             "interactable", "interact_object_v2",
@@ -169,6 +184,24 @@ class InteractableHandler(StaticCommandHandler):
             metadata=success_meta,
             omit_empty_delta=False,
         )
+
+
+def _read_check_value(check_path: Any, key: str) -> Any:
+    if isinstance(check_path, dict):
+        return check_path.get(key)
+    return getattr(check_path, key, None)
+
+
+def _string_or_default(value: Any, default: str) -> str:
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or default
+
+
+def _coerce_check_int(value: Any, default: int) -> int:
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
 
 
 def _reward_payload(reward: Any) -> dict[str, Any]:

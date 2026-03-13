@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 
 from app.game_core.content import WorldInstance
+from app.game_core.environment_rewards import apply_environment_reward
 from app.game_core.rules.base import StaticCommandHandler
 from app.game_core.rules.handler_utils import (
     build_dice_roll,
@@ -114,10 +115,19 @@ class DiscoveryHandler(StaticCommandHandler):
                 },
             )
 
+        reward_payload = dict(template.reward) if template.reward else {}
+        reward_changes, reward_result = apply_environment_reward(
+            state,
+            reward_payload,
+            area_id=area_id,
+            source="discovery",
+        )
+
         return handler_success(
             "discovery", "discover",
             changes=[
                 StateChange("areas", "set", f"{area_id}.discovered_items.{discovery_id}", True),
+                *reward_changes,
             ],
             time_cost=1.0 / 6.0,
             rolls=[dice_roll],
@@ -130,6 +140,7 @@ class DiscoveryHandler(StaticCommandHandler):
                 "modifier": modifier,
                 "total": total,
                 "dc": template.dc,
-                "reward": dict(template.reward) if template.reward else {},
+                "reward": reward_payload,
+                "reward_result": reward_result,
             },
         )

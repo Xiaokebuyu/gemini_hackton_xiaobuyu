@@ -274,6 +274,30 @@ def test_board_accept_quest_rejects_missing_quest_in_board() -> None:
 
 
 def test_board_complete_quest_success_marks_completed() -> None:
+    state = _make_state(
+        dynamic_statuses={"q_report": "ready_to_report"},
+        board_bulletins=[
+            {"board_id": "quest_board", "quest_id": "q_report", "title": "护送商队"},
+        ],
+    )
+    world = _make_world()
+    result = _execute(
+        Command(
+            type="board_complete_quest",
+            params={"board_id": "quest_board", "quest_id": "q_report"},
+        ),
+        state,
+        world,
+    )
+
+    assert result.executed is True
+    assert result.time_cost == 1 / 6
+    state.apply(result.delta)
+    assert state.quests.dynamic_quests["q_report"]["status"] == "completed"
+
+
+def test_board_complete_quest_rejects_active_status() -> None:
+    """Active quests cannot be completed from the board — must reach ready_to_report first."""
     state = _make_state(dynamic_statuses={"q_active": "active"})
     world = _make_world()
     result = _execute(
@@ -285,13 +309,11 @@ def test_board_complete_quest_success_marks_completed() -> None:
         world,
     )
 
-    assert result.executed is True
-    assert result.time_cost == 1 / 6
-    state.apply(result.delta)
-    assert state.quests.dynamic_quests["q_active"]["status"] == "completed"
+    assert result.executed is False
+    assert any("not ready to report" in err for err in result.errors)
 
 
-def test_board_complete_quest_rejects_non_active() -> None:
+def test_board_complete_quest_rejects_available_status() -> None:
     state = _make_state(dynamic_statuses={"q_available": "available"})
     world = _make_world()
     result = _execute(
@@ -304,7 +326,7 @@ def test_board_complete_quest_rejects_non_active() -> None:
     )
 
     assert result.executed is False
-    assert any("cannot be completed" in err for err in result.errors)
+    assert any("not ready to report" in err for err in result.errors)
 
 
 def test_board_retire_quest_success_marks_retired() -> None:
@@ -343,3 +365,152 @@ def test_board_commands_only_affect_quests_on_board() -> None:
 
     assert result.executed is False
     assert any("not found on board" in err for err in result.errors)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (P26): level wall tests
+# ---------------------------------------------------------------------------
+
+def _make_state_with_level(
+    *,
+    player_level: int = 1,
+    quest_min_level: int = 1,
+    quest_status: str = "available",
+) -> StateContainer:
+    """Build a minimal state with a player at a specific level and one levelled quest."""
+    state = StateContainer()
+
+    player = PlayerSlice()
+    player.restore(
+        {
+            "current_area": "city",
+            "current_location": "square",
+            "level": player_level,
+        }
+    )
+    state.register(player)
+    state.register(_make_narrative_state())
+
+    areas = AreaSlice()
+    areas.restore(
+        {
+            "areas": {
+                "city": {
+                    "board_bulletins": {
+                        "quest_board": [
+                            {
+                                "board_id": "quest_board",
+                                "quest_id": "dq_levelled",
+                                "title": "中级讨伐任务",
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    )
+    state.register(areas)
+
+    quests = QuestSlice()
+    quests.restore(
+        {
+            "dynamic_quests": {
+                "dq_levelled": {
+                    "quest_id": "dq_levelled",
+                    "status": quest_status,
+                    "title": "中级讨伐任务",
+                    "min_level": quest_min_level,
+                }
+            }
+        }
+    )
+    state.register(quests)
+
+    return state
+
+
+def test_board_accept_quest_rejects_level_too_low() -> None:
+    """Player level 1 should not be able to accept a min_level=2 quest."""
+    state = _make_state_with_level(player_level=1, quest_min_level=2)
+    world = _make_world()
+    result = _execute(
+        Command(
+            type="board_accept_quest",
+            params={"board_id": "quest_board", "quest_id": "dq_levelled"},
+        ),
+        state,
+        world,
+    )
+
+    assert result.executed is False
+    assert any("below quest minimum" in err for err in result.errors)
+
+
+def test_board_accept_quest_allows_sufficient_level() -> None:
+    """Player level 2 can accept a min_level=2 quest."""
+    state = _make_state_with_level(player_level=2, quest_min_level=2)
+    world = _make_world()
+    result = _execute(
+        Command(
+            type="board_accept_quest",
+            params={"board_id": "quest_board", "quest_id": "dq_levelled"},
+        ),
+        state,
+        world,
+    )
+
+    assert result.executed is True
+    assert result.delta is not None
+    state.apply(result.delta)
+    assert state.quests.dynamic_quests["dq_levelled"]["status"] == "active"
+
+
+def test_board_accept_quest_no_min_level_allows_level_1() -> None:
+    """Quest with no min_level (defaults to 1) can be accepted by any level player."""
+    state = _make_state_with_level(player_level=1, quest_min_level=1)
+    world = _make_world()
+    result = _execute(
+        Command(
+            type="board_accept_quest",
+            params={"board_id": "quest_board", "quest_id": "dq_levelled"},
+        ),
+        state,
+        world,
+    )
+
+    assert result.executed is True
+
+
+def test_browse_board_includes_level_locked_field() -> None:
+    """browse_board entries should contain min_level and level_locked fields."""
+    state = _make_state_with_level(player_level=1, quest_min_level=2)
+    world = _make_world()
+    result = _execute(
+        Command(type="browse_board", params={"board_id": "quest_board"}),
+        state,
+        world,
+    )
+
+    assert result.executed is True
+    entries = result.metadata["entries"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["min_level"] == 2
+    assert entry["level_locked"] is True
+
+
+def test_browse_board_level_unlocked_when_player_meets_requirement() -> None:
+    """A level-2 player looking at a min_level=2 quest should see level_locked=False."""
+    state = _make_state_with_level(player_level=2, quest_min_level=2)
+    world = _make_world()
+    result = _execute(
+        Command(type="browse_board", params={"board_id": "quest_board"}),
+        state,
+        world,
+    )
+
+    assert result.executed is True
+    entries = result.metadata["entries"]
+    entry = entries[0]
+    assert entry["min_level"] == 2
+    assert entry["level_locked"] is False

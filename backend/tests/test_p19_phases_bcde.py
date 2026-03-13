@@ -222,10 +222,13 @@ def test_context_window_export_import_messages() -> None:
     cw.add_message(WindowMessage(role="model", content="world", token_count=6))
 
     exported = cw.export_messages()
-    assert len(exported) == 2
-    assert exported[0]["role"] == "user"
-    assert exported[0]["content"] == "hello"
-    assert exported[0]["metadata"] == {"k": "v"}
+    # export_messages now returns a dict with "messages" and "graphize_counter"
+    assert isinstance(exported, dict)
+    msgs = exported["messages"]
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "hello"
+    assert msgs[0]["metadata"] == {"k": "v"}
 
     cw2 = ContextWindow(actor_id="a", max_tokens=10000)
     cw2.import_messages(exported)
@@ -234,7 +237,43 @@ def test_context_window_export_import_messages() -> None:
     assert cw2.messages[0].content == "hello"
     assert cw2.messages[1].content == "world"
     assert cw2.current_tokens == 11
-    assert cw2.graphize_counter == 0  # starts fresh after import
+    # graphize_counter is restored from exported dict
+    assert cw2.graphize_counter == exported["graphize_counter"]
+
+
+def test_context_window_graphize_counter_persisted() -> None:
+    """graphize_counter is preserved across export/import round-trip."""
+    from app.game_core.narrative.context_window import ContextWindow, WindowMessage
+
+    cw = ContextWindow(actor_id="b", max_tokens=100000, graphize_threshold=100)
+    cw.add_message(WindowMessage(role="user", content="x", token_count=40))
+    cw.add_message(WindowMessage(role="model", content="y", token_count=35))
+    # graphize_counter = 75, threshold = 100 (not yet reached)
+    assert cw.graphize_counter == 75
+    assert cw.should_graphize is False
+
+    exported = cw.export_messages()
+    assert exported["graphize_counter"] == 75
+
+    cw2 = ContextWindow(actor_id="b", max_tokens=100000, graphize_threshold=100)
+    cw2.import_messages(exported)
+    assert cw2.graphize_counter == 75
+    assert cw2.should_graphize is False
+
+
+def test_context_window_legacy_list_import() -> None:
+    """import_messages accepts legacy list format (plain list of message dicts)."""
+    from app.game_core.narrative.context_window import ContextWindow
+
+    legacy_data = [
+        {"role": "user", "content": "hello", "token_count": 5, "metadata": {}, "is_graphized": False},
+        {"role": "model", "content": "world", "token_count": 6, "metadata": {}, "is_graphized": False},
+    ]
+    cw = ContextWindow(actor_id="c", max_tokens=10000)
+    cw.import_messages(legacy_data)
+    assert len(cw.messages) == 2
+    assert cw.messages[0].content == "hello"
+    assert cw.graphize_counter == 0  # legacy list has no counter → defaults to 0
 
 
 def test_graphize_triggered_after_threshold() -> None:
@@ -258,7 +297,7 @@ def test_graphize_triggered_after_threshold() -> None:
 
 
 def test_planner_history_append() -> None:
-    """_append_history correctly updates _history and _history_tokens."""
+    """_append_history correctly writes to ContextWindow (S1-07: migrated from _history)."""
     from app.narrators import AgenticNarrativePlanner
 
     class _FakeLlm:
@@ -266,18 +305,19 @@ def test_planner_history_append() -> None:
             raise RuntimeError("not needed")
 
     planner = AgenticNarrativePlanner(_FakeLlm())
-    assert planner._history == []
-    assert planner._history_tokens == 0
+    assert len(planner._context_window.messages) == 0
+    assert planner._context_window.current_tokens == 0
 
     planner._append_history("user message here", '{"directives": []}')
-    assert len(planner._history) == 2
-    assert planner._history[0]["role"] == "user"
-    assert planner._history[1]["role"] == "model"
-    assert planner._history_tokens > 0
+    messages = planner._context_window.messages
+    assert len(messages) == 2
+    assert messages[0].role == "user"
+    assert messages[1].role == "model"
+    assert planner._context_window.current_tokens > 0
 
 
 def test_planner_history_fifo_eviction() -> None:
-    """FIFO eviction kicks in when _history_tokens exceeds max budget."""
+    """FIFO eviction kicks in when ContextWindow current_tokens exceeds max_tokens."""
     from app.narrators import AgenticNarrativePlanner
 
     class _FakeLlm:
@@ -285,7 +325,7 @@ def test_planner_history_fifo_eviction() -> None:
             raise RuntimeError("not needed")
 
     planner = AgenticNarrativePlanner(_FakeLlm())
-    planner._max_history_tokens = 50  # very tight
+    planner._context_window.max_tokens = 50  # very tight
 
     # Each round contributes about: len(user_msg)//4 + len(model_msg)//4
     # "u" * 40 → 10 tokens, "m" * 40 → 10 tokens → 20 per round
@@ -294,12 +334,12 @@ def test_planner_history_fifo_eviction() -> None:
         planner._append_history("u" * 40, "m" * 40)
 
     # After eviction, total should be <= max
-    assert planner._history_tokens <= planner._max_history_tokens + 20  # tolerance of 1 round
-    assert len(planner._history) < 6  # some rounds were evicted
+    assert planner._context_window.current_tokens <= planner._context_window.max_tokens + 20
+    assert len(planner._context_window.messages) < 6  # some rounds were evicted
 
 
 def test_planner_history_export_import() -> None:
-    """export_history + import_history round-trip."""
+    """export_history + import_history round-trip (S1-07: new ContextWindow format)."""
     from app.narrators import AgenticNarrativePlanner
 
     class _FakeLlm:
@@ -310,17 +350,21 @@ def test_planner_history_export_import() -> None:
     planner._append_history("the user context", '{"directives": [], "strategy_notes": "test"}')
 
     exported = planner.export_history()
-    assert len(exported) == 2
-    assert exported[0]["role"] == "user"
-    assert exported[0]["text"] == "the user context"
-    assert exported[1]["role"] == "model"
+    # export_history now returns a dict with "messages" and "graphize_counter"
+    assert isinstance(exported, dict)
+    msgs = exported["messages"]
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "user"
+    # New format uses "content" key (not legacy "text")
+    assert msgs[0]["content"] == "the user context"
+    assert msgs[1]["role"] == "model"
 
     planner2 = AgenticNarrativePlanner(_FakeLlm())
-    assert planner2._history == []
+    assert len(planner2._context_window.messages) == 0
     planner2.import_history(exported)
-    assert len(planner2._history) == 2
-    assert planner2._history_tokens > 0
-    assert planner2._history[0]["parts"][0]["text"] == "the user context"
+    assert len(planner2._context_window.messages) == 2
+    assert planner2._context_window.current_tokens > 0
+    assert planner2._context_window.messages[0].content == "the user context"
 
 
 def test_planner_plan_includes_history() -> None:

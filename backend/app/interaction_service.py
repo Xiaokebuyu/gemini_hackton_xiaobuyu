@@ -57,6 +57,7 @@ class InteractionViewContext:
     npc_positions: dict[str, tuple[str | None, str | None]]
     npc_names: dict[str, str]
     npc_tags: dict[str, frozenset[str]]
+    npc_service_ids: dict[str, list[str]]
     relationship_stages: dict[str, str]
     npc_dispositions: dict[str, dict[str, int]]
     npc_impressions: dict[str, list[str]]
@@ -110,6 +111,7 @@ def build_interaction_view_context(
 
     npc_names: dict[str, str] = {}
     npc_tags: dict[str, frozenset[str]] = {}
+    npc_service_ids: dict[str, list[str]] = {}
     npc_refresh_modes: dict[str, list[str]] = {}
     if world.has_registry("characters"):
         for raw_character in world.characters.list_all():
@@ -123,6 +125,17 @@ def build_interaction_view_context(
                 for tag in getattr(raw_character, "tags", [])
                 if str(tag).strip()
             )
+            raw_shop = getattr(raw_character, "shop", None)
+            raw_services = raw_shop.get("services", []) if isinstance(raw_shop, Mapping) else []
+            if isinstance(raw_services, list):
+                service_ids = [
+                    str(service.get("service_id") or service.get("id") or "").strip()
+                    for service in raw_services
+                    if isinstance(service, Mapping)
+                    and str(service.get("service_id") or service.get("id") or "").strip()
+                ]
+                if service_ids:
+                    npc_service_ids[npc_id] = service_ids
             refresh_modes: list[str] = []
             raw_refresh = getattr(raw_character, "refresh_on", None)
             if raw_refresh is None:
@@ -251,6 +264,7 @@ def build_interaction_view_context(
         npc_positions=npc_positions,
         npc_names=npc_names,
         npc_tags=npc_tags,
+        npc_service_ids=npc_service_ids,
         relationship_stages=relationship_stages,
         npc_dispositions=npc_dispositions,
         npc_impressions=npc_impressions,

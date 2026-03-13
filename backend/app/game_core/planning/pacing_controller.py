@@ -61,12 +61,12 @@ class PacingControllerSubSystem:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         if kind == "escalate":
             return self._apply_escalate(payload, context, current_tick=current_tick)
         if kind == "adjust_pacing":
             return self._apply_adjust_pacing(payload, context, current_tick=current_tick)
-        return False
+        return "unsupported_kind"
 
     # ------------------------------------------------------------------
     # Handler: escalate
@@ -78,7 +78,7 @@ class PacingControllerSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(Command(
@@ -86,7 +86,9 @@ class PacingControllerSubSystem:
             params=params,
             source="narrative_planner",
         ))
-        return result.executed
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
 
     # ------------------------------------------------------------------
     # Handler: adjust_pacing
@@ -98,11 +100,13 @@ class PacingControllerSubSystem:
         context: SettlementContext,
         *,
         current_tick: int,
-    ) -> bool:
+    ) -> bool | str:
         del current_tick
         result = context.execute_command(Command(
             type="planner_set_pacing_frozen",
             params=dict(payload),
             source="narrative_planner",
         ))
-        return result.executed
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True

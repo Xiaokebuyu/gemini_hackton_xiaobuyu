@@ -130,7 +130,8 @@ def test_receptionist_accept_quest_rejects_non_receptionist_npc() -> None:
     assert result.errors == ["npc is not a receptionist"]
 
 
-def test_receptionist_accept_quest_rejects_missing_board_offer() -> None:
+def test_receptionist_accept_quest_accepts_available_quest_not_on_board() -> None:
+    """B-6: receptionist can accept a quest that is not on the board but is 'available'."""
     state = _make_state(board_entries=[])
     world = _make_world()
     result = ReceptionistHandler().compute(
@@ -145,8 +146,29 @@ def test_receptionist_accept_quest_rejects_missing_board_offer() -> None:
         world,
     )
 
+    # Quest is 'available' in dynamic_quests → accepted even without board entry
+    assert result.executed is True
+
+
+def test_receptionist_accept_quest_rejects_non_available_quest_not_on_board() -> None:
+    """B-6: quest not on board and not 'available' should still be rejected."""
+    state = _make_state(board_entries=[])
+    # Set quest to active (not available) so it can't be accepted again
+    state.quests.dynamic_quests["dq_report_in"]["status"] = "active"
+    world = _make_world()
+    result = ReceptionistHandler().compute(
+        Command(
+            type="receptionist_accept_quest",
+            params={
+                "npc_id": "receptionist",
+                "quest_id": "dq_report_in",
+            },
+        ),
+        state,
+        world,
+    )
+
     assert result.executed is False
-    assert result.errors == ["quest not currently offerable"]
 
 
 def test_receptionist_report_quest_success_marks_quest_reported() -> None:

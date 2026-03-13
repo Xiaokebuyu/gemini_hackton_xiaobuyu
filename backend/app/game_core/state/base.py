@@ -358,8 +358,9 @@ class StateContainer:
                 raw_danger = item.base_danger if item.base_danger is not None else 1.0
                 tags = [str(tag) for tag in item.tags]
 
-                # Populate npc_locations from sub_location.resident_npcs
+                # Populate npc_locations from sub_location/room resident_npcs.
                 npc_locations: dict[str, str | None] = {}
+                npc_rooms: dict[str, str | None] = {}
                 for sub_id, sub_template in item.sub_locations.items():
                     sub_id_str = str(sub_id).strip()
                     if not sub_id_str:
@@ -368,6 +369,16 @@ class StateContainer:
                         npc_id_str = str(npc_id).strip()
                         if npc_id_str:
                             npc_locations[npc_id_str] = sub_id_str
+                    for room_id, room_template in getattr(sub_template, "rooms", {}).items():
+                        room_id_str = str(room_id).strip()
+                        if not room_id_str:
+                            continue
+                        for npc_id in getattr(room_template, "resident_npcs", []):
+                            npc_id_str = str(npc_id).strip()
+                            if not npc_id_str:
+                                continue
+                            npc_locations[npc_id_str] = sub_id_str
+                            npc_rooms[npc_id_str] = room_id_str
 
                 areas[area_id] = {
                     "exploration": "undiscovered",
@@ -377,6 +388,7 @@ class StateContainer:
                     "temporary_sub_areas": [],
                     "discovered_items": [],
                     "npc_locations": npc_locations,
+                    "npc_rooms": npc_rooms,
                     "board_bulletins": {},
                     "container_states": {},
                     "hostile_tracking": {},
@@ -396,6 +408,24 @@ class StateContainer:
                 if char_area and char_area in areas:
                     char_location = (char.location_id or char.current_location or "").strip()
                     areas[char_area]["npc_locations"][char_id] = char_location or None
+                    if world.has_registry("maps") and char_location:
+                        sub_location = world.maps.get_sub_location(char_area, char_location)
+                        resolved_room = ""
+                        if sub_location is not None:
+                            for room_id, room_template in getattr(sub_location, "rooms", {}).items():
+                                room_id_str = str(room_id).strip()
+                                if not room_id_str:
+                                    continue
+                                resident_ids = getattr(room_template, "resident_npcs", [])
+                                if any(str(raw_npc_id).strip() == char_id for raw_npc_id in resident_ids):
+                                    resolved_room = room_id_str
+                                    break
+                            if not resolved_room:
+                                resolved_room = str(
+                                    getattr(sub_location, "default_room", "") or ""
+                                ).strip()
+                        if resolved_room:
+                            areas[char_area]["npc_rooms"][char_id] = resolved_room
 
         return {"areas": areas}
 

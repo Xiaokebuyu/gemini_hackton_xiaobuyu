@@ -75,6 +75,26 @@ def normalize_dynamic_quest_view(
             next_steps = [_REPORT_NEXT_STEP]
         if not hints:
             hints = [_REPORT_HINT]
+    elif status == "active" and current_step is None:
+        # B-3: newly accepted quests get auto-generated initial navigation from objectives
+        objectives = quest_map.get("objectives", [])
+        if isinstance(objectives, list) and objectives:
+            first_obj = objectives[0]
+            if isinstance(first_obj, dict):
+                current_step = str(first_obj.get("description", "完成任务目标")).strip() or "完成任务目标"
+            else:
+                current_step = str(first_obj).strip() or "完成任务目标"
+            next_steps = []
+            for obj in objectives[1:3]:
+                if isinstance(obj, dict):
+                    desc = str(obj.get("description", "")).strip()
+                else:
+                    desc = str(obj).strip()
+                if desc:
+                    next_steps.append(desc)
+        else:
+            summary_text = str(quest_map.get("summary", "")).strip()
+            current_step = summary_text or "前往任务地点"
 
     quest_view = {
         key: value
@@ -94,6 +114,37 @@ def normalize_dynamic_quest_view(
     quest_view["ui_state"] = ui_state
     quest_view["badge"] = badge
     quest_view["rewards"] = rewards
+
+    # P25-12: completion_hint — visible when all objectives are done but quest not yet reported
+    if status == "active":
+        objectives = quest_map.get("objectives", [])
+        if isinstance(objectives, list) and objectives:
+            all_completed = all(
+                (isinstance(obj, dict) and obj.get("completed"))
+                for obj in objectives
+            )
+            if all_completed and requires_report:
+                quest_view["completion_hint"] = "所有目标已完成，请返回汇报"
+            elif all_completed:
+                quest_view["completion_hint"] = "所有目标已完成"
+
+    # B-4: completed quests get a completed_summary with reward + objective info
+    if status == "completed":
+        completed_objectives: list[str] = []
+        raw_objectives = quest_map.get("objectives", [])
+        if isinstance(raw_objectives, list):
+            for obj in raw_objectives:
+                if isinstance(obj, dict):
+                    desc = str(obj.get("description", "")).strip()
+                    if desc:
+                        completed_objectives.append(desc)
+                elif str(obj).strip():
+                    completed_objectives.append(str(obj).strip())
+        quest_view["completed_summary"] = {
+            "rewards": rewards,
+            "completed_objectives": completed_objectives,
+        }
+
     return quest_view
 
 
