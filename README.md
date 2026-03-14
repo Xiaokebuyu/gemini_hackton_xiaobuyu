@@ -1,338 +1,370 @@
-# AI CRPG Game Engine Backend
+<p align="center">
+  <h1 align="center">AI CRPG Engine</h1>
+  <p align="center">
+    <strong>AI 驱动的类博德之门 3 CRPG 游戏引擎</strong>
+  </p>
+  <p align="center">
+    <img src="https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white" alt="Python 3.13" />
+    <img src="https://img.shields.io/badge/LLM-Gemini_Flash-4285F4?logo=google&logoColor=white" alt="Gemini Flash" />
+    <img src="https://img.shields.io/badge/tests-3043_passed-brightgreen" alt="Tests" />
+    <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
+    <img src="https://img.shields.io/badge/react-19-61DAFB?logo=react&logoColor=white" alt="React 19" />
+  </p>
+  <p align="center">
+    <a href="./README_EN.md">English</a> | 中文
+  </p>
+</p>
 
-An AI-powered CRPG game backend in the style of Baldur's Gate 3, built on a **hexagonal pure-Python kernel** — `game_core` has zero external dependencies, with all external capabilities (LLM, persistence, knowledge graph) injected through adapter ports for maximum testability and extensibility.
+---
 
-## Tech Stack
+全栈 CRPG 引擎，基于**六边形纯 Python 内核**（零外部依赖）构建，集成**三角色 LLM Agent 系统**（GM / NPC / 队友）、**D&D 5e 规则子集**和**实时 SSE 流式叙事**。所有 LLM 功能均有确定性降级——无 API Key 时游戏完整运行不中断。
 
-| Layer | Technology |
-|-------|-----------|
-| Web Framework | FastAPI 0.109 + uvicorn |
-| Data Store | Google Cloud Firestore / local JSON |
-| AI Models | Google Gemini Flash (`google-genai`) |
-| Graph Algorithms | NetworkX 3.2 (world knowledge graph) |
-| Token Counting | tiktoken |
+## 概览
 
-## Quick Start
+| 指标 | 数值 |
+|------|------|
+| 后端模块数 | 203 |
+| 内核模块数（零依赖） | 167 |
+| 命令类型 | ~96 |
+| Settlement Hook | 25 |
+| 内容层 dataclass | 45+ |
+| 测试通过 | 3,043 |
+| 后端代码量 | ~74,000 行 |
+| 测试代码量 | ~78,000 行 |
+| 前端代码量 | ~8,800 行 |
+| SSE 事件类型 | 40+ |
+| Zustand Store | 12 |
 
-### 1. Install Dependencies
+## 架构
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    Frontend · React 19 + Zustand + Tailwind       │
+│            12 Stores · useGameStream（SSE 消费层）                  │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │ HTTP / SSE
+┌────────────────────────────▼─────────────────────────────────────┐
+│                    Application Layer · FastAPI                     │
+│    deps.py (DI) · GeminiAdapter · AgentOrchestration · Narrators  │
+│    WorldKnowledgeGraph · AIOsirisEvaluator · ViewBuilders         │
+└────────────────────────────┬─────────────────────────────────────┘
+                             │ Port Protocols
+┌────────────────────────────▼─────────────────────────────────────┐
+│                   game_core/ · 六边形内核                           │
+│                                                                    │
+│    L1 State ──► L2 Content ──► L3 Rules ──► L4 Orchestration      │
+│                                   │               │                │
+│                               L5 Narrative ◄─────┘                │
+│                                   │                                │
+│                               L6 Planning                          │
+│                                                                    │
+│                            Adapters / Ports                        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+内核 `game_core/` 包含 167 个 Python 模块，**不 import 任何外部库**。LLM、数据库、SSE 输出全部通过 Port Protocol 注入——更换任何外部服务无需修改内核代码。
+
+### Tick 生命周期
+
+```
+Player Input
+    │
+    ▼
+ActionDispatcher → Command（~96 种类型）
+    │
+    ▼
+RulesEngine.execute() → StateDelta
+    │
+    ▼
+StateContainer.apply()                 ← 唯一写入路径
+    │
+    ▼  (accumulated_time >= 1.0)
+Settlement Hook 优先级链  P20 → P90
+    ├─ P30  AIOsiris           因果判断（LLM）
+    ├─ P35  NarrativePlanner   叙事规划
+    ├─ P45  PassivePerception  被动感知自动发现
+    ├─ P50  EventCondition     事件触发评估
+    ├─ P60  NpcSchedule        NPC 日程移动
+    ├─ P63  Campfire           长休篝火叙事
+    ├─ P65  Relationship       关系跃迁 + 自动驱逐
+    ├─ P75  PrivateChatTrigger 私聊触发
+    └─ P80  GmNarration        GM 叙事生成
+    │
+    ▼
+SSE Event Stream → Frontend
+```
+
+## 核心设计
+
+### 1. 三角色 LLM Agent 系统
+
+| 角色 | 工具 | 能改状态？ | 信息可见性 |
+|------|------|:---------:|-----------|
+| **GM** | narrate, comment, suggest_options, describe_environment, pass_turn | 否（仅 SSE） | 全局（L0–L7） |
+| **NPC** | speak, emote, update_feeling, remember, offer_quest, offer_trade, refuse | 是（倾向值、任务） | 受限（无法访问 quests/plan） |
+| **Teammate** | speak, emote, express_opinion, leave_party | 是（倾向值、离队） | 受限（无法访问任务细节） |
+
+**Agent 行为由系统架构保证，不靠 prompt 约束：**
+
+- **工具路由** — `OfferTradeTool.applicable_traits = ["merchant"]`：只有商人 NPC 的工具集中才有交易工具。LLM 无法调用不存在的工具。
+- **协议约束** — 每轮最多 1 次 speak + 1 次 emote；有可见输出即终止循环。
+- **状态隔离** — `RoleStateProxy` 在代码层面拦截 NPC 对 `quests` / `narrative_plan` 的访问。
+- **优雅降级** — 每个 LLM 集成点都有确定性 fallback。无 API Key = 游戏照常运行。
+
+### 2. L0–L7 分层上下文工程
+
+每次 Agent 调用按需装配 7 层上下文，按角色权限过滤：
+
+| 层 | 内容 | GM | NPC | Teammate |
+|----|------|:--:|:---:|:--------:|
+| L0 | 世界观与派系 | 全量 | 全量 | 全量 |
+| L1 | 章节进度与里程碑 | 全量 | 不可见 | 仅可用里程碑 |
+| L2 | 区域环境 | 全量 | 全量 | 全量 |
+| L3 | 位置详情 | 全量 | 全量 | 全量 |
+| L4 | 动态状态（倾向值、关系） | 全局 | 仅自身 | 自身+队伍 |
+| L5 | 场景总线（最近对话） | 全量 | 按可见性过滤 | 按可见性过滤 |
+| L6 | 记忆召回（知识图谱） | 不使用 | BFS top-5 | BFS top-5 |
+| L7 | 引擎结果（骰点、命令） | 全量 | 不可见 | 不可见 |
+
+### 3. 三层记忆架构
+
+```
+短期记忆 ─── ContextWindow（per-actor FIFO，32K token）
+                │  溢出 → write_episode()
+                ▼
+长期记忆 ─── Per-actor 知识图谱（NetworkX）
+                │  LLM 提取 [主体, 关系, 客体, 权重] 三元组
+                │  BFS 扩散激活（decay=0.8）→ top-5 注入 system prompt
+                ▲
+                │  合并查询
+全局知识 ─── 静态知识图谱
+                │  从内容层 seed（11 种边关系）
+                +
+外部指令 ─── Directive 队列（规划层注入）
+                NPC 消费指令但不知道来源
+```
+
+### 4. StateDelta 原子状态
+
+所有状态变更描述为 `StateDelta`（`StateChange` 列表），通过唯一入口 `apply()` 写入。无 setter，无直接修改。
+
+```python
+delta = StateDelta(changes=[
+    StateChange("player", "set", "hp", 45),
+    StateChange("relations", "add", "npc_dispositions.goblin_chef.approval", -10),
+], reason="combat_attack")
+state.apply(delta)  # 唯一写入路径
+```
+
+收益：完整审计链路、25 个 Hook 安全并发读、dry-run 能力、快照回放。
+
+### 5. 涌现叙事
+
+没有中央编剧。25 个 Settlement Hook 按优先级独立执行，6 个规划子系统产出 18 种 Directive，它们的交互作用产生不可预测但合理的叙事走向。
+
+## 游戏系统
+
+### 战斗
+
+D&D 5e 回合制战斗：d20 攻击骰、AC 对比、伤害骰、优势/劣势、暴击。`BattleGrid` 实现 Dijkstra 寻路（地形加权移动力）、A* 搜索（Manhattan 启发式）、Bresenham 视线检测。怪物 AI 基于性格驱动决策树（激进/防御/胆怯），含目标评分系统。
+
+### 法术
+
+法术位系统：专注追踪、豁免检定、AOE 多目标、提环施放、状态效果（眩晕/麻痹/中毒/流血，均有实际机制效果）。
+
+### 探索
+
+区域制导航（含子地点和房间）。容器、陷阱（技能检定解除）、隐藏发现（被动感知自动检测）、运行时动态生成临时子区域。
+
+### 关系系统
+
+NPC 四维倾向值：认可、信任、恐惧、浪漫。六阶段关系，含正向和负向路径：
+
+```
+stranger → acquaintance → friend → close_friend → intimate
+                 ↓              ↓            ↓           ↓
+                cold ──────► hostile ──────► enemy
+                               ↑ 自动驱逐队友
+```
+
+### 经济与成长
+
+NPC 商店（库存消耗、刷新周期）。XP 升级（1–20）、职业特性树、3 级选子职业、里程碑级 ASI。
+
+## 技术栈
+
+### 后端
+
+| 组件 | 技术 |
+|------|------|
+| 语言 | Python 3.13 |
+| 框架 | FastAPI + uvicorn |
+| LLM | Google Gemini Flash (`google-genai`) |
+| 知识图谱 | NetworkX 3.2 |
+| 持久化 | Google Cloud Firestore / 本地 JSON |
+| 测试 | pytest（3,043 tests） |
+
+### 前端
+
+| 组件 | 技术 |
+|------|------|
+| 语言 | TypeScript |
+| 框架 | React 19 + Vite |
+| 状态管理 | Zustand 5（12 个 store） |
+| 样式 | Tailwind CSS |
+| 实时通信 | SSE (Server-Sent Events) |
+| 动画 | Framer Motion |
+
+## 项目结构
+
+```
+.
+├── backend/
+│   ├── app/
+│   │   ├── main.py                    # FastAPI 入口
+│   │   ├── deps.py                    # 依赖注入根
+│   │   ├── llm_gemini.py             # Gemini LLM 适配器
+│   │   ├── agent_orchestration.py    # 三角色 Agent 编排
+│   │   ├── narrators.py             # GM 结算叙事
+│   │   ├── evaluators.py            # AI-Osiris 因果评估
+│   │   ├── world_knowledge_graph.py  # NetworkX 知识图谱
+│   │   ├── interaction_service.py    # 交互校验与编排
+│   │   ├── routers/                  # API 路由
+│   │   │
+│   │   └── game_core/               # ★ 六边形内核（零外部依赖）
+│   │       ├── state/               #   L1: 10 个 StateSlice + StateDelta
+│   │       ├── content/             #   L2: 11 个 Registry + 45+ dataclass
+│   │       ├── rules/               #   L3: RulesEngine + 27 个 Handler（~96 命令）
+│   │       ├── orchestration/       #   L4: TickCoordinator + 25 个 Settlement Hook
+│   │       ├── narrative/           #   L5: AgenticExecutor + L0-L7 ContextBuilder
+│   │       ├── planning/            #   L6: 6 个子系统 + 18 种 Directive
+│   │       └── adapters/            #   Port Protocol + null 实现
+│   │
+│   ├── tests/                       # 3,043 测试，~78,000 行
+│   └── data/                        # 世界数据（结构化 JSON）
+│
+└── frontend/
+    └── src/
+        ├── pages/                   # GamePage（主路由）
+        ├── game/                    # 游戏 UI 组件
+        ├── hooks/                   # useGameStream（SSE 消费层）
+        ├── stores/                  # 12 个 Zustand Store
+        ├── types/                   # SSE 事件类型定义（40+）
+        └── lib/                     # SSE 客户端
+```
+
+## 快速开始
+
+### 前置条件
+
+- Python 3.13+
+- Node.js 18+
+
+### 后端
 
 ```bash
+cd backend
+
+# 创建虚拟环境
+python -m venv .venv
+source .venv/bin/activate
+
+# 安装依赖
 pip install -r requirements.txt
-```
 
-### 2. Configure Environment
-
-Create a `.env` file:
-
-```env
+# 配置环境变量（可选——没有 API Key 游戏也能完整运行）
+cat > .env << 'EOF'
 GOOGLE_API_KEY=your_gemini_api_key
-# Optional: Firestore (falls back to local JSON persistence without this)
-GOOGLE_APPLICATION_CREDENTIALS=./firebase-credentials.json
-```
+EOF
 
-### 3. Run the Server
-
-```bash
+# 启动服务
 uvicorn app.main:app --reload --port 8000
 ```
 
-Once running:
-- API: http://localhost:8000/api/game/worlds
-- Docs: http://localhost:8000/docs
-- Health: http://localhost:8000/health
-
-### 4. Initialize World Data
-
-World data is stored as structured JSON under `data/<world_id>/structured_new/` and loaded automatically at startup via `world_data_loader`.
-
-## Project Structure
-
-```
-backend/
-├── app/
-│   ├── main.py                        # FastAPI entry point
-│   ├── deps.py                        # Singleton construction & dependency injection
-│   ├── interaction_service.py         # App layer: presence validation + execution orchestration
-│   ├── interaction_views.py           # Snapshot view builders (shop / quest / dialogue)
-│   ├── agent_orchestration.py         # Agentic session orchestration (NPC / GM / Teammate)
-│   ├── narrators.py                   # GM narration LLM adapter (Settlement narrator)
-│   ├── evaluators.py                  # Agentic AI Osiris evaluator (causal judgment)
-│   ├── llm_gemini.py                  # Gemini LLM adapter
-│   ├── world_knowledge_graph.py       # World knowledge graph (NetworkX BFS spreading activation)
-│   ├── world_data_loader.py           # Structured world data loader
-│   ├── routers/
-│   │   ├── sessions.py                # Session management routes
-│   │   ├── character.py               # Character creation & panel routes
-│   │   ├── panels.py                  # Inventory / map / quest panel routes
-│   │   └── gameplay.py                # Gameplay action & streaming routes
-│   └── game_core/                     # ★ Hexagonal pure-Python kernel (zero external deps)
-│       ├── state/                     # State layer — 10 StateSlices + StateDelta
-│       ├── content/                   # Content layer — WorldInstance + 10 Registries + 43 typed dataclasses
-│       ├── rules/                     # Rules layer — RulesEngine + 22 handler modules
-│       ├── orchestration/             # Orchestration layer — TickCoordinator + 13 SettlementHooks
-│       ├── narrative/                 # Narrative layer — AgenticExecutor + 18 agent tools (3 roles)
-│       ├── adapters/                  # Adapter layer — port protocols + default implementations
-│       └── planning/                  # Planning layer — dynamic sub-area generation
-├── tests/                             # 1044 tests passed
-├── data/                              # World data (Goblin Slayer, etc.)
-└── requirements.txt
-```
-
-## Game Systems
-
-The engine implements a comprehensive CRPG ruleset modeled on D&D 5e. All mechanics are turn-based — each player action advances time by a fractional tick (1 tick = 6 seconds of game time), and settlement hooks fire when a full tick accumulates.
-
-### Combat
-
-Turn-based initiative combat with action economy. Players can **attack**, **defend**, **disengage**, **dash**, **shove**, **flee**, or **use combat items**. Attack resolution rolls d20 + modifier vs. target AC; damage varies by weapon/spell dice. Status effects (stun, paralysis, poison, bleed) apply real mechanical consequences — stunned characters cannot act. Monster AI controls flee behavior and tactical decisions based on `ai_personality` and `flee_threshold`.
-
-### Spell & Magic
-
-D&D 5e spell slot system with concentration tracking. Players prepare spells from their class list, cast using level-appropriate slots, and manage concentration (casting a new concentration spell breaks the previous one). Spells support saving throws (target rolls vs. spell DC), AOE multi-targeting, upcast scaling, and status effect application.
-
-### Exploration
-
-Area-based navigation with sub-locations. Players move between connected areas, enter sub-locations (tavern, shop, shrine), and interact with environmental objects. Containers can be looted, traps disarmed via skill checks, and hidden discoveries revealed by passive perception. The **DynamicSubAreaManager** generates temporary locations at runtime (hidden chambers, encounter zones) that expire after a set number of ticks.
-
-### Economy & Trading
-
-Gold-based trading with NPC shops. NPCs maintain shop inventories with stock counts and optional refresh cycles. Players buy/sell items; shop stock depletes on purchase and can refresh on long rest or time-based triggers.
-
-### Character Growth
-
-XP-based leveling (1–20) with class feature trees. On level-up, players gain HP, unlock class features (`level_features` mapped per level), and choose subclasses at level 3. Ability Score Improvements at milestone levels. Class resources (rage, ki, superiority dice) scale per level with recovery on rest.
-
-### NPC Interaction & Dialogue
-
-Agentic 6-step pipeline: player message → NPC agent response (LLM with tool calls) → GM observation → teammate reactions → dialogue options presented → player chooses. NPC dispositions track **approval**, **trust**, **fear**, and **romance** independently. Relationship stages progress from stranger → acquaintance → friend → close_friend → soulmate, with stage transitions evaluated at settlement time.
-
-### Private Chat
-
-NPC-initiated intimate conversations triggered when romance >= 60, trust >= 50, or relationship stage is intimate. Cooldown of 6 ticks between triggers. Emits `npc_wants_to_chat` SSE event; execution follows a similar pipeline to NPC interaction but without party member reactions.
-
-### Narrative & World Events
-
-Reactive storytelling driven by settlement hooks. The **NarrativePlanner** sequences story beats; **GmNarrationHook** generates scene narration via LLM; the **EventEngine** evaluates 8 condition types (flag, quest_state, location, item, disposition, time_elapsed, custom, has_party_member) to trigger scheduled events. NPC schedules drive daily movement patterns (sleep → work → social hours).
-
-### World Knowledge Graph
-
-NetworkX-based knowledge graph with BFS spreading activation. Content-layer relationships (character→area, character→faction, faction→faction) form the base graph; NPC interactions dynamically add triple edges (subject→predicate→object). Memory retrieval provides contextually relevant world knowledge to NPC system prompts, enabling NPCs to "know" about events and relationships they've witnessed.
-
----
-
-## Documentation
-
-| Directory | Contents |
-|-----------|----------|
-| `app/博德之门3架构设计规范/` | 14 architecture design specs (content/state/rules/orchestration/narrative layers, AI-Osiris, NPC runtime, etc.) |
-| `app/施工记录（持续更新）/` | Development logs — per-layer change records (D-Rxx), decision rationale, active TODO list |
-| `app/增量执行计划/` | Incremental correction plans (R-1a through R-5) from design-doc alignment audits |
-
----
-
-## Core Architecture
-
-### Hexagonal Layering
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  Application Layer (app/)                                │
-│  FastAPI routes → InteractionService → InteractionViews  │
-│  AgentOrchestration · Narrators · Evaluators             │
-├─────────────────────────────────────────────────────────┤
-│  Adapter Layer (game_core/adapters/)                     │
-│  FastAPIInputPort · LlmPort · PersistencePort · OutputPort│
-├─────────────────────────────────────────────────────────┤
-│  Orchestration Layer (game_core/orchestration/)          │
-│  TickCoordinator → PipelineOrchestrator                  │
-│  ActionDispatcher · ContextAssembler · EventEngine       │
-│  13 SettlementHooks (P10–P90 priority chain)             │
-├─────────────────────────────────────────────────────────┤
-│  Rules Layer (game_core/rules/)                          │
-│  RulesEngine → 59 action command types                   │
-├─────────────────────────────────────────────────────────┤
-│  Content Layer (game_core/content/)                      │
-│  WorldInstance + 10 Registries + 43 typed dataclasses    │
-├─────────────────────────────────────────────────────────┤
-│  State Layer (game_core/state/)                          │
-│  StateContainer + 10 StateSlices + StateDelta            │
-├─────────────────────────────────────────────────────────┤
-│  Narrative Layer (game_core/narrative/)                   │
-│  AgenticExecutor + RoleToolRegistry + InstanceManager    │
-│  18 agent tools across GM / NPC / Teammate roles         │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Request Data Flow
-
-```
-Player Input (HTTP)
-    │
-    ▼
-FastAPIInputPort.process_action()
-    │  Normalize to execution directive (resolved / rejected)
-    ▼
-InteractionService
-    │  Presence validation (NPC / board in scene?)
-    │  Precondition validation (intent, item, quest)
-    ▼
-TickCoordinator.process()
-    │
-    ├─► PipelineOrchestrator
-    │       ├─► ContextAssembler (L0–L7 context layers)
-    │       ├─► ActionDispatcher  (action_type → Command)
-    │       └─► RulesEngine.execute(Command, state, world)
-    │               └─► StateDelta (state change description)
-    │
-    └─► SettlementHooks (ordered by priority P10–P90)
-            P10 ScheduledEvent → P20 StatusEffect → P30 AIOsiris
-            → P35 NarrativePlanner → P40 Encounter
-            → P50 Relationship → P60 NpcSchedule
-            → P65 EventCondition → P70 TimeAdvance
-            → P75 PrivateChatTrigger → P80 DynamicSubAreaExpiry
-            → P90 GmNarration (LLM) → SceneBusReset
-    │
-    ▼
-PipelineResult → SSE event stream → Frontend
-```
-
-### Ten State Slices
-
-| Slice | Responsibility |
-|-------|---------------|
-| TimeSlice | Game time (rounds / hours / days), absolute tick counter |
-| PlayerSlice | Location, attributes, HP, spell slots, inventory, active effects |
-| AreaSlice | Current area & sub-location states, hostile tracking |
-| QuestSlice | Quest states (active / completed / retired), dynamic quests |
-| SceneSlice | Current scene description & NPC presence list |
-| RelationsSlice | NPC dispositions (approval/trust/fear/romance), relationship stages, shop stock |
-| FlagSlice | Global flags (schemaless dict) |
-| EventsSlice | Event history, rumors, triggered event tracking |
-| PartySlice | Party members, shared experiences, critical moments |
-| NarrativePlanSlice | Narrative plan, current beat, chapter progression |
-
-### Content Layer (10 Registries, 43 Typed Dataclasses)
-
-| Registry | Key Types | Count |
-|----------|-----------|-------|
-| MapRegistry | AreaTemplate, SubLocationTemplate, InteractableTemplate, Connection, HostileConfig, EncounterEntry | 12 types |
-| CharacterRegistry | CharacterTemplate, NpcAttack, ShopInventory, ShopEntry | 4 types |
-| MonsterRegistry | MonsterTemplate, MonsterAttack, LootEntry | 3 types |
-| ClassRegistry | ClassTemplate, SubclassTemplate, RaceTemplate, BackgroundTemplate, Feature, ResourceConfig, SpellcastingConfig | 7 types |
-| SkillRegistry | SkillTemplate, SkillEffect, SkillCost, StatusEffectTemplate | 4 types |
-| ItemRegistry | ItemTemplate, WeaponData, ArmorData, ConsumableData, AccessoryData | 5 types |
-| QuestRegistry | MilestoneTemplate, MilestoneCondition | 2 types |
-| LoreRegistry | LoreEntry, WorldRule, ChapterMeta, InitialEvent | 4 types |
-| FactionRegistry | FactionTemplate | 1 type |
-| TagRegistry | TagDimension | 1 type |
-| (shared) | Effect, LootTableDef | 2 types |
-
-### Narrative Layer (AgenticExecutor)
-
-`AgenticExecutor` supports two modes:
-
-- **Single-pass** `run()`: Executes a pre-built `tool_calls` list — used for post-action structured processing
-- **Multi-turn agentic loop** `run_agentic()`: LLM autonomously selects tool calls — used for GM narration and NPC dialogue
-
-Three role-based tool sets managed by `RoleToolRegistry`:
-
-| Role | Tools | Purpose |
-|------|-------|---------|
-| **GM** | DescribeEnvironment, Narrate, Comment, PassTurn, SuggestOptions | Scene narration, option generation |
-| **NPC** | Speak, Emote, UpdateFeeling, Remember, OfferQuest, OfferTrade, Refuse, RevealSecret | Dialogue, relationship, commerce |
-| **Teammate** | Speak, Emote, ExpressOpinion, SuggestTactic, ShareMemory, RequestAction | Party interaction, tactical advice |
-
-`InstanceManager` manages NPC conversation instances with LRU eviction. `WorldKnowledgeGraph` provides BFS spreading-activation memory retrieval for contextual NPC knowledge.
-
-### LLM Integration
-
-LLM features degrade gracefully — the system runs fully deterministic without an API key.
-
-| Component | Purpose | Fallback |
-|-----------|---------|----------|
-| GmNarrationHook | Settlement-phase scene narration | Skipped (no narration) |
-| AgentOrchestrationService | NPC dialogue, GM reactions, Teammate responses | Deterministic stub responses |
-| AgenticAIOsirisEvaluator | Causal event judgment (did player's action cause X?) | BasicAIOsirisEvaluator (rule-based) |
-| AgenticNarrativePlanner | Story beat planning via LLM | Deterministic next-beat fallback |
-
-## API Endpoints
-
-### World & Session
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check |
-| GET | `/api/game/worlds` | List all worlds |
-| GET | `/api/game/{world_id}/sessions` | List sessions |
-| POST | `/api/game/{world_id}/sessions` | Create session |
-| POST | `/api/game/{world_id}/sessions/{sid}/load` | Load / resume session |
-| DELETE | `/api/game/{world_id}/sessions/{sid}` | Delete session |
-
-### Character
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/game/{world_id}/character-creation/options` | Creation options (class / race) |
-| POST | `/api/game/{world_id}/sessions/{sid}/character` | Create character |
-| GET | `/api/game/{world_id}/sessions/{sid}/character` | Character panel |
-
-### Panels (State Queries)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `.../inventory` | Inventory panel |
-| GET | `.../map` | Map panel |
-| GET | `.../quests` | Quest panel |
-
-### Gameplay Actions (all SSE streaming)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `.../navigate` | Navigation (move_area / enter / leave sub-location) |
-| POST | `.../action/stream` | Structured action (with GM narration SSE) |
-| POST | `.../input/stream` | Text command (alias parsing + SSE) |
-| POST | `.../interact/stream` | NPC / quest board interaction (SSE) |
-| POST | `.../private_chat/stream` | Private chat stream (SSE) |
-
-## Configuration
-
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_API_KEY` or `GEMINI_API_KEY` | Gemini API key (LLM features degrade gracefully without it) |
-
-### Optional
-
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Firebase credentials path (falls back to local JSON) |
-| `GEMINI_FLASH_MODEL` | Flash model name override |
-
-## Running Tests
+### 前端
 
 ```bash
-# From the backend/ directory
-PYTHONPATH=. pytest --ignore=tests/test_api_shell.py --ignore=tests/test_interaction_service.py -v
-
-# Single test file
-PYTHONPATH=. pytest tests/test_game_core_scaffold.py -v
+cd frontend
+npm install
+npm run dev
 ```
 
-Test baseline: **1044 passed**.
+### 验证
 
-## Design Highlights
+| URL | 说明 |
+|-----|------|
+| http://localhost:8000/health | 健康检查 |
+| http://localhost:8000/docs | API 文档（Swagger） |
+| http://localhost:5173 | 前端页面 |
 
-1. **Hexagonal pure-Python kernel**: `game_core/` has zero external dependencies — any database, LLM, or framework can be swapped; unit tests require no infrastructure mocks
-2. **Immutable StateDelta**: All state mutations are described by `StateDelta` and applied atomically by `StateContainer.apply()`, enabling replay, auditing, and undo
-3. **SettlementHook chain**: 13 ordered hooks (P10–P90) form a pluggable post-processing pipeline — new features only require appending a hook at the right priority
-4. **59 action command types**: Centrally managed action-type-to-handler mappings via `ActionDispatcher`, dynamically registrable at runtime
-5. **43 typed content dataclasses**: All content templates are `@dataclass(slots=True)` with defensive loading (load_issues collection, backward-compatible defaults)
-6. **AgenticExecutor dual-mode**: Supports both single-pass tool execution and multi-turn LLM autonomous loops — GM, NPC, and Teammate are independently extensible
-7. **RoleToolRegistry isolation**: GM / NPC / Teammate tool sets are registered independently; the LLM context is trimmed per role to prevent unauthorized tool access
-8. **ContextAssembler L0–L7**: Eight context layers assembled on demand — the narration LLM always receives the minimal sufficient context
-9. **WorldKnowledgeGraph**: NetworkX-based spreading activation retrieves contextually relevant world knowledge for NPC conversations
-10. **Graceful LLM degradation**: Every LLM integration point has a deterministic fallback — the entire game loop works without an API key
+### 运行测试
+
+```bash
+cd backend
+PYTHONPATH=. pytest --ignore=tests/test_api_shell.py --ignore=tests/test_interaction_service.py -v
+```
+
+## API 端点
+
+### 会话管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| GET | `/api/game/worlds` | 世界列表 |
+| POST | `/api/game/{world_id}/sessions` | 创建会话 |
+| POST | `.../sessions/{sid}/resume` | 恢复会话 |
+| DELETE | `.../sessions/{sid}` | 删除会话 |
+
+### 游戏玩法（SSE 流式）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `.../act` | 结构化行动 |
+| POST | `.../navigate` | 区域导航 |
+| POST | `.../interact` | NPC / 公告栏交互 |
+| POST | `.../private_chat` | 私聊 |
+| POST | `.../text_input` | 自由文本输入 |
+| GET | `.../scene` | 场景状态 |
+
+### 面板
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `.../character` | 角色面板 |
+| GET | `.../inventory` | 背包面板 |
+| GET | `.../quests` | 任务面板 |
+| GET | `.../map` | 地图面板 |
+
+### 战斗
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `.../encounter` | 遭遇决策（战/逃/偷袭） |
+| POST | `.../combat` | 战斗行动 |
+| GET | `.../combat` | 战斗状态 |
+
+## 配置
+
+| 变量 | 必需 | 说明 |
+|------|:----:|------|
+| `GOOGLE_API_KEY` | 否 | Gemini API Key。没有此 Key 时所有 LLM 功能降级为确定性 fallback，游戏完整可玩。 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | 否 | Firebase 凭据路径。没有时回退到本地 JSON 持久化。 |
+
+> **没有 API Key？没问题。** 完整游戏循环——战斗、探索、交易、任务、NPC 日程——无需任何外部服务即可运行。LLM 在此基础上增加更丰富的叙事、NPC 个性和动态剧情规划。
+
+## 设计亮点
+
+1. **六边形内核** — `game_core/` 零外部 import。3,043 个测试在无 API Key、无数据库的 CI 环境中全部通过。
+2. **架构级 Agent 安全** — 工具路由（`applicable_traits`）、协议约束（max 1 speak/emote）、状态隔离（`RoleStateProxy`）、确定性降级。行为边界由代码保证，不是 prompt。
+3. **L0–L7 上下文工程** — 7 层上下文按需装配，角色可见性矩阵。每个 Agent 只看到其角色权限内的信息。
+4. **三层记忆** — FIFO 工作记忆（32K）+ NetworkX 知识图谱（BFS 扩散激活）+ Directive 指令注入。NPC 跨 session 维持持久记忆。
+5. **StateDelta 不变性** — 所有变更描述为 delta，通过唯一 `apply()` 入口写入。完整审计链路、安全并发读、dry-run 能力。
+6. **Settlement Hook 链** — 25 个 Hook，优先级 P20–P90。新功能 = 在合适优先级插入一个 Hook，核心循环零修改。
+7. **涌现叙事** — 6 个规划子系统 + 18 种 Directive 类型。无中央编剧——叙事从独立 Hook/Planner 的交互作用中涌现。
+8. **双路径 SSE 流式** — 离散事件（drain 缓冲）+ 连续文本（直接透传）。per-session `asyncio.Lock` + Queue 驱动并发模型。
+9. **D&D 5e 战斗引擎** — 方格战斗：Dijkstra/A* 寻路、Bresenham 视线、性格驱动怪物 AI、优势/劣势骰。
+10. **生产级降级** — 每个 LLM 集成点都有确定性 fallback。系统设计为用 AI 增强，而非依赖 AI。
 
 ## License
 

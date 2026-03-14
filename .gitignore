@@ -71,11 +71,11 @@ CODEX_INIT.md
 **/施工记录*/
 **/增量执行计划/
 MEMORY_GATEWAY_INTEGRATION.md
-README_EN.md
 
 # Legacy code & temp workspace
 backend/legacy/
 临时工作区/
+深刻认知/
 
 # Game data (large JSON files)
 backend/data/
