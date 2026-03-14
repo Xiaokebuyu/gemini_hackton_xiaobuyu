@@ -158,9 +158,52 @@ state.apply(delta)  # 唯一写入路径
 
 收益：完整审计链路、25 个 Hook 安全并发读、dry-run 能力、快照回放。
 
-### 5. 涌现叙事
+### 5. Narrative Planner — 涌现叙事引擎
 
-没有中央编剧。25 个 Settlement Hook 按优先级独立执行，6 个规划子系统产出 18 种 Directive，它们的交互作用产生不可预测但合理的叙事走向。
+没有中央编剧。`NarrativePlannerHook`（P35）在每次结算时驱动 `PlannerDispatcher`，将世界状态变化转化为 `PlannerEvent`，分发到 6 个独立子系统，各子系统产出 `Directive`（18 种类型），最终转化为 RulesEngine 命令执行——叙事从系统规则的交互作用中**涌现**，而非预编排。
+
+```
+Settlement Hook 链执行
+    │ 产生状态变更
+    ▼
+collect_planner_events()              ← 从 change_log / action_log 提取语义事件
+    │ 5 个优先级大类，去重排序
+    ▼
+PlannerDispatcher.dispatch()
+    │ 分发到匹配的子系统
+    ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  QuestManager        任务创建 / 公告发布 / 退役                    │
+│  NpcDirector         NPC 行为指令 / 动态能力分配                   │
+│  NarrativeWeaver     生命周期 GC / 升级安全网 / 临时 NPC 解散       │
+│  WorldBuilder        环境植入 / 动态子区域 / 遭遇植入               │
+│  PacingController    节奏控制 / 停滞升级                           │
+│  ItemDesigner        任务奖励设计 / 商店策展                       │
+└─────────────────────────────────────────────────────────────────┘
+    │ 产出 Directive
+    ▼
+PlannerDispatcher.apply_directive()
+    │ 转化为 RulesEngine Command
+    ▼
+StateContainer.apply(delta)           ← 状态变更传播到下一个 Hook
+```
+
+#### 18 种 Directive 类型
+
+| 类别 | Directive | 效果 |
+|------|-----------|------|
+| **任务** | `create_quest`, `publish_bulletin`, `retire_quest`, `update_quest`, `set_task_monitor` | 动态创建/发布/退役任务 |
+| **NPC** | `direct_npc`, `spawn_quest_npc`, `assign_capability`, `revoke_capability` | 指令注入 NPC 实例 / 动态分配能力 |
+| **世界** | `plant_environmental`, `fill_area`, `plant_encounter`, `discover_room`, `fill_room` | 运行时改变环境 / 植入遭遇 |
+| **节奏** | `escalate`, `adjust_pacing` | 升级叙事张力 / 冻结节奏 |
+| **物品** | `design_reward`, `curate_shop` | LLM 驱动的奖励设计 / 商店策展 |
+
+#### 关键机制
+
+- **Directive → NPC 实例实时注入**：`NpcDirector` 产出 `direct_npc` 后，如果该 NPC 的 `InstanceManager` 实例存在，指令直接注入其 `directive_queue`——下次对话时 NPC 会自然地执行该行为，而不知道指令来源。
+- **动态能力分配**：`assign_capability` 可以在运行时给任何 NPC 添加功能（如临时变成商人），通过 `CapabilityDescriptor` 注入 system prompt，到期自动回收。
+- **停滞升级安全网**：`NarrativeWeaver` 监控 `ticks_since_milestone_progress`，阈值 `[4, 7, 10, 13, 16]` 逐级触发 `escalate`，防止玩家卡关。
+- **事件去重与忙碌语义**：`PlannerDispatcher` 用 `dedupe_key` 去重，子系统执行中标记 busy，新事件入队（最大深度 3），避免重复处理和无限递归。
 
 ## 游戏系统
 

@@ -158,9 +158,52 @@ state.apply(delta)  # the only write path
 
 Benefits: full audit trail, safe concurrent reads by 25 Settlement Hooks, dry-run capability, snapshot replay.
 
-### 5. Emergent Narrative
+### 5. Narrative Planner — Emergent Narrative Engine
 
-No central scriptwriter. 25 Settlement Hooks execute independently by priority, 6 Planning subsystems produce 18 types of Directives, and their interactions generate unpredictable but coherent narrative.
+No central scriptwriter. `NarrativePlannerHook` (P35) drives `PlannerDispatcher` at each settlement, converting world state changes into `PlannerEvent`s, dispatching them to 6 independent subsystems. Each subsystem produces `Directive`s (18 types) that are converted to RulesEngine commands — narrative **emerges** from system rule interactions, not from pre-scripted sequences.
+
+```
+Settlement Hook Chain
+    │ state changes
+    ▼
+collect_planner_events()              ← extract semantic events from change_log / action_log
+    │ 5 priority tiers, deduplicated & sorted
+    ▼
+PlannerDispatcher.dispatch()
+    │ route to matching subsystems
+    ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  QuestManager        Quest creation / bulletin publishing / retire │
+│  NpcDirector         NPC behavior directives / dynamic capabilities│
+│  NarrativeWeaver     Lifecycle GC / escalation safety net          │
+│  WorldBuilder        Environment planting / dynamic sub-areas      │
+│  PacingController    Pacing control / stagnation escalation        │
+│  ItemDesigner        Reward design / shop curation                 │
+└─────────────────────────────────────────────────────────────────┘
+    │ produce Directives
+    ▼
+PlannerDispatcher.apply_directive()
+    │ convert to RulesEngine Command
+    ▼
+StateContainer.apply(delta)           ← state changes propagate to next Hook
+```
+
+#### 18 Directive Types
+
+| Category | Directives | Effect |
+|----------|-----------|--------|
+| **Quest** | `create_quest`, `publish_bulletin`, `retire_quest`, `update_quest`, `set_task_monitor` | Dynamically create / publish / retire quests |
+| **NPC** | `direct_npc`, `spawn_quest_npc`, `assign_capability`, `revoke_capability` | Inject directives into NPC instances / assign dynamic capabilities |
+| **World** | `plant_environmental`, `fill_area`, `plant_encounter`, `discover_room`, `fill_room` | Modify environment at runtime / plant encounters |
+| **Pacing** | `escalate`, `adjust_pacing` | Escalate narrative tension / freeze pacing |
+| **Items** | `design_reward`, `curate_shop` | LLM-driven reward design / shop curation |
+
+#### Key Mechanisms
+
+- **Directive → NPC instance real-time injection**: When `NpcDirector` produces a `direct_npc`, if the NPC's `InstanceManager` instance exists, the directive is injected directly into its `directive_queue` — the NPC will naturally execute the behavior in its next conversation without knowing the directive's source.
+- **Dynamic capability assignment**: `assign_capability` can add functionality to any NPC at runtime (e.g., temporarily become a merchant) via `CapabilityDescriptor` injected into the system prompt, with automatic expiry.
+- **Stagnation escalation safety net**: `NarrativeWeaver` monitors `ticks_since_milestone_progress` with thresholds `[4, 7, 10, 13, 16]`, triggering progressive `escalate` directives to prevent player deadlocks.
+- **Event deduplication & busy semantics**: `PlannerDispatcher` deduplicates via `dedupe_key`, marks subsystems as busy during execution, queues new events (max depth 3), preventing duplicate processing and infinite recursion.
 
 ## Game Systems
 
