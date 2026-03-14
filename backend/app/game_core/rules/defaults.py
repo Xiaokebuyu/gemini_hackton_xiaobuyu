@@ -27,6 +27,7 @@ from app.game_core.rules.handlers import (
     PlannerWorldHandler,
     ReceptionistHandler,
     RestHandler,
+    ServiceEffectHandler,
     SkillCheckHandler,
     SpellHandler,
     StatusEffectHandler,
@@ -61,6 +62,7 @@ DEFAULT_RULE_HANDLER_TYPES: tuple[type[CommandHandler], ...] = (
     ReceptionistHandler,
     InteractableHandler,
     HostileAreaHandler,
+    ServiceEffectHandler,
 )
 
 

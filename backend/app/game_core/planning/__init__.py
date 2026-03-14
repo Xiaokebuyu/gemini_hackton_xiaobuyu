@@ -1,7 +1,6 @@
 """Narrative-planning subsystem package."""
 
 from app.game_core.planning.dynamic_sub_area import DynamicSubAreaManager
-from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
 from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.planning.pacing_controller import PacingControllerSubSystem
@@ -20,7 +19,6 @@ from app.game_core.planning.world_builder import WorldBuilderSubSystem
 
 __all__ = [
     "DynamicSubAreaManager",
-    "ItemDesignerSubSystem",
     "NarrativeWeaverSubSystem",
     "NpcDirectorSubSystem",
     "PacingControllerSubSystem",

@@ -10,9 +10,10 @@ from typing import Any
 
 # Valid functional binding types for CapabilityDescriptor.
 # Empty string means no UI binding (pure behavioural guidance only).
+# NOTE: "quest_accept" is intentionally excluded — GM is a pure narrator.
+# Quest acceptance is handled by NPC tools (accept_quest), not GM functional options.
 VALID_FUNCTIONAL_TYPES: frozenset[str] = frozenset({
     "trade_browse",
-    "quest_accept",
     "board_browse",
     "navigate",
     "inspect_item",

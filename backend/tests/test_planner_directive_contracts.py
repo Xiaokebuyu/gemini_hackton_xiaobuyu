@@ -63,17 +63,6 @@ from app.game_core.planning.models import CreateQuestPlan, DirectNpcPlan
             "fill_location",
         ),
         ({"kind": "update_quest", "payload": {"quest_id": "dq_active"}}, "update_quest"),
-        (
-            {
-                "kind": "design_reward",
-                "payload": {
-                    "linked_quest_id": "dq_active",
-                    "item_id": "bandage",
-                    "quantity": 2,
-                },
-            },
-            "design_reward",
-        ),
         ({"kind": "curate_shop", "payload": {"npc_id": "merchant"}}, "curate_shop"),
     ],
 )
@@ -107,10 +96,6 @@ def test_validate_planner_directive_accepts_all_supported_happy_paths(
         ({"kind": "plant_encounter", "payload": {"area_id": "forest"}}, "missing_sub_area_id"),
         ({"kind": "fill_area", "payload": {}}, "missing_area_id"),
         ({"kind": "update_quest", "payload": {}}, "missing_quest_id"),
-        (
-            {"kind": "design_reward", "payload": {"item_id": "bandage", "quantity": 1}},
-            "missing_linked_quest_id",
-        ),
         ({"kind": "curate_shop", "payload": {}}, "missing_npc_id"),
     ],
 )
@@ -126,6 +111,18 @@ def test_validate_planner_directive_rejects_contract_violations(
 
 def test_validate_planner_directive_rejects_unknown_kinds() -> None:
     result = validate_planner_directive({"kind": "unknown_kind", "payload": {}})
+
+    assert result.ok is False
+    assert result.reason_code == "unsupported_kind"
+
+
+def test_design_reward_is_rejected_as_unsupported_kind() -> None:
+    result = validate_planner_directive(
+        {
+            "kind": "design_reward",
+            "payload": {"linked_quest_id": "dq_x", "item_id": "healing_potion", "quantity": 1},
+        }
+    )
 
     assert result.ok is False
     assert result.reason_code == "unsupported_kind"
@@ -184,12 +181,14 @@ def test_supported_planner_directives_match_current_hook_surface() -> None:
         "fill_area",
         "fill_location",
         "update_quest",
-        "design_reward",
         "curate_shop",
         "discover_room",
         "fill_room",
         "assign_capability",
         "revoke_capability",
+        "advance_milestone",
+        "assign_service",
+        "revoke_service",
     }
 
 
@@ -212,26 +211,6 @@ def test_payload_digest_keeps_only_key_ids_and_payload_keys() -> None:
         "payload_keys": ["area_id", "board_id", "content", "title"],
         "board_id": "board",
         "area_id": "forest",
-    }
-
-
-def test_validate_planner_directive_normalizes_design_reward_defaults() -> None:
-    result = validate_planner_directive(
-        {
-            "kind": "design_reward",
-            "payload": {
-                "linked_quest_id": "dq_active",
-                "item_id": "bandage",
-            },
-        }
-    )
-
-    assert result.ok is True
-    assert result.payload == {
-        "linked_quest_id": "dq_active",
-        "item_id": "bandage",
-        "reward_type": "item",
-        "quantity": 1,
     }
 
 
@@ -525,7 +504,9 @@ def test_validate_planner_directive_accepts_fill_location_clue_interactable() ->
     assert interactable["functional"]["params"]["clue_id"] == "blood_trail"
 
 
-def test_validate_planner_directive_rejects_invalid_clue_interactable_shape() -> None:
+def test_validate_planner_directive_rejects_when_only_clue_is_invalid() -> None:
+    # When the sole interactable is an invalid clue it gets stripped, leaving
+    # an empty list → "all_interactables_invalid".
     result = validate_planner_directive(
         {
             "kind": "fill_location",
@@ -554,4 +535,88 @@ def test_validate_planner_directive_rejects_invalid_clue_interactable_shape() ->
     )
 
     assert result.ok is False
-    assert result.reason_code == "invalid_clue_interactable:invalid_option_count"
+    assert result.reason_code == "all_interactables_invalid"
+
+
+def test_fill_location_strips_invalid_clue_keeps_valid_interactables() -> None:
+    # An invalid clue is stripped but the non-clue interactable survives.
+    result = validate_planner_directive(
+        {
+            "kind": "fill_location",
+            "payload": {
+                "area_id": "frontier_town",
+                "location_id": "adventurer_guild",
+                "interactables": [
+                    {
+                        "id": "bad_clue",
+                        "name": "坏线索",
+                        "description": "没有选项。",
+                        "type": "inspect",
+                        "tags": ["clue"],
+                        "functional": {
+                            "type": "investigate_clue",
+                            "params": {
+                                "clue_id": "bad_clue",
+                                "options": [{"id": "only", "label": "唯一选项"}],
+                                "outcomes": {"only": []},
+                            },
+                        },
+                    },
+                    {
+                        "id": "notice_board",
+                        "name": "告示板",
+                        "description": "张贴着任务委托。",
+                    },
+                ],
+            },
+        }
+    )
+
+    assert result.ok is True
+    interactable_ids = [item["id"] for item in result.payload["interactables"]]
+    assert "notice_board" in interactable_ids
+    assert "bad_clue" not in interactable_ids
+
+
+def test_fill_location_rejects_when_all_interactables_invalid() -> None:
+    # All interactables are invalid clues → all_interactables_invalid.
+    result = validate_planner_directive(
+        {
+            "kind": "fill_location",
+            "payload": {
+                "area_id": "frontier_town",
+                "location_id": "adventurer_guild",
+                "interactables": [
+                    {
+                        "id": "bad_clue_1",
+                        "name": "坏线索1",
+                        "description": "没有选项。",
+                        "functional": {
+                            "type": "investigate_clue",
+                            "params": {
+                                "clue_id": "bad_clue_1",
+                                "options": [{"id": "only", "label": "唯一"}],
+                                "outcomes": {"only": []},
+                            },
+                        },
+                    },
+                    {
+                        "id": "bad_clue_2",
+                        "name": "坏线索2",
+                        "description": "没有选项。",
+                        "functional": {
+                            "type": "investigate_clue",
+                            "params": {
+                                "clue_id": "bad_clue_2",
+                                "options": [{"id": "only", "label": "唯一"}],
+                                "outcomes": {"only": []},
+                            },
+                        },
+                    },
+                ],
+            },
+        }
+    )
+
+    assert result.ok is False
+    assert result.reason_code == "all_interactables_invalid"

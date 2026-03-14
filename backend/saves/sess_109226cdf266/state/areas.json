@@ -1,0 +1,511 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.2,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": []
+    },
+    "cow_girl_farm": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.3,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "cow_girl": "main_house"
+      },
+      "npc_presence_sources": {},
+      "npc_rooms": {
+        "cow_girl": "living_room"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "board_bulletins": {
+        "frontier_town_bulletin": [
+          {
+            "board_id": "frontier_town_bulletin",
+            "content": "",
+            "published_at_tick": 8,
+            "quest_id": "dq_town_tour",
+            "source": "narrative_planner",
+            "title": ""
+          }
+        ],
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "来到边境小镇的冒险者公会，在柜台小姐的引导下完成冒险者登记。公会大厅里弥漫着皮革和油脂的气味，任务板上密密麻麻地钉满了委托书。",
+            "published_at_tick": 8,
+            "quest_id": "dq_ms_arrival",
+            "source": "narrative_planner",
+            "title": "初到边境"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "既然已经完成了登记，不妨在边境小镇转转。去铁匠铺看看磨损的装备，或者去地母神殿祈求旅途平安，最后在酒馆喝上一杯温热的牛奶酒。",
+            "published_at_tick": 8,
+            "quest_id": "dq_town_tour",
+            "source": "narrative_planner",
+            "title": "小镇的烟火气"
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 0.25,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "discovered",
+      "hostile_tracking": {},
+      "interactable_states": {
+        "guild_supplies_crate": {
+          "area_id": "frontier_town",
+          "clue_id": "clue_adventurer_gear",
+          "first_inspected": true,
+          "resolved_at_tick": 9,
+          "resolved_option_id": "read_manifest"
+        }
+      },
+      "npc_locations": {
+        "blacksmith": "blacksmith_shop",
+        "dwarf_shaman": "adventurer_guild",
+        "goblin_slayer": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "guild_quartermaster": "adventurer_guild",
+        "high_elf_archer": "adventurer_guild",
+        "informant": "back_alley",
+        "lizard_priest": "adventurer_guild",
+        "north_gate_warden": "north_gate",
+        "priestess": "mother_earth_temple",
+        "tavern_keeper": "tavern",
+        "tavern_waitress": "tavern",
+        "temple_matron": "mother_earth_temple",
+        "town_guard": "town_square",
+        "traveling_merchant": "market_plaza"
+      },
+      "npc_presence_sources": {},
+      "npc_rooms": {
+        "blacksmith": "forge",
+        "dwarf_shaman": "guild_hall",
+        "goblin_slayer": "guild_hall",
+        "guild_girl": "guild_counter",
+        "guild_quartermaster": "guild_counter",
+        "high_elf_archer": "guild_hall",
+        "informant": "dead_end",
+        "lizard_priest": "guild_hall",
+        "north_gate_warden": "guard_post",
+        "priestess": "prayer_hall",
+        "tavern_keeper": "main_hall",
+        "tavern_waitress": "main_hall",
+        "temple_matron": "prayer_hall",
+        "town_guard": "fountain_plaza",
+        "traveling_merchant": "open_market"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {
+        "adventurer_guild__guild_counter": [
+          {
+            "description": "贴满了各种羊皮纸委托，从讨伐哥布林到寻找丢失的猫，边缘已经有些卷曲。",
+            "functional": {
+              "params": {
+                "board_id": "quest_board"
+              },
+              "type": "bulletin_board"
+            },
+            "id": "guild_recruitment_board",
+            "name": "公会布告栏",
+            "tags": [
+              "quest",
+              "info"
+            ],
+            "type": "facility"
+          },
+          {
+            "description": "大厅一侧巨大的石质壁炉，木柴在里面噼啪作响，为疲惫的冒险者提供寒风中难得的慰藉。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_guild_atmosphere",
+                "options": [
+                  {
+                    "id": "warm_up",
+                    "label": "靠近取暖"
+                  },
+                  {
+                    "id": "listen_nearby",
+                    "label": "倾听旁边的闲聊"
+                  }
+                ],
+                "outcomes": {
+                  "listen_nearby": "你听到几个白瓷等级的冒险者在低声抱怨：‘又是哥布林任务，那些脏东西最近越来越难对付了。’",
+                  "warm_up": "火光映红了你的脸庞，你感到长途跋涉的疲劳消解了不少。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "guild_warm_hearth",
+            "name": "公会壁炉",
+            "tags": [
+              "comfort",
+              "social"
+            ],
+            "type": "facility"
+          },
+          {
+            "description": "一本厚重的皮质名册，记录着活跃在边境的冒险者信息。翻开的那页布满了新手的名字，但也有不少名字被划掉了。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_casualty_rate",
+                "options": [
+                  {
+                    "id": "check_newbies",
+                    "label": "查看新人登记"
+                  },
+                  {
+                    "id": "check_status",
+                    "label": "查看任务状态"
+                  }
+                ],
+                "outcomes": {
+                  "check_newbies": "最近几天有大量白瓷等级的年轻人登记，他们脸上带着尚未被现实磨平的憧憬。",
+                  "check_status": "许多简单的‘下水道清理’或‘农场驱赶’任务被标记为‘失败’或‘人员失踪’，这对于低级任务来说很不寻常。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "guild_adventurer_roster",
+            "name": "冒险者登记名册",
+            "tags": [
+              "info",
+              "lore"
+            ],
+            "type": "object"
+          }
+        ],
+        "back_alley": [
+          {
+            "description": "堆在小巷死胡同里的破烂行囊，带子被利刃切断了，里面的杂物散落一地。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_alley_attack",
+                "options": [
+                  {
+                    "id": "search_belongings",
+                    "label": "翻找遗物"
+                  },
+                  {
+                    "id": "check_scratches",
+                    "label": "观察周围痕迹"
+                  }
+                ],
+                "outcomes": {
+                  "check_scratches": "墙根处有细小的爪痕，高度很低，不像是人类留下的，更像是某种敏捷的小型生物。",
+                  "search_belongings": "你在夹层里发现一枚沾血的白瓷冒险者铭牌，名字已经被磨损得看不清了。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "abandoned_goods_clue",
+            "name": "被遗弃的行李",
+            "tags": [
+              "investigate",
+              "crime"
+            ],
+            "type": "object"
+          }
+        ],
+        "blacksmith_shop": [
+          {
+            "description": "矮人铁匠碎盾常用的铁砧，上面残留着尚未散去的余温。旁边散落着一些崩口的破损短剑。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_goblin_damage",
+                "options": [
+                  {
+                    "id": "examine_swords",
+                    "label": "观察破损的武器"
+                  },
+                  {
+                    "id": "touch_anvil",
+                    "label": "触摸铁砧"
+                  }
+                ],
+                "outcomes": {
+                  "examine_swords": "这些短剑的缺口很杂乱，像是被某种钝器或者低劣的石刃反复劈砍造成的，符合哥布林的战斗风格。",
+                  "touch_anvil": "铁砧还很烫，铁匠刚才一定在疯狂赶工。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "heavy_anvil",
+            "name": "巨大的铁砧",
+            "tags": [
+              "craft",
+              "story"
+            ],
+            "type": "facility"
+          },
+          {
+            "description": "一辆堆满了待修理盾牌和长矛的小木车，有些木盾上还残留着焦灼的痕迹。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_blacksmith_workload",
+                "options": [
+                  {
+                    "id": "examine_burns",
+                    "label": "检查焦痕"
+                  },
+                  {
+                    "id": "check_delivery_note",
+                    "label": "查看送货单"
+                  }
+                ],
+                "outcomes": {
+                  "check_delivery_note": "送货单上写着：‘给北门卫兵队的加急件’。看来边境的防御压力正在增大。",
+                  "examine_burns": "这些焦痕看起来像是某种低级火球术或者火把留下的。‘那些哥布林居然开始用火了？’你听到铁匠在屋里咒骂。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "blacksmith_delivery_cart",
+            "name": "铁匠铺的送货车",
+            "tags": [
+              "quest",
+              "info"
+            ],
+            "type": "object"
+          }
+        ],
+        "market_plaza": [
+          {
+            "description": "摊位上摆满了止血草和解毒剂，摊主正大声推销着他针对‘洞窟生物’特别调制的喷雾。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_supply_demand",
+                "options": [
+                  {
+                    "id": "ask_price",
+                    "label": "询问解毒剂价格"
+                  },
+                  {
+                    "id": "observe_buyer",
+                    "label": "观察购买者"
+                  }
+                ],
+                "outcomes": {
+                  "ask_price": "‘最近哥布林用的毒越来越怪了，进货价也涨了！’摊主一边叹气一边报价。",
+                  "observe_buyer": "几个年轻的小伙子正神色紧张地凑钱购买大份的驱虫粉，看样子他们正准备深入某些潮湿的洞穴。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "herbalist_stall",
+            "name": "药草摊位",
+            "tags": [
+              "shop",
+              "clue"
+            ],
+            "type": "facility"
+          }
+        ],
+        "mother_earth_temple": [
+          {
+            "description": "简朴的木制箱子，散发着淡淡的香草味，镇民们常在此祈求丰收与平安。",
+            "functional": {
+              "params": {
+                "deity": "mother_earth",
+                "options": [
+                  {
+                    "id": "small_donation",
+                    "label": "投入几枚铜币"
+                  },
+                  {
+                    "id": "silent_prayer",
+                    "label": "进行一次默祷"
+                  }
+                ]
+              },
+              "type": "offering"
+            },
+            "id": "temple_offering_box",
+            "name": "地母神奉献箱",
+            "tags": [
+              "religion",
+              "social"
+            ],
+            "type": "facility"
+          },
+          {
+            "description": "一排排打磨光滑的长木椅，对着地母神的慈悲圣像。空气中漂浮着圣餐和干草的香气。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_temple_peace",
+                "options": [
+                  {
+                    "id": "sit_and_pray",
+                    "label": "坐下祈祷"
+                  },
+                  {
+                    "id": "watch_priestess",
+                    "label": "观察年轻神官"
+                  }
+                ],
+                "outcomes": {
+                  "sit_and_pray": "你感到内心的浮躁被宁静的氛围抚平了，神灵似乎在护佑着每一位开拓者。",
+                  "watch_priestess": "年轻的女神官正在仔细整理祭坛上的蜡烛，她的动作轻柔，却带着一股莫名的坚定。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "temple_meditation_bench",
+            "name": "神殿长椅",
+            "tags": [
+              "rest",
+              "quest"
+            ],
+            "type": "facility"
+          }
+        ],
+        "north_gate": [
+          {
+            "description": "钉在卫兵哨位旁的木板上，粗略勾勒了城镇周边的防御点，上面有用红笔标注的‘频繁出没区’。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_border_defense",
+                "options": [
+                  {
+                    "id": "study_red_marks",
+                    "label": "研究红圈位置"
+                  },
+                  {
+                    "id": "observe_guards",
+                    "label": "观察卫兵反应"
+                  }
+                ],
+                "outcomes": {
+                  "observe_guards": "卫兵们神情紧绷，他们擦拭长矛的频率比平时更高，显然在担忧着什么。",
+                  "study_red_marks": "红圈主要集中在东北部的森林边缘和南部的废弃牧场，这些地方的哨所已经加强了轮班。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "gate_defense_map",
+            "name": "城防布署图",
+            "tags": [
+              "map",
+              "war"
+            ],
+            "type": "facility"
+          }
+        ],
+        "tavern": [
+          {
+            "description": "被磨得发亮的红木吧台，上面放着几杯冒着热气的牛奶酒。老板娘正忙着擦拭杯子。",
+            "functional": {
+              "params": {
+                "shop_id": "frontier_tavern_menu"
+              },
+              "type": "shop"
+            },
+            "id": "tavern_serving_counter",
+            "name": "酒馆吧台",
+            "tags": [
+              "food",
+              "service"
+            ],
+            "type": "facility"
+          },
+          {
+            "description": "一张略显陈旧的木桌，上面刻着不少冒险者留下的标记。桌角似乎塞着一张碎纸片。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_tavern_rumor",
+                "options": [
+                  {
+                    "id": "pick_up_paper",
+                    "label": "拾起纸片"
+                  },
+                  {
+                    "id": "look_at_carvings",
+                    "label": "观察刻痕"
+                  }
+                ],
+                "outcomes": {
+                  "look_at_carvings": "刻痕中有很多代表‘生还’或‘复仇’的古老符号，显示出这里的常客过着刀口舔血的生活。",
+                  "pick_up_paper": "纸片上草草写着：‘注意东边的废弃矿坑，有不寻常的火光。’"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "corner_table_clue",
+            "name": "角落的空桌子",
+            "tags": [
+              "clue",
+              "investigate"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    },
+    "water_capital": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.6,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

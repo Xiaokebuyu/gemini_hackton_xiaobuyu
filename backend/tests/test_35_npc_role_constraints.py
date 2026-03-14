@@ -30,6 +30,7 @@ from app.game_core.narrative.context_builder import (
     _extract_receptionist_data,
     _extract_merchant_data,
     _extract_role_data,
+    _fear_hint,
     _format_role_constraint_block,
 )
 from app.game_core.state import StateContainer
@@ -606,7 +607,7 @@ def test_extract_role_data_empty_tags_returns_none():
 # ------------------------------------------------------------------
 
 def test_format_receptionist_block_with_bulletins():
-    """Receptionist block lists bulletin task titles."""
+    """Receptionist block lists bulletin task titles and quest_ids."""
     role_data = {
         "role": "receptionist",
         "bulletins": [{"quest_id": "q1", "title": "哥布林讨伐", "summary": "猎杀哥布林"}],
@@ -614,6 +615,7 @@ def test_format_receptionist_block_with_bulletins():
     }
     block = _format_role_constraint_block(role_data)
     assert "哥布林讨伐" in block
+    assert "quest_id: q1" in block
     assert "你的职责" in block
     assert "约束规则" in block
     assert "绝不编造" in block
@@ -631,7 +633,7 @@ def test_format_receptionist_block_empty_board():
 
 
 def test_format_receptionist_block_with_active_quests():
-    """Active quests are listed in the constraint block."""
+    """Active quests are listed in the constraint block with quest_id."""
     role_data = {
         "role": "receptionist",
         "bulletins": [],
@@ -639,6 +641,7 @@ def test_format_receptionist_block_with_active_quests():
     }
     block = _format_role_constraint_block(role_data)
     assert "哥布林袭击任务" in block
+    assert "quest_id: dq_raid" in block
 
 
 def test_format_receptionist_block_no_active_quests():
@@ -941,3 +944,122 @@ def test_constraint_rules_text_present():
         assert "绝不编造" in result.system_prompt
 
     asyncio.run(_run())
+
+
+# ------------------------------------------------------------------
+# D-Audit1: Phase 1 — quest_id in receptionist bulletin / active quests
+# ------------------------------------------------------------------
+
+def test_format_receptionist_block_bulletin_shows_quest_id():
+    """Bulletins include quest_id so the agent can reference it correctly."""
+    role_data = {
+        "role": "receptionist",
+        "bulletins": [
+            {"quest_id": "dq_ms_arrival", "title": "初到边境", "summary": "前往边境镇"},
+        ],
+        "active_quests": [],
+    }
+    block = _format_role_constraint_block(role_data)
+    assert "quest_id: dq_ms_arrival" in block
+    assert "初到边境" in block
+
+
+def test_format_receptionist_active_quests_show_quest_id():
+    """Active quests include quest_id so the agent can confirm completion correctly."""
+    role_data = {
+        "role": "receptionist",
+        "bulletins": [],
+        "active_quests": [
+            {"quest_id": "dq_goblin_raid", "title": "哥布林袭击"},
+        ],
+    }
+    block = _format_role_constraint_block(role_data)
+    assert "quest_id: dq_goblin_raid" in block
+    assert "哥布林袭击" in block
+
+
+# ------------------------------------------------------------------
+# D-Audit1: Phase 2 — event_id in guard block
+# ------------------------------------------------------------------
+
+def test_format_guard_block_event_shows_event_id():
+    """Guard block shows event_id alongside event title."""
+    role_data = {
+        "role": "guard",
+        "area_id": "frontier_town",
+        "location_id": "south_gate",
+        "danger_level": 3.0,
+        "pending_events": [
+            {"event_id": "ev_lockdown_001", "title": "封锁南门", "summary": "有嫌犯在逃"},
+        ],
+        "access_flags": [],
+    }
+    block = _format_role_constraint_block(role_data)
+    assert "event_id: ev_lockdown_001" in block
+    assert "封锁南门" in block
+
+
+# ------------------------------------------------------------------
+# D-Audit1: Phase 3 — _fear_hint behavior
+# ------------------------------------------------------------------
+
+def test_fear_hint_returns_empty_below_20():
+    """Fear below 20 produces no hint — no behavioral guidance needed."""
+    assert _fear_hint(0) == ""
+    assert _fear_hint(10) == ""
+    assert _fear_hint(19) == ""
+
+
+def test_fear_hint_returns_guidance_above_50():
+    """Fear of 50+ triggers stronger fear language."""
+    hint_50 = _fear_hint(50)
+    hint_80 = _fear_hint(80)
+    assert hint_50 != ""
+    assert "害怕" in hint_50
+    hint_extreme = _fear_hint(90)
+    assert "极度恐惧" in hint_extreme or "颤抖" in hint_extreme
+
+
+def test_fear_hint_low_fear_mild_guidance():
+    """Fear in [20, 50) produces mild avoidance guidance."""
+    hint = _fear_hint(30)
+    assert hint != ""
+    assert "畏惧" in hint
+
+
+# ------------------------------------------------------------------
+# D-Audit1: Phase 4 — npc_id in prompt
+# ------------------------------------------------------------------
+
+def test_npc_prompt_includes_npc_id():
+    """When npc_id is passed, prompt header includes the id."""
+    prompt = _build_npc_prompt_text(
+        _minimal_profile(name="TestNPC"),
+        disposition={},
+        stage="stranger",
+        impressions=[],
+        npc_id="guild_girl_001",
+    )
+    assert "id: guild_girl_001" in prompt
+
+
+def test_npc_prompt_without_npc_id_no_id_suffix():
+    """When npc_id is omitted (default ""), no id suffix in prompt."""
+    prompt = _build_npc_prompt_text(
+        _minimal_profile(name="AnonNPC"),
+        disposition={},
+        stage="stranger",
+        impressions=[],
+    )
+    assert "(id:" not in prompt
+
+
+def test_npc_prompt_fear_hint_injected_when_fear_high():
+    """When fear >= 50, fear hint appears in behavior section of prompt."""
+    prompt = _build_npc_prompt_text(
+        _minimal_profile(),
+        disposition={"fear": 60},
+        stage="acquaintance",
+        impressions=[],
+    )
+    assert "害怕" in prompt or "畏惧" in prompt

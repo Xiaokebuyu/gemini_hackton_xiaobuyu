@@ -176,3 +176,48 @@ def test_resolve_clue_option_unlocks_sub_location_and_hides_overlay() -> None:
     ) == []
     unlocked = state.areas.list_temporary_sub_areas("frontier_town")
     assert any(item["id"] == "north_alley_hideout" for item in unlocked)
+
+
+def test_clue_definition_no_linked_fields() -> None:
+    """R2-C: normalized clue definition must not contain linked_quest_id or linked_milestone."""
+    from app.game_core.clue_investigation import normalize_clue_definition
+
+    raw_params = {
+        "clue_id": "test_clue",
+        "name": "神秘血迹",
+        "description": "地板上的干涸血迹。",
+        "linked_quest_id": "dq_mystery",
+        "linked_milestone": "ms_first_lead",
+        "options": [
+            {"id": "examine", "label": "仔细检查"},
+            {"id": "ignore", "label": "暂时忽略"},
+        ],
+    }
+
+    clue = normalize_clue_definition(raw_params, interactable_id="test_clue", name="神秘血迹")
+
+    assert "linked_quest_id" not in clue, "linked_quest_id is a dead field and should not be normalized"
+    assert "linked_milestone" not in clue, "linked_milestone is a dead field and should not be normalized"
+    assert clue["clue_id"] == "test_clue"
+    assert clue["name"] == "神秘血迹"
+
+
+def test_investigate_clue_metadata_no_linked_fields() -> None:
+    """R2-C: investigate_clue handler metadata must not contain linked_quest_id or linked_milestone."""
+    world = _build_world()
+    state = _build_state()
+
+    handler = ClueHandler()
+    result = handler.compute(
+        Command(
+            type="investigate_clue",
+            params={"interactable_id": "blood_trail_clue"},
+            source="player",
+        ),
+        state,
+        world,
+    )
+
+    assert result.executed is True
+    assert "linked_quest_id" not in result.metadata
+    assert "linked_milestone" not in result.metadata

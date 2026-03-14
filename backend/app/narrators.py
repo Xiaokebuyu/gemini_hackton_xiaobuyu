@@ -235,6 +235,11 @@ class AgenticNarrativePlanner:
     {"subject": "entity_id", "relation": "relation_type", "object": "entity_id"}
   ],
   "strategy_notes": "<给自己的笔记，下次运行时会看到>",
+  "outline_updates": {
+    "completed_steps": [0, 1],
+    "new_steps": [{"description": "...", "type": "dialogue", "condition": {"type": "npc_talked", "params": {"npc_id": "..."}}}],
+    "remove_steps": [3]
+  },
   "next_trigger_hint": "player_moves_or_3_ticks"
 }
 
@@ -247,6 +252,7 @@ class AgenticNarrativePlanner:
 6. direct_npc 的 directive.kind 只能是：talk（主动找玩家说话）、approach（接近玩家）、react（对局面反应）、inform（分享信息）。
 7. directive 只描述行为意图和话题，不要写完整台词。正确："topic": "西部牧场的委托"。错误："content": "冒险者，你听说西部牧场的事了吗？"
 8. 语言规则：所有任务标题（title）、摘要（summary）、描述（description）、公告文本（announcement）必须使用中文。
+9. outline_updates 用于同步大纲进度：completed_steps（已完成的 step index 列表）、new_steps（新增 step，含 description/type/condition）、remove_steps（要移除的 step index 列表）。只在有实质变化时填写，不需要时可省略此字段。
 
 ## 设计原则
 1. 保护叙事弧线，不偏离里程碑路径。
@@ -335,13 +341,14 @@ context 中的 play_style_tags 反映玩家近期行为模式，应影响你的�
 - fill_location: {"kind":"fill_location","payload":{"area_id":"...","location_id":"...","room_id":"optional","interactables":[{"id":"...","name":"...","description":"...","type":"inspect","tags":["..."]}]}}
 - plant_encounter: {"kind":"plant_encounter","payload":{"area_id":"...","sub_area_id":"...","monster_ids":["goblin","goblin","hobgoblin"],"threat_level":"moderate","description":"...","map_category":"cave"}}
 - update_quest: {"kind":"update_quest","payload":{"quest_id":"dq_x","current_step":"...","next_steps":["..."],"hints":["..."]}}
-- design_reward: {"kind":"design_reward","payload":{"linked_quest_id":"dq_x","item_id":"...","quantity":1,"reward_type":"item"}}
 - curate_shop: {"kind":"curate_shop","payload":{"npc_id":"...","add_items":[{"item_id":"...","count":5}],"remove_items":["old_item_id"],"restock_items":[{"item_id":"...","count":10}]}}
 - discover_room: {"kind":"discover_room","payload":{"area_id":"...","location_id":"...","room_id":"..."}}
 - fill_room: {"kind":"fill_room","payload":{"area_id":"...","location_id":"...","room_id":"new_room_1","name":"密室","description":"...","discoverable":false}}
 - fill_location: {"kind":"fill_location","payload":{"area_id":"...","location_id":"...","room_id":"optional","interactables":[{"id":"...","name":"...","description":"...","type":"inspect","tags":["..."]}]}}
 - assign_capability: {"kind":"assign_capability","payload":{"npc_id":"...","capability_id":"...","instruction":"中文行为指导","functional":"trade_browse","expiry_ticks":20}}
 - revoke_capability: {"kind":"revoke_capability","payload":{"npc_id":"...","capability_id":"..."}}
+- advance_milestone: {"kind":"advance_milestone","payload":{"milestone_id":"...","to_state":"COMPLETED"}}
+  当你判断叙事已准备好推进到下一阶段，且至少 80% 成功条件已满足时使用。系统会自动验证条件满足率，不足 80% 时拒绝执行。
 
 ## 任务目标与自动完成 (create_quest objectives)
 create_quest 的 objectives 字段是任务自动跟踪的核心。每个 objective 必须包含：
@@ -840,7 +847,28 @@ class MilestoneOutlineGenerator:
             lines += ["", "成功条件:"]
             if isinstance(success_conditions, list):
                 for cond in success_conditions:
-                    lines.append(f"  - {cond}")
+                    if isinstance(cond, dict):
+                        # Structured dict: render as type=... params=...
+                        cond_type = cond.get("type", "?")
+                        cond_params = cond.get("params", {})
+                        optional = cond.get("optional", False)
+                        parts = [f"type={cond_type}"]
+                        if isinstance(cond_params, dict) and cond_params:
+                            parts.append(f"params={cond_params}")
+                        if optional:
+                            parts.append("optional=true")
+                        lines.append("  - " + ", ".join(parts))
+                    else:
+                        # Fallback for non-dict (e.g., MilestoneCondition dataclass)
+                        cond_type = getattr(cond, "type", "?")
+                        cond_params = getattr(cond, "params", {})
+                        optional = getattr(cond, "optional", False)
+                        parts = [f"type={cond_type}"]
+                        if isinstance(cond_params, dict) and cond_params:
+                            parts.append(f"params={cond_params}")
+                        if optional:
+                            parts.append("optional=true")
+                        lines.append("  - " + ", ".join(parts))
             else:
                 lines.append(f"  {success_conditions}")
 
@@ -1043,6 +1071,78 @@ def _format_planner_context(ctx: dict[str, Any]) -> str:
             f"相关地点: {', '.join(target_detail.get('involved_locations', [])) or '(无)'}",
             f"叙事背景: {target_detail.get('narrative_context', '') or '(无)'}",
         ]
+        # R3-A/R3-C: render success_conditions from target_detail (set in R3-A)
+        success_conditions = target_detail.get("success_conditions") or []
+        if isinstance(success_conditions, list) and success_conditions:
+            lines.append("成功条件:")
+            for cond in success_conditions:
+                if not isinstance(cond, dict):
+                    continue
+                cond_type = cond.get("type", "?")
+                cond_params = cond.get("params", {})
+                optional_str = " [optional]" if cond.get("optional") else ""
+                param_str = f" params={cond_params}" if isinstance(cond_params, dict) and cond_params else ""
+                lines.append(f"  - type={cond_type}{param_str}{optional_str}")
+
+    # ---- R3-C: Planner feedback (quest progress, milestone satisfaction, NPC confirmations, clues) ----
+    planner_feedback = ctx.get("planner_feedback") or {}
+    if isinstance(planner_feedback, dict) and planner_feedback:
+        # Quest objective progress
+        quest_progress = planner_feedback.get("quest_progress") or []
+        if quest_progress:
+            lines += ["", "## 任务目标进度"]
+            for qp in quest_progress:
+                if not isinstance(qp, dict):
+                    continue
+                ratio = qp.get("ratio", 0.0)
+                completed = qp.get("completed_objectives", 0)
+                total = qp.get("total_objectives", 0)
+                title = qp.get("title") or qp.get("quest_id", "?")
+                lines.append(
+                    f"  {title}: {completed}/{total} objectives done ({ratio:.0%})"
+                )
+
+        # Milestone condition satisfaction
+        ms_satisfaction = planner_feedback.get("milestone_satisfaction") or []
+        if ms_satisfaction:
+            met_count = sum(1 for c in ms_satisfaction if isinstance(c, dict) and c.get("met"))
+            total_count = len(ms_satisfaction)
+            lines += ["", f"## 当前里程碑条件满足度 ({met_count}/{total_count})"]
+            for cond in ms_satisfaction:
+                if not isinstance(cond, dict):
+                    continue
+                status = "✓" if cond.get("met") else "✗"
+                cond_type = cond.get("type", "?")
+                cond_params = cond.get("params") or {}
+                optional_str = " [optional]" if cond.get("optional") else ""
+                param_str = f" {cond_params}" if cond_params else ""
+                lines.append(f"  {status} {cond_type}{param_str}{optional_str}")
+
+        # NPC directive confirmation
+        npc_confirmations = planner_feedback.get("npc_directive_confirmations") or []
+        if npc_confirmations:
+            lines += ["", "## NPC指令执行确认"]
+            for nc in npc_confirmations:
+                if not isinstance(nc, dict):
+                    continue
+                npc_id = nc.get("npc_id", "?")
+                kind = nc.get("directive_kind", "?")
+                talked = nc.get("talked_flag_set", False)
+                confirmation = "已确认对话" if talked else "未确认对话"
+                lines.append(f"  npc={npc_id} kind={kind} → {confirmation}")
+
+        # Clue interaction summary
+        clue_summary = planner_feedback.get("clue_interaction_summary") or {}
+        if isinstance(clue_summary, dict) and clue_summary:
+            discovered = clue_summary.get("discovered", 0)
+            examined = clue_summary.get("examined", 0)
+            resolved = clue_summary.get("resolved", 0)
+            unexamined = clue_summary.get("unexamined", 0)
+            lines += [
+                "",
+                f"## 线索交互状态  discovered={discovered} "
+                f"examined={examined} resolved={resolved} unexamined={unexamined}",
+            ]
 
     # ---- Part 2: 当前叙事计划状态 ----
     lines += [
@@ -1476,7 +1576,8 @@ QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
 8. 只围绕 current_event 决策；如果 current_event 与任务生命周期无关，返回空 directives。
 9. create_quest 的 objectives 每个都必须有 condition 字段（带 type 和 params），否则任务无法自动完成。
 
-创建新内容前，建议先通过 list_design_skills / read_design_skill 查阅对应设计模板以确保输出质量。
+**强制要求**：生成任何 directive 前，你**必须**先调用 read_design_skill 查阅对应类型的设计模板。
+未查阅模板直接输出的 directive 将被拒绝。
 """
 
 
@@ -1501,7 +1602,8 @@ NPC_DIRECTOR_AGENT_PROMPT = """你是 NpcDirector 子系统。
 7. 只围绕 current_event 决策；如果 current_event 不要求 NPC 出手，返回空 directives。
 8. 临时 NPC 默认在 24 ticks 后自动清理（despawn）。如需更长生命周期，提供 despawn_in_ticks 参数。如需持久 NPC，应从静态内容库中选择而非 spawn。
 
-创建新内容前，建议先通过 list_design_skills / read_design_skill 查阅对应设计模板以确保输出质量。
+**强制要求**：生成任何 directive 前，你**必须**先调用 read_design_skill 查阅对应类型的设计模板。
+未查阅模板直接输出的 directive 将被拒绝。
 """
 
 
@@ -1532,10 +1634,14 @@ WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
 13. 只围绕 current_event 决策；如果 current_event 不要求世界填充，返回空 directives。
 14. ⚠️ 容量约束（违反会被拒）：fill_area（permanent 子区域）最多 8 个，plant_environmental（temporary）总数不超过 15 个。fill_location 不占用 sub_area 容量，但单场景 overlay 上限 4 个。
 15. fill_area 只用于真正新增可进入的新空间；现有地点里的互动补丁优先用 fill_location。
-16. 纯线索必须用 fill_location 里的 interactable 表达，而不是 plant_environmental。线索 interactable 应写 functional.type="investigate_clue"，并在 functional.params 里提供 clue_id / options / outcomes。options 必须是 2~4 个对象数组，每个 option 必须含 id 和 label 字段，例如：`"options": [{"id": "examine", "label": "仔细检查"}, {"id": "ask_party", "label": "听听队友判断"}]`。
+16. 纯线索必须用 fill_location 里的 interactable 表达，而不是 plant_environmental。线索 interactable 应写 functional.type="investigate_clue"，并在 functional.params 里提供 clue_id / options / outcomes。
+    **⚠️ options 必须是 2~4 个对象数组**，每个 option 必须含 id 和 label 字段，例如：
+    `"options": [{"id": "examine", "label": "仔细检查"}, {"id": "ask_party", "label": "听听队友判断"}]`
+    options 少于 2 个或多于 4 个，directive 将被拒绝。
 17. fill_location / fill_area 的 interactables 字段需包含完整定义：每个 interactable 必须含 id / name / description / type / tags；功能型设施（如公告板、奉献、线索）应补 functional.type。
 
-创建新内容前，建议先通过 list_design_skills / read_design_skill 查阅对应设计模板以确保输出质量。
+**强制要求**：生成任何 directive 前，你**必须**先调用 read_design_skill 查阅对应类型的设计模板。
+未查阅模板直接输出的 directive 将被拒绝。
 """
 
 
@@ -1559,31 +1665,8 @@ NARRATIVE_WEAVER_AGENT_PROMPT = """你是 NarrativeWeaver 子系统。
 7. 只围绕 current_event 决策；如果 current_event 没有长期维护意义，返回空 directives。
 8. escalate 的 payload 必须是 {"delta": N}，其中 N 是 [-3, 3] 范围内的整数，超出会被拒。
 
-创建新内容前，建议先通过 list_design_skills / read_design_skill 查阅对应设计模板以确保输出质量。
+**强制要求**：生成任何 directive 前，你**必须**先调用 read_design_skill 查阅对应类型的设计模板。
+未查阅模板直接输出的 directive 将被拒绝。
 """
 
 
-ITEM_DESIGNER_AGENT_PROMPT = """你是 ItemDesigner 子系统。
-你只负责物品相关规划：design_reward / curate_shop。
-
-## 输出格式（严格 JSON）
-{
-  "directives": [{"kind": "...", "payload": {...}}],
-  "story_facts": [],
-  "strategy_notes": ""
-}
-
-## 规则
-1. 只能输出 design_reward / curate_shop。
-2. 每轮最多 1 条 directive。
-3. 只能使用上下文中真实存在的 item_id；不要发明新品、价格或候选外物品。
-4. current_event=quest_created / quest_accepted 时，只能从 reward_candidates 中选择 0 或 1 个候选设计奖励；reward_candidates 为空时返回空 directives。
-5. current_event=shop_refreshed 时，只能针对该事件里的 npc_id，从 shop_candidates 中选择 0 或 1 个候选做库存策展；shop_candidates 为空时返回空 directives。
-6. player progression 是优先目标，但不能违背 quest 语义、merchant_profile 和候选约束。
-7. design_reward 的 payload 必须是 {"linked_quest_id":"dq_x","item_id":"healing_potion","quantity":1,"reward_type":"item"}；不要输出 reward_items / gold / xp。
-8. curate_shop 的 payload 必须是 {"npc_id":"merchant","add_items":[...],"remove_items":[...],"restock_items":[...]} 中的一种最小变更；不要发明价格字段。
-9. curate_shop 只做最小库存策展，不重复添加相同 item_id 的库存行。
-10. blacksmith_like 商人不得策展出不符合铁匠身份的商品。
-
-创建新内容前，建议先通过 list_design_skills / read_design_skill 查阅对应设计模板以确保输出质量。
-"""

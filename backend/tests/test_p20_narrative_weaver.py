@@ -1,4 +1,4 @@
-"""Tests for P20 Phase 2e+2f — NarrativeWeaverSubSystem + ItemDesignerSubSystem.
+"""Tests for P20 Phase 2e — NarrativeWeaverSubSystem.
 
 Covers:
 - Protocol compliance (name/handles/accepts_event)
@@ -7,7 +7,6 @@ Covers:
 - Directive GC via prune_consumed_and_expired
 - Auto-escalation safety net: fires / frozen / below threshold / higher levels
 - Dispatch integration: Hook.execute() + NarrativeWeaver end-to-end
-- ItemDesigner stub behaviour
 - SSE events emitted during evaluate() reach the Hook's HookResult
 """
 
@@ -22,7 +21,6 @@ from app.game_core.orchestration.models import SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.planning import (
-    ItemDesignerSubSystem,
     NarrativeWeaverSubSystem,
     NpcDirectorSubSystem,
     PacingControllerSubSystem,
@@ -125,7 +123,7 @@ def _make_settlement_context(
 
 
 def _make_full_hook(planner: Any = None) -> tuple[NarrativePlannerHook, list[SSEEvent]]:
-    """Build a NarrativePlannerHook with all 6 sub-systems registered."""
+    """Build a NarrativePlannerHook with all sub-systems registered."""
     hook = NarrativePlannerHook(blackboard=planner)
     dispatcher = PlannerDispatcher()
     quest_manager = QuestManagerSubSystem(dispatcher=dispatcher)
@@ -134,7 +132,6 @@ def _make_full_hook(planner: Any = None) -> tuple[NarrativePlannerHook, list[SSE
     dispatcher.register(WorldBuilderSubSystem(sse_collector=hook._pending_sse))
     dispatcher.register(PacingControllerSubSystem())
     dispatcher.register(NarrativeWeaverSubSystem(sse_collector=hook._pending_sse))
-    dispatcher.register(ItemDesignerSubSystem())
     hook._dispatcher = dispatcher
     return hook, hook._pending_sse
 
@@ -702,65 +699,6 @@ class TestDispatchIntegration:
 # ---------------------------------------------------------------------------
 # §8  ItemDesigner stub
 # ---------------------------------------------------------------------------
-
-
-class TestItemDesignerStub:
-    def test_name(self) -> None:
-        stub = ItemDesignerSubSystem()
-        assert stub.name == "item_designer"
-
-    def test_handles_design_reward_and_curate_shop(self) -> None:
-        stub = ItemDesignerSubSystem()
-        assert "design_reward" in stub.handles
-        assert "curate_shop" in stub.handles
-
-    def test_accepts_shop_refreshed(self) -> None:
-        stub = ItemDesignerSubSystem()
-        event = PlannerEvent(kind="shop_refreshed", tick=1)
-        assert stub.accepts_event(event) is True
-
-    def test_accepts_quest_created(self) -> None:
-        stub = ItemDesignerSubSystem()
-        event = PlannerEvent(kind="quest_created", tick=1)
-        assert stub.accepts_event(event) is True
-
-    def test_accepts_quest_accepted(self) -> None:
-        stub = ItemDesignerSubSystem()
-        event = PlannerEvent(kind="quest_accepted", tick=1)
-        assert stub.accepts_event(event) is True
-
-    def test_rejects_quest_completed(self) -> None:
-        stub = ItemDesignerSubSystem()
-        event = PlannerEvent(kind="quest_completed", tick=1)
-        assert stub.accepts_event(event) is False
-
-    def test_rejects_tick_settlement(self) -> None:
-        stub = ItemDesignerSubSystem()
-        event = PlannerEvent(kind="tick_settlement", tick=1)
-        assert stub.accepts_event(event) is False
-
-    def test_evaluate_returns_empty_result(self) -> None:
-        stub = ItemDesignerSubSystem()
-        ctx = _make_settlement_context()
-        event = PlannerEvent(kind="tick_settlement", tick=1)
-        result = asyncio.run(stub.evaluate(event, ctx))
-        assert result.directives == []
-
-    def test_apply_directive_returns_rejection_for_invalid_design_reward(self) -> None:
-        stub = ItemDesignerSubSystem()
-        ctx = _make_settlement_context()
-        result = stub.apply_directive(
-            "design_reward", {"item_id": "magic_sword"}, ctx, current_tick=0
-        )
-        assert result is not True  # Returns a rejection reason string
-
-    def test_apply_directive_returns_rejection_for_curate_shop(self) -> None:
-        stub = ItemDesignerSubSystem()
-        ctx = _make_settlement_context()
-        result = stub.apply_directive(
-            "curate_shop", {"shop_id": "blacksmith"}, ctx, current_tick=0
-        )
-        assert result is not True  # Returns a rejection reason string
 
 
 # ---------------------------------------------------------------------------

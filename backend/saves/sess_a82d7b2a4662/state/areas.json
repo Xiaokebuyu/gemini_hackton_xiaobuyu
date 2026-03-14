@@ -1,0 +1,1238 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 2.1999999999999997,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [
+        {
+          "created_at_tick": 13,
+          "description": "",
+          "discoverable": false,
+          "expiry": -1,
+          "name": "萨满的骸骨祭坛",
+          "room_id": "shaman_altar",
+          "source": "narrative_planner",
+          "sub_loc_id": "inner_sanctum"
+        },
+        {
+          "created_at_tick": 14,
+          "description": "",
+          "discoverable": false,
+          "expiry": -1,
+          "name": "残破瞭望塔基座",
+          "room_id": "watchtower_base",
+          "source": "narrative_planner",
+          "sub_loc_id": "outer_cloisters"
+        }
+      ],
+      "exploration": "undiscovered",
+      "hostile_tracking": {
+        "forest_approach": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 14,
+          "description": "两只掉队的哥布林斥候正躲在哨点附近的乱石堆后。发现你后，它们并未立即逃跑，而是试图投掷涂毒的飞刀进行骚扰。",
+          "expiry_ticks": -1,
+          "map_category": "optional",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        },
+        "outer_cloisters": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 17,
+          "description": "三只哥布林重装步兵组成的盾阵封锁了回廊的拐角。它们手持生铁长矛，动作整齐划一，完全没有普通哥布林的散漫。这是此前被抢夺的货车物资转化的战斗力。",
+          "expiry_ticks": -1,
+          "map_category": "optional",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin",
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        },
+        "overgrown_approach": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 15,
+          "description": "两只哥布林潜伏者。它们并未在林道上游荡，而是利用树叶伪装，趴在玩家进入遗迹必经之路的横梁上，准备发动空袭。",
+          "expiry_ticks": -1,
+          "map_category": "optional",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        },
+        "waystone_clearing": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 17,
+          "description": "三只哥布林正在路石附近挖掘战壕。它们不仅装备了皮甲，甚至还持有带有黑色涂层的毒箭，正警惕地注视着林道的动向。",
+          "expiry_ticks": -1,
+          "map_category": "optional",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin",
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        }
+      },
+      "interactable_states": {
+        "tactical_vantage_ledge": {
+          "area_id": "ancient_ruins",
+          "clue_id": "tactical_vantage_ledge",
+          "first_inspected": true,
+          "resolved_at_tick": 18,
+          "resolved_option_id": "ask_party"
+        }
+      },
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {
+        "ancient_ruins": {
+          "active_ids": [],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
+      "properties": {},
+      "scoped_interactable_overlays": {
+        "forest_approach": [
+          {
+            "description": "货车倾覆在路旁，车轮被暴力拆解。车身上残留着哥布林特有的涂鸦，但攻击者的手法精准，几乎所有致命伤都直指守卫的要害。",
+            "functional": {
+              "params": {
+                "clue_id": "precision_raid_evidence",
+                "options": [
+                  {
+                    "id": "examine_guard_wounds",
+                    "label": "检查守卫伤口"
+                  },
+                  {
+                    "id": "search_cargo_area",
+                    "label": "搜查货物残余"
+                  }
+                ],
+                "outcomes": {
+                  "examine_guard_wounds": "伤口由统一规格的短剑造成，且多为背部刺入。这说明哥布林利用了完美的伏击圈，而不是乱糟糟的冲锋。",
+                  "search_cargo_area": "几乎所有的箭镞和生铁都不见了，剩下的只有一些对哥布林无用的沉重原木。这是一场极具针对性的抢劫。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "smashed_heavy_wagon",
+            "name": "被砸毁的重型货车",
+            "tags": [
+              "clue",
+              "story_detail"
+            ],
+            "type": "debris"
+          },
+          {
+            "description": "林道旁的一棵古树上被清理出了视野开阔的平台，地上散落着几根带有黑色羽毛的劣质箭矢。这里显然曾有人（或魔物）长时间监视着道路。",
+            "functional": {
+              "params": {
+                "clue_id": "goblin_archery_threat",
+                "options": [
+                  {
+                    "id": "check_sightline",
+                    "label": "检查射界"
+                  },
+                  {
+                    "id": "examine_arrows",
+                    "label": "检查箭矢"
+                  }
+                ],
+                "outcomes": {
+                  "check_sightline": "这个位置能完美覆盖整个林道的转弯处。如果车队走到这里，根本无处躲藏。",
+                  "examine_arrows": "箭镞涂抹了某种带有腥臭味的粘稠液体——是哥布林常用的腐毒。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "concealed_sniper_nest",
+            "name": "隐蔽的狙击位",
+            "tags": [
+              "clue",
+              "tactical"
+            ],
+            "type": "investigation_point"
+          },
+          {
+            "description": "林道旁的一个土坡上留有还没熄灭多久的余烬，旁边散落着几只吃剩的鼠类骨骸。这里的哨兵似乎刚刚撤回遗迹内部。",
+            "functional": {
+              "params": {
+                "clue_id": "goblin_retreat_path",
+                "options": [
+                  {
+                    "id": "trace_embers",
+                    "label": "检查余烬热度"
+                  },
+                  {
+                    "id": "scout_surroundings",
+                    "label": "侦察周边掩体"
+                  }
+                ],
+                "outcomes": {
+                  "scout_surroundings": "你发现土坡后方有一条被故意踩出的隐蔽小道，能绕过林道正面的大部分路障。",
+                  "trace_embers": "余烬尚有余温。这意味着大批哥布林在不久前刚被调集回遗迹中心，外围的防线变得有些空虚。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "hastily_abandoned_post",
+            "name": "仓促遗弃的哨点",
+            "tags": [
+              "clue",
+              "stealth_context"
+            ],
+            "type": "debris"
+          },
+          {
+            "description": "遗迹入口斜上方的一处乱石堆。从这里可以清晰地俯瞰整个崩塌正门的防御布置，是制定突袭计划的绝佳位置。",
+            "functional": {
+              "params": {
+                "clue_id": "tactical_vantage_slice",
+                "hide_on_resolve": true,
+                "linked_milestone": null,
+                "linked_quest_id": null,
+                "options": [
+                  {
+                    "id": "examine",
+                    "label": "仔细检查"
+                  },
+                  {
+                    "id": "ask_party",
+                    "label": "听听队友判断"
+                  }
+                ],
+                "outcomes": {
+                  "ask_party": [],
+                  "examine": []
+                },
+                "party_prompt_hints": [],
+                "topic": null
+              },
+              "type": "investigate_clue"
+            },
+            "id": "tactical_vantage_slice",
+            "name": "Tactical Vantage Slice",
+            "tags": [
+              "clue",
+              "party_discussion"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "outer_cloisters": [
+          {
+            "description": "回廊的断壁上悬挂着一个巨大的骨质号角，一名身披铁甲的哥布林正警惕地巡视。这种岗哨能通过音频在瞬间警示整座遗迹。",
+            "functional": {
+              "params": {
+                "clue_id": "ruins_alarm_network",
+                "options": [
+                  {
+                    "id": "sabotage_horn",
+                    "label": "尝试潜行破坏号角"
+                  },
+                  {
+                    "id": "observe_signal_pattern",
+                    "label": "观察信号规律"
+                  }
+                ],
+                "outcomes": {
+                  "observe_signal_pattern": "你注意到每隔一会儿，号角就会发出微弱的震动。那是遗迹内部传来的‘平安反馈’，说明这不仅是警报器，还是联络节点。",
+                  "sabotage_horn": "你悄悄切断了号角的挂绳并塞入了碎石。现在即使哥布林发现你们，也无法通过这个号角呼唤援军了。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "goblin_alarm_post",
+            "name": "哥布林骨质号角岗哨",
+            "tags": [
+              "tactical",
+              "clue",
+              "high_priority"
+            ],
+            "type": "fortification"
+          },
+          {
+            "description": "一处由于石柱坍塌形成的阴影夹角，可以避开主路哥布林盾阵的视线，从侧方接近岗哨。这似乎是曾经祭司们使用的密道残迹。",
+            "functional": {
+              "params": {
+                "clue_id": "cloister_shadow_flank",
+                "hide_on_resolve": true,
+                "linked_milestone": null,
+                "linked_quest_id": null,
+                "options": [
+                  {
+                    "id": "examine",
+                    "label": "仔细检查"
+                  },
+                  {
+                    "id": "ask_party",
+                    "label": "听听队友判断"
+                  }
+                ],
+                "outcomes": {
+                  "ask_party": [],
+                  "examine": []
+                },
+                "party_prompt_hints": [],
+                "topic": null
+              },
+              "type": "investigate_clue"
+            },
+            "id": "cloister_shadow_flank",
+            "name": "Cloister Shadow Flank",
+            "tags": [
+              "clue",
+              "party_discussion"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "waystone_clearing": [
+          {
+            "description": "在林间空地的中央，一个由动物骨头磨制成的号角被遗弃在血泊中。这种号角通常用于远距离的战术通讯。",
+            "functional": {
+              "params": {
+                "clue_id": "tactical_signaling",
+                "options": [
+                  {
+                    "id": "blow_horn",
+                    "label": "尝试吹响"
+                  },
+                  {
+                    "id": "inspect_material",
+                    "label": "观察号角材质"
+                  }
+                ],
+                "outcomes": {
+                  "blow_horn": "号角发出了低沉而沙哑的鸣响，惊起了远处林间的飞鸟。你感觉到四周的丛林似乎变得更加不安了。",
+                  "inspect_material": "号角上刻着一些歪扭的符号，看起来像是在计数——它们在记录杀死的‘大个子’（人类）数量。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "broken_goblin_horn",
+            "name": "破碎的哥布林号角",
+            "tags": [
+              "clue",
+              "sound_threat"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "空地边缘矗立着一个用绳索和圆木强行捆扎而成的哨塔。虽然摇摇欲坠，但它的高度足以俯瞰整片森林入口。",
+            "functional": {
+              "params": {
+                "clue_id": "goblin_strategic_deployment",
+                "options": [
+                  {
+                    "id": "spy_on_guards",
+                    "label": "观察卫兵动向"
+                  },
+                  {
+                    "id": "sabotage_structure",
+                    "label": "尝试破坏地基"
+                  }
+                ],
+                "outcomes": {
+                  "sabotage_structure": "你发现地基处涂抹了大量的油脂和易燃物。似乎在遭遇强敌时，哥布林宁愿烧毁这座塔作为警报。",
+                  "spy_on_guards": "哨塔上的哥布林并未在打瞌睡，它们手中握着号角，且每隔十分钟就会向遗迹内部发出短促的鸣叫，这是一种规律的‘平安报告’。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "makeshift_goblin_scaffold",
+            "name": "粗制滥造的木质岗哨",
+            "tags": [
+              "clue",
+              "tactical"
+            ],
+            "type": "fortification"
+          },
+          {
+            "description": "空地边缘的一根残破石柱上，用粗糙的皮带系着一个巨大的骨质号角。一旦吹响，声音将传遍整座遗迹。",
+            "functional": {
+              "params": {
+                "clue_id": "ruins_alarm_mechanism",
+                "options": [
+                  {
+                    "id": "cut_strap",
+                    "label": "切断皮带并带走号角"
+                  },
+                  {
+                    "id": "check_surrounding_traps",
+                    "label": "检查石柱周围的陷阱"
+                  }
+                ],
+                "outcomes": {
+                  "check_surrounding_traps": "石柱底部的落叶下掩盖着细细的引线，如果贸然靠近，会触发周围的响片陷阱。哥布林对这里的保护相当周密。",
+                  "cut_strap": "你成功拆下了号角。虽然这个岗哨废了，但你需要小心不要弄出太大的声响。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "bone_horn_pillar",
+            "name": "挂着骨号角的石柱",
+            "tags": [
+              "tactical",
+              "clue",
+              "high_threat"
+            ],
+            "type": "fortification"
+          }
+        ]
+      },
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 10,
+          "description": "通往古代遗迹的必经之路。高大的原始森林几乎遮蔽了阳光，由于近期哥布林的频繁活动，林间的野兽都已销声匿迹，只有枯叶碎裂的诡异响声。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "overgrown_approach",
+          "interactables": [],
+          "label": "蔓生林道",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 10,
+          "description": "古代文明留下的宏伟石门现已半掩在泥土与藤蔓之中。门前的空地上有着明显的重物拖拽痕迹，新鲜的泥土暗示着这里近期有大规模的挖掘或搬运活动。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "collapsed_entrance",
+          "interactables": [],
+          "label": "崩塌的遗迹正门",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 11,
+          "description": "遗迹核心区域的宏伟殿堂。原本庄严的石柱被涂满了污秽的涂鸦，空气中充满了哥布林的臭味和令人作呕的祭祀气息。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "desecrated_shrine_hall",
+          "interactables": [],
+          "label": "受污的祭祀大厅",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_high_elf_archer_18",
+          "name": "僻静处",
+          "resident_npcs": [
+            "high_elf_archer"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        },
+        {
+          "created_at_tick": 21,
+          "description": "位于祭祀大厅下方的隐蔽空间。墙壁上挂满了用人皮绘制的简易战术图，地上堆放着大量被抢夺而来的生铁和尚未拆封的铁匠铺货箱。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "shaman_command_vault",
+          "interactables": [],
+          "label": "萨满指挥密室",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        }
+      ]
+    },
+    "cow_girl_farm": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.3,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "cow_girl": "main_house",
+        "goblin_slayer": "gs_warehouse"
+      },
+      "npc_presence_sources": {
+        "goblin_slayer": "schedule"
+      },
+      "npc_rooms": {
+        "cow_girl": "living_room",
+        "goblin_slayer": "workbench"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "board_bulletins": {
+        "guild_board": [
+          {
+            "board_id": "guild_board",
+            "content": "",
+            "published_at_tick": 11,
+            "quest_id": "ancient_ruins_goblin_slaying",
+            "source": "narrative_planner",
+            "title": ""
+          }
+        ],
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+            "published_at_tick": 8,
+            "quest_id": "dq_ms_frontier_arrival",
+            "source": "narrative_planner",
+            "title": "踏入边境"
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 3.4499999999999966,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "discovered",
+      "hostile_tracking": {
+        "_encounter_frontier_town_18": {
+          "area_id": "frontier_town",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": true,
+          "combat_round": 1,
+          "combat_started_at_tick": 22,
+          "created_at_tick": 18,
+          "current_turn_index": 0,
+          "current_unit_id": "high_elf_archer",
+          "danger_snapshot": 1.1000000000000003,
+          "description": "一小撮哥布林趁夜潜入镇子边缘，企图掠夺仓库。",
+          "entry_mode": "entered",
+          "environment": {
+            "time_of_day": "night",
+            "weather": "clear"
+          },
+          "grid": {
+            "height": 6,
+            "terrain": [
+              "BBRRRRRB",
+              "BRRGGRRB",
+              "RRRGGRRR",
+              "RRRGGRRR",
+              "BRRGGRRB",
+              "BBRRRRRB"
+            ],
+            "width": 8
+          },
+          "initiative_rolls": {
+            "goblin_1": 12,
+            "goblin_2": 21,
+            "goblin_3": 3,
+            "high_elf_archer": 22,
+            "player": 4
+          },
+          "last_stealth_choice": null,
+          "last_stealth_result": {
+            "advantage": true,
+            "dc": 14,
+            "disadvantage": false,
+            "modifier": 3,
+            "narrative": "你踩到碎石发出动静，敌人立刻警觉起来。",
+            "options": [],
+            "passed": false,
+            "roll": 10,
+            "surprise_state": "none"
+          },
+          "map_category": "town_street",
+          "monster_count": 3,
+          "monster_ids": [
+            "goblin",
+            "goblin",
+            "goblin"
+          ],
+          "name": "一小撮哥布林趁夜潜入镇子边缘，企图掠夺仓库。",
+          "participants": [],
+          "period": "dusk",
+          "player_flags": {},
+          "source": "encounter",
+          "status": "engaged",
+          "stealth_dc": 14,
+          "sub_area_id": "_encounter_frontier_town_18",
+          "surprise_state": "none",
+          "template_id": "frontier_town_0",
+          "threat_level": "hard",
+          "turn_order": [
+            "high_elf_archer",
+            "goblin_2",
+            "goblin_1",
+            "player",
+            "goblin_3"
+          ],
+          "units": [
+            {
+              "ac": 19,
+              "action_used": false,
+              "active_effects": [],
+              "ai_personality": null,
+              "alive": true,
+              "attacks": [
+                {
+                  "damage_dice": "1d6",
+                  "damage_type": "piercing",
+                  "hit_bonus": 0,
+                  "name": "廉价短剑",
+                  "range": 1,
+                  "tags": [
+                    "MELEE",
+                    "LIGHT",
+                    "FINESSE"
+                  ]
+                }
+              ],
+              "character_id": "pc_c366e03bc708",
+              "dashed": false,
+              "defending": false,
+              "disengaged": false,
+              "fled": false,
+              "flee_chance": 0.0,
+              "flee_threshold": 0.0,
+              "hp": 18,
+              "max_hp": 20,
+              "monster_id": null,
+              "move_used": false,
+              "name": "xiaokebuyu",
+              "position": [
+                0,
+                2
+              ],
+              "proficiency_bonus": 2,
+              "reaction_used": false,
+              "side": "ally",
+              "source": "player",
+              "speed": 3,
+              "stats": {
+                "cha": 15,
+                "con": 14,
+                "dex": 13,
+                "int": 16,
+                "str": 11,
+                "wis": 9
+              },
+              "surprised": false,
+              "unit_id": "player"
+            },
+            {
+              "ac": 15,
+              "action_used": true,
+              "active_effects": [],
+              "ai_personality": "cowardly",
+              "alive": true,
+              "attacks": [
+                {
+                  "damage_dice": "1d8+4",
+                  "damage_type": "piercing",
+                  "hit_bonus": 7,
+                  "name": "赤柏松木弓",
+                  "range": 150,
+                  "tags": [
+                    "finesse",
+                    "ranged"
+                  ]
+                }
+              ],
+              "character_id": "high_elf_archer",
+              "dashed": false,
+              "defending": true,
+              "disengaged": false,
+              "fled": false,
+              "flee_chance": 0.0,
+              "flee_threshold": 0.0,
+              "hp": 32,
+              "max_hp": 32,
+              "monster_id": null,
+              "move_used": true,
+              "name": "妖精弓手",
+              "position": [
+                0,
+                3
+              ],
+              "proficiency_bonus": 3,
+              "reaction_used": false,
+              "side": "ally",
+              "source": "companion",
+              "speed": 3,
+              "stats": {
+                "cha": 13,
+                "con": 12,
+                "dex": 18,
+                "int": 12,
+                "str": 10,
+                "wis": 14
+              },
+              "surprised": false,
+              "unit_id": "high_elf_archer"
+            },
+            {
+              "ac": 13,
+              "action_used": false,
+              "active_effects": [],
+              "ai_personality": "cowardly",
+              "alive": true,
+              "attacks": [
+                {
+                  "damage_dice": "1d6+2",
+                  "damage_type": "piercing",
+                  "hit_bonus": 4,
+                  "name": "生锈短剑",
+                  "range": 1,
+                  "tags": [
+                    "finesse"
+                  ]
+                },
+                {
+                  "damage_dice": "1d4+2",
+                  "damage_type": "bludgeoning",
+                  "hit_bonus": 4,
+                  "name": "小型投石索",
+                  "range": 10,
+                  "tags": [
+                    "ranged"
+                  ]
+                }
+              ],
+              "character_id": null,
+              "dashed": false,
+              "defending": false,
+              "disengaged": false,
+              "fled": false,
+              "flee_chance": 0.6,
+              "flee_threshold": 0.3,
+              "hp": 7,
+              "max_hp": 7,
+              "monster_id": "goblin",
+              "move_used": false,
+              "name": "普通哥布林",
+              "position": [
+                7,
+                2
+              ],
+              "preferred_terrain": [],
+              "proficiency_bonus": 2,
+              "reaction_used": false,
+              "side": "enemy",
+              "source": "monster",
+              "speed": 3,
+              "stats": {
+                "cha": 8,
+                "con": 10,
+                "dex": 14,
+                "int": 10,
+                "str": 8,
+                "wis": 8
+              },
+              "surprised": false,
+              "unit_id": "goblin_1"
+            },
+            {
+              "ac": 13,
+              "action_used": false,
+              "active_effects": [],
+              "ai_personality": "cowardly",
+              "alive": true,
+              "attacks": [
+                {
+                  "damage_dice": "1d6+2",
+                  "damage_type": "piercing",
+                  "hit_bonus": 4,
+                  "name": "生锈短剑",
+                  "range": 1,
+                  "tags": [
+                    "finesse"
+                  ]
+                },
+                {
+                  "damage_dice": "1d4+2",
+                  "damage_type": "bludgeoning",
+                  "hit_bonus": 4,
+                  "name": "小型投石索",
+                  "range": 10,
+                  "tags": [
+                    "ranged"
+                  ]
+                }
+              ],
+              "character_id": null,
+              "dashed": false,
+              "defending": false,
+              "disengaged": false,
+              "fled": false,
+              "flee_chance": 0.6,
+              "flee_threshold": 0.3,
+              "hp": 7,
+              "max_hp": 7,
+              "monster_id": "goblin",
+              "move_used": false,
+              "name": "普通哥布林",
+              "position": [
+                7,
+                3
+              ],
+              "preferred_terrain": [],
+              "proficiency_bonus": 2,
+              "reaction_used": false,
+              "side": "enemy",
+              "source": "monster",
+              "speed": 3,
+              "stats": {
+                "cha": 8,
+                "con": 10,
+                "dex": 14,
+                "int": 10,
+                "str": 8,
+                "wis": 8
+              },
+              "surprised": false,
+              "unit_id": "goblin_2"
+            },
+            {
+              "ac": 13,
+              "action_used": false,
+              "active_effects": [],
+              "ai_personality": "cowardly",
+              "alive": true,
+              "attacks": [
+                {
+                  "damage_dice": "1d6+2",
+                  "damage_type": "piercing",
+                  "hit_bonus": 4,
+                  "name": "生锈短剑",
+                  "range": 1,
+                  "tags": [
+                    "finesse"
+                  ]
+                },
+                {
+                  "damage_dice": "1d4+2",
+                  "damage_type": "bludgeoning",
+                  "hit_bonus": 4,
+                  "name": "小型投石索",
+                  "range": 10,
+                  "tags": [
+                    "ranged"
+                  ]
+                }
+              ],
+              "character_id": null,
+              "dashed": false,
+              "defending": false,
+              "disengaged": false,
+              "fled": false,
+              "flee_chance": 0.6,
+              "flee_threshold": 0.3,
+              "hp": 7,
+              "max_hp": 7,
+              "monster_id": "goblin",
+              "move_used": false,
+              "name": "普通哥布林",
+              "position": [
+                6,
+                3
+              ],
+              "preferred_terrain": [],
+              "proficiency_bonus": 2,
+              "reaction_used": false,
+              "side": "enemy",
+              "source": "monster",
+              "speed": 3,
+              "stats": {
+                "cha": 8,
+                "con": 10,
+                "dex": 14,
+                "int": 10,
+                "str": 8,
+                "wis": 8
+              },
+              "surprised": false,
+              "unit_id": "goblin_3"
+            }
+          ],
+          "version": 2
+        }
+      },
+      "interactable_states": {
+        "caravan_cargo_manifest": {
+          "area_id": "frontier_town",
+          "clue_id": "missing_caravan_details",
+          "first_inspected": true,
+          "resolved_at_tick": 13,
+          "resolved_option_id": "trace_route"
+        },
+        "warden_urgent_dispatch": {
+          "area_id": "frontier_town",
+          "clue_id": "organized_threat_confirmed",
+          "first_inspected": true,
+          "resolved_at_tick": 12,
+          "resolved_option_id": "read_report"
+        }
+      },
+      "npc_locations": {
+        "blacksmith": "tavern",
+        "dwarf_shaman": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "guild_quartermaster": "tavern",
+        "high_elf_archer": "north_gate",
+        "informant": "back_alley",
+        "lizard_priest": "adventurer_guild",
+        "north_gate_warden": "north_gate",
+        "priestess": "mother_earth_temple",
+        "tavern_keeper": "tavern",
+        "tavern_waitress": "tavern",
+        "temple_matron": "mother_earth_temple",
+        "town_guard": "town_square",
+        "traveling_merchant": "tavern"
+      },
+      "npc_presence_sources": {
+        "blacksmith": "schedule",
+        "dwarf_shaman": "schedule",
+        "guild_quartermaster": "schedule",
+        "high_elf_archer": "companion",
+        "priestess": "schedule",
+        "traveling_merchant": "schedule"
+      },
+      "npc_rooms": {
+        "blacksmith": "main_hall",
+        "dwarf_shaman": "guild_hall",
+        "guild_girl": "guild_counter",
+        "guild_quartermaster": "main_hall",
+        "high_elf_archer": "guard_post",
+        "informant": "dead_end",
+        "lizard_priest": "guild_hall",
+        "north_gate_warden": "guard_post",
+        "priestess": "prayer_hall",
+        "tavern_keeper": "main_hall",
+        "tavern_waitress": "main_hall",
+        "temple_matron": "prayer_hall",
+        "town_guard": "fountain_plaza",
+        "traveling_merchant": "main_hall"
+      },
+      "permanent_hostile_slots": {
+        "frontier_town": {
+          "active_ids": [
+            "_encounter_frontier_town_18"
+          ],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
+      "properties": {
+        "temple_donation_total": 5,
+        "temple_last_donation_day": 1
+      },
+      "scoped_interactable_overlays": {
+        "adventurer_guild__guild_hall": [
+          {
+            "description": "布告栏中央钉着一份由北门守备长签发的报告，墨迹未干。上面详细标注了哥布林出没的时间与路线，其组织性令人担忧。",
+            "functional": {
+              "params": {
+                "clue_id": "organized_patrol_evidence",
+                "options": [
+                  {
+                    "id": "check_footprint_diagram",
+                    "label": "检查脚印示意图"
+                  },
+                  {
+                    "id": "compare_supply_routes",
+                    "label": "比对补给路线"
+                  }
+                ],
+                "outcomes": {
+                  "check_footprint_diagram": "示意图显示这些哥布林并非乱走，而是有着明显的行军纵队。这在哥布林中极为罕见。",
+                  "compare_supply_routes": "被袭击的地点完美避开了主要哨站，直指铁匠铺的供货薄弱点，说明情报已泄露。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "goblin_patrol_report",
+            "name": "公会布告栏：北门紧急报告",
+            "tags": [
+              "clue",
+              "quest_hook"
+            ],
+            "type": "bulletin_board"
+          },
+          {
+            "description": "桌上摊开着一张标注了近期魔物目击点的边境地图，几个红圈醒目地环绕着古代遗迹。",
+            "functional": {
+              "params": {
+                "clue_id": "ruins_strategic_importance",
+                "options": [
+                  {
+                    "id": "examine_circles",
+                    "label": "检查红圈标注"
+                  },
+                  {
+                    "id": "trace_supply_lines",
+                    "label": "追踪消失的补给线"
+                  }
+                ],
+                "outcomes": {
+                  "examine_circles": "红圈的中心并非城镇，而是深林中的古代遗迹，那里似乎成了哥布林的集结地。",
+                  "trace_supply_lines": "所有被截获的货车最后消失的位置，其延长线都指向了同一个坐标：古代遗迹入口。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "guild_strategic_map",
+            "name": "公会战略形势图",
+            "tags": [
+              "clue",
+              "map_data"
+            ],
+            "type": "map"
+          },
+          {
+            "description": "大厅内火把通明，冒险者们正围在紧急布告栏前，公会的武装干事正在分发成捆的火油和驱魔粉。",
+            "functional": {
+              "params": {
+                "clue_id": "assault_preparation_logistics",
+                "options": [
+                  {
+                    "id": "inspect_supplies",
+                    "label": "检查分发的物资"
+                  },
+                  {
+                    "id": "listen_to_orders",
+                    "label": "倾听作战简报"
+                  }
+                ],
+                "outcomes": {
+                  "inspect_supplies": "除了常规补给，公会甚至拿出了库存的强力闪光弹，这是专门对付哥布林夜视能力的杀手锏。",
+                  "listen_to_orders": "‘黎明前必须突入遗迹。如果让它们完成祭祀，整座山脉的哥布林都会被唤醒！’干事的声音在嘈杂中格外清晰。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "guild_emergency_assembly",
+            "name": "公会深夜集结令",
+            "tags": [
+              "clue",
+              "high_tension"
+            ],
+            "type": "npc_cluster"
+          }
+        ],
+        "north_gate": [
+          {
+            "description": "守备长在城墙根下临时搭建了一个沙盘，上面插满了代表哥布林哨点的黑旗，遗迹核心区域被圈出了显眼的血红色。",
+            "functional": {
+              "params": {
+                "clue_id": "ancient_ruins_interior_layout",
+                "options": [
+                  {
+                    "id": "locate_flank_route",
+                    "label": "寻找侧翼通路"
+                  },
+                  {
+                    "id": "identify_command_post",
+                    "label": "确认敌方指挥所"
+                  }
+                ],
+                "outcomes": {
+                  "identify_command_post": "所有黑旗的汇聚点都在遗迹的最深处——那座被萨满占据的骸骨祭坛。",
+                  "locate_flank_route": "沙盘显示，通过外廊的排水渠可以直接绕过正门的拒马阵，直达受污的祭祀大厅。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "warden_battle_map",
+            "name": "北门临时作战沙盘",
+            "tags": [
+              "clue",
+              "strategic"
+            ],
+            "type": "map"
+          }
+        ],
+        "tavern": [
+          {
+            "description": "角落里坐着几个垂头丧气的佣兵，他们正低声讨论着在遗迹附近遇到的‘不正常’哥布林。",
+            "functional": {
+              "params": {
+                "clue_id": "mercenary_rumors_ruins",
+                "options": [
+                  {
+                    "id": "listen_quietly",
+                    "label": "静心旁听"
+                  },
+                  {
+                    "id": "buy_a_drink",
+                    "label": "请他们喝一杯"
+                  }
+                ],
+                "outcomes": {
+                  "buy_a_drink": "他们接过酒，心有余悸地告诉你，古代遗迹的入口现在简直像个守备森严的要塞。",
+                  "listen_quietly": "你听到他们提到那些哥布林竟然装备了统一的皮甲，甚至还会设置交替掩护的岗哨。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "whispering_mercenaries",
+            "name": "窃窃私语的佣兵",
+            "tags": [
+              "clue",
+              "flavor"
+            ],
+            "type": "npc_cluster"
+          }
+        ]
+      },
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": [
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_blacksmith_9",
+          "name": "僻静处",
+          "resident_npcs": [
+            "blacksmith"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        },
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_guild_girl_12",
+          "name": "僻静处",
+          "resident_npcs": [
+            "guild_girl"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        }
+      ]
+    },
+    "water_capital": {
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.6,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

@@ -152,11 +152,15 @@ next actionable player dialogue options.
 the NPC can actually perform.
 - When an option maps to a concrete game function (trade, quest board, rest, \
 navigation), include a `functional` field: {"type": "<type>", "params": {…}}
-- Valid functional types: trade_browse, quest_accept, board_browse, navigate, \
-inspect_item, rest
+- Valid functional types: trade_browse, board_browse, navigate, inspect_item, rest
+- Accepting a quest is NOT a functional action. If the player wants to accept \
+a quest, generate a dialogue option with `npc_id` set to the receptionist NPC's \
+ID and a suitable `message`. The receptionist will handle the actual acceptance \
+through their own tools.
 - Do NOT invent functional actions for NPCs who lack those capabilities. \
-A merchant NPC should not get quest_accept; a guild receptionist should not \
-get trade_browse unless the context shows they have it.
+A merchant NPC should not get board_browse unless they are running a quest board; \
+a guild receptionist should not get trade_browse unless the context shows they \
+have it.
 - If another nearby NPC has the needed capability, suggest going to that NPC \
 instead (no functional field needed — just use text/message).
 
@@ -383,6 +387,16 @@ def _romance_hint(romance: int) -> str:
     return "你对此人有强烈的感情，但表达方式取决于你的性格。"
 
 
+def _fear_hint(fear: int) -> str:
+    if fear < 20:
+        return ""
+    if fear < 50:
+        return "你对此人有些畏惧，不太敢正面冲突或拒绝。"
+    if fear < 80:
+        return "你相当害怕此人，说话会不自觉地小心翼翼、讨好。"
+    return "你极度恐惧此人，几乎不敢违逆，言语中带着颤抖和顺从。"
+
+
 # ------------------------------------------------------------------
 # Utility helpers (moved from app/agent_orchestration.py)
 # ------------------------------------------------------------------
@@ -541,6 +555,7 @@ class AgentContextBuilder:
             knowledge_hits=l6.get("hits", []),
             time_info=l4.get("time"),
             role_data=role_data,
+            npc_id=npc_id,
         )
 
     async def build_npc_full_context(
@@ -596,6 +611,7 @@ class AgentContextBuilder:
             is_passive=is_passive,
             role_data=role_data,
             story_facts=story_facts if story_facts else None,
+            npc_id=npc_id,
         )
         return NpcFullContext(system_prompt=system_prompt, layers=layers)
 
@@ -1504,8 +1520,18 @@ def _extract_temple_keeper_data(
     state: StateContainer,
     world: WorldInstance,
 ) -> dict[str, Any]:
-    """Extract service catalog + player status for temple keeper NPCs."""
-    services: list[dict[str, Any]] = []
+    """Extract service catalog + player status for temple keeper NPCs.
+
+    Service list merges two sources (planner overrides content on same service_id):
+    1. Content layer: ``shop.services`` from CharacterTemplate (provides human-readable info)
+    2. NarrativePlanSlice: dynamically assigned services (carries effects atoms)
+
+    Each entry in the merged list includes an ``effects`` key so that the
+    ``execute_service`` NPC tool can locate effect atoms without querying the
+    slice again at execution time.
+    """
+    # ---- Source 1: content-layer services ----
+    content_map: dict[str, dict[str, Any]] = {}
     if world.has_registry("characters"):
         profile = world.characters.get(npc_id)
         shop = getattr(profile, "shop", None) if profile is not None else None
@@ -1530,15 +1556,45 @@ def _extract_temple_keeper_data(
                     or raw_service.get("availability")
                     or ""
                 ).strip()
-                services.append({
+                # effects may already be in content data; default to empty list
+                raw_effects = raw_service.get("effects", [])
+                effects: list[dict[str, Any]] = (
+                    list(raw_effects) if isinstance(raw_effects, list) else []
+                )
+                content_map[service_id] = {
                     "service_id": service_id,
                     "label": label,
                     "price": normalized_price,
                     "notes": notes,
-                })
+                    "effects": effects,
+                }
+
+    # ---- Source 2: NarrativePlanSlice dynamic services ----
+    # Planner entries carry authoritative effects atoms; they override content
+    # entries with the same service_id so that runtime assignments take precedence.
+    planner_map: dict[str, dict[str, Any]] = {}
+    if state.has_slice("narrative_plan"):
+        for svc in state.narrative_plan.get_services(npc_id):
+            svc_id = str(svc.get("service_id", "")).strip()
+            if not svc_id:
+                continue
+            planner_map[svc_id] = {
+                "service_id": svc_id,
+                "label": str(svc.get("label") or svc_id),
+                "price": svc.get("price", 0),
+                "notes": str(svc.get("notes", "")),
+                "effects": list(svc.get("effects", [])),
+                "preconditions": dict(svc.get("preconditions", {})),
+                "one_shot": bool(svc.get("one_shot", False)),
+                "source": str(svc.get("source", "planner")),
+            }
+
+    # ---- Merge: content base, planner overrides ----
+    merged: dict[str, dict[str, Any]] = {**content_map, **planner_map}
+    services: list[dict[str, Any]] = list(merged.values())
 
     area_id, location_id = _resolve_npc_area_and_location(npc_id, state, world)
-    player_state = {
+    player_state: dict[str, Any] = {
         "hp": None,
         "max_hp": None,
         "gold": None,
@@ -1657,7 +1713,7 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         ]
         if bulletins:
             for b in bulletins:
-                bulletin_line = f"- 【{b.get('title', '?')}】{b.get('summary', '')}"
+                bulletin_line = f"- 【{b.get('title', '?')}】(quest_id: {b.get('quest_id', '?')}) {b.get('summary', '')}"
                 objectives = b.get("objectives")
                 if isinstance(objectives, list) and objectives:
                     obj_str = "；".join(str(o) for o in objectives[:3])
@@ -1678,7 +1734,8 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         lines.append("### 玩家已接任务")
         if active:
             for q in active:
-                lines.append(f"- {q.get('title', q.get('quest_id', '?'))}")
+                qid = q.get('quest_id', '?')
+                lines.append(f"- {q.get('title', qid)} (quest_id: {qid})")
         else:
             lines.append("- （玩家当前没有进行中的任务）")
         lines.append("")
@@ -1798,7 +1855,8 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         if pending_events:
             for event in pending_events:
                 summary = str(event.get("summary", "")).strip()
-                detail = f"- {event.get('title', event.get('event_id', '?'))}"
+                eid = event.get('event_id', '?')
+                detail = f"- {event.get('title', eid)} (event_id: {eid})"
                 if summary:
                     detail += f"：{summary}"
                 lines.append(detail)
@@ -1832,6 +1890,7 @@ def _build_npc_prompt_text(
     is_passive: bool = False,
     role_data: dict[str, Any] | None = None,
     story_facts: list[dict[str, Any]] | None = None,
+    npc_id: str = "",
 ) -> str:
     """Format NPC system prompt string from resolved profile + relationship data."""
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
@@ -1897,6 +1956,7 @@ def _build_npc_prompt_text(
         g for g in [
             _STAGE_GUIDES.get(stage, ""),
             _trust_hint(int(trust)),
+            _fear_hint(int(fear)),
             _romance_hint(int(romance)),
         ]
         if g
@@ -2003,8 +2063,9 @@ def _build_npc_prompt_text(
 - You MUST respond when spoken to — do not use `pass_turn`.
 """
 
+    id_suffix = f" (id: {npc_id})" if npc_id else ""
     return f"""\
-You are {name}, an NPC in a dark-fantasy CRPG world.
+You are {name}{id_suffix}, an NPC in a dark-fantasy CRPG world.
 
 ## Your character
 {personality_block}{dialogue_hook_block}{tags_block}{style_block}{backstory_block}{speech_pattern_block}{identity_block}

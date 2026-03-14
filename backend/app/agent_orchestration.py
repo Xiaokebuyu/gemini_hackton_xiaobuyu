@@ -614,17 +614,13 @@ class AgentOrchestrationService:
                 await _emit(event)
             return collected
         if result.action_type == "resolve_clue_option":
-            resolution_event = self._build_clue_resolution_comment_event(result)
-            if resolution_event is not None:
-                shared.scene_bus.add_entry(
-                    {
-                        "source": "GM",
-                        "content": str(resolution_event.payload.get("content", "")),
-                        "visibility": "public",
-                        "tags": [resolution_event.event_type, "clue_resolution"],
-                    }
-                )
-                await _emit(resolution_event)
+            resolve_events = await self._run_clue_resolution_round(
+                shared,
+                result,
+                execute_command=execute_command,
+            )
+            for event in resolve_events:
+                await _emit(event)
             return collected
 
         gm_events = await self._generate_gm_reaction_from_shared(
@@ -684,8 +680,6 @@ class AgentOrchestrationService:
             "clue_name": str(metadata.get("clue_name") or metadata.get("name") or interactable_id or "线索").strip(),
             "description": str(metadata.get("description") or "").strip(),
             "topic": str(metadata.get("topic") or "").strip(),
-            "linked_quest_id": str(metadata.get("linked_quest_id") or "").strip(),
-            "linked_milestone": str(metadata.get("linked_milestone") or "").strip(),
             "party_prompt_hints": list(metadata.get("party_prompt_hints", []))
             if isinstance(metadata.get("party_prompt_hints"), list)
             else [],
@@ -755,6 +749,104 @@ class AgentOrchestrationService:
                     )
                 )
 
+        return events
+
+    async def _run_clue_resolution_round(
+        self,
+        shared: SharedContext,
+        result: PipelineResult,
+        *,
+        execute_command: Callable[[Command], ExecuteResult],
+    ) -> list[SSEEvent]:
+        """Full feedback chain for a resolve_clue_option action.
+
+        Mirrors _run_clue_investigation_round but omits the dialogue_options
+        panel (the clue is resolved — no further options apply).
+        """
+        metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+        interactable_id = str(metadata.get("interactable_id") or "").strip()
+        clue_payload: dict[str, Any] = {
+            "clue_id": str(metadata.get("clue_id") or interactable_id).strip(),
+            "interactable_id": interactable_id,
+            "clue_name": str(
+                metadata.get("clue_name") or metadata.get("name") or interactable_id or "线索"
+            ).strip(),
+            "description": str(metadata.get("description") or "").strip(),
+            "topic": str(metadata.get("topic") or "").strip(),
+            "party_prompt_hints": list(metadata.get("party_prompt_hints", []))
+            if isinstance(metadata.get("party_prompt_hints"), list)
+            else [],
+            "option_id": str(metadata.get("option_id") or "").strip(),
+            "option_label": str(metadata.get("option_label") or "").strip(),
+            "passed": metadata.get("passed"),
+            "effect_types": list(metadata.get("effect_types", []))
+            if isinstance(metadata.get("effect_types"), list)
+            else [],
+            "applied_effects": list(metadata.get("applied_effects", []))
+            if isinstance(metadata.get("applied_effects"), list)
+            else [],
+            "area_id": str(metadata.get("area_id") or "").strip(),
+            "location_id": str(metadata.get("location_id") or "").strip(),
+            "room_id": str(metadata.get("room_id") or "").strip(),
+        }
+        if not clue_payload["clue_id"]:
+            clue_payload["clue_id"] = interactable_id or "scene_clue"
+
+        shared.scene_bus.add_entry(
+            {
+                "source": "ENGINE",
+                "content": clue_payload["clue_name"],
+                "visibility": "public",
+                "tags": ["CLUE", "clue_resolution", "party_discussion"],
+            }
+        )
+
+        events: list[SSEEvent] = []
+        gm_events = await self._generate_clue_gm_events(shared, result, clue_payload)
+        if not gm_events:
+            # LLM unavailable — fall back to deterministic summary comment.
+            fallback = self._build_clue_resolution_comment_event(result)
+            if fallback is not None:
+                gm_events = [fallback]
+        for event in gm_events:
+            if event.event_type in {"gm_comment", "gm_narration"}:
+                shared.scene_bus.add_entry(
+                    {
+                        "source": "GM",
+                        "content": str(event.payload.get("content", "")),
+                        "visibility": "public",
+                        "tags": [event.event_type, "clue_resolution"],
+                    }
+                )
+            events.append(event)
+
+        teammate_events = await self._generate_clue_teammate_events(
+            shared,
+            clue_payload,
+            gm_events=gm_events,
+            execute_command=execute_command,
+        )
+        for event in teammate_events:
+            if event.event_type == "teammate_response":
+                shared.scene_bus.add_entry(
+                    {
+                        "source": f"TEAMMATE:{event.payload.get('character_id', '')}",
+                        "content": str(
+                            event.payload.get("content") or event.payload.get("action") or ""
+                        ),
+                        "visibility": "public",
+                        "tags": [event.event_type, "clue_resolution"],
+                    }
+                )
+            events.append(event)
+
+        # Close the front-end options panel.
+        events.append(
+            SSEEvent(
+                event_type="dialogue_options_unavailable",
+                payload={"reason": "clue_resolved"},
+            )
+        )
         return events
 
     async def _generate_clue_gm_events(
@@ -855,6 +947,16 @@ class AgentOrchestrationService:
             )
             if tm_prompt is None:
                 continue
+
+            # Inject party_prompt_hints when the clue author provided guidance.
+            party_hints: list[str] = [
+                str(h).strip()
+                for h in clue_payload.get("party_prompt_hints", [])
+                if isinstance(h, str) and str(h).strip()
+            ]
+            if party_hints:
+                hints_text = "\n".join(f"- {h}" for h in party_hints)
+                tm_prompt = f"{tm_prompt}\n\n## 线索提示\n{hints_text}"
 
             instance = (
                 companion_manager.get_or_create(member_id, current_tick=current_tick)

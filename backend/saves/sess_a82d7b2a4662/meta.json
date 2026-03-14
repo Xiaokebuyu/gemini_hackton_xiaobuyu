@@ -1,0 +1,19 @@
+{
+  "character_name": "xiaokebuyu",
+  "created_at": 1773506574.4165232,
+  "game_day": 1,
+  "game_slot": 24,
+  "last_played": 1773515873.8325927,
+  "phase": "active",
+  "saved_at": 1773515873.8325927,
+  "session_id": "sess_a82d7b2a4662",
+  "summary": {
+    "day": 1,
+    "level": 2,
+    "location": "北门",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "xiaokebuyu"
+  },
+  "world_id": "goblin_slayer"
+}

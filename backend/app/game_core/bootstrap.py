@@ -11,7 +11,6 @@ from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
 from app.game_core.narrative.instance_manager import InstanceManager
 from app.game_core.planning import (
     DynamicSubAreaManager,
-    ItemDesignerSubSystem,
     NarrativeWeaverSubSystem,
     NpcDirectorSubSystem,
     PacingControllerSubSystem,
@@ -131,10 +130,6 @@ def build_narrative_planner_hook(
     dispatcher.register(NarrativeWeaverSubSystem(
         sse_collector=planner_hook._pending_sse,
         agent=planner_system.narrative_weaver_agent,
-    ))
-    dispatcher.register(ItemDesignerSubSystem(
-        sse_collector=planner_hook._pending_sse,
-        agent=planner_system.item_designer_agent,
     ))
     planner_hook._dispatcher = dispatcher
     return planner_hook

@@ -1,0 +1,138 @@
+{
+  "active_events": {},
+  "pending_events": [
+    {
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 17
+      },
+      "event_id": "rumor_organized_goblins_approaching",
+      "event_type": "generic",
+      "metadata": {},
+      "payload": {},
+      "source": "ai_osiris",
+      "trigger_condition": {
+        "location_id": "frontier_town",
+        "type": "location_entered"
+      }
+    }
+  ],
+  "rumors": [
+    {
+      "area_id": null,
+      "content": "边境小镇的居民们注意到一名新来的白瓷级冒险者，他不仅在铁匠铺反复挑选装备，还虔诚地前往地母神殿寻求庇护，被认为是一个少见的、不急于送死的稳健派。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 9
+      },
+      "metadata": {},
+      "rumor_id": "rumor_1dcdf593ef82",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "边境小镇的居民们注意到一名新来的白瓷级冒险者，他不仅在铁匠铺反复挑选装备，还虔诚地前往地母神殿寻求庇护，被认为是一个少见的、不急于送死的稳健派。"
+    },
+    {
+      "area_id": null,
+      "content": "公会大厅内开始流传关于北边遗迹的哥布林不再是散兵游勇，而是拥有了铁制武器和防御工事的传闻，冒险者们的危机感正在上升。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 12
+      },
+      "metadata": {},
+      "rumor_id": "rumor_c82cdbf9e94c",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "公会大厅内开始流传关于北边遗迹的哥布林不再是散兵游勇，而是拥有了铁制武器和防御工事的传闻，冒险者们的危机感正在上升。"
+    },
+    {
+      "area_id": null,
+      "content": "随着小队从遗迹归来，关于哥布林开始使用号角和陷阱进行组织化防御的传闻在公会大厅内传开，引起了低等冒险者的不安。",
+      "created_at": {
+        "day": 1,
+        "period": "dusk",
+        "slot": 18
+      },
+      "metadata": {},
+      "rumor_id": "rumor_b93c36b72593",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "随着小队从遗迹归来，关于哥布林开始使用号角和陷阱进行组织化防御的传闻在公会大厅内传开，引起了低等冒险者的不安。"
+    },
+    {
+      "area_id": null,
+      "content": "随着冒险者从古代遗迹归来，关于“哥布林开始像军队一样行动”的传闻开始在公会大厅内蔓延，年轻冒险者们的脸色显得有些不安。",
+      "created_at": {
+        "day": 1,
+        "period": "dusk",
+        "slot": 19
+      },
+      "metadata": {},
+      "rumor_id": "rumor_e1fa709ccfc9",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "随着冒险者从古代遗迹归来，关于“哥布林开始像军队一样行动”的传闻开始在公会大厅内蔓延，年轻冒险者们的脸色显得有些不安。"
+    },
+    {
+      "area_id": null,
+      "content": "深夜的冒险者公会流传着一个消息：一名白瓷等级的新人从北边遗迹活着回来了，并带回了关于‘哥布林军队’的惊人情报。",
+      "created_at": {
+        "day": 1,
+        "period": "night",
+        "slot": 20
+      },
+      "metadata": {},
+      "rumor_id": "rumor_efb06012a041",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "深夜的冒险者公会流传着一个消息：一名白瓷等级的新人从北边遗迹活着回来了，并带回了关于‘哥布林军队’的惊人情报。"
+    },
+    {
+      "area_id": null,
+      "content": "深夜的公会大厅内，关于“北方遗迹的哥布林开始像军队一样行动”的传闻开始在冒险者之间小声流传。",
+      "created_at": {
+        "day": 1,
+        "period": "night",
+        "slot": 21
+      },
+      "metadata": {},
+      "rumor_id": "rumor_14db4972d885",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "深夜的公会大厅内，关于“北方遗迹的哥布林开始像军队一样行动”的传闻开始在冒险者之间小声流传。"
+    },
+    {
+      "area_id": null,
+      "content": "一位新来的冒险者在深夜向地母神教会慷慨解囊，这在边境镇的冒险者中并不多见。",
+      "created_at": {
+        "day": 1,
+        "period": "night",
+        "slot": 23
+      },
+      "metadata": {},
+      "rumor_id": "rumor_c63d01920d1b",
+      "source": "ai_osiris",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [
+        "social",
+        "earth_mother_church"
+      ],
+      "text": "一位新来的冒险者在深夜向地母神教会慷慨解囊，这在边境镇的冒险者中并不多见。"
+    }
+  ]
+}

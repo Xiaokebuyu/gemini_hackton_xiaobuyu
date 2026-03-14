@@ -11,7 +11,6 @@ from app.game_core.orchestration.hooks.narrative_planner import (
 )
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
-from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
 from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.planning.pacing_controller import PacingControllerSubSystem
@@ -256,7 +255,6 @@ def build_test_hook(
     npc_agent: Any | None = None,
     world_agent: Any | None = None,
     weaver_agent: Any | None = None,
-    item_agent: Any | None = None,
     instance_manager: InstanceManager | None = None,
 ) -> NarrativePlannerHook:
     if planner is not None:
@@ -267,7 +265,6 @@ def build_test_hook(
             and npc_agent is None
             and world_agent is None
             and weaver_agent is None
-            and item_agent is None
         ):
             quest_agent = PlannerAgentAdapter(
                 planner,
@@ -289,10 +286,6 @@ def build_test_hook(
             weaver_agent = PlannerAgentAdapter(
                 planner,
                 allowed_directives={"escalate", "adjust_pacing"},
-            )
-            item_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"design_reward", "curate_shop"},
             )
     if blackboard is None:
         blackboard = StaticBlackboard()
@@ -319,6 +312,5 @@ def build_test_hook(
             agent=weaver_agent,
         )
     )
-    dispatcher.register(ItemDesignerSubSystem(sse_collector=hook._pending_sse, agent=item_agent))
     hook._dispatcher = dispatcher
     return hook

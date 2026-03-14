@@ -40,6 +40,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ------------------------------------------------------------------
+# Content-layer service → effect-atom mapping (Phase 4)
+# Maps known service_id values to executable effect atom lists.
+# Unknown service_id → empty list (NPC can discuss but not execute mechanically).
+# "donation" is intentionally excluded — handled by the existing DonationHandler.
+# ------------------------------------------------------------------
+_CONTENT_SERVICE_EFFECTS: dict[str, list[dict[str, Any]]] = {
+    "heal": [{"type": "restore_hp", "amount": 30}],
+    "blessing": [{"type": "apply_effect", "effect_id": "blessed", "duration_ticks": 6}],
+    "field_dressing": [{"type": "restore_hp", "amount": 15}],
+    "trail_prayer": [
+        {"type": "apply_effect", "effect_id": "trail_protection", "duration_ticks": 4}
+    ],
+}
+
 _TICK_KIND_TRAVEL = frozenset({"move_area", "enter_sub_location", "leave_sub_location"})
 _TICK_KIND_REST = frozenset({"rest_short", "rest_long", "night_watch", "set_camp"})
 _TICK_KIND_CONVERSATION = frozenset(
@@ -79,6 +94,7 @@ class NarrativePlannerDecision:
     strategy_notes: str = ""
     next_scheduled_tick: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    outline_updates: dict[str, Any] = field(default_factory=dict)
 
 
 class NarrativePlannerProvider(Protocol):
@@ -494,6 +510,12 @@ class NarrativePlannerHook(NoOpSettlementHook):
             commit_payload["next_scheduled_tick"] = blackboard_decision.next_scheduled_tick
         self._commit_runtime_state(context, **commit_payload)
 
+        # Apply outline_updates from the planner's response
+        if blackboard_decision.outline_updates and context.state.has_slice("narrative_plan"):
+            context.state.narrative_plan.update_milestone_outline(
+                blackboard_decision.outline_updates
+            )
+
         sse_events: list[SSEEvent] = list(self._pending_sse)
         self._pending_sse.clear()
         if applied_count > 0:
@@ -700,6 +722,16 @@ class NarrativePlannerHook(NoOpSettlementHook):
         ):
             bootstrap_commit_payload["next_scheduled_tick"] = blackboard_decision.next_scheduled_tick
         self._commit_runtime_state(context, **bootstrap_commit_payload)
+
+        # Apply outline_updates from the planner's bootstrap response
+        if blackboard_decision.outline_updates and context.state.has_slice("narrative_plan"):
+            context.state.narrative_plan.update_milestone_outline(
+                blackboard_decision.outline_updates
+            )
+
+        # Phase 4: inject content-layer services into NarrativePlanSlice
+        self._bootstrap_content_services(context)
+
         sse_events = list(self._pending_sse)
         self._pending_sse.clear()
         return HookResult(
@@ -1267,6 +1299,11 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "并使用该 step 的 condition 作为任务目标。"
                 "优先推进 current_step，不要跳过未完成的步骤。"
             ) if milestone_outline_ctx else None,
+            # R3-C: rich feedback — quest progress, milestone condition satisfaction,
+            #        NPC directive confirmation, clue interaction summary
+            "planner_feedback": self._build_planner_feedback(
+                context, current_tick=current_tick,
+            ),
         }
 
     async def _ensure_milestone_outline(
@@ -2248,13 +2285,168 @@ class NarrativePlannerHook(NoOpSettlementHook):
         template = context.world.quests.get_milestone(target_milestone_id)
         if template is None:
             return {}
+        # R3-A: include success_conditions as structured list[dict] for Planner
+        raw_success = getattr(template, "success_conditions", None) or []
+        success_conditions_serialized: list[dict[str, Any]] = []
+        for cond in raw_success:
+            if isinstance(cond, dict):
+                success_conditions_serialized.append(cond)
+            else:
+                # MilestoneCondition dataclass: .type, .params, .optional
+                entry: dict[str, Any] = {"type": str(getattr(cond, "type", ""))}
+                params = getattr(cond, "params", None)
+                if isinstance(params, dict) and params:
+                    entry["params"] = dict(params)
+                optional = getattr(cond, "optional", False)
+                if optional:
+                    entry["optional"] = True
+                success_conditions_serialized.append(entry)
         return {
             "key_elements": list(template.key_elements),
             "involved_npcs": list(template.involved_npcs),
             "involved_locations": list(template.involved_locations),
             "narrative_context": template.narrative_context,
             "failure_fallback": template.failure_fallback,
+            "success_conditions": success_conditions_serialized,
         }
+
+    @staticmethod
+    def _build_planner_feedback(
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> dict[str, Any]:
+        """R3-C: Build a rich feedback dict for the Planner.
+
+        Returns keys:
+        - quest_progress: list[dict] — active quests with obj completion ratio
+        - milestone_satisfaction: list[dict] — current milestone conditions (met/not_met)
+        - npc_directive_confirmations: list[dict] — recent npc_directives vs talked_to flags
+        - clue_interaction_summary: dict — discovered/examined/resolved/unexamined counts
+        """
+        result: dict[str, Any] = {}
+
+        # 1. Quest progress (active quests with objectives completion ratio)
+        quest_progress: list[dict[str, Any]] = []
+        if context.state.has_slice("quests"):
+            active_statuses = {"in_progress", "active", "accepted"}
+            for q_id, q_data in context.state.quests.dynamic_quests.items():
+                if not isinstance(q_data, Mapping):
+                    continue
+                if str(q_data.get("status", "")).strip().lower() not in active_statuses:
+                    continue
+                raw_objectives = q_data.get("objectives", [])
+                if not isinstance(raw_objectives, list) or not raw_objectives:
+                    continue
+                total = len(raw_objectives)
+                completed = sum(
+                    1 for obj in raw_objectives
+                    if isinstance(obj, Mapping) and bool(obj.get("completed", False))
+                )
+                quest_progress.append({
+                    "quest_id": str(q_id),
+                    "title": str(q_data.get("title", q_id)),
+                    "completed_objectives": completed,
+                    "total_objectives": total,
+                    "ratio": round(completed / total, 2) if total else 0.0,
+                })
+        result["quest_progress"] = quest_progress
+
+        # 2. Milestone condition satisfaction (current target milestone)
+        milestone_satisfaction: list[dict[str, Any]] = []
+        if (
+            context.state.has_slice("quests")
+            and context.world.has_registry("quests")
+        ):
+            target_ms = context.state.narrative_plan.current_target_milestone
+            if target_ms:
+                template = context.world.quests.get_milestone(target_ms)
+                if template is not None:
+                    from app.game_core.orchestration.event_engine import BasicEventConditionEvaluator
+                    from app.game_core.orchestration.hooks.milestone_completion import (
+                        _condition_to_dict,
+                        _has_condition_type,
+                    )
+                    evaluator = BasicEventConditionEvaluator()
+                    raw_conds = getattr(template, "success_conditions", None) or []
+                    for cond in raw_conds:
+                        if not _has_condition_type(cond):
+                            continue
+                        cond_dict = _condition_to_dict(cond)
+                        met, _ = evaluator._condition_met(context.state, cond_dict)
+                        cond_type = str(cond_dict.get("type", "?"))
+                        cond_params = cond_dict.get("params", {})
+                        milestone_satisfaction.append({
+                            "type": cond_type,
+                            "params": cond_params if isinstance(cond_params, dict) else {},
+                            "met": met,
+                            "optional": bool(getattr(cond, "optional", cond_dict.get("optional", False))),
+                        })
+        result["milestone_satisfaction"] = milestone_satisfaction
+
+        # 3. NPC directive execution confirmation (recent unconsumed directives vs talked_to flags)
+        npc_directive_confirmations: list[dict[str, Any]] = []
+        if context.state.has_slice("narrative_plan") and context.state.has_slice("flags"):
+            for d in context.state.narrative_plan.npc_directives:
+                if not isinstance(d, Mapping):
+                    continue
+                if d.get("consumed", False):
+                    continue
+                expires = d.get("expires_at_tick", current_tick + 1)
+                if isinstance(expires, (int, float)) and expires < current_tick:
+                    continue
+                npc_id = str(d.get("npc_id", "")).strip()
+                if not npc_id:
+                    continue
+                # Check if talked_to_{npc_id} flag is set as confirmation
+                flag_key = f"talked_to_{npc_id}"
+                flag_value = context.state.flags.get(flag_key)
+                talked = bool(flag_value) if flag_value is not None else False
+                npc_directive_confirmations.append({
+                    "npc_id": npc_id,
+                    "directive_kind": d.get("directive", {}).get("kind", "?") if isinstance(d.get("directive"), Mapping) else "?",
+                    "issued_at_tick": d.get("issued_at_tick", 0),
+                    "talked_flag_set": talked,
+                })
+        result["npc_directive_confirmations"] = npc_directive_confirmations
+
+        # 4. Clue interaction summary (current area)
+        clue_summary: dict[str, Any] = {}
+        if (
+            context.state.has_slice("areas")
+            and context.state.has_slice("player")
+        ):
+            area_id = context.state.player.current_area
+            if area_id and area_id in context.state.areas.areas:
+                area_state = context.state.areas.areas[area_id]
+                discovered = 0
+                examined = 0
+                resolved = 0
+                unexamined = 0
+                for _iid, istate in area_state.interactable_states.items():
+                    if not isinstance(istate, Mapping):
+                        continue
+                    # Only count clue interactables
+                    ft = str(istate.get("functional_type", "")).strip()
+                    if ft != "investigate_clue":
+                        continue
+                    discovered += 1
+                    if istate.get("resolved_option_id"):
+                        resolved += 1
+                    elif istate.get("first_inspected"):
+                        examined += 1
+                    else:
+                        unexamined += 1
+                if discovered:
+                    clue_summary = {
+                        "discovered": discovered,
+                        "examined": examined,
+                        "resolved": resolved,
+                        "unexamined": unexamined,
+                    }
+        result["clue_interaction_summary"] = clue_summary
+
+        return result
 
     @staticmethod
     def _get_area_danger(context: SettlementContext) -> float:
@@ -2435,6 +2627,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 strategy_notes=cls._string_or_empty(raw.strategy_notes),
                 next_scheduled_tick=raw.next_scheduled_tick,
                 metadata=_normalize_mapping(raw.metadata),
+                outline_updates=dict(raw.outline_updates) if isinstance(raw.outline_updates, Mapping) else {},
             )
         if isinstance(raw, list):
             return NarrativePlannerDecision(directives=list(raw))
@@ -2447,12 +2640,19 @@ class NarrativePlannerHook(NoOpSettlementHook):
             not isinstance(next_tick, int) or isinstance(next_tick, bool)
         ):
             next_tick = None
+        raw_outline_updates = raw.get("outline_updates")
+        outline_updates = (
+            dict(raw_outline_updates)
+            if isinstance(raw_outline_updates, Mapping)
+            else {}
+        )
         return NarrativePlannerDecision(
             directives=directives,
             story_facts=cls._normalize_story_facts(raw.get("story_facts")),
             strategy_notes=cls._string_or_empty(raw.get("strategy_notes")),
             next_scheduled_tick=next_tick,
             metadata=_normalize_mapping(raw.get("metadata")),
+            outline_updates=outline_updates,
         )
 
     @classmethod
@@ -2536,3 +2736,72 @@ class NarrativePlannerHook(NoOpSettlementHook):
     @classmethod
     def _string_or_empty(cls, value: Any) -> str:
         return cls._coerce_non_empty_string(value) or ""
+
+    # ------------------------------------------------------------------
+    # Content-layer service bootstrap (Phase 4)
+    # ------------------------------------------------------------------
+
+    def _bootstrap_content_services(self, context: "SettlementContext") -> None:
+        """Inject shop.services from character templates into NarrativePlanSlice.
+
+        Idempotent: if an NPC already has any service with source="content",
+        that NPC is skipped entirely to avoid duplicate injection on repeated
+        bootstrap calls.
+
+        "donation" entries are skipped — they are handled by DonationHandler.
+        Unknown service_ids get an empty effects list so the NPC can discuss
+        them in dialogue but the execute_service tool cannot mechanically execute.
+        """
+        if not context.state.has_slice("narrative_plan"):
+            return
+        if not context.world.has_registry("characters"):
+            return
+
+        for template in context.world.characters.list_all():
+            npc_id = template.id
+            shop = template.shop
+            if not isinstance(shop, Mapping):
+                continue
+            raw_services = shop.get("services", [])
+            if not isinstance(raw_services, list) or not raw_services:
+                continue
+
+            # Idempotency: skip NPC if any content-sourced service already exists
+            existing = context.state.narrative_plan.get_services(npc_id)
+            if any(str(s.get("source", "")) == "content" for s in existing):
+                continue
+
+            for raw_svc in raw_services:
+                if not isinstance(raw_svc, Mapping):
+                    continue
+                service_id = str(
+                    raw_svc.get("service_id") or raw_svc.get("id") or ""
+                ).strip()
+                if not service_id:
+                    continue
+                # Skip donation — handled by dedicated DonationHandler
+                if service_id == "donation":
+                    continue
+                label = str(raw_svc.get("label") or service_id).strip() or service_id
+                try:
+                    price = int(raw_svc.get("price", 0))
+                except (TypeError, ValueError):
+                    price = 0
+                notes = str(
+                    raw_svc.get("notes") or raw_svc.get("availability") or ""
+                ).strip()
+                effects = list(_CONTENT_SERVICE_EFFECTS.get(service_id, []))
+                svc_dict: dict[str, Any] = {
+                    "service_id": service_id,
+                    "npc_id": npc_id,
+                    "label": label,
+                    "price": price,
+                    "notes": notes,
+                    "effects": effects,
+                    "preconditions": {},
+                    "one_shot": False,
+                    "assigned_tick": 0,
+                    "expiry_tick": 0,  # never expires
+                    "source": "content",
+                }
+                context.state.narrative_plan.assign_service(npc_id, svc_dict)

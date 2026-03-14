@@ -1079,8 +1079,12 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'combat_end': {
         const d = cast<CombatEndData>(event.data)
         combat.endCombat(d)
-        if (d.result === 'victory') audio.playVictory()
-        else audio.playDefeat()
+        if (d.result === 'victory') {
+          audio.playVictory()
+          audio.setBgm('victory')
+        } else {
+          audio.playDefeat()
+        }
         break
       }
 

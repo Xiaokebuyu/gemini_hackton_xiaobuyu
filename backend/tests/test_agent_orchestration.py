@@ -991,13 +991,14 @@ class TestPostActionReactions:
             for option in dialogue_event.payload["options"]
         )
 
-    def test_run_post_action_round_uses_clue_resolution_summary_instead_of_generic_reactions(self) -> None:
-        class NoopExecutor:
+    def test_run_post_action_round_uses_clue_resolution_fallback_when_llm_unavailable(self) -> None:
+        """When LLM executor returns empty result, resolve falls back to deterministic comment."""
+        class EmptyExecutor:
             async def run_agentic(self, **_: Any) -> AgentResult:
-                raise AssertionError("resolve_clue_option should not invoke generic agent reactions")
+                return AgentResult()
 
         session = _session_for_post_action_round()
-        service = AgentOrchestrationService(NoopExecutor())  # type: ignore[arg-type]
+        service = AgentOrchestrationService(EmptyExecutor())  # type: ignore[arg-type]
         shared = SharedContext(
             world=session.runtime.world,
             state=session.runtime.state,
@@ -1025,8 +1026,12 @@ class TestPostActionReactions:
             )
         )
 
-        assert [event.event_type for event in events] == ["gm_comment"]
+        # Fallback deterministic comment should appear + panel closed.
+        event_types = [event.event_type for event in events]
+        assert "gm_comment" in event_types
+        assert "dialogue_options_unavailable" in event_types
         assert "露出了一条能追下去的路" in events[0].payload["content"]
+        assert events[-1].payload["reason"] == "clue_resolved"
 
     def test_run_post_action_round_drops_protocol_error_reactions(self) -> None:
         session = _session_for_post_action_round()
@@ -1287,6 +1292,237 @@ class TestPostActionReactions:
             ))
 
         assert any(event.event_type == "npc_response" for event in events)
+
+    def test_resolve_clue_emits_dialogue_options_unavailable(self) -> None:
+        """resolve_clue_option always appends dialogue_options_unavailable to close the panel."""
+
+        class EmptyExecutor:
+            async def run_agentic(self, **_: Any) -> AgentResult:
+                return AgentResult()
+
+        session = _session_for_post_action_round()
+        service = AgentOrchestrationService(EmptyExecutor())  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+        result = PipelineResult(
+            executed=True,
+            action_type="resolve_clue_option",
+            metadata={
+                "clue_id": "blood_trail",
+                "clue_name": "拖拽血迹",
+                "option_id": "examine",
+                "option_label": "仔细检查",
+                "passed": False,
+                "effect_types": [],
+            },
+        )
+
+        events = asyncio.run(
+            service.run_post_action_round(
+                shared,
+                result,
+                session.runtime.tick_coordinator._apply_delta,
+            )
+        )
+
+        event_types = [event.event_type for event in events]
+        assert "dialogue_options_unavailable" in event_types
+        unavailable_event = next(e for e in events if e.event_type == "dialogue_options_unavailable")
+        assert unavailable_event.payload["reason"] == "clue_resolved"
+
+    def test_resolve_clue_option_generates_gm_narration(self) -> None:
+        """R2-A: resolve_clue_option uses LLM GM narration when executor succeeds."""
+        class GmNarrationExecutor:
+            async def run_agentic(self, *, role: str, **_: Any) -> AgentResult:
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                ok=True,
+                                message="痕迹在这里断掉了，但方向已经清晰。",
+                                metadata={"event_type": "gm_narration"},
+                            )
+                        ]
+                    )
+                return AgentResult()
+
+        session = _session_for_post_action_round()
+        service = AgentOrchestrationService(GmNarrationExecutor())  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+        )
+        result = PipelineResult(
+            executed=True,
+            action_type="resolve_clue_option",
+            metadata={
+                "clue_id": "dust_marks",
+                "clue_name": "灰尘痕迹",
+                "option_id": "examine",
+                "option_label": "仔细检查",
+                "passed": True,
+                "effect_types": [],
+            },
+        )
+
+        events = asyncio.run(
+            service.run_post_action_round(
+                shared,
+                result,
+                session.runtime.tick_coordinator._apply_delta,
+            )
+        )
+
+        event_types = [event.event_type for event in events]
+        # LLM gm_narration should appear, not the deterministic gm_comment fallback.
+        assert "gm_narration" in event_types
+        assert "gm_comment" not in event_types
+        narration_event = next(e for e in events if e.event_type == "gm_narration")
+        assert "痕迹在这里断掉了" in narration_event.payload["content"]
+        # Panel still closed at the end.
+        assert event_types[-1] == "dialogue_options_unavailable"
+
+    def test_resolve_clue_option_generates_teammate_reactions(self) -> None:
+        """R2-A: resolve_clue_option generates teammate reactions when party is present."""
+        class ResolveExecutor:
+            def __init__(self) -> None:
+                self.roles: list[str] = []
+
+            async def run_agentic(self, *, role: str, **_: Any) -> AgentResult:
+                self.roles.append(role)
+                if role == "gm":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                ok=True,
+                                message="谜题的一角掀开了。",
+                                metadata={"event_type": "gm_narration"},
+                            )
+                        ]
+                    )
+                if role == "teammate":
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                ok=True,
+                                message="这条线比我想象的还要直。",
+                                metadata={"event_type": "speech"},
+                            )
+                        ]
+                    )
+                return AgentResult()
+
+        session = _session_for_post_action_round()
+        executor_obj = ResolveExecutor()
+        service = AgentOrchestrationService(executor_obj)  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+            companion_manager=session.runtime.companion_manager,
+        )
+        result = PipelineResult(
+            executed=True,
+            action_type="resolve_clue_option",
+            metadata={
+                "clue_id": "blood_trail",
+                "clue_name": "拖拽血迹",
+                "option_id": "follow",
+                "option_label": "顺着痕迹追过去",
+                "passed": True,
+                "effect_types": [],
+            },
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            events = asyncio.run(
+                service.run_post_action_round(
+                    shared,
+                    result,
+                    session.runtime.tick_coordinator._apply_delta,
+                )
+            )
+
+        event_types = [event.event_type for event in events]
+        assert "gm_narration" in event_types
+        assert "teammate_response" in event_types
+        assert "dialogue_options_unavailable" in event_types
+        # dialogue_options panel should NOT appear for resolve (only for investigate).
+        assert "dialogue_options" not in event_types
+        # Teammate called.
+        assert "teammate" in executor_obj.roles
+
+    def test_party_prompt_hints_injected_into_teammate_prompt(self) -> None:
+        """R2-B: party_prompt_hints from clue_payload are appended to the teammate system prompt."""
+        captured_prompts: list[str] = []
+
+        class CapturingExecutor:
+            async def run_agentic(
+                self,
+                *,
+                role: str,
+                system_prompt: str,
+                **_: Any,
+            ) -> AgentResult:
+                if role == "teammate":
+                    captured_prompts.append(system_prompt)
+                    return AgentResult(
+                        tool_results=[
+                            ToolResult(
+                                ok=True,
+                                message="我注意到了那条线索。",
+                                metadata={"event_type": "speech"},
+                            )
+                        ]
+                    )
+                return AgentResult()
+
+        session = _session_for_post_action_round()
+        service = AgentOrchestrationService(CapturingExecutor())  # type: ignore[arg-type]
+        shared = SharedContext(
+            world=session.runtime.world,
+            state=session.runtime.state,
+            rules_engine=session.runtime.rules_engine,
+            scene_bus=session.runtime.scene_bus,
+            companion_manager=session.runtime.companion_manager,
+        )
+        result = PipelineResult(
+            executed=True,
+            action_type="investigate_clue",
+            metadata={
+                "clue_id": "old_map",
+                "interactable_id": "old_map_interactable",
+                "clue_name": "旧地图",
+                "description": "一张褪色的地图，角落里有标记。",
+                "options": [
+                    {"id": "study", "label": "仔细研读"},
+                    {"id": "compare", "label": "对照现有地图"},
+                ],
+                "party_prompt_hints": ["注意地图上的十字标记", "西北角标注有特殊符号"],
+            },
+        )
+
+        with patch("app.agent_orchestration.random.random", return_value=0.0):
+            asyncio.run(
+                service.run_post_action_round(
+                    shared,
+                    result,
+                    session.runtime.tick_coordinator._apply_delta,
+                )
+            )
+
+        assert len(captured_prompts) > 0
+        prompt = captured_prompts[0]
+        assert "## 线索提示" in prompt
+        assert "注意地图上的十字标记" in prompt
+        assert "西北角标注有特殊符号" in prompt
 
 
 class TestGracefulDegradation:

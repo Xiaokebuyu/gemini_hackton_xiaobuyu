@@ -32,6 +32,7 @@ class NarrativePlanSlice(StateSlice):
         self.context_windows_data: dict[str, Any] = {}
         self.last_planner_replay_trace: dict[str, Any] = {}
         self.npc_capabilities: dict[str, list[dict[str, Any]]] = {}
+        self.npc_services: dict[str, list[dict[str, Any]]] = {}
         self.milestone_outline: dict[str, Any] = {}
 
     def restore(self, payload: Mapping[str, Any]) -> None:
@@ -90,6 +91,15 @@ class NarrativePlanSlice(StateSlice):
                         dict(item) for item in raw_list
                         if isinstance(item, Mapping)
                     ]
+        raw_svcs = payload.get("npc_services")
+        self.npc_services = {}
+        if isinstance(raw_svcs, Mapping):
+            for npc_id, raw_list in raw_svcs.items():
+                if isinstance(npc_id, str) and isinstance(raw_list, list):
+                    self.npc_services[npc_id] = [
+                        dict(item) for item in raw_list
+                        if isinstance(item, Mapping)
+                    ]
         raw_outline = payload.get("milestone_outline")
         self.milestone_outline = dict(raw_outline) if isinstance(raw_outline, Mapping) else {}
         self.clear_dirty()
@@ -123,6 +133,10 @@ class NarrativePlanSlice(StateSlice):
             "npc_capabilities": {
                 npc_id: [dict(cap) for cap in caps]
                 for npc_id, caps in self.npc_capabilities.items()
+            },
+            "npc_services": {
+                npc_id: [dict(svc) for svc in svcs]
+                for npc_id, svcs in self.npc_services.items()
             },
             "milestone_outline": self._snapshot_milestone_outline(),
         }
@@ -277,6 +291,63 @@ class NarrativePlanSlice(StateSlice):
         return pruned
 
     # ------------------------------------------------------------------
+    # NPC service management
+    # ------------------------------------------------------------------
+
+    def assign_service(self, npc_id: str, svc_dict: dict[str, Any]) -> None:
+        """Assign (or replace by service_id) a service for an NPC."""
+        npc_id = str(npc_id)
+        svc_id = str(svc_dict.get("service_id", ""))
+        existing = self.npc_services.get(npc_id, [])
+        # Replace existing entry with the same service_id
+        filtered = [s for s in existing if str(s.get("service_id", "")) != svc_id]
+        filtered.append(dict(svc_dict))
+        self.npc_services[npc_id] = filtered
+        self._dirty = True
+
+    def revoke_service(self, npc_id: str, service_id: str) -> bool:
+        """Remove a service from an NPC. Returns True if something was removed."""
+        npc_id = str(npc_id)
+        service_id = str(service_id)
+        existing = self.npc_services.get(npc_id, [])
+        filtered = [s for s in existing if str(s.get("service_id", "")) != service_id]
+        if len(filtered) == len(existing):
+            return False
+        if filtered:
+            self.npc_services[npc_id] = filtered
+        else:
+            self.npc_services.pop(npc_id, None)
+        self._dirty = True
+        return True
+
+    def get_services(self, npc_id: str) -> list[dict[str, Any]]:
+        """Return defensive copy of services for npc_id."""
+        svcs = self.npc_services.get(str(npc_id), [])
+        return [dict(s) for s in svcs]
+
+    def prune_expired_services(self, current_tick: int) -> int:
+        """Remove expired service entries. Returns count of removed services."""
+        pruned = 0
+        to_remove: list[str] = []
+        for npc_id, svcs in self.npc_services.items():
+            before_count = len(svcs)
+            active = [
+                s for s in svcs
+                if int(s.get("expiry_tick", 0)) == 0
+                or int(s.get("expiry_tick", 0)) > current_tick
+            ]
+            pruned += before_count - len(active)
+            if active:
+                self.npc_services[npc_id] = active
+            else:
+                to_remove.append(npc_id)
+        for npc_id in to_remove:
+            self.npc_services.pop(npc_id, None)
+        if pruned > 0:
+            self._dirty = True
+        return pruned
+
+    # ------------------------------------------------------------------
     # Milestone outline management
     # ------------------------------------------------------------------
 
@@ -365,6 +436,86 @@ class NarrativePlanSlice(StateSlice):
                 return dict(step)
         return None
 
+    def update_milestone_outline(self, updates: dict[str, Any]) -> None:
+        """Apply incremental updates to milestone_outline.steps.
+
+        Supported update keys:
+
+        - ``completed_steps``: list[int] — mark each step at the given *index*
+          value (matching ``step["index"]``) as ``completed=True``.
+        - ``new_steps``: list[dict] — append each entry to the steps list.
+          Each entry is stored as-is; callers should supply at least
+          ``description`` and ``type``.
+        - ``remove_steps``: list[int] — remove steps whose ``index`` matches
+          any value in the list.  Removals are processed after completions
+          but before appends to keep indices stable during removal.
+
+        Silently ignores invalid index references and non-dict step entries.
+        """
+        if not isinstance(updates, Mapping):
+            return
+        steps = self.milestone_outline.get("steps")
+        if not isinstance(steps, list):
+            steps = []
+            self.milestone_outline["steps"] = steps
+
+        changed = False
+
+        # 1. Mark completed
+        completed_indices = updates.get("completed_steps")
+        if isinstance(completed_indices, list):
+            for raw_idx in completed_indices:
+                try:
+                    idx = int(raw_idx)
+                except (TypeError, ValueError):
+                    continue
+                for step in steps:
+                    if isinstance(step, dict) and step.get("index") == idx:
+                        if not step.get("completed", False):
+                            step["completed"] = True
+                            changed = True
+                        break
+
+        # 2. Remove steps (process largest indices first to avoid offset shift)
+        remove_indices = updates.get("remove_steps")
+        if isinstance(remove_indices, list):
+            remove_set: set[int] = set()
+            for raw_idx in remove_indices:
+                try:
+                    remove_set.add(int(raw_idx))
+                except (TypeError, ValueError):
+                    continue
+            if remove_set:
+                before_len = len(steps)
+                self.milestone_outline["steps"] = [
+                    step for step in steps
+                    if not (isinstance(step, dict) and step.get("index") in remove_set)
+                ]
+                steps = self.milestone_outline["steps"]
+                if len(steps) != before_len:
+                    changed = True
+
+        # 3. Append new steps
+        new_steps = updates.get("new_steps")
+        if isinstance(new_steps, list):
+            next_index = max(
+                (step.get("index", -1) for step in steps if isinstance(step, dict)),
+                default=-1,
+            ) + 1
+            for raw_step in new_steps:
+                if not isinstance(raw_step, Mapping):
+                    continue
+                entry = dict(raw_step)
+                if "index" not in entry:
+                    entry["index"] = next_index
+                    next_index += 1
+                entry.setdefault("completed", False)
+                steps.append(entry)
+                changed = True
+
+        if changed:
+            self._dirty = True
+
     def validate(self) -> list[str]:
         issues: list[str] = []
         if not isinstance(self.chapter_completion, (int, float)):
@@ -418,6 +569,18 @@ class NarrativePlanSlice(StateSlice):
                     for i, cap in enumerate(caps):
                         if not isinstance(cap, dict):
                             issues.append(f"npc_capabilities[{npc_id}][{i}] must be a dict")
+        if not isinstance(self.npc_services, dict):
+            issues.append("npc_services must be a dict")
+        else:
+            for npc_id, svcs in self.npc_services.items():
+                if not isinstance(npc_id, str) or not npc_id:
+                    issues.append("npc_services keys must be non-empty strings")
+                if not isinstance(svcs, list):
+                    issues.append(f"npc_services[{npc_id}] must be a list")
+                else:
+                    for i, svc in enumerate(svcs):
+                        if not isinstance(svc, dict):
+                            issues.append(f"npc_services[{npc_id}][{i}] must be a dict")
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
@@ -531,6 +694,18 @@ class NarrativePlanSlice(StateSlice):
             self.revoke_capability(
                 str(change.value.get("npc_id", "")),
                 str(change.value.get("capability_id", "")),
+            )
+            return
+        if change.path == "npc_services.assign" and isinstance(change.value, Mapping):
+            self.assign_service(
+                str(change.value.get("npc_id", "")),
+                dict(change.value),
+            )
+            return
+        if change.path == "npc_services.revoke" and change.operation == "remove" and isinstance(change.value, Mapping):
+            self.revoke_service(
+                str(change.value.get("npc_id", "")),
+                str(change.value.get("service_id", "")),
             )
             return
         if change.path == "milestone_outline" and isinstance(change.value, Mapping):

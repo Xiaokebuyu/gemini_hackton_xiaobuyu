@@ -16,9 +16,11 @@ from app.game_core.narrative.tools import AgentTool
 
 #: Valid functional interaction types that GM can embed in dialogue options.
 #: Each type maps to a front-end UI action that executes alongside the narrative.
+#: NOTE: "quest_accept" is intentionally excluded — GM is a pure narrator and
+#: must not execute game mechanics. Quest acceptance should be routed through
+#: the relevant NPC (e.g. receptionist) who has the accept_quest tool.
 _VALID_FUNCTIONAL_TYPES: frozenset[str] = frozenset({
     "trade_browse",
-    "quest_accept",
     "board_browse",
     "navigate",
     "inspect_item",

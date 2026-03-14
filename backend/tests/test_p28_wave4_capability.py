@@ -51,10 +51,10 @@ class _FakeExecutor:
 class TestCapabilityDescriptor:
     def test_snapshot_restore_round_trip(self):
         cap = CapabilityDescriptor(
-            capability_id="help_quest",
+            capability_id="help_browse",
             npc_id="guild_girl",
-            instruction="帮助接取任务",
-            functional="quest_accept",
+            instruction="帮助查看公告板",
+            functional="board_browse",
             functional_params={"board_id": "frontier_board"},
             assigned_tick=10,
             expiry_tick=30,
@@ -62,10 +62,10 @@ class TestCapabilityDescriptor:
         )
         data = cap.snapshot()
         restored = CapabilityDescriptor.restore(data)
-        assert restored.capability_id == "help_quest"
+        assert restored.capability_id == "help_browse"
         assert restored.npc_id == "guild_girl"
-        assert restored.instruction == "帮助接取任务"
-        assert restored.functional == "quest_accept"
+        assert restored.instruction == "帮助查看公告板"
+        assert restored.functional == "board_browse"
         assert restored.functional_params == {"board_id": "frontier_board"}
         assert restored.assigned_tick == 10
         assert restored.expiry_tick == 30
@@ -93,7 +93,8 @@ class TestCapabilityDescriptor:
     def test_valid_functional_types_contains_empty(self):
         assert "" in VALID_FUNCTIONAL_TYPES
         assert "trade_browse" in VALID_FUNCTIONAL_TYPES
-        assert "quest_accept" in VALID_FUNCTIONAL_TYPES
+        # quest_accept removed — GM is a pure narrator, quest handling is via NPC tools
+        assert "quest_accept" not in VALID_FUNCTIONAL_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +216,18 @@ class TestAssignCapabilityContract:
     def test_valid_with_functional(self):
         result = self._validate({
             "npc_id": "n1", "capability_id": "c1", "instruction": "do x",
-            "functional": "quest_accept",
+            "functional": "board_browse",
         })
         assert result.ok is True
+
+    def test_quest_accept_functional_now_invalid(self):
+        # quest_accept removed from VALID_FUNCTIONAL_TYPES — capability descriptors using it should fail
+        result = self._validate({
+            "npc_id": "n1", "capability_id": "c1", "instruction": "do x",
+            "functional": "quest_accept",
+        })
+        assert result.ok is False
+        assert result.reason_code == "invalid_functional"
 
     def test_valid_with_expiry_ticks(self):
         result = self._validate({
@@ -294,9 +304,9 @@ class TestPlannerNpcHandler:
             type="planner_assign_capability",
             params={
                 "npc_id": "guild_girl",
-                "capability_id": "help_accept_quest",
-                "instruction": "帮助接取任务",
-                "functional": "quest_accept",
+                "capability_id": "help_browse_board",
+                "instruction": "帮助查看公告板任务",
+                "functional": "board_browse",
                 "current_tick": 5,
                 "expiry_ticks": 20,
             },
@@ -308,7 +318,7 @@ class TestPlannerNpcHandler:
         assert len(result.delta.changes) == 1
         change = result.delta.changes[0]
         assert change.path == "npc_capabilities.assign"
-        assert change.value["capability_id"] == "help_accept_quest"
+        assert change.value["capability_id"] == "help_browse_board"
         assert change.value["npc_id"] == "guild_girl"
         # expiry_tick = current_tick + expiry_ticks = 5 + 20 = 25
         assert change.value["expiry_tick"] == 25

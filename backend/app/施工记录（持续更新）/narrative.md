@@ -36,7 +36,18 @@
 | `PacingControllerSubSystem` | [完成] | escalate/adjust_pacing（D-P20b） |
 | `planning/utils.py` | [完成] | coerce_non_empty_string/string_or_empty/normalize_mapping（D-P20b） |
 | `NarrativeWeaverSubSystem` | [完成] | Directive GC + 任务过期 + NPC 清理 + 自动升级保障网（D-P20c） |
-| `ItemDesignerSubSystem` | [部分完成] | curate_shop 已激活（D-P36）；design_reward 仍 deferred |
+| `ItemDesignerSubSystem` | [已移除] | D-Svc05：整体移除；curate_shop 迁移到 NpcDirectorSubSystem；design_reward 淘汰 |
+| `ServiceDescriptor` | [完成] | D-Svc01 Phase 1：数据结构 + validate_effects + snapshot/restore |
+| `NarrativePlanSlice.npc_services` | [完成] | D-Svc01 Phase 1：assign/revoke/get/prune + StateChange 路径 |
+| `assign_service`/`revoke_service` 指令合约 | [完成] | D-Svc02 Phase 2：SUPPORTED_PLANNER_DIRECTIVE_KINDS + _validate_contract() 两个分支 |
+| `PlannerNpcHandler` 服务命令 | [完成] | D-Svc02 Phase 2：planner_assign_service/planner_revoke_service + validate + compute |
+| `NpcDirectorSubSystem` 服务指令 | [完成] | D-Svc02 Phase 2：_HANDLES 新增两种 + apply_directive 分派 + _apply_assign/revoke_service |
+| `ServiceEffectHandler` | [完成] | D-Svc03 Phase 3：restore_hp / modify_gold 子操作（npc_service_effect command） |
+| `ExecuteServiceTool` | [完成] | D-Svc03 Phase 3：NPC 执行服务元工具，效果原子路由 + 扣费 + one_shot 自动撤销 |
+| `NarrativePlannerHook._bootstrap_content_services()` | [完成] | D-Svc04 Phase 4：启动注入 shop.services → NarrativePlanSlice，donation 跳过，未知 effects=[] |
+| `_extract_temple_keeper_data()` 服务合并 | [完成] | D-Svc04 Phase 4：content 层 + planner 层合并，planner 覆盖同名服务，输出含 effects 字段 |
+| `NpcDirectorSubSystem` 确定性 quest_completed | [完成] | D-Svc06 Phase 6：任务完成自动为柜台小姐生成奖励服务（无 LLM 即可运行） |
+| `ExecuteServiceTool._check_preconditions()` | [完成] | D-Svc06 Phase 6：quest_completed 前置条件检查，阻止未完成任务领奖 |
 
 ### 适配器（adapters/）
 
@@ -69,6 +80,345 @@
 
 ## 决策记录
 
+### [D-Svc01] NPC 服务系统 Phase 1：ServiceDescriptor + 状态切片存储
+
+**变更文件：**
+- `app/game_core/planning/service_descriptors.py`（新建）— `ServiceDescriptor` dataclass（slots=True）、`VALID_EFFECT_ATOM_TYPES: frozenset`、`validate_effects(effects) -> list[str]`
+- `app/game_core/state/slices/narrative_plan.py` — 新增 `npc_services: dict[str, list[dict[str, Any]]]` 字段，四个管理方法，snapshot/restore/validate/apply_state_change 覆盖
+
+**新增内容：**
+
+`ServiceDescriptor` 字段：`service_id / npc_id / label / price / effects / preconditions / notes / assigned_tick / expiry_tick / source / one_shot`
+
+`VALID_EFFECT_ATOM_TYPES`：`restore_hp / modify_gold / grant_item / remove_item / apply_effect / remove_effect / add_xp / add_knowledge`
+
+`NarrativePlanSlice` 新增方法（镜像 capabilities 模式）：
+- `assign_service(npc_id, svc_dict)` — 按 service_id 去重替换
+- `revoke_service(npc_id, service_id) -> bool` — 移除后清空 npc_id key
+- `get_services(npc_id) -> list[dict]` — 防御性拷贝
+- `prune_expired_services(current_tick) -> int` — 清理过期服务
+
+`apply_state_change` 新增路径：
+- `npc_services.assign`（operation="set"）→ `assign_service()`
+- `npc_services.revoke`（operation="remove"）→ `revoke_service()`
+
+**测试：**
+- `tests/test_service_descriptors.py`（43 个测试）：ServiceDescriptor 往返、validate_effects、4 个切片方法、StateChange 路径、snapshot/restore、validate
+
+**关键设计决策：**
+- 严格镜像 `npc_capabilities` 的 assign/revoke/get/prune 模式，保持代码一致性
+- `effects` 字段存 raw dict 列表（不存 ServiceDescriptor 对象），与 capabilities 模式对齐
+- `one_shot` 标志在 Phase 3 由 `execute_service` 工具消费（Phase 1 只定义数据结构）
+- `source` 字段区分内容层（`"content"`）和规划者动态分配（`"planner"`），为 Phase 4 幂等注入铺路
+
+---
+
+### [D-Svc02] NPC 服务系统 Phase 2：指令合约 + 命令处理器
+
+**变更文件：**
+- `app/game_core/planning/directive_contracts.py` — `SUPPORTED_PLANNER_DIRECTIVE_KINDS` 新增两种；`_validate_contract()` 新增 assign_service / revoke_service 两个分支
+- `app/game_core/rules/handlers/planner.py` — `PlannerNpcHandler.COMMAND_TYPES` 新增两种；validate + compute 新增分支；新增 `_compute_assign_service()` / `_compute_revoke_service()`
+- `app/game_core/planning/npc_director.py` — `_HANDLES` 新增两种；`apply_directive()` 新增分派；新增 `_apply_assign_service()` / `_apply_revoke_service()`
+
+**新增内容：**
+
+指令合约验证（`assign_service`）：
+- 必填：`npc_id`, `service_id`, `label`
+- 选填：`price`（int≥0，默认 0）、`effects`（list，用 validate_effects 验证）、`notes`（str）、`expiry_ticks`（int≥0）、`preconditions`（dict）、`one_shot`（bool）
+- 错误码：`missing_npc_id` / `missing_service_id` / `missing_label` / `invalid_price` / `invalid_effects` / `invalid_expiry_ticks` / `invalid_preconditions`
+
+指令合约验证（`revoke_service`）：
+- 必填：`npc_id`, `service_id`
+- 错误码：`missing_npc_id` / `missing_service_id`
+
+命令处理器：
+- `planner_assign_service` → `StateChange("narrative_plan", "set", "npc_services.assign", svc_dict)`
+- `planner_revoke_service` → `StateChange("narrative_plan", "remove", "npc_services.revoke", revoke_dict)`
+- expiry_tick = current_tick + expiry_ticks（若未提供则 0）
+- price / one_shot 均有防御性默认值
+
+**测试：**
+- `tests/test_service_directives.py`（25 个测试）：合约验证（合法/非法 payload）、handler 执行、NpcDirector 端到端
+- `tests/test_planner_directive_contracts.py::test_supported_planner_directives_match_current_hook_surface` 同步更新
+
+**关键设计决策：**
+- 严格镜像 assign_capability / revoke_capability 模式（validate → compute → StateChange → slice.apply_state_change）
+- validate_effects 在合约层和 handler 层均可以校验，合约层校验更早，避免非法效果原子进入状态切片
+- NpcDirectorSubSystem 通过 SettlementContext.execute_command 走 RulesEngine 而非直接改 slice（遵循层级约定）
+
+---
+
+### [D-Svc03] NPC 服务系统 Phase 3：execute_service NPC 工具
+
+**变更文件：**
+- `app/game_core/narrative/service_tool.py`（新建）— `ExecuteServiceTool(_CharacterTool)`：NPC 执行被授权服务的元工具
+- `app/game_core/rules/handlers/service_effect.py`（新建）— `ServiceEffectHandler`：处理 `npc_service_effect` command（restore_hp / modify_gold 两种子操作）
+- `app/game_core/rules/handlers/__init__.py` — 导出 `ServiceEffectHandler`
+- `app/game_core/rules/defaults.py` — 在 `DEFAULT_RULE_HANDLER_TYPES` 末尾注册 `ServiceEffectHandler`
+- `app/game_core/narrative/character_tools.py` — `register_npc_tools()` 末尾懒导入 `ExecuteServiceTool` 并注册（避免循环导入）
+- `tests/test_execute_service_tool.py`（新建）— 23 个测试
+- `tests/test_character_tools.py` — `test_register_npc_tools_registers_nine` 更新：12→13，新增 `execute_service`
+
+**效果原子执行矩阵：**
+
+| 原子类型 | 执行方式 | 备注 |
+|---------|---------|------|
+| `restore_hp` | `npc_service_effect` (ServiceEffectHandler) | cap 到 max_hp |
+| `modify_gold` | `npc_service_effect` (ServiceEffectHandler) | 允许负数（扣款），floor 到 0 |
+| `grant_item` | `pick_up` command | 转发 atom 参数 |
+| `remove_item` | `drop` command | 转发 atom 参数 |
+| `apply_effect` | `apply_effect` command | 转发 atom 参数 |
+| `remove_effect` | `remove_effect` command | 转发 atom 参数 |
+| `add_xp` | `add_xp` command | 转发 atom 参数 |
+| `add_knowledge` | `add_knowledge` command | 转发 atom 参数 |
+
+**关键设计决策：**
+- `ServiceEffectHandler` 单独一个小 handler 处理不能映射到现有 command 的效果原子（restore_hp / modify_gold）；其余原子统一走现有 command 路径，保持单一职责
+- 循环导入规避：`service_tool.py` 从 `character_tools.py` import `_CharacterTool`；`character_tools.py` 在 `register_npc_tools()` 内懒导入 `ExecuteServiceTool`（函数级 import，不在模块顶层）
+- 价格检查在效果执行前完成（乐观预验证），扣款在所有效果原子成功后执行
+- `one_shot` 服务执行成功后自动发 `planner_revoke_service` command，revoke 失败仅 warning（不中断）
+- `_resolve_services` 从 `context.metadata["role_data"]["services"]` 读取服务列表（Phase 4 的 context_builder 负责合并内容层和规划者层）
+
+**测试覆盖（23 个）：**
+- 基础执行 + 金币扣除 + 场景总线写入
+- 金币不足时拒绝
+- 未知 service_id 拒绝
+- 缺少/空白 service_id 参数
+- 多效果原子顺序执行
+- 各原子类型的命令路由（6 个）
+- one_shot 触发 revoke / 非 one_shot 不触发
+- 无 role_data 优雅降级
+- 无 player slice 优雅降级
+- 免费服务（price=0）不检查金币
+- 满血时 restore_hp 成功但不改 HP
+- 缺少 character_id
+- modify_gold 正数（直接奖励金币）
+- 工具元数据验证
+
+---
+
+### [D-Svc04] NPC 服务系统 Phase 4：内容层启动注入 + 上下文构建器服务合并
+
+**变更文件：**
+- `app/game_core/orchestration/hooks/narrative_planner.py` — 新增模块级 `_CONTENT_SERVICE_EFFECTS` 映射表（已知 service_id → 效果原子列表）；新增 `_bootstrap_content_services(context)` 方法；在 `bootstrap()` 末尾调用
+- `app/game_core/narrative/context_builder.py` — 修改 `_extract_temple_keeper_data()`：读取 content 层 + NarrativePlanSlice 两个来源，planner 覆盖 content 同名服务，输出每个服务含 `effects` 字段
+
+**新增内容：**
+
+`_CONTENT_SERVICE_EFFECTS` 映射（4 个已知服务）：
+- `"heal"` → `[{"type": "restore_hp", "amount": 30}]`
+- `"blessing"` → `[{"type": "apply_effect", "effect_id": "blessed", "duration_ticks": 6}]`
+- `"field_dressing"` → `[{"type": "restore_hp", "amount": 15}]`
+- `"trail_prayer"` → `[{"type": "apply_effect", "effect_id": "trail_protection", "duration_ticks": 4}]`
+- `"donation"` 明确跳过（DonationHandler 已处理）
+- 未知 service_id → `effects = []`（NPC 可谈论但 execute_service 不能机械执行）
+
+`_bootstrap_content_services(context)` 逻辑：
+- 遍历 `world.characters.list_all()` 查找有 `shop.services` 的角色
+- 幂等检查：若 NPC 已有任何 source="content" 的服务则跳过该 NPC
+- 构造 svc_dict（含 `source="content"`, `expiry_tick=0`, `one_shot=False`）调用 `assign_service()`
+
+`_extract_temple_keeper_data()` 合并逻辑：
+- Source 1：`shop.services` → `content_map` （含 `effects` 字段，默认 `[]`）
+- Source 2：`NarrativePlanSlice.get_services(npc_id)` → `planner_map`（带 preconditions/one_shot/source 字段）
+- Merge：`{**content_map, **planner_map}` — planner 覆盖 content 同名 service_id
+
+**关键设计决策：**
+- `_bootstrap_content_services()` 在 `bootstrap()` 末尾调用（仅在会话启动时跑一次），不在 `execute()` 主循环中重复执行
+- 幂等性以"该 NPC 是否存在任意 source=content 服务"为判断，而非单个服务——避免部分注入后重入时混入重复条目
+- context_builder 中 `_extract_temple_keeper_data()` 无需访问效果原子映射表；它从 NarrativePlanSlice（由 Phase 4 bootstrap 已填充）读取 effects，保持函数层与 hook 层的职责分离
+
+**测试覆盖（19 个）：**
+- `_CONTENT_SERVICE_EFFECTS` 映射完整性（5 个）
+- 内容层服务正确注入，donation 跳过，未知 service 得空 effects（5 个）
+- 幂等性：二次调用不重复（1 个）
+- 价格保留、无注册表/无 slice 优雅降级（3 个）
+- context_builder 输出含 effects 字段、planner 覆盖 content、新服务追加、role 字段（5 个）
+
+---
+
+### [D-Svc05] NPC 服务系统 Phase 5：ItemDesigner 移除 + curate_shop 迁移
+
+**日期**：2026-03-14
+
+**删除文件：**
+- `app/game_core/planning/item_designer.py`（1353 行）— ItemDesignerSubSystem 整体移除
+- `tests/test_item_designer.py`（19 个测试）— 随模块删除
+
+**确认移除的导出/注册点（均已不存在）：**
+- `app/game_core/planning/__init__.py` — 无 ItemDesignerSubSystem 导出
+- `app/game_core/bootstrap.py` — 无 ItemDesigner 注册到 build_narrative_planner_hook()
+- `app/game_core/adapters/planner_system.py` — PlannerSystemAssembly 无 item_designer_agent 字段
+- `app/deps.py` — 无 item_designer fallback agent 构造逻辑
+- `app/narrators.py` — 无 ITEM_DESIGNER_AGENT_PROMPT
+
+**curate_shop 迁移目标（NpcDirectorSubSystem）：**
+- `_HANDLES` 已包含 `"curate_shop"`
+- `apply_directive()` 已分派到 `_apply_curate_shop()`
+- `_apply_curate_shop()` 走 `planner_curate_shop` command → PlannerItemHandler
+
+**SUPPORTED_PLANNER_DIRECTIVE_KINDS：**
+- `"design_reward"` 未出现（已被淘汰），`"curate_shop"` 正常保留
+
+**测试状态：**
+- `tests/test_planner_directive_contracts.py::test_design_reward_is_rejected_as_unsupported_kind` — design_reward 被拒绝（unsupported_kind）
+- `tests/test_planner_directive_contracts.py::test_supported_planner_directives_match_current_hook_surface` — 已不含 design_reward，含 curate_shop
+- `tests/test_36_shop_activation.py` — curate_shop 通过 NpcDirectorSubSystem 可用（8 个 curate_shop 测试）
+
+**关键设计决策：**
+- ItemDesigner 整个子系统被服务系统取代，无需保留任何残留代码
+- curate_shop 属于 NPC 管理语义（告诉 NPC 商店库存怎么变），归 NpcDirectorSubSystem 更合理
+- design_reward 的奖励发放职责由 D-Svc06 的柜台小姐服务模式承接
+
+---
+
+### [D-Svc06] NPC 服务系统 Phase 6：柜台小姐任务奖励服务
+
+**日期**：2026-03-14
+
+**变更文件：**
+- `app/game_core/planning/npc_director.py`
+- `app/game_core/narrative/service_tool.py`
+- `app/game_core/rules/handlers/planner.py`
+
+**新增文件：**
+- `tests/test_receptionist_reward_service.py`（17 个测试）
+
+**变更详情：**
+
+#### npc_director.py — 确定性 quest_completed 处理
+
+在 `evaluate()` 方法中，在 LLM Agent 分支之前增加确定性逻辑：
+
+1. `_evaluate_quest_completed(event, context)` — 主入口：
+   - 从 `event.payload.get("quest_id")` 提取 quest_id，为空则 None（优雅降级）
+   - 调用 `_resolve_quest_rewards()` 查找奖励数据，无奖励则 None
+   - 调用 `_rewards_to_effects()` 转换效果原子，结果为空则 None
+   - 调用 `_find_receptionist()` 查找柜台小姐，未找到则 None（记录 debug 日志）
+   - 幂等检查：`narrative_plan.get_services(receptionist_id)` 已含同名服务则返回空 SubSystemResult
+   - 构造 `assign_service` 指令：price=0, one_shot=True, preconditions={"quest_completed": quest_id}
+
+2. `_resolve_quest_rewards(quest_id, context)` — 奖励来源双查找：
+   - 先查 `context.state.quests.get_dynamic_quest(quest_id)["rewards"]`
+   - 再查 `context.world.quests.get(quest_id).rewards`（content 层 MilestoneTemplate）
+
+3. `_rewards_to_effects(rewards)` — 静态转换方法：
+   - `gold > 0` → `{"type": "modify_gold", "amount": gold}`
+   - `xp > 0` → `{"type": "add_xp", "amount": xp}`
+   - `items` 列表每项 → `{"type": "grant_item", "item_id": ..., "count": ...}`
+
+4. `_find_receptionist(context)` — 遍历 `world.characters.list_all()`，找第一个 `"receptionist" in tags` 的 NPC
+
+#### service_tool.py — quest_completed 前置条件检查
+
+在 `execute()` 的步骤 3（价格检查）之前新增 `_check_preconditions(service, context)` 调用。
+
+`_check_preconditions()` 逻辑：
+- 无 preconditions 或 preconditions 为空 dict → 直接返回 None（放行）
+- `preconditions.get("quest_completed")` 非空时：
+  - 无 quests slice → 拒绝（"quest_not_completed"）
+  - dynamic_quests 中找到 quest_id：status 必须是 "completed" 或 "reported"
+  - 未找到 dynamic_quest：查 milestone state，必须是 "COMPLETED"
+
+#### planner.py — 源白名单扩展
+
+`_planner_source_gate()` 新增 `"npc_service"` 到允许来源列表，使 one_shot 服务执行后的 `planner_revoke_service` 命令能通过验证。
+
+**关键设计决策：**
+- 确定性逻辑放在 LLM agent 分支之前：即使无 LLM 也能在任务完成时自动注册奖励服务
+- 幂等性：同一 service_id 不重复注册，避免多次 quest_completed 事件触发重复服务
+- precondition 检查在 execute_service 工具内：NPC 不需要"知道"任务是否完成，工具自动验证
+- 奖励查找双来源：动态任务 + 内容层 Milestone，兼容两种任务创建流程
+- `npc_service` 源加入白名单：`one_shot` revoke 必须走 planner 命令链，源必须被接受
+
+**测试覆盖（17 个）：**
+- quest_completed 触发 assign_service 指令，含正确 npc_id/service_id/preconditions
+- 生成指令效果原子正确（gold+xp+items 全覆盖）
+- 无柜台小姐 NPC → 优雅降级（空 directives）
+- 无奖励数据 → 优雅降级
+- 幂等性：服务已存在不重复生成
+- precondition：任务进行中 → 拒绝；completed → 放行；reported → 放行；milestone COMPLETED → 放行；无 quests slice → 拒绝
+- _rewards_to_effects 单元测试（gold-only、xp-only、items-only、combined、empty、零值）
+- one_shot 执行后服务从 NarrativePlanSlice 移除（端到端）
+
+---
+
+### [D-Audit2-R6] 叙事系统审计第二轮 Round 6：ch2 里程碑精简（7→3）
+
+**变更文件：**
+- `data/goblin_slayer/v2/quests.json` — 将 7 个里程碑合并为 3 个：
+  - `ms_frontier_arrival`（合并 ms_arrival + ms_town_life + ms_party_encounter）
+  - `ms_growing_darkness`（合并 ms_growing_shadow + ms_into_the_wilds）
+  - `ms_hive_heart`（合并 ms_the_hive + ms_water_capital_call）
+- `tests/test_33_quest_completion.py` — 更新 `TestQuestsJsonData` 所有 5 个测试，使其引用新 ID；新增 3 个测试（`test_milestone_chain_integrity`、`test_milestone_conditions_have_valid_types`、`test_milestone_completion_values_ascending`）
+
+**旧里程碑 ID（已删除）：**
+`ms_arrival`、`ms_town_life`、`ms_party_encounter`、`ms_growing_shadow`、`ms_into_the_wilds`、`ms_the_hive`、`ms_water_capital_call`
+
+**新里程碑设计：**
+- M1 `ms_frontier_arrival`：sequence=1，completion_value=25，rewards={xp:600, gold:300}；conditions: npc_talked(guild_girl) + npc_talked(goblin_slayer) + location_visited(tavern)
+- M2 `ms_growing_darkness`：sequence=2，completion_value=60，rewards={xp:700, gold:300, items:[healing_potion×2]}；conditions: npc_talked(blacksmith) + location_visited(ancient_ruins)
+- M3 `ms_hive_heart`：sequence=3，completion_value=100，rewards={xp:1300, gold:800, items:[quality_healing_potion×1]}；conditions: location_visited(inner_sanctum) + npc_talked(cow_girl)；保留 failure_fallback
+
+**关键设计决策：**
+- 合并后 narrative_context 整合而非拼接——每段是独立连贯叙述
+- 旧存档不兼容（设计决策，不需迁移）
+- kill_count 条件从 M3 移除（简化成就条件，叙事通过对话+地点触发）
+- level_reached 条件移除（milestone 完成条件改为叙事驱动）
+
+**不兼容影响：** 只影响新游戏，旧存档（saves/）不需改动
+
+---
+
+### [D-Audit2-R1] 叙事系统审计第二轮 Round 1：Bug 修复
+
+**变更文件：**
+- `app/agent_orchestration.py`（`run_post_action_round`）— R1-A：`resolve_clue_option` 分支在发出 `gm_comment` 后，补发 `dialogue_options_unavailable(reason="clue_resolved")` 事件，关闭前端选项面板
+- `app/game_core/planning/directive_contracts.py`（`_validate_contract` fill_location 段）— R1-B：遇到无效 clue interactable 时改为剥离该项（`logger.warning` + `continue`），保留其余有效项；仅在剥离后列表为空时才 `return False, ..., "all_interactables_invalid"`；添加 `import logging` + 模块级 `logger`
+
+**关键设计决策：**
+- R1-A：`dialogue_options_unavailable` 无论是否发出 `gm_comment` 都必须发（保证前端不卡死），因此放在 `resolution_event` 处理之后、`return collected` 之前
+- R1-B：单个无效 clue 不应整体拒绝 directive — Planner 输出中偶有 LLM hallucination 的 clue 字段，其余 interactable 都有效；剥离策略比全拒更鲁棒
+
+**更新已有测试（1 处）：**
+- `tests/test_agent_orchestration.py` — `test_run_post_action_round_uses_clue_resolution_summary_instead_of_generic_reactions`：预期事件序列从 `["gm_comment"]` 更新为 `["gm_comment", "dialogue_options_unavailable"]`，并验证 payload reason
+- `tests/test_planner_directive_contracts.py` — `test_validate_planner_directive_rejects_invalid_clue_interactable_shape` 重命名为 `test_validate_planner_directive_rejects_when_only_clue_is_invalid`，reason_code 从 `"invalid_clue_interactable:invalid_option_count"` 更新为 `"all_interactables_invalid"`
+
+**新增测试（3 个）：**
+- `tests/test_agent_orchestration.py`：`TestPostActionReactions.test_resolve_clue_emits_dialogue_options_unavailable` — 验证 resolve_clue_option 总是包含 `dialogue_options_unavailable` 事件且 payload reason 正确
+- `tests/test_planner_directive_contracts.py`：`test_fill_location_strips_invalid_clue_keeps_valid_interactables` — 混合有效/无效 interactable 时只保留有效项
+- `tests/test_planner_directive_contracts.py`：`test_fill_location_rejects_when_all_interactables_invalid` — 全部无效时拒绝
+
+---
+
+### [D-Audit2-R2] 叙事系统审计第二轮 Round 2：Clue 增强
+
+**变更文件：**
+- `app/agent_orchestration.py` — R2-A：新增 `_run_clue_resolution_round()` 方法，与 `_run_clue_investigation_round` 对称；`resolve_clue_option` 分支现在调用该方法，提供完整 LLM GM 叙述 + 队友反应 + `dialogue_options_unavailable` 关闭面板；LLM 失败时 fallback 到 `_build_clue_resolution_comment_event()`
+- `app/agent_orchestration.py` — R2-B：`_generate_clue_teammate_events()` 中，若 `clue_payload["party_prompt_hints"]` 非空，将其追加为 `## 线索提示` 段落到每个队友的 system prompt
+- `app/agent_orchestration.py` — R2-C：`_run_clue_investigation_round` 的 `clue_payload` 构建中删除 `linked_quest_id` 和 `linked_milestone` 键（数据源已无此字段）
+- `app/game_core/clue_investigation.py:53-58` — R2-C：删除 `normalize_clue_definition` 中的 `linked_quest_id` 和 `linked_milestone` normalize 段落
+- `app/game_core/rules/handlers/clue.py:121-122` — R2-C：删除 `investigate_clue` 元数据中的 `linked_quest_id` / `linked_milestone`
+- `app/game_core/rules/handlers/clue.py:238-239` — R2-C：删除 `resolve_clue_option` 元数据中的 `linked_quest_id` / `linked_milestone`
+- `app/game_core/orchestration/tick_coordinator.py:446-447` — R2-C：删除 tick record 中的 `linked_quest_id` / `linked_milestone` 键
+
+**关键设计决策：**
+- R2-A：`_run_clue_resolution_round` 与 investigate 对称，但不发 `dialogue_options` 面板（resolve 已结束，无需再选）；GM LLM 调用走同一个 `_generate_clue_gm_events`，user_message 中的 `interaction_type` 仍为 `"clue_investigation"` 以保持 GM prompt 上下文一致
+- R2-B：hints 注入只在非空时追加，不破坏无 hints 的正常流程；以 `## 线索提示` + 列表格式追加到 prompt 末尾，不插入中间
+- R2-C：`linked_quest_id` / `linked_milestone` 是早期设计遗留死字段，Planner 已通过独立的 quest/milestone 机制管理链接关系，不再需要 clue 级别的冗余字段
+
+**更新已有测试（2 处）：**
+- `tests/test_agent_orchestration.py` — `test_run_post_action_round_uses_clue_resolution_summary_instead_of_generic_reactions`：重命名为 `test_run_post_action_round_uses_clue_resolution_fallback_when_llm_unavailable`，`NoopExecutor`（raises） → `EmptyExecutor`（returns empty）；验证 fallback deterministic comment 存在
+- `tests/test_agent_orchestration.py` — `test_resolve_clue_emits_dialogue_options_unavailable`：`NoopExecutor`（raises） → `EmptyExecutor`（returns empty）；保持功能验证不变
+
+**新增测试（4 个）：**
+- `tests/test_agent_orchestration.py`：`test_resolve_clue_option_generates_gm_narration` — LLM 成功时 gm_narration 出现、不用 fallback gm_comment、末尾是 dialogue_options_unavailable
+- `tests/test_agent_orchestration.py`：`test_resolve_clue_option_generates_teammate_reactions` — 有 party 时 resolve 产生 teammate_response，且无 dialogue_options（仅 investigate 才需要）
+- `tests/test_agent_orchestration.py`：`test_party_prompt_hints_injected_into_teammate_prompt` — investigate_clue 时 party_prompt_hints 注入每个队友 system prompt
+- `tests/test_clue_handler.py`：`test_clue_definition_no_linked_fields` + `test_investigate_clue_metadata_no_linked_fields` — normalize 和 handler 元数据均不含 linked_quest_id / linked_milestone
+
+---
+
 ### [D-P29-A10] 动态子地点背景图生成集成（A10a + A10b）
 
 **变更文件：**
@@ -87,6 +437,30 @@
 - `prefetch_sub_area_backgrounds`：新子地点触发 task / 已缓存跳过 / 空 delta noop / 非 areas slice noop / 无 id 的 sub_area 跳过
 - `get_cached_background_url`：命中返回 data URL / 未命中返回 None / fallback 结果返回 None
 - `build_scene_change` 集成：动态子地点有缓存 → `background_url` 在 payload / 缓存未命中 → 无 `background_url` / 无 resolver → 无 `background_url`
+
+---
+
+### [D-Audit2-R3] 叙事系统审计第二轮 Round 3：Planner 可见性增强
+
+**变更文件：**
+- `app/game_core/orchestration/hooks/narrative_planner.py`
+  - `_build_target_milestone_detail`（R3-A）：返回值中增加 `success_conditions` 字段，将 MilestoneCondition dataclass 序列化为 `{"type": str, "params": dict, "optional": bool}` 结构化 dict
+  - `_build_planner_feedback`（R3-C）：新增 `@staticmethod` 方法，计算 4 项反馈信息：quest_progress（活跃任务目标完成比例）、milestone_satisfaction（当前里程碑每个 success_condition 的满足状态）、npc_directive_confirmations（未消费 NPC 指令与 talked_to 标志的比对）、clue_interaction_summary（当前区域 clue 交互统计）
+  - `_build_planner_context`：末尾追加 `planner_feedback` 键，调用 `_build_planner_feedback`
+- `app/narrators.py`
+  - `MilestoneOutlineGenerator._build_user_message`（R3-B）：`success_conditions` 序列化从 `str(cond)` 改为结构化 `type=... params=...`，同时处理 dict 和 MilestoneCondition dataclass 两种输入
+  - `_format_planner_context`：在 `target_detail` 段后新增 success_conditions 渲染；追加 `## 任务目标进度`、`## 当前里程碑条件满足度`、`## NPC指令执行确认`、`## 线索交互状态` 四个 planner_feedback 展示段落
+
+**关键设计决策：**
+- R3-A：`_build_target_milestone_detail` 返回的 dict 用于 Planner 的 context，将 MilestoneCondition 序列化为 plain dict（不依赖 dataclass repr），与 LLM 消费端对齐
+- R3-B：LLM 看到的 success_conditions 应是结构化文本（`type=npc_talked, params={"npc_id": "guild_girl"}`），而不是 Python repr 字符串，这样 LLM 才能推断哪些条件已满足
+- R3-C：`_build_planner_feedback` 是独立方法而不是内联在 `_build_planner_context`，保持主函数可读性；使用 `BasicEventConditionEvaluator._condition_met()` 做条件判断（与 MilestoneCompletionHook 共用相同评估逻辑，延迟导入避免循环依赖问题）
+- R3-C Clue summary：仅统计 `functional_type == "investigate_clue"` 的 interactable，排除普通交互物；状态分类：已 resolve（有 resolved_option_id）> 已检视（有 first_inspected）> 未检视
+
+**新增测试（12 个，`tests/test_r3_planner_visibility.py`）：**
+- R3-A（3 个）：`test_target_milestone_detail_includes_success_conditions`、`test_target_milestone_detail_empty_success_conditions`、`test_target_milestone_detail_with_dataclass_conditions`
+- R3-B（2 个）：`test_outline_generator_formats_conditions_as_dicts`、`test_outline_generator_formats_dataclass_conditions`
+- R3-C（7 个）：`test_planner_context_includes_quest_progress`、`test_planner_context_includes_milestone_satisfaction`、`test_planner_context_milestone_satisfaction_empty_when_no_target`、`test_planner_context_npc_directive_confirmation`、`test_planner_context_npc_directive_unconfirmed`、`test_planner_context_clue_interaction_summary`、`test_format_planner_context_renders_feedback`
 
 ---
 
@@ -2805,3 +3179,171 @@ Planner 运行后正常设置 `last_run_tick = current_tick`，后续冷却恢�
 **文件**：`app/game_core/runtime.py` — `bootstrap_opening_planner()` +2 行
 
 **测试基线**：2917 passed, 8 skipped，全量通过
+
+---
+
+## D-Audit1：LLM Prompt 对齐修复（2026-03-14）
+
+**背景**：NPC agent 在工具调用中将 quest_id 幻觉为错误值（如 `"first_arrival"` 而非 `"dq_ms_arrival"`）。根因：`_format_role_constraint_block` 中展示任务时只有标题没有 quest_id。全面审计发现同类问题共 5 处，均在 `context_builder.py`。
+
+**文件**：`app/game_core/narrative/context_builder.py`
+
+**Phase 1 — Receptionist quest_id 注入**：
+- 公告板任务行（~line 1660）加入 `(quest_id: {b.get('quest_id', '?')})`，LLM 不再需要猜任务 ID
+- 已接任务行（~line 1681）同样加入 `(quest_id: {qid})`，支持报告完成任务时精确核实
+
+**Phase 2 — Guard event_id 注入**：
+- 守卫事件行（~line 1801）加入 `(event_id: {eid})`，LLM 可准确引用事件 ID
+
+**Phase 3 — Fear 行为提示**：
+- 新增 `_fear_hint(fear: int) -> str` 函数（放在 `_romance_hint` 之后）
+- 4 档：< 20 空；[20, 50) 轻微畏惧；[50, 80) 明显讨好；>= 80 极度顺从
+- NPC `behavior_parts` 列表加入 `_fear_hint(int(fear))` 调用（terror 维度之前已有 fear 字段但行为提示未接入）
+
+**Phase 4 — NPC 自身 ID 注入**：
+- `_build_npc_prompt_text` 新增 `npc_id: str = ""` 参数
+- prompt 开头 `"You are {name}"` 改为 `"You are {name} (id: {npc_id})"` 当 npc_id 非空
+- 两处调用处（`build_npc_system_prompt` + `build_npc_full_context`）均传入 `npc_id`
+
+**测试**：`tests/test_35_npc_role_constraints.py` 更新已有测试 2 处 + 新增 10 个测试
+
+---
+
+## D-R4：Planner 能力增强（2026-03-14）
+
+**背景**：叙事审计 Round 4 —— 为 Planner 新增两项主动能力：`advance_milestone`（里程碑推进指令）和 `outline_updates`（大纲增量更新）。
+
+### R4-A：advance_milestone directive
+
+**目的**：Planner 判断叙事已准备好推进时，可主动推进里程碑，绕过自动检测。安全阈值：≥80% 成功条件已满足。
+
+**文件**：
+
+1. `app/game_core/planning/directive_contracts.py`
+   - `SUPPORTED_PLANNER_DIRECTIVE_KINDS` 添加 `"advance_milestone"`
+   - `_validate_contract` 新增 `advance_milestone` 分支：验证 `milestone_id`（必填）、`to_state`（可选，默认 "COMPLETED"，自动大写）
+
+2. `app/game_core/rules/handlers/planner.py`
+   - `PlannerRuntimeHandler.COMMAND_TYPES` 添加 `"planner_advance_milestone"`
+   - `validate()` 移除 `del world`（之前其他命令不需要 world，但新命令需要），添加 `planner_advance_milestone` 验证分支
+   - `compute()` 添加 `planner_advance_milestone` dispatch
+   - 新增 `_compute_advance_milestone()` 方法：用 `BasicEventConditionEvaluator._condition_met` 逐条评估 `success_conditions`，满足比例 < 80% 返回错误，≥ 80% 写入 `milestone_states.{milestone_id}` StateChange
+
+3. `app/game_core/planning/quest_manager.py`
+   - `QuestManagerSubSystem._HANDLES` 添加 `"advance_milestone"`
+   - `apply_directive()` 添加 `"advance_milestone"` 分支
+   - 新增 `_apply_advance_milestone()` 方法：调用 `planner_advance_milestone` command，SSE 发送 `milestone_advanced_by_planner` 事件
+
+4. `app/narrators.py`
+   - `_SYSTEM_PROMPT` 规则 9：`outline_updates` 说明
+   - `## 可用指令`：添加 `advance_milestone` 示例，含 80% 条件阈值说明
+
+### R4-B：outline_updates 输出字段
+
+**目的**：Planner 每轮可声明大纲变化（标记已完成步骤、新增步骤、移除步骤）。
+
+**文件**：
+
+1. `app/narrators.py`
+   - `_SYSTEM_PROMPT` 输出格式添加 `outline_updates` 字段说明（`completed_steps`/`new_steps`/`remove_steps`）
+
+2. `app/game_core/orchestration/hooks/narrative_planner.py`
+   - `NarrativePlannerDecision` dataclass 添加 `outline_updates: dict[str, Any]`（默认空 dict）
+   - `_normalize_decision()` 提取 `outline_updates`（仅 Mapping 类型，否则默认 `{}`）
+   - 主执行路径（`execute()` 正常流 + bootstrap 流）：`_commit_runtime_state` 之后调用 `state.narrative_plan.update_milestone_outline(decision.outline_updates)`
+
+3. `app/game_core/state/slices/narrative_plan.py`
+   - 新增 `update_milestone_outline(updates: dict)` 方法：
+     - `completed_steps`：按 `step["index"]` 匹配，设 `completed=True`
+     - `remove_steps`：过滤掉对应 index 的 steps
+     - `new_steps`：append，自动分配 index（最大现有 index + 1 起）
+     - 有变化则设 `_dirty = True`
+
+### R4-C：step ↔ quest 自动绑定（已有实现，补充测试）
+
+**已有代码**：`quest_objective_tracking.py` 已在 quest 完成时检查 `metadata.step_index` 并调用 `mark_outline_step_completed()`。本轮补充烟测。
+
+### 测试
+
+**文件**：`tests/test_r4_planner_capabilities.py`（19 个测试）
+
+- R4-A 合约验证：`test_advance_milestone_contract_*`（4 个）
+- R4-A handler 80% 阈值：`test_advance_milestone_succeeds_*`、`test_advance_milestone_rejected_*`、边界场景（3条件2满足/5条件4满足/无条件）（5 个）
+- R4-B slice 方法：`test_outline_updates_*`（6 个）
+- R4-B decision 解析：`test_normalize_decision_*`（3 个）
+- R4-C 烟测：`test_quest_completion_auto_marks_outline_step`（1 个）
+
+`tests/test_planner_directive_contracts.py`：更新 `test_supported_planner_directives_match_current_hook_surface` 添加 `"advance_milestone"`
+
+---
+
+## D-Audit5（R5）：Planner 配置增强
+
+**日期**：2026-03-14
+
+### R5-A：Planner LLM thinking_level → "high"
+
+**目标**：Planner 子系统需要更深层推理，从 "low" 升级为 "high"。
+
+**修改**：`app/deps.py` — `_build_planner_system()` 内 6 个 `GeminiLlmAdapter` 实例添加 `thinking_level="high"`：
+- `blackboard_llm`、`quest_llm`、`npc_llm`、`world_llm`、`weaver_llm`、`item_llm`
+
+其他 LLM（NPC 对话、GM 叙述、Osiris）不受影响，维持各自默认值（low/medium）。
+
+### R5-B：Skill prompt 强制要求
+
+**目标**：将 5 个子系统 prompt 末尾的"建议"改为强制措辞，提升模板查阅执行率。
+
+**修改**：`app/narrators.py`
+
+1. `QUEST_MANAGER_AGENT_PROMPT` — 末尾改为：**强制要求**：生成任何 directive 前，必须先调用 read_design_skill。未查阅直接输出将被拒绝。
+2. `NPC_DIRECTOR_AGENT_PROMPT` — 同上
+3. `WORLD_BUILDER_AGENT_PROMPT` — 同上；同时将规则 #16 中 `options 必须是 2~4 个` 约束提取为单独醒目行并加粗警告
+4. `NARRATIVE_WEAVER_AGENT_PROMPT` — 同上
+5. `ITEM_DESIGNER_AGENT_PROMPT` — 同上
+
+### 测试
+
+无新测试（纯配置/prompt 变更）。
+
+更新 `tests/test_phase5_quest_tracking.py::TestSkillsPromptMandatory::test_subsystem_prompts_updated_from_optional_to_recommended`：
+- 重命名为 `test_subsystem_prompts_updated_from_optional_to_mandatory`
+- 断言新的强制要求措辞（`强制要求`、`read_design_skill`、`未查阅模板直接输出的 directive 将被拒绝`）
+- 同时断言旧"建议先通过 list_design_skills"不再存在
+
+**测试基线**：3070 passed, 8 skipped（pre-existing 13 failures 不变）
+
+---
+
+## D-QA1：GM quest_accept 职责分离
+
+**日期**：2026-03-14
+
+### 背景
+
+GM 的 `SuggestOptionsTool` 生成带 `functional: {type: "quest_accept"}` 的选项时，quest_id 由 LLM 填写，容易产生幻觉导致 "dynamic quest not found" 错误。
+
+**设计决策**：GM 是纯叙述者，不负责执行游戏机制。接取任务应通过 NPC 交互流程，由柜台小姐（已有正确 quest_id 可见）自行调用 `accept_quest` 工具。
+
+### 代码修改
+
+1. **`app/game_core/narrative/gm_tools.py`** — `_VALID_FUNCTIONAL_TYPES` 移除 `"quest_accept"`，添加注释说明原因
+2. **`app/game_core/planning/capabilities.py`** — `VALID_FUNCTIONAL_TYPES` 同步移除 `"quest_accept"`，添加注释
+3. **`app/game_core/narrative/context_builder.py`** — `GM_DIALOGUE_OPTIONS_PROMPT` 更新 functional 类型列表，增加一条规则：接取任务应生成带 `npc_id` 的普通对话选项而非 functional 选项
+
+### 测试修改
+
+- `tests/test_p28_wave4_gm_functional.py`：
+  - `test_expected_types_present`：移除 `quest_accept`
+  - 新增 `test_quest_accept_not_present`：断言 `quest_accept not in _VALID_FUNCTIONAL_TYPES`
+  - `test_option_with_only_functional_and_text_is_valid`：改用 `board_browse`
+  - 新增 `test_quest_accept_functional_dropped_silently`：断言 quest_accept 选项被静默剥离后无 action/check → 返回 None
+  - `test_returns_dynamic_caps_in_section`：动态 cap mock 改用 `board_browse`
+- `tests/test_p28_wave4_capability.py`：
+  - `test_valid_functional_types_contains_empty`：断言 `quest_accept not in VALID_FUNCTIONAL_TYPES`
+  - `test_snapshot_restore_round_trip`：改用 `board_browse`
+  - `test_valid_with_functional`：改用 `board_browse`
+  - 新增 `test_quest_accept_functional_now_invalid`：断言 `quest_accept` 合约验证失败（invalid_functional）
+  - `test_compute_assign_capability`：改用 `board_browse`
+
+**测试基线**：3076 passed, 8 skipped（pre-existing 13 failures 不变）

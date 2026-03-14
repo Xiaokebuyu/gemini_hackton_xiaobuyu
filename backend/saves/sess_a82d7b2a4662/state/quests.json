@@ -1,0 +1,151 @@
+{
+  "chapter_completion": {
+    "ch2": 0.25
+  },
+  "dynamic_quests": {
+    "ancient_ruins_goblin_slaying": {
+      "created_at_tick": 0,
+      "delivery_method": "npc",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "giver_npc": "goblin_slayer"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "description": "前往古代遗迹"
+        },
+        {
+          "completed": false,
+          "description": "消灭所有哥布林"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "ancient_ruins_goblin_slaying",
+      "reported": false,
+      "requires_report": false,
+      "rewards": {},
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "与哥布林杀手一起前往北方的古代遗迹，清剿盘踞在那里的哥布林。",
+      "target_milestone": null,
+      "title": "遗迹的清剿者",
+      "urgency": "medium"
+    },
+    "dq_ms_frontier_arrival": {
+      "created_at_tick": 8,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "source_milestone": "ms_frontier_arrival",
+        "urgency": "medium"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与guild_girl对话"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "goblin_slayer"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与goblin_slayer对话"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往frontier_town"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_frontier_arrival",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 300,
+        "xp": 600
+      },
+      "rewards_claimed": true,
+      "source": "narrative_planner",
+      "status": "completed",
+      "summary": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+      "target_milestone": "ms_frontier_arrival",
+      "title": "踏入边境",
+      "urgency": "medium"
+    },
+    "dq_ms_growing_darkness": {
+      "created_at_tick": 11,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "ancient_ruins"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往古代遗迹进行调查"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_growing_darkness",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 500,
+        "xp": 1000
+      },
+      "source": "narrative_planner",
+      "status": "retired",
+      "summary": "北门守备长与铁匠的报告相互印证——一向散乱的哥布林开始像军队一样列队行军，并截断了边境的补给线。哥布林杀手判断这并非偶然，所有线索都指向了那座古老的遗迹。去那里一探究竟，揭开这股不寻常力量的面纱。",
+      "target_milestone": null,
+      "title": "暗影渐浓：遗迹的异动",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_frontier_arrival": {
+      "activated_tick": 8,
+      "completed_tick": null,
+      "state": "COMPLETED"
+    },
+    "ms_growing_darkness": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "AVAILABLE"
+    },
+    "ms_hive_heart": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

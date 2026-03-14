@@ -32,7 +32,6 @@ from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.planning.world_builder import WorldBuilderSubSystem
 from app.game_core.planning.pacing_controller import PacingControllerSubSystem
 from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
-from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.rules import RulesEngine
 from app.game_core.rules.defaults import register_default_rules_handlers
 from app.game_core.rules.handlers.planner import PlannerQuestHandler
@@ -184,7 +183,6 @@ def _make_hook_with_dispatcher(blackboard: Any = None) -> NarrativePlannerHook:
     dispatcher.register(WorldBuilderSubSystem(sse_collector=hook._pending_sse))
     dispatcher.register(PacingControllerSubSystem())
     dispatcher.register(NarrativeWeaverSubSystem(sse_collector=hook._pending_sse))
-    dispatcher.register(ItemDesignerSubSystem())
     hook._dispatcher = dispatcher
     return hook
 

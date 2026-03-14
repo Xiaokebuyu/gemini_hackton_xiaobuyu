@@ -29,8 +29,12 @@ def _make_tool() -> SuggestOptionsTool:
 
 class TestValidFunctionalTypes:
     def test_expected_types_present(self):
-        for t in ("trade_browse", "quest_accept", "board_browse", "navigate", "inspect_item", "rest"):
+        for t in ("trade_browse", "board_browse", "navigate", "inspect_item", "rest"):
             assert t in _VALID_FUNCTIONAL_TYPES
+
+    def test_quest_accept_not_present(self):
+        # GM is a pure narrator — quest_accept is handled by NPC tools, not GM functional options
+        assert "quest_accept" not in _VALID_FUNCTIONAL_TYPES
 
     def test_is_frozenset(self):
         assert isinstance(_VALID_FUNCTIONAL_TYPES, frozenset)
@@ -120,12 +124,22 @@ class TestValidateOptionFunctional:
     def test_option_with_only_functional_and_text_is_valid(self):
         """An option with text + valid functional (no check or action) should be accepted."""
         opt = {
+            "text": "查看公告板",
+            "functional": {"type": "board_browse", "params": {"board_id": "guild_board"}},
+        }
+        result = SuggestOptionsTool._validate_option(opt)
+        assert result is not None
+        assert result["functional"]["type"] == "board_browse"
+
+    def test_quest_accept_functional_dropped_silently(self):
+        """quest_accept is no longer a valid GM functional type — dropped silently."""
+        opt = {
             "text": "接受任务",
             "functional": {"type": "quest_accept", "params": {"quest_id": "q1"}},
         }
         result = SuggestOptionsTool._validate_option(opt)
-        assert result is not None
-        assert result["functional"]["type"] == "quest_accept"
+        # quest_accept is no longer valid → functional dropped; no action/check either → option rejected
+        assert result is None
 
     def test_option_text_only_without_functional_check_action_rejected(self):
         """Option with text but no functional, check, or action → rejected."""
@@ -265,18 +279,18 @@ class TestGmNpcCapabilityContext:
         state.has_slice.side_effect = lambda name: name == "narrative_plan"
         state.narrative_plan.get_capabilities.return_value = [
             {
-                "capability_id": "help_accept_quest",
-                "instruction": "帮助接取任务",
-                "functional": "quest_accept",
+                "capability_id": "help_browse_board",
+                "instruction": "帮助查看公告板",
+                "functional": "board_browse",
                 "expiry_tick": 0,
             }
         ]
 
         result = _build_gm_npc_capability_context(world, state, "guild_girl")
         assert "当前 NPC 的能力" in result
-        assert "help_accept_quest" in result
-        assert "帮助接取任务" in result
-        assert "functional=quest_accept" in result
+        assert "help_browse_board" in result
+        assert "帮助查看公告板" in result
+        assert "functional=board_browse" in result
 
     def test_includes_nearby_npc_section_for_merchant(self):
         from app.agent_orchestration import _build_gm_npc_capability_context

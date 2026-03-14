@@ -13,7 +13,10 @@ pass here and still be rejected later for world/state-specific reasons.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any, Collection, Mapping
+
+logger = logging.getLogger(__name__)
 
 from app.game_core.clue_investigation import (
     CLUE_FUNCTIONAL_TYPE,
@@ -34,6 +37,7 @@ from app.game_core.planning.models import (
     SpawnQuestNpcPlan,
 )
 from app.game_core.planning.capabilities import VALID_FUNCTIONAL_TYPES
+from app.game_core.planning.service_descriptors import validate_effects
 from app.game_core.planning.utils import (
     coerce_non_empty_string,
     normalize_mapping,
@@ -55,12 +59,14 @@ SUPPORTED_PLANNER_DIRECTIVE_KINDS = frozenset(
         "fill_area",
         "fill_location",
         "update_quest",
-        "design_reward",
         "curate_shop",
         "discover_room",
         "fill_room",
         "assign_capability",
         "revoke_capability",
+        "advance_milestone",
+        "assign_service",
+        "revoke_service",
     }
 )
 
@@ -385,28 +391,6 @@ def _validate_contract(
             return False, normalized, "invalid_frozen"
         return True, normalized, None
 
-    if kind == "design_reward":
-        reward_type = coerce_non_empty_string(normalized.get("reward_type")) or "item"
-        if reward_type.lower() != "item":
-            return False, normalized, "invalid_reward_type"
-        linked_quest_id = coerce_non_empty_string(normalized.get("linked_quest_id"))
-        if linked_quest_id is None:
-            return False, normalized, "missing_linked_quest_id"
-        item_id = coerce_non_empty_string(normalized.get("item_id"))
-        if item_id is None:
-            return False, normalized, "missing_item_id"
-        try:
-            quantity = int(normalized.get("quantity", 1))
-        except (TypeError, ValueError):
-            return False, normalized, "invalid_quantity"
-        if quantity < 1:
-            return False, normalized, "invalid_quantity"
-        normalized["reward_type"] = "item"
-        normalized["linked_quest_id"] = linked_quest_id
-        normalized["item_id"] = item_id
-        normalized["quantity"] = quantity
-        return True, normalized, None
-
     if kind == "curate_shop":
         npc_id = coerce_non_empty_string(normalized.get("npc_id"))
         if npc_id is None:
@@ -486,9 +470,11 @@ def _validate_contract(
         ]
         if not normalized["interactables"]:
             return False, normalized, "missing_interactables"
+        valid_interactables = []
         for interactable in normalized["interactables"]:
             functional = normalize_mapping(interactable.get("functional"))
             if coerce_non_empty_string(functional.get("type")) != CLUE_FUNCTIONAL_TYPE:
+                valid_interactables.append(interactable)
                 continue
             clue = normalize_clue_definition(
                 functional,
@@ -498,7 +484,12 @@ def _validate_contract(
             )
             error = validate_clue_definition(clue)
             if error is not None:
-                return False, normalized, f"invalid_clue_interactable:{error}"
+                logger.warning("stripping invalid clue interactable: %s", error)
+                continue
+            valid_interactables.append(interactable)
+        normalized["interactables"] = valid_interactables
+        if not valid_interactables:
+            return False, normalized, "all_interactables_invalid"
         return True, normalized, None
 
     if kind == "assign_capability":
@@ -540,6 +531,83 @@ def _validate_contract(
         if capability_id is None:
             return False, normalized, "missing_capability_id"
         normalized["capability_id"] = capability_id
+        return True, normalized, None
+
+    if kind == "advance_milestone":
+        milestone_id = coerce_non_empty_string(normalized.get("milestone_id"))
+        if milestone_id is None:
+            return False, normalized, "missing_milestone_id"
+        normalized["milestone_id"] = milestone_id
+        to_state = coerce_non_empty_string(normalized.get("to_state"))
+        if to_state is None:
+            to_state = "COMPLETED"
+        normalized["to_state"] = to_state.upper()
+        return True, normalized, None
+
+    if kind == "assign_service":
+        npc_id = coerce_non_empty_string(normalized.get("npc_id"))
+        if npc_id is None:
+            return False, normalized, "missing_npc_id"
+        normalized["npc_id"] = npc_id
+        service_id = coerce_non_empty_string(normalized.get("service_id"))
+        if service_id is None:
+            return False, normalized, "missing_service_id"
+        normalized["service_id"] = service_id
+        label = coerce_non_empty_string(normalized.get("label"))
+        if label is None:
+            return False, normalized, "missing_label"
+        normalized["label"] = label
+        # Optional: price (int >= 0)
+        raw_price = normalized.get("price")
+        if raw_price is not None:
+            try:
+                price = int(raw_price)
+            except (TypeError, ValueError):
+                return False, normalized, "invalid_price"
+            if price < 0:
+                return False, normalized, "invalid_price"
+            normalized["price"] = price
+        # Optional: effects (list of dicts)
+        raw_effects = normalized.get("effects")
+        if raw_effects is not None:
+            if not isinstance(raw_effects, list):
+                return False, normalized, "invalid_effects"
+            errors = validate_effects(raw_effects)
+            if errors:
+                return False, normalized, "invalid_effects"
+        # Optional: notes (str)
+        raw_notes = normalized.get("notes")
+        if raw_notes is not None:
+            normalized["notes"] = str(raw_notes)
+        # Optional: expiry_ticks (int >= 0)
+        raw_expiry = normalized.get("expiry_ticks")
+        if raw_expiry is not None:
+            try:
+                expiry_ticks = int(raw_expiry)
+            except (TypeError, ValueError):
+                return False, normalized, "invalid_expiry_ticks"
+            if expiry_ticks < 0:
+                return False, normalized, "invalid_expiry_ticks"
+            normalized["expiry_ticks"] = expiry_ticks
+        # Optional: preconditions (dict)
+        raw_pre = normalized.get("preconditions")
+        if raw_pre is not None and not isinstance(raw_pre, dict):
+            return False, normalized, "invalid_preconditions"
+        # Optional: one_shot (bool)
+        raw_one_shot = normalized.get("one_shot")
+        if raw_one_shot is not None:
+            normalized["one_shot"] = bool(raw_one_shot)
+        return True, normalized, None
+
+    if kind == "revoke_service":
+        npc_id = coerce_non_empty_string(normalized.get("npc_id"))
+        if npc_id is None:
+            return False, normalized, "missing_npc_id"
+        normalized["npc_id"] = npc_id
+        service_id = coerce_non_empty_string(normalized.get("service_id"))
+        if service_id is None:
+            return False, normalized, "missing_service_id"
+        normalized["service_id"] = service_id
         return True, normalized, None
 
     return True, normalized, None

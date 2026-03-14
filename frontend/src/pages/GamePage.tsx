@@ -52,6 +52,8 @@ export default function GamePage() {
   const worldId = storedWorldId ?? routeWorldId ?? null
   const sessionId = storedSessionId ?? routeSessionId ?? null
   const gameMode = useSceneStore((s) => s.gameMode)
+  const currentArea = useSceneStore((s) => s.currentArea)
+  const currentLocation = useSceneStore((s) => s.currentLocation)
   const activeNpcId = useSceneStore((s) => s.activeNpcId)
   const openingInProgress = useSceneStore((s) => s.openingInProgress)
   const clearPortraits = useSceneStore((s) => s.clearPortraits)
@@ -154,14 +156,10 @@ export default function GamePage() {
     }
   }, [worldId, sessionId, phase, initError])
 
-  // ── BGM 随 gameMode 切换 ────────────────────────────────────────────────────
+  // ── BGM 随场景 + gameMode 联动切换 ──────────────────────────────────────────
   useEffect(() => {
-    const key =
-      gameMode === 'combat' ? 'combat' :
-      gameMode === 'encounter' ? 'encounter' :
-      gameMode === 'private_chat' ? 'private_chat' : 'explore'
-    audio.setBgm(key)
-  }, [gameMode])
+    audio.setBgmForScene(currentArea, currentLocation, gameMode)
+  }, [currentArea, currentLocation, gameMode])
 
   // ── 初始场景加载 ───────────────────────────────────────────────────────────
   useEffect(() => {

@@ -27,6 +27,7 @@ from app.game_core.rules.handlers.rest import RestHandler
 from app.game_core.rules.handlers.skill_check import SkillCheckHandler
 from app.game_core.rules.handlers.spell import SpellHandler
 from app.game_core.rules.handlers.status_effect import StatusEffectHandler
+from app.game_core.rules.handlers.service_effect import ServiceEffectHandler
 from app.game_core.rules.handlers.world_state import WorldStateHandler
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     "PlannerWorldHandler",
     "ReceptionistHandler",
     "RestHandler",
+    "ServiceEffectHandler",
     "SkillCheckHandler",
     "SpellHandler",
     "StatusEffectHandler",

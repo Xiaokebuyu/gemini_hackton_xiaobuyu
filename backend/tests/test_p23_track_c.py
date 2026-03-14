@@ -6,7 +6,7 @@ Covers:
 - C-3 (W5-3): no-LLM fallback planner system — bootstrap works, regular noop
 - C-4 (W5-4): narrators.py planner prompt contains play_style_tags guidance
 - C-5 (W6-2): rotating inventory uses hash-based seed, not simple tick mod
-- C-6 (W6-3): design_reward emits SSE event on success; price=0 logs warning
+- C-6 (W6-3): price=0 logs warning (design_reward removed)
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from unittest import mock
 from app.game_core.content import WorldInstance
 from app.game_core.content.registries import CharacterRegistry, ItemRegistry
 from app.game_core.orchestration.models import SSEEvent
-from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.rules import Command, RulesEngine
 from app.game_core.rules.defaults import register_default_rules_handlers
 from app.game_core.rules.handlers import EconomyHandler
@@ -256,14 +255,12 @@ def test_subsystem_prompts_contain_design_skill_note():
         NPC_DIRECTOR_AGENT_PROMPT,
         WORLD_BUILDER_AGENT_PROMPT,
         NARRATIVE_WEAVER_AGENT_PROMPT,
-        ITEM_DESIGNER_AGENT_PROMPT,
     )
     for name, prompt in [
         ("quest_manager", QUEST_MANAGER_AGENT_PROMPT),
         ("npc_director", NPC_DIRECTOR_AGENT_PROMPT),
         ("world_builder", WORLD_BUILDER_AGENT_PROMPT),
         ("narrative_weaver", NARRATIVE_WEAVER_AGENT_PROMPT),
-        ("item_designer", ITEM_DESIGNER_AGENT_PROMPT),
     ]:
         assert "list_design_skills" in prompt or "read_design_skill" in prompt, (
             f"{name} prompt should mention design skill tools"
@@ -277,7 +274,6 @@ def test_subsystem_prompts_spell_out_runtime_contract_examples():
         NPC_DIRECTOR_AGENT_PROMPT,
         WORLD_BUILDER_AGENT_PROMPT,
         NARRATIVE_WEAVER_AGENT_PROMPT,
-        ITEM_DESIGNER_AGENT_PROMPT,
     )
 
     assert '"quest_id":"dq_x"' in QUEST_MANAGER_AGENT_PROMPT
@@ -292,8 +288,6 @@ def test_subsystem_prompts_spell_out_runtime_contract_examples():
     assert "敌对/战斗遭遇" in WORLD_BUILDER_AGENT_PROMPT
     assert '{"frozen": true}' in NARRATIVE_WEAVER_AGENT_PROMPT
     assert "pacing_factor" in NARRATIVE_WEAVER_AGENT_PROMPT
-    assert '"linked_quest_id":"dq_x"' in ITEM_DESIGNER_AGENT_PROMPT
-    assert "reward_items / gold / xp" in ITEM_DESIGNER_AGENT_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +349,6 @@ def _build_fallback_assembly():
         npc_director_agent=_FallbackAgent("npc_director"),
         world_builder_agent=_FallbackAgent("world_builder"),
         narrative_weaver_agent=_FallbackAgent("narrative_weaver"),
-        item_designer_agent=_FallbackAgent("item_designer"),
     )
 
 
@@ -370,7 +363,6 @@ def test_fallback_assembly_has_all_agents():
     assert assembly.npc_director_agent is not None
     assert assembly.world_builder_agent is not None
     assert assembly.narrative_weaver_agent is not None
-    assert assembly.item_designer_agent is not None
 
 
 def test_fallback_agent_returns_empty_directives():
@@ -492,128 +484,8 @@ def test_rotating_inventory_consistent_within_same_tick():
 
 
 # ---------------------------------------------------------------------------
-# C-6 (W6-3): design_reward SSE + price warning
+# C-6 (W6-3): price warning
 # ---------------------------------------------------------------------------
-
-
-def test_design_reward_emits_sse_on_success():
-    """_apply_design_reward should append reward_designed SSE event on success."""
-    from app.game_core.planning.item_designer import ItemDesignerSubSystem
-    from app.game_core.orchestration.settlement import SettlementContext
-    from app.game_core.orchestration.scene_bus import SceneBus
-    from app.game_core.state.slices import SceneSlice
-
-    # Build a minimal state + world with quest support
-    world = WorldInstance("test_world")
-    items = ItemRegistry()
-    items.load({"healing_potion": {"id": "healing_potion", "base_price": 10}})
-    world.register(items)
-
-    state = StateContainer()
-    player = PlayerSlice()
-    player.restore({"character_id": "pc_1", "gold": 100})
-    state.register(player)
-    relations = RelationSlice()
-    relations.restore({})
-    state.register(relations)
-    time_slice = TimeSlice()
-    time_slice.restore({"day": 1, "slot": 9})
-    state.register(time_slice)
-
-    # Register quests slice with a dynamic quest
-    from app.game_core.state.slices.quests import QuestSlice
-    quests = QuestSlice()
-    quests.restore({
-        "dynamic_quests": {
-            "dq_test_001": {
-                "quest_id": "dq_test_001",
-                "title": "Test Quest",
-                "status": "available",
-                "rewards": {},
-                "reward_items": [],
-            }
-        }
-    })
-    state.register(quests)
-
-    rules_engine = RulesEngine()
-    register_default_rules_handlers(rules_engine)
-
-    sse_collector: list[SSEEvent] = []
-    context = SettlementContext(
-        change_log=[],
-        state=state,
-        world=world,
-        scene_bus=SceneBus(SceneSlice()),
-        _rules_engine=rules_engine,
-        _apply_delta=state.apply,
-    )
-
-    designer = ItemDesignerSubSystem(sse_collector=sse_collector)
-
-    payload = {
-        "linked_quest_id": "dq_test_001",
-        "reward_items": [{"item_id": "healing_potion", "count": 1}],
-    }
-
-    result = designer._apply_design_reward(payload, context, current_tick=1)
-    # If result is True (not a rejection string), SSE should be emitted
-    if result is True:
-        sse_types = [e.event_type for e in sse_collector]
-        assert "reward_designed" in sse_types, "reward_designed SSE should be emitted on success"
-        reward_event = next(e for e in sse_collector if e.event_type == "reward_designed")
-        assert reward_event.payload.get("quest_id") == "dq_test_001"
-
-
-def test_design_reward_no_sse_when_collector_none():
-    """_apply_design_reward should not fail when sse_collector is None."""
-    from app.game_core.planning.item_designer import ItemDesignerSubSystem
-    from app.game_core.orchestration.settlement import SettlementContext
-    from app.game_core.orchestration.scene_bus import SceneBus
-    from app.game_core.state.slices import SceneSlice
-
-    world = WorldInstance("test_world")
-    state = StateContainer()
-    player = PlayerSlice()
-    player.restore({"character_id": "pc_1", "gold": 100})
-    state.register(player)
-    relations = RelationSlice()
-    relations.restore({})
-    state.register(relations)
-    time_slice = TimeSlice()
-    time_slice.restore({"day": 1, "slot": 9})
-    state.register(time_slice)
-
-    from app.game_core.state.slices.quests import QuestSlice
-    quests = QuestSlice()
-    quests.restore({
-        "dynamic_quests": {
-            "dq_test_001": {"quest_id": "dq_test_001", "status": "available", "rewards": {}}
-        }
-    })
-    state.register(quests)
-
-    rules_engine = RulesEngine()
-    register_default_rules_handlers(rules_engine)
-
-    context = SettlementContext(
-        change_log=[],
-        state=state,
-        world=world,
-        scene_bus=SceneBus(SceneSlice()),
-        _rules_engine=rules_engine,
-        _apply_delta=state.apply,
-    )
-
-    # No sse_collector
-    designer = ItemDesignerSubSystem(sse_collector=None)
-    payload = {"linked_quest_id": "dq_test_001", "reward_items": [{"item_id": "sword", "count": 1}]}
-    # Should not raise even if reward_items has invalid item
-    # (just checking it doesn't crash)
-    try:
-        designer._apply_design_reward(payload, context, current_tick=1)
-    except Exception as exc:
-        assert False, f"Should not raise: {exc}"
 
 
 def test_base_price_logs_warning_for_zero_price(caplog):

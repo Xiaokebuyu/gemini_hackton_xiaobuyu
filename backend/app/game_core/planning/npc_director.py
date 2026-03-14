@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class NpcDirectorSubSystem:
     """PlannerSubSystem responsible for NPC directive and spawn directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"direct_npc", "spawn_quest_npc", "assign_capability", "revoke_capability"})
+    _HANDLES: frozenset[str] = frozenset({"direct_npc", "spawn_quest_npc", "assign_capability", "revoke_capability", "assign_service", "revoke_service", "curate_shop"})
 
     def __init__(
         self,
@@ -66,9 +66,156 @@ class NpcDirectorSubSystem:
         }
 
     async def evaluate(self, event: PlannerEvent, context: Any) -> SubSystemResult:
+        # Deterministic handling: generate assign_service for quest_completed
+        # without requiring an LLM agent.
+        if event.kind == "quest_completed":
+            result = self._evaluate_quest_completed(event, context)
+            if result is not None:
+                return result
+
         if self._agent is not None:
             return await self._evaluate_with_agent(event, context)
         return SubSystemResult()
+
+    # ------------------------------------------------------------------
+    # Deterministic: quest_completed → assign_service for receptionist
+    # ------------------------------------------------------------------
+
+    def _evaluate_quest_completed(
+        self,
+        event: PlannerEvent,
+        context: Any,
+    ) -> "SubSystemResult | None":
+        """Generate an assign_service directive for the receptionist NPC when a
+        quest is completed.  Returns None when graceful degradation is needed
+        (no quest_id, no rewards found).  Returns an empty SubSystemResult when
+        the service is already assigned (idempotency guard)."""
+        quest_id = coerce_non_empty_string(event.payload.get("quest_id"))
+        if quest_id is None:
+            return None
+
+        # Resolve rewards from dynamic quest state or content quest registry.
+        rewards = self._resolve_quest_rewards(quest_id, context)
+        if not rewards:
+            return None
+
+        # Build effect atoms from rewards dict.
+        effects = self._rewards_to_effects(rewards)
+        if not effects:
+            return None
+
+        # Find receptionist NPC.
+        receptionist_id = self._find_receptionist(context)
+        if receptionist_id is None:
+            logger.debug(
+                "NpcDirectorSubSystem: no receptionist NPC found for quest %s; "
+                "skipping reward service assignment",
+                quest_id,
+            )
+            return None
+
+        service_id = f"reward_{quest_id}"
+
+        # Idempotency: do not create a duplicate service if already assigned.
+        if context.state.has_slice("narrative_plan"):
+            existing = context.state.narrative_plan.get_services(receptionist_id)
+            if any(s.get("service_id") == service_id for s in existing):
+                logger.debug(
+                    "NpcDirectorSubSystem: reward service %s already assigned to %s; skipping",
+                    service_id,
+                    receptionist_id,
+                )
+                return SubSystemResult()
+
+        directive = {
+            "kind": "assign_service",
+            "payload": {
+                "npc_id": receptionist_id,
+                "service_id": service_id,
+                "label": "领取任务报酬",
+                "price": 0,
+                "effects": effects,
+                "preconditions": {"quest_completed": quest_id},
+                "one_shot": True,
+                "notes": f"完成任务 {quest_id} 后可领取的报酬",
+            },
+        }
+        return SubSystemResult(directives=[directive])
+
+    def _resolve_quest_rewards(
+        self, quest_id: str, context: Any,
+    ) -> dict:
+        """Return rewards dict for *quest_id*, or {} if not found.
+
+        Checks dynamic_quests first, then content quest registry.
+        """
+        # Dynamic quest state
+        if context.state.has_slice("quests"):
+            quest = context.state.quests.get_dynamic_quest(quest_id)
+            if isinstance(quest, dict):
+                raw = quest.get("rewards")
+                if isinstance(raw, dict) and raw:
+                    return raw
+
+        # Content layer quest registry
+        if context.world.has_registry("quests"):
+            milestone = context.world.quests.get(quest_id)
+            if milestone is not None:
+                raw = milestone.rewards
+                if isinstance(raw, dict) and raw:
+                    return raw
+
+        return {}
+
+    @staticmethod
+    def _rewards_to_effects(rewards: dict) -> list[dict]:
+        """Convert a rewards dict to a list of effect atoms."""
+        effects: list[dict] = []
+        gold = rewards.get("gold", 0)
+        try:
+            gold = int(gold)
+        except (TypeError, ValueError):
+            gold = 0
+        if gold > 0:
+            effects.append({"type": "modify_gold", "amount": gold})
+
+        xp = rewards.get("xp", 0)
+        try:
+            xp = int(xp)
+        except (TypeError, ValueError):
+            xp = 0
+        if xp > 0:
+            effects.append({"type": "add_xp", "amount": xp})
+
+        items = rewards.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_id = item.get("item_id", "")
+                if not isinstance(item_id, str) or not item_id.strip():
+                    continue
+                count = item.get("count", 1)
+                try:
+                    count = int(count)
+                except (TypeError, ValueError):
+                    count = 1
+                effects.append({
+                    "type": "grant_item",
+                    "item_id": item_id.strip(),
+                    "count": count,
+                })
+
+        return effects
+
+    def _find_receptionist(self, context: Any) -> "str | None":
+        """Return the id of the first NPC with a 'receptionist' tag, or None."""
+        if not context.world.has_registry("characters"):
+            return None
+        for template in context.world.characters.list_all():
+            if "receptionist" in (template.tags or []):
+                return template.id
+        return None
 
     def apply_directive(
         self,
@@ -86,6 +233,12 @@ class NpcDirectorSubSystem:
             return self._apply_assign_capability(payload, context, current_tick=current_tick)
         if kind == "revoke_capability":
             return self._apply_revoke_capability(payload, context, current_tick=current_tick)
+        if kind == "assign_service":
+            return self._apply_assign_service(payload, context, current_tick=current_tick)
+        if kind == "revoke_service":
+            return self._apply_revoke_service(payload, context, current_tick=current_tick)
+        if kind == "curate_shop":
+            return self._apply_curate_shop(payload, context, current_tick=current_tick)
         return "unsupported_kind"
 
     # ------------------------------------------------------------------
@@ -187,6 +340,78 @@ class NpcDirectorSubSystem:
         result = context.execute_command(
             Command(
                 type="planner_revoke_capability",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: assign_service
+    # ------------------------------------------------------------------
+
+    def _apply_assign_service(
+        self,
+        payload: dict[str, Any],
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_assign_service",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: revoke_service
+    # ------------------------------------------------------------------
+
+    def _apply_revoke_service(
+        self,
+        payload: dict[str, Any],
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_revoke_service",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: curate_shop
+    # ------------------------------------------------------------------
+
+    def _apply_curate_shop(
+        self,
+        payload: dict[str, Any],
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_curate_shop",
                 params=params,
                 source="narrative_planner",
             )

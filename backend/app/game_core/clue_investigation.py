@@ -50,12 +50,6 @@ def normalize_clue_definition(
     topic = coerce_non_empty_string(params.get("topic"))
     if topic is not None:
         normalized["topic"] = topic
-    linked_quest_id = coerce_non_empty_string(params.get("linked_quest_id"))
-    if linked_quest_id is not None:
-        normalized["linked_quest_id"] = linked_quest_id
-    linked_milestone = coerce_non_empty_string(params.get("linked_milestone"))
-    if linked_milestone is not None:
-        normalized["linked_milestone"] = linked_milestone
 
     prompt_hints = _string_list(params.get("party_prompt_hints"))
     if prompt_hints:

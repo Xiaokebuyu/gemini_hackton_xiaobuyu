@@ -443,8 +443,6 @@ class TickCoordinator:
             "interactable_id",
             "clue_name",
             "topic",
-            "linked_quest_id",
-            "linked_milestone",
             "option_id",
             "option_label",
         ):

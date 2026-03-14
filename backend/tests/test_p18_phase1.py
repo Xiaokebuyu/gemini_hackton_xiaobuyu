@@ -21,7 +21,7 @@ from app.game_core.orchestration.hooks.narrative_planner import NarrativePlanner
 from app.game_core.orchestration.models import SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
-from app.game_core.planning import NarrativeWeaverSubSystem, ItemDesignerSubSystem
+from app.game_core.planning import NarrativeWeaverSubSystem
 from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.planning.pacing_controller import PacingControllerSubSystem
 from app.game_core.planning.quest_manager import QuestManagerSubSystem
@@ -568,7 +568,6 @@ def _make_full_hook_p18(planner: Any = None) -> tuple[NarrativePlannerHook, list
     dispatcher.register(WorldBuilderSubSystem(sse_collector=hook._pending_sse))
     dispatcher.register(PacingControllerSubSystem())
     dispatcher.register(NarrativeWeaverSubSystem(sse_collector=hook._pending_sse))
-    dispatcher.register(ItemDesignerSubSystem())
     hook._dispatcher = dispatcher
     return hook, hook._pending_sse
 

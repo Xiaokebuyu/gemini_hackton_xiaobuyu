@@ -1,0 +1,19 @@
+{
+  "character_name": "buyudesu",
+  "created_at": 1773497045.781021,
+  "game_day": 1,
+  "game_slot": 9,
+  "last_played": 1773499213.2889168,
+  "phase": "active",
+  "saved_at": 1773499213.2889168,
+  "session_id": "sess_109226cdf266",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "地母神殿",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "buyudesu"
+  },
+  "world_id": "goblin_slayer"
+}

@@ -153,7 +153,6 @@ def _build_hook(planner: Any | None = None) -> NarrativePlannerHook:
     from app.game_core.planning.world_builder import WorldBuilderSubSystem
     from app.game_core.planning.pacing_controller import PacingControllerSubSystem
     from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
-    from app.game_core.planning.item_designer import ItemDesignerSubSystem
 
     hook = NarrativePlannerHook(planner=planner)
     dispatcher = PlannerDispatcher()
@@ -163,7 +162,6 @@ def _build_hook(planner: Any | None = None) -> NarrativePlannerHook:
     dispatcher.register(WorldBuilderSubSystem(sse_collector=hook._pending_sse))
     dispatcher.register(PacingControllerSubSystem())
     dispatcher.register(NarrativeWeaverSubSystem(sse_collector=hook._pending_sse))
-    dispatcher.register(ItemDesignerSubSystem())
     hook._dispatcher = dispatcher
     return hook
 

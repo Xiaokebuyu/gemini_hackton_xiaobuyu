@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Any, Mapping
 
 from app.game_core.content import WorldInstance
+from app.game_core.orchestration.event_engine import BasicEventConditionEvaluator
 from app.game_core.orchestration.presence import resolve_npc_room, room_exists
 from app.game_core.scene_interactables import canonical_facility_ids
 from app.game_core.rules.base import StaticCommandHandler
@@ -113,7 +114,7 @@ def _planner_location_exists(
 
 
 def _planner_source_gate(cmd: Command) -> ValidationResult:
-    if cmd.source in ("narrative_planner", "npc"):
+    if cmd.source in ("narrative_planner", "npc", "npc_service"):
         return ValidationResult(ok=True)
     return ValidationResult(ok=False, reason="planner command source must be narrative_planner or npc")
 
@@ -787,6 +788,8 @@ class PlannerNpcHandler(StaticCommandHandler):
         "planner_prune_npc_directives",
         "planner_assign_capability",
         "planner_revoke_capability",
+        "planner_assign_service",
+        "planner_revoke_service",
     )
 
     def validate(
@@ -857,6 +860,25 @@ class PlannerNpcHandler(StaticCommandHandler):
             if capability_id is None:
                 return ValidationResult(ok=False, reason="capability_id must be a non-empty string")
             return ValidationResult(ok=True)
+        if cmd.type == "planner_assign_service":
+            npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
+            if npc_id is None:
+                return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+            service_id = coerce_non_empty_string(cmd.params.get("service_id"))
+            if service_id is None:
+                return ValidationResult(ok=False, reason="service_id must be a non-empty string")
+            label = coerce_non_empty_string(cmd.params.get("label"))
+            if label is None:
+                return ValidationResult(ok=False, reason="label must be a non-empty string")
+            return ValidationResult(ok=True)
+        if cmd.type == "planner_revoke_service":
+            npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
+            if npc_id is None:
+                return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+            service_id = coerce_non_empty_string(cmd.params.get("service_id"))
+            if service_id is None:
+                return ValidationResult(ok=False, reason="service_id must be a non-empty string")
+            return ValidationResult(ok=True)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -880,6 +902,10 @@ class PlannerNpcHandler(StaticCommandHandler):
             return self._compute_assign_capability(cmd)
         if cmd.type == "planner_revoke_capability":
             return self._compute_revoke_capability(cmd)
+        if cmd.type == "planner_assign_service":
+            return self._compute_assign_service(cmd)
+        if cmd.type == "planner_revoke_service":
+            return self._compute_revoke_service(cmd)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _compute_direct_npc(self, cmd: Command) -> ExecuteResult:
@@ -1116,6 +1142,57 @@ class PlannerNpcHandler(StaticCommandHandler):
             cmd.type,
             changes=[StateChange("narrative_plan", "remove", "npc_capabilities.revoke", revoke_dict)],
             metadata={"npc_id": npc_id, "capability_id": capability_id},
+        )
+
+    def _compute_assign_service(self, cmd: Command) -> ExecuteResult:
+        current_tick = coerce_int(cmd.params.get("current_tick")) or 0
+        npc_id = coerce_non_empty_string(cmd.params.get("npc_id")) or ""
+        service_id = coerce_non_empty_string(cmd.params.get("service_id")) or ""
+        label = coerce_non_empty_string(cmd.params.get("label")) or ""
+        raw_price = cmd.params.get("price")
+        price = (coerce_int(raw_price) or 0) if raw_price is not None else 0
+        if price < 0:
+            price = 0
+        raw_effects = cmd.params.get("effects")
+        effects: list[dict] = []
+        if isinstance(raw_effects, list):
+            effects = [dict(atom) for atom in raw_effects if isinstance(atom, dict)]
+        raw_pre = cmd.params.get("preconditions")
+        preconditions: dict = _normalize_mapping(raw_pre) if raw_pre is not None else {}
+        notes = _string_or_empty(cmd.params.get("notes"))
+        raw_expiry = cmd.params.get("expiry_ticks")
+        if raw_expiry is not None:
+            expiry_tick = (coerce_int(raw_expiry) or 0) + current_tick
+        else:
+            expiry_tick = 0
+        one_shot = _coerce_optional_bool(cmd.params.get("one_shot"))
+        svc_dict = {
+            "service_id": service_id,
+            "npc_id": npc_id,
+            "label": label,
+            "price": price,
+            "effects": effects,
+            "preconditions": preconditions,
+            "notes": notes,
+            "assigned_tick": current_tick,
+            "expiry_tick": expiry_tick,
+            "source": "planner",
+            "one_shot": one_shot,
+        }
+        return _planner_success(
+            cmd.type,
+            changes=[StateChange("narrative_plan", "set", "npc_services.assign", svc_dict)],
+            metadata={"npc_id": npc_id, "service_id": service_id},
+        )
+
+    def _compute_revoke_service(self, cmd: Command) -> ExecuteResult:
+        npc_id = coerce_non_empty_string(cmd.params.get("npc_id")) or ""
+        service_id = coerce_non_empty_string(cmd.params.get("service_id")) or ""
+        revoke_dict = {"npc_id": npc_id, "service_id": service_id}
+        return _planner_success(
+            cmd.type,
+            changes=[StateChange("narrative_plan", "remove", "npc_services.revoke", revoke_dict)],
+            metadata={"npc_id": npc_id, "service_id": service_id},
         )
 
     @staticmethod
@@ -1577,10 +1654,7 @@ class PlannerWorldHandler(StaticCommandHandler):
 
 
 class PlannerItemHandler(StaticCommandHandler):
-    COMMAND_TYPES = (
-        "planner_design_reward",
-        "planner_curate_shop",
-    )
+    COMMAND_TYPES = ("planner_curate_shop",)
 
     def validate(
         self,
@@ -1591,31 +1665,6 @@ class PlannerItemHandler(StaticCommandHandler):
         source_gate = _planner_source_gate(cmd)
         if not source_gate.ok:
             return source_gate
-        if cmd.type == "planner_design_reward":
-            if not state.has_slice("quests"):
-                return ValidationResult(ok=False, reason="quests slice is required")
-            if not state.has_slice("narrative_plan"):
-                return ValidationResult(ok=False, reason="narrative_plan slice is required")
-            if not world.has_registry("items"):
-                return ValidationResult(ok=False, reason="item registry unavailable")
-            quest_id = coerce_non_empty_string(cmd.params.get("linked_quest_id"))
-            item_id = coerce_non_empty_string(cmd.params.get("item_id"))
-            quantity = coerce_int(cmd.params.get("quantity", 1))
-            if quest_id is None:
-                return ValidationResult(ok=False, reason="linked_quest_id must be a non-empty string")
-            if item_id is None:
-                return ValidationResult(ok=False, reason="item_id must be a non-empty string")
-            if quantity is None or quantity < 1:
-                return ValidationResult(ok=False, reason="quantity must be an integer >= 1")
-            if world.items.get(item_id) is None:
-                return ValidationResult(ok=False, reason=f"unknown item_id: {item_id}")
-            quest = state.quests.dynamic_quests.get(quest_id)
-            if not isinstance(quest, Mapping):
-                return ValidationResult(ok=False, reason=f"dynamic quest not found: {quest_id}")
-            status = _string_or_empty(quest.get("status")).strip().lower()
-            if status not in {"available", "active"}:
-                return ValidationResult(ok=False, reason=f"dynamic quest not mutable: {status}")
-            return ValidationResult(ok=True)
         if cmd.type == "planner_curate_shop":
             if not state.has_slice("relations"):
                 return ValidationResult(ok=False, reason="relations slice is required")
@@ -1650,56 +1699,9 @@ class PlannerItemHandler(StaticCommandHandler):
         validation = self.validate(cmd, state, world)
         if not validation.ok:
             return ExecuteResult.error(validation.reason or "validation failed")
-        if cmd.type == "planner_design_reward":
-            return self._compute_design_reward(cmd, state)
         if cmd.type == "planner_curate_shop":
             return self._compute_curate_shop(cmd, state, world)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
-
-    def _compute_design_reward(self, cmd: Command, state: StateContainer) -> ExecuteResult:
-        reward_type = coerce_non_empty_string(cmd.params.get("reward_type")) or "item"
-        if reward_type.lower() != "item":
-            return ExecuteResult.error(f"unsupported reward_type: {reward_type}")
-        current_tick = coerce_int(cmd.params.get("current_tick")) or 0
-        quest_id = coerce_non_empty_string(cmd.params.get("linked_quest_id")) or ""
-        item_id = coerce_non_empty_string(cmd.params.get("item_id")) or ""
-        quantity = coerce_int(cmd.params.get("quantity", 1)) or 1
-        quest = state.quests.dynamic_quests.get(quest_id)
-        if not isinstance(quest, Mapping):
-            return ExecuteResult.error(f"dynamic quest not found: {quest_id}")
-        updated = dict(quest)
-        existing_rewards = _normalize_mapping(updated.get("rewards"))
-        reward_items = self._normalize_reward_items(existing_rewards.get("items"))
-        updated_rewards = dict(existing_rewards)
-        updated_rewards["items"] = self._merge_reward_item(reward_items, item_id, quantity)
-        updated["rewards"] = updated_rewards
-        history_entry = {
-            "kind": "design_reward",
-            "quest_id": quest_id,
-            "item_id": item_id,
-            "quantity": quantity,
-            "tick": current_tick,
-        }
-        title = coerce_non_empty_string(cmd.params.get("title"))
-        if title is not None:
-            history_entry["title"] = title
-        description = coerce_non_empty_string(cmd.params.get("description"))
-        if description is not None:
-            history_entry["description"] = description
-        trigger = coerce_non_empty_string(cmd.params.get("trigger"))
-        if trigger is not None:
-            history_entry["trigger"] = trigger
-        metadata = cmd.params.get("metadata")
-        if isinstance(metadata, Mapping) and metadata:
-            history_entry["metadata"] = dict(metadata)
-        return _planner_success(
-            cmd.type,
-            changes=[
-                StateChange("quests", "set", f"dynamic_quests.{quest_id}.rewards", updated_rewards),
-                StateChange("narrative_plan", "add", "quest_history", history_entry),
-            ],
-            metadata={"quest_id": quest_id, "item_id": item_id, "quantity": quantity},
-        )
 
     def _compute_curate_shop(
         self,
@@ -1784,39 +1786,6 @@ class PlannerItemHandler(StaticCommandHandler):
             },
         )
 
-    @classmethod
-    def _normalize_reward_items(cls, raw_items: Any) -> list[dict[str, Any]]:
-        if not isinstance(raw_items, list):
-            return []
-        merged: list[dict[str, Any]] = []
-        for raw_item in raw_items:
-            if not isinstance(raw_item, Mapping):
-                continue
-            item_id = coerce_non_empty_string(raw_item.get("item_id"))
-            if item_id is None:
-                continue
-            count = coerce_int(raw_item.get("count", 1)) or 1
-            if count < 1:
-                continue
-            merged = cls._merge_reward_item(merged, item_id, count)
-        return merged
-
-    @classmethod
-    def _merge_reward_item(
-        cls,
-        items: list[dict[str, Any]],
-        item_id: str,
-        quantity: int,
-    ) -> list[dict[str, Any]]:
-        merged = cls._normalize_reward_items(items)
-        for entry in merged:
-            if entry.get("item_id") != item_id:
-                continue
-            current = coerce_int(entry.get("count", 1)) or 1
-            entry["count"] = max(1, current) + quantity
-            return merged
-        merged.append({"item_id": item_id, "count": quantity})
-        return merged
 
 
 class PlannerRuntimeHandler(StaticCommandHandler):
@@ -1826,6 +1795,7 @@ class PlannerRuntimeHandler(StaticCommandHandler):
         "planner_expire_dynamic_quest",
         "planner_add_story_facts",
         "planner_commit_runtime_state",
+        "planner_advance_milestone",
     )
 
     def validate(
@@ -1834,7 +1804,6 @@ class PlannerRuntimeHandler(StaticCommandHandler):
         state: StateContainer,
         world: WorldInstance,
     ) -> ValidationResult:
-        del world
         source_gate = _planner_source_gate(cmd)
         if not source_gate.ok:
             return source_gate
@@ -1869,6 +1838,22 @@ class PlannerRuntimeHandler(StaticCommandHandler):
             if trace is not None and not isinstance(trace, Mapping):
                 return ValidationResult(ok=False, reason="last_planner_replay_trace must be a mapping")
             return ValidationResult(ok=True)
+        if cmd.type == "planner_advance_milestone":
+            if not state.has_slice("quests"):
+                return ValidationResult(ok=False, reason="quests slice is required")
+            if not world.has_registry("quests"):
+                return ValidationResult(ok=False, reason="quests registry is required")
+            milestone_id = coerce_non_empty_string(cmd.params.get("milestone_id"))
+            if milestone_id is None:
+                return ValidationResult(ok=False, reason="milestone_id must be a non-empty string")
+            milestone = world.quests.get_milestone(milestone_id)
+            if milestone is None:
+                return ValidationResult(ok=False, reason=f"milestone not found: {milestone_id}")
+            to_state = coerce_non_empty_string(cmd.params.get("to_state")) or "COMPLETED"
+            valid_states = {"COMPLETED", "FAILED", "AVAILABLE", "ACTIVE"}
+            if to_state.upper() not in valid_states:
+                return ValidationResult(ok=False, reason=f"invalid to_state: {to_state}")
+            return ValidationResult(ok=True)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -1890,6 +1875,8 @@ class PlannerRuntimeHandler(StaticCommandHandler):
             return self._compute_add_story_facts(cmd)
         if cmd.type == "planner_commit_runtime_state":
             return self._compute_commit_runtime_state(cmd, state)
+        if cmd.type == "planner_advance_milestone":
+            return self._compute_advance_milestone(cmd, state, world)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _compute_escalate(self, cmd: Command, state: StateContainer) -> ExecuteResult:
@@ -2035,3 +2022,61 @@ class PlannerRuntimeHandler(StaticCommandHandler):
         if isinstance(behavior_entry, Mapping):
             changes.append(StateChange("narrative_plan", "add", "behavior_window", dict(behavior_entry)))
         return _planner_success(cmd.type, changes=changes, metadata=metadata)
+
+    def _compute_advance_milestone(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: WorldInstance,
+    ) -> ExecuteResult:
+        """Advance a milestone state, enforcing an 80% success-condition threshold.
+
+        The planner may request advancement only when at least 80% of the
+        milestone's success_conditions are already satisfied.  This prevents the
+        planner from bypassing meaningful player progress requirements while still
+        allowing it to nudge a nearly-complete milestone over the finish line.
+        """
+        milestone_id = coerce_non_empty_string(cmd.params.get("milestone_id")) or ""
+        to_state = (coerce_non_empty_string(cmd.params.get("to_state")) or "COMPLETED").upper()
+        current_tick = coerce_int(cmd.params.get("current_tick")) or 0
+
+        milestone = world.quests.get_milestone(milestone_id)
+        if milestone is None:
+            return ExecuteResult.error(f"milestone not found: {milestone_id}")
+
+        # Evaluate success_conditions satisfaction ratio
+        success_conditions = list(milestone.success_conditions) if milestone.success_conditions else []
+        if success_conditions:
+            evaluator = BasicEventConditionEvaluator()
+            met_count = 0
+            for cond in success_conditions:
+                cond_dict = {"type": cond.type, "params": dict(cond.params)}
+                is_met, _ = evaluator._condition_met(state, cond_dict)
+                if is_met:
+                    met_count += 1
+            satisfaction_ratio = met_count / len(success_conditions)
+            if satisfaction_ratio < 0.8:
+                return ExecuteResult.error(
+                    f"milestone_conditions_insufficient: "
+                    f"{met_count}/{len(success_conditions)} conditions met "
+                    f"({satisfaction_ratio:.0%} < 80%)"
+                )
+
+        changes: list[StateChange] = [
+            StateChange(
+                "quests",
+                "set",
+                f"milestone_states.{milestone_id}",
+                {"state": to_state, "tick": current_tick},
+            ),
+        ]
+        return _planner_success(
+            cmd.type,
+            changes=changes,
+            metadata={
+                "milestone_id": milestone_id,
+                "to_state": to_state,
+                "tick": current_tick,
+                "conditions_total": len(success_conditions),
+            },
+        )

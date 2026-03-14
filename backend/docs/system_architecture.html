@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>AI CRPG 后端 — 系统架构总览</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 24px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    color: #58a6ff;
+    margin-bottom: 8px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #8b949e;
+    margin-bottom: 40px;
+    font-size: 14px;
+  }
+  .section {
+    max-width: 1200px;
+    margin: 0 auto 48px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 32px;
+  }
+  .section h2 {
+    font-size: 22px;
+    color: #f0883e;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section h2 .badge {
+    font-size: 12px;
+    background: #f0883e22;
+    color: #f0883e;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: normal;
+  }
+  .section h2 .badge-new {
+    font-size: 12px;
+    background: #3fb95022;
+    color: #3fb950;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-weight: normal;
+  }
+  .section .desc {
+    color: #8b949e;
+    margin-bottom: 20px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .mermaid {
+    display: flex;
+    justify-content: center;
+    overflow-x: auto;
+    padding: 16px 0;
+  }
+  .mermaid svg {
+    max-width: 100%;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: #0d111799;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .legend-dot {
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+  .nav {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 13px;
+    z-index: 100;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .nav a {
+    display: block;
+    color: #58a6ff;
+    text-decoration: none;
+    padding: 4px 0;
+  }
+  .nav a:hover { text-decoration: underline; }
+  .nav a.new { color: #3fb950; }
+  .note {
+    background: #1c2128;
+    border-left: 3px solid #58a6ff;
+    padding: 12px 16px;
+    margin-top: 16px;
+    border-radius: 0 6px 6px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .note strong { color: #58a6ff; }
+  .note.success { border-left-color: #3fb950; }
+  .note.success strong { color: #3fb950; }
+</style>
+</head>
+<body>
+
+<h1>AI CRPG 后端 — 系统架构总览</h1>
+<p class="subtitle">2026-03-14 | 回合生命周期 / 规划者与NPC信息流 / AI审判者 / 结算钩子链 / NPC服务系统</p>
+
+<nav class="nav">
+  <strong style="color:#f0883e">目录</strong>
+  <a href="#fig1">图一、回合生命周期</a>
+  <a href="#fig2">图二、结算钩子链</a>
+  <a href="#fig3">图三、规划者 &harr; NPC</a>
+  <a href="#fig4">图四、AI审判者</a>
+  <a href="#fig5">图五、三系统闭环</a>
+  <a href="#fig6">图六、NPC对话6步管线</a>
+  <a href="#fig7">图七、信息可见性矩阵</a>
+  <a href="#fig8" class="new">图八、NPC服务系统 (NEW)</a>
+  <a href="#fig9" class="new">图九、规划者5子系统 (NEW)</a>
+</nav>
+
+<!-- ============================================================ -->
+<div class="section" id="fig1">
+  <h2>图一、完整回合生命周期 <span class="badge">核心循环</span></h2>
+  <p class="desc">玩家行动 &rarr; 三阶段管线 &rarr; 智能体编排 &rarr; 结算钩子 &rarr; SSE推流响应。整个系统的主运行循环。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117','fontFamily':'system-ui'}}}%%
+flowchart TD
+    subgraph HTTP["阶段0：HTTP入口"]
+        A["玩家行动<br/>(点击/发送消息)"] --> B["POST /interact 或 /action"]
+        B --> C["交互服务 InteractionService<br/>验证存在性 validate_presence<br/>验证前置条件 validate_preconditions"]
+    end
+
+    subgraph PIPE["阶段1：三阶段管线 Pipeline"]
+        D["A. 上下文组装器 ContextAssembler<br/>构建 L0~L7 八层上下文"]
+        E["B. 行动分发器 ActionDispatcher<br/>行动 &rarr; 指令 Command"]
+        F["C. 规则引擎 RulesEngine<br/>指令 &rarr; 状态变更 StateDelta"]
+        D --> E --> F
+    end
+
+    subgraph AGENT["阶段2：智能体编排 Agent Orchestration (LLM)"]
+        G["NPC交互协调器 / 私聊协调器<br/>NpcInteractionCoordinator"]
+        H["智能体执行器 AgenticExecutor<br/>多轮工具调用"]
+        I["NPC回复<br/>+ GM观察<br/>+ 队友反应"]
+        G --> H --> I
+    end
+
+    subgraph TIME["阶段3：时间累积"]
+        J{"累积时间<br/>&ge; 1.0小时 ?"}
+        K["继续<br/>累积"]
+    end
+
+    subgraph SETTLE["阶段4：结算 Settlement (25个钩子)"]
+        L["P10~P30: 定时事件<br/>状态效果 / AI审判者 AIOsiris"]
+        M["P40~P58: 遭遇<br/>感知 / 事件 / 任务 / 经验"]
+        N["P60~P66: NPC日程<br/>关系 / 叙事规划者 NarrativePlanner"]
+        O["P70~P90: 时间推进<br/>过期回收 / GM叙述 / 重置"]
+        L --> M --> N --> O
+    end
+
+    subgraph OUT["阶段5：输出"]
+        P["SSE事件流 &rarr; 前端"]
+        Q["存档仓库 SaveStore &rarr; 持久化"]
+        R["释放会话锁 session_lock"]
+        P --> Q --> R
+    end
+
+    C --> D
+    F --> G
+    I -->|"时间消耗 time_cost"| J
+    J -->|"否"| K
+    J -->|"是"| L
+    O --> P
+
+    style HTTP fill:#1c2128,stroke:#30363d
+    style PIPE fill:#1c2128,stroke:#1f6feb
+    style AGENT fill:#1c2128,stroke:#da3633
+    style TIME fill:#1c2128,stroke:#f0883e
+    style SETTLE fill:#1c2128,stroke:#3fb950
+    style OUT fill:#1c2128,stroke:#8b949e
+  </div>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-dot" style="background:#1f6feb"></span> 管线 Pipeline（规则层）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#da3633"></span> 智能体 Agent（LLM层）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> 结算 Settlement（钩子链）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#f0883e"></span> 时间闸门</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig2">
+  <h2>图二、结算钩子链 <span class="badge">25个钩子 SettlementHook</span></h2>
+  <p class="desc">当累积时间 &ge; 1.0小时，所有结算钩子按优先级严格顺序执行。审判者(P30)先于规划者(P66)运行 — 审判者的输出成为规划者的输入。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart LR
+    subgraph EARLY["P10 ~ P30：即时后果"]
+        H10["P10<br/>定时事件<br/>ScheduledEvent"]
+        H20["P20<br/>状态效果<br/>StatusEffect"]
+        H30["P30<br/><b>AI审判者</b><br/>AIOsiris"]
+    end
+    subgraph MID1["P40 ~ P58：世界反应"]
+        H40["P40<br/>遭遇生成<br/>Encounter"]
+        H45["P45<br/>被动感知<br/>PassivePerception"]
+        H50["P50<br/>事件触发条件<br/>EventCondition"]
+        H54["P54<br/>里程碑完成<br/>MilestoneCompletion"]
+        H55["P55<br/>里程碑解锁<br/>MilestoneUnlock"]
+        H56["P56<br/>任务目标追踪<br/>QuestObjective"]
+        H58["P58<br/>经验升级<br/>XpAdvancement"]
+    end
+    subgraph MID2["P60 ~ P66：社交与叙事"]
+        H60["P60<br/>NPC日程移动<br/>NpcSchedule"]
+        H62["P62<br/>共享经历记录<br/>SharedExperience"]
+        H63["P63<br/>营火对话<br/>Campfire"]
+        H65["P65<br/>关系阶段跃迁<br/>Relationship"]
+        H66["P66<br/><b>叙事规划者</b><br/>NarrativePlanner"]
+    end
+    subgraph LATE["P70 ~ P90：清理与输出"]
+        H70["P70<br/>时间推进<br/>TimeAdvance"]
+        H72["P72<br/>任务过期回收<br/>QuestExpiry"]
+        H75a["P75<br/>私聊触发<br/>PrivateChatTrigger"]
+        H75b["P75<br/>临时区域过期<br/>SubAreaExpiry"]
+        H76["P76<br/>指令触发<br/>DirectiveTrigger"]
+        H80["P80<br/>GM叙述<br/>GmNarration"]
+        H90["P90<br/>场景总线重置<br/>SceneBusReset"]
+    end
+
+    H10 --> H20 --> H30
+    H30 --> H40 --> H45 --> H50 --> H54 --> H55 --> H56 --> H58
+    H58 --> H60 --> H62 --> H63 --> H65 --> H66
+    H66 --> H70 --> H72 --> H75a --> H75b --> H76 --> H80 --> H90
+
+    H30 -. "变更日志 change_log 流入" .-> H66
+
+    style H30 fill:#da3633,stroke:#f85149,color:#fff
+    style H66 fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style EARLY fill:#1c2128,stroke:#da3633
+    style MID1 fill:#1c2128,stroke:#f0883e
+    style MID2 fill:#1c2128,stroke:#1f6feb
+    style LATE fill:#1c2128,stroke:#8b949e
+  </div>
+  <div class="note">
+    <strong>关键关系：</strong>审判者 AIOsiris(P30) 的状态变更进入变更日志 &rarr; 规划者 NarrativePlanner(P66) 通过语义事件收集器 semantic_events 读到 &rarr; 规划者据此做战略决策。<br/>
+    审判者 = 战术因果引擎 &nbsp;|&nbsp; 规划者 = 战略叙事引擎
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig3">
+  <h2>图三、规划者 &harr; NPC 信息流 <span class="badge">6条通道</span></h2>
+  <p class="desc">规划者和NPC之间是<b>间接通信</b>，通过状态中转。规划者从不直接调用NPC；NPC也从不直接调用规划者。通道6（服务分配）是新增的NPC服务系统。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart TB
+    PLANNER["<b>叙事规划者 NarrativePlanner</b><br/>(P66 结算钩子)<br/>LLM 战略决策"]
+
+    subgraph STATE["叙事计划状态切片 NarrativePlanSlice"]
+        DIR["NPC指令队列 npc_directives<br/>行为指导指令"]
+        CAP["NPC能力表 npc_capabilities<br/>功能绑定描述符 CapabilityDescriptor"]
+        SVC["NPC服务表 npc_services<br/>服务描述符 ServiceDescriptor"]
+        FACTS["故事事实 story_facts<br/>世界知识三元组"]
+    end
+
+    subgraph HOOKS["触发钩子"]
+        DTH["指令触发钩子 DirectiveTrigger (P76)<br/>扫描指令 &rarr; SSE推送<br/>'NPC想和你说话 npc_wants_to_chat'"]
+    end
+
+    subgraph NPC_EXEC["NPC交互管线"]
+        CONSUME["实例管理器 InstanceManager<br/>消费指令 consume_directive"]
+        CTX["上下文构建器 ContextBuilder<br/>L6: 记忆命中<br/>L7: 能力+服务列表"]
+        AGENT["NPC智能体 (LLM)<br/>13个工具（含 execute_service）"]
+    end
+
+    subgraph FEEDBACK["反馈路径"]
+        ALOG["行动日志 action_log<br/>(说话, 表情, 更新好感, 执行服务...)"]
+        CLOG["变更日志 change_log<br/>(认同度, 信任度, HP, 金币...)"]
+        SBUS["场景总线 SceneBus<br/>(场景条目)"]
+        SEM["语义事件收集器 semantic_events<br/>语义事件提取"]
+    end
+
+    subgraph MEMORY["长期记忆"]
+        WKG["世界知识图谱 WorldKnowledgeGraph<br/>(BFS扩散查询)"]
+        MRET["记忆检索器 MemoryRetriever<br/>检索 retrieve(npc_id)"]
+    end
+
+    %% 规划者 -> 状态
+    PLANNER -->|"通道1: 指导NPC direct_npc"| DIR
+    PLANNER -->|"通道2: 分配能力 assign_capability"| CAP
+    PLANNER -->|"通道6: 分配服务 assign_service"| SVC
+    PLANNER -->|"通道4: 写入事实 write_episode"| FACTS
+
+    %% 状态 -> 钩子 -> NPC
+    DIR --> DTH
+    DTH -->|"SSE推送到前端"| CONSUME
+    DIR --> CONSUME
+    CAP --> CTX
+    SVC --> CTX
+    CONSUME --> CTX
+    CTX --> AGENT
+
+    %% NPC -> 反馈
+    AGENT -->|"工具执行（含 execute_service）"| ALOG
+    AGENT -->|"状态变更（HP/金币/物品）"| CLOG
+    AGENT -->|"对话/表情"| SBUS
+
+    %% 反馈 -> 规划者
+    ALOG -->|"通道3"| SEM
+    CLOG -->|"通道3"| SEM
+    SBUS -->|"通道3"| SEM
+    SEM -->|"规划者事件 PlannerEvent"| PLANNER
+
+    %% 记忆环路
+    FACTS --> WKG
+    AGENT -.->|"通道5: 上下文溢出<br/>压缩为知识 graphize"| WKG
+    WKG --> MRET
+    MRET -->|"L6命中"| CTX
+
+    style PLANNER fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style AGENT fill:#da3633,stroke:#f85149,color:#fff
+    style STATE fill:#1c2128,stroke:#f0883e
+    style HOOKS fill:#1c2128,stroke:#3fb950
+    style NPC_EXEC fill:#1c2128,stroke:#da3633
+    style FEEDBACK fill:#1c2128,stroke:#8b949e
+    style MEMORY fill:#1c2128,stroke:#a371f7
+  </div>
+  <div class="note">
+    <strong>通道1</strong> direct_npc 指导NPC &rarr; 注入NPC系统提示词（一次性消费）<br/>
+    <strong>通道2</strong> assign_capability 分配能力 &rarr; 约束GM对话选项生成（持久到过期）<br/>
+    <strong>通道3</strong> NPC行动 &rarr; semantic_events 语义事件 &rarr; 规划者下轮决策<br/>
+    <strong>通道4</strong> story_facts 故事事实 &rarr; WorldKnowledgeGraph &rarr; NPC L6层记忆<br/>
+    <strong>通道5</strong> NPC对话溢出 &rarr; graphize 压缩为三元组 &rarr; 回流知识图谱<br/>
+    <strong style="color:#3fb950">通道6</strong> <strong style="color:#3fb950">assign_service 分配服务 &rarr; NPC获得可执行服务 &rarr; execute_service 工具执行效果原子</strong><br/><br/>
+    <strong>&#9888; 规划者看不到自己之前发出的指令，只看到语义后果（NPC做了什么、关系怎么变了）</strong>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig4">
+  <h2>图四、AI审判者 AIOsiris 信息流 <span class="badge">因果推理引擎</span></h2>
+  <p class="desc">审判者接收结构化摘要 + 世界快照，推理跨系统因果后果，输出最多5条指令。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart TB
+    subgraph INPUTS["审判者输入（3个结构化载荷）"]
+        SUM["<b>行动摘要 summary</b><br/>行动列表 + 状态变更列表<br/>时间段 + 地点<br/>回合类型 + 目击者 witnessed_by"]
+        SNAP["<b>世界快照 snapshot</b><br/>玩家状态 + 队伍<br/>在场NPC + 阵营<br/>标记 flags + 任务 + 危险等级"]
+        RULES["<b>规则上下文 rules_context</b><br/>允许的指令(10种)<br/>世界传说 + 阵营规则<br/>世界法则 + 标签维度"]
+    end
+
+    EVAL["<b>Gemini审判者 GeminiAIOsirisProvider</b><br/>温度=0.2（确定性推理）<br/>思考深度=中 thinking_level=medium"]
+
+    subgraph DECISION["审判决定 AIOsirisDecision"]
+        REASON["推理过程 reasoning<br/>'玩家在酒馆打架<br/>&rarr; 酒保目击<br/>&rarr; 信任下降，谣言传播'"]
+        CMDS["因果后果 consequences（最多5条）"]
+    end
+
+    subgraph CMD_TYPES["10种允许的指令类型"]
+        C1["set_flag 设置标记"]
+        C2["modify_disposition 修改好感<br/><i>（必须NPC在场！）</i>"]
+        C3["modify_approval 修改队友认同"]
+        C4["advance_quest 推进任务"]
+        C5["schedule_event 安排延迟事件"]
+        C6["create_rumor 传播谣言"]
+        C7["modify_location 修改区域特征"]
+        C8["add_knowledge 灌输知识"]
+        C9["modify_completion 修改章节进度"]
+        C10["adjust_danger 调整危险等级"]
+    end
+
+    subgraph EXEC["执行管线"]
+        VALID["语义验证<br/>+ 在场性检查 locality check<br/>（NPC必须在场）"]
+        RE["execute_command<br/>&rarr; 规则引擎 RulesEngine<br/>&rarr; 状态变更 StateDelta"]
+        CL["变更日志 change_log<br/>（流入P66规划者）"]
+        SSE["SSE事件<br/>ai_osiris_applied"]
+    end
+
+    SUM --> EVAL
+    SNAP --> EVAL
+    RULES --> EVAL
+    EVAL --> REASON
+    EVAL --> CMDS
+
+    CMDS --> C1 & C2 & C3 & C4 & C5 & C6 & C7 & C8 & C9 & C10
+
+    C1 & C2 & C3 & C4 & C5 & C6 & C7 & C8 & C9 & C10 --> VALID
+    VALID --> RE
+    RE --> CL
+    RE --> SSE
+
+    style EVAL fill:#da3633,stroke:#f85149,color:#fff
+    style INPUTS fill:#1c2128,stroke:#1f6feb
+    style DECISION fill:#1c2128,stroke:#f0883e
+    style CMD_TYPES fill:#1c2128,stroke:#3fb950
+    style EXEC fill:#1c2128,stroke:#8b949e
+  </div>
+  <div class="note">
+    <strong>在场性约束 locality check：</strong>modify_disposition 修改好感只能针对<b>当前在场</b>的NPC — 不能隔空修改不在场NPC<br/>
+    <strong>深眠压制 quiet_rest_slot：</strong>深度睡眠时段所有因果后果被压制，不执行<br/>
+    <strong>不可直接改玩家状态：</strong>审判者不能直接修改HP/金币/物品/位置
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig5">
+  <h2>图五、三系统交互闭环 <span class="badge">闭环循环</span></h2>
+  <p class="desc">规则引擎、审判者、规划者形成级联链条。每个系统的输出成为下一个系统的输入，构成完整反馈闭环。NPC现在可以通过服务系统执行机械效果。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart LR
+    PLAYER["玩家<br/>行动"] --> RE
+
+    subgraph LAYER1["即时层（管线 Pipeline）"]
+        RE["<b>规则引擎 RulesEngine</b><br/>机械性后果<br/>HP/金币/位置/骰点"]
+    end
+
+    subgraph LAYER2["战术层（P30）"]
+        OSIRIS["<b>AI审判者 AIOsiris</b><br/>因果推理<br/>好感/标记/谣言<br/>危险/知识"]
+    end
+
+    subgraph LAYER3["战略层（P66）"]
+        PLANNER["<b>叙事规划者 NarrativePlanner</b><br/>故事指令<br/>任务/NPC行为指导<br/>世界构建/服务分配"]
+    end
+
+    subgraph LAYER4["执行层（下次交互）"]
+        NPC["<b>NPC智能体 Agent</b><br/>消费指令 + 执行服务<br/>说话/表情/治疗/交易<br/>13个工具"]
+    end
+
+    RE -->|"状态变更 StateDelta<br/>&rarr; 行动日志 action_log"| OSIRIS
+    OSIRIS -->|"因果指令 Commands<br/>&rarr; 变更日志 change_log"| PLANNER
+    PLANNER -->|"行为指令 + 服务定义<br/>&rarr; npc_directives + npc_services"| NPC
+    NPC -->|"行动结果 + 服务执行<br/>&rarr; action_log<br/>&rarr; semantic_events"| RE
+
+    style RE fill:#3fb950,stroke:#56d364,color:#000
+    style OSIRIS fill:#da3633,stroke:#f85149,color:#fff
+    style PLANNER fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style NPC fill:#a371f7,stroke:#bc8cff,color:#fff
+  </div>
+  <div class="legend">
+    <span class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> 规则引擎 RulesEngine：即时机械效果（骰点、HP、物品）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#da3633"></span> 审判者 AIOsiris：战术跨系统后果（好感、谣言、危险）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#1f6feb"></span> 规划者 NarrativePlanner：战略叙事演进（任务、NPC指令、服务分配、世界构建）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#a371f7"></span> NPC智能体 Agent：执行行动 + 执行服务（对话、情感、治疗、交易、奖励发放）</span>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig6">
+  <h2>图六、NPC对话6步管线 <span class="badge">智能体编排 Agent Orchestration</span></h2>
+  <p class="desc">当玩家与NPC对话时，系统执行6步管线，最多进行 4+ 次LLM调用（NPC + GM + N个队友）。NPC现在可以在对话中调用 execute_service 执行服务。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart TD
+    START["玩家点击「与NPC对话」"]
+
+    subgraph S1["第1步：初始化 Setup"]
+        S1A["验证NPC存在"]
+        S1B["玩家消息写入场景总线 SceneBus"]
+        S1C["实例管理器 InstanceManager.获取或创建"]
+        S1D["从规划者消费指令 consume_directive"]
+        S1E["构建NPC完整上下文 NpcFullContext<br/>(L0/L2/L3/L5/L7 + 服务列表)"]
+        S1A --> S1B --> S1C --> S1D --> S1E
+    end
+
+    subgraph S2["第2步：NPC智能体（LLM调用 #1）"]
+        S2A["系统提示词 system_prompt：<br/>性格 + 角色数据 role_data<br/>+ 规划者指令（如有）<br/>+ L6层记忆命中<br/>+ 可执行服务列表"]
+        S2B["智能体执行器 AgenticExecutor<br/>最多5轮工具调用"]
+        S2C["可用工具 13个：说话、表情、<br/>更新好感、回忆、提供交易、<br/>加入队伍、<b>执行服务 execute_service</b>..."]
+        S2A --> S2B --> S2C
+    end
+
+    subgraph S3["第3步：GM观察（LLM调用 #2）"]
+        S3A["GM可见L7上下文<br/>+ NPC能力+服务列表"]
+        S3B["可用工具 5个：叙述 narrate、评论 comment、<br/>建议选项 suggest_options、跳过 pass_turn"]
+        S3A --> S3B
+    end
+
+    subgraph S4["第4步：队友反应（LLM调用 #3~N）"]
+        S4A["是否应该回应？<br/>关系亲密度 + 场景标签"]
+        S4B["每个被触发的队友<br/>运行智能体执行器"]
+        S4C["可用工具 8个：说话、表情、<br/>发表看法 express_opinion、建议战术"]
+        S4A -->|"触发"| S4B --> S4C
+    end
+
+    subgraph S5["第5步：对话选项 Dialogue Options"]
+        S5A["提取GM的 suggest_options"]
+        S5B["兜底：NPC档案中的<br/>静态选项"]
+        S5A --> S5B
+    end
+
+    subgraph S6["第6步：返回结果"]
+        S6A["NPC交互结果 NpcInteractionResult<br/>时间消耗 time_cost = 1/6小时"]
+        S6B["转换为SSE事件<br/>npc_response / npc_emote<br/>teammate_response / dialogue_options<br/>service_executed"]
+        S6A --> S6B
+    end
+
+    START --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+
+    style S1 fill:#1c2128,stroke:#8b949e
+    style S2 fill:#1c2128,stroke:#da3633
+    style S3 fill:#1c2128,stroke:#1f6feb
+    style S4 fill:#1c2128,stroke:#a371f7
+    style S5 fill:#1c2128,stroke:#f0883e
+    style S6 fill:#1c2128,stroke:#3fb950
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig7">
+  <h2>图七、信息可见性矩阵 <span class="badge">谁能看到什么</span></h2>
+  <p class="desc">每个智能体角色对系统信息的可见范围不同。此矩阵展示各角色能访问哪些信息。</p>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:12px">
+      <thead>
+        <tr style="border-bottom:2px solid #30363d">
+          <th style="text-align:left;padding:10px;color:#58a6ff">信息层</th>
+          <th style="text-align:center;padding:10px;color:#da3633">NPC智能体</th>
+          <th style="text-align:center;padding:10px;color:#1f6feb">GM智能体</th>
+          <th style="text-align:center;padding:10px;color:#a371f7">队友智能体</th>
+          <th style="text-align:center;padding:10px;color:#3fb950">规划者LLM</th>
+          <th style="text-align:center;padding:10px;color:#f0883e">审判者LLM</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #21262d">
+          <td style="padding:8px 10px">L0 世界传说/阵营</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（rules_context）</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d;background:#161b2299">
+          <td style="padding:8px 10px">L1 章节状态</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（完整）</td>
+          <td style="text-align:center;color:#f0883e">过滤后</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d">
+          <td style="padding:8px 10px">L2 区域环境</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（snapshot）</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d;background:#161b2299">
+          <td style="padding:8px 10px">L3 地点详情</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#f0883e">部分</td>
+          <td style="text-align:center;color:#f0883e">部分</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d">
+          <td style="padding:8px 10px">L4 动态状态（玩家/关系）</td>
+          <td style="text-align:center;color:#f0883e">仅自身</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（全局）</td>
+          <td style="text-align:center;color:#f0883e">自身+队伍</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（snapshot）</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d;background:#161b2299">
+          <td style="padding:8px 10px">L5 场景总线 SceneBus</td>
+          <td style="text-align:center;color:#f0883e">可见性<br/>过滤</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（全部）</td>
+          <td style="text-align:center;color:#f0883e">可见性<br/>过滤</td>
+          <td style="text-align:center;color:#f0883e">间接<br/>（events）</td>
+          <td style="text-align:center;color:#f0883e">最近5条<br/>系统条目</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d">
+          <td style="padding:8px 10px">L6 记忆 / 知识图谱</td>
+          <td style="text-align:center;color:#3fb950">&#10003;（5条命中）</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#f0883e">story_facts</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d;background:#161b2299">
+          <td style="padding:8px 10px">L7 引擎结果 / 能力+服务</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#3fb950">&#10003;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d">
+          <td style="padding:8px 10px"><b>规划者指令 npc_directives</b></td>
+          <td style="text-align:center;color:#3fb950"><b>&#10003;</b><br/>（在提示词中）</td>
+          <td style="text-align:center;color:#3fb950">&#10003;<br/>（L7层）</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f0883e">仅通过<br/>事件反馈</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d;background:#161b2299">
+          <td style="padding:8px 10px"><b>NPC能力 npc_capabilities</b></td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#3fb950"><b>&#10003;</b><br/>（L7层）</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+        </tr>
+        <tr style="border-bottom:1px solid #21262d">
+          <td style="padding:8px 10px"><b style="color:#3fb950">NPC服务 npc_services</b></td>
+          <td style="text-align:center;color:#3fb950"><b>&#10003;</b><br/>（role_data + execute_service）</td>
+          <td style="text-align:center;color:#3fb950">&#10003;<br/>（L7层）</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+          <td style="text-align:center;color:#f85149">&#10007;</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 10px"><b>可用工具数</b></td>
+          <td style="text-align:center"><b>13</b>个工具<br/>（特征过滤 + execute_service）</td>
+          <td style="text-align:center">5个工具</td>
+          <td style="text-align:center">8个工具</td>
+          <td style="text-align:center">2个工具<br/>（设计技能 design_skill）</td>
+          <td style="text-align:center">1个工具<br/>（提交后果 submit_consequences）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note success" style="margin-top:20px">
+    <strong>NPC服务系统已实现（D-Svc01~06）：</strong>NPC现在可以通过 execute_service 工具执行被授权的服务。<br/>
+    服务来源：内容层 shop.services（启动时自动注入）+ 规划者 assign_service 指令（动态分配）。<br/>
+    效果原子：restore_hp / modify_gold / grant_item / apply_effect / remove_effect / add_xp 等。<br/>
+    任务奖励：任务完成时自动分配给柜台小姐 NPC，玩家对话时领取（one_shot 一次性服务）。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig8">
+  <h2>图八、NPC服务系统 <span class="badge-new">NEW D-Svc01~06</span></h2>
+  <p class="desc">NPC服务系统打通了"叙事意图"到"机械执行"的最后一公里。规划者定义服务，NPC在玩家交互时执行。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart TB
+    subgraph SOURCES["三个服务来源"]
+        CONTENT["内容层 characters.json<br/>shop.services<br/>(heal, blessing, field_dressing...)"]
+        PLANNER_A["规划者 assign_service 指令<br/>动态定义新服务<br/>(自定义效果原子)"]
+        PLANNER_R["规划者 revoke_service 指令<br/>移除服务"]
+        QUEST["任务完成事件 quest_completed<br/>NPC导演自动生成<br/>奖励服务 reward_{quest_id}"]
+    end
+
+    subgraph BOOTSTRAP["启动注入（幂等）"]
+        BOOT["NarrativePlannerHook.bootstrap<br/>_bootstrap_content_services()<br/>已知服务 &rarr; 效果原子映射<br/>未知服务 &rarr; 空效果（可谈论不可执行）"]
+    end
+
+    subgraph STORAGE["叙事计划状态切片 NarrativePlanSlice"]
+        SVCS["npc_services 服务表<br/>{npc_id: [ServiceDescriptor, ...]}<br/>assign / revoke / get / prune"]
+    end
+
+    subgraph CTX_BUILD["上下文构建 ContextBuilder"]
+        MERGE["合并服务来源<br/>内容层 + 规划者动态服务<br/>（规划者覆盖同名服务）<br/>&rarr; role_data.services"]
+    end
+
+    subgraph NPC_TOOL["NPC execute_service 工具"]
+        LOOKUP["查找 service_id<br/>从 role_data.services"]
+        PRECHECK["前置条件检查<br/>金币充足? 任务已完成?"]
+        EFFECTS["逐条执行效果原子 Effect Atoms"]
+        DEDUCT["扣除价格 modify_gold"]
+        ONESHOT["one_shot 服务<br/>执行后自动移除"]
+    end
+
+    subgraph ATOMS["8种效果原子"]
+        A1["restore_hp<br/>恢复生命"]
+        A2["modify_gold<br/>增减金币"]
+        A3["grant_item<br/>给予物品"]
+        A4["remove_item<br/>移除物品"]
+        A5["apply_effect<br/>施加状态效果"]
+        A6["remove_effect<br/>移除状态效果"]
+        A7["add_xp<br/>增加经验"]
+        A8["add_knowledge<br/>灌输知识"]
+    end
+
+    subgraph ENGINE["规则引擎 RulesEngine"]
+        CMD["Command 执行<br/>ServiceEffectHandler<br/>+ 现有 Handler"]
+        DELTA["StateDelta 状态变更<br/>HP / 金币 / 物品 / 效果"]
+    end
+
+    %% 来源 → 存储
+    CONTENT --> BOOT --> SVCS
+    PLANNER_A --> SVCS
+    PLANNER_R --> SVCS
+    QUEST --> SVCS
+
+    %% 存储 → 上下文
+    SVCS --> MERGE
+
+    %% 上下文 → 工具
+    MERGE --> LOOKUP
+    LOOKUP --> PRECHECK --> EFFECTS --> DEDUCT --> ONESHOT
+
+    %% 工具 → 效果原子
+    EFFECTS --> A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8
+
+    %% 效果原子 → 规则引擎
+    A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 --> CMD --> DELTA
+
+    style SOURCES fill:#1c2128,stroke:#1f6feb
+    style BOOTSTRAP fill:#1c2128,stroke:#f0883e
+    style STORAGE fill:#1c2128,stroke:#f0883e
+    style CTX_BUILD fill:#1c2128,stroke:#a371f7
+    style NPC_TOOL fill:#1c2128,stroke:#da3633
+    style ATOMS fill:#1c2128,stroke:#3fb950
+    style ENGINE fill:#1c2128,stroke:#8b949e
+  </div>
+  <div class="note">
+    <strong>关键设计：</strong>规划者 NarrativePlanner 是纯定义者（只发 assign_service/revoke_service 指令），不执行。<br/>
+    NPC 是执行者（通过 execute_service 工具），执行只在玩家交互时发生，有明确的叙事来源。<br/><br/>
+    <strong>任务奖励流：</strong>quest_completed 事件 &rarr; NPC导演 NpcDirector 自动生成 assign_service 指令 &rarr;<br/>
+    柜台小姐获得 reward_{quest_id} 服务（one_shot=True, price=0）&rarr; 玩家对话时领取奖励。<br/><br/>
+    <strong>DonationHandler 兼容：</strong>donation 服务跳过自动注入，继续走已有的 donate 指令路径。
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<div class="section" id="fig9">
+  <h2>图九、规划者5子系统 <span class="badge-new">NEW ItemDesigner已移除</span></h2>
+  <p class="desc">叙事规划者 NarrativePlanner 由5个子系统 PlannerSubSystem 组成（原6个，ItemDesigner 已移除并吸收）。每个子系统处理一组不相交的指令种类。</p>
+  <div class="mermaid">
+%%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
+flowchart TD
+    PLANNER["<b>叙事规划者钩子 NarrativePlannerHook</b><br/>P66 结算钩子<br/>分发器 PlannerDispatcher 路由事件"]
+
+    subgraph SUB1["任务管理器 QuestManager"]
+        Q1["create_quest 创建任务"]
+        Q2["publish_bulletin 发布公告"]
+        Q3["retire_quest 下架任务"]
+        Q4["update_quest 更新任务"]
+        Q5["advance_milestone 推进里程碑"]
+    end
+
+    subgraph SUB2["NPC导演 NpcDirector"]
+        N1["direct_npc 指导NPC"]
+        N2["spawn_quest_npc 生成任务NPC"]
+        N3["assign_capability 分配能力"]
+        N4["revoke_capability 移除能力"]
+        N5["<b style='color:#3fb950'>assign_service 分配服务</b>"]
+        N6["<b style='color:#3fb950'>revoke_service 移除服务</b>"]
+        N7["curate_shop 策展商店库存"]
+    end
+
+    subgraph SUB3["世界构建器 WorldBuilder"]
+        W1["plant_environmental 放置环境线索"]
+        W2["fill_area 填充区域"]
+        W3["fill_location 填充地点"]
+        W4["plant_encounter 放置遭遇"]
+        W5["discover_room 发现房间"]
+        W6["fill_room 填充房间"]
+    end
+
+    subgraph SUB4["叙事编织器 NarrativeWeaver"]
+        V1["指令GC prune_directives"]
+        V2["临时NPC回收 despawn"]
+        V3["自动升级安全网 auto_escalation"]
+        V4["<b style='color:#3fb950'>服务过期清理 prune_services</b>"]
+    end
+
+    subgraph SUB5["节奏控制器 PacingController"]
+        P1["escalate 升级紧迫度"]
+        P2["adjust_pacing 调整节奏"]
+    end
+
+    PLANNER --> SUB1
+    PLANNER --> SUB2
+    PLANNER --> SUB3
+    PLANNER --> SUB4
+    PLANNER --> SUB5
+
+    style PLANNER fill:#1f6feb,stroke:#58a6ff,color:#fff
+    style SUB1 fill:#1c2128,stroke:#f0883e
+    style SUB2 fill:#1c2128,stroke:#3fb950
+    style SUB3 fill:#1c2128,stroke:#a371f7
+    style SUB4 fill:#1c2128,stroke:#8b949e
+    style SUB5 fill:#1c2128,stroke:#da3633
+  </div>
+  <div class="note">
+    <strong>变更记录（D-Svc05）：</strong>ItemDesigner 子系统已移除。<br/>
+    &bull; curate_shop（策展商店库存）&rarr; 迁移到 NPC导演 NpcDirector<br/>
+    &bull; design_reward（设计奖励）&rarr; 被柜台小姐服务模式取代（quest_completed &rarr; assign_service）<br/><br/>
+    <strong style="color:#3fb950">新增指令（D-Svc02）：</strong>assign_service / revoke_service 由 NPC导演处理<br/>
+    <strong>NPC导演现在是最大的子系统</strong>，负责7种指令：行为指导 + 生成/回收NPC + 能力 + 服务 + 商店
+  </div>
+</div>
+
+<div style="text-align:center;color:#484f58;padding:40px 0;font-size:13px">
+  为系统架构回顾生成 — 2026-03-14 | 含 NPC 服务系统更新（D-Svc01~06）
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    securityLevel: 'loose',
+    flowchart: {
+      useMaxWidth: true,
+      htmlLabels: true,
+      curve: 'basis'
+    }
+  });
+</script>
+</body>
+</html>

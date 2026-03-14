@@ -3,13 +3,12 @@
 Tests cover:
 - characters.json blacksmith data (shop_inventory, tags)
 - maps.json blacksmith_shop resident_npcs
-- ItemDesignerSubSystem.apply_directive("curate_shop") — add/remove/restock
+- NpcDirectorSubSystem.apply_directive("curate_shop") — add/remove/restock
 - Guard clauses (unknown npc, no shop state)
-- SSE notification (shop_curated)
 - NarrativePlannerHook._SUPPORTED_DIRECTIVES membership
 - _extract_merchant_data bug fix (current_stock / base_price / remaining)
 
-Decision record: D-P36 (narrative.md)
+Decision record: D-P36, D-Svc05 (narrative.md)
 """
 from __future__ import annotations
 
@@ -24,10 +23,9 @@ from app.game_core.narrative.context_builder import (
     _format_role_constraint_block,
 )
 from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
-from app.game_core.orchestration.models import SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
-from app.game_core.planning.item_designer import ItemDesignerSubSystem
+from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.rules import RulesEngine
 from app.game_core.rules.defaults import register_default_rules_handlers
 from app.game_core.state import StateChange, StateContainer, StateDelta
@@ -125,8 +123,8 @@ def _make_shop_state(items: list[dict[str, Any]] | None = None) -> dict[str, Any
     }
 
 
-def _make_designer(*, sse_collector: list | None = None) -> ItemDesignerSubSystem:
-    return ItemDesignerSubSystem(sse_collector=sse_collector)
+def _make_designer() -> NpcDirectorSubSystem:
+    return NpcDirectorSubSystem()
 
 
 def _build_rules_engine() -> RulesEngine:
@@ -326,44 +324,20 @@ def test_curate_shop_no_shop_state() -> None:
     assert result is not True  # Returns a rejection reason string
 
 
-def test_curate_shop_sse_emitted() -> None:
-    """curate_shop appends shop_curated SSEEvent to sse_collector."""
-    sse_collector: list[SSEEvent] = []
+def test_curate_shop_succeeds_with_empty_payload() -> None:
+    """curate_shop with no mutations still succeeds (empty mutation is valid)."""
     world = _make_world_with_blacksmith()
     context = _make_context(
         shop_states={"blacksmith": _make_shop_state([])},
         world=world,
     )
-    designer = _make_designer(sse_collector=sse_collector)
-
-    designer.apply_directive(
-        "curate_shop",
-        {"npc_id": "blacksmith"},
-        context,
-        current_tick=5,
-    )
-
-    assert len(sse_collector) == 1
-    event = sse_collector[0]
-    assert isinstance(event, SSEEvent)
-    assert event.event_type == "shop_curated"
-    assert event.payload["npc_id"] == "blacksmith"
-
-
-def test_curate_shop_no_sse_when_collector_none() -> None:
-    """curate_shop does not raise when sse_collector is None."""
-    world = _make_world_with_blacksmith()
-    context = _make_context(
-        shop_states={"blacksmith": _make_shop_state([])},
-        world=world,
-    )
-    designer = _make_designer(sse_collector=None)
+    designer = _make_designer()
 
     result = designer.apply_directive(
         "curate_shop",
         {"npc_id": "blacksmith"},
         context,
-        current_tick=1,
+        current_tick=5,
     )
 
     assert result is True

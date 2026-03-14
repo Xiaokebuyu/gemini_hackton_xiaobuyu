@@ -230,23 +230,24 @@ class TestSkillsPromptMandatory:
         assert "create_quest" in prompt, "Mandatory rule should mention create_quest"
         assert "plant_encounter" in prompt, "Mandatory rule should mention plant_encounter"
 
-    def test_subsystem_prompts_updated_from_optional_to_recommended(self) -> None:
+    def test_subsystem_prompts_updated_from_optional_to_mandatory(self) -> None:
         from app.narrators import (
             QUEST_MANAGER_AGENT_PROMPT,
             NPC_DIRECTOR_AGENT_PROMPT,
             WORLD_BUILDER_AGENT_PROMPT,
             NARRATIVE_WEAVER_AGENT_PROMPT,
-            ITEM_DESIGNER_AGENT_PROMPT,
         )
         for name, prompt in [
             ("QUEST_MANAGER", QUEST_MANAGER_AGENT_PROMPT),
             ("NPC_DIRECTOR", NPC_DIRECTOR_AGENT_PROMPT),
             ("WORLD_BUILDER", WORLD_BUILDER_AGENT_PROMPT),
             ("NARRATIVE_WEAVER", NARRATIVE_WEAVER_AGENT_PROMPT),
-            ("ITEM_DESIGNER", ITEM_DESIGNER_AGENT_PROMPT),
         ]:
             assert "（可选）" not in prompt, f"{name}: old '（可选）' text should be replaced"
-            assert "建议先通过 list_design_skills" in prompt, f"{name}: should have recommended language"
+            assert "建议先通过 list_design_skills" not in prompt, f"{name}: old recommended language should be replaced with mandatory"
+            assert "强制要求" in prompt, f"{name}: should have mandatory language"
+            assert "read_design_skill" in prompt, f"{name}: should mention read_design_skill"
+            assert "未查阅模板直接输出的 directive 将被拒绝" in prompt, f"{name}: should state directive rejection consequence"
 
 
 # ------------------------------------------------------------------

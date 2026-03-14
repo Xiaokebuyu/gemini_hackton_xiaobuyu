@@ -15,7 +15,6 @@ from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.planning.world_builder import WorldBuilderSubSystem
 from app.game_core.planning.pacing_controller import PacingControllerSubSystem
 from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
-from app.game_core.planning.item_designer import ItemDesignerSubSystem
 from app.game_core.content.registries.factions import FactionRegistry
 from app.game_core.content.registries.lore import LoreRegistry
 from app.game_core.orchestration.hooks.narrative_planner import (
@@ -387,7 +386,6 @@ def _build_test_hook(
         sse_collector=hook._pending_sse,
         agent=weaver_agent,
     ))
-    dispatcher.register(ItemDesignerSubSystem())
     hook._dispatcher = dispatcher
     return hook
 

@@ -1434,6 +1434,10 @@ def register_npc_tools(registry: RoleToolRegistry) -> None:
     """Instantiate and register all NPC tools."""
     for tool_cls in _NPC_TOOLS:
         registry.register(tool_cls())
+    # Lazy import to avoid circular dependency: service_tool imports _CharacterTool
+    # from this module, so we cannot import it at module level.
+    from app.game_core.narrative.service_tool import ExecuteServiceTool  # noqa: PLC0415
+    registry.register(ExecuteServiceTool())
 
 
 def register_teammate_tools(registry: RoleToolRegistry) -> None:

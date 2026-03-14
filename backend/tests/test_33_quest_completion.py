@@ -644,8 +644,7 @@ class TestMilestoneCascadeAndSSE:
 
 
 class TestQuestsJsonData:
-    def test_success_conditions_loaded_for_all_milestones(self) -> None:
-        """All 7 milestones in goblin_slayer quests.json should have success_conditions."""
+    def _load_registry(self) -> "QuestRegistry":
         quests_path = (
             pathlib.Path(__file__).parent.parent
             / "data"
@@ -655,17 +654,21 @@ class TestQuestsJsonData:
         )
         assert quests_path.exists(), f"quests.json not found at {quests_path}"
         data = json.loads(quests_path.read_text(encoding="utf-8"))
-
         reg = QuestRegistry()
         reg.load(data)
+        return reg
+
+    def test_success_conditions_loaded_for_all_milestones(self) -> None:
+        """All 3 milestones in goblin_slayer quests.json should have success_conditions."""
+        reg = self._load_registry()
         issues = reg.validate()
         assert not issues, f"QuestRegistry validation errors: {issues}"
 
         milestones = {ms.id: ms for ms in reg.list_all()}
         expected_ids = {
-            "ms_arrival", "ms_town_life", "ms_party_encounter",
-            "ms_growing_shadow", "ms_into_the_wilds", "ms_the_hive",
-            "ms_water_capital_call",
+            "ms_frontier_arrival",
+            "ms_growing_darkness",
+            "ms_hive_heart",
         }
         assert expected_ids.issubset(milestones.keys())
 
@@ -676,77 +679,89 @@ class TestQuestsJsonData:
             )
 
     def test_arrival_conditions(self) -> None:
-        """ms_arrival should have npc_talked condition for guild_girl."""
-        quests_path = (
-            pathlib.Path(__file__).parent.parent
-            / "data"
-            / "goblin_slayer"
-            / "v2"
-            / "quests.json"
-        )
-        data = json.loads(quests_path.read_text(encoding="utf-8"))
-        reg = QuestRegistry()
-        reg.load(data)
+        """ms_frontier_arrival should have npc_talked conditions for guild_girl and goblin_slayer."""
+        reg = self._load_registry()
 
-        ms = reg.get_milestone("ms_arrival")
+        ms = reg.get_milestone("ms_frontier_arrival")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
         assert "npc_talked" in cond_types
+        assert "location_visited" in cond_types
+        npc_ids = {
+            c.params.get("npc_id")
+            for c in ms.success_conditions
+            if c.type == "npc_talked"
+        }
+        assert "guild_girl" in npc_ids
+        assert "goblin_slayer" in npc_ids
 
     def test_the_hive_conditions_types(self) -> None:
-        """ms_the_hive should have kill_count and location_visited conditions."""
-        quests_path = (
-            pathlib.Path(__file__).parent.parent
-            / "data"
-            / "goblin_slayer"
-            / "v2"
-            / "quests.json"
-        )
-        data = json.loads(quests_path.read_text(encoding="utf-8"))
-        reg = QuestRegistry()
-        reg.load(data)
+        """ms_hive_heart should have location_visited and npc_talked conditions."""
+        reg = self._load_registry()
 
-        ms = reg.get_milestone("ms_the_hive")
+        ms = reg.get_milestone("ms_hive_heart")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
-        assert "kill_count" in cond_types
         assert "location_visited" in cond_types
+        assert "npc_talked" in cond_types
 
     def test_growing_shadow_conditions_types(self) -> None:
-        """ms_growing_shadow should have npc_talked conditions."""
-        quests_path = (
-            pathlib.Path(__file__).parent.parent
-            / "data"
-            / "goblin_slayer"
-            / "v2"
-            / "quests.json"
-        )
-        data = json.loads(quests_path.read_text(encoding="utf-8"))
-        reg = QuestRegistry()
-        reg.load(data)
+        """ms_growing_darkness should have npc_talked and location_visited conditions."""
+        reg = self._load_registry()
 
-        ms = reg.get_milestone("ms_growing_shadow")
+        ms = reg.get_milestone("ms_growing_darkness")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
         assert "npc_talked" in cond_types
+        assert "location_visited" in cond_types
 
     def test_next_milestones_chain_intact(self) -> None:
-        """Full 7-milestone chain: arrival → town_life → encounter → shadow → wilds → hive → water_capital."""
-        quests_path = (
-            pathlib.Path(__file__).parent.parent
-            / "data"
-            / "goblin_slayer"
-            / "v2"
-            / "quests.json"
-        )
-        data = json.loads(quests_path.read_text(encoding="utf-8"))
-        reg = QuestRegistry()
-        reg.load(data)
+        """3-milestone chain: frontier_arrival → growing_darkness → hive_heart."""
+        reg = self._load_registry()
 
-        assert "ms_town_life" in reg.get_milestone("ms_arrival").next_milestones
-        assert "ms_party_encounter" in reg.get_milestone("ms_town_life").next_milestones
-        assert "ms_growing_shadow" in reg.get_milestone("ms_party_encounter").next_milestones
-        assert "ms_into_the_wilds" in reg.get_milestone("ms_growing_shadow").next_milestones
-        assert "ms_the_hive" in reg.get_milestone("ms_into_the_wilds").next_milestones
-        assert "ms_water_capital_call" in reg.get_milestone("ms_the_hive").next_milestones
-        assert reg.get_milestone("ms_water_capital_call").next_milestones == []
+        assert "ms_growing_darkness" in reg.get_milestone("ms_frontier_arrival").next_milestones
+        assert "ms_hive_heart" in reg.get_milestone("ms_growing_darkness").next_milestones
+        assert reg.get_milestone("ms_hive_heart").next_milestones == []
+
+    def test_milestone_chain_integrity(self) -> None:
+        """Prerequisites chain is consistent: M1 has none, M2 requires M1, M3 requires M2."""
+        reg = self._load_registry()
+
+        m1 = reg.get_milestone("ms_frontier_arrival")
+        m2 = reg.get_milestone("ms_growing_darkness")
+        m3 = reg.get_milestone("ms_hive_heart")
+
+        assert m1 is not None
+        assert m2 is not None
+        assert m3 is not None
+
+        assert m1.prerequisites == []
+        assert "ms_frontier_arrival" in m2.prerequisites
+        assert "ms_growing_darkness" in m3.prerequisites
+
+    def test_milestone_conditions_have_valid_types(self) -> None:
+        """All success_conditions use types that the event engine recognises."""
+        supported_types = {
+            "npc_talked", "location_visited", "item_obtained",
+            "kill_count", "flag_set", "level_reached",
+        }
+        reg = self._load_registry()
+
+        for ms in reg.list_all():
+            for cond in ms.success_conditions:
+                assert cond.type in supported_types, (
+                    f"Milestone {ms.id}: unsupported condition type '{cond.type}'"
+                )
+
+    def test_milestone_completion_values_ascending(self) -> None:
+        """completion_value must be strictly ascending along the sequence chain."""
+        reg = self._load_registry()
+
+        ordered = sorted(reg.list_all(), key=lambda m: m.sequence)
+        for i in range(1, len(ordered)):
+            prev = ordered[i - 1]
+            curr = ordered[i]
+            assert curr.completion_value > prev.completion_value, (
+                f"completion_value not ascending: "
+                f"{prev.id}={prev.completion_value} >= {curr.id}={curr.completion_value}"
+            )

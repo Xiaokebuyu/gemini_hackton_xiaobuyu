@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class QuestManagerSubSystem:
     """PlannerSubSystem responsible for quest lifecycle directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"create_quest", "publish_bulletin", "retire_quest", "update_quest"})
+    _HANDLES: frozenset[str] = frozenset({"create_quest", "publish_bulletin", "retire_quest", "update_quest", "advance_milestone"})
 
     def __init__(
         self,
@@ -87,6 +87,8 @@ class QuestManagerSubSystem:
             return self._apply_retire_quest(payload, context, current_tick=current_tick)
         if kind == "update_quest":
             return self._apply_update_quest(payload, context, current_tick=current_tick)
+        if kind == "advance_milestone":
+            return self._apply_advance_milestone(payload, context, current_tick=current_tick)
         return "unsupported_kind"
 
     # ------------------------------------------------------------------
@@ -328,6 +330,43 @@ class QuestManagerSubSystem:
                 continue
             return [str(npc_id) for npc_id in raw_residents if coerce_non_empty_string(npc_id)]
         return []
+
+    # ------------------------------------------------------------------
+    # Handler: advance_milestone
+    # ------------------------------------------------------------------
+
+    def _apply_advance_milestone(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_advance_milestone",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        if self._sse_collector is not None:
+            from app.game_core.orchestration.models import SSEEvent
+
+            milestone_id = coerce_non_empty_string(params.get("milestone_id")) or ""
+            to_state = string_or_empty(params.get("to_state")) or "COMPLETED"
+            self._sse_collector.append(SSEEvent(
+                event_type="milestone_advanced_by_planner",
+                payload={
+                    "milestone_id": milestone_id,
+                    "to_state": to_state,
+                    "tick": current_tick,
+                },
+            ))
+        return True
 
     async def _evaluate_with_agent(
         self,
