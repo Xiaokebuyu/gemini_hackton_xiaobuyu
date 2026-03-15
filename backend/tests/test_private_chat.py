@@ -404,7 +404,8 @@ class TestPrivateChatCoordinator:
         assert result.completed is True
         assert directive["consumed"] is True
         assert instance.directive_queue == []
-        assert "hidden_cellar" in llm.calls[0]["system_prompt"]
+        # 3-C: directive no longer injected into system prompt as a text block
+        # (replaced by blackboard approach); directive is still consumed correctly
 
     def test_time_cost_is_one_sixth(self) -> None:
         """Private chat time cost must equal 1/6."""

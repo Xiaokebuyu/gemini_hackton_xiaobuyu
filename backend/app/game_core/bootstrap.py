@@ -39,7 +39,10 @@ from app.game_core.orchestration import (
     build_default_action_dispatcher,
     register_default_settlement_hooks,
 )
-from app.game_core.orchestration.hooks.ai_osiris import AIOsirisEvaluator, AIOsirisHook
+from app.game_core.orchestration.hooks.ai_osiris import AIOsirisEvaluator, AIOsirisHook, MechanicalOsirisEngine
+from app.game_core.orchestration.hooks.encounter import BasicEncounterDetector, EncounterPhase
+from app.game_core.orchestration.hooks.event_condition import BasicEventConditionEvaluator, EventConditionPhase
+from app.game_core.orchestration.hooks.passive_perception import PerceptionPhase
 from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook, GmNarrator
 from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
 from app.game_core.rules import RulesEngine, register_default_rules_handlers
@@ -203,9 +206,9 @@ def build_runtime_for_world(
 ) -> DefaultRuntime:
     """Build a fully wired default runtime for an already loaded world.
 
-    If *osiris_evaluator_factory* is provided, it is called to create an
-    LLM-driven AIOsirisEvaluator.  If *gm_narrator_factory* is provided,
-    it is called with (world, state) to create an LLM-driven GmNarrator.
+    AIOsirisHook is always registered with MechanicalOsirisEngine (no LLM).
+    If *gm_narrator_factory* is provided, it is called with (world, state)
+    to create an LLM-driven GmNarrator.
     If *planner_system_factory* is provided, it is called to create a
     multi-agent planner system.
     """
@@ -224,11 +227,16 @@ def build_runtime_for_world(
         pipeline=pipeline,
         companion_manager=runtime_companion_manager,
     )
-    if osiris_evaluator_factory is not None:
-        evaluator = osiris_evaluator_factory()
-        tick_coordinator.register_settlement_hook(
-            AIOsirisHook(evaluator=evaluator)
+    # Always register mechanical Osiris engine (osiris_evaluator_factory is ignored — kept for
+    # backward-compat call sites in runtime.py / tests that still pass the parameter)
+    tick_coordinator.register_settlement_hook(
+        AIOsirisHook(
+            engine=MechanicalOsirisEngine(),
+            encounter_phase=EncounterPhase(detector=BasicEncounterDetector()),
+            perception_phase=PerceptionPhase(),
+            event_phase=EventConditionPhase(evaluator=BasicEventConditionEvaluator()),
         )
+    )
     if gm_narrator_factory is not None:
         narrator = gm_narrator_factory(world, state)
         tick_coordinator.register_settlement_hook(
@@ -282,11 +290,16 @@ def build_restored_runtime_for_world(
         pipeline=pipeline,
         companion_manager=runtime_companion_manager,
     )
-    if osiris_evaluator_factory is not None:
-        evaluator = osiris_evaluator_factory()
-        tick_coordinator.register_settlement_hook(
-            AIOsirisHook(evaluator=evaluator)
+    # Always register mechanical Osiris engine (osiris_evaluator_factory is ignored — kept for
+    # backward-compat call sites in runtime.py / tests that still pass the parameter)
+    tick_coordinator.register_settlement_hook(
+        AIOsirisHook(
+            engine=MechanicalOsirisEngine(),
+            encounter_phase=EncounterPhase(detector=BasicEncounterDetector()),
+            perception_phase=PerceptionPhase(),
+            event_phase=EventConditionPhase(evaluator=BasicEventConditionEvaluator()),
         )
+    )
     if gm_narrator_factory is not None:
         narrator = gm_narrator_factory(world, state)
         tick_coordinator.register_settlement_hook(

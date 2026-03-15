@@ -67,6 +67,9 @@ SUPPORTED_PLANNER_DIRECTIVE_KINDS = frozenset(
         "advance_milestone",
         "assign_service",
         "revoke_service",
+        "schedule_event",
+        "create_rumor",
+        "modify_location",
     }
 )
 
@@ -608,6 +611,44 @@ def _validate_contract(
         if service_id is None:
             return False, normalized, "missing_service_id"
         normalized["service_id"] = service_id
+        return True, normalized, None
+
+    if kind == "schedule_event":
+        # event_id is required; all other fields are optional (trigger_condition,
+        # event_type, payload, metadata).
+        event_id = coerce_non_empty_string(normalized.get("event_id"))
+        if event_id is None:
+            return False, normalized, "missing_event_id"
+        normalized["event_id"] = event_id
+        event_type = coerce_non_empty_string(normalized.get("event_type"))
+        if event_type is not None:
+            normalized["event_type"] = event_type
+        return True, normalized, None
+
+    if kind == "create_rumor":
+        # At least one of text/content is required so the rumor has substance.
+        text = coerce_non_empty_string(
+            normalized.get("text") or normalized.get("content")
+        )
+        if text is None:
+            return False, normalized, "missing_rumor_text"
+        normalized["text"] = text
+        normalized["content"] = text
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is not None:
+            normalized["area_id"] = area_id
+        return True, normalized, None
+
+    if kind == "modify_location":
+        # area_id is always required; the rest depends on which variant is used
+        # (key/value property update vs. NPC/player move).
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is None:
+            return False, normalized, "missing_area_id"
+        normalized["area_id"] = area_id
+        location_id = coerce_non_empty_string(normalized.get("location_id"))
+        if location_id is not None:
+            normalized["location_id"] = location_id
         return True, normalized, None
 
     return True, normalized, None

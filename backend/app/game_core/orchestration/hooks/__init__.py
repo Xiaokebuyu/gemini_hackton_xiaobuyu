@@ -11,6 +11,7 @@ from app.game_core.orchestration.hooks.gm_narration import GmNarrationHook
 from app.game_core.orchestration.hooks.milestone_completion import MilestoneCompletionHook
 from app.game_core.orchestration.hooks.milestone_unlock import MilestoneUnlockHook
 from app.game_core.orchestration.hooks.narrative_planner import NarrativePlannerHook
+from app.game_core.orchestration.hooks.npc_autonomy import NpcAutonomyHook
 from app.game_core.orchestration.hooks.npc_schedule import NpcScheduleHook
 from app.game_core.orchestration.hooks.passive_perception import PassivePerceptionHook
 from app.game_core.orchestration.hooks.private_chat_trigger import PrivateChatTriggerHook
@@ -36,6 +37,7 @@ __all__ = [
     "MilestoneUnlockHook",
     "NarrativePlannerHook",
     "NoOpSettlementHook",
+    "NpcAutonomyHook",
     "NpcScheduleHook",
     "PassivePerceptionHook",
     "PrivateChatTriggerHook",

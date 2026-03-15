@@ -1,0 +1,19 @@
+{
+  "character_name": "buyudesua",
+  "created_at": 1773567220.1791697,
+  "game_day": 1,
+  "game_slot": 14,
+  "last_played": 1773573072.638234,
+  "phase": "active",
+  "saved_at": 1773573072.638234,
+  "session_id": "sess_3aa29643fa69",
+  "summary": {
+    "day": 1,
+    "level": 2,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "buyudesua"
+  },
+  "world_id": "goblin_slayer"
+}

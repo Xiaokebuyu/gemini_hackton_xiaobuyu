@@ -1438,9 +1438,39 @@ def register_npc_tools(registry: RoleToolRegistry) -> None:
     # from this module, so we cannot import it at module level.
     from app.game_core.narrative.service_tool import ExecuteServiceTool  # noqa: PLC0415
     registry.register(ExecuteServiceTool())
+    # Lazy import: exploration_tools also imports _CharacterTool from this module.
+    from app.game_core.narrative.exploration_tools import DiscoverClueTool  # noqa: PLC0415
+    registry.register(DiscoverClueTool())
+    # Lazy import: help_tool imports _CharacterTool and service_tool from this module.
+    from app.game_core.narrative.help_tool import OfferHelpTool  # noqa: PLC0415
+    registry.register(OfferHelpTool())
+    # Lazy import: blackboard_tools imports _CharacterTool from this module.
+    from app.game_core.narrative.blackboard_tools import (  # noqa: PLC0415
+        UpdateBlackboardTool,
+        SendNpcMessageTool,
+    )
+    registry.register(UpdateBlackboardTool())
+    registry.register(SendNpcMessageTool())
 
 
 def register_teammate_tools(registry: RoleToolRegistry) -> None:
     """Instantiate and register all Teammate tools."""
     for tool_cls in _TEAMMATE_TOOLS:
         registry.register(tool_cls())
+    # Lazy import: exploration_tools imports _CharacterTool from this module.
+    from app.game_core.narrative.exploration_tools import (  # noqa: PLC0415
+        DiscoverClueTool,
+        ShareDiscoveryTool,
+    )
+    registry.register(DiscoverClueTool())
+    registry.register(ShareDiscoveryTool())
+    # Lazy import: help_tool imports _CharacterTool and service_tool from this module.
+    from app.game_core.narrative.help_tool import OfferHelpTool  # noqa: PLC0415
+    registry.register(OfferHelpTool())
+    # Lazy import: blackboard_tools imports _CharacterTool from this module.
+    from app.game_core.narrative.blackboard_tools import (  # noqa: PLC0415
+        UpdateBlackboardTool,
+        SendNpcMessageTool,
+    )
+    registry.register(UpdateBlackboardTool())
+    registry.register(SendNpcMessageTool())

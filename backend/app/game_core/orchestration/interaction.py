@@ -257,7 +257,7 @@ def _validate_npc_presence(
             "code": "npc_not_available",
             "message": f"npc is not currently placed: {npc_id}",
         }
-    if intent in {"browse", "buy", "sell"}:
+    if intent in {"browse", "buy", "sell", "buy_service"}:
         if npc_area == context.current_area:
             return None
         return {

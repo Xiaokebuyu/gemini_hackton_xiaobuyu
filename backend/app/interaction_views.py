@@ -15,6 +15,7 @@ _INTENT_ORDER = (
     "browse",
     "buy",
     "sell",
+    "buy_service",
     "inspect_item",
     "ask_quest",
     "ask_progress",
@@ -130,11 +131,27 @@ def build_shop_snapshot_payload(
             "base_price": base_price,
         })
 
+    # Build services list (excludes "donation" — separate donate intent).
+    raw_services = context.npc_services.get(npc_id, [])
+    services: list[dict[str, Any]] = [
+        {
+            "service_id": str(svc.get("service_id", "")),
+            "label": str(svc.get("label", svc.get("service_id", ""))),
+            "price": int(svc.get("price", 0) or 0),
+            "notes": str(svc.get("notes", "")),
+            "type": "service",
+            "effects_summary": _build_effects_summary(svc.get("effects", [])),
+        }
+        for svc in raw_services
+        if isinstance(svc, dict) and svc.get("service_id")
+    ]
+
     return {
         "npc_id": npc_id,
         "player_gold": context.player_gold,
         "stock": enriched_stock,
         "player_sellable_items": player_sellable,
+        "services": services,
         "last_refresh_tick": normalized_tick,
         "refresh_policy": refresh_policy,
         "next_refresh_hint": next_refresh_hint,
@@ -179,10 +196,14 @@ def build_talk_snapshot_payload(
     impressions = context.npc_impressions.get(npc_id, [])
     recent_impressions = impressions[-3:] if isinstance(impressions, list) else []
     available_intents = {"talk", "greet"}
-    if npc_id in context.shop_states:
+    shop_state = context.shop_states.get(npc_id, {})
+    if isinstance(shop_state, dict) and shop_state.get("current_stock"):
         available_intents.update({"browse", "buy", "sell", "inspect_item"})
     if "donation" in context.npc_service_ids.get(npc_id, []):
         available_intents.add("donate")
+    if context.npc_services.get(npc_id):
+        available_intents.add("browse")
+        available_intents.add("buy_service")
     if context.dynamic_quest_views:
         available_intents.update({
             "ask_quest", "ask_progress", "ask_location",
@@ -388,6 +409,50 @@ def build_quest_reward_payload(
             "items": items,
         },
     }
+
+
+def _build_effects_summary(effects: Any) -> str:
+    """Convert a list of effect atoms into a human-readable summary string."""
+    if not isinstance(effects, list) or not effects:
+        return ""
+    parts: list[str] = []
+    for atom in effects:
+        if not isinstance(atom, dict):
+            continue
+        atom_type = str(atom.get("type", ""))
+        if atom_type == "restore_hp":
+            amount = int(atom.get("amount", 0) or 0)
+            parts.append(f"恢复{amount}点HP")
+        elif atom_type == "modify_gold":
+            amount = int(atom.get("amount", 0) or 0)
+            if amount >= 0:
+                parts.append(f"获得{amount}金币")
+            else:
+                parts.append(f"消耗{-amount}金币")
+        elif atom_type == "grant_item":
+            item_id = str(atom.get("item_id", ""))
+            qty = int(atom.get("count", 1) or 1)
+            parts.append(f"获得{item_id}×{qty}")
+        elif atom_type == "remove_item":
+            item_id = str(atom.get("item_id", ""))
+            qty = int(atom.get("count", 1) or 1)
+            parts.append(f"移除{item_id}×{qty}")
+        elif atom_type == "apply_effect":
+            effect_id = str(atom.get("effect_id", ""))
+            duration = atom.get("duration_ticks")
+            if duration is not None:
+                parts.append(f"获得{effect_id}（{duration}回合）")
+            else:
+                parts.append(f"获得{effect_id}")
+        elif atom_type == "remove_effect":
+            effect_id = str(atom.get("effect_id", ""))
+            parts.append(f"移除{effect_id}")
+        elif atom_type == "add_xp":
+            amount = int(atom.get("amount", 0) or 0)
+            parts.append(f"获得{amount}经验")
+        elif atom_type == "add_knowledge":
+            parts.append("获得知识")
+    return "；".join(parts) if parts else ""
 
 
 def _ordered_available_intents(enabled_intents: set[str]) -> list[str]:

@@ -6,49 +6,26 @@ from typing import Any
 
 from app.game_core.environment_access import list_current_scene_interactables
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
-from app.game_core.orchestration.models import HookResult, SSEEvent
+from app.game_core.orchestration.models import HookResult, PhaseResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.state import StateChange
 
 
-class PassivePerceptionHook(NoOpSettlementHook):
-    """Settlement hook: triggers passive perception checks when player enters a new area/sub-location.
+class PerceptionPhase:
+    """Core passive-perception logic extracted for Osiris coordination.
 
-    Priority P45 — runs after EncounterHook (P40), before RelationshipHook (P65).
-
-    Checks:
-    1. Area-level discoveries (visibility_dc) when player is on world map (no sub-location).
-    2. Sub-location interactable visibility_dc for hidden interactables.
-    3. Sub-location container trap detect_dc.
-    4. Dynamic sub-area discovery (plant_environmental, discovery_mode="check").
+    Encapsulates all discovery/trap detection logic previously in
+    PassivePerceptionHook.execute().  AIOsirisHook calls run() as Phase 2.
     """
 
-    HOOK_PRIORITY = 45
-    HOOK_NAME = "passive_perception"
-
-    def should_skip(
-        self,
-        change_log: list[Any],
-        action_log: list[dict[str, Any]] | None = None,
-    ) -> bool:
-        del action_log
-        for change in change_log:
-            slice_name = getattr(change, "slice", getattr(change, "slice_name", ""))
-            if slice_name == "player" and getattr(change, "path", "") in {
-                "current_area",
-                "current_location",
-                "current_room",
-            }:
-                return False
-        return True
-
-    async def execute(self, context: SettlementContext) -> HookResult:
+    async def run(self, context: SettlementContext) -> PhaseResult:
+        """Run passive perception checks.  Returns PhaseResult (sse_events + metadata)."""
         if not context.state.has_slice("player"):
-            return HookResult(metadata={"status": "noop", "reason": "no_player_slice"})
+            return PhaseResult(metadata={"status": "noop", "reason": "no_player_slice"})
         if not context.world.has_registry("maps"):
-            return HookResult(metadata={"status": "noop", "reason": "no_maps_registry"})
+            return PhaseResult(metadata={"status": "noop", "reason": "no_maps_registry"})
         if not context.state.has_slice("areas"):
-            return HookResult(metadata={"status": "noop", "reason": "no_areas_slice"})
+            return PhaseResult(metadata={"status": "noop", "reason": "no_areas_slice"})
 
         try:
             passive = 10 + context.state.player.get_modifier("wis")
@@ -160,7 +137,7 @@ class PassivePerceptionHook(NoOpSettlementHook):
             if (discoveries_found or interactables_revealed or traps_detected or dynamic_sub_areas_found)
             else "noop"
         )
-        return HookResult(
+        return PhaseResult(
             sse_events=sse_events,
             metadata={
                 "status": status,
@@ -171,3 +148,43 @@ class PassivePerceptionHook(NoOpSettlementHook):
                 "dynamic_sub_areas_found": dynamic_sub_areas_found,
             },
         )
+
+
+class PassivePerceptionHook(NoOpSettlementHook):
+    """Settlement hook: triggers passive perception checks when player enters a new area/sub-location.
+
+    Priority P45 — runs after EncounterHook (P40), before RelationshipHook (P65).
+
+    Checks:
+    1. Area-level discoveries (visibility_dc) when player is on world map (no sub-location).
+    2. Sub-location interactable visibility_dc for hidden interactables.
+    3. Sub-location container trap detect_dc.
+    4. Dynamic sub-area discovery (plant_environmental, discovery_mode="check").
+    """
+
+    HOOK_PRIORITY = 45
+    HOOK_NAME = "passive_perception"
+
+    def __init__(self) -> None:
+        self._phase = PerceptionPhase()
+
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del action_log
+        for change in change_log:
+            slice_name = getattr(change, "slice", getattr(change, "slice_name", ""))
+            if slice_name == "player" and getattr(change, "path", "") in {
+                "current_area",
+                "current_location",
+                "current_room",
+            }:
+                return False
+        return True
+
+    async def execute(self, context: SettlementContext) -> HookResult:
+        """Delegate to PerceptionPhase.run() — kept for backward compatibility."""
+        phase_result = await self._phase.run(context)
+        return HookResult(sse_events=phase_result.sse_events, metadata=phase_result.metadata)

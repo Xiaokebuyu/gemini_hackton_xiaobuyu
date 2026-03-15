@@ -73,6 +73,8 @@ export interface LocationOverview {
   exits: Exit[]
   rooms: Room[]
   current_room: string | null
+  danger_level?: number        // 运行时危险度（1.0=正常，>2.0=高危）
+  area_tags?: string[]         // 区域语义标签（hostile, safe_zone, dungeon 等）
 }
 
 export type GameMode = 'explore' | 'dialogue' | 'private_chat' | 'combat' | 'encounter'

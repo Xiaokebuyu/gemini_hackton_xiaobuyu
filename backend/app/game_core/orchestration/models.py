@@ -29,6 +29,18 @@ class HookResult:
 
 
 @dataclass(slots=True)
+class PhaseResult:
+    """Result from one Osiris sub-phase (encounter / perception / event_condition).
+
+    Used by EncounterPhase, PerceptionPhase, EventConditionPhase so that
+    AIOsirisHook can coordinate them without importing SettlementHook machinery.
+    """
+
+    sse_events: list[SSEEvent] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class StructuredAction:
     """Normalized structured action sent by UI-like callers."""
 

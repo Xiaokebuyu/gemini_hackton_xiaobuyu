@@ -128,14 +128,14 @@
 <body>
 
 <h1>AI CRPG 后端 — 系统架构总览</h1>
-<p class="subtitle">2026-03-14 | 回合生命周期 / 规划者与NPC信息流 / AI审判者 / 结算钩子链 / NPC服务系统</p>
+<p class="subtitle">2026-03-15 | 回合生命周期 / 规划者与NPC信息流 / 机械世界引擎 / 结算钩子链 / NPC服务+认知系统</p>
 
 <nav class="nav">
   <strong style="color:#f0883e">目录</strong>
   <a href="#fig1">图一、回合生命周期</a>
   <a href="#fig2">图二、结算钩子链</a>
   <a href="#fig3">图三、规划者 &harr; NPC</a>
-  <a href="#fig4">图四、AI审判者</a>
+  <a href="#fig4" class="new">图四、机械世界引擎 (改造)</a>
   <a href="#fig5">图五、三系统闭环</a>
   <a href="#fig6">图六、NPC对话6步管线</a>
   <a href="#fig7">图七、信息可见性矩阵</a>
@@ -213,20 +213,17 @@ flowchart TD
 
 <!-- ============================================================ -->
 <div class="section" id="fig2">
-  <h2>图二、结算钩子链 <span class="badge">25个钩子 SettlementHook</span></h2>
-  <p class="desc">当累积时间 &ge; 1.0小时，所有结算钩子按优先级严格顺序执行。审判者(P30)先于规划者(P66)运行 — 审判者的输出成为规划者的输入。</p>
+  <h2>图二、结算钩子链 <span class="badge">23个钩子 SettlementHook</span></h2>
+  <p class="desc">当累积时间 &ge; 1.0小时，所有结算钩子按优先级严格顺序执行。机械世界引擎 Osiris(P30) 整合了遭遇/感知/事件条件三个 Phase，先于规划者(P66)运行。</p>
   <div class="mermaid">
 %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
 flowchart LR
     subgraph EARLY["P10 ~ P30：即时后果"]
         H10["P10<br/>定时事件<br/>ScheduledEvent"]
         H20["P20<br/>状态效果<br/>StatusEffect"]
-        H30["P30<br/><b>AI审判者</b><br/>AIOsiris"]
+        H30["P30<br/><b>机械世界引擎</b><br/>MechanicalOsiris<br/><i>5-Phase: 因果/感知/遭遇/事件/汇总</i>"]
     end
-    subgraph MID1["P40 ~ P58：世界反应"]
-        H40["P40<br/>遭遇生成<br/>Encounter"]
-        H45["P45<br/>被动感知<br/>PassivePerception"]
-        H50["P50<br/>事件触发条件<br/>EventCondition"]
+    subgraph MID1["P54 ~ P58：世界反应"]
         H54["P54<br/>里程碑完成<br/>MilestoneCompletion"]
         H55["P55<br/>里程碑解锁<br/>MilestoneUnlock"]
         H56["P56<br/>任务目标追踪<br/>QuestObjective"]
@@ -234,6 +231,7 @@ flowchart LR
     end
     subgraph MID2["P60 ~ P66：社交与叙事"]
         H60["P60<br/>NPC日程移动<br/>NpcSchedule"]
+        H61["P61<br/><b>NPC自主活动</b><br/>NpcAutonomy"]
         H62["P62<br/>共享经历记录<br/>SharedExperience"]
         H63["P63<br/>营火对话<br/>Campfire"]
         H65["P65<br/>关系阶段跃迁<br/>Relationship"]
@@ -250,13 +248,14 @@ flowchart LR
     end
 
     H10 --> H20 --> H30
-    H30 --> H40 --> H45 --> H50 --> H54 --> H55 --> H56 --> H58
-    H58 --> H60 --> H62 --> H63 --> H65 --> H66
+    H30 --> H54 --> H55 --> H56 --> H58
+    H58 --> H60 --> H61 --> H62 --> H63 --> H65 --> H66
     H66 --> H70 --> H72 --> H75a --> H75b --> H76 --> H80 --> H90
 
-    H30 -. "变更日志 change_log 流入" .-> H66
+    H30 -. "area_events + change_log 流入" .-> H66
 
-    style H30 fill:#da3633,stroke:#f85149,color:#fff
+    style H30 fill:#3fb950,stroke:#56d364,color:#000
+    style H61 fill:#a371f7,stroke:#bc8cff,color:#fff
     style H66 fill:#1f6feb,stroke:#58a6ff,color:#fff
     style EARLY fill:#1c2128,stroke:#da3633
     style MID1 fill:#1c2128,stroke:#f0883e
@@ -264,8 +263,9 @@ flowchart LR
     style LATE fill:#1c2128,stroke:#8b949e
   </div>
   <div class="note">
-    <strong>关键关系：</strong>审判者 AIOsiris(P30) 的状态变更进入变更日志 &rarr; 规划者 NarrativePlanner(P66) 通过语义事件收集器 semantic_events 读到 &rarr; 规划者据此做战略决策。<br/>
-    审判者 = 战术因果引擎 &nbsp;|&nbsp; 规划者 = 战略叙事引擎
+    <strong>关键变更（D-WE02）：</strong>AIOsiris 已改为纯机械引擎（零LLM），内含 5 个 Phase：因果规则→被动感知→遭遇触发→事件条件→汇总写入 area_events。<br/>
+    原 EncounterHook(P40)/PassivePerceptionHook(P45)/EventConditionHook(P50) 已合并为 Osiris 内部 Phase。新增 NpcAutonomyHook(P61) 负责 NPC 每轮自主活动。<br/>
+    Osiris = 机械世界引擎（规则表驱动）&nbsp;|&nbsp; 规划者 = 战略叙事引擎（LLM驱动）
   </div>
 </div>
 
@@ -292,7 +292,7 @@ flowchart TB
     subgraph NPC_EXEC["NPC交互管线"]
         CONSUME["实例管理器 InstanceManager<br/>消费指令 consume_directive"]
         CTX["上下文构建器 ContextBuilder<br/>L6: 记忆命中<br/>L7: 能力+服务列表"]
-        AGENT["NPC智能体 (LLM)<br/>13个工具（含 execute_service）"]
+        AGENT["NPC智能体 (LLM)<br/>14个工具（含 execute_service, discover_clue）"]
     end
 
     subgraph FEEDBACK["反馈路径"]
@@ -360,67 +360,48 @@ flowchart TB
 
 <!-- ============================================================ -->
 <div class="section" id="fig4">
-  <h2>图四、AI审判者 AIOsiris 信息流 <span class="badge">因果推理引擎</span></h2>
-  <p class="desc">审判者接收结构化摘要 + 世界快照，推理跨系统因果后果，输出最多5条指令。</p>
+  <h2>图四、机械世界引擎 MechanicalOsiris <span class="badge-new">已改造 D-WE02</span></h2>
+  <p class="desc">纯规则表驱动，零 LLM 依赖。内含 5 个 Phase，整合了原 EncounterHook/PassivePerceptionHook/EventConditionHook 的逻辑。只发射 2 种指令：set_flag + adjust_danger。</p>
   <div class="mermaid">
 %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
 flowchart TB
-    subgraph INPUTS["审判者输入（3个结构化载荷）"]
-        SUM["<b>行动摘要 summary</b><br/>行动列表 + 状态变更列表<br/>时间段 + 地点<br/>回合类型 + 目击者 witnessed_by"]
-        SNAP["<b>世界快照 snapshot</b><br/>玩家状态 + 队伍<br/>在场NPC + 阵营<br/>标记 flags + 任务 + 危险等级"]
-        RULES["<b>规则上下文 rules_context</b><br/>允许的指令(10种)<br/>世界传说 + 阵营规则<br/>世界法则 + 标签维度"]
+    subgraph INPUTS["引擎输入"]
+        TAGS["SceneBus ACTION_TAGS<br/>COMBAT / COMBAT_END / NAVIGATION<br/>SKILL_CHECK / QUEST_PROGRESS<br/>INVESTIGATION / LONG_REST ..."]
+        AREA["区域状态 AreaState<br/>danger_level + tags<br/>hostile_tracking + interactables"]
+        WIT["目击者 witnessed_by<br/>在场NPC列表"]
     end
 
-    EVAL["<b>Gemini审判者 GeminiAIOsirisProvider</b><br/>温度=0.2（确定性推理）<br/>思考深度=中 thinking_level=medium"]
-
-    subgraph DECISION["审判决定 AIOsirisDecision"]
-        REASON["推理过程 reasoning<br/>'玩家在酒馆打架<br/>&rarr; 酒保目击<br/>&rarr; 信任下降，谣言传播'"]
-        CMDS["因果后果 consequences（最多5条）"]
+    subgraph PHASES["5-Phase 执行流"]
+        P1["Phase 1: 因果规则<br/>Tag→后果 规则表<br/>+ 目击者→阵营传播"]
+        P2["Phase 2: 被动感知<br/>（原 PassivePerceptionHook）<br/>陷阱/隐藏物检测"]
+        P3["Phase 3: 遭遇触发<br/>（原 EncounterHook）<br/>encounter_table + 概率门控"]
+        P4["Phase 4: 事件条件<br/>（原 EventConditionHook）<br/>flag 满足→触发事件"]
+        P5["Phase 5: 汇总写入<br/>area_events 区域事件日志"]
+        P1 --> P2 --> P3 --> P4 --> P5
     end
 
-    subgraph CMD_TYPES["10种允许的指令类型"]
+    subgraph OUTPUT["引擎输出"]
         C1["set_flag 设置标记"]
-        C2["modify_disposition 修改好感<br/><i>（必须NPC在场！）</i>"]
-        C3["modify_approval 修改队友认同"]
-        C4["advance_quest 推进任务"]
-        C5["schedule_event 安排延迟事件"]
-        C6["create_rumor 传播谣言"]
-        C7["modify_location 修改区域特征"]
-        C8["add_knowledge 灌输知识"]
-        C9["modify_completion 修改章节进度"]
-        C10["adjust_danger 调整危险等级"]
+        C2["adjust_danger 调整危险等级"]
+        AE["area_events 区域事件"]
+        SSE["SSE事件<br/>discovery_reveal / encounter_spotted<br/>event_state_changed / ai_osiris_applied"]
     end
 
-    subgraph EXEC["执行管线"]
-        VALID["语义验证<br/>+ 在场性检查 locality check<br/>（NPC必须在场）"]
-        RE["execute_command<br/>&rarr; 规则引擎 RulesEngine<br/>&rarr; 状态变更 StateDelta"]
-        CL["变更日志 change_log<br/>（流入P66规划者）"]
-        SSE["SSE事件<br/>ai_osiris_applied"]
-    end
+    TAGS --> P1
+    AREA --> P1
+    WIT --> P1
+    P5 --> C1 & C2 & AE & SSE
 
-    SUM --> EVAL
-    SNAP --> EVAL
-    RULES --> EVAL
-    EVAL --> REASON
-    EVAL --> CMDS
-
-    CMDS --> C1 & C2 & C3 & C4 & C5 & C6 & C7 & C8 & C9 & C10
-
-    C1 & C2 & C3 & C4 & C5 & C6 & C7 & C8 & C9 & C10 --> VALID
-    VALID --> RE
-    RE --> CL
-    RE --> SSE
-
-    style EVAL fill:#da3633,stroke:#f85149,color:#fff
     style INPUTS fill:#1c2128,stroke:#1f6feb
-    style DECISION fill:#1c2128,stroke:#f0883e
-    style CMD_TYPES fill:#1c2128,stroke:#3fb950
-    style EXEC fill:#1c2128,stroke:#8b949e
+    style PHASES fill:#1c2128,stroke:#3fb950
+    style OUTPUT fill:#1c2128,stroke:#8b949e
+    style P1 fill:#3fb950,stroke:#56d364,color:#000
   </div>
   <div class="note">
-    <strong>在场性约束 locality check：</strong>modify_disposition 修改好感只能针对<b>当前在场</b>的NPC — 不能隔空修改不在场NPC<br/>
-    <strong>深眠压制 quiet_rest_slot：</strong>深度睡眠时段所有因果后果被压制，不执行<br/>
-    <strong>不可直接改玩家状态：</strong>审判者不能直接修改HP/金币/物品/位置
+    <strong>与旧版对比（D-WE02a）：</strong>原 Osiris 用 LLM（Gemini）做因果推理，有 10 种指令。现在改为纯规则表，只保留 2 种指令。<br/>
+    <strong>迁移到 Planner 的指令：</strong>advance_quest / modify_completion / schedule_event / create_rumor / modify_location<br/>
+    <strong>迁移到 NPC 自身的指令：</strong>modify_disposition（NPC 用 update_feeling 自主管理）/ modify_approval（队友自主管理）<br/>
+    <strong>深眠压制保留：</strong>quiet_rest_slot 时所有 Phase 被跳过
   </div>
 </div>
 
@@ -640,20 +621,20 @@ flowchart TD
         </tr>
         <tr>
           <td style="padding:8px 10px"><b>可用工具数</b></td>
-          <td style="text-align:center"><b>13</b>个工具<br/>（特征过滤 + execute_service）</td>
+          <td style="text-align:center"><b>14</b>个工具<br/>（+ execute_service, discover_clue）</td>
           <td style="text-align:center">5个工具</td>
-          <td style="text-align:center">8个工具</td>
+          <td style="text-align:center"><b>10</b>个工具<br/>（+ discover_clue, share_discovery）</td>
           <td style="text-align:center">2个工具<br/>（设计技能 design_skill）</td>
-          <td style="text-align:center">1个工具<br/>（提交后果 submit_consequences）</td>
+          <td style="text-align:center">机械引擎<br/>（无LLM，规则表驱动）</td>
         </tr>
       </tbody>
     </table>
   </div>
   <div class="note success" style="margin-top:20px">
-    <strong>NPC服务系统已实现（D-Svc01~06）：</strong>NPC现在可以通过 execute_service 工具执行被授权的服务。<br/>
-    服务来源：内容层 shop.services（启动时自动注入）+ 规划者 assign_service 指令（动态分配）。<br/>
-    效果原子：restore_hp / modify_gold / grant_item / apply_effect / remove_effect / add_xp 等。<br/>
-    任务奖励：任务完成时自动分配给柜台小姐 NPC，玩家对话时领取（one_shot 一次性服务）。
+    <strong>NPC服务系统已实现（D-Svc01~06）：</strong>NPC可通过 execute_service 工具执行被授权的服务。<br/>
+    <strong>NPC黑板认知系统（D-WE01b+04）：</strong>每个NPC维护个人黑板（thoughts/goals/observations/mood/attitude），注入提示词替代旧的印象/行为指南/story_facts/active_directive。<br/>
+    <strong>NPC自主活动（D-WE04a）：</strong>NpcAutonomyHook(P61) 每结算轮对同room NPC空跑，更新黑板 + 发现线索。<br/>
+    <strong>审判者已机械化（D-WE02）：</strong>Osiris 不再用 LLM，改为规则表驱动，只发射 set_flag + adjust_danger。
   </div>
 </div>
 
@@ -768,6 +749,8 @@ flowchart TD
         N5["<b style='color:#3fb950'>assign_service 分配服务</b>"]
         N6["<b style='color:#3fb950'>revoke_service 移除服务</b>"]
         N7["curate_shop 策展商店库存"]
+        N8["<b style='color:#3fb950'>create_rumor 传播谣言</b>"]
+        N9["<b style='color:#3fb950'>modify_location 修改NPC位置</b>"]
     end
 
     subgraph SUB3["世界构建器 WorldBuilder"]
@@ -784,6 +767,7 @@ flowchart TD
         V2["临时NPC回收 despawn"]
         V3["自动升级安全网 auto_escalation"]
         V4["<b style='color:#3fb950'>服务过期清理 prune_services</b>"]
+        V5["<b style='color:#3fb950'>安排延迟事件 schedule_event</b>"]
     end
 
     subgraph SUB5["节奏控制器 PacingController"]
@@ -805,16 +789,16 @@ flowchart TD
     style SUB5 fill:#1c2128,stroke:#da3633
   </div>
   <div class="note">
-    <strong>变更记录（D-Svc05）：</strong>ItemDesigner 子系统已移除。<br/>
-    &bull; curate_shop（策展商店库存）&rarr; 迁移到 NPC导演 NpcDirector<br/>
-    &bull; design_reward（设计奖励）&rarr; 被柜台小姐服务模式取代（quest_completed &rarr; assign_service）<br/><br/>
-    <strong style="color:#3fb950">新增指令（D-Svc02）：</strong>assign_service / revoke_service 由 NPC导演处理<br/>
-    <strong>NPC导演现在是最大的子系统</strong>，负责7种指令：行为指导 + 生成/回收NPC + 能力 + 服务 + 商店
+    <strong>变更记录：</strong><br/>
+    &bull; D-Svc05：ItemDesigner 已移除，curate_shop 迁入 NPC导演<br/>
+    &bull; D-Svc02：assign_service / revoke_service 由 NPC导演处理<br/>
+    &bull; D-WE02c：create_rumor / modify_location 从 Osiris 迁入 NPC导演；schedule_event 迁入叙事编织器<br/><br/>
+    <strong>NPC导演现在是最大的子系统</strong>，负责9种指令：行为指导 + 生成/回收NPC + 能力 + 服务 + 商店 + 谣言 + 位置移动
   </div>
 </div>
 
 <div style="text-align:center;color:#484f58;padding:40px 0;font-size:13px">
-  为系统架构回顾生成 — 2026-03-14 | 含 NPC 服务系统更新（D-Svc01~06）
+  为系统架构回顾生成 — 2026-03-15 | 含 NPC 服务系统（D-Svc01~06）+ 世界引擎升级（D-WE01~05）
 </div>
 
 <script type="module">

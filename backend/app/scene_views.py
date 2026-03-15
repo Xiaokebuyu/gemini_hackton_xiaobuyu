@@ -243,6 +243,18 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
                 "blocked": bool(connection.blocked),
             })
 
+    # ── area metadata (danger + tags for frontend atmosphere) ────────────────
+    area_danger_level: float = (
+        float(area_state.danger_level)
+        if area_state is not None and isinstance(area_state.danger_level, (int, float))
+        else 1.0
+    )
+    area_tags: list[str] = (
+        [str(t) for t in area_template.tags if str(t).strip()]
+        if area_template is not None and hasattr(area_template, "tags")
+        else []
+    )
+
     payload: dict[str, Any] = {
         "area_id": current_area_id,
         "area_name": area_template.name if area_template else current_area_id,
@@ -253,6 +265,8 @@ def build_location_overview(session: ManagedSession) -> dict[str, Any]:
         "rooms": rooms,
         "interactables": interactables,
         "exits": exits,
+        "danger_level": area_danger_level,
+        "area_tags": area_tags,
     }
 
     if current_location_id is not None:

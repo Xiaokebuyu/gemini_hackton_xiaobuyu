@@ -18,13 +18,18 @@ After successful execution the price is deducted and, if the service is
 ``one_shot``, a ``planner_revoke_service`` command is issued so that the
 service cannot be used again.
 
-Decision record: D-Svc03 (narrative.md)
+The module-level ``execute_service_effects()`` function encapsulates the
+atomic execution logic and is reused by the player-panel ``buy_service``
+intent path in the application layer (app/interaction_service.py).
+
+Decision record: D-Svc03, D-SvcA1 (narrative.md)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from app.game_core.narrative.character_tools import _CharacterTool
 from app.game_core.narrative.context import AgentContext
@@ -45,6 +50,174 @@ _COMMAND_MAP: dict[str, str] = {
     "add_xp": "add_xp",
     "add_knowledge": "add_knowledge",
 }
+
+
+# ---------------------------------------------------------------------------
+# Shared result type
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ServiceExecutionResult:
+    """Result of a service execution, returned by ``execute_service_effects()``.
+
+    Attributes:
+        success: Whether the service was fully applied.
+        message: Human-readable status message.
+        applied_effects: List of effect-atom type strings that were applied.
+        price_paid: Amount of gold deducted from the player.
+        status: Machine-readable status tag (e.g. ``"ok"``, ``"insufficient_gold"``).
+    """
+
+    success: bool
+    message: str
+    applied_effects: list[str] = field(default_factory=list)
+    price_paid: int = 0
+    status: str = "ok"
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Shared execution helper — used by NPC tool AND player buy_service intent
+# ---------------------------------------------------------------------------
+
+
+def execute_service_effects(
+    service: dict[str, Any],
+    run_command: Callable[[Command], Any],
+    *,
+    player_gold: int,
+    npc_id: str = "",
+) -> ServiceExecutionResult:
+    """Execute the effect atoms of one service and deduct its price.
+
+    This is the core logic shared between:
+    - ``ExecuteServiceTool.execute()`` (NPC tool path)
+    - ``InteractionService._execute_buy_service()`` (player panel path)
+
+    Args:
+        service: The service descriptor dict (contains ``effects``, ``price``,
+            ``one_shot``, ``service_id``, ``npc_id`` etc.).
+        run_command: Callable that accepts a ``Command`` and returns a result
+            with ``.executed`` and ``.errors`` attributes.
+        player_gold: Current player gold (used for the pre-flight check only;
+            the actual deduction happens via run_command).
+        npc_id: NPC id string, used when issuing ``planner_revoke_service``
+            for one_shot services.
+
+    Returns:
+        ``ServiceExecutionResult`` with success flag, message, and effect list.
+    """
+    service_id = str(service.get("service_id", ""))
+    label = str(service.get("label", service_id))
+    price = 0
+    try:
+        price = int(service.get("price", 0))
+    except (TypeError, ValueError):
+        price = 0
+
+    # Pre-flight: gold check.
+    if price > 0 and player_gold < price:
+        return ServiceExecutionResult(
+            success=False,
+            message=f"金币不足：需要 {price} 枚金币，当前持有 {player_gold} 枚。",
+            status="insufficient_gold",
+            extra={"required": price, "current": player_gold},
+        )
+
+    # Execute each effect atom in order.
+    effects: list[dict[str, Any]] = service.get("effects", [])
+    if not isinstance(effects, list):
+        effects = []
+
+    applied: list[str] = []
+    for atom in effects:
+        if not isinstance(atom, dict):
+            continue
+        atom_type = atom.get("type", "")
+        ok, err = _run_effect_atom(atom, run_command)
+        if not ok:
+            return ServiceExecutionResult(
+                success=False,
+                message=f"效果 '{atom_type}' 执行失败：{err}",
+                status="effect_failed",
+            )
+        applied.append(str(atom_type))
+
+    # Deduct price.
+    if price > 0:
+        ok, err = _run_effect_atom({"type": "modify_gold", "amount": -price}, run_command)
+        if not ok:
+            logger.warning(
+                "execute_service_effects: gold deduction failed for %s/%s: %s",
+                npc_id,
+                service_id,
+                err,
+            )
+
+    # one_shot: revoke after first successful execution.
+    if service.get("one_shot", False) and npc_id and service_id:
+        revoke_cmd = Command(
+            type="planner_revoke_service",
+            params={"npc_id": npc_id, "service_id": service_id},
+            source="npc_service",
+        )
+        revoke_result = run_command(revoke_cmd)
+        if not revoke_result.executed:
+            logger.warning(
+                "execute_service_effects: revoke_service failed for %s/%s: %s",
+                npc_id,
+                service_id,
+                revoke_result.errors,
+            )
+
+    return ServiceExecutionResult(
+        success=True,
+        message=f"服务 '{label}' 已执行。",
+        applied_effects=applied,
+        price_paid=price,
+        status="ok",
+    )
+
+
+def _run_effect_atom(
+    atom: dict[str, Any],
+    run_command: Callable[[Command], Any],
+) -> tuple[bool, str]:
+    """Execute one effect atom. Returns (ok, error_message)."""
+    atom_type = atom.get("type", "")
+
+    if atom_type in _DIRECT_EFFECT_TYPES:
+        amount = atom.get("amount", 0)
+        try:
+            amount = int(amount)
+        except (TypeError, ValueError):
+            amount = 0
+        cmd = Command(
+            type="npc_service_effect",
+            params={"effect_type": atom_type, "amount": amount},
+            source="npc_service",
+        )
+        result = run_command(cmd)
+        if not result.executed:
+            err = result.errors[0] if result.errors else "command failed"
+            return False, str(err)
+        return True, ""
+
+    cmd_type = _COMMAND_MAP.get(atom_type)
+    if cmd_type is None:
+        logger.warning(
+            "_run_effect_atom: unrecognised effect atom type '%s'; skipping", atom_type,
+        )
+        return False, f"未知效果类型 '{atom_type}'"
+
+    cmd_params = {k: v for k, v in atom.items() if k != "type"}
+    cmd = Command(type=cmd_type, params=cmd_params, source="npc_service")
+    result = run_command(cmd)
+    if not result.executed:
+        err = result.errors[0] if result.errors else "command failed"
+        return False, str(err)
+    return True, ""
 
 
 class ExecuteServiceTool(_CharacterTool):
@@ -125,67 +298,41 @@ class ExecuteServiceTool(_CharacterTool):
                 metadata={"status": "unknown_service", "service_id": service_id},
             )
 
-        # 3. Validate preconditions (quest_completed + price check).
+        # 3. Validate preconditions (quest_completed check).
         precond_check = self._check_preconditions(service, context)
         if precond_check is not None:
             return precond_check
 
-        price = int(service.get("price", 0))
-        if price > 0:
-            gold_check = self._check_gold(context, price)
-            if gold_check is not None:
-                return gold_check
-
-        # 4. Execute each effect atom.
-        effects: list[dict[str, Any]] = service.get("effects", [])
-        if not isinstance(effects, list):
-            effects = []
-
-        effects_applied: list[str] = []
-        for atom in effects:
-            if not isinstance(atom, dict):
-                continue
-            atom_type = atom.get("type", "")
-            result = self._execute_effect_atom(atom, context)
-            if not result.ok:
-                return ToolResult(
-                    ok=False,
-                    message=f"效果 '{atom_type}' 执行失败：{result.message}",
-                    metadata={"status": "effect_failed", "effect_type": atom_type},
-                )
-            effects_applied.append(atom_type)
-
-        # 5. Deduct price.
-        if price > 0:
-            deduct_result = self._execute_effect_atom(
-                {"type": "modify_gold", "amount": -price}, context
+        # 4. Read current gold for the pre-flight check in execute_service_effects.
+        # Only needed when the service has a price — free services skip the player check.
+        price = 0
+        try:
+            price = int(service.get("price", 0))
+        except (TypeError, ValueError):
+            price = 0
+        if price > 0 and not context.state.has_slice("player"):
+            return ToolResult(
+                ok=False,
+                message="无法验证玩家金币（player 状态切片不可用）。",
+                metadata={"status": "state_unavailable"},
             )
-            if not deduct_result.ok:
-                # Should not happen — we checked gold above, but be defensive.
-                logger.warning(
-                    "execute_service: gold deduction failed for %s service %s: %s",
-                    character_id,
-                    service_id,
-                    deduct_result.message,
-                )
+        player_gold = int(context.state.player.gold) if context.state.has_slice("player") else 0
 
-        # 6. one_shot: revoke the service after first successful execution.
-        if service.get("one_shot", False):
-            revoke_cmd = Command(
-                type="planner_revoke_service",
-                params={"npc_id": character_id, "service_id": service_id},
-                source="npc_service",
+        # 5. Delegate to the shared execution helper.
+        exec_result = execute_service_effects(
+            service,
+            context.run_command,
+            player_gold=player_gold,
+            npc_id=character_id,
+        )
+        if not exec_result.success:
+            return ToolResult(
+                ok=False,
+                message=exec_result.message,
+                metadata={"status": exec_result.status, **exec_result.extra},
             )
-            revoke_result = context.run_command(revoke_cmd)
-            if not revoke_result.executed:
-                logger.warning(
-                    "execute_service: revoke_service failed for %s/%s: %s",
-                    character_id,
-                    service_id,
-                    revoke_result.errors,
-                )
 
-        # 7. Write to SceneBus.
+        # 6. Write to SceneBus.
         label = str(service.get("label", service_id))
         self._add_scene_entry(
             context,
@@ -196,14 +343,14 @@ class ExecuteServiceTool(_CharacterTool):
 
         return ToolResult(
             ok=True,
-            message=f"服务 '{label}' 已执行。",
+            message=exec_result.message,
             metadata={
                 "status": "ok",
                 "event_type": "service_executed",
                 "character_id": character_id,
                 "service_id": service_id,
-                "effects_applied": effects_applied,
-                "price_paid": price,
+                "effects_applied": exec_result.applied_effects,
+                "price_paid": exec_result.price_paid,
             },
         )
 
@@ -290,82 +437,3 @@ class ExecuteServiceTool(_CharacterTool):
 
         return None  # all preconditions satisfied
 
-    def _check_gold(
-        self, context: AgentContext, price: int,
-    ) -> ToolResult | None:
-        """Return an error ToolResult if the player cannot afford the service."""
-        if not context.state.has_slice("player"):
-            return ToolResult(
-                ok=False,
-                message="无法验证玩家金币（player 状态切片不可用）。",
-                metadata={"status": "state_unavailable"},
-            )
-        gold = int(context.state.player.gold)
-        if gold < price:
-            return ToolResult(
-                ok=False,
-                message=f"金币不足：需要 {price} 枚金币，当前持有 {gold} 枚。",
-                metadata={
-                    "status": "insufficient_gold",
-                    "required": price,
-                    "current": gold,
-                },
-            )
-        return None  # ok
-
-    def _execute_effect_atom(
-        self, atom: dict[str, Any], context: AgentContext,
-    ) -> ToolResult:
-        """Execute a single effect atom.  Returns ToolResult(ok=True/False)."""
-        atom_type = atom.get("type", "")
-
-        # Direct effects handled by ServiceEffectHandler.
-        if atom_type in _DIRECT_EFFECT_TYPES:
-            amount = atom.get("amount", 0)
-            try:
-                amount = int(amount)
-            except (TypeError, ValueError):
-                amount = 0
-            cmd = Command(
-                type="npc_service_effect",
-                params={"effect_type": atom_type, "amount": amount},
-                source="npc_service",
-            )
-            result = context.run_command(cmd)
-            if not result.executed:
-                return ToolResult(
-                    ok=False,
-                    message=result.errors[0] if result.errors else "command failed",
-                    metadata={"status": "command_failed"},
-                )
-            return ToolResult(ok=True, message=f"{atom_type} applied")
-
-        # Canonical command mapping.
-        cmd_type = _COMMAND_MAP.get(atom_type)
-        if cmd_type is None:
-            logger.warning(
-                "execute_service: unrecognised effect atom type '%s'; skipping",
-                atom_type,
-            )
-            return ToolResult(
-                ok=False,
-                message=f"未知效果类型 '{atom_type}'",
-                metadata={"status": "unknown_effect_type"},
-            )
-
-        # Build params for the canonical command, forwarding all atom keys
-        # except "type".
-        cmd_params = {k: v for k, v in atom.items() if k != "type"}
-        cmd = Command(
-            type=cmd_type,
-            params=cmd_params,
-            source="npc_service",
-        )
-        result = context.run_command(cmd)
-        if not result.executed:
-            return ToolResult(
-                ok=False,
-                message=result.errors[0] if result.errors else "command failed",
-                metadata={"status": "command_failed"},
-            )
-        return ToolResult(ok=True, message=f"{atom_type} applied")

@@ -48,6 +48,8 @@ interface SceneState {
   lastOverview: LocationOverview | null  // 最近一次 overview 快照（用于退出对话重建选项）
   activeNpcId: string | null             // 当前对话 NPC ID（对话上下文指示器）
   vnSpeakerId: string | null             // VN 模式当前发言角色 ID（用于立绘高亮）
+  dangerLevel: number            // 运行时危险度（1.0=正常基线，高则更紧张）
+  areaTags: string[]             // 区域语义标签（hostile, safe_zone, dungeon 等）
 
   updateFromOverview: (overview: LocationOverview) => void
   transitionTo: (data: SceneChangeData) => void
@@ -78,6 +80,8 @@ export const useSceneStore = create<SceneState>((set) => ({
   lastOverview: null,
   activeNpcId: null,
   vnSpeakerId: null,
+  dangerLevel: 1.0,
+  areaTags: [],
 
   updateFromOverview: (overview) => {
     const currentRoom = overview.current_room ?? null
@@ -98,6 +102,8 @@ export const useSceneStore = create<SceneState>((set) => ({
       portraits: s.openingInProgress ? s.portraits : buildPortraits(overview.present_npcs),
       activePortraitId: s.openingInProgress ? s.activePortraitId : null,
       lastOverview: overview,
+      dangerLevel: overview.danger_level ?? s.dangerLevel,
+      areaTags: overview.area_tags ?? s.areaTags,
     }))
   },
 

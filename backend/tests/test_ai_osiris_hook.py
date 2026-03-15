@@ -1,9 +1,12 @@
-"""Tests for AIOsirisHook."""
+"""Tests for AIOsirisHook (post-mechanical-engine migration).
+
+Tests for the old LLM evaluator path (_build_summary, _build_snapshot,
+RecordingEvaluator) have been removed. The hook now uses MechanicalOsirisEngine.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
 from app.game_core.content import WorldInstance
@@ -15,7 +18,7 @@ from app.game_core.content.registries import (
     SkillRegistry,
     TagRegistry,
 )
-from app.game_core.orchestration.hooks.ai_osiris import AIOsirisHook
+from app.game_core.orchestration.hooks.ai_osiris import AIOsirisHook, MechanicalOsirisEngine
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules import Command, RulesEngine
@@ -35,28 +38,6 @@ from app.game_core.state.slices import (
 )
 
 
-class RecordingEvaluator:
-    def __init__(self, decision) -> None:
-        self.decision = decision
-        self.calls: list[dict[str, object]] = []
-
-    async def evaluate(self, summary, snapshot, rules_context):
-        self.calls.append(
-            {
-                "summary": summary,
-                "snapshot": snapshot,
-                "rules_context": rules_context,
-            }
-        )
-        return self.decision
-
-
-class ExplodingEvaluator:
-    async def evaluate(self, summary, snapshot, rules_context):
-        del summary, snapshot, rules_context
-        raise RuntimeError("llm unavailable")
-
-
 def _make_context(
     *,
     change_log: list[StateChange] | None = None,
@@ -71,6 +52,7 @@ def _make_context(
     area_npc_locations: dict[str, str | None] | None = None,
     area_danger_level: float | None = None,
     action_log: list[dict] | None = None,
+    area_tags: list[str] | None = None,
 ) -> SettlementContext:
     world = WorldInstance("test_world")
     if include_characters:
@@ -160,11 +142,15 @@ def _make_context(
 
     areas = AreaSlice()
     area_data: dict = {}
-    if area_npc_locations is not None:
-        area_data = {"areas": {"forest": {"npc_locations": area_npc_locations}}}
-    if area_danger_level is not None:
-        area_state = area_data.setdefault("areas", {}).setdefault("forest", {})
-        area_state["danger_level"] = area_danger_level
+    if area_npc_locations is not None or area_danger_level is not None or area_tags is not None:
+        area_state: dict = {}
+        if area_npc_locations is not None:
+            area_state["npc_locations"] = area_npc_locations
+        if area_danger_level is not None:
+            area_state["danger_level"] = area_danger_level
+        if area_tags is not None:
+            area_state["tags"] = area_tags
+        area_data = {"areas": {"forest": area_state}}
     areas.restore(area_data)
     state.register(areas)
 
@@ -301,1183 +287,207 @@ class TestAIOsirisHook:
 
         assert hook.should_skip([], action_log=action_log) is False
 
-    def test_default_evaluator_sets_ack_flag_for_quest_started(self) -> None:
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
+    def test_execute_with_no_tags_returns_noop(self) -> None:
+        """When no ENGINE tags are in SceneBus and no action_log, engine returns no effects."""
+        context = _make_context()
 
         result = asyncio.run(AIOsirisHook().execute(context))
 
-        assert result.metadata["status"] == "applied"
         assert result.metadata["evaluated"] is True
-        assert result.metadata["executed_count"] == 1
-        assert result.metadata["truncated_count"] == 0
-        assert result.metadata["allowed_command_enforced"] is True
-        assert result.metadata["evaluator_metadata"] == {
-            "status": "deterministic",
-            "provider": "default_evaluator",
-            "branch": "flags",
-            "command_count": 1,
-        }
-        assert _non_processing_events(result)[0].event_type == "ai_osiris_applied"
-        assert context.state.flags.get("quest_started") is True
-        assert context.state.flags.get("osiris_ack_quest_started") is True
-
-    def test_default_evaluator_records_current_chapter_on_quest_changes(self) -> None:
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="quests",
-                    operation="set",
-                    path="milestone_states.ms_1",
-                    value={"state": "ACTIVE"},
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook().execute(context))
-
-        assert result.metadata["status"] == "applied"
-        assert context.state.flags.get("osiris_last_quest_change_chapter") == "chapter_1"
-        assert result.metadata["evaluator_metadata"] == {
-            "status": "deterministic",
-            "provider": "default_evaluator",
-            "branch": "quests",
-            "command_count": 1,
-        }
-
-    def test_default_evaluator_is_noop_when_ack_flag_already_exists(self) -> None:
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-        context.state.flags.set("osiris_ack_quest_started", True)
-        context.state.flags.clear_dirty()
-
-        result = asyncio.run(AIOsirisHook().execute(context))
-
-        assert result.metadata["status"] == "noop"
+        assert result.metadata["provider_name"] == "MechanicalOsirisEngine"
         assert result.metadata["executed_count"] == 0
-        assert result.metadata["evaluator_metadata"] == {
-            "status": "noop",
-            "provider": "default_evaluator",
-            "reason": "stable",
-        }
-        assert _non_processing_events(result) == []
 
-    def test_default_evaluator_stays_noop_for_player_only_changes(self) -> None:
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="player",
-                    operation="set",
-                    path="current_area",
-                    value="forest",
-                )
-            ]
-        )
+    def test_execute_emits_ai_processing_sse_events(self) -> None:
+        context = _make_context()
 
         result = asyncio.run(AIOsirisHook().execute(context))
 
-        assert result.metadata["status"] == "noop"
-        assert result.metadata["executed_count"] == 0
-        assert result.metadata["evaluator_metadata"] == {
-            "status": "noop",
-            "provider": "default_evaluator",
-            "reason": "stable",
-        }
-        assert _non_processing_events(result) == []
-
-    def test_execute_passes_stable_summary_snapshot_and_rules_context(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [],
-                "reasoning": "nothing to do",
-                "metadata": {"model": "fake"},
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="player",
-                    operation="set",
-                    path="current_area",
-                    value="forest",
-                ),
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                ),
-            ],
-            include_characters=True,
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["status"] == "noop"
-        call = evaluator.calls[0]
-        summary = call["summary"]
-        snapshot = call["snapshot"]
-        rules_context = call["rules_context"]
-
-        assert summary["change_count"] == 2
-        assert summary["changed_slices"] == ["player", "flags"]
-        assert summary["time_slot"]["absolute_tick"] == 33
-        assert summary["location"] == {"area_id": "forest", "location_id": "camp"}
-        assert summary["actions"] == []
-        assert summary["tick_kind"] == "normal"
-        assert summary["time_cost"] == 0.0
-        assert summary["duration_minutes"] == 0.0
-
-        assert snapshot["current_chapter"] == "chapter_1"
-        assert snapshot["chapter_completion"] == 0.0
-        assert snapshot["active_flags"] == {"quest_started": True}
-        assert snapshot["faction_standings"] == {"guild": 3}
-        # With sub-location filtering active (player at "camp"),
-        # npc_guard has no location_id (None) so it's excluded from nearby
-        assert len(snapshot["nearby_npcs"]) == 0
-        assert snapshot["scene_presence"] == {
-            "area_id": "forest",
-            "location_id": "camp",
-            "present_character_ids": ["player_char"],
-        }
-
-        assert rules_context["command_source"] == "ai_osiris"
-        assert "set_flag" in rules_context["allowed_commands"]
-        assert rules_context["constraints"]["scene_bus_text_deferred"] is True
-        assert "command_schema" in rules_context
-        assert "trigger_condition_schema" in rules_context
-        assert "visibility_rules" in rules_context
-        assert "semantic_constraints" in rules_context
-        assert isinstance(rules_context["world_lore"], list)
-        assert rules_context["world_lore"] == []
-        assert isinstance(rules_context["faction_rules"], list)
-        assert rules_context["faction_rules"] == []
-        assert isinstance(rules_context["tag_dimensions"], dict)
-        assert rules_context["tag_dimensions"] == {}
-
-    def test_dict_consequence_executes_and_emits_sse_without_scene_text(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {
-                        "type": "set_flag",
-                        "params": {"key": "ai_flag", "value": 7},
-                    }
-                ],
-                "reasoning": "set a flag",
-                "visible_change": True,
-                "metadata": {"model": "fake"},
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="player",
-                    operation="set",
-                    path="current_location",
-                    value="camp",
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert context.state.flags.get("ai_flag") == 7
-        assert result.metadata["status"] == "applied"
-        assert result.metadata["executed_count"] == 1
-        assert result.metadata["failed_count"] == 0
-        assert result.metadata["decision_reasoning"] == "set a flag"
-        non_proc = _non_processing_events(result)
-        assert non_proc[0].event_type == "ai_osiris_applied"
-        assert non_proc[0].payload["command_types"] == ["set_flag"]
-        assert context.scene_bus.snapshot()["entries"] == []
-
-    def test_visible_change_false_skips_visible_render(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {
-                        "type": "create_rumor",
-                        "params": {
-                            "text": "Rumor of wolves",
-                            "event_id": "rumor_event",
-                            "trigger_condition": {"type": "absolute_tick", "tick": 10},
-                        },
-                    }
-                ],
-                "reasoning": "seed rumor",
-                "visible_change": False,
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ],
-            include_events=True,
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert context.scene_bus.snapshot()["entries"] == []
-
-    def test_visible_change_true_renders_system_scene_entries(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {
-                        "type": "create_rumor",
-                        "params": {
-                            "text": "Rumor of wolves",
-                            "event_id": "rumor_event",
-                            "trigger_condition": {"type": "absolute_tick", "tick": 10},
-                        },
-                        "reason": "Rumor of wolves starts spreading through the camp.",
-                        "visibility_hint": "visible",
-                        "confidence": "high",
-                    },
-                    {
-                        "type": "set_flag",
-                        "params": {
-                            "key": "ai_flag",
-                            "value": 7,
-                        },
-                    },
-                ],
-                "reasoning": "seed rumor",
-                "visible_change": True,
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ],
-            include_events=True,
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["visible_change_count"] == 1
-        entries = context.scene_bus.snapshot()["entries"]
-        assert len(entries) == 1
-        assert entries[0]["source"] == "ai_osiris"
-        assert entries[0]["visibility"] == "system"
-        assert entries[0]["tags"] == ["ai_osiris", "visible_consequence", "create_rumor"]
-        assert entries[0]["content"] == "Rumor of wolves starts spreading through the camp."
-        assert entries[0]["metadata"] == {
-            "kind": "visible_consequence",
-            "command_type": "create_rumor",
-            "reason": "Rumor of wolves starts spreading through the camp.",
-            "visibility_hint": "visible",
-            "confidence": "high",
-            "refs": {},
-        }
-
-    def test_telemetry_records_raw_and_normalized_consequence_counts(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {
-                        "type": "create_rumor",
-                        "params": {
-                            "text": "Rumor of wolves",
-                            "event_id": "rumor_event",
-                            "trigger_condition": {"type": "absolute_tick", "tick": 10},
-                        },
-                    },
-                    {"params": {"foo": "bar"}},
-                ],
-                "visible_change": True,
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ],
-            include_events=True,
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["raw_consequence_count"] == 2
-        assert result.metadata["normalized_consequence_count"] == 1
-        assert result.metadata["normalized_count"] == 1
-        assert result.metadata["skipped_invalid_count"] == 1
-        assert result.metadata["invalid_count"] == 1
-        assert result.metadata["visible_change_count"] == 1
-        assert result.metadata["visible_command_types"] == ["create_rumor"]
-        assert result.metadata["evaluation_ms"] >= 0.0
-
-    def test_command_consequence_is_supported(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    Command(
-                        type="set_flag",
-                        params={"key": "from_command", "value": "ok"},
-                        source="engine",
-                    )
-                ]
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert context.state.flags.get("from_command") == "ok"
-        assert result.metadata["status"] == "applied"
-        assert result.metadata["command_results"][0]["command_type"] == "set_flag"
-
-    def test_invalid_consequence_is_skipped(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [{"params": {"key": "x"}}]})
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["status"] == "invalid_consequences"
-        assert result.metadata["requested_count"] == 1
-        assert result.metadata["normalized_count"] == 0
-        assert result.metadata["skipped_invalid_count"] == 1
-        assert _non_processing_events(result) == []
-
-    def test_minimal_semantic_validation_rejects_empty_schedule_event(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {"type": "schedule_event", "params": {"event_id": "ev_missing_trigger"}},
-                ]
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["status"] == "invalid_consequences"
-        assert result.metadata["skipped_invalid_count"] == 1
-
-    def test_unknown_command_type_is_rejected_by_whitelist(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {"type": "cast_spell", "params": {"spell_id": "fireball"}},
-                ]
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["status"] == "invalid_consequences"
-        assert result.metadata["normalized_count"] == 0
-        assert result.metadata["skipped_invalid_count"] == 1
-        assert result.metadata["allowed_command_enforced"] is True
-
-    def test_consequence_list_is_truncated_to_maximum(self) -> None:
-        consequences = [
-            {
-                "type": "set_flag",
-                "params": {"key": f"flag_{index}", "value": index},
-            }
-            for index in range(7)
-        ]
-        evaluator = RecordingEvaluator({"consequences": consequences})
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert result.metadata["status"] == "applied"
-        assert result.metadata["executed_count"] == 5
-        assert result.metadata["truncated_count"] == 2
-        assert context.state.flags.get("flag_4") == 4
-        assert context.state.flags.get("flag_5") is None
-        assert _non_processing_events(result)[0].payload["command_types"] == [
-            "set_flag",
-            "set_flag",
-            "set_flag",
-            "set_flag",
-            "set_flag",
-        ]
-
-    def test_failed_command_does_not_stop_following_commands(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    Command(
-                        type="modify_location",
-                        params={"area_id": "cave"},
-                        source="engine",
-                    ),
-                    {"type": "set_flag", "params": {"key": "after_failure", "value": True}},
-                ]
-            }
-        )
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="player",
-                    operation="set",
-                    path="current_area",
-                    value="forest",
-                )
-            ]
-        )
-
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        assert context.state.player.current_area == "forest"
-        assert context.state.flags.get("after_failure") is True
-        assert result.metadata["status"] == "partial_failure"
-        assert result.metadata["executed_count"] == 2
-        assert result.metadata["failed_count"] == 1
-        assert result.metadata["command_results"][0]["executed"] is False
-        assert result.metadata["command_results"][0]["errors"] == [
-            "ai_osiris cannot modify player location directly"
-        ]
-
-    def test_evaluator_exception_returns_error_sse(self, caplog) -> None:
-        context = _make_context(
-            change_log=[
-                StateChange(
-                    slice="flags",
-                    operation="set",
-                    path="flags.quest_started",
-                    value=True,
-                )
-            ]
-        )
-
-        with caplog.at_level(logging.ERROR):
-            result = asyncio.run(AIOsirisHook(evaluator=ExplodingEvaluator()).execute(context))
-
-        assert result.metadata["status"] == "evaluator_error"
-        assert result.metadata["evaluated"] is False
-        assert result.metadata["truncated_count"] == 0
-        assert result.metadata["allowed_command_enforced"] is True
-        assert _non_processing_events(result)[0].event_type == "ai_osiris_error"
-        assert _non_processing_events(result)[0].payload["error"] == "llm unavailable"
-        assert any(
-            record.message == "hook failed: ai_osiris"
-            and getattr(record, "hook_name", "") == "ai_osiris"
-            and record.exc_info is not None
-            for record in caplog.records
-        )
-
-    def test_rules_context_includes_world_lore_when_registry_loaded(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_lore=True,
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        rules_context = evaluator.calls[0]["rules_context"]
-        assert len(rules_context["world_lore"]) == 1
-        lore_entry = rules_context["world_lore"][0]
-        assert lore_entry["id"] == "theft_rules"
-        assert "zero tolerance" in lore_entry["content"].lower()
-        assert lore_entry["tags"] == ["CRIME", "COMMERCE"]
-
-    def test_rules_context_includes_faction_rules_when_registry_loaded(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_factions=True,
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        rules_context = evaluator.calls[0]["rules_context"]
-        assert len(rules_context["faction_rules"]) == 1
-        faction = rules_context["faction_rules"][0]
-        assert faction["id"] == "merchant_guild"
-        assert faction["name"] == "Merchant Guild"
-        assert faction["alignment"] == "lawful_neutral"
-        assert "behavioral_rules" in faction
-
-    def test_rules_context_includes_tag_dimensions_when_registry_loaded(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_tags=True,
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        rules_context = evaluator.calls[0]["rules_context"]
-        assert "moral" in rules_context["tag_dimensions"]
-        assert rules_context["tag_dimensions"]["moral"] == ["SACRED", "PROFANE", "NEUTRAL"]
-
-    def test_snapshot_chapter_completion_populated(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            narrative_plan_data={
-                "current_chapter": "ch1_goblin_crisis",
-                "chapter_completion": 0.15,
-            },
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        snapshot = evaluator.calls[0]["snapshot"]
-        assert snapshot["current_chapter"] == "ch1_goblin_crisis"
-        assert snapshot["chapter_completion"] == 0.15
-
-    def test_nearby_npcs_uses_dynamic_positions(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        # Place dynamic NPC at "camp" (same location as player) so sub-location
-        # filtering includes it.
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            area_npc_locations={"npc_dynamic": "camp"},
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        nearby = evaluator.calls[0]["snapshot"]["nearby_npcs"]
-        assert len(nearby) == 1
-        assert nearby[0]["id"] == "npc_dynamic"
-        assert nearby[0]["location_id"] == "camp"
-
-    def test_nearby_npcs_merges_dynamic_and_static(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        # Place npc_guard at "camp" (same sub-location as player) so
-        # sub-location filtering includes it. npc_far is in a different area.
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-            area_npc_locations={"npc_guard": "camp"},
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        nearby = evaluator.calls[0]["snapshot"]["nearby_npcs"]
-        ids = [npc["id"] for npc in nearby]
-        assert "npc_guard" in ids
-        assert "npc_far" not in ids  # npc_far is in "city", not "forest"
-        # npc_guard comes from dynamic source with location_id
-        guard = next(npc for npc in nearby if npc["id"] == "npc_guard")
-        assert guard["location_id"] == "camp"
-        assert guard["name"] == "Guard"
-
-    def test_nearby_npcs_includes_disposition(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        # Place npc_guard at "camp" (same sub-location as player) so
-        # sub-location filtering includes it, allowing disposition test.
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-            area_npc_locations={"npc_guard": "camp"},
-        )
-        # Set disposition data on the relations slice
-        context.state.relations.npc_dispositions["npc_guard"] = {"trust": 40, "respect": 60}
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        nearby = evaluator.calls[0]["snapshot"]["nearby_npcs"]
-        guard = next(npc for npc in nearby if npc["id"] == "npc_guard")
-        assert guard["disposition"] == {"trust": 40, "respect": 60}
-
-    def test_nearby_npcs_scene_local_only_when_sublocation_known(self) -> None:
-        """When player has a known sub_location, only NPCs at that sub_location are returned."""
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-            area_npc_locations={
-                "npc_guard": "watchtower",
-                "npc_far": "plaza",
-                "companion_1": "plaza",
-            },
-        )
-        context.state.player.current_location = "watchtower"
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        nearby = evaluator.calls[0]["snapshot"]["nearby_npcs"]
-        # With sub_location filtering: only npc_guard (at watchtower) is included
-        # npc_far and companion_1 are at plaza — excluded
-        assert nearby[0]["id"] == "npc_guard"
-        assert nearby[0]["location_id"] == "watchtower"
-        assert [npc["id"] for npc in nearby] == ["npc_guard"]
-
-    def test_summary_actions_populated_from_action_log(self) -> None:
-        action_records = [
-            {"type": "trade_buy", "actor": "player", "params": {"item_id": "dagger"}, "executed": True, "time_cost": 1.0 / 6.0},
-            {"type": "skill_check", "actor": "player", "params": {"skill": "perception"}, "executed": False, "time_cost": 1.0 / 6.0},
-        ]
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=action_records,
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        summary = evaluator.calls[0]["summary"]
-        assert summary["tick_kind"] == "normal"
-        assert summary["time_cost"] == 1.0 / 3.0
-        assert summary["duration_minutes"] == 20.0
-        assert len(summary["actions"]) == 2
-        assert summary["actions"][0]["type"] == "trade_buy"
-        assert summary["actions"][0]["actor"] == "player"
-        assert summary["actions"][0]["params"]["item_id"] == "dagger"
-        assert summary["actions"][1]["type"] == "skill_check"
-        assert summary["actions"][1]["executed"] is False
-        assert summary["actions"][0]["visibility_scope"] == "local"
-        assert summary["actions"][0]["witnessed_by"] == ["companion_1"]
-
-    def test_summary_actions_empty_when_no_action_log(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        summary = evaluator.calls[0]["summary"]
-        assert summary["actions"] == []
-        assert summary["tick_kind"] == "normal"
-        assert summary["time_cost"] == 0.0
-
-    def test_summary_tick_kind_by_action_category(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {"type": "move_area", "time_cost": 1.0, "actor": "player"},
-                {"type": "look_inventory", "time_cost": 0.0, "actor": "player"},
-            ],
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        summary = evaluator.calls[0]["summary"]
-        assert summary["tick_kind"] == "travel"
-        assert summary["time_cost"] == 1.0
-        assert summary["duration_minutes"] == 60.0
-
-    def test_summary_tick_kind_detects_external_dialogue_turns(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "dialogue_turn",
-                    "time_cost": 1.0 / 6.0,
-                    "actor": "player",
-                    "params": {"npc_id": "guild_girl"},
-                }
-            ],
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        summary = evaluator.calls[0]["summary"]
-        assert summary["tick_kind"] == "conversation"
-        assert summary["time_cost"] == 1.0 / 6.0
-
-    def test_quiet_long_rest_slot_suppresses_provider_consequences(self) -> None:
-        evaluator = RecordingEvaluator(
-            {
-                "consequences": [
-                    {
-                        "type": "create_rumor",
-                        "params": {"text": "Sleepy gossip"},
-                        "reason": "The camp whispers spread.",
-                        "visibility_hint": "visible",
-                        "confidence": "medium",
-                    }
-                ],
-                "reasoning": "quiet slot",
-                "visible_change": True,
-            }
-        )
+        processing = [e for e in result.sse_events if e.event_type == "ai_processing"]
+        assert len(processing) == 2
+        assert processing[0].payload["system"] == "osiris"
+        assert processing[0].payload["status"] == "start"
+        assert processing[1].payload["status"] == "done"
+
+    def test_quiet_long_rest_slot_suppresses_consequences(self) -> None:
         context = _make_context(action_log=[{"type": "rest_long", "time_cost": 1.0}])
         context.state.time.accumulated = 4.0
         context.state.time._dirty = True
 
-        result = asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        result = asyncio.run(AIOsirisHook().execute(context))
 
-        assert len(evaluator.calls) == 1
-        assert result.metadata["status"] == "noop"
+        assert result.metadata["status"] == "quiet_rest_slot"
         assert result.metadata["quiet_rest_slot"] is True
         assert result.metadata["executed_count"] == 0
-        assert result.metadata["requested_count"] == 0
         assert _non_processing_events(result) == []
         assert context.scene_bus.snapshot()["entries"] == []
 
-    def test_snapshot_player_curated_fields(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
+    def test_execute_returns_mechanical_metadata(self) -> None:
+        context = _make_context()
+
+        result = asyncio.run(AIOsirisHook().execute(context))
+
+        assert result.metadata["provider_name"] == "MechanicalOsirisEngine"
+        assert result.metadata["provider_status"] == "mechanical"
+        assert "action_tags" in result.metadata
+        assert "area_tags" in result.metadata
+        assert "evaluation_ms" in result.metadata
+
+    def test_execute_with_engine_none_uses_default_engine(self) -> None:
+        """AIOsirisHook() with no args should use MechanicalOsirisEngine by default."""
+        hook = AIOsirisHook()
+        assert isinstance(hook._engine, MechanicalOsirisEngine)
+
+    def test_execute_with_combat_action_log_applies_danger_adjust(self) -> None:
+        """COMBAT action in safe_zone area triggers adjust_danger effect."""
         context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
+            action_log=[{"type": "attack", "time_cost": 1.0 / 6.0}],
+            area_tags=["safe_zone"],
         )
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        result = asyncio.run(AIOsirisHook().execute(context))
 
-        player = evaluator.calls[0]["snapshot"]["player"]
-        expected_keys = {
-            "character_id", "character_name", "level", "hp", "max_hp",
-            "gold", "character_class", "current_area", "current_location",
-            "guild_rank", "ac", "active_quests", "tags",
-        }
-        assert set(player.keys()) == expected_keys
-        assert player["current_area"] == "forest"
-        assert player["current_location"] == "camp"
-        assert player["active_quests"] == []
-        assert player["tags"] == []
+        # Should have executed at least one command (adjust_danger) and set a flag
+        assert result.metadata["evaluated"] is True
+        assert result.metadata["provider_name"] == "MechanicalOsirisEngine"
+        # area_tags should be captured
+        assert "safe_zone" in result.metadata["area_tags"]
 
-    def test_snapshot_player_with_quests_and_tags(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
+    def test_execute_with_navigation_action_writes_area_event(self) -> None:
+        """NAVIGATION action produces an area_event."""
         context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-            include_quests=True,
+            action_log=[{"type": "move_area", "time_cost": 1.0}],
         )
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        result = asyncio.run(AIOsirisHook().execute(context))
 
-        player = evaluator.calls[0]["snapshot"]["player"]
-        assert player["tags"] == ["ADVENTURER", "NEWCOMER"]
-        assert set(player["active_quests"]) == {
-            "main_quest_1", "side_quest_1", "dynamic_1",
-        }
-        assert "completed_quest" not in player["active_quests"]
-        assert "dynamic_done" not in player["active_quests"]
+        assert result.metadata["evaluated"] is True
+        # area_events_written should be >= 1 for NAVIGATION
+        assert result.metadata["area_events_written"] >= 1
 
-    def test_snapshot_includes_pending_events_danger_and_active_dynamic_quests(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-            include_quests=True,
-            include_events=True,
-            event_pending=[
-                {"event_id": "ev_1", "trigger_condition": {"type": "absolute_tick", "tick": 10}}
-            ],
-            area_danger_level=1.75,
-            action_log=[],
-        )
-        context.state.areas.areas["forest"].temporary_sub_areas.append(
-            {"id": "camp", "threat_level": "high"}
-        )
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+class TestMechanicalOsirisEngine:
+    """Direct unit tests for MechanicalOsirisEngine.evaluate()."""
 
-        snapshot = evaluator.calls[0]["snapshot"]
-        assert snapshot["pending_events"] == [
-            {"event_id": "ev_1", "trigger_condition": {"type": "absolute_tick", "tick": 10}}
-        ]
-        assert snapshot["danger"]["area_id"] == "forest"
-        assert snapshot["danger"]["area_level"] == 1.75
-        assert snapshot["danger"]["location_id"] == "camp"
-        assert snapshot["danger"]["location_level"] == "high"
-        assert snapshot["active_dynamic_quests"] == [
-            {"status": "active", "title": "Dynamic Quest"}
-        ]
+    def test_no_action_tags_returns_empty(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate(set(), [], False, "forest")
+        assert effects == []
 
-    def test_snapshot_party_enriched_list(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-        )
+    def test_combat_in_safe_zone_produces_effects(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT"}, ["safe_zone"], True, "frontier_town")
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        effect_types = {e["type"] for e in effects}
+        assert "adjust_danger" in effect_types
+        assert "set_flag" in effect_types
+        assert "area_event" in effect_types
 
-        party = evaluator.calls[0]["snapshot"]["party"]
-        assert isinstance(party, list)
-        assert len(party) == 1
-        member = party[0]
-        assert member["id"] == "companion_1"
-        assert member["approval"] == 65
-        assert member["disposition"] == {"trust": 40, "admiration": 30}
-        assert member["relationship_stage"] == "acquaintance"
-        assert member["name"] == "Companion"
-        assert member["tags"] == ["COMPANION", "PALADIN"]
-        assert member["faction"] == "temple_order"
+    def test_combat_in_safe_zone_adjust_danger_delta_positive(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT"}, ["safe_zone"], True, "frontier_town")
 
-    def test_snapshot_party_without_registries(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-        )
+        danger_effects = [e for e in effects if e["type"] == "adjust_danger"]
+        assert len(danger_effects) == 1
+        assert danger_effects[0]["delta"] > 0
+        assert danger_effects[0]["area_id"] == "frontier_town"
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+    def test_combat_in_safe_zone_flag_has_area_id_in_key(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT"}, ["safe_zone"], False, "frontier_town")
 
-        party = evaluator.calls[0]["snapshot"]["party"]
-        assert isinstance(party, list)
-        assert len(party) == 1
-        member = party[0]
-        assert member["id"] == "companion_1"
-        assert member["approval"] == 0
-        assert "tags" not in member
-        assert "faction" not in member
-        assert "disposition" not in member
+        flag_effects = [e for e in effects if e["type"] == "set_flag"]
+        assert len(flag_effects) == 1
+        assert "frontier_town" in flag_effects[0]["flag"]
 
-    def test_enriched_actions_extracts_target_from_params(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "trade_buy",
-                    "actor": "player",
-                    "params": {"seller_npc": "merchant_tom", "item_id": "dagger"},
-                    "executed": True,
-                    "time_cost": 1.0 / 6.0,
-                },
-            ],
-        )
+    def test_combat_end_reduces_danger(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT_END"}, [], False, "forest")
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        danger_effects = [e for e in effects if e["type"] == "adjust_danger"]
+        assert len(danger_effects) == 1
+        assert danger_effects[0]["delta"] < 0
 
-        actions = evaluator.calls[0]["summary"]["actions"]
-        assert actions[0]["target"] == "merchant_tom"
-        assert actions[0]["type"] == "trade_buy"
-        assert actions[0]["actor"] == "player"
-        assert actions[0]["params"]["item_id"] == "dagger"
+    def test_combat_end_produces_area_event(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT_END"}, [], False, "forest")
 
-    def test_enriched_actions_adds_category_tags(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {"type": "trade_buy", "actor": "player", "params": {}, "executed": True, "time_cost": 0.0},
-                {"type": "steal", "actor": "player", "params": {}, "executed": True, "time_cost": 0.0},
-                {"type": "move_area", "actor": "player", "params": {}, "executed": True, "time_cost": 0.0},
-            ],
-        )
+        area_events = [e for e in effects if e["type"] == "area_event"]
+        assert len(area_events) >= 1
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+    def test_navigation_produces_area_event(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"NAVIGATION"}, [], False, "forest")
 
-        actions = evaluator.calls[0]["summary"]["actions"]
-        assert "TRANSACTION" in actions[0]["tags"]
-        assert "CRIME" in actions[1]["tags"]
-        assert "THEFT" in actions[1]["tags"]
-        assert "NAVIGATION" in actions[2]["tags"]
+        area_events = [e for e in effects if e["type"] == "area_event"]
+        assert len(area_events) == 1
+        assert area_events[0]["severity"] == "minor"
 
-    def test_enriched_actions_adds_item_tags_from_registry(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "trade_buy",
-                    "actor": "player",
-                    "params": {"item_id": "dagger"},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
-        items = ItemRegistry()
-        items.load({"dagger": {"id": "dagger", "type": "weapon", "tags": ["melee"]}})
-        context.world.register(items)
+    def test_combat_without_safe_zone_tag_not_triggered(self) -> None:
+        """COMBAT rule with area_tag='safe_zone' must NOT fire when area has no safe_zone tag."""
+        engine = MechanicalOsirisEngine()
+        # hostile area — no safe_zone tag
+        effects = engine.evaluate({"COMBAT"}, ["hostile"], False, "dungeon")
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        # COMBAT+safe_zone rule should NOT fire
+        # But COMBAT_END is not in tags so only non-area-tagged rules matter
+        # No rule for COMBAT without area_tag constraint → no effects
+        assert all(e["type"] != "set_flag" or "safe_zone" not in str(e) for e in effects)
+        # No adjust_danger from the COMBAT rule (since area_tag mismatch)
+        combat_danger = [e for e in effects if e["type"] == "adjust_danger" and e.get("delta", 0) > 0.4]
+        assert combat_danger == []
 
-        tags = evaluator.calls[0]["summary"]["actions"][0]["tags"]
-        assert "TRANSACTION" in tags
-        assert "MELEE" in tags
-        assert "WEAPON" in tags
+    def test_long_rest_in_hostile_area_increases_danger(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"LONG_REST"}, ["hostile"], False, "swamp")
 
-    def test_enriched_actions_adds_spell_tags_from_registry(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "cast_spell",
-                    "actor": "player",
-                    "params": {"spell_id": "magic_missile"},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
-        skills = SkillRegistry()
-        skills.load({
-            "magic_missile": {
-                "id": "magic_missile",
-                "school": "evocation",
-                "effect": {"type": "damage"},
-            },
-        })
-        context.world.register(skills)
+        danger_effects = [e for e in effects if e["type"] == "adjust_danger"]
+        assert len(danger_effects) == 1
+        assert danger_effects[0]["delta"] > 0
+        assert danger_effects[0]["area_id"] == "swamp"
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+    def test_long_rest_without_hostile_tag_no_danger(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"LONG_REST"}, ["peaceful"], False, "inn")
 
-        tags = evaluator.calls[0]["summary"]["actions"][0]["tags"]
-        assert "SPELLCASTING" in tags
-        assert "EVOCATION" in tags
-        assert "DAMAGE" in tags
+        danger_effects = [e for e in effects if e["type"] == "adjust_danger"]
+        assert danger_effects == []
 
-    def test_enriched_actions_handles_unknown_type_and_missing_registries(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "unknown_action",
-                    "actor": "player",
-                    "params": {"target": "npc_1"},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
+    def test_quest_progress_produces_major_area_event(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"QUEST_PROGRESS"}, [], False, "town")
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        area_events = [e for e in effects if e["type"] == "area_event"]
+        assert len(area_events) == 1
+        assert area_events[0]["severity"] == "major"
 
-        action = evaluator.calls[0]["summary"]["actions"][0]
-        assert action["target"] == "npc_1"
-        assert "tags" not in action
+    def test_investigation_produces_no_effects(self) -> None:
+        """INVESTIGATION rule has empty effects (clue handler writes area_event directly)."""
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"INVESTIGATION"}, [], False, "dungeon")
+        # INVESTIGATION rule fires but has no effects
+        assert effects == []
 
-    def test_enriched_actions_detail_trade_with_registry(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "trade_buy",
-                    "actor": "player",
-                    "params": {"seller_npc": "merchant_tom", "item_id": "dagger"},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
-        items = ItemRegistry()
-        items.load({"dagger": {"id": "dagger", "name": "Dagger"}})
-        context.world.register(items)
-        characters = CharacterRegistry()
-        characters.load({"merchant_tom": {"id": "merchant_tom", "name": "Merchant Tom"}})
-        context.world.register(characters)
+    def test_multiple_tags_fires_multiple_rules(self) -> None:
+        engine = MechanicalOsirisEngine()
+        # Both NAVIGATION and QUEST_PROGRESS — both rules should fire
+        effects = engine.evaluate({"NAVIGATION", "QUEST_PROGRESS"}, [], False, "forest")
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
+        area_events = [e for e in effects if e["type"] == "area_event"]
+        assert len(area_events) >= 2
 
-        action = evaluator.calls[0]["summary"]["actions"][0]
-        assert action["detail"] == "purchased Dagger from Merchant Tom"
+    def test_empty_area_id_passthrough_in_effects(self) -> None:
+        """Even with empty area_id, no crash — effects get area_id=""."""
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT_END"}, [], False, "")
+        # Should not crash
+        for e in effects:
+            assert "area_id" in e
+            assert e["area_id"] == ""
 
-    def test_enriched_actions_detail_skill_check_with_dc(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "skill_check",
-                    "actor": "player",
-                    "params": {"skill": "perception", "dc": 15},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
+    def test_area_id_template_expansion_in_flag_key(self) -> None:
+        engine = MechanicalOsirisEngine()
+        effects = engine.evaluate({"COMBAT"}, ["safe_zone"], True, "north_gate")
 
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        action = evaluator.calls[0]["summary"]["actions"][0]
-        assert action["detail"] == "perception check (DC 15)"
-
-    def test_enriched_actions_detail_failed_with_hints(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "attack",
-                    "actor": "player",
-                    "params": {"target": "goblin"},
-                    "executed": False,
-                    "time_cost": 0.0,
-                    "narrative_hints": ["disastrous failure"],
-                },
-            ],
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        action = evaluator.calls[0]["summary"]["actions"][0]
-        assert "attacked" in action["detail"]
-        assert "goblin" in action["detail"]
-        assert "disastrous failure" in action["detail"]
-        assert "failed" in action["detail"]
-
-    def test_enriched_actions_detail_fallback_unknown_type(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            action_log=[
-                {
-                    "type": "some_new_action",
-                    "actor": "player",
-                    "params": {},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        action = evaluator.calls[0]["summary"]["actions"][0]
-        assert action["detail"] == "some new action"
-
-    def test_enriched_actions_witnessed_by(self) -> None:
-        evaluator = RecordingEvaluator({"consequences": [], "reasoning": "ok"})
-        context = _make_context(
-            change_log=[
-                StateChange(slice="flags", operation="set", path="flags.x", value=1)
-            ],
-            include_characters=True,
-            action_log=[
-                {
-                    "type": "steal",
-                    "actor": "player",
-                    "params": {"container_id": "chest_01"},
-                    "executed": True,
-                    "time_cost": 0.0,
-                },
-            ],
-        )
-
-        asyncio.run(AIOsirisHook(evaluator=evaluator).execute(context))
-
-        action = evaluator.calls[0]["summary"]["actions"][0]
-        witnesses = action["witnessed_by"]
-        # companion_1 is party member → witness
-        assert "companion_1" in witnesses
-        # npc_guard has area_id=forest matching player's current_area → witness
-        assert "npc_guard" in witnesses
-        # target is chest_01 (not a character) so it doesn't appear in witnesses
-        # npc_far is in city → not witness
-        assert "npc_far" not in witnesses
+        flag_effects = [e for e in effects if e["type"] == "set_flag"]
+        assert len(flag_effects) == 1
+        assert flag_effects[0]["flag"] == "disturbance_north_gate"

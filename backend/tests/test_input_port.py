@@ -140,8 +140,8 @@ def test_fastapi_input_port_normalizes_talk_and_rejects_invalid_npc_intent() -> 
         "count": 1,
         "code": "invalid_intent",
         "message": (
-            "npc intent must be browse, buy, sell, talk, greet, accept_quest, "
-            "report_quest, "
+            "npc intent must be browse, buy, sell, buy_service, talk, greet, "
+            "accept_quest, report_quest, "
             "inspect_item, ask_quest, ask_progress, ask_location, "
             "ask_requirements, or ask_reward"
         ),

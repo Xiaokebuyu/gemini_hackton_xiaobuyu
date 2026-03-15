@@ -289,7 +289,7 @@ class TestVisibilityFiltering:
 
 class TestPromptBuilders:
     def test_build_npc_system_prompt_integrates_l4_data(self) -> None:
-        """build_npc_system_prompt resolves disposition/stage/impressions from L4."""
+        """build_npc_system_prompt resolves disposition/stage from L4 (3-C: simplified format)."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -300,9 +300,10 @@ class TestPromptBuilders:
         assert "Merchant Tom" in prompt
         assert "shrewd" in prompt.lower()
         assert "acquaintance" in prompt
-        assert "Approval: 25" in prompt
-        assert "Trust: 15" in prompt
-        assert "Bought a sword last time" in prompt
+        # 3-C: relationship block uses Chinese compact format
+        assert "好感：25" in prompt
+        assert "信任：15" in prompt
+        # 3-C: impressions no longer injected into prompt (blackboard replaces old fields)
 
     def test_build_npc_system_prompt_none_for_unknown_npc(self) -> None:
         builder = _builder()
@@ -437,9 +438,10 @@ class TestPurePromptFormatters:
         assert "Tom" in prompt
         assert "Shrewd merchant" in prompt
         assert "friend" in prompt
-        assert "Approval: 30" in prompt
-        assert "Bought a sword" in prompt
-        assert "Kind person" in prompt
+        # 3-C: compact Chinese relationship format
+        assert "好感：30" in prompt
+        # 3-C: impressions no longer in prompt (blackboard replaces old fields)
+        assert "Bought a sword" not in prompt
 
     def test_npc_prompt_text_empty_profile(self) -> None:
         prompt = _build_npc_prompt_text(
@@ -450,7 +452,8 @@ class TestPurePromptFormatters:
         )
         assert "Unknown NPC" in prompt
         assert "stranger" in prompt
-        assert "No previous memories" in prompt
+        # 3-C: "No previous memories" block removed (impressions no longer injected)
+        assert "No previous memories" not in prompt
 
     def test_npc_prompt_text_respects_passive_flag(self) -> None:
         prompt = _build_npc_prompt_text(
@@ -806,9 +809,11 @@ class TestNpcFullContext:
         assert npc_full is not None
         assert "Merchant Tom" in npc_full.system_prompt
         assert "acquaintance" in npc_full.system_prompt
-        assert "Approval: 25" in npc_full.system_prompt
-        assert "Trust: 15" in npc_full.system_prompt
-        assert "Bought a sword last time" in npc_full.system_prompt
+        # 3-C: compact Chinese relationship format
+        assert "好感：25" in npc_full.system_prompt
+        assert "信任：15" in npc_full.system_prompt
+        # 3-C: impressions no longer injected (blackboard replaces old fields)
+        assert "Bought a sword last time" not in npc_full.system_prompt
 
     def test_build_npc_full_context_passive_uses_passive_prompt_rules(self) -> None:
         world = _world_with_characters()

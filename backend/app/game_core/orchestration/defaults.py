@@ -14,6 +14,7 @@ from app.game_core.orchestration.hooks import (
     MilestoneCompletionHook,
     MilestoneUnlockHook,
     NarrativePlannerHook,
+    NpcAutonomyHook,
     NpcScheduleHook,
     PassivePerceptionHook,
     PrivateChatTriggerHook,
@@ -108,16 +109,16 @@ DEFAULT_ACTION_COMMAND_TYPES: tuple[tuple[str, str], ...] = (
 DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     ScheduledEventHook,
     StatusEffectHook,
-    AIOsirisHook,
+    # AIOsirisHook is always constructed manually in bootstrap.py (with injected phases).
+    # EncounterHook, PassivePerceptionHook, EventConditionHook are now coordinated as
+    # phases inside AIOsirisHook and no longer registered as independent hooks.
     NarrativePlannerHook,
-    EncounterHook,
-    PassivePerceptionHook,  # P45
-    EventConditionHook,
     MilestoneCompletionHook,
     MilestoneUnlockHook,
     QuestObjectiveTrackingHook,  # P56 — auto-track objectives with structured conditions
     XpAdvancementHook,           # P58 — XP threshold check → level_up SSE
     NpcScheduleHook,
+    NpcAutonomyHook,        # P61 — deterministic NPC/companion blackboard update
     SharedExperienceHook,   # P62
     CampfireHook,           # NEW (P63)
     RelationshipHook,

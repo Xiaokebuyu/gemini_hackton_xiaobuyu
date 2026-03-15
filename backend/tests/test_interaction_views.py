@@ -48,7 +48,10 @@ def _view_context(session) -> object:
 
 def test_build_talk_snapshot_payload_for_merchant_keeps_global_intent_order() -> None:
     session = _session()
-    session.runtime.state.relations.shop_states["merchant"] = {"current_stock": []}
+    # Non-empty stock triggers browse/buy/sell/inspect_item.
+    session.runtime.state.relations.shop_states["merchant"] = {
+        "current_stock": [{"item_id": "training_sword", "price": 12, "count": 1}],
+    }
 
     payload = build_talk_snapshot_payload(_view_context(session), "merchant")
 

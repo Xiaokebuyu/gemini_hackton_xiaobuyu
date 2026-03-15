@@ -20,49 +20,44 @@ from app.game_core.orchestration.event_engine import (
     _normalize_state_name,
 )
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
-from app.game_core.orchestration.models import HookResult, SSEEvent
+from app.game_core.orchestration.models import HookResult, PhaseResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
 
 logger = logging.getLogger(__name__)
 
 
-class EventConditionHook(NoOpSettlementHook):
-    HOOK_PRIORITY = 50
-    HOOK_NAME = "event_conditions"
+class EventConditionPhase:
+    """Core event-condition logic extracted for Osiris coordination.
+
+    Encapsulates all event state transition logic previously in
+    EventConditionHook.execute().  AIOsirisHook calls run() as Phase 4.
+
+    event_engine.py is completely untouched — this class still calls
+    BasicEventConditionEvaluator from there.
+    """
 
     def __init__(self, evaluator: EventConditionEvaluator | None = None) -> None:
         self._evaluator = evaluator or BasicEventConditionEvaluator()
 
-    def should_skip(
-        self,
-        change_log: list[Any],
-        action_log: list[dict[str, Any]] | None = None,
-    ) -> bool:
-        del change_log
-        del action_log
-        return False
-
-    async def execute(self, context: SettlementContext) -> HookResult:
+    async def run(self, context: SettlementContext) -> PhaseResult:
+        """Run event condition checks.  Returns PhaseResult (sse_events + metadata)."""
         if not context.state.has_slice("events"):
-            return HookResult(metadata=self._noop_metadata(checked_event_count=0))
+            return PhaseResult(metadata=EventConditionHook._noop_metadata(checked_event_count=0))
 
         active_events = context.state.events.list_active_events()
         checked_event_count = len(active_events)
         if checked_event_count == 0:
-            return HookResult(metadata=self._noop_metadata(checked_event_count=0))
+            return PhaseResult(metadata=EventConditionHook._noop_metadata(checked_event_count=0))
 
         try:
             raw_decision = self._evaluator.evaluate(context.state, context.world)
         except Exception as exc:
             logger.exception(
-                "hook failed: event_conditions",
-                extra={
-                    "hook_name": self.HOOK_NAME,
-                    "checked_event_count": checked_event_count,
-                },
+                "phase failed: event_conditions",
+                extra={"checked_event_count": checked_event_count},
             )
-            return HookResult(
+            return PhaseResult(
                 sse_events=[
                     SSEEvent(
                         event_type="event_condition_error",
@@ -84,16 +79,16 @@ class EventConditionHook(NoOpSettlementHook):
                 },
             )
 
-        decision = self._normalize_decision(raw_decision)
+        decision = EventConditionHook._normalize_decision(raw_decision)
         transitions, transition_sse_events, skipped_invalid_transition_count = (
-            self._apply_transitions(context, active_events, decision.transitions)
+            EventConditionHook._apply_transitions(context, active_events, decision.transitions)
         )
-        commands, skipped_invalid_command_count = self._normalize_commands(decision.commands)
-        command_results, failed_count = self._execute_commands(context, commands)
+        commands, skipped_invalid_command_count = EventConditionHook._normalize_commands(decision.commands)
+        command_results, failed_count = EventConditionHook._execute_commands(context, commands)
 
         executed_count = len(command_results)
         transitioned_count = len(transitions)
-        status = self._resolve_status(
+        status = EventConditionHook._resolve_status(
             transitioned_count=transitioned_count,
             executed_count=executed_count,
             failed_count=failed_count,
@@ -105,7 +100,7 @@ class EventConditionHook(NoOpSettlementHook):
         if unsupported_condition_count is None:
             unsupported_condition_count = 0
 
-        return HookResult(
+        return PhaseResult(
             sse_events=transition_sse_events,
             metadata={
                 "status": status,
@@ -121,6 +116,29 @@ class EventConditionHook(NoOpSettlementHook):
                 "evaluator_metadata": evaluator_metadata,
             },
         )
+
+
+class EventConditionHook(NoOpSettlementHook):
+    HOOK_PRIORITY = 50
+    HOOK_NAME = "event_conditions"
+
+    def __init__(self, evaluator: EventConditionEvaluator | None = None) -> None:
+        self._evaluator = evaluator or BasicEventConditionEvaluator()
+        self._phase = EventConditionPhase(evaluator=self._evaluator)
+
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del change_log
+        del action_log
+        return False
+
+    async def execute(self, context: SettlementContext) -> HookResult:
+        """Delegate to EventConditionPhase.run() — kept for backward compatibility."""
+        phase_result = await self._phase.run(context)
+        return HookResult(sse_events=phase_result.sse_events, metadata=phase_result.metadata)
 
     @staticmethod
     def _noop_metadata(*, checked_event_count: int) -> dict[str, Any]:

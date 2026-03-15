@@ -146,10 +146,10 @@ class TestProtocolCompliance:
         weaver = NarrativeWeaverSubSystem()
         assert weaver.name == "narrative_weaver"
 
-    def test_handles_is_empty(self) -> None:
-        """NarrativeWeaver is purely evaluate-driven; no directive namespace."""
+    def test_handles_schedule_event(self) -> None:
+        """NarrativeWeaver handles 'schedule_event' directive (migrated from Osiris 2-C)."""
         weaver = NarrativeWeaverSubSystem()
-        assert weaver.handles == frozenset()
+        assert "schedule_event" in weaver.handles
 
     def test_accepts_tick_settlement(self) -> None:
         weaver = NarrativeWeaverSubSystem()

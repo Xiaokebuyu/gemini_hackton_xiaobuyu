@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from app.game_core import ManagedSession
 from app.game_core.content import WorldInstance
+from app.game_core.narrative.service_tool import execute_service_effects
 from app.game_core.orchestration.interaction import (
     InteractionPolicyContext,
     build_interaction_policy_context,
@@ -72,6 +73,7 @@ class InteractionViewContext:
     player_gold: int
     player_inventory: list[dict[str, Any]]
     item_catalog: dict[str, dict[str, Any]]
+    npc_services: dict[str, list[dict[str, Any]]]
 
 
 @dataclass(frozen=True)
@@ -258,6 +260,56 @@ def build_interaction_view_context(
                             for meta_key, meta_value in raw_metadata.items()
                         }
 
+    # Build npc_services: merge content-layer shop.services + planner-layer
+    # NarrativePlanSlice.npc_services, skipping "donation" (separate handler).
+    npc_services: dict[str, list[dict[str, Any]]] = {}
+    narrative_plan = state.narrative_plan if state.has_slice("narrative_plan") else None
+    if world.has_registry("characters"):
+        for raw_character in world.characters.list_all():
+            char_npc_id = raw_character.id.strip()
+            if not char_npc_id:
+                continue
+            raw_shop = getattr(raw_character, "shop", None)
+            raw_svcs = raw_shop.get("services", []) if isinstance(raw_shop, Mapping) else []
+            content_svcs: dict[str, dict[str, Any]] = {}
+            if isinstance(raw_svcs, list):
+                for svc in raw_svcs:
+                    if not isinstance(svc, Mapping):
+                        continue
+                    svc_id = str(svc.get("service_id") or svc.get("id") or "").strip()
+                    if not svc_id or svc_id == "donation":
+                        continue
+                    content_svcs[svc_id] = {
+                        "service_id": svc_id,
+                        "label": str(svc.get("label", svc_id)),
+                        "price": int(svc.get("price", 0) or 0) if svc.get("price") is not None else 0,
+                        "notes": str(svc.get("notes", "")),
+                        "effects": list(svc.get("effects", [])) if isinstance(svc.get("effects"), list) else [],
+                        "one_shot": bool(svc.get("one_shot", False)),
+                        "preconditions": dict(svc.get("preconditions", {})) if isinstance(svc.get("preconditions"), Mapping) else {},
+                    }
+            # Planner-layer services (override same service_id)
+            planner_svcs: dict[str, dict[str, Any]] = {}
+            if narrative_plan is not None:
+                for svc in narrative_plan.get_services(char_npc_id):
+                    if not isinstance(svc, dict):
+                        continue
+                    svc_id = str(svc.get("service_id", "")).strip()
+                    if not svc_id or svc_id == "donation":
+                        continue
+                    planner_svcs[svc_id] = {
+                        "service_id": svc_id,
+                        "label": str(svc.get("label", svc_id)),
+                        "price": int(svc.get("price", 0) or 0) if svc.get("price") is not None else 0,
+                        "notes": str(svc.get("notes", "")),
+                        "effects": list(svc.get("effects", [])) if isinstance(svc.get("effects"), list) else [],
+                        "one_shot": bool(svc.get("one_shot", False)),
+                        "preconditions": dict(svc.get("preconditions", {})) if isinstance(svc.get("preconditions"), Mapping) else {},
+                    }
+            merged = {**content_svcs, **planner_svcs}
+            if merged:
+                npc_services[char_npc_id] = list(merged.values())
+
     return InteractionViewContext(
         current_area=current_area,
         current_location=current_location,
@@ -279,6 +331,7 @@ def build_interaction_view_context(
         player_gold=player_gold,
         player_inventory=player_inventory,
         item_catalog=item_catalog,
+        npc_services=npc_services,
     )
 
 
@@ -378,6 +431,15 @@ class InteractionService:
                 normalized_map,
                 resolved_event,
             )
+        if execution_kind == "buy_service":
+            view_ctx = build_interaction_view_context(state, world)
+            return self._execute_buy_service(
+                session,
+                normalized_map,
+                execution_map,
+                view_ctx,
+                resolved_event,
+            )
         if execution_kind == "pipeline_action":
             return await self._execute_pipeline_action(
                 session,
@@ -466,6 +528,93 @@ class InteractionService:
                 InteractionOutputEvent(
                     "shop_snapshot",
                     _build_shop_snapshot(refreshed_context, target_id, "", ""),
+                ),
+            ],
+        )
+
+    def _execute_buy_service(
+        self,
+        session: ManagedSession,
+        normalized: Mapping[str, Any],
+        execution: Mapping[str, Any],
+        view_ctx: InteractionViewContext,
+        resolved_event: InteractionOutputEvent,
+    ) -> InteractionExecutionResult:
+        """Execute a player-initiated buy_service purchase.
+
+        Looks up the service in the merged npc_services view, runs effects
+        through the rules engine, and returns an action_result SSE event.
+        """
+        npc_id = _normalized_id(execution.get("npc_id")) or _normalized_id(normalized.get("target_id")) or ""
+        service_id = _normalized_id(execution.get("service_id")) or _normalized_id(normalized.get("item_id")) or ""
+
+        # 1. Resolve service definition from the pre-built view context.
+        svc_list = view_ctx.npc_services.get(npc_id, [])
+        service = next((s for s in svc_list if s.get("service_id") == service_id), None)
+        if service is None:
+            return InteractionExecutionResult(
+                completed=False,
+                reason="interaction_rejected",
+                events=[
+                    resolved_event,
+                    _interaction_failed_event(
+                        normalized, message=f"unknown service '{service_id}' for npc '{npc_id}'"
+                    ),
+                ],
+            )
+
+        # 2. Build a synchronous run_command callable using the rules engine.
+        state = session.runtime.state
+        world = session.runtime.world
+        rules_engine = session.runtime.rules_engine
+
+        def _run_command(cmd: Command) -> Any:
+            result = rules_engine.execute(cmd, state, world)
+            if result.executed and result.delta is not None:
+                state.apply(result.delta)
+            return result
+
+        # 3. Call the shared execution helper.
+        exec_result = execute_service_effects(
+            service,
+            _run_command,
+            player_gold=int(state.player.gold),
+            npc_id=npc_id,
+        )
+
+        if not exec_result.success:
+            return InteractionExecutionResult(
+                completed=False,
+                reason="interaction_rejected",
+                events=[
+                    resolved_event,
+                    _interaction_failed_event(normalized, message=exec_result.message),
+                ],
+            )
+
+        # 4. Return action_result event.
+        return InteractionExecutionResult(
+            completed=True,
+            reason="completed",
+            events=[
+                resolved_event,
+                InteractionOutputEvent(
+                    "action_result",
+                    {
+                        "executed": True,
+                        "action_type": "buy_service",
+                        "time_cost": 0.0,
+                        "errors": [],
+                        "metadata": {
+                            "service_id": service_id,
+                            "npc_id": npc_id,
+                            "effects_applied": exec_result.applied_effects,
+                            "price_paid": exec_result.price_paid,
+                            "status": "ok",
+                        },
+                        "narrative_hints": [],
+                        "outcome": None,
+                    },
                 ),
             ],
         )

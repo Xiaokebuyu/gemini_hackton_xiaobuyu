@@ -31,7 +31,7 @@ class NarrativeWeaverSubSystem:
     3. Emits an escalate directive when the auto-escalation safety net fires.
     """
 
-    _HANDLES: ClassVar[frozenset[str]] = frozenset()  # pure evaluate-driven
+    _HANDLES: ClassVar[frozenset[str]] = frozenset({"schedule_event"})  # evaluate-driven + schedule_event
     _AUTO_ESCALATION_THRESHOLDS: ClassVar[list[int]] = [4, 7, 10, 13, 16]
     _FALLBACK_ESCALATION_INTERVAL: ClassVar[int] = 6
 
@@ -118,9 +118,35 @@ class NarrativeWeaverSubSystem:
         context: Any,
         *,
         current_tick: int,
-    ) -> bool:
-        # NarrativeWeaver has no directive namespace; reject all.
+    ) -> bool | str:
+        if kind == "schedule_event":
+            return self._apply_schedule_event(payload, context, current_tick=current_tick)
+        # NarrativeWeaver does not handle other directive kinds.
         return False
+
+    # ------------------------------------------------------------------
+    # Handler: schedule_event
+    # ------------------------------------------------------------------
+
+    def _apply_schedule_event(
+        self,
+        payload: dict[str, Any],
+        context: Any,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="schedule_event",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
 
     # ------------------------------------------------------------------
     # Dynamic quest expiry (migrated from NarrativePlannerHook)

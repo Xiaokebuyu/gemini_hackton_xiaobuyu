@@ -538,6 +538,9 @@ class NarrativePlannerHook(NoOpSettlementHook):
         sse_events.extend(self._pending_sse)
         self._pending_sse.clear()
 
+        # Update area_situation from area_events + danger_level + hostile_tracking
+        self._update_area_situation(context)
+
         return HookResult(
             sse_events=sse_events,
             metadata={
@@ -797,6 +800,58 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 return True
         return False
 
+    def _update_area_situation(self, context: SettlementContext) -> None:
+        """Build a deterministic natural-language situation summary for the current area.
+
+        Reads area_events (recent 10), danger_level, area tags, and hostile_tracking
+        counters, then writes the result into AreaSlice.area_situation.  No LLM call —
+        pure template concatenation so the data is always up-to-date.
+        """
+        if not context.state.has_slice("areas") or not context.state.has_slice("player"):
+            return
+        area_id = context.state.player.current_area
+        if not area_id:
+            return
+        area_state = context.state.areas.areas.get(area_id)
+        if area_state is None:
+            return
+
+        danger_level = area_state.danger_level
+        area_tags = list(area_state.tags) if isinstance(area_state.tags, list) else []
+        recent_events = [
+            e for e in area_state.area_events[-10:]
+            if isinstance(e, dict)
+        ]
+        # Count active vs cleared hostile encounters
+        active_encounters = 0
+        cleared_encounters = 0
+        for ht_state in area_state.hostile_tracking.values():
+            if not isinstance(ht_state, dict):
+                continue
+            if str(ht_state.get("status", "")) == "cleared":
+                cleared_encounters += 1
+            else:
+                active_encounters += 1
+
+        parts: list[str] = []
+        if danger_level >= 3.0:
+            parts.append(f"当前区域危险等级较高({danger_level:.1f})")
+        if active_encounters:
+            parts.append(f"区域内有{active_encounters}处已知敌对遭遇")
+        if cleared_encounters:
+            parts.append(f"已清除{cleared_encounters}处遭遇")
+        if recent_events:
+            event_texts = [
+                str(e.get("event", "")).strip()
+                for e in recent_events[-3:]
+                if str(e.get("event", "")).strip()
+            ]
+            if event_texts:
+                parts.append("近期事件：" + "；".join(event_texts))
+
+        situation = "。".join(parts) + "。" if parts else ""
+        context.state.areas.set_area_situation(area_id, situation)
+
     def _build_planner_context(
         self,
         context: SettlementContext,
@@ -872,6 +927,9 @@ class NarrativePlannerHook(NoOpSettlementHook):
         existing_npc_ids: list[str] = []  # A5b: all NPC IDs present in current area
         interactable_examples: list[dict[str, Any]] = []  # A5e: static interactable examples
         hostile_config_locations: list[dict[str, Any]] = []  # A6b: hostile sub-loc configs
+        area_situation_ctx: str = ""
+        area_events_ctx: list[dict[str, Any]] = []
+        exploration_summary_ctx: dict[str, Any] = {}
         if context.state.has_slice("areas") and context.state.has_slice("player"):
             # Collect all known area_ids for planner reference
             all_area_ids = list(context.state.areas.areas.keys())
@@ -888,6 +946,22 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     "remaining_total": max(0, 15 - total_dynamic),
                 }
                 area_state = context.state.areas.areas[area_id]
+                # 3-B: inject area_situation, area_events, exploration_summary
+                area_situation_ctx = area_state.area_situation
+                area_events_ctx = [
+                    dict(e) for e in area_state.area_events[-10:]
+                    if isinstance(e, dict)
+                ]
+                hostile_tracking = area_state.hostile_tracking
+                interactable_states = area_state.interactable_states
+                exploration_summary_ctx = {
+                    "encounters_total": len(hostile_tracking),
+                    "encounters_cleared": sum(
+                        1 for e in hostile_tracking.values() if e.get("cleared")
+                    ),
+                    "clues_investigated": len(interactable_states),
+                    "discovered_rooms": len(area_state.discovered_rooms),
+                }
                 # Collect sub_area_ids for current area
                 if context.world.has_registry("maps"):
                     area_template = context.world.maps.get(area_id)
@@ -1241,6 +1315,10 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "target_milestone_detail": self._build_target_milestone_detail(context),
             "story_facts": list(context.state.narrative_plan.story_facts),
             "danger_level": self._get_area_danger(context),
+            # 3-B: area situation + recent events + exploration summary
+            "area_situation": area_situation_ctx,
+            "area_events": area_events_ctx,
+            "exploration_summary": exploration_summary_ctx,
             "previous_directive_results": previous_directive_results,
             "all_area_ids": all_area_ids,
             "current_sub_area_ids": current_sub_area_ids,

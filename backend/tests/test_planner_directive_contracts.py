@@ -189,6 +189,10 @@ def test_supported_planner_directives_match_current_hook_surface() -> None:
         "advance_milestone",
         "assign_service",
         "revoke_service",
+        # Migrated from Osiris (2-C): now routed via Planner subsystems
+        "schedule_event",
+        "create_rumor",
+        "modify_location",
     }
 
 

@@ -217,6 +217,58 @@ class QuestManagerSubSystem:
         *,
         current_tick: int,
     ) -> bool | str:
+        quest_id = coerce_non_empty_string(payload.get("quest_id"))
+
+        # Before retiring, check if all objectives are complete and rewards unclaimed.
+        # If so, assign a reward service to the receptionist so the player can claim.
+        if quest_id is not None and context.state.has_slice("quests"):
+            quest_payload = context.state.quests.get_dynamic_quest(quest_id)
+            if isinstance(quest_payload, dict):
+                rewards = quest_payload.get("rewards") or {}
+                rewards_claimed = bool(quest_payload.get("rewards_claimed", False))
+                objectives = quest_payload.get("objectives") or []
+                all_completed = (
+                    isinstance(objectives, list)
+                    and len(objectives) > 0
+                    and all(
+                        bool(obj.get("completed", False))
+                        for obj in objectives
+                        if isinstance(obj, dict)
+                    )
+                )
+                if all_completed and not rewards_claimed and isinstance(rewards, dict) and rewards:
+                    from app.game_core.planning.npc_director import NpcDirectorSubSystem
+                    effects = NpcDirectorSubSystem._rewards_to_effects(rewards)
+                    receptionist_id = self._find_receptionist(context)
+                    if effects and receptionist_id is not None:
+                        service_id = f"reward_{quest_id}"
+                        # Idempotency: skip if service already assigned
+                        already_assigned = False
+                        if context.state.has_slice("narrative_plan"):
+                            existing = context.state.narrative_plan.get_services(receptionist_id)
+                            already_assigned = any(
+                                s.get("service_id") == service_id for s in existing
+                            )
+                        if not already_assigned:
+                            self._dispatcher.apply_directive(
+                                "assign_service",
+                                {
+                                    "npc_id": receptionist_id,
+                                    "service_id": service_id,
+                                    "label": "领取任务报酬",
+                                    "price": 0,
+                                    "effects": effects,
+                                    "one_shot": True,
+                                },
+                                context,
+                                current_tick=current_tick,
+                            )
+                        else:
+                            logger.debug(
+                                "QuestManagerSubSystem: reward service %s already assigned; skipping",
+                                service_id,
+                            )
+
         params = dict(payload)
         params["current_tick"] = current_tick
         result = context.execute_command(
@@ -229,6 +281,15 @@ class QuestManagerSubSystem:
         if not result.executed:
             return "; ".join(result.errors) if result.errors else "command_failed"
         return True
+
+    def _find_receptionist(self, context: SettlementContext) -> str | None:
+        """Return the id of the first NPC with a 'receptionist' tag, or None."""
+        if not context.world.has_registry("characters"):
+            return None
+        for template in context.world.characters.list_all():
+            if "receptionist" in (template.tags or []):
+                return template.id
+        return None
 
     # ------------------------------------------------------------------
     # Handler: update_quest

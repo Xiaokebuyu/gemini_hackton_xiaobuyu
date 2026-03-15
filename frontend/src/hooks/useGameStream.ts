@@ -1319,6 +1319,7 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'navigate': {
         const locationId = readFunctionalParam(item, 'location_id')
         if (locationId) {
+          options.clearOptions()
           void sendNavigate({ action: 'enter_sub_location', location_id: locationId })
           return true
         }

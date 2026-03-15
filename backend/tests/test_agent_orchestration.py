@@ -335,9 +335,10 @@ class TestPromptBuilders:
         assert "Tom" in prompt
         assert "Shrewd merchant" in prompt
         assert "friend" in prompt
-        assert "Approval: 30" in prompt
-        assert "Bought a sword" in prompt
-        assert "Kind person" in prompt
+        # 3-C: compact Chinese relationship format
+        assert "好感：30" in prompt
+        # 3-C: impressions no longer injected into prompt
+        assert "Bought a sword" not in prompt
 
     def test_npc_prompt_passive_mode_skips_direct_response_constraint(self) -> None:
         prompt = _build_npc_prompt_text(
@@ -372,7 +373,8 @@ class TestPromptBuilders:
 
         assert "Unknown NPC" in prompt
         assert "stranger" in prompt
-        assert "No previous memories" in prompt
+        # 3-C: "No previous memories" block removed; impressions no longer injected
+        assert "No previous memories" not in prompt
 
     def test_teammate_prompt_includes_personality(self) -> None:
         prompt = _build_teammate_prompt_text(

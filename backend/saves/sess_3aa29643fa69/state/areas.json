@@ -1,0 +1,652 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.2,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {
+        "hidden_scout_post": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 13,
+          "description": "在遗迹的高处哨点，两只披着伪装网的哥布林正熟练地操作着一支大型弩箭，它们并不是在嬉戏，而是在认真地扫视下方的林道。",
+          "expiry_ticks": -1,
+          "map_category": "optional",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        },
+        "overgrown_entrance": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 13,
+          "description": "在遗迹入口的阴影中，一支由哥布林小头目率领的精锐小队正在巡逻。它们穿着拼凑的铁甲，举止间竟然有着类似人类卫兵的肃静感。",
+          "expiry_ticks": -1,
+          "map_category": "optional",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        }
+      },
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 11,
+          "description": "这座古老的建筑残骸矗立在密林深处。巨大的石门已然倾斜，暗绿色的藤蔓如同毒蛇般攀附其上，入口漆黑如深渊。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "overgrown_entrance",
+          "interactables": [],
+          "label": "藤蔓缠绕的遗迹入口",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 11,
+          "description": "遗迹入口后的第一个大厅。原本圣洁的石柱上涂满了哥布林的排泄物和扭曲的涂鸦，空气中弥漫着难闻的腐臭味和劣质火把的烟气。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "desecrated_outer_hall",
+          "interactables": [],
+          "label": "被亵渎的外殿",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 12,
+          "description": "位于遗迹侧翼的高处，可以俯瞰整条进入林道的必经之路。这里的灌木被修剪过，地面上有大量哥布林的脚印和遗弃的干肉。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "hidden_scout_post",
+          "interactables": [],
+          "label": "隐蔽的观察哨点",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 13,
+          "description": "这条小路曾是通往遗迹侧翼的捷径，现在布满了尖刺陷阱和哥布林的哨塔残骸。空气中弥漫着危险的气息。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "ruined_supply_road",
+          "interactables": [],
+          "label": "被废弃的补给旧道",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        }
+      ]
+    },
+    "cow_girl_farm": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.3,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "cow_girl": "main_house"
+      },
+      "npc_presence_sources": {},
+      "npc_rooms": {
+        "cow_girl": "living_room"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "area_events": [
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 10
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 11
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 13
+        },
+        {
+          "event": "调查了战术部署地图：研究红色标记暂时替战术部署地图定住了一个方向。",
+          "severity": "minor",
+          "source": "clue_investigation",
+          "tick": 14
+        },
+        {
+          "event": "调查了伤员聚集的角落：倾听他们的碎碎念暂时替伤员聚集的角落定住了一个方向。",
+          "severity": "minor",
+          "source": "clue_investigation",
+          "tick": 14
+        }
+      ],
+      "area_situation": "近期事件：冒险者移动到新区域；冒险者移动到新区域；冒险者移动到新区域。",
+      "board_bulletins": {
+        "notice_board": [
+          {
+            "board_id": "notice_board",
+            "content": "",
+            "published_at_tick": 11,
+            "quest_id": "dq_growing_darkness",
+            "source": "narrative_planner",
+            "title": ""
+          },
+          {
+            "board_id": "notice_board",
+            "content": "",
+            "published_at_tick": 13,
+            "quest_id": "dq_emergency_scout",
+            "source": "narrative_planner",
+            "title": ""
+          }
+        ],
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+            "published_at_tick": 8,
+            "quest_id": "dq_ms_frontier_arrival",
+            "source": "narrative_planner",
+            "title": "踏入边境"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "铁匠碎盾的供货车队在林道失踪，有情报显示哥布林正以前所未有的组织性在古老遗迹集结。你需要查明真相并清除威胁。",
+            "published_at_tick": 11,
+            "quest_id": "dq_growing_darkness",
+            "source": "narrative_planner",
+            "title": "遗迹之影：失踪的车队"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "北门外的林道传来了惨叫声。由于卫兵主力正集结待命，公会紧急招募冒险者前往侦察并清除威胁，确保通往遗迹的道路不被截断。",
+            "published_at_tick": 13,
+            "quest_id": "dq_emergency_scout",
+            "source": "narrative_planner",
+            "title": "血染的林道"
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 1.2000000000000004,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "discovered",
+      "hostile_tracking": {},
+      "interactable_states": {
+        "guild_tactical_map": {
+          "area_id": "frontier_town",
+          "check_passed": null,
+          "clue_id": "clue_guild_strategy",
+          "effects_applied": [],
+          "first_inspected": true,
+          "outcome_text": "研究红色标记暂时替战术部署地图定住了一个方向。",
+          "resolved_at_tick": 14,
+          "resolved_option_id": "study_marks"
+        },
+        "wounded_veterans_corner": {
+          "area_id": "frontier_town",
+          "check_passed": null,
+          "clue_id": "clue_elite_injury",
+          "effects_applied": [],
+          "first_inspected": true,
+          "outcome_text": "倾听他们的碎碎念暂时替伤员聚集的角落定住了一个方向。",
+          "resolved_at_tick": 14,
+          "resolved_option_id": "listen_mutter"
+        }
+      },
+      "npc_locations": {
+        "blacksmith": "blacksmith_shop",
+        "dwarf_shaman": "adventurer_guild",
+        "goblin_slayer": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "guild_quartermaster": "adventurer_guild",
+        "high_elf_archer": "adventurer_guild",
+        "informant": "back_alley",
+        "lizard_priest": "adventurer_guild",
+        "north_gate_warden": "north_gate",
+        "priestess": "adventurer_guild",
+        "tavern_keeper": "tavern",
+        "tavern_waitress": "tavern",
+        "temple_matron": "mother_earth_temple",
+        "town_guard": "town_square",
+        "traveling_merchant": "market_plaza"
+      },
+      "npc_presence_sources": {
+        "high_elf_archer": "companion",
+        "priestess": "companion"
+      },
+      "npc_rooms": {
+        "blacksmith": "forge",
+        "dwarf_shaman": "guild_hall",
+        "goblin_slayer": "guild_hall",
+        "guild_girl": "guild_counter",
+        "guild_quartermaster": "guild_counter",
+        "high_elf_archer": "guild_counter",
+        "informant": "dead_end",
+        "lizard_priest": "guild_hall",
+        "north_gate_warden": "guard_post",
+        "priestess": "guild_counter",
+        "tavern_keeper": "main_hall",
+        "tavern_waitress": "main_hall",
+        "temple_matron": "prayer_hall",
+        "town_guard": "fountain_plaza",
+        "traveling_merchant": "open_market"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {
+        "adventurer_guild__guild_counter": [],
+        "blacksmith_shop": [
+          {
+            "description": "铁匠铺的柜台上散乱着几份催货单，上面用红墨水重重地画着叉，显示出这里的供应已经中断。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_lost_shipment",
+                "options": [
+                  {
+                    "id": "view_ledger",
+                    "label": "查看桌上的账簿"
+                  },
+                  {
+                    "id": "check_forge",
+                    "label": "检查冷却的炉火"
+                  }
+                ],
+                "outcomes": {
+                  "check_forge": "熔炉虽然还亮着，但并没有在处理精炼矿石，只有一些废旧农具在进行简单的修补。",
+                  "view_ledger": "最新的几笔铁矿石订单都标注为‘未送达’，且护卫佣金被标注了‘全额赔偿’。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "stalled_ledger",
+            "name": "断供的账簿",
+            "tags": [
+              "milestone",
+              "clue"
+            ],
+            "type": "investigate_clue"
+          }
+        ],
+        "blacksmith_shop__forge": [
+          {
+            "description": "角落里堆放着几块带血的木板，那是从失踪车队现场捡回来的碎片。上面的切割痕迹异常平整，不像是胡乱撕咬留下的。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_organized_attack",
+                "options": [
+                  {
+                    "id": "analyze_cuts",
+                    "label": "分析切割痕迹"
+                  },
+                  {
+                    "id": "check_blood",
+                    "label": "检查血迹干涸度"
+                  }
+                ],
+                "outcomes": {
+                  "analyze_cuts": "这些痕迹显示出攻击者使用了某种沉重且锋利的制式长柄武器，而非哥布林常用的锈蚀短剑。",
+                  "check_blood": "血迹已经发黑且渗透进木纤维，说明袭击发生在至少二十四小时前，且攻击极快，守卫几乎没有挣扎。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "raided_caravan_scrap",
+            "name": "被毁货车的残骸",
+            "tags": [
+              "quest_clue",
+              "military"
+            ],
+            "type": "investigate_clue"
+          },
+          {
+            "description": "整个边境小镇弥漫着磨刀石摩擦和皮革紧固的声音。即使是酒馆也收起了欢快的招牌，换上了加厚的门栓，冒险者们在大厅里低声核对武器，气氛凝重得如同一触即发的火药桶。",
+            "functional": {
+              "params": {
+                "clue_id": "town_war_footing",
+                "hide_on_resolve": true,
+                "linked_milestone": null,
+                "linked_quest_id": null,
+                "options": [
+                  {
+                    "id": "examine",
+                    "label": "仔细检查"
+                  },
+                  {
+                    "id": "ask_party",
+                    "label": "听听队友判断"
+                  }
+                ],
+                "outcomes": {
+                  "ask_party": [],
+                  "examine": []
+                },
+                "party_prompt_hints": [],
+                "topic": null
+              },
+              "type": "investigate_clue"
+            },
+            "id": "town_war_footing",
+            "name": "Town War Footing",
+            "tags": [
+              "clue",
+              "party_discussion"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "north_gate": [
+          {
+            "description": "在北门外松软的泥地上，有一组令人毛骨悚然的脚印。它们不是混乱的脚印堆，而是两列平行的纵队。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_marching_order",
+                "options": [
+                  {
+                    "id": "measure_stride",
+                    "label": "测量步幅"
+                  },
+                  {
+                    "id": "follow_path",
+                    "label": "望向足迹延伸方向"
+                  }
+                ],
+                "outcomes": {
+                  "follow_path": "足迹径直穿过林道，指向北方的‘古代遗迹’。哥布林杀手蹲下身，沉默地印证了自己的判断。",
+                  "measure_stride": "所有的步幅几乎一致，这说明它们正处于一种受过训练的行军状态，而非散漫移动。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "organized_march_tracks",
+            "name": "严整的行军足迹",
+            "tags": [
+              "quest_clue",
+              "evidence"
+            ],
+            "type": "investigate_clue"
+          }
+        ],
+        "tavern__main_hall": [
+          {
+            "description": "酒馆里的灯火忽明忽暗，冒险者们围坐在桌边，神色紧绷。原本豪爽的笑声被不安的窃窃私语取代。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_town_tension",
+                "options": [
+                  {
+                    "id": "listen",
+                    "label": "窃听冒险者的谈话"
+                  },
+                  {
+                    "id": "observe",
+                    "label": "观察酒馆的异样"
+                  }
+                ],
+                "outcomes": {
+                  "listen": "你听到他们在谈论最近消失的巡逻队，每个人的脸上都写满了恐惧。",
+                  "observe": "你注意到吧台后面备用的武器比往常多出了不少，显然酒馆老板也在戒备着什么。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "tavern_tension",
+            "name": "不安的小酒馆",
+            "tags": [
+              "atmospheric",
+              "clue"
+            ],
+            "type": "investigate_clue"
+          },
+          {
+            "description": "一名年轻的斥候坐在角落，手臂扎着带血的绷带。他面前的麦酒一口没动，眼神空洞地盯着桌面。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_scout_trauma",
+                "options": [
+                  {
+                    "id": "offer_drink",
+                    "label": "请他喝一杯并搭话"
+                  },
+                  {
+                    "id": "check_wounds",
+                    "label": "观察伤口的性质"
+                  }
+                ],
+                "outcomes": {
+                  "check_wounds": "你发现伤口不是抓痕，而是由某种制式粗糙的投掷矛造成的，这暗示了哥布林拥有统一的武装。",
+                  "offer_drink": "他颤抖着低声说道：‘它们...它们在排队。我发誓我看到了旗帜，哥布林竟然打着旗帜...’"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "wounded_scout_table",
+            "name": "带伤的斥候",
+            "tags": [
+              "narrative",
+              "tension"
+            ],
+            "type": "investigate_clue"
+          },
+          {
+            "description": "通往遗迹的林道一侧。由于近期无雨，泥土上清晰地保留了一组令人心惊的足迹：它们排列整齐，步伐一致，直指遗迹方向。",
+            "functional": {
+              "params": {
+                "clue_id": "march_trail_slice",
+                "hide_on_resolve": true,
+                "linked_milestone": null,
+                "linked_quest_id": null,
+                "options": [
+                  {
+                    "id": "examine",
+                    "label": "仔细检查"
+                  },
+                  {
+                    "id": "ask_party",
+                    "label": "听听队友判断"
+                  }
+                ],
+                "outcomes": {
+                  "ask_party": [],
+                  "examine": []
+                },
+                "party_prompt_hints": [],
+                "topic": null
+              },
+              "type": "investigate_clue"
+            },
+            "id": "march_trail_slice",
+            "name": "March Trail Slice",
+            "tags": [
+              "clue",
+              "party_discussion"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "一封带有北门卫队火漆印的信件被插在吧台的告示架上，封皮已经由于潮湿而略显褶皱。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_warden_report",
+                "options": [
+                  {
+                    "id": "read_letter",
+                    "label": "私自拆开阅读"
+                  },
+                  {
+                    "id": "ask_tavern_keeper",
+                    "label": "询问老板关于信的内容"
+                  },
+                  {
+                    "id": "wait_for_owner",
+                    "label": "观察谁会来取走信件"
+                  }
+                ],
+                "outcomes": {
+                  "ask_tavern_keeper": "老板低声告诉你，这是守备长给冒险者领队的紧急通知，据说和失踪的车队有关。",
+                  "read_letter": "信中提到最近三晚在北门外发现哥布林以‘雁形阵’行军，这极度反常且专业。",
+                  "wait_for_owner": "你注意到路过的冒险者都对这封信避而远之，似乎这信代表着死亡的征兆。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "warden_sealed_letter",
+            "name": "北门守备长的密封信",
+            "tags": [
+              "quest_item",
+              "urgent"
+            ],
+            "type": "investigate_clue"
+          }
+        ],
+        "town_square": [
+          {
+            "description": "夕阳染红了街道，但没有往日的喧闹。镇民们正匆匆赶回家中，沉重的门闩声此起彼伏。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_town_lockdown",
+                "options": [
+                  {
+                    "id": "look_sky",
+                    "label": "远眺地平线"
+                  },
+                  {
+                    "id": "check_street",
+                    "label": "观察街道细节"
+                  }
+                ],
+                "outcomes": {
+                  "check_street": "平日里堆放货物的角落现在空空如也，街道两旁的油灯也没有点亮。",
+                  "look_sky": "远处山脊上隐约可见几缕不祥的狼烟，像是某种邪恶契约的信号。"
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "closing_doors",
+            "name": "紧闭的门窗",
+            "tags": [
+              "atmospheric",
+              "tension"
+            ],
+            "type": "investigate_clue"
+          }
+        ]
+      },
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    },
+    "water_capital": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.6,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

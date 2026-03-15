@@ -222,31 +222,36 @@ def test_npc_prompt_identity_block_absent_when_empty() -> None:
 
 
 def test_npc_prompt_behavior_block_from_stage() -> None:
+    """3-C: behavior_block removed; stage is now in compact relationship line."""
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
         profile, _default_disposition(), "hostile", []
     )
-    assert "## How to behave" in prompt
-    assert "厌恶" in prompt
+    # behavior_block with stage guides removed; stage still present in relationship line
+    assert "## How to behave" not in prompt
+    assert "hostile" in prompt
 
 
 def test_npc_prompt_time_block_with_slot() -> None:
+    """3-C: time now appears as compact Chinese format in relationship line."""
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
         profile, _default_disposition(), "stranger", [],
         time_info={"day": 3, "slot": "night"},
     )
-    assert "Day 3, night" in prompt
+    # Chinese format: 第3天 night
+    assert "第3天" in prompt
+    assert "night" in prompt
 
 
 def test_npc_prompt_time_block_no_slot() -> None:
+    """3-C: time without slot shows day only."""
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
         profile, _default_disposition(), "stranger", [],
         time_info={"day": 5, "slot": ""},
     )
-    assert "Day 5" in prompt
-    assert "Day 5," not in prompt
+    assert "第5天" in prompt
 
 
 def test_npc_prompt_no_time_block_when_absent() -> None:
@@ -255,6 +260,7 @@ def test_npc_prompt_no_time_block_when_absent() -> None:
         profile, _default_disposition(), "stranger", [],
         time_info=None,
     )
+    assert "当前时间" not in prompt
     assert "Current time" not in prompt
 
 

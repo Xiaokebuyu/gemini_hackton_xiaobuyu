@@ -177,14 +177,6 @@ class OsirisVisibleConsequenceRenderer:
 
 _ALLOWED_COMMAND_TYPES: tuple[str, ...] = (
     "set_flag",
-    "modify_disposition",
-    "modify_approval",
-    "advance_quest",
-    "schedule_event",
-    "create_rumor",
-    "modify_location",
-    "add_knowledge",
-    "modify_completion",
     "adjust_danger",
 )
 
@@ -351,6 +343,136 @@ _ACTION_CATEGORY_TAGS: dict[str, list[str]] = {
 
 
 @dataclass(slots=True)
+class OsirisEffect:
+    """One effect emitted by the MechanicalOsirisEngine."""
+
+    effect_type: str  # "set_flag" | "adjust_danger" | "area_event"
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class OsirisRuleMatch:
+    """Result of matching one rule table entry."""
+
+    rule_index: int
+    trigger_tag: str
+    area_tag_matched: str | None
+    effects: list[OsirisEffect] = field(default_factory=list)
+
+
+class MechanicalOsirisEngine:
+    """Pure rule-table driven causal engine based on SceneBus ACTION_TAGS.
+
+    Matches action_tags against CONSEQUENCE_RULES and returns a list of
+    Commands + area_events for the AIOsirisHook to apply.
+    """
+
+    # Rules keyed on SceneBus ENGINE tags (from tick_coordinator._SEMANTIC_TAGS)
+    # Each rule has:
+    #   trigger.tag       — required tag in action_tags
+    #   trigger.area_tag  — optional: area must have this tag (from AreaState.tags)
+    #   effects           — list of effect descriptors
+    CONSEQUENCE_RULES: list[dict[str, Any]] = [
+        # ── Combat ──
+        {
+            "trigger": {"tag": "COMBAT", "area_tag": "safe_zone"},
+            "effects": [
+                {"type": "adjust_danger", "delta": +0.5},
+                {"type": "set_flag", "flag": "disturbance_{area_id}"},
+                {"type": "area_event", "event": "区域内发生了战斗", "severity": "major"},
+            ],
+        },
+        {
+            "trigger": {"tag": "COMBAT_END"},
+            "effects": [
+                {"type": "adjust_danger", "delta": -0.3},
+                {"type": "area_event", "event": "战斗结束，紧张态势缓和", "severity": "minor"},
+            ],
+        },
+        # ── Exploration ──
+        {
+            "trigger": {"tag": "NAVIGATION"},
+            "effects": [
+                {"type": "area_event", "event": "冒险者移动到新区域", "severity": "minor"},
+            ],
+        },
+        # Investigation: area_event is written directly by clue handler (1-C)
+        {
+            "trigger": {"tag": "INVESTIGATION"},
+            "effects": [],
+        },
+        # ── Rest ──
+        {
+            "trigger": {"tag": "LONG_REST", "area_tag": "hostile"},
+            "effects": [
+                {"type": "adjust_danger", "delta": +0.1},
+                {"type": "area_event", "event": "在危险区域休息，敌人有时间重新部署", "severity": "minor"},
+            ],
+        },
+        # ── Quest progress ──
+        {
+            "trigger": {"tag": "QUEST_PROGRESS"},
+            "effects": [
+                {"type": "area_event", "event": "任务取得重要进展", "severity": "major"},
+            ],
+        },
+    ]
+
+    # Faction propagation config (reserved for future use — witnesses path)
+    FACTION_PROPAGATION: dict[str, Any] = {
+        "decay": 0.5,   # delta decays 50% when propagated to faction members
+        "max_hops": 1,  # no multi-hop propagation
+        # Trigger: COMBAT + safe_zone + has_witnesses
+    }
+
+    def evaluate(
+        self,
+        action_tags: set[str],
+        area_tags: list[str],
+        has_witnesses: bool,
+        area_id: str,
+    ) -> list[dict[str, Any]]:
+        """Match rules and return a list of effect descriptors.
+
+        Each effect has:
+          type: "set_flag" | "adjust_danger" | "area_event"
+          (plus type-specific fields: delta, area_id, flag, event, severity)
+        """
+        if not action_tags:
+            return []
+
+        area_tag_set = set(area_tags)
+        effects: list[dict[str, Any]] = []
+        seen_rule_indices: set[int] = set()
+
+        for idx, rule in enumerate(self.CONSEQUENCE_RULES):
+            trigger = rule.get("trigger", {})
+            required_tag = str(trigger.get("tag", ""))
+            required_area_tag = trigger.get("area_tag")
+
+            if required_tag not in action_tags:
+                continue
+            if required_area_tag is not None and required_area_tag not in area_tag_set:
+                continue
+            if idx in seen_rule_indices:
+                continue
+            seen_rule_indices.add(idx)
+
+            for raw_effect in rule.get("effects", []):
+                if not isinstance(raw_effect, dict):
+                    continue
+                effect = dict(raw_effect)
+                effect["area_id"] = area_id
+                # Template expansion: {area_id} in string values
+                for key, val in effect.items():
+                    if isinstance(val, str) and "{area_id}" in val:
+                        effect[key] = val.replace("{area_id}", area_id)
+                effects.append(effect)
+
+        return effects
+
+
+@dataclass(slots=True)
 class AIOsirisDecision:
     consequences: list[Command | Mapping[str, Any]] = field(default_factory=list)
     reasoning: str = ""
@@ -503,8 +625,20 @@ class AIOsirisHook(NoOpSettlementHook):
     HOOK_NAME = "ai_osiris"
     MAX_CONSEQUENCES = 5
 
-    def __init__(self, evaluator: AIOsirisProvider | None = None) -> None:
-        self._evaluator = evaluator or BasicAIOsirisEvaluator()
+    def __init__(
+        self,
+        evaluator: AIOsirisProvider | None = None,
+        engine: MechanicalOsirisEngine | None = None,
+        encounter_phase: Any = None,
+        perception_phase: Any = None,
+        event_phase: Any = None,
+    ) -> None:
+        del evaluator  # LLM evaluator path removed; MechanicalOsirisEngine is now the sole engine
+        self._engine = engine or MechanicalOsirisEngine()
+        # Phase coordinators (lazy-imported to avoid circular imports)
+        self._encounter_phase = encounter_phase  # EncounterPhase | None
+        self._perception_phase = perception_phase  # PerceptionPhase | None
+        self._event_phase = event_phase  # EventConditionPhase | None
 
     def should_skip(
         self,
@@ -538,122 +672,99 @@ class AIOsirisHook(NoOpSettlementHook):
         return None
 
     async def execute(self, context: SettlementContext) -> HookResult:
-        summary = self._build_summary(context)
-        snapshot = self._build_snapshot(context)
-        # Extract present_character_ids for locality check during validation
-        present_ids: list[str] = list(
-            snapshot.get("scene_presence", {}).get("present_character_ids", [])
-        )
-        rules_context = self._build_rules_context(context)
         rest_phase = resolve_rest_phase(context)
         quiet_rest_slot = is_quiet_rest_slot(context, rest_phase)
         evaluate_started = time.perf_counter()
-        raw_consequence_count = 0
 
         # QF-4: signal that Osiris evaluator is starting
         sse_events_pre: list[SSEEvent] = [
             SSEEvent(event_type="ai_processing", payload={"system": "osiris", "status": "start"})
         ]
-        try:
-            raw_decision = await self._evaluator.evaluate(summary, snapshot, rules_context)
-            if isinstance(raw_decision, AIOsirisDecision):
-                raw_consequence_count = len(raw_decision.consequences)
-            elif isinstance(raw_decision, Mapping):
-                raw_consequence_count = len(
-                    raw_decision.get("consequences", [])
-                    if isinstance(raw_decision.get("consequences"), list)
-                    else []
-                )
-        except Exception as exc:
-            logger.exception(
-                "hook failed: ai_osiris",
-                extra={
-                    "hook_name": self.HOOK_NAME,
-                    "change_count": len(context.change_log),
-                },
-            )
+
+        # Extract action_tags from SceneBus ENGINE entries
+        action_tags = self._collect_action_tags(context)
+
+        # Extract area tags from AreaSlice
+        area_id = ""
+        area_tags: list[str] = []
+        if context.state.has_slice("player"):
+            area_id = context.state.player.current_area or ""
+        if area_id and context.state.has_slice("areas"):
+            area_state = context.state.areas.areas.get(area_id)
+            if area_state is not None and isinstance(getattr(area_state, "tags", None), list):
+                area_tags = [str(t) for t in area_state.tags if isinstance(t, str)]
+
+        # Determine whether any witnesses were present
+        has_witnesses = self._has_witnesses(context)
+
+        # Quiet rest slot: suppress all mechanical consequences
+        if quiet_rest_slot:
+            evaluation_ms = (time.perf_counter() - evaluate_started) * 1000.0
             return HookResult(
                 sse_events=[
                     *sse_events_pre,
                     SSEEvent(event_type="ai_processing", payload={"system": "osiris", "status": "done"}),
-                    SSEEvent(
-                        event_type="ai_osiris_error",
-                        payload={"error": str(exc)},
-                    ),
                 ],
                 metadata={
-                    "status": "evaluator_error",
-                    "evaluated": False,
-                    "provider_status": "failed",
-                    "provider_name": "unknown",
-                    "decision_reasoning": "",
-                    "requested_count": 0,
-                    "raw_consequence_count": raw_consequence_count,
-                    "normalized_count": 0,
-                    "normalized_consequence_count": 0,
+                    "status": "quiet_rest_slot",
+                    "evaluated": True,
+                    "quiet_rest_slot": True,
+                    "provider_status": "mechanical",
+                    "provider_name": "MechanicalOsirisEngine",
+                    "action_tags": sorted(action_tags),
+                    "area_tags": area_tags,
                     "executed_count": 0,
                     "failed_count": 0,
-                    "truncated_count": 0,
-                    "skipped_invalid_count": 0,
-                    "invalid_count": 0,
-                    "allowed_command_enforced": True,
-                    "visible_change_count": 0,
-                    "visible_command_types": [],
-                    "visible_tags_count": 0,
-                    "evaluation_ms": (time.perf_counter() - evaluate_started) * 1000.0,
-                    "command_results": [],
-                    "summary": summary,
-                    "snapshot_digest": self._snapshot_digest(snapshot),
-                    "evaluator_metadata": {},
+                    "evaluation_ms": evaluation_ms,
                 },
             )
 
-        decision = self._normalize_decision(raw_decision)
-        requested_count = len(decision.consequences)
-        if not raw_consequence_count:
-            raw_consequence_count = requested_count
-        if quiet_rest_slot:
-            decision = AIOsirisDecision(
-                consequences=[],
-                reasoning=decision.reasoning,
-                visible_change=False,
-                metadata={
-                    **dict(decision.metadata),
-                    "status": "quiet_rest_slot",
-                    "quiet_rest_slot": True,
-                    "suppressed_consequence_count": requested_count,
-                },
-            )
-            requested_count = 0
-            raw_consequence_count = 0
+        # Evaluate rules
+        effects = self._engine.evaluate(action_tags, area_tags, has_witnesses, area_id)
+
+        # Separate effects into commands and area_events
         commands: list[Command] = []
+        area_event_dicts: list[dict[str, Any]] = []
         skipped_invalid_count = 0
         truncated_count = 0
-        for consequence in decision.consequences:
-            command = self._normalize_consequence(consequence)
+
+        current_tick = (
+            int(context.state.time.absolute_tick())
+            if context.state.has_slice("time")
+            else 0
+        )
+
+        for effect in effects:
+            effect_type = str(effect.get("type", "")).strip()
+
+            if effect_type == "area_event":
+                if len(area_event_dicts) < self.MAX_CONSEQUENCES:
+                    area_event_dicts.append({
+                        "tick": current_tick,
+                        "event": str(effect.get("event", "")),
+                        "source": "ai_osiris",
+                        "severity": str(effect.get("severity", "minor")),
+                    })
+                else:
+                    truncated_count += 1
+                continue
+
+            if effect_type not in _ALLOWED_COMMAND_TYPES:
+                skipped_invalid_count += 1
+                continue
+
+            command = self._effect_to_command(effect, area_id)
             if command is None:
                 skipped_invalid_count += 1
                 continue
-            if not self._passes_minimal_semantic_validation(command):
-                skipped_invalid_count += 1
-                continue
-            # Locality check: modify_disposition must only target present NPCs
-            if command.type == "modify_disposition" and present_ids:
-                target = command.params.get("npc_id") or command.params.get("target")
-                if target and target not in present_ids:
-                    skipped_invalid_count += 1
-                    logger.debug(
-                        "AIOsirisHook: blocked modify_disposition for absent NPC %s", target
-                    )
-                    continue
             if len(commands) >= self.MAX_CONSEQUENCES:
                 truncated_count += 1
                 continue
             commands.append(command)
 
+        # Execute commands
         command_results: list[dict[str, Any]] = []
         failed_count = 0
-        successful_commands: list[Command] = []
         for command in commands:
             result = context.execute_command(command)
             if not result.executed:
@@ -667,29 +778,57 @@ class AIOsirisHook(NoOpSettlementHook):
                     "applied_change_count": applied_change_count,
                 }
             )
-            if result.executed:
-                successful_commands.append(command)
 
-        visible_entries: list[dict[str, Any]] = []
-        if decision.visible_change:
-            visible_entries = OsirisVisibleConsequenceRenderer.render_visible_entries(
-                context,
-                successful_commands,
-            )
-            for entry in visible_entries:
-                context.scene_bus.add_entry(entry)
+        # Write area_events via StateChange
+        for event_dict in area_event_dicts:
+            if area_id and context.state.has_slice("areas"):
+                try:
+                    context.state.areas.append_area_event(area_id, event_dict)
+                except Exception:
+                    logger.debug(
+                        "AIOsirisHook: failed to append area_event for area %s", area_id
+                    )
 
         executed_count = len(command_results)
-        normalized_count = len(commands)
+
+        # Phase 2: Passive Perception
+        perception_sse: list[SSEEvent] = []
+        perception_meta: dict[str, Any] = {}
+        if self._perception_phase is not None:
+            try:
+                p_result = await self._perception_phase.run(context)
+                perception_sse = p_result.sse_events
+                perception_meta = p_result.metadata
+            except Exception:
+                logger.exception("AIOsirisHook: perception_phase.run() failed")
+
+        # Phase 3: Encounter Detection
+        encounter_sse: list[SSEEvent] = []
+        encounter_meta: dict[str, Any] = {}
+        if self._encounter_phase is not None:
+            try:
+                e_result = await self._encounter_phase.run(context)
+                encounter_sse = e_result.sse_events
+                encounter_meta = e_result.metadata
+            except Exception:
+                logger.exception("AIOsirisHook: encounter_phase.run() failed")
+
+        # Phase 4: Event Condition Checks
+        event_sse: list[SSEEvent] = []
+        event_meta: dict[str, Any] = {}
+        if self._event_phase is not None:
+            try:
+                ev_result = await self._event_phase.run(context)
+                event_sse = ev_result.sse_events
+                event_meta = ev_result.metadata
+            except Exception:
+                logger.exception("AIOsirisHook: event_phase.run() failed")
+
         evaluation_ms = (time.perf_counter() - evaluate_started) * 1000.0
-        visible_command_types = [
-            str(entry["tags"][2])
-            for entry in visible_entries
-            if isinstance(entry.get("tags"), list) and len(entry["tags"]) >= 3
-        ]
+
         status = self._resolve_status(
-            requested_count=requested_count,
-            normalized_count=normalized_count,
+            requested_count=len(commands) + len(area_event_dicts),
+            normalized_count=len(commands),
             executed_count=executed_count,
             failed_count=failed_count,
         )
@@ -710,42 +849,113 @@ class AIOsirisHook(NoOpSettlementHook):
                     },
                 )
             )
+        # Append phase SSE events (perception → encounter → event conditions)
+        sse_events.extend(perception_sse)
+        sse_events.extend(encounter_sse)
+        sse_events.extend(event_sse)
 
         return HookResult(
             sse_events=sse_events,
             metadata={
                 "status": status,
                 "evaluated": True,
-                "decision_reasoning": decision.reasoning,
-                "visible_change": decision.visible_change,
-                "provider_status": decision.metadata.get("status", ""),
-                "provider_name": decision.metadata.get("provider", ""),
-                "provider_profile": decision.metadata.get("profile", ""),
-                "provider_model": decision.metadata.get("model", ""),
-                "provider_thinking_level": decision.metadata.get("thinking_level", ""),
-                "provider_latency_ms": decision.metadata.get("latency_ms"),
-                "provider_token_usage": decision.metadata.get("token_usage", {}),
-                "requested_count": requested_count,
-                "raw_consequence_count": raw_consequence_count,
-                "normalized_consequence_count": normalized_count,
-                "normalized_count": normalized_count,
+                "provider_status": "mechanical",
+                "provider_name": "MechanicalOsirisEngine",
+                "action_tags": sorted(action_tags),
+                "area_tags": area_tags,
+                "has_witnesses": has_witnesses,
                 "executed_count": executed_count,
                 "failed_count": failed_count,
-                "invalid_count": skipped_invalid_count,
-                "truncated_count": truncated_count,
                 "skipped_invalid_count": skipped_invalid_count,
-                "allowed_command_enforced": True,
+                "truncated_count": truncated_count,
+                "area_events_written": len(area_event_dicts),
                 "command_results": command_results,
-                "visible_change_count": len(visible_entries),
-                "visible_command_types": visible_command_types,
-                "visible_tags_count": len(visible_entries),
                 "evaluation_ms": evaluation_ms,
-                "summary": summary,
-                "snapshot_digest": self._snapshot_digest(snapshot),
-                "evaluator_metadata": dict(decision.metadata),
                 "quiet_rest_slot": quiet_rest_slot,
+                "phases": {
+                    "perception": perception_meta,
+                    "encounter": encounter_meta,
+                    "event_conditions": event_meta,
+                },
             },
         )
+
+    @classmethod
+    def _collect_action_tags(cls, context: SettlementContext) -> set[str]:
+        """Collect ENGINE-tagged action tags from the SceneBus."""
+        tags: set[str] = set()
+        scene_snapshot = context.scene_bus.snapshot()
+        raw_entries = scene_snapshot.get("entries", [])
+        if not isinstance(raw_entries, list):
+            return tags
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            source = str(entry.get("source", "")).upper()
+            if source != "ENGINE":
+                continue
+            entry_tags = entry.get("tags", [])
+            if isinstance(entry_tags, list):
+                for tag in entry_tags:
+                    if isinstance(tag, str) and tag:
+                        tags.add(tag)
+        # Also extract from action_log's type field using _ACTION_CATEGORY_TAGS
+        for action in context.action_log:
+            if not isinstance(action, dict):
+                continue
+            action_type = str(action.get("type", "")).strip()
+            for cat_tag in _ACTION_CATEGORY_TAGS.get(action_type, []):
+                tags.add(cat_tag)
+        return tags
+
+    @classmethod
+    def _has_witnesses(cls, context: SettlementContext) -> bool:
+        """Return True if any NPC or party member witnessed this tick's actions."""
+        # Check party members
+        if context.state.has_slice("party"):
+            if context.state.party.members:
+                return True
+        # Check co-located NPCs
+        if context.state.has_slice("player") and context.state.has_slice("areas"):
+            area_id = context.state.player.current_area or ""
+            if area_id:
+                area_state = context.state.areas.areas.get(area_id)
+                if area_state is not None and area_state.npc_locations:
+                    return True
+        return False
+
+    @classmethod
+    def _effect_to_command(
+        cls,
+        effect: dict[str, Any],
+        area_id: str,
+    ) -> Command | None:
+        """Convert one mechanical effect descriptor to a Command."""
+        effect_type = str(effect.get("type", "")).strip()
+
+        if effect_type == "set_flag":
+            flag_key = str(effect.get("flag", "")).strip()
+            if not flag_key:
+                return None
+            return Command(
+                type="set_flag",
+                params={"key": flag_key, "value": True},
+                source="ai_osiris",
+            )
+
+        if effect_type == "adjust_danger":
+            raw_delta = effect.get("delta")
+            if not isinstance(raw_delta, (int, float)):
+                return None
+            if not area_id:
+                return None
+            return Command(
+                type="adjust_danger",
+                params={"area_id": area_id, "delta": float(raw_delta)},
+                source="ai_osiris",
+            )
+
+        return None
 
     @classmethod
     def _build_summary(cls, context: SettlementContext) -> dict[str, Any]:

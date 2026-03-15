@@ -142,20 +142,8 @@ def _build_game_runtime() -> GameRuntime:
             instance_manager=instance_manager,
         )
 
+    # Osiris LLM evaluator removed — AIOsirisHook now uses MechanicalOsirisEngine (pure rules).
     osiris_evaluator_factory = None
-    if llm_provider is not None:
-        def _build_osiris() -> Any:
-            from app.evaluators import GeminiAIOsirisProvider
-            from app.llm_gemini import GeminiLlmAdapter
-
-            osiris_llm = GeminiLlmAdapter(
-                temperature=0.2,
-                thinking_level="medium",
-                profile_name="osiris",
-            )
-            return GeminiAIOsirisProvider(llm=osiris_llm)
-
-        osiris_evaluator_factory = _build_osiris
 
     gm_narrator_factory = None
     if llm_provider is not None:

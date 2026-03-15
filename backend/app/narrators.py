@@ -322,12 +322,14 @@ context 中的 play_style_tags 反映玩家近期行为模式，应影响你的�
    - create_quest 时设置 min_level 匹配任务难度（日常任务 min_level=1，中级任务 min_level=2，高级任务 min_level=3+）
    - 任务奖励应包含合理 XP（简单=200, 中等=400, 困难=800）
    - 主线讨伐任务设 min_level=2，引导玩家先做日常任务升级
-7. 任务奖励规则（create_quest 时必须设置 rewards）：
-   - 简单日常（巡逻/采集）: rewards = {xp: 200, gold: 50}
-   - 中等任务（护送/调查）: rewards = {xp: 400, gold: 100}
-   - 困难任务（清剿/Boss）: rewards = {xp: 800, gold: 250}
-   - 可选物品奖励: rewards.items = ["healing_potion"] 等
+7. 任务奖励规则（create_quest 时必须设置 rewards，rewards 字段不能为空）：
+   - rewards 字段是必填项，必须至少包含 xp 或 gold 其中一项，否则 directive 将被拒绝
+   - 简单日常（巡逻/采集）: rewards = {"xp": 200, "gold": 50}
+   - 中等任务（护送/调查）: rewards = {"xp": 400, "gold": 100}
+   - 困难任务（清剿/Boss）: rewards = {"xp": 800, "gold": 250}
+   - 可选物品奖励: rewards.items = [{"item_id": "healing_potion", "count": 1}] 等
    - 奖励必须与任务难度匹配，不要过度奖励
+   - ⚠️ 禁止输出没有 rewards 的 create_quest；即使是最简单的任务也必须设置 rewards
 
 ## 可用指令
 - create_quest: {"kind":"create_quest","payload":{"quest_id":"dq_x","title":"...","summary":"...","status":"available","objectives":[{"description":"...","condition":{"type":"...","params":{...}}}],"rewards":{"xp":200,"gold":50}}}
@@ -364,6 +366,12 @@ create_quest 的 objectives 字段是任务自动跟踪的核心。每个 object
 - item_obtained: {"type":"item_obtained","params":{"item_id":"herb_bundle"}}
 - flag_set: {"type":"flag_set","params":{"key":"rescued_villager","value":true}}
 - level_reached: {"type":"level_reached","params":{"level":3}}
+- encounter_cleared: {"type":"encounter_cleared","params":{"area_id":"frontier_wilderness","encounter_id":"enc_goblin_camp_01"}}（指定遭遇点已清除）
+- clue_investigated: {"type":"clue_investigated","params":{"area_id":"frontier_wilderness","clue_id":"clue_footprints_01"}}（指定线索已调查）
+- all_encounters_cleared: {"type":"all_encounters_cleared","params":{"area_id":"frontier_wilderness"}}（区域内所有遭遇点全部清除）
+- danger_below: {"type":"danger_below","params":{"area_id":"frontier_wilderness","threshold":0.5}}（区域危险度低于阈值）
+
+⚠️ 优先使用引用具体区域内容的 condition 类型（encounter_cleared、clue_investigated、all_encounters_cleared、danger_below），比泛化条件（kill_count）更精确，任务完成检测也更可靠。encounter_id 和 clue_id 应来自 context 中的区域数据（encounters、interactables）。
 
 ### 完整示例
 巡逻任务：击杀 3 只哥布林并回到公会汇报 →
@@ -1558,6 +1566,13 @@ QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
 ⚠️ create_quest 必须包含 objectives 数组，每个 objective 必须有 description 和 condition 字段。
 没有 condition 的 objective 无法自动完成。可用 condition 类型见主 prompt 的"任务目标与自动完成"章节。
 
+⚠️ create_quest 的 rewards 字段不能为空。必须至少指定 xp 或 gold：
+- 简单日常（巡逻/采集）: rewards = {"xp": 200, "gold": 50}
+- 中等任务（护送/调查）: rewards = {"xp": 400, "gold": 100}
+- 困难任务（清剿/Boss）: rewards = {"xp": 800, "gold": 250}
+- 物品奖励（可选）: rewards.items = [{"item_id": "healing_potion", "count": 1}]
+缺少 rewards 的 create_quest 将被拒绝。
+
 ## 输出格式（严格 JSON）
 {
   "directives": [{"kind": "...", "payload": {...}}],
@@ -1575,6 +1590,7 @@ QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
 7. update_quest 用于推送 objectives / description / summary 等内容更新；只能对 status=active 的任务使用（其他状态会被拒绝），字段增量合并。不要用 update_quest 改 status（status 变更用 retire_quest）。
 8. 只围绕 current_event 决策；如果 current_event 与任务生命周期无关，返回空 directives。
 9. create_quest 的 objectives 每个都必须有 condition 字段（带 type 和 params），否则任务无法自动完成。
+10. objectives 应优先引用具体的区域内容（使用 encounter_cleared/clue_investigated/all_encounters_cleared/danger_below 等条件类型），encounter_id 和 clue_id 来自 context 中的区域数据。
 
 **强制要求**：生成任何 directive 前，你**必须**先调用 read_design_skill 查阅对应类型的设计模板。
 未查阅模板直接输出的 directive 将被拒绝。

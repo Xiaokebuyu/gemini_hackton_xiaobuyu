@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from app.game_core.orchestration.event_engine import _normalize_mapping
 from app.game_core.orchestration.hooks.base import NoOpSettlementHook
-from app.game_core.orchestration.models import HookResult, SSEEvent
+from app.game_core.orchestration.models import HookResult, PhaseResult, SSEEvent
 from app.game_core.orchestration.settlement import SettlementContext
 from app.game_core.rules.models import Command
 from app.game_core.state import StateChange
@@ -258,9 +258,13 @@ class BasicEncounterDetector:
         }.get(threat_level, 12)
 
 
-class EncounterHook(NoOpSettlementHook):
-    HOOK_PRIORITY = 40
-    HOOK_NAME = "encounter"
+class EncounterPhase:
+    """Core encounter logic extracted for Osiris coordination.
+
+    Encapsulates all encounter detection and spawn logic previously in
+    EncounterHook.execute().  AIOsirisHook calls run() as Phase 3.
+    """
+
     DEFAULT_SLOT_CAPACITY = 1
     PROBE_REFRESH_DELAY = 6
     CLEAR_REFRESH_DELAY = 12
@@ -268,28 +272,15 @@ class EncounterHook(NoOpSettlementHook):
     def __init__(self, detector: EncounterDetector | None = None) -> None:
         self._detector = detector or BasicEncounterDetector()
 
-    def should_skip(
-        self,
-        change_log: list[Any],
-        action_log: list[dict[str, Any]] | None = None,
-    ) -> bool:
-        del action_log
-        for change in change_log:
-            slice_name = getattr(change, "slice", getattr(change, "slice_name", ""))
-            if slice_name != "player":
-                continue
-            if getattr(change, "path", "") in {"current_area", "current_location"}:
-                return False
-        return True
-
-    async def execute(self, context: SettlementContext) -> HookResult:
-        can_evaluate, area_id, period, danger_level = self._can_evaluate(
+    async def run(self, context: SettlementContext) -> PhaseResult:
+        """Run encounter detection logic.  Returns PhaseResult (sse_events + metadata)."""
+        can_evaluate, area_id, period, danger_level = EncounterHook._can_evaluate(
             context,
             action_log=context.action_log,
         )
         if not can_evaluate:
-            return HookResult(
-                metadata=self._noop_metadata(
+            return PhaseResult(
+                metadata=EncounterHook._noop_metadata(
                     area_id=area_id,
                     period=period,
                     danger_level=danger_level,
@@ -306,7 +297,7 @@ class EncounterHook(NoOpSettlementHook):
             default_max_slots=slot_capacity,
             clear_refresh_delay=self.CLEAR_REFRESH_DELAY,
         )
-        detector_context = self._build_detector_context(
+        detector_context = EncounterHook._build_detector_context(
             context,
             area_id=area_id,
             period=period,
@@ -318,14 +309,13 @@ class EncounterHook(NoOpSettlementHook):
             raw_probe = self._detector.plan(detector_context)
         except Exception as exc:
             logger.exception(
-                "hook failed: encounter",
+                "phase failed: encounter",
                 extra={
-                    "hook_name": self.HOOK_NAME,
                     "area_id": area_id,
                     "period": period,
                 },
             )
-            return HookResult(
+            return PhaseResult(
                 sse_events=[
                     SSEEvent(
                         event_type="encounter_error",
@@ -344,9 +334,9 @@ class EncounterHook(NoOpSettlementHook):
                 },
             )
 
-        probe = self._normalize_probe(raw_probe)
+        probe = EncounterHook._normalize_probe(raw_probe)
         if not probe.should_check:
-            return HookResult(
+            return PhaseResult(
                 metadata={
                     "status": "noop",
                     "evaluated": True,
@@ -377,7 +367,7 @@ class EncounterHook(NoOpSettlementHook):
             status = "command_failed"
         else:
             if bool(encounter_result.get("triggered")):
-                sub_area_id = self._coerce_non_empty_string(
+                sub_area_id = EncounterHook._coerce_non_empty_string(
                     encounter_result.get("sub_area_id")
                 )
                 if sub_area_id is not None:
@@ -415,7 +405,7 @@ class EncounterHook(NoOpSettlementHook):
                     )
                 )
             else:
-                selected_template_id = self._coerce_non_empty_string(
+                selected_template_id = EncounterHook._coerce_non_empty_string(
                     probe.metadata.get("selected_template_id")
                 )
                 context.state.areas.cooldown_permanent_hostile_slot(
@@ -430,7 +420,7 @@ class EncounterHook(NoOpSettlementHook):
                 )
                 context.record_change(StateChange(slice="areas", operation="set", path=f"{area_id}.permanent_hostile_slots", value="cooldown"))
 
-        return HookResult(
+        return PhaseResult(
             sse_events=sse_events,
             metadata={
                 "status": status,
@@ -443,6 +433,37 @@ class EncounterHook(NoOpSettlementHook):
                 "encounter_result": encounter_result,
             },
         )
+
+
+class EncounterHook(NoOpSettlementHook):
+    HOOK_PRIORITY = 40
+    HOOK_NAME = "encounter"
+    DEFAULT_SLOT_CAPACITY = 1
+    PROBE_REFRESH_DELAY = 6
+    CLEAR_REFRESH_DELAY = 12
+
+    def __init__(self, detector: EncounterDetector | None = None) -> None:
+        self._detector = detector or BasicEncounterDetector()
+        self._phase = EncounterPhase(detector=self._detector)
+
+    def should_skip(
+        self,
+        change_log: list[Any],
+        action_log: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        del action_log
+        for change in change_log:
+            slice_name = getattr(change, "slice", getattr(change, "slice_name", ""))
+            if slice_name != "player":
+                continue
+            if getattr(change, "path", "") in {"current_area", "current_location"}:
+                return False
+        return True
+
+    async def execute(self, context: SettlementContext) -> HookResult:
+        """Delegate to EncounterPhase.run() — kept for backward compatibility."""
+        phase_result = await self._phase.run(context)
+        return HookResult(sse_events=phase_result.sse_events, metadata=phase_result.metadata)
 
     @staticmethod
     def _can_evaluate(

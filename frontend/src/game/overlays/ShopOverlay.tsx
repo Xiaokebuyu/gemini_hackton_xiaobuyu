@@ -1,5 +1,5 @@
 import { useOverlayStore } from '../../stores/overlayStore'
-import type { ShopSnapshotData } from '../../types/sse'
+import type { ShopSnapshotData, ShopServiceItem } from '../../types/sse'
 import type { InteractRequest } from '../../types/api'
 
 interface Props {
@@ -93,7 +93,44 @@ export default function ShopOverlay({ sendInteract }: Props) {
             </div>
           )}
 
-          {data.stock.length === 0 && data.player_sellable_items.length === 0 && (
+          {/* 可用服务 */}
+          {data.services && data.services.length > 0 && (
+            <div>
+              <p className="text-gray-500 text-xs mb-1.5">── 可用服务 ──</p>
+              {data.services.map((service: ShopServiceItem) => (
+                <div key={service.service_id} className="py-1.5 border-b border-gray-800 last:border-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-purple-300 text-sm">✨ {service.label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-yellow-400 text-xs">{service.price}G</span>
+                      <button
+                        onClick={() =>
+                          doInteract({
+                            intent: 'buy_service',
+                            target_kind: 'npc',
+                            target_id: data.npc_id,
+                            item_id: service.service_id,
+                          })
+                        }
+                        disabled={data.player_gold < service.price}
+                        className="text-xs text-purple-400 hover:text-purple-300 disabled:opacity-40 border border-purple-700/50 rounded px-2 py-0.5"
+                      >
+                        使用
+                      </button>
+                    </div>
+                  </div>
+                  {service.notes && (
+                    <p className="text-gray-500 text-xs mt-0.5 pl-4">{service.notes}</p>
+                  )}
+                  {service.effects_summary && (
+                    <p className="text-emerald-600 text-xs mt-0.5 pl-4">{service.effects_summary}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {data.stock.length === 0 && data.player_sellable_items.length === 0 && (!data.services || data.services.length === 0) && (
             <p className="text-gray-500 text-sm text-center">商店暂无商品</p>
           )}
         </div>

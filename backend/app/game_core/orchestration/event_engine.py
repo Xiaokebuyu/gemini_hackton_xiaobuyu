@@ -256,6 +256,34 @@ class BasicEventConditionEvaluator:
             return self._check_kill_count(state, params), 0
         if condition_type == "level_reached":
             return self._check_level_reached(state, params), 0
+        if condition_type == "encounter_cleared":
+            area_id = _coerce_string(params.get("area_id"))
+            encounter_id = _coerce_string(params.get("encounter_id"))
+            if state.has_slice("areas"):
+                hostile = state.areas.get_area(area_id).hostile_tracking.get(encounter_id, {})
+                return (bool(hostile.get("cleared")), 0)
+            return (False, 0)
+        if condition_type == "clue_investigated":
+            area_id = _coerce_string(params.get("area_id"))
+            clue_id = _coerce_string(params.get("clue_id"))
+            if state.has_slice("areas"):
+                ist = state.areas.get_area(area_id).interactable_states.get(clue_id, {})
+                return (bool(ist.get("resolved_option_id")), 0)
+            return (False, 0)
+        if condition_type == "all_encounters_cleared":
+            area_id = _coerce_string(params.get("area_id"))
+            if state.has_slice("areas"):
+                tracking = state.areas.get_area(area_id).hostile_tracking
+                if not tracking:
+                    return (True, 0)  # 没有遭遇视为已清除
+                return (all(e.get("cleared") for e in tracking.values()), 0)
+            return (False, 0)
+        if condition_type == "danger_below":
+            area_id = _coerce_string(params.get("area_id"))
+            threshold = float(params.get("threshold", 1.0))
+            if state.has_slice("areas"):
+                return (state.areas.get_area(area_id).danger_level < threshold, 0)
+            return (False, 0)
         return False, 1
 
     @staticmethod

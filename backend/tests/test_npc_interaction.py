@@ -266,7 +266,8 @@ class TestNpcInteractionCoordinator:
         assert result.completed is True
         assert directive["consumed"] is True
         assert instance.directive_queue == []
-        assert "west_gate" in llm.calls[0]["system_prompt"]
+        # 3-C: directive no longer injected into system prompt as a text block
+        # (it was replaced by the blackboard approach); directive is still consumed
 
     def test_scene_entry_written_for_player_message(self) -> None:
         world = _world_with_characters()

@@ -663,6 +663,71 @@ class WorldKnowledgeGraph:
         return actor_graph.has_edge(src, dst)
 
     # ------------------------------------------------------------------
+    # Public triple insertion (for external callers, e.g. NpcAutonomyHook)
+    # ------------------------------------------------------------------
+
+    def add_triple(
+        self,
+        subject: str,
+        relation: str,
+        obj: str,
+        *,
+        weight: float = 1.0,
+    ) -> None:
+        """Insert a semantic triple into the global graph by resolving names.
+
+        Resolves *subject* and *obj* to existing node IDs using keyword search.
+        Silently no-ops when either endpoint cannot be resolved or they map to
+        the same node (self-loop).  Suitable for LLM-extracted triples where
+        entity names come from natural-language text.
+
+        Args:
+            subject: Name of the subject entity.
+            relation: Relationship type string (e.g. EdgeType.KNOWS_ABOUT).
+            obj: Name of the object entity.
+            weight: Edge weight 0.0–1.0 (default 1.0).
+        """
+        self._apply_triple({"subject": subject, "relation": relation, "object": obj, "weight": weight})
+
+    def add_raw_triple(
+        self,
+        subject: str,
+        relation: str,
+        obj: str,
+        *,
+        weight: float = 1.0,
+        node_type: str = "memory_note",
+    ) -> None:
+        """Insert a raw triple, creating nodes if they do not already exist.
+
+        Unlike add_triple(), this bypasses name resolution and creates new
+        nodes for any endpoint that does not yet exist.  Suitable for fallback
+        insertion when no LLM is available and entity IDs are known exactly.
+
+        Args:
+            subject: Node ID (or name) of the subject entity.
+            relation: Relationship type string.
+            obj: Node ID (or content) of the object entity.
+            weight: Edge weight 0.0–1.0 (default 1.0).
+            node_type: Node type for newly created nodes (default "memory_note").
+        """
+        if not subject or not obj:
+            return
+        if subject == obj:
+            return
+        for node_id in (subject, obj):
+            if node_id not in self._graph:
+                self._graph.add_node(
+                    node_id,
+                    label=node_id[:80],
+                    tags=[],
+                    description=node_id if node_id == obj else "",
+                    node_type=node_type,
+                    metadata={},
+                )
+        self._graph.add_edge(subject, obj, relation=relation, weight=weight)
+
+    # ------------------------------------------------------------------
     # write_episode — Phase 3b: LLM triple extraction
     # ------------------------------------------------------------------
 

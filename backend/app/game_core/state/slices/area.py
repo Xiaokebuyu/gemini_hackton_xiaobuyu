@@ -43,6 +43,8 @@ class AreaState:
     permanent_hostile_slots: dict[str, dict[str, Any]] = field(default_factory=dict)
     dynamic_rooms: list[dict[str, Any]] = field(default_factory=list)
     scoped_interactable_overlays: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    area_situation: str = ""
+    area_events: list[dict[str, Any]] = field(default_factory=list)
 
     def snapshot(self) -> dict[str, Any]:
         return {
@@ -75,6 +77,8 @@ class AreaState:
                 key: [dict(item) for item in entries]
                 for key, entries in self.scoped_interactable_overlays.items()
             },
+            "area_situation": self.area_situation,
+            "area_events": [dict(e) for e in self.area_events],
         }
 
 
@@ -664,7 +668,36 @@ class AreaSlice(StateSlice):
         """Return the number of dynamic rooms for a specific sub_location."""
         return len(self.list_dynamic_rooms(area_id, sub_loc_id))
 
-    # ── 5e. Scene-scoped interactable overlays ───────────────────────────────
+    # ── 5e. Area situation & events ───────────────────────────────────────────
+
+    def append_area_event(self, area_id: str, event_dict: dict[str, Any]) -> None:
+        """Append one event to area_events, keeping only the most recent 20 entries."""
+        area = self._ensure_area(area_id)
+        area.area_events.append(dict(event_dict))
+        if len(area.area_events) > 20:
+            del area.area_events[: len(area.area_events) - 20]
+        self._dirty = True
+
+    def set_area_situation(self, area_id: str, text: str) -> None:
+        """Set the natural-language situation summary for an area."""
+        self._ensure_area(area_id).area_situation = str(text)
+        self._dirty = True
+
+    def get_area_events(self, area_id: str) -> list[dict[str, Any]]:
+        """Return a defensive copy of the area_events list for an area."""
+        area = self.areas.get(area_id)
+        if area is None:
+            return []
+        return [dict(e) for e in area.area_events]
+
+    def get_area_situation(self, area_id: str) -> str:
+        """Return the current situation summary for an area (empty string if none)."""
+        area = self.areas.get(area_id)
+        if area is None:
+            return ""
+        return area.area_situation
+
+    # ── 5f. Scene-scoped interactable overlays ───────────────────────────────
 
     @staticmethod
     def interactable_scope_key(location_id: str, room_id: str | None = None) -> str:
@@ -949,6 +982,16 @@ class AreaSlice(StateSlice):
                                         issues.append(
                                             f"area '{area_id}' hostile '{sub_area_id}' participant {index} active_effect {effect_index} must be a mapping"
                                         )
+            if not isinstance(area.area_situation, str):
+                issues.append(f"area '{area_id}' area_situation must be a str")
+            if not isinstance(area.area_events, list):
+                issues.append(f"area '{area_id}' area_events must be a list")
+            else:
+                for index, event in enumerate(area.area_events):
+                    if not isinstance(event, dict):
+                        issues.append(
+                            f"area '{area_id}' area_events entry {index} must be a dict"
+                        )
             if not isinstance(area.permanent_hostile_slots, dict):
                 issues.append(
                     f"area '{area_id}' permanent_hostile_slots must be a dict"
@@ -1251,6 +1294,41 @@ class AreaSlice(StateSlice):
                 raise ValueError("dynamic_room entry must be a mapping")
             self.add_dynamic_room(area_id, dict(change.value))
             return
+        if field_name == "area_events":
+            if change.operation == "add":
+                if not isinstance(change.value, Mapping):
+                    logger.warning(
+                        "apply_state_change: area_events entry must be a mapping, skipping: %s",
+                        change.path,
+                    )
+                    return
+                self.append_area_event(area_id, dict(change.value))
+            elif change.operation == "set":
+                if not isinstance(change.value, list):
+                    logger.warning(
+                        "apply_state_change: area_events set value must be a list, skipping: %s",
+                        change.path,
+                    )
+                    return
+                self.get_area(area_id).area_events = [
+                    dict(e) for e in change.value if isinstance(e, Mapping)
+                ]
+                self._dirty = True
+            else:
+                logger.warning(
+                    "apply_state_change: area_events only supports add/set operations, skipping: %s",
+                    change.path,
+                )
+            return
+        if field_name == "area_situation":
+            if change.operation != "set":
+                logger.warning(
+                    "apply_state_change: area_situation only supports set operation, skipping: %s",
+                    change.path,
+                )
+                return
+            self.set_area_situation(area_id, str(change.value))
+            return
         raise ValueError(
             f"unsupported area state change: {change.operation} {change.path}"
         )
@@ -1290,6 +1368,8 @@ class AreaSlice(StateSlice):
                     str(key): [dict(item) for item in value if isinstance(item, Mapping)]
                     for key, value in raw.scoped_interactable_overlays.items()
                 },
+                area_situation=raw.area_situation,
+                area_events=[dict(e) for e in raw.area_events],
             )
             AreaSlice._migrate_duplicate_facilities(area_id, state)
             return state
@@ -1352,6 +1432,11 @@ class AreaSlice(StateSlice):
             scoped_interactable_overlays=AreaSlice._coerce_scoped_interactable_overlays(
                 raw.get("scoped_interactable_overlays", {})
             ),
+            area_situation=str(raw.get("area_situation", "")),
+            area_events=[
+                dict(e) for e in raw.get("area_events", [])
+                if isinstance(e, Mapping)
+            ],
         )
         AreaSlice._migrate_duplicate_facilities(area_id, state)
         return state

@@ -48,6 +48,17 @@
 | `_extract_temple_keeper_data()` 服务合并 | [完成] | D-Svc04 Phase 4：content 层 + planner 层合并，planner 覆盖同名服务，输出含 effects 字段 |
 | `NpcDirectorSubSystem` 确定性 quest_completed | [完成] | D-Svc06 Phase 6：任务完成自动为柜台小姐生成奖励服务（无 LLM 即可运行） |
 | `ExecuteServiceTool._check_preconditions()` | [完成] | D-Svc06 Phase 6：quest_completed 前置条件检查，阻止未完成任务领奖 |
+| `execute_service_effects()` 共享执行函数 | [完成] | D-SvcA1 Phase A-1：提取自 ExecuteServiceTool，模块级函数，NPC 工具 + 玩家面板共用 |
+| `ServiceExecutionResult` 结果类型 | [完成] | D-SvcA1 Phase A-1：success/message/applied_effects/price_paid/status/extra |
+| `InteractionViewContext.npc_services` | [完成] | D-SvcA1 Phase A-1：content + planner 合并服务列表，donation 排除，写入 view context |
+| `build_interaction_view_context()` 服务合并 | [完成] | D-SvcA1 Phase A-1：遍历 world.characters，合并 shop.services + narrative_plan.get_services() |
+| `build_shop_snapshot_payload()` services 字段 | [完成] | D-SvcA1 Phase A-1：从 npc_services 构建 services 列表，含 effects_summary 可读摘要 |
+| `_build_effects_summary()` | [完成] | D-SvcA1 Phase A-1：效果原子 → 人类可读字符串（restore_hp/modify_gold/apply_effect 等） |
+| `build_talk_snapshot_payload()` buy_service + browse | [完成] | D-SvcA1 Phase A-1：有服务的 NPC 添加 browse+buy_service intent；shop_states 改为检查 current_stock 非空 |
+| `FastAPIInputPort` buy_service intent | [完成] | D-SvcA1 Phase A-1：加入合法 intent 集合，路由到 execution_kind="buy_service" |
+| `validate_presence()` buy_service 区域级检查 | [完成] | D-SvcA1 Phase A-1：与 browse/buy/sell 相同的 area-level 检查 |
+| `InteractionService._execute_buy_service()` | [完成] | D-SvcA1 Phase A-1：查 npc_services → execute_service_effects() → action_result SSE |
+| `tests/test_buy_service_intent.py` | [完成] | D-SvcA1 Phase A-1：14 个测试，覆盖 execute_service_effects + npc_services 合并 + 快照 payload + intent |
 
 ### 适配器（adapters/）
 
@@ -3347,3 +3358,41 @@ GM 的 `SuggestOptionsTool` 生成带 `functional: {type: "quest_accept"}` 的�
   - `test_compute_assign_capability`：改用 `board_browse`
 
 **测试基线**：3076 passed, 8 skipped（pre-existing 13 failures 不变）
+
+---
+
+## D-SvcA2：前端 ShopOverlay 服务区域集成
+
+**日期**：2026-03-15
+
+### 背景
+
+Phase A-1 完成后端 buy_service 链路（InteractionService + execute_service_effects + shop_snapshot services 字段）。本次完成 Phase A-2：前端集成，让玩家可以在商店面板中看到 NPC 服务并点击购买。
+
+### 代码修改
+
+**`frontend/src/types/sse.ts`**
+- 新增 `ShopServiceItem` 接口（单独导出，供组件 import）：
+  - `service_id: string`, `label: string`, `price: number`, `notes?: string`, `type: 'service'`, `effects_summary?: string`
+- `ShopSnapshotData` 新增可选字段 `services?: ShopServiceItem[]`
+
+**`frontend/src/game/overlays/ShopOverlay.tsx`**
+- import 新增 `ShopServiceItem` 类型
+- 在"可出售"区域下方、空状态提示上方，新增"可用服务"区域：
+  - 从 `data.services` 读取（存在且非空时渲染）
+  - 每项显示：`✨ label`（紫色）+ 价格（金色）+ 使用按钮（紫色边框）
+  - 服务描述（`notes`）灰色小字，效果摘要（`effects_summary`）绿色小字
+  - 金币不足时按钮 `disabled`（opacity-40）
+  - 点击"使用"按钮：`doInteract({ intent: 'buy_service', target_kind: 'npc', target_id: npc_id, item_id: service_id })`
+    - 遵循计划约定：service_id 放在 `item_id` 字段，后端 buy_service intent 解析时映射
+  - 空状态提示条件扩展：同时无商品、无出售品、无服务时才显示"商店暂无商品"
+
+### 设计决策
+
+- `buy_service` 走 `doInteract`（先关面板再发送），与 buy/sell 行为一致；执行结果通过 SSE `action_result` 呈现，不自动刷新面板
+- 服务条目用紫色主题区分商品（蓝色）和出售（绿色），统一使用 `✨` 图标前缀
+- 服务条目内部使用 `border-b border-gray-800 last:border-0` 分隔，与商品区域的 py-1 列表风格保持一致
+
+### 测试
+
+前端无测试框架，不写前端测试。后端 buy_service 链路测试在 D-SvcA1 中完成。

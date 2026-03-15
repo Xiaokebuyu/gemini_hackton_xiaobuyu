@@ -538,6 +538,7 @@ class AgentContextBuilder:
         if profile is None:
             return None
         layers = await self.build_npc_context(npc_id, memory_retriever=memory_retriever)
+        l2 = layers["l2_area_environment"] or {}
         l4 = layers["l4_dynamic_state"] or {}
         l6 = layers["l6_memory_recall"] or {}
 
@@ -547,6 +548,11 @@ class AgentContextBuilder:
         if isinstance(tags, list):
             role_data = _extract_role_data(tags, npc_id, self._state, self._world)
 
+        blackboard: dict[str, Any] | None = None
+        if self._state.has_slice("relations"):
+            bb = self._state.relations.get_blackboard(npc_id)
+            if bb:
+                blackboard = bb
         return _build_npc_prompt_text(
             profile,
             disposition=l4.get("disposition", {}),
@@ -556,6 +562,9 @@ class AgentContextBuilder:
             time_info=l4.get("time"),
             role_data=role_data,
             npc_id=npc_id,
+            area_situation=l2.get("area_situation", ""),
+            recent_area_events=l2.get("recent_area_events", []),
+            blackboard=blackboard,
         )
 
     async def build_npc_full_context(
@@ -583,6 +592,7 @@ class AgentContextBuilder:
         if profile is None:
             return None
         layers = await self.build_npc_context(npc_id, memory_retriever=memory_retriever)
+        l2 = layers["l2_area_environment"] or {}
         l4 = layers["l4_dynamic_state"] or {}
         l6 = layers["l6_memory_recall"] or {}
 
@@ -592,12 +602,11 @@ class AgentContextBuilder:
         if isinstance(tags, list):
             role_data = _extract_role_data(tags, npc_id, self._state, self._world)
 
-        # B-5: inject recent story_facts from NarrativePlanSlice if available
-        story_facts: list[dict[str, Any]] = []
-        if self._state.has_slice("narrative_plan"):
-            raw_facts = getattr(self._state.narrative_plan, "story_facts", None)
-            if isinstance(raw_facts, list):
-                story_facts = raw_facts[-5:]  # cap at 5 most recent facts
+        blackboard2: dict[str, Any] | None = None
+        if self._state.has_slice("relations"):
+            bb2 = self._state.relations.get_blackboard(npc_id)
+            if bb2:
+                blackboard2 = bb2
 
         system_prompt = _build_npc_prompt_text(
             profile,
@@ -610,8 +619,10 @@ class AgentContextBuilder:
             is_private=is_private,
             is_passive=is_passive,
             role_data=role_data,
-            story_facts=story_facts if story_facts else None,
             npc_id=npc_id,
+            area_situation=l2.get("area_situation", ""),
+            recent_area_events=l2.get("recent_area_events", []),
+            blackboard=blackboard2,
         )
         return NpcFullContext(system_prompt=system_prompt, layers=layers)
 
@@ -986,12 +997,25 @@ class AgentContextBuilder:
                     "hint": hint,
                     "discovered": self._state.areas.is_discovery_found(area_id, sub_id),
                 })
+        area_situation: str = ""
+        recent_area_events: list[dict[str, Any]] = []
+        if isinstance(area_state, dict):
+            raw_situation = area_state.get("area_situation", "")
+            if isinstance(raw_situation, str):
+                area_situation = raw_situation
+            raw_events = area_state.get("area_events", [])
+            if isinstance(raw_events, list):
+                recent_area_events = [
+                    dict(e) for e in raw_events[-5:] if isinstance(e, dict)
+                ]
         return {
             "area_id": area_id,
             "template": template,
             "state": dict(area_state) if isinstance(area_state, dict) else None,
             "dynamic_sub_area_counts": _sub_area_counts,
             "content_hints": _content_hints,
+            "area_situation": area_situation,
+            "recent_area_events": recent_area_events,
         }
 
     # ----------------------------------------------------------------
@@ -1891,6 +1915,9 @@ def _build_npc_prompt_text(
     role_data: dict[str, Any] | None = None,
     story_facts: list[dict[str, Any]] | None = None,
     npc_id: str = "",
+    area_situation: str = "",
+    recent_area_events: list[dict[str, Any]] | None = None,
+    blackboard: dict[str, Any] | None = None,
 ) -> str:
     """Format NPC system prompt string from resolved profile + relationship data."""
     name = _str_or(_profile_get(npc_profile, "name"), "Unknown NPC")
@@ -1917,11 +1944,6 @@ def _build_npc_prompt_text(
     fear = disposition.get("fear", 0)
     romance = disposition.get("romance", 0)
 
-    memories_block = (
-        "\n".join(f"- {imp}" for imp in impressions)
-        if impressions
-        else "- (No previous memories of this player)"
-    )
     personality_block = personality if personality else "A character in this world."
     dialogue_hook_block = (
         f"\n\n## Dialogue hook\n{dialogue_hook}" if dialogue_hook else ""
@@ -1944,26 +1966,57 @@ def _build_npc_prompt_text(
         "\n\n## Your identity\n" + "\n".join(identity_lines) if identity_lines else ""
     )
 
+    # Area situation and recent events
+    area_situation_block = ""
+    if area_situation:
+        area_situation_block += f"\n\n## 你所在区域的当前态势\n{area_situation}"
+    if recent_area_events:
+        event_lines = []
+        for ev in recent_area_events:
+            ev_text = str(ev.get("event", "")).strip()
+            if ev_text:
+                event_lines.append(f"- {ev_text}")
+        if event_lines:
+            area_situation_block += "\n\n## 近期发生的事件\n" + "\n".join(event_lines)
+
+    # Blackboard: NPC's current inner state (replaces old impressions/story_facts/directive blocks)
+    blackboard_block = ""
+    if blackboard:
+        bb_lines: list[str] = []
+        thoughts = str(blackboard.get("thoughts", "")).strip()
+        if thoughts:
+            bb_lines.append(f"- 思绪：{thoughts}")
+        goals = blackboard.get("goals")
+        if goals:
+            if isinstance(goals, list):
+                goals_str = "、".join(str(g) for g in goals if str(g).strip())
+            else:
+                goals_str = str(goals).strip()
+            if goals_str:
+                bb_lines.append(f"- 目标：{goals_str}")
+        observations = blackboard.get("observations")
+        if observations:
+            if isinstance(observations, list):
+                obs_str = "；".join(str(o) for o in observations if str(o).strip())
+            else:
+                obs_str = str(observations).strip()
+            if obs_str:
+                bb_lines.append(f"- 近期观察：{obs_str}")
+        mood = str(blackboard.get("mood", "")).strip()
+        if mood:
+            bb_lines.append(f"- 情绪：{mood}")
+        attitude = str(blackboard.get("attitude_towards_player", "")).strip()
+        if attitude:
+            bb_lines.append(f"- 对冒险者的看法：{attitude}")
+        if bb_lines:
+            blackboard_block = "\n\n## 你当前的想法\n" + "\n".join(bb_lines)
+
     # Time awareness
     time_block = ""
     if time_info:
         day = time_info.get("day", 1)
         slot = time_info.get("slot", "")
-        time_block = f"\n- Current time: Day {day}, {slot}" if slot else f"\n- Current time: Day {day}"
-
-    # Behavior guides from relationship
-    behavior_parts = [
-        g for g in [
-            _STAGE_GUIDES.get(stage, ""),
-            _trust_hint(int(trust)),
-            _fear_hint(int(fear)),
-            _romance_hint(int(romance)),
-        ]
-        if g
-    ]
-    behavior_block = (
-        "\n\n## How to behave\n" + "\n".join(behavior_parts) if behavior_parts else ""
-    )
+        time_block = f" | 当前时间：第{day}天 {slot}" if slot else f" | 当前时间：第{day}天"
 
     # Private conversation context
     private_block = ""
@@ -1988,45 +2041,13 @@ def _build_npc_prompt_text(
                 + "\n".join(f"- {s}" for s in eligible)
             )
 
-    # knowledge_block: story_facts from NarrativePlanSlice injected as world knowledge (B-5)
-    knowledge_block = ""
-    if story_facts:
-        fact_lines = []
-        for fact in story_facts:
-            if isinstance(fact, dict):
-                content = str(fact.get("content") or fact.get("fact") or "").strip()
-                if not content:
-                    # try subject/predicate/object format
-                    subj = str(fact.get("subject", "")).strip()
-                    pred = str(fact.get("predicate", "")).strip()
-                    obj = str(fact.get("object", "")).strip()
-                    if subj and pred:
-                        content = f"{subj} {pred} {obj}".strip()
-                if content:
-                    fact_lines.append(f"- {content}")
-            elif isinstance(fact, str) and fact.strip():
-                fact_lines.append(f"- {fact.strip()}")
-        if fact_lines:
-            knowledge_block = (
-                "\n\n## Relevant world knowledge\n"
-                + "\n".join(fact_lines)
-            )
-
-    # Build narrative-planner directive block (P1-B)
-    directive_block = ""
-    if active_directive:
-        d = active_directive.get("directive", {})
-        kind = d.get("kind", "")
-        details = {k: v for k, v in d.items() if k != "kind"}
-        detail_str = (
-            ", ".join(f"{k}={v}" for k, v in details.items()) if details else ""
-        )
-        directive_desc = f"{kind}: {detail_str}" if detail_str else kind
-        directive_block = (
-            "\n\n## [重要行为指令]\n"
-            "你收到了以下叙事指令，请在对话中自然融入，不要生硬提及：\n"
-            f"- {directive_desc}"
-        )
+    # Anti-fabrication grounding constraint — injected for all NPCs (3-C)
+    grounding_block = (
+        "\n\n## 重要行为准则\n"
+        "- 你只能提及当前区域态势和近期事件中描述的真实情况，严禁编造不存在的地点、NPC、事件或物品\n"
+        "- 如果你不确定某件事是否发生过，请如实说「我不太清楚」而不是编造\n"
+        "- 你的对话内容必须与你当前所在的地点和时间一致"
+    )
 
     # Role constraint block — inject truth-source data for specialized NPCs (P3.5)
     role_block = ""
@@ -2068,17 +2089,10 @@ def _build_npc_prompt_text(
 You are {name}{id_suffix}, an NPC in a dark-fantasy CRPG world.
 
 ## Your character
-{personality_block}{dialogue_hook_block}{tags_block}{style_block}{backstory_block}{speech_pattern_block}{identity_block}
+{personality_block}{dialogue_hook_block}{tags_block}{style_block}{backstory_block}{speech_pattern_block}{identity_block}{area_situation_block}{blackboard_block}
 
-## Current relationship with the player
-- Relationship stage: {stage}
-- Approval: {approval} (how much you like them, range -100 to +100)
-- Trust: {trust} (how much you trust them, range -100 to +100)
-- Fear: {fear} (how much you fear them, range 0 to 100)
-- Romance: {romance} (romantic interest, range 0 to 100){time_block}{behavior_block}{private_block}
-
-## Your memories of the player
-{memories_block}{knowledge_block}{secrets_block}{directive_block}{role_block}
+## 与冒险者的关系
+阶段：{stage} | 好感：{approval} | 信任：{trust} | 恐惧：{fear} | 浪漫：{romance}{time_block}{private_block}{secrets_block}{grounding_block}{role_block}
 
 {tool_rules}
 

@@ -1055,11 +1055,12 @@ def test_npc_prompt_without_npc_id_no_id_suffix():
 
 
 def test_npc_prompt_fear_hint_injected_when_fear_high():
-    """When fear >= 50, fear hint appears in behavior section of prompt."""
+    """3-C: behavior_block removed; fear value still appears in compact relationship line."""
     prompt = _build_npc_prompt_text(
         _minimal_profile(),
         disposition={"fear": 60},
         stage="acquaintance",
         impressions=[],
     )
-    assert "害怕" in prompt or "畏惧" in prompt
+    # fear value is still visible in the relationship one-liner
+    assert "恐惧：60" in prompt

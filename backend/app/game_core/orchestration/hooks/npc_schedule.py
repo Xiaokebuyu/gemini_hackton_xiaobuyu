@@ -61,6 +61,10 @@ class BasicNpcScheduleProvider:
         areas = raw_areas if isinstance(raw_areas, Mapping) else {}
         raw_characters = context.get("characters", [])
         characters = raw_characters if isinstance(raw_characters, list) else []
+        raw_directives = context.get("npc_directives")
+        npc_directives: list[Any] | None = (
+            raw_directives if isinstance(raw_directives, list) else None
+        )
         placements = self._placements(areas)
         valid_areas: set[str] = set(areas.keys())
 
@@ -68,7 +72,8 @@ class BasicNpcScheduleProvider:
             return self._noop(reason="stable")
 
         moves = self._collect_moves(
-            characters, areas, placements, next_period, valid_areas
+            characters, areas, placements, next_period, valid_areas,
+            npc_directives=npc_directives,
         )
         if not moves:
             return self._noop(reason="stable")
@@ -89,6 +94,7 @@ class BasicNpcScheduleProvider:
         placements: dict[str, tuple[str, str | None, str | None]],
         next_period: str,
         valid_areas: set[str],
+        npc_directives: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         moves: list[dict[str, Any]] = []
         for character in self._sorted_characters(characters):
@@ -96,7 +102,7 @@ class BasicNpcScheduleProvider:
             if character_id is None:
                 continue
             sched_area, sched_loc, sched_room = self._scheduled_destination(
-                character, next_period, valid_areas
+                character, next_period, valid_areas, npc_directives=npc_directives
             )
             if sched_area is None and sched_loc is None and sched_room is None:
                 continue  # no schedule entry → don't move
@@ -139,9 +145,40 @@ class BasicNpcScheduleProvider:
         char_data: Any,
         next_period: str,
         valid_area_ids: set[str],
+        npc_directives: list[Any] | None = None,
     ) -> tuple[str | None, str | None, str | None]:
-        """Return (area_id, location_id, room_id) from the character schedule."""
+        """Return (area_id, location_id, room_id) from directives or character schedule.
+
+        Priority: active NPC directive with destination > character schedule > global rules.
+        """
         del valid_area_ids
+        # Check NarrativePlanSlice.npc_directives for an active destination directive
+        npc_id = char_data.get("id") if isinstance(char_data, dict) else None
+        if npc_id and isinstance(npc_directives, list):
+            for directive in npc_directives:
+                if not isinstance(directive, Mapping):
+                    continue
+                if directive.get("npc_id") != npc_id or directive.get("consumed"):
+                    continue
+                dest = directive.get("directive", {}).get("destination")
+                if isinstance(dest, Mapping) and dest.get("area_id"):
+                    area_id = str(dest["area_id"]).strip() or None
+                    location_id_raw = dest.get("location_id")
+                    room_id_raw = dest.get("room_id")
+                    loc = (
+                        str(location_id_raw).strip()
+                        if isinstance(location_id_raw, str) and str(location_id_raw).strip()
+                        else None
+                    )
+                    room = (
+                        str(room_id_raw).strip()
+                        if isinstance(room_id_raw, str) and str(room_id_raw).strip()
+                        else None
+                    )
+                    if area_id:
+                        return (area_id, loc, room)
+
+        # Fallback: character schedule
         sched = char_data.get("schedule") if isinstance(char_data, dict) else None
         if not isinstance(sched, dict):
             return (None, None, None)
@@ -463,6 +500,15 @@ class NpcScheduleHook(NoOpSettlementHook):
             for area_id, area in context.state.areas.areas.items()
         }
         current_tick = context.state.time.absolute_tick()
+
+        # Include active NPC directives so BasicNpcScheduleProvider can honor
+        # destination-based directive movement (3-D).
+        npc_directives: list[Any] = []
+        if context.state.has_slice("narrative_plan"):
+            raw = getattr(context.state.narrative_plan, "npc_directives", None)
+            if isinstance(raw, list):
+                npc_directives = list(raw)
+
         return {
             "current_period": current_period,
             "next_period": next_period,
@@ -472,6 +518,7 @@ class NpcScheduleHook(NoOpSettlementHook):
             "areas": areas,
             "characters": [dict(template) for template in candidate_templates.values()],
             "party_members": party_members,
+            "npc_directives": npc_directives,
         }
 
     @classmethod

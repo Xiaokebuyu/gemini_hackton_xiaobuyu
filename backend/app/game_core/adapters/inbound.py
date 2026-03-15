@@ -226,6 +226,7 @@ class FastAPIInputPort:
             "browse",
             "buy",
             "sell",
+            "buy_service",
             "talk",
             "greet",
             "accept_quest",
@@ -241,8 +242,8 @@ class FastAPIInputPort:
                 **base,
                 code="invalid_intent",
                 message=(
-                    "npc intent must be browse, buy, sell, talk, greet, accept_quest, "
-                    "report_quest, "
+                    "npc intent must be browse, buy, sell, buy_service, talk, greet, "
+                    "accept_quest, report_quest, "
                     "inspect_item, ask_quest, ask_progress, ask_location, "
                     "ask_requirements, or ask_reward"
                 ),
@@ -288,6 +289,27 @@ class FastAPIInputPort:
                     "action_type": action_type,
                     "params": params,
                     "post_snapshot": "shop",
+                },
+            )
+        if intent == "buy_service":
+            service_id = self._normalized_id(base.get("item_id"))
+            if service_id is None:
+                return self._rejected_action(
+                    **base,
+                    code="missing_service",
+                    message="item_id (service_id) is required for buy_service",
+                )
+            return self._resolved_action(
+                target_kind="npc",
+                target_id=target_id,
+                intent="buy_service",
+                item_id=str(service_id),
+                quest_id=None,
+                count=1,
+                execution={
+                    "kind": "buy_service",
+                    "npc_id": target_id,
+                    "service_id": str(service_id),
                 },
             )
         if intent == "inspect_item":

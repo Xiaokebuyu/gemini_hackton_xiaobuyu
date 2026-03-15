@@ -18,6 +18,7 @@ class RelationSlice(StateSlice):
         self.faction_standings: dict[str, int] = {}
         self.npc_impressions: dict[str, list[str]] = {}
         self.shop_states: dict[str, dict[str, Any]] = {}
+        self.npc_blackboards: dict[str, dict[str, Any]] = {}
 
     def restore(self, payload: Mapping[str, Any]) -> None:
         self.npc_dispositions = {
@@ -46,6 +47,11 @@ class RelationSlice(StateSlice):
             for key, value in payload.get("shop_states", {}).items()
             if isinstance(value, Mapping)
         }
+        self.npc_blackboards = {
+            str(k): dict(v)
+            for k, v in payload.get("npc_blackboards", {}).items()
+            if isinstance(v, Mapping)
+        }
         self.clear_dirty()
 
     def serialize(self) -> dict[str, Any]:
@@ -66,6 +72,10 @@ class RelationSlice(StateSlice):
             "shop_states": {
                 key: dict(value)
                 for key, value in self.shop_states.items()
+            },
+            "npc_blackboards": {
+                k: dict(v)
+                for k, v in self.npc_blackboards.items()
             },
         }
 
@@ -185,6 +195,12 @@ class RelationSlice(StateSlice):
             for npc_id, state in self.shop_states.items():
                 if not isinstance(state, dict):
                     issues.append(f"shop_states[{npc_id}] must be a dict")
+        if not isinstance(self.npc_blackboards, dict):
+            issues.append("npc_blackboards must be a dict")
+        else:
+            for npc_id, board in self.npc_blackboards.items():
+                if not isinstance(board, dict):
+                    issues.append(f"npc_blackboards[{npc_id}] must be a dict")
         return issues
 
     def apply_state_change(self, change: StateChange) -> None:
@@ -222,6 +238,21 @@ class RelationSlice(StateSlice):
             _, npc_id = change.path.split(".", 1)
             self.update_shop_state(npc_id, dict(change.value))
             return
+        if change.path.startswith("npc_blackboards.") and isinstance(change.value, Mapping):
+            _, npc_id = change.path.split(".", 1)
+            self.npc_blackboards[npc_id] = dict(change.value)
+            self._dirty = True
+            return
         raise ValueError(
             f"unsupported relation state change: {change.operation} {change.path}"
         )
+
+    def get_blackboard(self, npc_id: str) -> dict[str, Any]:
+        """Return defensive copy of npc blackboard, or empty dict if not present."""
+        return dict(self.npc_blackboards.get(npc_id, {}))
+
+    def update_blackboard(self, npc_id: str, updates: dict[str, Any]) -> None:
+        """Merge updates into the NPC's blackboard. Creates it if absent."""
+        existing = self.npc_blackboards.setdefault(npc_id, {})
+        existing.update(updates)
+        self._dirty = True

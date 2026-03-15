@@ -1033,11 +1033,14 @@ class AgentOrchestrationService:
         clue_payload: Mapping[str, Any],
     ) -> SSEEvent:
         clue_name = str(clue_payload.get("clue_name") or clue_payload.get("clue_id") or "这条线索").strip()
+        # Use outcome_text from handler metadata when available (KI-01 fix).
+        outcome_text = str(clue_payload.get("outcome_text") or "").strip()
+        content = outcome_text if outcome_text else (
+            f"{clue_name}先把方向拧了出来，却还没打算把答案直接交到你手里。"
+        )
         return SSEEvent(
             event_type="gm_comment",
-            payload={
-                "content": f"{clue_name}先把方向拧了出来，却还没打算把答案直接交到你手里。",
-            },
+            payload={"content": content},
         )
 
     def _build_clue_resolution_comment_event(
@@ -1045,6 +1048,13 @@ class AgentOrchestrationService:
         result: PipelineResult,
     ) -> SSEEvent | None:
         metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
+
+        # Prefer outcome_text produced by the handler (KI-01 fix).
+        outcome_text = str(metadata.get("outcome_text") or "").strip()
+        if outcome_text:
+            return SSEEvent(event_type="gm_comment", payload={"content": outcome_text})
+
+        # Fallback: derive deterministic text from metadata fields.
         clue_name = str(metadata.get("clue_name") or metadata.get("clue_id") or "线索").strip()
         option_label = str(metadata.get("option_label") or metadata.get("option_id") or "这个判断").strip()
         passed = metadata.get("passed") if isinstance(metadata.get("passed"), bool) else None
@@ -2025,6 +2035,17 @@ def _npc_result_to_sse(npc_id: str, result: AgentResult) -> list[SSEEvent]:
                     "npc_id": tr.metadata.get("npc_id", npc_id),
                     "reason": "recruited",
                     "party_members": tr.metadata.get("party_members", []),
+                },
+            ))
+        elif event_type == "npc_help_offered":
+            events.append(SSEEvent(
+                event_type="npc_help_offered",
+                payload={
+                    "npc_id": tr.metadata.get("character_id", npc_id),
+                    "help_type": tr.metadata.get("help_type", ""),
+                    "reason": tr.metadata.get("reason", ""),
+                    "effects_applied": tr.metadata.get("effects_applied", []),
+                    "label": tr.metadata.get("label", ""),
                 },
             ))
         # Command-based tools (update_feeling, remember, etc.) execute

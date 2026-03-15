@@ -196,11 +196,21 @@ export interface HookErrorData {
   message: string
 }
 
+export interface ShopServiceItem {
+  service_id: string
+  label: string
+  price: number
+  notes?: string
+  type: 'service'
+  effects_summary?: string
+}
+
 export interface ShopSnapshotData {
   npc_id: string
   player_gold: number
   stock: Array<{ item_id: string; name: string; count: number; base_price: number; [k: string]: unknown }>
   player_sellable_items: Array<{ item_id: string; name: string; count: number; base_price: number }>
+  services?: ShopServiceItem[]
 }
 
 export interface TalkSnapshotData {

@@ -185,21 +185,53 @@ class ClueHandler(StaticCommandHandler):
         if error is not None:
             return ExecuteResult.error(error)
 
+        computed_effect_types = effect_types_for_option(clue, option_id, passed=passed)
+        clue_name = str(clue.get("name") or entry.name or clue["clue_id"]).strip()
+        option_label = str(option.get("label") or option_id).strip()
+        outcome_text = _derive_outcome_text(
+            clue_name=clue_name,
+            option_label=option_label,
+            effect_types=computed_effect_types,
+            passed=passed,
+        )
+        effects_applied = [
+            str(item.get("type", ""))
+            for item in effect_summary.get("applied", [])
+            if isinstance(item, dict) and item.get("type")
+        ]
+
         changes: list[StateChange] = list(effect_changes)
+        current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
         updated_state = dict(clue_state)
         updated_state.update({
             "area_id": area_id,
             "clue_id": clue["clue_id"],
             "first_inspected": True,
             "resolved_option_id": option_id,
+            "outcome_text": outcome_text,
+            "check_passed": passed,
+            "effects_applied": effects_applied,
         })
         if state.has_slice("time"):
-            updated_state["resolved_at_tick"] = state.time.absolute_tick()
+            updated_state["resolved_at_tick"] = current_tick
         changes.append(StateChange(
             "areas",
             "set",
             f"interactable_states.{entry.interactable_id}",
             updated_state,
+        ))
+
+        # Write area event so NPC/Planner can see what was investigated.
+        changes.append(StateChange(
+            "areas",
+            "add",
+            f"{area_id}.area_events",
+            {
+                "tick": current_tick,
+                "event": f"调查了{clue_name}：{outcome_text[:80]}",
+                "source": "clue_investigation",
+                "severity": "minor",
+            },
         ))
 
         removed_from_scene = False
@@ -227,12 +259,13 @@ class ClueHandler(StaticCommandHandler):
         metadata = {
             "clue_id": clue["clue_id"],
             "interactable_id": entry.interactable_id,
-            "clue_name": clue.get("name") or entry.name,
+            "clue_name": clue_name,
             "option_id": option_id,
             "option_label": option.get("label"),
             "passed": passed,
             "applied_effects": effect_summary.get("applied", []),
-            "effect_types": effect_types_for_option(clue, option_id, passed=passed),
+            "effect_types": computed_effect_types,
+            "outcome_text": outcome_text,
             "topic": clue.get("topic"),
             "removed_from_scene": removed_from_scene,
             "source": entry.source,
@@ -257,6 +290,28 @@ class ClueHandler(StaticCommandHandler):
             metadata=metadata,
             omit_empty_delta=False,
         )
+
+
+def _derive_outcome_text(
+    *,
+    clue_name: str,
+    option_label: str,
+    effect_types: list[str],
+    passed: bool | None,
+) -> str:
+    """Generate a deterministic human-readable outcome summary for a clue resolution.
+
+    This text is stored in state (interactable_states) and in metadata so that
+    agent_orchestration fallback comments can use actual content instead of a
+    generic template.
+    """
+    if "unlock_sub_location" in effect_types:
+        return f"{option_label}让{clue_name}终于露出了一条能追下去的路。"
+    if "advance_quest" in effect_types:
+        return f"{option_label}把{clue_name}钉进了更清楚的方向，事情往前走了一步。"
+    if passed is False:
+        return f"{option_label}没能把{clue_name}彻底掰开，但至少排掉了一条岔路。"
+    return f"{option_label}暂时替{clue_name}定住了一个方向。"
 
 
 def _resolve_current_clue(

@@ -653,6 +653,9 @@ def _make_npc_world_with_npc(npc_id: str) -> WorldInstance:
 
 
 def test_story_facts_injected_into_npc_prompt() -> None:
+    """3-C: story_facts no longer injected directly into NPC prompt.
+    Blackboard now carries NPC inner state; story_facts removed from prompt.
+    NPC uses recall tool for on-demand knowledge retrieval."""
     async def _run() -> None:
         state = _make_story_facts_state()
         world = _make_npc_world_with_npc("test_npc")
@@ -660,9 +663,10 @@ def test_story_facts_injected_into_npc_prompt() -> None:
         result = await builder.build_npc_full_context("test_npc")
         assert result is not None
         prompt = result.system_prompt
-        # story_facts should appear in the prompt
-        assert "## Relevant world knowledge" in prompt
-        assert "goblin" in prompt.lower() or "frontier" in prompt.lower()
+        # story_facts no longer in prompt (recall tool used instead)
+        assert "## Relevant world knowledge" not in prompt
+        # prompt is valid and contains NPC identity
+        assert "Test NPC" in prompt
 
     asyncio.run(_run())
 

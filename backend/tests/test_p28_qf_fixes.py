@@ -234,16 +234,23 @@ class TestAiOsirisProcessingSSE:
 
         asyncio.run(_run())
 
-    def test_ai_processing_done_emitted_on_evaluator_error(self) -> None:
-        """AIOsirisHook.execute() emits ai_processing start+done even when evaluator raises."""
+    def test_ai_processing_done_emitted_when_evaluator_arg_ignored(self) -> None:
+        """AIOsirisHook.execute() emits ai_processing start+done even when legacy evaluator arg is passed.
+
+        With MechanicalOsirisEngine, the evaluator arg is fully ignored.
+        The old ai_osiris_error SSE is no longer emitted (no LLM path).
+        """
         async def _run():
+            # ExplodingEvaluator is never called because MechanicalOsirisEngine is used.
             hook = AIOsirisHook(evaluator=ExplodingEvaluator())
             context = _make_osiris_context()
             result = await hook.execute(context)
             sse_types = [e.event_type for e in result.sse_events]
-            assert "ai_processing" in sse_types, f"Expected ai_processing in error path, got {sse_types}"
-            # Should still emit the error event too
-            assert "ai_osiris_error" in sse_types, f"Expected ai_osiris_error in {sse_types}"
+            assert "ai_processing" in sse_types, f"Expected ai_processing in {sse_types}"
+            # No ai_osiris_error — that was the old LLM failure path; mechanical engine always succeeds
+            assert "ai_osiris_error" not in sse_types, (
+                f"ai_osiris_error should not appear in mechanical path: {sse_types}"
+            )
             processing_events = [
                 e for e in result.sse_events if e.event_type == "ai_processing"
             ]
