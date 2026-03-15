@@ -227,7 +227,7 @@ def _detect_completed_milestones_sse(
 class NarrativePlannerHook(NoOpSettlementHook):
     HOOK_PRIORITY = 66
     HOOK_NAME = "narrative_planner"
-    FALLBACK_INTERVAL = 4  # A-7 (S1-09/10/11): shortened from 6 to 4 for faster reaction
+    FALLBACK_INTERVAL = 1  # P32-1: shortened to 1 so planner runs every settlement tick
     _MAX_REPLAY_ROUNDS = 5
     _BOOTSTRAP_DIRECTIVES = {
         "create_quest",
@@ -1235,6 +1235,9 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         )
                         npc_entry["trust"] = (
                             context.state.relations.get_disposition(npc_id, "trust") or 0
+                        )
+                        npc_entry["stage"] = (
+                            context.state.relations.get_stage(npc_id) or "stranger"
                         )
                     area_npcs_summaries.append(npc_entry)
                 # backward-compat: area_npcs stays as list[str], new area_npc_summaries is rich
@@ -2537,10 +2540,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
     def history_participants(self) -> dict[str, Any]:
         participants: dict[str, Any] = {}
         if self.blackboard is not None:
-            history_key = getattr(self.blackboard, "history_key", "__planner_blackboard__")
+            history_key = getattr(self.blackboard, "history_key", "__planner__")
             participants[str(history_key)] = self.blackboard
-            if history_key == "__planner__":
-                participants["__planner_blackboard__"] = self.blackboard
         if self._dispatcher is None:
             return participants
         for subsystem in self._dispatcher.subsystems:

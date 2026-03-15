@@ -174,9 +174,9 @@ flowchart TD
         K["继续<br/>累积"]
     end
 
-    subgraph SETTLE["阶段4：结算 Settlement (25个钩子)"]
+    subgraph SETTLE["阶段4：结算 Settlement (20个钩子)"]
         L["P10~P30: 定时事件<br/>状态效果 / AI审判者 AIOsiris"]
-        M["P40~P58: 遭遇<br/>感知 / 事件 / 任务 / 经验"]
+        M["P54~P58: 里程碑<br/>任务目标 / 经验升级"]
         N["P60~P66: NPC日程<br/>关系 / 叙事规划者 NarrativePlanner"]
         O["P70~P90: 时间推进<br/>过期回收 / GM叙述 / 重置"]
         L --> M --> N --> O
@@ -213,15 +213,15 @@ flowchart TD
 
 <!-- ============================================================ -->
 <div class="section" id="fig2">
-  <h2>图二、结算钩子链 <span class="badge">23个钩子 SettlementHook</span></h2>
-  <p class="desc">当累积时间 &ge; 1.0小时，所有结算钩子按优先级严格顺序执行。机械世界引擎 Osiris(P30) 整合了遭遇/感知/事件条件三个 Phase，先于规划者(P66)运行。</p>
+  <h2>图二、结算钩子链 <span class="badge">20个钩子 SettlementHook</span></h2>
+  <p class="desc">当累积时间 &ge; 1.0小时，所有结算钩子按优先级严格顺序执行。机械世界引擎 Osiris(P30) 整合了遭遇/感知/事件条件三个内部 Phase，先于规划者(P66)运行。</p>
   <div class="mermaid">
 %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
 flowchart LR
     subgraph EARLY["P10 ~ P30：即时后果"]
         H10["P10<br/>定时事件<br/>ScheduledEvent"]
         H20["P20<br/>状态效果<br/>StatusEffect"]
-        H30["P30<br/><b>机械世界引擎</b><br/>MechanicalOsiris<br/><i>5-Phase: 因果/感知/遭遇/事件/汇总</i>"]
+        H30["P30<br/><b>机械世界引擎</b><br/>MechanicalOsiris<br/><i>4-Phase: 因果/感知/遭遇/事件条件</i>"]
     end
     subgraph MID1["P54 ~ P58：世界反应"]
         H54["P54<br/>里程碑完成<br/>MilestoneCompletion"]
@@ -263,7 +263,7 @@ flowchart LR
     style LATE fill:#1c2128,stroke:#8b949e
   </div>
   <div class="note">
-    <strong>关键变更（D-WE02）：</strong>AIOsiris 已改为纯机械引擎（零LLM），内含 5 个 Phase：因果规则→被动感知→遭遇触发→事件条件→汇总写入 area_events。<br/>
+    <strong>关键变更（D-WE02）：</strong>AIOsiris 已改为纯机械引擎（零LLM），内含 4 个 Phase：因果规则（含 area_events 写入）→被动感知→遭遇触发→事件条件。<br/>
     原 EncounterHook(P40)/PassivePerceptionHook(P45)/EventConditionHook(P50) 已合并为 Osiris 内部 Phase。新增 NpcAutonomyHook(P61) 负责 NPC 每轮自主活动。<br/>
     Osiris = 机械世界引擎（规则表驱动）&nbsp;|&nbsp; 规划者 = 战略叙事引擎（LLM驱动）
   </div>
@@ -292,7 +292,7 @@ flowchart TB
     subgraph NPC_EXEC["NPC交互管线"]
         CONSUME["实例管理器 InstanceManager<br/>消费指令 consume_directive"]
         CTX["上下文构建器 ContextBuilder<br/>L6: 记忆命中<br/>L7: 能力+服务列表"]
-        AGENT["NPC智能体 (LLM)<br/>14个工具（含 execute_service, discover_clue）"]
+        AGENT["NPC智能体 (LLM)<br/>18个工具（含 execute_service, discover_clue,<br/>offer_help, update_blackboard, sell_to_player...）"]
     end
 
     subgraph FEEDBACK["反馈路径"]
@@ -361,7 +361,7 @@ flowchart TB
 <!-- ============================================================ -->
 <div class="section" id="fig4">
   <h2>图四、机械世界引擎 MechanicalOsiris <span class="badge-new">已改造 D-WE02</span></h2>
-  <p class="desc">纯规则表驱动，零 LLM 依赖。内含 5 个 Phase，整合了原 EncounterHook/PassivePerceptionHook/EventConditionHook 的逻辑。只发射 2 种指令：set_flag + adjust_danger。</p>
+  <p class="desc">纯规则表驱动，零 LLM 依赖。内含 4 个 Phase，整合了原 EncounterHook/PassivePerceptionHook/EventConditionHook 的逻辑。只发射 2 种指令：set_flag + adjust_danger。</p>
   <div class="mermaid">
 %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
 flowchart TB
@@ -371,13 +371,12 @@ flowchart TB
         WIT["目击者 witnessed_by<br/>在场NPC列表"]
     end
 
-    subgraph PHASES["5-Phase 执行流"]
-        P1["Phase 1: 因果规则<br/>Tag→后果 规则表<br/>+ 目击者→阵营传播"]
+    subgraph PHASES["4-Phase 执行流"]
+        P1["Phase 1: 因果规则<br/>Tag→后果 规则表<br/>+ 目击者→阵营传播<br/>+ area_events 写入"]
         P2["Phase 2: 被动感知<br/>（原 PassivePerceptionHook）<br/>陷阱/隐藏物检测"]
         P3["Phase 3: 遭遇触发<br/>（原 EncounterHook）<br/>encounter_table + 概率门控"]
         P4["Phase 4: 事件条件<br/>（原 EventConditionHook）<br/>flag 满足→触发事件"]
-        P5["Phase 5: 汇总写入<br/>area_events 区域事件日志"]
-        P1 --> P2 --> P3 --> P4 --> P5
+        P1 --> P2 --> P3 --> P4
     end
 
     subgraph OUTPUT["引擎输出"]
@@ -390,7 +389,7 @@ flowchart TB
     TAGS --> P1
     AREA --> P1
     WIT --> P1
-    P5 --> C1 & C2 & AE & SSE
+    P4 --> C1 & C2 & AE & SSE
 
     style INPUTS fill:#1c2128,stroke:#1f6feb
     style PHASES fill:#1c2128,stroke:#3fb950
@@ -419,7 +418,7 @@ flowchart LR
     end
 
     subgraph LAYER2["战术层（P30）"]
-        OSIRIS["<b>AI审判者 AIOsiris</b><br/>因果推理<br/>好感/标记/谣言<br/>危险/知识"]
+        OSIRIS["<b>机械世界引擎 MechanicalOsiris</b><br/>规则表驱动<br/>标记/危险等级<br/>感知/遭遇/事件"]
     end
 
     subgraph LAYER3["战略层（P66）"]
@@ -427,11 +426,11 @@ flowchart LR
     end
 
     subgraph LAYER4["执行层（下次交互）"]
-        NPC["<b>NPC智能体 Agent</b><br/>消费指令 + 执行服务<br/>说话/表情/治疗/交易<br/>13个工具"]
+        NPC["<b>NPC智能体 Agent</b><br/>消费指令 + 执行服务<br/>说话/表情/治疗/交易<br/>18个工具"]
     end
 
     RE -->|"状态变更 StateDelta<br/>&rarr; 行动日志 action_log"| OSIRIS
-    OSIRIS -->|"因果指令 Commands<br/>&rarr; 变更日志 change_log"| PLANNER
+    OSIRIS -->|"set_flag + adjust_danger<br/>&rarr; area_events + change_log"| PLANNER
     PLANNER -->|"行为指令 + 服务定义<br/>&rarr; npc_directives + npc_services"| NPC
     NPC -->|"行动结果 + 服务执行<br/>&rarr; action_log<br/>&rarr; semantic_events"| RE
 
@@ -442,7 +441,7 @@ flowchart LR
   </div>
   <div class="legend">
     <span class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> 规则引擎 RulesEngine：即时机械效果（骰点、HP、物品）</span>
-    <span class="legend-item"><span class="legend-dot" style="background:#da3633"></span> 审判者 AIOsiris：战术跨系统后果（好感、谣言、危险）</span>
+    <span class="legend-item"><span class="legend-dot" style="background:#da3633"></span> 机械引擎 MechanicalOsiris：规则表驱动（标记、危险、感知、遭遇、事件条件）</span>
     <span class="legend-item"><span class="legend-dot" style="background:#1f6feb"></span> 规划者 NarrativePlanner：战略叙事演进（任务、NPC指令、服务分配、世界构建）</span>
     <span class="legend-item"><span class="legend-dot" style="background:#a371f7"></span> NPC智能体 Agent：执行行动 + 执行服务（对话、情感、治疗、交易、奖励发放）</span>
   </div>
@@ -451,7 +450,7 @@ flowchart LR
 <!-- ============================================================ -->
 <div class="section" id="fig6">
   <h2>图六、NPC对话6步管线 <span class="badge">智能体编排 Agent Orchestration</span></h2>
-  <p class="desc">当玩家与NPC对话时，系统执行6步管线，最多进行 4+ 次LLM调用（NPC + GM + N个队友）。NPC现在可以在对话中调用 execute_service 执行服务。</p>
+  <p class="desc">当玩家与NPC对话时，系统执行6步管线，最多进行 2+N 次LLM调用（NPC + GM + N个队友）。NPC现在可以在对话中调用 execute_service 执行服务。</p>
   <div class="mermaid">
 %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
 flowchart TD
@@ -468,8 +467,8 @@ flowchart TD
 
     subgraph S2["第2步：NPC智能体（LLM调用 #1）"]
         S2A["系统提示词 system_prompt：<br/>性格 + 角色数据 role_data<br/>+ 规划者指令（如有）<br/>+ L6层记忆命中<br/>+ 可执行服务列表"]
-        S2B["智能体执行器 AgenticExecutor<br/>最多5轮工具调用"]
-        S2C["可用工具 13个：说话、表情、<br/>更新好感、回忆、提供交易、<br/>加入队伍、<b>执行服务 execute_service</b>..."]
+        S2B["智能体执行器 AgenticExecutor<br/>最多3轮工具调用"]
+        S2C["可用工具 18个：说话、表情、更新好感、<br/>回忆、提供交易、加入队伍、<br/><b>执行服务、发现线索、主动帮助、<br/>更新黑板、发送消息、出售物品</b>..."]
         S2A --> S2B --> S2C
     end
 
@@ -482,7 +481,7 @@ flowchart TD
     subgraph S4["第4步：队友反应（LLM调用 #3~N）"]
         S4A["是否应该回应？<br/>关系亲密度 + 场景标签"]
         S4B["每个被触发的队友<br/>运行智能体执行器"]
-        S4C["可用工具 8个：说话、表情、<br/>发表看法 express_opinion、建议战术"]
+        S4C["可用工具 13个：说话、表情、回忆、<br/>发表看法、建议战术、分享记忆、<br/>请求行动、离队、发现线索、<br/>分享发现、主动帮助、更新黑板、发送消息"]
         S4A -->|"触发"| S4B --> S4C
     end
 
@@ -621,10 +620,10 @@ flowchart TD
         </tr>
         <tr>
           <td style="padding:8px 10px"><b>可用工具数</b></td>
-          <td style="text-align:center"><b>14</b>个工具<br/>（+ execute_service, discover_clue）</td>
+          <td style="text-align:center"><b>18</b>个工具<br/>（12核心 + 6延迟加载）</td>
           <td style="text-align:center">5个工具</td>
-          <td style="text-align:center"><b>10</b>个工具<br/>（+ discover_clue, share_discovery）</td>
-          <td style="text-align:center">2个工具<br/>（设计技能 design_skill）</td>
+          <td style="text-align:center"><b>13</b>个工具<br/>（8核心 + 5延迟加载）</td>
+          <td style="text-align:center">2个工具<br/>（read/list_design_skill）</td>
           <td style="text-align:center">机械引擎<br/>（无LLM，规则表驱动）</td>
         </tr>
       </tbody>
@@ -726,8 +725,8 @@ flowchart TB
 
 <!-- ============================================================ -->
 <div class="section" id="fig9">
-  <h2>图九、规划者5子系统 <span class="badge-new">NEW ItemDesigner已移除</span></h2>
-  <p class="desc">叙事规划者 NarrativePlanner 由5个子系统 PlannerSubSystem 组成（原6个，ItemDesigner 已移除并吸收）。每个子系统处理一组不相交的指令种类。</p>
+  <h2>图九、规划者5子系统 <span class="badge-new">PacingController DEPRECATED</span></h2>
+  <p class="desc">叙事规划者 NarrativePlanner 由5个子系统 PlannerSubSystem 组成（PacingController 已 DEPRECATED，escalate/adjust_pacing 吸收入 NarrativeWeaver）。共处理 24 种指令。</p>
   <div class="mermaid">
 %%{init: {'theme':'dark', 'themeVariables': {'primaryColor':'#1f6feb','primaryTextColor':'#c9d1d9','primaryBorderColor':'#30363d','lineColor':'#58a6ff','secondaryColor':'#161b22','tertiaryColor':'#0d1117'}}}%%
 flowchart TD
@@ -739,6 +738,7 @@ flowchart TD
         Q3["retire_quest 下架任务"]
         Q4["update_quest 更新任务"]
         Q5["advance_milestone 推进里程碑"]
+        Q6["<b style='color:#3fb950'>set_task_monitor 设置任务监控</b>"]
     end
 
     subgraph SUB2["NPC导演 NpcDirector"]
@@ -768,11 +768,13 @@ flowchart TD
         V3["自动升级安全网 auto_escalation"]
         V4["<b style='color:#3fb950'>服务过期清理 prune_services</b>"]
         V5["<b style='color:#3fb950'>安排延迟事件 schedule_event</b>"]
+        V6["<b style='color:#3fb950'>escalate 升级紧迫度</b>"]
+        V7["<b style='color:#3fb950'>adjust_pacing 调整节奏</b>"]
     end
 
-    subgraph SUB5["节奏控制器 PacingController"]
-        P1["escalate 升级紧迫度"]
-        P2["adjust_pacing 调整节奏"]
+    subgraph SUB5["节奏控制器 PacingController<br/><i>（DEPRECATED — 已吸收入叙事编织器）</i>"]
+        P1["escalate → 已迁移"]
+        P2["adjust_pacing → 已迁移"]
     end
 
     PLANNER --> SUB1
@@ -786,19 +788,21 @@ flowchart TD
     style SUB2 fill:#1c2128,stroke:#3fb950
     style SUB3 fill:#1c2128,stroke:#a371f7
     style SUB4 fill:#1c2128,stroke:#8b949e
-    style SUB5 fill:#1c2128,stroke:#da3633
+    style SUB5 fill:#1c212866,stroke:#484f58
   </div>
   <div class="note">
     <strong>变更记录：</strong><br/>
     &bull; D-Svc05：ItemDesigner 已移除，curate_shop 迁入 NPC导演<br/>
     &bull; D-Svc02：assign_service / revoke_service 由 NPC导演处理<br/>
-    &bull; D-WE02c：create_rumor / modify_location 从 Osiris 迁入 NPC导演；schedule_event 迁入叙事编织器<br/><br/>
+    &bull; D-WE02c：create_rumor / modify_location 从 Osiris 迁入 NPC导演；schedule_event 迁入叙事编织器<br/>
+    &bull; <strong style="color:#3fb950">QuestManager 新增 set_task_monitor（动态任务自动追踪条件）</strong><br/>
+    &bull; <strong style="color:#3fb950">PacingController DEPRECATED：escalate + adjust_pacing 已迁入 NarrativeWeaver（Phase 4 合并）</strong><br/><br/>
     <strong>NPC导演现在是最大的子系统</strong>，负责9种指令：行为指导 + 生成/回收NPC + 能力 + 服务 + 商店 + 谣言 + 位置移动
   </div>
 </div>
 
 <div style="text-align:center;color:#484f58;padding:40px 0;font-size:13px">
-  为系统架构回顾生成 — 2026-03-15 | 含 NPC 服务系统（D-Svc01~06）+ 世界引擎升级（D-WE01~05）
+  为系统架构回顾生成 — 2026-03-15 更新 | 含 NPC 服务系统（D-Svc01~06）+ 世界引擎升级（D-WE01~05）+ 工具/钩子/子系统最新盘点
 </div>
 
 <script type="module">

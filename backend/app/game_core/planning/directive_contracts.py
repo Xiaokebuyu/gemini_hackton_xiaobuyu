@@ -310,6 +310,15 @@ def _validate_contract(
         if area_id is None:
             return False, normalized, "missing_area_id"
         normalized["area_id"] = area_id
+        # Normalize optional locked boolean (default False for backward compat)
+        raw_locked = normalized.get("locked")
+        if raw_locked is not None:
+            if isinstance(raw_locked, bool):
+                normalized["locked"] = raw_locked
+            elif isinstance(raw_locked, str):
+                normalized["locked"] = raw_locked.strip().lower() in {"true", "1", "yes"}
+            else:
+                normalized.pop("locked", None)
         if kind == "fill_area":
             sub_area_id = coerce_non_empty_string(normalized.get("id"))
             if sub_area_id is not None:
@@ -327,6 +336,34 @@ def _validate_contract(
             and not _has_legacy_environmental_entries(normalized)
         ):
             return False, normalized, "missing_environmental_content"
+        else:
+            # Normalize optional label for plant_environmental (short display name,
+            # distinct from the narrative description).
+            raw_label = coerce_non_empty_string(normalized.get("label"))
+            if raw_label is not None:
+                raw_label = raw_label.strip()
+                if len(raw_label) > 30:
+                    return False, normalized, "label_too_long"
+                if raw_label:
+                    normalized["label"] = raw_label
+                else:
+                    normalized.pop("label", None)
+            else:
+                normalized.pop("label", None)
+            # Normalize optional location_id / room_id for hierarchical placement.
+            # When provided, the environmental element is associated with that
+            # sub-location rather than floating at area root.
+            location_id = coerce_non_empty_string(normalized.get("location_id"))
+            if location_id is not None:
+                normalized["location_id"] = location_id
+                room_id = coerce_non_empty_string(normalized.get("room_id"))
+                if room_id is not None:
+                    normalized["room_id"] = room_id
+                else:
+                    normalized.pop("room_id", None)
+            else:
+                normalized.pop("location_id", None)
+                normalized.pop("room_id", None)
         return True, normalized, None
 
     if kind == "plant_encounter":

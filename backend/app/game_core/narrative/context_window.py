@@ -27,6 +27,12 @@ class WindowMessage:
 
     ``is_graphized`` is set to True by ``collect_for_graphize`` to mark
     messages that have been handed off to MemoryGraphizer.
+
+    ``parts`` stores the original structured Gemini parts list for model
+    messages (e.g. function_call parts).  When present, it is preferred over
+    the plain-text ``content`` when reconstructing conversation history so
+    that the LLM sees "I previously called tool X" rather than just text.
+    User messages always use plain text; set ``parts=None`` for them.
     """
 
     role: str           # "user" | "assistant" | "system"
@@ -34,6 +40,7 @@ class WindowMessage:
     token_count: int
     metadata: dict[str, Any] = field(default_factory=dict)
     is_graphized: bool = False
+    parts: list[dict[str, Any]] | None = None  # structured parts (model only)
 
 
 @dataclass(slots=True)
@@ -134,17 +141,20 @@ class ContextWindow:
             - ``messages``: serialized WindowMessage list
             - ``graphize_counter``: current graphize counter (for persistence)
         """
+        rows = []
+        for m in self.messages:
+            row: dict[str, Any] = {
+                "role": m.role,
+                "content": m.content,
+                "token_count": m.token_count,
+                "metadata": dict(m.metadata),
+                "is_graphized": m.is_graphized,
+            }
+            if m.parts is not None:
+                row["parts"] = list(m.parts)
+            rows.append(row)
         return {
-            "messages": [
-                {
-                    "role": m.role,
-                    "content": m.content,
-                    "token_count": m.token_count,
-                    "metadata": dict(m.metadata),
-                    "is_graphized": m.is_graphized,
-                }
-                for m in self.messages
-            ],
+            "messages": rows,
             "graphize_counter": self.graphize_counter,
         }
 
@@ -173,12 +183,17 @@ class ContextWindow:
             token_count = int(entry.get("token_count", max(1, len(content) // 4)))
             metadata = entry.get("metadata")
             is_graphized = bool(entry.get("is_graphized", False))
+            raw_parts = entry.get("parts")
+            parts: list[dict[str, Any]] | None = None
+            if isinstance(raw_parts, list):
+                parts = [p for p in raw_parts if isinstance(p, dict)]
             self.messages.append(WindowMessage(
                 role=role,
                 content=content,
                 token_count=token_count,
                 metadata=dict(metadata) if isinstance(metadata, dict) else {},
                 is_graphized=is_graphized,
+                parts=parts,
             ))
         self.current_tokens = sum(m.token_count for m in self.messages)
 
@@ -194,3 +209,30 @@ class ContextWindow:
             "should_graphize": self.should_graphize,
             "graphize_counter": self.graphize_counter,
         }
+
+
+# ------------------------------------------------------------------
+# Module-level helpers
+# ------------------------------------------------------------------
+
+
+def window_to_history(window: ContextWindow) -> list[dict[str, Any]]:
+    """Convert ContextWindow messages to Gemini conversation history format.
+
+    Skips messages flagged as graphized (they have been compressed into the
+    knowledge graph and should not be re-sent to the LLM).
+
+    When a WindowMessage has a ``parts`` list (i.e. a model message that
+    contains function_call entries), those structured parts are used directly
+    so the model sees its own prior tool invocations.  Otherwise the plain
+    ``content`` text is wrapped in a single text part.
+    """
+    result: list[dict[str, Any]] = []
+    for msg in window.messages:
+        if msg.is_graphized:
+            continue
+        if msg.parts is not None:
+            result.append({"role": msg.role, "parts": list(msg.parts)})
+        else:
+            result.append({"role": msg.role, "parts": [{"text": msg.content}]})
+    return result

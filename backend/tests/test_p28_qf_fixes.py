@@ -371,8 +371,13 @@ class TestPrivateChatSceneTransition:
             "First entry should include transition:'fade'"
         )
 
-    def test_no_transition_when_already_in_private(self) -> None:
-        """scene_change omits transition field when player is already in a private scene."""
+    def test_no_scene_change_when_scene_is_not_new(self) -> None:
+        """No scene_change event is emitted when scene_is_new=False (scene reused).
+
+        Phase 9 fix: the old QF-1 behavior suppressed only the 'fade' transition on
+        repeated messages. The new behavior suppresses the entire scene_change event
+        when the coordinator reuses an existing private sub-area (scene_is_new=False).
+        """
         from app.agent_orchestration import _private_chat_result_to_sse
         from app.game_core.orchestration.private_chat import PrivateChatResult
 
@@ -381,12 +386,12 @@ class TestPrivateChatSceneTransition:
             npc_id="npc_test",
             scene_id="_private_player_npc_test_1",
             scene_name="Private Corner",
+            scene_is_new=False,  # reused scene
         )
         events = _private_chat_result_to_sse(result, current_location="_private_player_npc_test_1")
         scene_events = [e for e in events if e.event_type == "scene_change"]
-        assert len(scene_events) == 1
-        assert "transition" not in scene_events[0].payload, (
-            "Repeated message in private scene should not include transition"
+        assert len(scene_events) == 0, (
+            "scene_change must NOT be emitted when scene_is_new=False (scene reused)"
         )
 
     def test_no_scene_change_when_result_has_no_scene_id(self) -> None:

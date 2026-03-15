@@ -1069,9 +1069,9 @@ def test_a6_empty_subsystem_result_does_not_increment_accepted_event_count() -> 
 # A-7: FALLBACK_INTERVAL = 4, "time" in _TRIGGER_SLICES (W6-1)
 # ---------------------------------------------------------------------------
 
-def test_a7_fallback_interval_is_4() -> None:
-    """NarrativePlannerHook.FALLBACK_INTERVAL should be 4 (A-7/S1-09)."""
-    assert NarrativePlannerHook.FALLBACK_INTERVAL == 4
+def test_a7_fallback_interval_is_1() -> None:
+    """NarrativePlannerHook.FALLBACK_INTERVAL should be 1 (P32-1: every settlement tick)."""
+    assert NarrativePlannerHook.FALLBACK_INTERVAL == 1
 
 
 def test_a7_time_in_trigger_slices() -> None:

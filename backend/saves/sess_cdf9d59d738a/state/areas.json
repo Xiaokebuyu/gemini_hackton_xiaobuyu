@@ -1,0 +1,457 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.2,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {
+        "ruins_exterior": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 13,
+          "description": "守在遗迹路口的精锐哥布林小队，它们似乎在进行有组织的巡逻。",
+          "expiry_ticks": -1,
+          "map_category": null,
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin",
+            "goblin_archer",
+            "goblin_rider"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        }
+      },
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 11,
+          "description": "被藤蔓缠绕的石柱倾倒在泥土中，阴影里似乎有眼睛在窥视。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "ruins_exterior",
+          "interactables": [],
+          "label": "遗迹外围",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "locked": false,
+          "parent_location_id": null,
+          "parent_room_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        },
+        {
+          "created_at_tick": 12,
+          "description": "遗迹入口矗立着几块风化严重的石碑，上面刻着警告闯入者的古老文字。",
+          "discovery_dc": 14,
+          "discovery_mode": "check",
+          "expiry": 12,
+          "hostile_config": null,
+          "id": "clue_12",
+          "interactables": [],
+          "label": "古老石碑",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "locked": false,
+          "parent_location_id": "ruins_exterior",
+          "parent_room_id": "guild_counter",
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        }
+      ]
+    },
+    "cow_girl_farm": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.3,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "cow_girl": "main_house"
+      },
+      "npc_presence_sources": {},
+      "npc_rooms": {
+        "cow_girl": "living_room"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": []
+    },
+    "frontier_town": {
+      "area_events": [
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 8
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 9
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 10
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 13
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 14
+        }
+      ],
+      "area_situation": "近期事件：冒险者移动到新区域；冒险者移动到新区域；冒险者移动到新区域。",
+      "board_bulletins": {
+        "notice_board": [
+          {
+            "board_id": "notice_board",
+            "content": "近日边境附近哥布林巢穴有扩张迹象，请单身冒险者切勿深入密林。若有发现大规模踪迹，请速报公会。",
+            "published_at_tick": 8,
+            "quest_id": "",
+            "source": "narrative_planner",
+            "title": "【警告】近期哥布林活动频繁"
+          },
+          {
+            "board_id": "notice_board",
+            "content": "若在遗迹中遭遇并击败哥布林萨满，将其法杖带回公会可换取额外赏金。",
+            "published_at_tick": 14,
+            "quest_id": "",
+            "source": "narrative_planner",
+            "title": "【悬赏】收集哥布林萨满的法杖"
+          }
+        ],
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+            "published_at_tick": 8,
+            "quest_id": "dq_ms_frontier_arrival",
+            "source": "narrative_planner",
+            "title": "踏入边境"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "女神官需要一些新鲜的圣洁药草来制作伤药。",
+            "published_at_tick": 8,
+            "quest_id": "dq_temple_herbs",
+            "source": "narrative_planner",
+            "title": "地母神的药草请求"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "铁匠的车队在前往古代遗迹的必经之路上失踪了，公会怀疑与那里的哥布林活动有关。",
+            "published_at_tick": 10,
+            "quest_id": "dq_investigate_ruins",
+            "source": "narrative_planner",
+            "title": "失踪的车队与古代遗迹"
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 0.3,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "discovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {
+        "blacksmith": "blacksmith_shop",
+        "dwarf_shaman": "adventurer_guild",
+        "goblin_slayer": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "guild_quartermaster": "adventurer_guild",
+        "high_elf_archer": "adventurer_guild",
+        "informant": "back_alley",
+        "lizard_priest": "adventurer_guild",
+        "north_gate_warden": "north_gate",
+        "priestess": "adventurer_guild",
+        "tavern_keeper": "tavern",
+        "tavern_waitress": "tavern",
+        "temple_matron": "mother_earth_temple",
+        "town_guard": "town_square",
+        "traveling_merchant": "market_plaza"
+      },
+      "npc_presence_sources": {
+        "high_elf_archer": "companion",
+        "priestess": "companion"
+      },
+      "npc_rooms": {
+        "blacksmith": "forge",
+        "dwarf_shaman": "guild_hall",
+        "goblin_slayer": "guild_hall",
+        "guild_girl": "guild_counter",
+        "guild_quartermaster": "guild_counter",
+        "high_elf_archer": "guild_counter",
+        "informant": "dead_end",
+        "lizard_priest": "guild_hall",
+        "north_gate_warden": "guard_post",
+        "priestess": "guild_counter",
+        "tavern_keeper": "main_hall",
+        "tavern_waitress": "main_hall",
+        "temple_matron": "prayer_hall",
+        "town_guard": "fountain_plaza",
+        "traveling_merchant": "open_market"
+      },
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {
+        "mother_earth_temple__herb_garden": [
+          {
+            "description": "神庙后花园培育的药草，叶片上带着淡淡的微光。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_gather_herbs",
+                "options": [
+                  {
+                    "id": "gather",
+                    "label": "小心采摘"
+                  },
+                  {
+                    "id": "examine",
+                    "label": "观察药草品质"
+                  }
+                ],
+                "outcomes": {
+                  "gather": {
+                    "on_pass": [
+                      {
+                        "params": {
+                          "key": "herbs_gathered",
+                          "value": true
+                        },
+                        "type": "set_flag"
+                      }
+                    ]
+                  }
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "sacred_herbs",
+            "name": "圣洁药草",
+            "tags": [
+              "quest_item"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "north_gate": [
+          {
+            "description": "铁匠提到的那辆车就翻倒在路基下，车厢上有明显的斧凿痕迹和绿色的粘液。",
+            "functional": {
+              "params": {
+                "clue_id": "clue_broken_wagon",
+                "options": [
+                  {
+                    "id": "check_cargo",
+                    "label": "检查货物去向"
+                  },
+                  {
+                    "id": "check_tracks",
+                    "label": "搜寻袭击者的脚印"
+                  }
+                ],
+                "outcomes": {
+                  "check_tracks": {
+                    "on_pass": [
+                      {
+                        "params": {
+                          "key": "ruins_trail_found",
+                          "value": true
+                        },
+                        "type": "set_flag"
+                      }
+                    ]
+                  }
+                }
+              },
+              "type": "investigate_clue"
+            },
+            "id": "clue_broken_wagon",
+            "name": "损毁的货运马车",
+            "tags": [
+              "clue"
+            ],
+            "type": "inspect"
+          }
+        ]
+      },
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": [
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_priestess_9",
+          "name": "僻静处",
+          "resident_npcs": [
+            "priestess"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        },
+        {
+          "created_at_tick": 10,
+          "description": "为了应对频繁的袭击，城门处临时增设了拒马，守卫们神色紧张。",
+          "discovery_dc": 10,
+          "discovery_mode": "check",
+          "expiry": 7,
+          "hostile_config": null,
+          "id": "clue_10",
+          "interactables": [],
+          "label": "北门路障",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "locked": false,
+          "parent_location_id": "north_gate",
+          "parent_room_id": "guild_hall",
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        },
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_high_elf_archer_11",
+          "name": "僻静处",
+          "resident_npcs": [
+            "high_elf_archer"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        },
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_goblin_slayer_12",
+          "name": "僻静处",
+          "resident_npcs": [
+            "goblin_slayer"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        },
+        {
+          "created_at_tick": 13,
+          "description": "路边架设了简陋的帐篷，几名在袭击中受伤的运粮队民夫正痛苦地呻吟。",
+          "discovery_dc": 12,
+          "discovery_mode": "check",
+          "expiry": 10,
+          "hostile_config": null,
+          "id": "clue_13",
+          "interactables": [],
+          "label": "临时收容所",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "locked": false,
+          "parent_location_id": "north_gate",
+          "parent_room_id": "guard_post",
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        }
+      ]
+    },
+    "water_capital": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.6,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

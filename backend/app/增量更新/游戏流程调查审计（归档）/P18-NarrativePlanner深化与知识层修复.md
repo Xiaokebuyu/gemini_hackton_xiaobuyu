@@ -231,34 +231,11 @@ Phase A 随 NarrativePlanner 重构一起做。Phase B 可后续独立推进。
 
 > **ContextWindow 持久化不再需要**：§6.1 改为主动 write_episode 后，每次有意义对话的知识都会提取为三元组存入图谱。NPC 需要的是"知道发生了什么事实"而非"记得对话原文"，三元组足够覆盖。
 
-### 6.3 关键词提取重写
+### 6.3 中文关键词质量
 
-**问题**：`_extract_scene_keywords()` 用 `content.split()` 从中文场景文本分词，中文完全失效（无空格分割 + `len>3` 过滤掉短词）。
+**问题**：`_extract_scene_keywords()` 纯空格分词，中文无效。
 
-**方案**：**不再从中文文本分词**。图谱节点本身就是英文 ID（`merchant_tom`、`border_town`），直接用结构化 ID 作为关键词查询。
-
-```python
-def _extract_scene_keywords(self, actor_id, role="npc"):
-    keywords = [actor_id]                                    # 当前交互 NPC
-    keywords.append(self._state.area.current_area)           # 当前区域
-    if self._state.area.current_location:
-        keywords.append(self._state.area.current_location)   # 当前子地点
-
-    # 活跃任务的 milestone
-    for q in self._state.quests.active_dynamic_quests():
-        keywords.append(q.get("target_milestone", ""))
-
-    # 场景中出现的 NPC id（从 metadata 提取，非文本分词）
-    for entry in recent_scene_entries:
-        if npc_id := entry.get("metadata", {}).get("npc_id"):
-            keywords.append(npc_id)
-
-    return deduplicate(keywords)[:20]
-```
-
-英文 ID 精准匹配图谱节点，中文只在最终 prompt 注入时通过 `label` / `description` 展示。彻底绕过中文分词问题。
-
-**改动范围**：`context_builder.py` 的 `_extract_scene_keywords()` 方法重写，~20 行。
+**方案**：暂不单独修复。中文环境下 keyword matching 使用的是 substring 匹配（`keyword in node_label`），对单个汉字或短语仍有一定效果。后续如需改善，可引入 jieba 或 LLM 关键词提取。
 
 ---
 
@@ -276,7 +253,7 @@ def _extract_scene_keywords(self, actor_id, role="npc"):
 - 修复：despawn 关联临时 NPC + 移除公告 + 移除子区域
 - ~60 行
 
----
+ne't---
 
 ## 8. 实施计划
 
@@ -290,14 +267,12 @@ def _extract_scene_keywords(self, actor_id, role="npc"):
 | 1.2 | write_episode 改为主动触发 | agent_orchestration.py 对话结束时主动调用 | ~40 行 |
 | 1.3 | story_facts 持久化 | NarrativePlanSlice 新增字段 + 加载时注入图谱 | ~50 行 |
 | 1.4 | 场景变化 SSE + SceneBus 通知 | narrative_planner.py 指令执行后发通知 | ~30 行 |
-| 1.5 | 关键词提取重写 | context_builder.py `_extract_scene_keywords()` 改为结构化英文 ID | ~20 行 |
 
 **Phase 1 完成后效果**：
 - escalate 真正改变世界状态（danger 上升、flag 设置）
 - NPC 对话后知识自动积累到图谱
 - story_facts 跨 session 持久化
 - 环境变化有通知
-- 知识图谱查询用英文 ID 精准命中，不再依赖中文分词
 
 ### Phase 2：NarrativePlanner LLM 化
 
@@ -331,12 +306,13 @@ def _extract_scene_keywords(self, actor_id, role="npc"):
 | # | 任务 | 范围 | 预估 |
 |---|---|---|---|
 | 4.1 | WorldKnowledgeGraph 动态边持久化 | serialize/restore 动态三元组 | ~100 行 |
+| 4.2 | 中文关键词改善（可选） | jieba 分词或 LLM 关键词提取 | ~60 行 |
 
-> ~~ContextWindow 持久化~~：已取消。主动 write_episode（§6.1）覆盖了对话知识持久化需求。
-> ~~中文关键词改善~~：已取消。§6.3 改为英文 ID 查询，彻底绕过中文分词问题（已移至 Phase 1.5）。
+> ~~ContextWindow 持久化~~：已取消。主动 write_episode（§6.1）覆盖了对话知识持久化需求，NPC 不需要记得对话原文，只需知道事实。
 
 **Phase 4 完成后效果**：
 - 所有动态知识（对话三元组 + story_facts）跨 session 持久化
+- 中文检索质量提升
 
 ---
 
@@ -352,7 +328,7 @@ def _extract_scene_keywords(self, actor_id, role="npc"):
 | `app/agent_orchestration.py` | 1.2 | — | — | — |
 | `app/world_knowledge_graph.py` | 1.3 注入 | 2.2 写入 | — | 4.1 |
 | `app/game_core/narrative/context_window.py` | — | — | — | — |
-| `app/game_core/narrative/context_builder.py` | 1.5 | — | 3.1 L2/L3 | — |
+| `app/game_core/narrative/context_builder.py` | — | — | 3.1 L2/L3 | — |
 | `app/deps.py` | — | 2.1 调整 | — | — |
 | `app/game_core/runtime.py` | — | 2.1 调整 | — | — |
 | `app/game_core/bootstrap.py` | — | 2.1 调整 | — | — |
@@ -369,7 +345,6 @@ def _extract_scene_keywords(self, actor_id, role="npc"):
 - [ ] NPC 对话结束后自动调用 write_episode，新三元组出现在图谱中
 - [ ] story_facts 存入 narrative_plan.json，session 重启后注入图谱
 - [ ] plant_environmental / fill_area 执行后发 SSE + SceneBus 标签
-- [ ] `_extract_scene_keywords()` 用英文 ID 查询，L6 hits 非空
 
 ### Phase 2 验收
 
@@ -390,7 +365,7 @@ def _extract_scene_keywords(self, actor_id, role="npc"):
 ### Phase 4 验收
 
 - [ ] WorldKnowledgeGraph 动态边跨 session 持久化
-- [ ] session 重启后，动态三元组（对话提取 + story_facts）仍在图谱中
+- [ ] NPC 重启后通过图谱三元组知道之前对话中的关键事实
 
 ---
 

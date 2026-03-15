@@ -1,6 +1,13 @@
 {
-  "companion_approval": {},
+  "companion_approval": {
+    "priestess": 15
+  },
   "members": {
+    "high_elf_archer": {
+      "class_id": "ranger",
+      "name": "妖精弓手",
+      "recruited_tick": 14
+    },
     "priestess": {
       "class_id": "priest",
       "name": "女神官",
@@ -17,6 +24,59 @@
       "location": "frontier_town",
       "participants": [
         "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess",
+        "high_elf_archer"
       ],
       "summary": "Day 1 meaningful dialogue at frontier_town",
       "type": "dialogue"

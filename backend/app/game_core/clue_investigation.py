@@ -226,18 +226,27 @@ def apply_clue_effects(
         if effect_type is None or effect_type not in CLUE_EFFECT_TYPES:
             return [], {"applied": applied}, "invalid_effect_type"
         if effect_type == "unlock_sub_location":
-            reward = dict(params)
-            reward["type"] = "sub_location"
-            changes, reward_result = apply_environment_reward(
-                working_state,
-                reward,
-                area_id=area_id,
-                source=source,
-            )
-            if changes:
-                working_state.apply(StateDelta(changes=changes, reason="clue_effect"))
-                collected_changes.extend(changes)
-            applied.extend(_coerce_applied_entries(reward_result, default_type="unlock_sub_location"))
+            sub_loc_id = coerce_non_empty_string(params.get("sub_location_id")) or coerce_non_empty_string(params.get("id"))
+            # First try to unlock an existing locked dynamic sub-area
+            unlock_changes = _unlock_existing_sub_location(working_state, area_id, sub_loc_id)
+            if unlock_changes:
+                working_state.apply(StateDelta(changes=unlock_changes, reason="clue_effect"))
+                collected_changes.extend(unlock_changes)
+                applied.extend([{"type": "unlock_sub_location", "sub_location_id": sub_loc_id, "unlocked": True}])
+            else:
+                # Fall back to creating a new sub-area (legacy behavior)
+                reward = dict(params)
+                reward["type"] = "sub_location"
+                changes, reward_result = apply_environment_reward(
+                    working_state,
+                    reward,
+                    area_id=area_id,
+                    source=source,
+                )
+                if changes:
+                    working_state.apply(StateDelta(changes=changes, reason="clue_effect"))
+                    collected_changes.extend(changes)
+                applied.extend(_coerce_applied_entries(reward_result, default_type="unlock_sub_location"))
             continue
 
         expanded = _expand_effect_commands(effect_type, params, working_state)
@@ -390,6 +399,36 @@ def _coerce_applied_entries(
         if isinstance(item, Mapping):
             normalized.append(dict(item))
     return normalized or [{"type": default_type}]
+
+
+def _unlock_existing_sub_location(
+    state: StateContainer,
+    area_id: str,
+    sub_loc_id: str | None,
+) -> list[StateChange]:
+    """Find an existing locked dynamic sub-area and unlock it.
+
+    Returns a list of StateChange objects that set locked=False on the target
+    sub-area. Returns an empty list if no matching locked sub-area is found.
+    """
+    if not sub_loc_id or not state.has_slice("areas"):
+        return []
+    existing = state.areas.list_temporary_sub_areas(area_id)
+    target_idx = next(
+        (
+            idx
+            for idx, item in enumerate(existing)
+            if isinstance(item, Mapping)
+            and coerce_non_empty_string(item.get("id")) == sub_loc_id
+            and item.get("locked")
+        ),
+        None,
+    )
+    if target_idx is None:
+        return []
+    updated = [dict(item) for item in existing]
+    updated[target_idx] = {**updated[target_idx], "locked": False}
+    return [StateChange("areas", "set", f"{area_id}.temporary_sub_areas", updated)]
 
 
 def _string_list(raw: Any) -> list[str]:

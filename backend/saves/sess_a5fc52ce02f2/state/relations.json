@@ -6,8 +6,38 @@
     "kingdom": 0
   },
   "npc_blackboards": {
+    "blacksmith": {
+      "attitude_towards_player": "看起来是带了新同伴的冒险者，生意上门了。",
+      "goals": [
+        "车队最后的求救信号来自北方的古代遗迹入口"
+      ],
+      "mood": "略显烦躁但专业",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "听到了关于货物被拦的消息，这群人消息倒灵通。炉子火正旺，没时间废话。",
+      "updated_tick": 23
+    },
     "dwarf_shaman": {
-      "updated_tick": 9
+      "goals": [
+        "嘲笑妖精弓手带回了‘菜鸟’，但随后认真询问遗迹里是否有火药或咒术的痕迹",
+        "一边敲打着自己的酒囊一边抱怨公会的酒不够劲，提议去牧场看看有没有新鲜的火酒。"
+      ],
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|ai_osiris] 冒险者移动到新区域",
+        "[tick 19|ai_osiris] 冒险者移动到新区域",
+        "[tick 20|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域"
+      ],
+      "updated_tick": 22
     },
     "goblin_slayer": {
       "attitude_towards_player": "普通的冒险者。如果不去杀哥布林，就没什么好聊的。",
@@ -15,44 +45,163 @@
         "检查破旧的装备"
       ],
       "mood": "冷静，专注",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域"
+      ],
       "thoughts": "盾牌的边缘磨损得比预想中快，下次得注意。如果这个人能提供哥布林的情报就好了。",
-      "updated_tick": 9
+      "updated_tick": 13
     },
     "guild_girl": {
       "attitude_towards_player": "这位新人看起来很有干劲，希望能在这个小镇顺利开始他的冒险生涯。",
+      "goals": [
+        "祝贺玩家升至等级2，并提到铁匠碎盾正急需帮手处理车队失踪的事",
+        "公会的药水储备也因为货运中断而告急，希望玩家能尽快查明情况",
+        "确认铁匠碎盾的报告，发放【物资危机】的报酬，并提到最近有更多关于遗迹萨满的情报"
+      ],
       "mood": "愉快",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域"
+      ],
       "thoughts": "愿意从基础任务做起是件好事，这样的人往往能活得更久。下一步他需要去见见那位特殊的冒险者。",
-      "updated_tick": 8
+      "updated_tick": 12
     },
     "guild_quartermaster": {
-      "attitude_towards_player": "总算回归理智了，知道什么才是保命的家伙。",
-      "mood": "平和",
-      "thoughts": "这些基础物资虽然不起眼，但能在关键时刻救命。他能选这些，说明还没被贪婪冲昏头脑。",
-      "updated_tick": 8
+      "attitude_towards_player": "虽然有些冒失，但带回来的消息很有价值。",
+      "mood": "警觉",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域",
+        "北边林道的哥布林开始抢夺生铁，威胁等级上升。"
+      ],
+      "thoughts": "如果哥布林开始武装自己，公会的补给压力会剧增，得提前向上面申请调拨更多箭矢和伤药。",
+      "updated_tick": 23
     },
     "high_elf_archer": {
-      "updated_tick": 9
+      "attitude_towards_player": "是个非常有行动力且正直的家伙，虽然有点急躁，但作为同伴很可靠。",
+      "goals": [
+        "抱怨矮人并注意到玩家，邀请玩家加入关于‘大生意’的讨论",
+        "关于那个失踪的车队，我们需要更多情报，一起去铁匠铺问问那个顽固的矮人吗？",
+        "催促玩家动身前往铁匠铺，并暗示这些‘小鬼’的行动比看起来更复杂",
+        "提议立即前往遗迹，并推测那是哥布林的新据点",
+        "这里的箭支……这不是那些愚蠢小鬼能造出来的东西。小心，可能有‘大家伙’在指挥。",
+        "马车上的痕迹显示这些哥布林不仅抢走了物资，还将生还者拖向了深处的‘路标空地’",
+        "指着翻倒的马车，催促玩家检查是否有幸存者的踪迹",
+        "天色已晚，深夜闯入遗迹太危险。我知道城外有个牧场，那里的炖菜和床铺都很棒，而且某个人也住在那。",
+        "‘长耳朵’说她已经闻到城外牧场的炖菜香了，既然萨满躲在遗迹深处，不如先去饱餐一顿。"
+      ],
+      "mood": "警觉且有些恼火",
+      "observations": [
+        "[tick 17|ai_osiris] 冒险者移动到新区域",
+        "[tick 18|ai_osiris] 冒险者移动到新区域",
+        "[tick 19|ai_osiris] 冒险者移动到新区域",
+        "[tick 20|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 温暖的壁炉 (warm_hearth)",
+        "teammate notices clue: 整齐的酒桶 (ale_kegs)",
+        "teammate notices clue: 吵闹的长桌 (adventurer_table)"
+      ],
+      "pending_graphize": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 冷却的铁砧 (cold_anvil)",
+        "teammate notices clue: 凌乱的账本 (messy_ledger)",
+        "[tick 15|ai_osiris] 冒险者移动到新区域",
+        "[tick 16|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "本以为能稍微享受一下和平的氛围，结果还是绕不开那些恶心的哥布林。连生铁都要抢，它们是在打造什么危险的东西吗？绝对不能掉以轻心。",
+      "updated_tick": 23
     },
     "lizard_priest": {
-      "updated_tick": 9
+      "goals": [
+        "礼貌地自我介绍，并表示地母神的信徒与他在追踪同一个‘邪恶源头’，建议一同深入遗迹",
+        "赞同妖精的提议，并提到在这种神圣的月光下，分享美食也是一种修行。",
+        "‘拙僧’也感到了一丝倦意，听闻郊外的牧场不仅风景宜人，还有绝妙的芝士和炖菜，不如一同前往？",
+        "‘拙僧’认为夜晚的酒馆虽好，但牧场的月光与芝士更能净化心灵，不如动身前往？"
+      ],
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 12|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|ai_osiris] 冒险者移动到新区域",
+        "[tick 19|ai_osiris] 冒险者移动到新区域",
+        "[tick 20|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域"
+      ],
+      "updated_tick": 22
     },
     "priestess": {
-      "attitude_towards_player": "冒险者看起来很可靠，而且愿意询问我的意见，让我感到很安心。",
+      "attitude_towards_player": "他在认真考虑点餐和收集情报，是个稳重的同伴。",
       "goals": [
         "邀请一起去酒馆吃午饭",
-        "在地母神像前简短祈祷，并提醒玩家之后去酒馆汇合"
+        "在地母神像前简短祈祷，并提醒玩家之后去酒馆汇合",
+        "紧握法杖，祈祷地母神的庇护，并指出血迹一直延伸进阴暗的空地",
+        "观察地上的脚印，指出有一组沉稳的重甲足迹绕过马车走向了遗迹深处"
       ],
-      "mood": "极度羞愧和尴尬",
+      "mood": "忧虑",
       "observations": [
-        "[tick 10|ai_osiris] 冒险者移动到新区域"
+        "[tick 18|ai_osiris] 冒险者移动到新区域",
+        "遗迹入口的恶臭非常浓烈，哥布林的数量可能比预想的要多。",
+        "[tick 19|ai_osiris] 冒险者移动到新区域",
+        "[tick 20|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 温暖的壁炉 (warm_hearth)",
+        "teammate notices clue: 整齐的酒桶 (ale_kegs)",
+        "teammate notices clue: 吵闹的长桌 (adventurer_table)"
       ],
-      "thoughts": "天呐，我竟然在酒馆门口把这里当成了神殿走廊……太失礼了，地母神大人请原谅我的冒失！冒险者先生一定觉得我是个奇怪的人。",
-      "updated_tick": 10
+      "pending_graphize": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "我们已经到了牛奶酒馆，这里确实充满了生活的气息。",
+        "teammate notices clue: 整齐的酒桶 (ale_kegs)",
+        "[tick 12|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 冷却的铁砧 (cold_anvil)",
+        "teammate notices clue: 凌乱的账本 (messy_ledger)",
+        "[tick 15|ai_osiris] 冒险者移动到新区域",
+        "[tick 16|ai_osiris] 冒险者移动到新区域",
+        "[tick 17|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "哥布林带走矿石的情况并不常见，它们通常只抢夺食物和……女性。如果它们开始储备金属，那森林深处的威胁可能比想象中更严重。我们需要做好充分准备。",
+      "updated_tick": 23
+    },
+    "tavern_keeper": {
+      "attitude_towards_player": "是个有礼貌且懂规矩的新面孔，还懂得先填饱肚子。",
+      "goals": [
+        "铁匠碎盾最近火气很大，因为他的矿石车被截了"
+      ],
+      "mood": "警惕而专业",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "看来这几位是真的打算去处理那些绿皮畜生了。看在那杯牛奶的份上，我得多提醒他们几句，碎盾那老头的火气可不是开玩笑的。",
+      "updated_tick": 23
     },
     "tavern_waitress": {
       "attitude_towards_player": "出手大方，是个懂行的。",
+      "goals": [
+        "牧牛妹刚才托人传话，说她准备了多余的饭菜，如果你们路过请务必去坐坐。"
+      ],
       "mood": "愉快",
-      "thoughts": "是个新面孔，看起来挺有精神的，得留心一下他是不是要打听什么消息。"
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域",
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "是个新面孔，看起来挺有精神的，得留心一下他是不是要打听什么消息。",
+      "updated_tick": 23
     },
     "temple_matron": {
       "attitude_towards_player": "一个懂得寻求地母神庇佑的稳健旅人。",
@@ -62,6 +211,14 @@
       ],
       "thoughts": "愿神的力量能在他穿行林道时指引他。",
       "updated_tick": 10
+    },
+    "traveling_merchant": {
+      "observations": [
+        "[tick 21|ai_osiris] 冒险者移动到新区域",
+        "[tick 22|ai_osiris] 冒险者移动到新区域",
+        "[tick 23|ai_osiris] 冒险者移动到新区域"
+      ],
+      "updated_tick": 23
     }
   },
   "npc_dispositions": {
@@ -93,7 +250,7 @@
       "approval": 10,
       "fear": 0,
       "romance": 50,
-      "trust": 20
+      "trust": 25
     },
     "guild_quartermaster": {
       "approval": 0,
@@ -102,10 +259,10 @@
       "trust": 27
     },
     "high_elf_archer": {
-      "approval": 10,
+      "approval": 25,
       "fear": 0,
       "romance": 5,
-      "trust": 25
+      "trust": 55
     },
     "informant": {
       "approval": -5,
@@ -129,13 +286,13 @@
       "approval": 20,
       "fear": 0,
       "romance": 25,
-      "trust": 40
+      "trust": 45
     },
     "tavern_keeper": {
-      "approval": 5,
+      "approval": 10,
       "fear": 0,
       "romance": 0,
-      "trust": 15
+      "trust": 30
     },
     "tavern_waitress": {
       "approval": 15,
@@ -166,8 +323,10 @@
   "relationship_stages": {
     "cow_girl": "acquaintance",
     "dwarf_shaman": "acquaintance",
+    "high_elf_archer": "acquaintance",
     "lizard_priest": "acquaintance",
-    "priestess": "acquaintance"
+    "priestess": "acquaintance",
+    "tavern_waitress": "acquaintance"
   },
   "shop_states": {
     "blacksmith": {

@@ -1,29 +1,247 @@
 {
   "areas": {
     "ancient_ruins": {
-      "area_events": [],
-      "area_situation": "",
+      "area_events": [
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 15
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 16
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 17
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 18
+        }
+      ],
+      "area_situation": "区域内有3处已知敌对遭遇。近期事件：冒险者移动到新区域；冒险者移动到新区域；冒险者移动到新区域。",
       "board_bulletins": {},
       "container_states": {},
       "danger_level": 1.2,
-      "discovered_items": [],
+      "discovered_items": [
+        "clue_16"
+      ],
       "discovered_rooms": [],
       "dynamic_rooms": [],
       "exploration": "undiscovered",
-      "hostile_tracking": {},
+      "hostile_tracking": {
+        "forest_approach": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 15,
+          "description": "三只哥布林正蹲在马车残骸旁争夺战利品，它们显然没有注意到你们的靠近。",
+          "expiry_ticks": -1,
+          "map_category": "forest",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin",
+            "goblin_archer"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        },
+        "outer_cloisters": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 17,
+          "description": "一只高大的大哥布林正指挥着手下加固回廊的防线。",
+          "expiry_ticks": -1,
+          "map_category": "cave",
+          "map_tags": [],
+          "monster_ids": [
+            "hobgoblin",
+            "goblin",
+            "goblin"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "planted",
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        },
+        "waystone_clearing": {
+          "area_id": "ancient_ruins",
+          "blocking": true,
+          "cleared": false,
+          "combat_active": false,
+          "created_at_tick": 16,
+          "description": "在空地巡逻的哥布林斥候，其中一只骑着凶猛的座狼。",
+          "entry_mode": "entered",
+          "expiry_ticks": -1,
+          "last_stealth_result": {
+            "advantage": true,
+            "dc": 12,
+            "disadvantage": false,
+            "modifier": 4,
+            "narrative": "你借着阴影悄然逼近，敌人尚未发现你的踪迹。",
+            "options": [
+              {
+                "action": "surprise_attack",
+                "label": "发动突袭"
+              },
+              {
+                "action": "retreat",
+                "label": "撤退"
+              }
+            ],
+            "passed": true,
+            "roll": 14,
+            "surprise_state": "player_surprise"
+          },
+          "map_category": "forest",
+          "map_tags": [],
+          "monster_ids": [
+            "goblin",
+            "goblin",
+            "goblin_wolf_rider"
+          ],
+          "one_shot": true,
+          "source": "narrative_planner",
+          "status": "stealth_resolved",
+          "stealth_dc": 12,
+          "surprise_modifier": 0,
+          "threat_level": "moderate"
+        }
+      },
       "interactable_states": {},
       "npc_locations": {},
       "npc_presence_sources": {},
       "npc_rooms": {},
-      "permanent_hostile_slots": {},
+      "permanent_hostile_slots": {
+        "ancient_ruins": {
+          "active_ids": [],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
       "properties": {},
-      "scoped_interactable_overlays": {},
+      "scoped_interactable_overlays": {
+        "forest_approach": [
+          {
+            "description": "一辆翻倒在路边的马车，侧面刻有铁匠碎盾的标记。木板上有密密麻麻的箭痕，且这些箭支制作得比普通哥布林用的要精良。",
+            "functional": {
+              "options": [
+                {
+                  "id": "check_arrows",
+                  "label": "检查箭簇"
+                },
+                {
+                  "id": "check_cargo",
+                  "label": "检查剩余货物"
+                }
+              ],
+              "type": "investigate_clue"
+            },
+            "id": "convoy_remains",
+            "name": "破碎的货运马车",
+            "tags": [
+              "clue",
+              "quest_target"
+            ],
+            "type": "investigate_clue"
+          }
+        ],
+        "outer_cloisters": [
+          {
+            "description": "通常哥布林只会乱冲，但这里竟然布置了用来阻挡入侵者的拒马，极其反常。",
+            "id": "goblin_barricade",
+            "name": "简陋的尖木拒马",
+            "tags": [
+              "clue",
+              "defense"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "waystone_clearing": [
+          {
+            "description": "由兽骨和头盖骨堆叠而成的图腾，上面涂抹着某种发出微光的绿色粘液，散发着不详的魔力。",
+            "id": "goblin_totem",
+            "name": "简陋的骨头图腾",
+            "tags": [
+              "clue",
+              "magic"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "一副被暴力撕开的人类铠甲，上面的抓痕显示攻击者力量惊人。",
+            "id": "discarded_armor",
+            "name": "破损的护卫铠甲",
+            "tags": [
+              "clue",
+              "danger"
+            ],
+            "type": "inspect"
+          }
+        ]
+      },
       "tags": [
         "dungeon",
         "hostile",
         "ruins"
       ],
-      "temporary_sub_areas": []
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 16,
+          "description": "恶臭的遗迹入口林道",
+          "discovery_dc": 12,
+          "discovery_mode": "check",
+          "expiry": 9,
+          "hostile_config": null,
+          "id": "clue_16",
+          "interactables": [],
+          "label": "恶臭的遗迹入口林道",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        },
+        {
+          "created_at_tick": 18,
+          "description": "寂静无声的死寂森林",
+          "discovery_dc": 10,
+          "discovery_mode": "check",
+          "expiry": 11,
+          "hostile_config": null,
+          "id": "clue_18",
+          "interactables": [],
+          "label": "寂静无声的死寂森林",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "temporary",
+          "type": "discovery"
+        }
+      ]
     },
     "cow_girl_farm": {
       "area_events": [],
@@ -38,11 +256,15 @@
       "hostile_tracking": {},
       "interactable_states": {},
       "npc_locations": {
-        "cow_girl": "main_house"
+        "cow_girl": "main_house",
+        "goblin_slayer": "gs_warehouse"
       },
-      "npc_presence_sources": {},
+      "npc_presence_sources": {
+        "goblin_slayer": "schedule"
+      },
       "npc_rooms": {
-        "cow_girl": "living_room"
+        "cow_girl": "living_room",
+        "goblin_slayer": "workbench"
       },
       "permanent_hostile_slots": {},
       "properties": {},
@@ -51,7 +273,27 @@
         "safe_zone",
         "home"
       ],
-      "temporary_sub_areas": []
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 21,
+          "description": "一座充满生活气息的木质建筑，即使在深夜，窗口透出的灯火也让人感到温暖。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "farm_house",
+          "interactables": [],
+          "label": "牧场主屋",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        }
+      ]
     },
     "frontier_town": {
       "area_events": [
@@ -60,9 +302,51 @@
           "severity": "minor",
           "source": "ai_osiris",
           "tick": 10
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 12
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 14
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 19
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 20
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 21
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 22
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 23
         }
       ],
-      "area_situation": "近期事件：冒险者移动到新区域。",
+      "area_situation": "近期事件：冒险者移动到新区域；冒险者移动到新区域；冒险者移动到新区域。",
       "board_bulletins": {
         "notice_board": [
           {
@@ -94,7 +378,7 @@
         ]
       },
       "container_states": {},
-      "danger_level": 0.3,
+      "danger_level": 0.39999999999999997,
       "discovered_items": [],
       "discovered_rooms": [],
       "dynamic_rooms": [],
@@ -102,12 +386,11 @@
       "hostile_tracking": {},
       "interactable_states": {},
       "npc_locations": {
-        "blacksmith": "blacksmith_shop",
+        "blacksmith": "tavern",
         "dwarf_shaman": "adventurer_guild",
-        "goblin_slayer": "adventurer_guild",
         "guild_girl": "adventurer_guild",
-        "guild_quartermaster": "adventurer_guild",
-        "high_elf_archer": "adventurer_guild",
+        "guild_quartermaster": "tavern",
+        "high_elf_archer": "tavern",
         "informant": "back_alley",
         "lizard_priest": "adventurer_guild",
         "north_gate_warden": "north_gate",
@@ -116,18 +399,22 @@
         "tavern_waitress": "tavern",
         "temple_matron": "mother_earth_temple",
         "town_guard": "town_square",
-        "traveling_merchant": "market_plaza"
+        "traveling_merchant": "tavern"
       },
       "npc_presence_sources": {
-        "priestess": "companion"
+        "blacksmith": "schedule",
+        "dwarf_shaman": "schedule",
+        "guild_quartermaster": "schedule",
+        "high_elf_archer": "companion",
+        "priestess": "companion",
+        "traveling_merchant": "schedule"
       },
       "npc_rooms": {
-        "blacksmith": "forge",
+        "blacksmith": "main_hall",
         "dwarf_shaman": "guild_hall",
-        "goblin_slayer": "guild_hall",
         "guild_girl": "guild_counter",
-        "guild_quartermaster": "guild_counter",
-        "high_elf_archer": "guild_hall",
+        "guild_quartermaster": "main_hall",
+        "high_elf_archer": "main_hall",
         "informant": "dead_end",
         "lizard_priest": "guild_hall",
         "north_gate_warden": "guard_post",
@@ -136,11 +423,39 @@
         "tavern_waitress": "main_hall",
         "temple_matron": "prayer_hall",
         "town_guard": "fountain_plaza",
-        "traveling_merchant": "open_market"
+        "traveling_merchant": "main_hall"
       },
-      "permanent_hostile_slots": {},
+      "permanent_hostile_slots": {
+        "frontier_town": {
+          "active_ids": [],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
       "properties": {},
       "scoped_interactable_overlays": {
+        "blacksmith_shop__forge": [
+          {
+            "description": "通常这个时间应该火热的铁砧现在冷冰冰的，显示主人已经很久没有开工了。",
+            "id": "cold_anvil",
+            "name": "冷却的铁砧",
+            "tags": [
+              "tools",
+              "workplace"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "账本上划掉了好几笔预定，末尾写着：‘车队未至，矿石告罄’。",
+            "id": "messy_ledger",
+            "name": "凌乱的账本",
+            "tags": [
+              "clue",
+              "document"
+            ],
+            "type": "inspect"
+          }
+        ],
         "mother_earth_temple__prayer_hall": [
           {
             "description": "一个有些年头的木制箱子，边缘被磨得很光滑，用来收集信徒的微薄捐赠。",
@@ -184,6 +499,30 @@
             ],
             "type": "inspect"
           }
+        ],
+        "tavern__main_hall": [
+          {
+            "description": "妖精弓手、矮人道士和蜥蜴僧侣正围在这里，桌上堆满了地图和空酒杯。",
+            "id": "adventurer_table",
+            "name": "吵闹的长桌",
+            "tags": [
+              "npc_group",
+              "social"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "town_square": [
+          {
+            "description": "一群商人正聚在一起低声讨论失踪的货船和陆路车队，气氛凝重。",
+            "id": "anxious_merchants",
+            "name": "焦虑的商人群",
+            "tags": [
+              "clue",
+              "social"
+            ],
+            "type": "inspect"
+          }
         ]
       },
       "tags": [
@@ -191,7 +530,23 @@
         "safe_zone",
         "trade"
       ],
-      "temporary_sub_areas": []
+      "temporary_sub_areas": [
+        {
+          "description": "一个远离人群的安静角落。",
+          "expiry": -1,
+          "id": "_private_priestess_23",
+          "name": "僻静处",
+          "resident_npcs": [
+            "priestess"
+          ],
+          "source": "private_chat",
+          "tags": [
+            "PRIVATE_CHAT",
+            "TEMPORARY"
+          ],
+          "type": "private"
+        }
+      ]
     },
     "water_capital": {
       "area_events": [],

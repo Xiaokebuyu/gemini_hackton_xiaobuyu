@@ -752,7 +752,7 @@ class TestNpcFullContext:
     """Verify build_npc_full_context() returns correct data without double retrieve."""
 
     def test_returns_nonfull_object_with_seven_layer_keys(self) -> None:
-        """NpcFullContext must expose system_prompt + all 7 layer keys."""
+        """NpcFullContext must expose system_prompt + all 7 layer keys + nearby_npcs."""
         world = _world_with_characters()
         state = _state_with_relations(world)
         builder = AgentContextBuilder(world, state)
@@ -762,7 +762,8 @@ class TestNpcFullContext:
         assert npc_full is not None
         assert isinstance(npc_full, NpcFullContext)
         assert npc_full.system_prompt
-        assert set(npc_full.layers.keys()) == {
+        # Phase 8 adds nearby_npcs alongside the 7 standard layers
+        expected_keys = {
             "l0_world_constants",
             "l1_chapter_state",
             "l2_area_environment",
@@ -771,7 +772,9 @@ class TestNpcFullContext:
             "l5_scene_bus",
             "l6_memory_recall",
             "l7_engine_result",
+            "nearby_npcs",
         }
+        assert set(npc_full.layers.keys()) == expected_keys
 
     def test_unknown_npc_returns_none(self) -> None:
         """Unknown NPC id → build_npc_full_context returns None."""
@@ -959,3 +962,263 @@ class TestLoreScopeFilter:
         l0 = builder._build_l0()
         ids = [e.id for e in l0["lore"]]
         assert "dungeon_lore" not in ids
+
+
+# ------------------------------------------------------------------
+# TestPhase7NpcLocation — Phase 7: NPC/teammate true location in L2/L3
+# ------------------------------------------------------------------
+
+
+class TestPhase7NpcLocation:
+    """Phase 7: build_npc_context and build_teammate_context use the NPC/teammate's
+    real position rather than the player's position for L2 and L3."""
+
+    def _world_with_two_npcs(self) -> "WorldInstance":
+        # Characters have no static area_id; positions are set at runtime via move_npc.
+        return build_default_world(
+            "test_world",
+            world_data={
+                "tags": {
+                    "profession": {"id": "profession", "tags": ["merchant", "guard"]},
+                    "ancestry": {"id": "ancestry", "tags": ["human"]},
+                },
+                "characters": {
+                    "town_merchant": {
+                        "id": "town_merchant",
+                        "name": "Town Merchant",
+                        "personality": "A careful trader.",
+                        "tags": ["merchant", "human"],
+                    },
+                    "castle_guard": {
+                        "id": "castle_guard",
+                        "name": "Castle Guard",
+                        "personality": "A stoic guardian.",
+                        "tags": ["guard", "human"],
+                    },
+                },
+            },
+        )
+
+    def test_npc_context_l2_reflects_npc_area_not_player_area(self) -> None:
+        """NPC's L2 should describe the NPC's area, not the player's area."""
+        world = self._world_with_two_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        # Player is in 'dungeon', NPC is in 'town'
+        state.player.restore({"current_area": "dungeon", "current_location": "entrance"})
+        state.areas.move_npc("town_merchant", "town", "market")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("town_merchant"))
+
+        l2 = ctx["l2_area_environment"]
+        assert l2 is not None
+        # L2 must reflect the NPC's area ('town'), not the player's ('dungeon')
+        assert l2["area_id"] == "town"
+
+    def test_npc_context_l3_reflects_npc_location_not_player_location(self) -> None:
+        """NPC's L3 should reflect the NPC's sub-location, not the player's."""
+        world = self._world_with_two_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        # Player is in 'dungeon/pit', NPC is in 'town/market'
+        state.player.restore({"current_area": "dungeon", "current_location": "pit"})
+        state.areas.move_npc("town_merchant", "town", "market")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("town_merchant"))
+
+        l3 = ctx["l3_location_details"]
+        assert l3 is not None
+        # L3 location_id must be NPC's ('market'), not player's ('pit')
+        assert l3["location_id"] == "market"
+
+    def test_npc_context_l2_differs_from_player_l2(self) -> None:
+        """NPC L2 area differs from what player-based resolution would produce."""
+        world = self._world_with_two_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        # Player in 'dungeon'; NPC in 'town'. Without Phase 7 fix, NPC would
+        # see 'dungeon' in L2. With fix, NPC sees 'town'.
+        state.player.restore({"current_area": "dungeon", "current_location": "entrance"})
+        state.areas.move_npc("castle_guard", "town", "gate")
+
+        builder = AgentContextBuilder(world, state)
+        npc_ctx = asyncio.run(builder.build_npc_context("castle_guard"))
+        gm_ctx = builder.build_gm_context()
+
+        # GM uses player's area; NPC uses its own area
+        assert gm_ctx["l2_area_environment"]["area_id"] == "dungeon"
+        assert npc_ctx["l2_area_environment"]["area_id"] == "town"
+
+    def test_teammate_context_l2_reflects_teammate_area(self) -> None:
+        """Teammate's L2 should reflect the teammate's area, not the player's."""
+        world = self._world_with_two_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        # Player in 'dungeon'; teammate is in 'town'
+        state.player.restore({"current_area": "dungeon", "current_location": "entrance"})
+        state.areas.move_npc("town_merchant", "town", "market")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_teammate_context("town_merchant"))
+
+        l2 = ctx["l2_area_environment"]
+        assert l2 is not None
+        assert l2["area_id"] == "town"
+
+    def test_npc_context_l2_empty_area_when_npc_location_unknown(self) -> None:
+        """When NPC has no known area at all, L2 area_id should be empty."""
+        world = self._world_with_two_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({"current_area": "town", "current_location": "market"})
+        # unknown_npc has no profile entry and no runtime placement
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("unknown_npc"))
+
+        l2 = ctx["l2_area_environment"]
+        assert l2["area_id"] == ""
+
+
+# ------------------------------------------------------------------
+# TestPhase8NearbyNpcs — Phase 8: nearby_npcs injection in NPC context
+# ------------------------------------------------------------------
+
+
+class TestPhase8NearbyNpcs:
+    """Phase 8: build_npc_context should include nearby_npcs listing
+    co-located NPCs (same sub-location), excluding self."""
+
+    def _world_with_market_npcs(self) -> "WorldInstance":
+        # No static area_id in profiles — positions are set at runtime via move_npc.
+        return build_default_world(
+            "test_world",
+            world_data={
+                "tags": {
+                    "profession": {"id": "profession", "tags": ["merchant", "guard", "bard"]},
+                    "ancestry": {"id": "ancestry", "tags": ["human"]},
+                },
+                "characters": {
+                    "merchant_a": {
+                        "id": "merchant_a",
+                        "name": "Merchant A",
+                        "personality": "Shrewd.",
+                        "tags": ["merchant", "human"],
+                    },
+                    "merchant_b": {
+                        "id": "merchant_b",
+                        "name": "Merchant B",
+                        "personality": "Careful.",
+                        "tags": ["merchant"],
+                    },
+                    "gate_guard": {
+                        "id": "gate_guard",
+                        "name": "Gate Guard",
+                        "personality": "Stoic.",
+                        "tags": ["guard", "human"],
+                    },
+                    "tavern_bard": {
+                        "id": "tavern_bard",
+                        "name": "Tavern Bard",
+                        "personality": "Jovial.",
+                        "tags": ["bard"],
+                    },
+                },
+            },
+        )
+
+    def test_nearby_npcs_excludes_self(self) -> None:
+        """nearby_npcs must never contain the NPC itself."""
+        world = self._world_with_market_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({"current_area": "town", "current_location": "market"})
+        state.areas.move_npc("merchant_a", "town", "market")
+        state.areas.move_npc("merchant_b", "town", "market")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("merchant_a"))
+
+        nearby_ids = [n["id"] for n in ctx["nearby_npcs"]]
+        assert "merchant_a" not in nearby_ids
+
+    def test_nearby_npcs_includes_same_location_npcs(self) -> None:
+        """nearby_npcs should include NPCs at the same sub-location."""
+        world = self._world_with_market_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({"current_area": "town", "current_location": "market"})
+        state.areas.move_npc("merchant_a", "town", "market")
+        state.areas.move_npc("merchant_b", "town", "market")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("merchant_a"))
+
+        nearby_ids = [n["id"] for n in ctx["nearby_npcs"]]
+        assert "merchant_b" in nearby_ids
+
+    def test_nearby_npcs_excludes_different_location_npcs(self) -> None:
+        """NPCs at a different sub-location must not appear in nearby_npcs."""
+        world = self._world_with_market_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({"current_area": "town", "current_location": "market"})
+        state.areas.move_npc("merchant_a", "town", "market")
+        state.areas.move_npc("gate_guard", "town", "gate")
+        state.areas.move_npc("tavern_bard", "town", "tavern")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("merchant_a"))
+
+        nearby_ids = [n["id"] for n in ctx["nearby_npcs"]]
+        assert "gate_guard" not in nearby_ids
+        assert "tavern_bard" not in nearby_ids
+
+    def test_nearby_npcs_contains_name_and_tags(self) -> None:
+        """nearby_npcs entries should include name and tags from character registry."""
+        world = self._world_with_market_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({"current_area": "town", "current_location": "market"})
+        state.areas.move_npc("merchant_a", "town", "market")
+        state.areas.move_npc("merchant_b", "town", "market")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("merchant_a"))
+
+        merchant_b_entry = next(
+            (n for n in ctx["nearby_npcs"] if n["id"] == "merchant_b"), None
+        )
+        assert merchant_b_entry is not None
+        assert merchant_b_entry.get("name") == "Merchant B"
+        assert "merchant" in merchant_b_entry.get("tags", [])
+
+    def test_nearby_npcs_empty_when_no_colocated_npcs(self) -> None:
+        """nearby_npcs should be empty when NPC is alone at their location."""
+        world = self._world_with_market_npcs()
+        runtime = build_runtime_for_world(world)
+        state = runtime.state
+        state.player.restore({"current_area": "town", "current_location": "tavern"})
+        # Only tavern_bard placed at tavern; others are at different locations
+        state.areas.move_npc("tavern_bard", "town", "tavern")
+        state.areas.move_npc("merchant_a", "town", "market")
+        state.areas.move_npc("gate_guard", "town", "gate")
+
+        builder = AgentContextBuilder(world, state)
+        ctx = asyncio.run(builder.build_npc_context("tavern_bard"))
+
+        assert ctx["nearby_npcs"] == []
+
+    def test_npc_context_has_nearby_npcs_key(self) -> None:
+        """build_npc_context must always return a nearby_npcs key."""
+        builder = _builder()
+        ctx = asyncio.run(builder.build_npc_context("merchant_tom"))
+        assert "nearby_npcs" in ctx
+        assert isinstance(ctx["nearby_npcs"], list)
+
+    def test_teammate_context_does_not_have_nearby_npcs(self) -> None:
+        """build_teammate_context does not inject nearby_npcs (NPC-specific feature)."""
+        builder = _builder()
+        ctx = asyncio.run(builder.build_teammate_context("paladin_aria"))
+        assert "nearby_npcs" not in ctx

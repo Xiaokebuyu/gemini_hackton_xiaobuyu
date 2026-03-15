@@ -124,6 +124,19 @@ class AgenticExecutor:
                 history.append({"role": "user", "parts": [{"text": user_message}]})
             if not history:
                 history = [{"role": "user", "parts": [{"text": "Proceed with your role."}]}]
+            # Inject context_layers into the last user message so that
+            # NPC/teammate agents see scene information even in multi-turn
+            # conversations where _build_initial_history() was not used.
+            if context_layers is not None:
+                layers_text = self._serialize_context_layers(role, context_layers)
+                if layers_text:
+                    last_user: dict[str, Any] | None = None
+                    for entry in reversed(history):
+                        if entry.get("role") == "user":
+                            last_user = entry
+                            break
+                    if last_user is not None:
+                        last_user["parts"].insert(0, {"text": layers_text})
         else:
             has_l5 = bool(
                 context_layers is not None
@@ -141,6 +154,7 @@ class AgenticExecutor:
 
         for turn in range(max_turns):
             response = await self._llm.generate(system_prompt, history, declarations)
+            last_model_parts = self._filter_model_parts(response.raw_model_parts)
 
             if not response.tool_calls:
                 final_text = (response.text or "").strip()
@@ -157,6 +171,7 @@ class AgenticExecutor:
                                 "status": "completed",
                                 "finish_reason": "pass_turn",
                             },
+                            last_model_parts=last_model_parts,
                         )
                     if final_text:
                         # Graceful degradation: NPC returned plain text without
@@ -180,6 +195,7 @@ class AgenticExecutor:
                                 "status": "completed",
                                 "finish_reason": "text_fallback",
                             },
+                            last_model_parts=last_model_parts,
                         )
                     return self._protocol_error_result(
                         role=role,
@@ -204,6 +220,7 @@ class AgenticExecutor:
                             "status": "completed",
                             "finish_reason": "pass_turn",
                         },
+                        last_model_parts=last_model_parts,
                     )
                 # True streaming on the final text turn.
                 # TODO: optimize to single streaming call (currently double-calls LLM
@@ -229,6 +246,7 @@ class AgenticExecutor:
                         "status": "completed",
                         "finish_reason": response.finish_reason,
                     },
+                    last_model_parts=last_model_parts,
                 )
 
             protocol_reason = self._validate_turn_tool_calls(role, response.tool_calls)
@@ -266,6 +284,7 @@ class AgenticExecutor:
                         "status": "completed",
                         "finish_reason": "visible_output_emitted",
                     },
+                    last_model_parts=last_model_parts,
                 )
 
             # Append tool results to history
@@ -468,6 +487,26 @@ class AgenticExecutor:
                 )
 
         return "\n\n".join(blocks)
+
+    @staticmethod
+    def _filter_model_parts(
+        raw_parts: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        """Filter thought_signature from raw model parts.
+
+        thought_signature is a per-call temporary context from Gemini 3 that
+        must not be persisted across conversation turns.  Only function_call
+        and text parts are kept.
+
+        Returns None when raw_parts is None or the filtered list is empty.
+        """
+        if not raw_parts:
+            return None
+        kept = [
+            p for p in raw_parts
+            if isinstance(p, dict) and "thought_signature" not in p
+        ]
+        return kept if kept else None
 
     @staticmethod
     def _error_result(

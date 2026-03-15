@@ -43,12 +43,13 @@ def test_traits_none_returns_all_tools() -> None:
     assert "speak" in names
 
 
-def test_traits_empty_list_returns_all_tools() -> None:
-    """traits=[] → same as None (no filtering)."""
+def test_traits_empty_list_filters_trait_restricted_tools() -> None:
+    """traits=[] → NPC with no tags does NOT get trait-restricted tools."""
     registry = _make_registry()
     tools = registry.get_tools_for("npc", [])
     names = {t.name for t in tools}
-    assert "offer_trade" in names
+    assert "offer_trade" not in names  # requires merchant trait
+    assert "speak" in names  # no trait restriction
 
 
 def test_merchant_tag_includes_offer_trade() -> None:

@@ -21,7 +21,7 @@ class RoleToolRegistry:
 
     def get_tools_for(self, role: str, traits: list[str] | None = None) -> list[AgentTool]:
         tools = list(self._tools.get(role, {}).values())
-        if not traits:
+        if traits is None:
             return tools
         trait_set = set(traits)
         return [

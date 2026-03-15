@@ -591,8 +591,13 @@ class TestContextLayersInjection:
         assert "Town Square" in all_text
         assert "Market Stall" in all_text
 
-    def test_context_layers_skipped_when_conversation_history_provided(self) -> None:
-        """When conversation_history is given, context_layers injection is skipped."""
+    def test_context_layers_injected_into_last_user_when_conversation_history_provided(self) -> None:
+        """When conversation_history is given, context_layers are injected into the last user message.
+
+        Previously context_layers were skipped in the conversation_history branch, causing
+        NPC agents to lose scene information after the first turn. Phase 1 fix injects them
+        into the last user message's parts, prepended before the message text.
+        """
         executor, llm = self._make_executor()
         prior = [{"role": "user", "parts": [{"text": "previous"}]}]
         asyncio.run(executor.run_agentic(
@@ -605,8 +610,14 @@ class TestContextLayersInjection:
         all_text = " ".join(
             p.get("text", "") for msg in history for p in msg.get("parts", [])
         )
-        assert "Town Square" not in all_text   # layers not injected
+        # context_layers now injected into last user message
+        assert "Town Square" in all_text
+        assert "Market Stall" in all_text
         assert "Hi" in all_text                # user_message still appended
+        # context_layers prepended to last user entry (second message), NOT first
+        last_user_parts = history[-1]["parts"]
+        last_user_text = " ".join(p.get("text", "") for p in last_user_parts)
+        assert "Town Square" in last_user_text  # injected into last user, not first
 
     def test_l5_suppresses_raw_scene_when_layers_provided(self) -> None:
         """When context_layers has L5 entries, context.scene_entries are NOT re-injected."""

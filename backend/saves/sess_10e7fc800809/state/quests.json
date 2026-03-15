@@ -1,0 +1,179 @@
+{
+  "chapter_completion": {
+    "ch2": 0.25
+  },
+  "dynamic_quests": {
+    "dq_investigate_ambush": {
+      "created_at_tick": 11,
+      "current_step": "寻得祝福并重新出发",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "大修女提到的‘黑索’可能与袭击者的来历有关。",
+        "哥布林杀手应该还在北门附近等待。"
+      ],
+      "metadata": {},
+      "min_level": 1,
+      "next_steps": [
+        "前往北门调查袭击现场的残骸 (clue_ambush_debris)",
+        "跟随痕迹前往古代遗迹"
+      ],
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "clue_id": "clue_ambush_tracks"
+            },
+            "type": "clue_investigated"
+          },
+          "description": "前往北门调查车队遇袭的痕迹"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "ancient_ruins",
+              "location_id": "ruins_entrance"
+            },
+            "type": "location_visited"
+          },
+          "description": "追踪痕迹抵达古代遗迹"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_investigate_ambush",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 150,
+        "xp": 500
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "铁匠的补给车队在北门外失踪，这似乎与近期哥布林的异常活动有关。",
+      "target_milestone": null,
+      "title": "消失的货运队",
+      "urgency": "medium"
+    },
+    "dq_ms_frontier_arrival": {
+      "created_at_tick": 8,
+      "current_step": "在酒馆休整并打听消息",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "酒馆里的闲聊提到，那个‘哥布林杀手’通常在傍晚时分出现在公会大厅角落。"
+      ],
+      "metadata": {
+        "source_milestone": "ms_frontier_arrival",
+        "urgency": "medium"
+      },
+      "min_level": 1,
+      "next_steps": [
+        "回到公会大厅，寻找那个只接哥布林任务的男人"
+      ],
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与guild_girl对话"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "goblin_slayer"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与goblin_slayer对话"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往frontier_town"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_frontier_arrival",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 300,
+        "xp": 600
+      },
+      "rewards_claimed": true,
+      "source": "narrative_planner",
+      "status": "completed",
+      "summary": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+      "target_milestone": "ms_frontier_arrival",
+      "title": "踏入边境",
+      "urgency": "medium"
+    },
+    "lost_refined_ore": {
+      "created_at_tick": 0,
+      "delivery_method": "npc",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "giver_npc": "blacksmith"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "description": "前往被劫现场或哥布林营地搜索精炼矿石"
+        },
+        {
+          "completed": false,
+          "description": "将矿石带回给碎盾铁匠"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "lost_refined_ore",
+      "reported": false,
+      "requires_report": false,
+      "rewards": {},
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "铁匠的一批精炼矿石被哥布林劫走，这些矿石如果被哥布林利用将非常危险。找回矿石可以获得丰厚奖励。",
+      "target_milestone": null,
+      "title": "夺回失窃的精炼矿石",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_frontier_arrival": {
+      "activated_tick": 8,
+      "completed_tick": null,
+      "state": "COMPLETED"
+    },
+    "ms_growing_darkness": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "AVAILABLE"
+    },
+    "ms_hive_heart": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

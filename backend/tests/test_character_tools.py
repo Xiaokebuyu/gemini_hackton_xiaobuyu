@@ -422,13 +422,13 @@ def test_register_npc_tools_registers_nine() -> None:
 
     tools = registry.get_tools_for("npc")
     names = {t.name for t in tools}
-    assert len(names) == 17
+    assert len(names) == 18
     assert names == {
         "speak", "emote",
         "update_feeling", "remember", "recall", "offer_quest",
         "accept_quest", "assign_quest", "offer_trade", "refuse", "reveal_secret",
         "join_party", "execute_service", "discover_clue", "offer_help",
-        "update_blackboard", "send_npc_message",
+        "update_blackboard", "send_npc_message", "sell_to_player",
     }
 
 

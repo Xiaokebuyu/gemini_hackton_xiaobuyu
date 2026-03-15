@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable, Literal, Mapping
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.companion_runtime import CompanionRuntimeManager
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, _extract_role_data, _profile_get
-from app.game_core.narrative.context_window import ContextWindow, WindowMessage
+from app.game_core.narrative.context_window import ContextWindow, WindowMessage, window_to_history
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
@@ -293,7 +293,7 @@ class NpcInteractionCoordinator:
                 tm_history: list[dict[str, Any]] | None = None
                 if self._companion_manager is not None:
                     companion_inst = self._companion_manager.get_or_create(member_id)
-                    tm_history = _window_to_history(companion_inst.context_window)
+                    tm_history = window_to_history(companion_inst.context_window)
 
                 try:
                     tm_result = await self._executor.run_agentic(
@@ -390,6 +390,20 @@ class NpcInteractionCoordinator:
         if check_result:
             system_prompt += self._format_check_constraint(check_result)
 
+        # Phase 3b: Inject planner-assigned pending_topic from NPC blackboard.
+        # The NpcDirectorSubSystem writes pending_topic when a direct_npc directive
+        # carries a topic/goal.  We read it here and append a dedicated section to the
+        # system prompt so the NPC knows it should proactively raise that topic.
+        # The key is cleared after the interaction completes successfully (see Step 6 below).
+        _pending_topic: str | None = None
+        if self._state.has_slice("relations"):
+            _bb = self._state.relations.get_blackboard(npc_id)
+            _raw_topic = _bb.get("pending_topic", "")
+            if isinstance(_raw_topic, str) and _raw_topic.strip():
+                _pending_topic = _raw_topic.strip()
+        if _pending_topic is not None:
+            system_prompt += _build_pending_topic_prompt(_pending_topic)
+
         # QF-5: Inject capability boundary so NPC knows what it can/cannot do
         # Also inject dynamic capabilities assigned by the narrative planner
         _ni_dynamic_caps: list[dict] = []
@@ -421,7 +435,7 @@ class NpcInteractionCoordinator:
 
         # ---- Step 2: NPC Agent Response ---------------------------
         npc_result: AgentResult | None = None
-        history = _window_to_history(context_window) if context_window is not None else None
+        history = window_to_history(context_window) if context_window is not None else None
         try:
             npc_result = await self._executor.run_agentic(
                 role="npc",
@@ -472,6 +486,7 @@ class NpcInteractionCoordinator:
                 should2 = context_window.add_message(WindowMessage(
                     role="model", content=npc_speech,
                     token_count=_approx_tokens(npc_speech), metadata={},
+                    parts=npc_result.last_model_parts if npc_result is not None else None,
                 ))
             if should1 or should2:
                 graphize_candidates = context_window.collect_for_graphize()
@@ -529,6 +544,16 @@ class NpcInteractionCoordinator:
         )
 
         # ---- Step 6: Return ---------------------------------------
+        # Phase 3b: Clear pending_topic from NPC blackboard now that the NPC has
+        # had the opportunity to raise it.  We clear unconditionally on successful
+        # completion so the topic is not repeated in every subsequent interaction.
+        if _pending_topic is not None and self._state.has_slice("relations"):
+            self._state.relations.update_blackboard(npc_id, {"pending_topic": ""})
+            logger.debug(
+                "NpcInteractionCoordinator: cleared pending_topic for %s after interaction",
+                npc_id,
+            )
+
         return NpcInteractionResult(
             completed=True,
             npc_id=npc_id,
@@ -792,17 +817,7 @@ def _bucketed_relationship_response_mod(approval: int, trust: int) -> float:
     return tendency
 
 
-def _window_to_history(window: ContextWindow) -> list[dict[str, Any]]:
-    """Convert ContextWindow messages to Gemini conversation history format.
-
-    Skips messages already flagged as graphized (they have been compressed
-    into the knowledge graph and should not be re-sent to the LLM).
-    """
-    return [
-        {"role": msg.role, "parts": [{"text": msg.content}]}
-        for msg in window.messages
-        if not msg.is_graphized
-    ]
+# _window_to_history is provided by context_window.window_to_history
 
 
 def _approx_tokens(text: str) -> int:
@@ -962,6 +977,8 @@ def _build_capability_boundary_prompt(
     # Tool → Chinese description mapping
     _TOOL_CAN_DO: dict[str, str] = {
         "offer_trade": "展示商品和交易",
+        "sell_to_player": "向玩家出售商品（真实扣金币）",
+        "execute_service": "执行神殿服务（治疗、祝福等）",
         "offer_quest": "发布和介绍任务",
         "reveal_secret": "分享隐秘信息",
         "join_party": "邀请加入队伍",
@@ -991,6 +1008,24 @@ def _build_capability_boundary_prompt(
                 lines.append(f"- **{cap_id}**: {instruction}")
 
     return "\n".join(lines)
+
+
+def _build_pending_topic_prompt(topic: str) -> str:
+    """Build a system prompt section for a planner-assigned pending_topic (Phase 3b).
+
+    The NpcDirectorSubSystem writes ``pending_topic`` to the NPC blackboard when a
+    ``direct_npc`` directive carries a topic or goal.  This section is injected into
+    the NPC system prompt so the NPC knows it should proactively bring up that topic
+    in the current conversation.
+
+    The field is cleared by the coordinator after the interaction completes.
+    """
+    return (
+        f"\n\n## 你有话想对玩家说\n"
+        f"导演已安排你在这次对话中提起以下话题。请自然地将它融入对话中，"
+        f"不要生硬地切换，但确保在这次对话中提到它。\n"
+        f"话题：{topic}"
+    )
 
 
 def _resolve_dialogue_check_dc(

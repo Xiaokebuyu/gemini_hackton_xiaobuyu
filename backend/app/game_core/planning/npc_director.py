@@ -268,7 +268,11 @@ class NpcDirectorSubSystem:
         if not result.executed:
             return "; ".join(result.errors) if result.errors else "command_failed"
 
-        # Write npc_goal/topic from directive into the NPC's blackboard goals list.
+        # Write npc_goal/topic from directive into the NPC's blackboard.
+        # - "goals" list: accumulates all goals across directives (for NPC's general awareness)
+        # - "pending_topic": single string — the most recent planner-assigned topic the NPC
+        #   should proactively bring up. Read by npc_interaction.py to inject into the system
+        #   prompt; cleared after the NPC successfully speaks with the player.
         npc_id_for_bb = coerce_non_empty_string(payload.get("npc_id"))
         goal_text = None
         directive_inner = payload.get("directive")
@@ -283,7 +287,10 @@ class NpcDirectorSubSystem:
                 goals = []
             if goal_text not in goals:
                 goals.append(goal_text)
-            context.state.relations.update_blackboard(npc_id_for_bb, {"goals": goals})
+            context.state.relations.update_blackboard(
+                npc_id_for_bb,
+                {"goals": goals, "pending_topic": goal_text},
+            )
 
         return True
 

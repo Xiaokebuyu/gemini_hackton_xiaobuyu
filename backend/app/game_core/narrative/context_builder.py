@@ -25,6 +25,7 @@ from app.game_core.narrative.context import AgentContext
 from app.game_core.narrative.companion_runtime import CompanionInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
 from app.game_core.narrative.role_proxy import RoleStateProxy
+from app.game_core.orchestration.presence import get_area_npcs, get_npc_room
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateContainer
 
@@ -476,18 +477,28 @@ class AgentContextBuilder:
     async def build_npc_context(
         self, npc_id: str, *, memory_retriever: MemoryRetriever | None = None
     ) -> dict[str, Any]:
-        """NPC: 角色视角，L0 + L2-L6，L1 不可见。"""
-        current_area, current_location, current_room = self._resolve_location()
-        area_state = self._get_area_state(current_area)
+        """NPC: 角色视角，L0 + L2-L6，L1 不可见。
+
+        Phase 7: Uses NPC's true location (not player's) for L2/L3.
+        Phase 8: Injects nearby_npcs list of co-located NPCs.
+        """
+        npc_area, npc_location = _resolve_npc_area_and_location(npc_id, self._state, self._world)
+        npc_room: str | None = None
+        if npc_area and self._state.has_slice("areas"):
+            npc_room = self._state.areas.get_npc_room(npc_area, npc_id)
+        area_state = self._get_area_state(npc_area)
         return {
             "l0_world_constants": self._build_l0(),
             "l1_chapter_state": None,
-            "l2_area_environment": self._build_l2(current_area, area_state),
-            "l3_location_details": self._build_l3(current_area, current_location, current_room, area_state),
+            "l2_area_environment": self._build_l2(npc_area, area_state),
+            "l3_location_details": self._build_l3(npc_area, npc_location, npc_room, area_state),
             "l4_dynamic_state": self._build_l4_npc(npc_id),
             "l5_scene_bus": self._build_l5_role("npc", npc_id),
             "l6_memory_recall": await self._build_l6(npc_id, memory_retriever, "npc"),
             "l7_engine_result": None,
+            "nearby_npcs": self._build_nearby_npcs(
+                npc_id, npc_area, npc_location, npc_room
+            ),
         }
 
     async def build_teammate_context(
@@ -497,9 +508,15 @@ class AgentContextBuilder:
         memory_retriever: MemoryRetriever | None = None,
         companion_instance: CompanionInstance | None = None,
     ) -> dict[str, Any]:
-        """队友: 队伍视角，L0 + L1(部分) + L2-L6。"""
-        current_area, current_location, current_room = self._resolve_location()
-        area_state = self._get_area_state(current_area)
+        """队友: 队伍视角，L0 + L1(部分) + L2-L6。
+
+        Phase 7: Uses teammate's true location (not player's) for L2/L3.
+        """
+        char_area, char_location = _resolve_npc_area_and_location(char_id, self._state, self._world)
+        char_room: str | None = None
+        if char_area and self._state.has_slice("areas"):
+            char_room = self._state.areas.get_npc_room(char_area, char_id)
+        area_state = self._get_area_state(char_area)
         l6 = await self._build_l6(char_id, memory_retriever, "teammate")
         companion_summary = _build_companion_memory_context(companion_instance)
         if companion_summary:
@@ -507,8 +524,8 @@ class AgentContextBuilder:
         return {
             "l0_world_constants": self._build_l0(),
             "l1_chapter_state": self._build_l1_teammate(),
-            "l2_area_environment": self._build_l2(current_area, area_state),
-            "l3_location_details": self._build_l3(current_area, current_location, current_room, area_state),
+            "l2_area_environment": self._build_l2(char_area, area_state),
+            "l3_location_details": self._build_l3(char_area, char_location, char_room, area_state),
             "l4_dynamic_state": self._build_l4_teammate(char_id),
             "l5_scene_bus": self._build_l5_role("teammate", char_id),
             "l6_memory_recall": l6,
@@ -847,6 +864,57 @@ class AgentContextBuilder:
             return None
         area_state = raw.get(area_id)
         return dict(area_state) if isinstance(area_state, dict) else None
+
+    def _build_nearby_npcs(
+        self,
+        self_npc_id: str,
+        area_id: str,
+        location_id: str | None,
+        room_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """Phase 8: Build a list of other NPCs co-located with self_npc_id.
+
+        Uses presence.get_area_npcs() to enumerate all NPCs in the area, then
+        filters to those sharing the same sub-location (and room, if the NPC is
+        in a room). Self is excluded. Name and tags are resolved from the
+        character registry when available.
+        """
+        if not area_id or not self._state.has_slice("areas"):
+            return []
+
+        area_npcs = get_area_npcs(self._state, self._world, area_id)
+        normalized_self = self_npc_id.strip()
+        normalized_loc = (location_id or "").strip() or None
+        normalized_room = (room_id or "").strip() or None
+
+        nearby: list[dict[str, Any]] = []
+        for other_id, other_loc in area_npcs.items():
+            if other_id == normalized_self:
+                continue
+            # Must share the same sub-location as self
+            other_loc_norm = (other_loc or "").strip() or None
+            if other_loc_norm != normalized_loc:
+                continue
+            # If self is in a room, only include NPCs in the same room
+            if normalized_room is not None:
+                other_room = get_npc_room(self._state, self._world, area_id, other_id)
+                other_room_norm = (other_room or "").strip() or None
+                if other_room_norm != normalized_room:
+                    continue
+
+            entry: dict[str, Any] = {"id": other_id}
+            if self._world.has_registry("characters"):
+                profile = self._world.characters.get(other_id)
+                if profile is not None:
+                    name = str(getattr(profile, "name", "") or "").strip()
+                    if name:
+                        entry["name"] = name
+                    raw_tags = getattr(profile, "tags", [])
+                    if isinstance(raw_tags, list):
+                        entry["tags"] = [str(t) for t in raw_tags if t]
+            nearby.append(entry)
+
+        return nearby
 
     # ----------------------------------------------------------------
     # Private: L0 — world constants (identical for all roles)
@@ -1402,32 +1470,54 @@ def _extract_merchant_data(
 
     Enriches each item with name, type, rarity, and description from the
     ItemRegistry when world is provided.
+
+    Returns two lists:
+    - ``inventory``: display-oriented list used in the prompt constraint block
+      (item_id, price, stock, name, type, rarity, description)
+    - ``shop_stock``: truth-source list used by SellToPlayerTool at runtime
+      (item_id, name, base_price, unlimited, remaining)
     """
     inventory: list[dict[str, Any]] = []
+    shop_stock: list[dict[str, Any]] = []
     if state.has_slice("relations"):
         shop = state.relations.get_shop_state(npc_id)
         if isinstance(shop, dict):
             for item in shop.get("current_stock", []):
                 if isinstance(item, dict):
                     item_id = item.get("item_id", "")
-                    entry: dict[str, Any] = {
+                    remaining = item.get("remaining")  # None = unlimited
+                    base_price = item.get("base_price", 0)
+                    display_entry: dict[str, Any] = {
                         "item_id": item_id,
-                        "price": item.get("base_price", 0),
-                        "stock": item.get("remaining"),  # None = unlimited
+                        "price": base_price,
+                        "stock": remaining,
+                    }
+                    stock_entry: dict[str, Any] = {
+                        "item_id": item_id,
+                        "name": item_id,
+                        "base_price": base_price,
+                        "unlimited": remaining is None,
+                        "remaining": remaining,
+                        "source": item.get("source", ""),
+                        "price_override": None,
                     }
                     # Enrich with catalog data if world is available
                     if item_id and world is not None and world.has_registry("items"):
                         template = world.items.get(item_id)
                         if template is not None:
-                            entry["name"] = str(getattr(template, "name", item_id) or item_id)
-                            entry["type"] = str(getattr(template, "type", "") or "")
-                            entry["rarity"] = str(getattr(template, "rarity", "") or "")
+                            item_name = str(getattr(template, "name", item_id) or item_id)
+                            display_entry["name"] = item_name
+                            display_entry["type"] = str(getattr(template, "type", "") or "")
+                            display_entry["rarity"] = str(getattr(template, "rarity", "") or "")
                             raw_desc = str(getattr(template, "description", "") or "")
-                            entry["description"] = raw_desc[:50] if raw_desc else ""
-                    inventory.append(entry)
+                            display_entry["description"] = raw_desc[:50] if raw_desc else ""
+                            stock_entry["name"] = item_name
+                    inventory.append(display_entry)
+                    shop_stock.append(stock_entry)
     return {
         "role": "merchant",
         "inventory": inventory,
+        "shop_stock": shop_stock,
     }
 
 
@@ -1787,7 +1877,9 @@ def _format_role_constraint_block(role_data: dict[str, Any]) -> str:
         lines.append("")
         lines.append("### 约束规则")
         lines.append("- 只能出售库存中实际存在的商品，绝不编造不存在的商品")
-        lines.append("- 价格以库存列表为准，不得自行调整")
+        lines.append("- 价格可在原价的 50%-150% 范围内调整（需给出理由）")
+        lines.append("- 使用 sell_to_player 工具执行真实交易（扣金币 + 发放物品）")
+        lines.append("- 交易前确认玩家有足够金币，交易前先用 speak 介绍商品")
         return "\n".join(lines)
 
     if role == "temple_keeper":

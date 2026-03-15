@@ -121,12 +121,14 @@ async def navigate(
             await queue.put(event)
         if result.executed:
             if action == "enter_sub_location":
+                await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
                 await queue.put(SSEEvent("location_overview", build_location_overview(session)))
                 location_id = _non_empty_string(params.get("location_id"))
                 if location_id is not None:
                     await _emit_hostile_entry_events(queue, session, sub_area_id=location_id)
                 await queue.put(_build_stream_end_event("completed", result.executed))
                 return
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.executed))
 
@@ -688,6 +690,7 @@ async def action_stream(
                 _schedule_sub_area_prefetch(result, session)
                 resolver = get_asset_resolver()
                 await queue.put(SSEEvent("scene_change", build_scene_change(session, asset_resolver=resolver)))
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.executed))
 
@@ -751,6 +754,7 @@ async def input_stream(
                 _schedule_sub_area_prefetch(result, session)
                 resolver = get_asset_resolver()
                 await queue.put(SSEEvent("scene_change", build_scene_change(session, asset_resolver=resolver)))
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(_build_stream_end_event("completed", result.executed))
 
@@ -870,6 +874,7 @@ async def interact_stream(
                         scope=utterance_result.turn_scope,
                     ),
                 )
+            await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
             await queue.put(SSEEvent("location_overview", build_location_overview(session)))
             await queue.put(SSEEvent("stream_end", {
                 "reason": utterance_result.reason,
@@ -1019,6 +1024,7 @@ async def interact_stream(
                     },
                 )
 
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(SSEEvent("stream_end", {
             "reason": stream_reason,
@@ -1067,6 +1073,7 @@ async def private_chat_stream(
                     scope=result.turn_scope,
                 ),
             )
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         await queue.put(SSEEvent("stream_end", {
             "reason": result.reason,
@@ -1104,6 +1111,7 @@ async def companion_recruit(
             await queue.put(companion_event)
         for event in result.sse_events:
             await queue.put(event)
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         reason = (
             result.errors[0]
@@ -1137,6 +1145,7 @@ async def companion_dismiss(
             await queue.put(companion_event)
         for event in result.sse_events:
             await queue.put(event)
+        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
         await queue.put(SSEEvent("location_overview", build_location_overview(session)))
         reason = (
             result.errors[0]

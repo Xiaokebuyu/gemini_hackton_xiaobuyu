@@ -15,11 +15,11 @@ from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.character_tools import register_npc_tools, register_teammate_tools
 from app.game_core.narrative.models import AgentResult, ToolResult
 from app.game_core.narrative.registry import RoleToolRegistry
+from app.game_core.narrative.context_window import window_to_history
 from app.game_core.orchestration.private_chat import (
     PrivateChatCoordinator,
     PrivateChatResult,
     _approx_tokens,
-    _window_to_history,
 )
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateContainer
@@ -617,9 +617,29 @@ class TestWindowHelpers:
             WindowMessage(role="model", content="graphized", token_count=1, metadata={},
                           is_graphized=True),
         ]
-        history = _window_to_history(window)
+        history = window_to_history(window)
         assert len(history) == 1
         assert history[0]["parts"][0]["text"] == "visible"
+
+    def test_window_to_history_uses_parts_when_present(self) -> None:
+        """When parts is set on a message, it must be preferred over plain text."""
+        from app.game_core.narrative.context_window import WindowMessage
+        fc_part = {"function_call": {"name": "speak", "args": {"text": "hi"}}}
+        window = ContextWindow(actor_id="npc_alice", max_tokens=10000)
+        window.messages = [
+            WindowMessage(role="user", content="player msg", token_count=2),
+            WindowMessage(
+                role="model", content="hi",
+                token_count=2,
+                parts=[fc_part],
+            ),
+        ]
+        history = window_to_history(window)
+        assert len(history) == 2
+        # User message: text fallback
+        assert history[0]["parts"] == [{"text": "player msg"}]
+        # Model message: structured parts preferred
+        assert history[1]["parts"] == [fc_part]
 
     def test_approx_tokens_minimum_one(self) -> None:
         """Empty string → token count is at least 1."""
@@ -629,3 +649,211 @@ class TestWindowHelpers:
         """'aaaa' (4 chars) → ~1 token."""
         assert _approx_tokens("aaaa") == 1
         assert _approx_tokens("a" * 40) == 10
+
+
+# ------------------------------------------------------------------
+# TestPrivateChatSceneDeduplication (Phase 9 fix)
+# ------------------------------------------------------------------
+
+
+class TestPrivateChatSceneDeduplication:
+    """Phase 9: Verify僻静处 sub-area and SSE event are not duplicated across turns."""
+
+    def test_first_call_creates_scene_and_marks_is_new(self) -> None:
+        """First execute() call: scene_is_new=True, sub-area created in areas slice."""
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        coordinator, _ = _build_coordinator(
+            llm_responses=[_npc_speak_response("Hi!")],
+            world=world,
+            state=state,
+        )
+
+        result = asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Hello",
+            execute_command=_noop_executor,
+        ))
+
+        assert result.scene_is_new is True
+        assert result.scene_id is not None
+        assert result.scene_id.startswith("_private_merchant_tom_")
+
+    def test_second_call_reuses_scene_and_marks_not_new(self) -> None:
+        """Second execute() for the same NPC: scene_is_new=False, same scene_id returned."""
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        coordinator, _ = _build_coordinator(
+            llm_responses=[
+                _npc_speak_response("Hello!"),
+                _npc_speak_response("And again!"),
+                # GM responses
+                _stop_response(),
+                _stop_response(),
+            ],
+            world=world,
+            state=state,
+        )
+
+        result1 = asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Hello",
+            execute_command=_noop_executor,
+        ))
+        result2 = asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Hello again",
+            execute_command=_noop_executor,
+        ))
+
+        assert result1.scene_is_new is True
+        assert result2.scene_is_new is False
+        # Same scene_id returned (reused, not recreated)
+        assert result1.scene_id == result2.scene_id
+
+    def test_second_call_does_not_duplicate_sub_area_in_state(self) -> None:
+        """After two execute() calls, only ONE private sub-area for the NPC exists in state."""
+        world = _world_with_characters()
+        state = _state_with_relations(world)
+        coordinator, _ = _build_coordinator(
+            llm_responses=[
+                _npc_speak_response("Hello!"),
+                _npc_speak_response("Again!"),
+                _stop_response(),
+                _stop_response(),
+            ],
+            world=world,
+            state=state,
+        )
+
+        asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Hello",
+            execute_command=_noop_executor,
+        ))
+        asyncio.run(coordinator.execute(
+            npc_id="merchant_tom",
+            player_message="Hello again",
+            execute_command=_noop_executor,
+        ))
+
+        sub_areas = state.areas.list_temporary_sub_areas("town")
+        private_sub_areas = [
+            sa for sa in sub_areas
+            if sa.get("source") == "private_chat"
+            and "merchant_tom" in sa.get("resident_npcs", [])
+        ]
+        assert len(private_sub_areas) == 1, (
+            f"Expected exactly 1 private sub-area, got {len(private_sub_areas)}"
+        )
+
+    def test_scene_change_sse_emitted_only_on_first_call(self) -> None:
+        """scene_change SSE must appear on first call (scene_is_new=True) but not on second."""
+        # First call: scene_is_new=True → scene_change emitted
+        result_new = PrivateChatResult(
+            completed=True,
+            npc_id="merchant_tom",
+            scene_id="_private_merchant_tom_0",
+            scene_name="酒馆二楼的小包间",
+            scene_is_new=True,
+        )
+        events_new = _private_chat_result_to_sse(result_new)
+        assert any(e.event_type == "scene_change" for e in events_new), (
+            "scene_change must be emitted when scene_is_new=True"
+        )
+
+        # Second call: scene_is_new=False → scene_change NOT emitted
+        result_reuse = PrivateChatResult(
+            completed=True,
+            npc_id="merchant_tom",
+            scene_id="_private_merchant_tom_0",
+            scene_name="酒馆二楼的小包间",
+            scene_is_new=False,
+        )
+        events_reuse = _private_chat_result_to_sse(result_reuse)
+        assert not any(e.event_type == "scene_change" for e in events_reuse), (
+            "scene_change must NOT be emitted when scene_is_new=False"
+        )
+
+    def test_scene_change_payload_has_fade_transition(self) -> None:
+        """When scene_is_new=True, scene_change payload includes transition='fade'."""
+        result = PrivateChatResult(
+            completed=True,
+            npc_id="merchant_tom",
+            scene_id="_private_merchant_tom_0",
+            scene_name="僻静处",
+            scene_is_new=True,
+        )
+        events = _private_chat_result_to_sse(result)
+        scene_event = next(e for e in events if e.event_type == "scene_change")
+        assert scene_event.payload["transition"] == "fade"
+        assert scene_event.payload["location_id"] == "_private_merchant_tom_0"
+        assert scene_event.payload["location_name"] == "僻静处"
+
+    def test_different_npcs_get_separate_private_scenes(self) -> None:
+        """Two NPCs in the same area each get their own non-overlapping sub-areas."""
+        world = build_default_world(
+            "test_world",
+            world_data={
+                "tags": {
+                    "profession": {"id": "profession", "tags": ["merchant", "blacksmith"]},
+                    "ancestry": {"id": "ancestry", "tags": ["human"]},
+                },
+                "characters": {
+                    "merchant_tom": {
+                        "id": "merchant_tom",
+                        "name": "Merchant Tom",
+                        "personality": "Shrewd.",
+                        "tags": ["merchant", "human"],
+                    },
+                    "blacksmith_joe": {
+                        "id": "blacksmith_joe",
+                        "name": "Blacksmith Joe",
+                        "personality": "Gruff.",
+                        "tags": ["blacksmith", "human"],
+                    },
+                },
+            },
+        )
+        from app.game_core.bootstrap import build_runtime_for_world
+        state = build_runtime_for_world(world).state
+        state.player.restore({
+            "character_name": "Hero",
+            "current_area": "town",
+        })
+
+        llm = RecordingLlmProvider([_npc_speak_response("Hi from Tom."), _stop_response()])
+        from app.game_core.narrative.registry import RoleToolRegistry
+        from app.game_core.narrative.character_tools import register_npc_tools
+        from app.game_core.narrative.gm_tools import register_gm_tools
+        registry = RoleToolRegistry()
+        register_gm_tools(registry)
+        register_npc_tools(registry)
+        from app.game_core.narrative.executor import AgenticExecutor
+        executor = AgenticExecutor(tool_registry=registry, llm=llm)
+        coord = PrivateChatCoordinator(executor, world, state)
+
+        result_tom = asyncio.run(coord.execute(
+            npc_id="merchant_tom",
+            player_message="Hi",
+            execute_command=_noop_executor,
+        ))
+
+        llm2 = RecordingLlmProvider([_npc_speak_response("Hi from Joe."), _stop_response()])
+        executor2 = AgenticExecutor(tool_registry=registry, llm=llm2)
+        coord2 = PrivateChatCoordinator(executor2, world, state)
+        result_joe = asyncio.run(coord2.execute(
+            npc_id="blacksmith_joe",
+            player_message="Hi",
+            execute_command=_noop_executor,
+        ))
+
+        assert result_tom.scene_is_new is True
+        assert result_joe.scene_is_new is True
+        # Scenes must be different
+        assert result_tom.scene_id != result_joe.scene_id
+
+        # Two separate private sub-areas should exist
+        sub_areas = state.areas.list_temporary_sub_areas("town")
+        private_ids = {sa["id"] for sa in sub_areas if sa.get("source") == "private_chat"}
+        assert len(private_ids) == 2

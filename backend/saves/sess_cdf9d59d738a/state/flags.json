@@ -1,0 +1,29 @@
+{
+  "flags": {
+    "directive_trigger_cooldown_blacksmith": 18,
+    "directive_trigger_cooldown_goblin_slayer": 16,
+    "directive_trigger_cooldown_high_elf_archer": 15,
+    "directive_trigger_cooldown_north_gate_warden": 17,
+    "directive_trigger_cooldown_temple_matron": 19,
+    "narrative_escalation_level": 2,
+    "talked_to_blacksmith": true,
+    "talked_to_goblin_slayer": true,
+    "talked_to_guild_girl": true,
+    "talked_to_high_elf_archer": true,
+    "talked_to_priestess": true,
+    "talked_to_tavern_keeper": true,
+    "talked_to_temple_matron": true,
+    "visited_location_frontier_town__adventurer_guild": true,
+    "visited_location_frontier_town__blacksmith_shop": true,
+    "visited_location_frontier_town__clue_10": true,
+    "visited_location_frontier_town__mother_earth_temple": true,
+    "visited_location_frontier_town__north_gate": true,
+    "visited_location_frontier_town__tavern": true,
+    "visited_room_frontier_town__adventurer_guild__guild_counter": true,
+    "visited_room_frontier_town__adventurer_guild__guild_hall": true,
+    "visited_room_frontier_town__blacksmith_shop__forge": true,
+    "visited_room_frontier_town__mother_earth_temple__prayer_hall": true,
+    "visited_room_frontier_town__north_gate__guard_post": true,
+    "visited_room_frontier_town__tavern__main_hall": true
+  }
+}

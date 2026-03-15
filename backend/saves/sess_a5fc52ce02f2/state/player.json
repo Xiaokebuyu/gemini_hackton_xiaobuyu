@@ -38,10 +38,10 @@
     "ring_l": null,
     "ring_r": null
   },
-  "gold": 15,
+  "gold": 615,
   "guild_rank": "porcelain",
   "guild_reputation": 0,
-  "hp": 10,
+  "hp": 16,
   "inventory": [
     {
       "count": 1,
@@ -65,8 +65,8 @@
     }
   ],
   "known_spells": [],
-  "level": 1,
-  "max_hp": 10,
+  "level": 2,
+  "max_hp": 16,
   "prepared_spells": [],
   "proficiency_bonus": 2,
   "save_proficiencies": [],
@@ -80,5 +80,5 @@
     "wis": 14
   },
   "subclass": "None",
-  "xp": 0
+  "xp": 1200
 }

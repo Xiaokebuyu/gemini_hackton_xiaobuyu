@@ -1336,11 +1336,11 @@ class PlannerWorldHandler(StaticCommandHandler):
             if not world.has_registry("maps"):
                 return ValidationResult(ok=False, reason="maps registry is required")
             sub_loc = world.maps.get_sub_location(area_id, location_id)
-            if sub_loc is None:
+            if sub_loc is None and not _planner_location_exists(state, world, area_id, location_id):
                 return ValidationResult(ok=False, reason=f"unknown sub_location '{location_id}'")
             room_id = coerce_non_empty_string(cmd.params.get("room_id"))
             if room_id is not None:
-                static_room = sub_loc.rooms.get(room_id)
+                static_room = sub_loc.rooms.get(room_id) if sub_loc is not None else None
                 has_dynamic_room = any(
                     str(room.get("room_id", "")).strip() == room_id
                     for room in state.areas.list_dynamic_rooms(area_id, location_id)
@@ -1422,23 +1422,46 @@ class PlannerWorldHandler(StaticCommandHandler):
         cmd: Command,
         state: StateContainer,
     ) -> ExecuteResult:
-        # For plant_environmental, "description" is used as the sub-area label
-        # (label_fallback_key="description"). Validate that it looks like a
-        # place name rather than a narrative sentence.
-        label = str(cmd.params.get("label") or cmd.params.get("description") or "").strip()
+        # Separate label (short display name) from description (narrative text).
+        # Prefer explicit "label" param; fall back to first 20 chars of description + "…".
+        explicit_label = coerce_non_empty_string(cmd.params.get("label"))
+        description = str(cmd.params.get("description") or "").strip()
+        if explicit_label is not None:
+            label = explicit_label.strip()
+        elif description:
+            label = description[:20] + ("…" if len(description) > 20 else "")
+        else:
+            label = ""
         if label:
             if len(label) > 30:
                 return ExecuteResult.error("label_too_long")
             if any(ch in label for ch in ("。", "，", "！", ".", ",", "!")):
                 return ExecuteResult.error("label_contains_punctuation")
+        # Resolve parent_location_id / parent_room_id for hierarchical placement.
+        # Prefer explicit params; fall back to player's current position.
+        parent_location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+        parent_room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+        if state.has_slice("player"):
+            if parent_location_id is None:
+                parent_location_id = coerce_non_empty_string(state.player.current_location)
+            if parent_room_id is None:
+                parent_room_id = coerce_non_empty_string(state.player.current_room)
+        # Inject the resolved label and parent location into params so
+        # _compute_sub_area_command uses them while keeping description intact.
+        patched_params = {**cmd.params, "label": label}
+        if parent_location_id is not None:
+            patched_params["parent_location_id"] = parent_location_id
+        if parent_room_id is not None:
+            patched_params["parent_room_id"] = parent_room_id
+        patched_cmd = Command(type=cmd.type, params=patched_params, source=cmd.source)
         return self._compute_sub_area_command(
-            cmd,
+            patched_cmd,
             state,
             default_type="discovery",
             default_tier="temporary",
             default_expiry=12,
             change_type="plant_environmental",
-            label_fallback_key="description",
+            label_fallback_key="label",
             spec_overrides={
                 "discovery_mode": coerce_non_empty_string(cmd.params.get("discovery_mode")) or "check",
                 "discovery_dc": coerce_int(cmd.params.get("dc")) or 12,
@@ -1452,8 +1475,18 @@ class PlannerWorldHandler(StaticCommandHandler):
         cmd: Command,
         state: StateContainer,
     ) -> ExecuteResult:
+        # Propagate parent_location_id if provided (for fill_area that conceptually
+        # belongs inside a specific sub-location rather than at area root level).
+        patched_params = dict(cmd.params)
+        parent_location_id = coerce_non_empty_string(cmd.params.get("parent_location_id"))
+        if parent_location_id is not None:
+            patched_params["parent_location_id"] = parent_location_id
+            parent_room_id = coerce_non_empty_string(cmd.params.get("parent_room_id"))
+            if parent_room_id is not None:
+                patched_params["parent_room_id"] = parent_room_id
+        patched_cmd = Command(type=cmd.type, params=patched_params, source=cmd.source)
         return self._compute_sub_area_command(
-            cmd,
+            patched_cmd,
             state,
             default_type=coerce_non_empty_string(cmd.params.get("type")) or "visit",
             default_tier="permanent",
@@ -1581,6 +1614,9 @@ class PlannerWorldHandler(StaticCommandHandler):
             "created_at_tick": current_tick,
             "expiry": expiry_ticks,
             "status": "active",
+            "locked": _coerce_optional_bool(cmd.params.get("locked")),
+            "parent_location_id": coerce_non_empty_string(cmd.params.get("parent_location_id")),
+            "parent_room_id": coerce_non_empty_string(cmd.params.get("parent_room_id")),
         }
         temporary.append(created)
         # A4: for each resident NPC listed, emit an npc_presence StateChange

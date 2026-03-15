@@ -1,13 +1,48 @@
 {
   "chapter_completion": {
-    "ch2": 0.0
+    "ch2": 0.25
   },
   "dynamic_quests": {
+    "broken_shield_ore_delivery": {
+      "created_at_tick": 0,
+      "delivery_method": "npc",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "giver_npc": "tavern_keeper"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "description": "前往碎盾铁匠铺了解情况"
+        },
+        {
+          "completed": false,
+          "description": "寻回被截获的矿石车（可选）"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "broken_shield_ore_delivery",
+      "reported": false,
+      "requires_report": false,
+      "rewards": {},
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "铁匠碎盾的矿石车在北边林道附近被截了，他现在心情糟透了。如果你能帮他解决这个问题，或许能得到不错的报酬。",
+      "target_milestone": null,
+      "title": "暴躁铁匠的烦恼",
+      "urgency": "medium"
+    },
     "dq_goblin_pest_01": {
       "created_at_tick": 8,
       "delivery_method": "board",
       "expiry_ticks": null,
       "generated_by_escalation": 0,
+      "hints": [
+        "前往遗迹的路上可能会遇到那些侧郊的小鬼，顺手清理掉它们。"
+      ],
       "metadata": {},
       "min_level": 1,
       "objectives": [
@@ -23,7 +58,7 @@
           "description": "击杀3只哥布林"
         },
         {
-          "completed": false,
+          "completed": true,
           "condition": {
             "params": {
               "npc_id": "guild_girl"
@@ -43,7 +78,7 @@
         "xp": 400
       },
       "source": "narrative_planner",
-      "status": "available",
+      "status": "active",
       "summary": "在边境小镇郊外的废弃仓库附近发现了少量哥布林的踪迹，请前往清理。",
       "target_milestone": null,
       "title": "【新手委托】清理侧郊的哥布林",
@@ -85,7 +120,7 @@
           "description": "与goblin_slayer对话"
         },
         {
-          "completed": false,
+          "completed": true,
           "condition": {
             "params": {
               "area_id": "frontier_town",
@@ -105,11 +140,135 @@
         "gold": 300,
         "xp": 600
       },
+      "rewards_claimed": true,
       "source": "narrative_planner",
-      "status": "active",
+      "status": "completed",
       "summary": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
       "target_milestone": "ms_frontier_arrival",
       "title": "踏入边境",
+      "urgency": "medium"
+    },
+    "mq_ruins_investigation": {
+      "created_at_tick": 14,
+      "current_step": "调查路标空地，寻找车队成员的去向",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "在决战萨满之前，先去西郊的牧场休息整备吧。牧牛妹的款待能恢复你们的精力。",
+        "夜晚的城镇很安静，但牧场的灯火一直在为你留着。"
+      ],
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "ancient_ruins"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往古代遗迹区域"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "ancient_ruins",
+              "clue_id": "convoy_remains"
+            },
+            "type": "clue_investigated"
+          },
+          "description": "在遗迹入口寻找车队的残骸"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "mq_ruins_investigation",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 200,
+        "xp": 800
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "根据铁匠的情报，失踪的车队可能被带往了古代遗迹。那里原本荒废已久，现在却成了不详之地。",
+      "target_milestone": null,
+      "title": "【主线】古代遗迹的阴影",
+      "urgency": "medium"
+    },
+    "mq_supply_crisis": {
+      "created_at_tick": 11,
+      "current_step": "前往城镇西侧的铁匠铺寻找碎盾",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "铁匠碎盾就在广场西边的铁匠铺，那个烟囱冒着黑烟（或者现在没烟了）的地方。",
+        "如果能帮铁匠解决问题，或许能得到更好的装备补给。"
+      ],
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "blacksmith"
+            },
+            "type": "npc_talked"
+          },
+          "description": "前往铁匠铺询问碎盾详情"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "mq_supply_crisis",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 150,
+        "xp": 400
+      },
+      "source": "narrative_planner",
+      "status": "ready_to_report",
+      "summary": "铁匠碎盾的货运车队在林道失踪了，这直接影响了冒险者的装备供应。去铁匠铺看看能不能帮忙。",
+      "target_milestone": null,
+      "title": "【主线】中断的物资链",
+      "urgency": "medium"
+    },
+    "rescue_the_convoy": {
+      "created_at_tick": 0,
+      "delivery_method": "npc",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "giver_npc": "high_elf_archer"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "description": "前往森林追踪失踪车队的痕迹"
+        },
+        {
+          "completed": false,
+          "description": "在哥布林下毒手前解救幸存者"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "rescue_the_convoy",
+      "reported": false,
+      "requires_report": false,
+      "rewards": {},
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "失踪的车队正处于哥布林的威胁之下，必须立即出发，依靠上森人的追踪能力找到营地并展开救援。",
+      "target_milestone": null,
+      "title": "密林深处的紧急救援",
       "urgency": "medium"
     }
   },
@@ -117,17 +276,17 @@
     "ms_frontier_arrival": {
       "activated_tick": 8,
       "completed_tick": null,
-      "state": "ACTIVE"
+      "state": "COMPLETED"
     },
     "ms_growing_darkness": {
       "activated_tick": null,
-      "completed_tick": null,
-      "state": "LOCKED"
+      "completed_tick": 15,
+      "state": "COMPLETED"
     },
     "ms_hive_heart": {
       "activated_tick": null,
       "completed_tick": null,
-      "state": "LOCKED"
+      "state": "AVAILABLE"
     }
   }
 }

@@ -1,0 +1,251 @@
+{
+  "chapter_completion": {
+    "ch2": 0.25
+  },
+  "dynamic_quests": {
+    "clear_trade_route_goblins": {
+      "created_at_tick": 0,
+      "delivery_method": "npc",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "giver_npc": "blacksmith"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "description": "前往断崖隘口调查哥布林的营地规模"
+        },
+        {
+          "completed": false,
+          "description": "带回三枚哥布林英雄或大哥布林的牙齿作为实力的证明"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "clear_trade_route_goblins",
+      "reported": false,
+      "requires_report": false,
+      "rewards": {},
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "清理拦截商道的哥布林，确保铁矿石能正常运抵铁匠铺。",
+      "target_milestone": null,
+      "title": "疏通商道的咽喉",
+      "urgency": "medium"
+    },
+    "dq_investigate_ruins": {
+      "created_at_tick": 10,
+      "current_step": "已确认北门袭击情报",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "守备长提到的整齐脚印指向遗迹深处，那里可能已经变成了哥布林的据点。"
+      ],
+      "metadata": {},
+      "min_level": 1,
+      "next_steps": [
+        "前往古代遗迹调查袭击源头"
+      ],
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "npc_id": "north_gate_warden"
+            },
+            "type": "npc_talked"
+          },
+          "description": "向北门守备长询问最近的发现"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "ancient_ruins",
+              "location_id": "ruins_entrance"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往古代遗迹进行调查"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_investigate_ruins",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 150,
+        "xp": 500
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "铁匠的车队在前往古代遗迹的必经之路上失踪了，公会怀疑与那里的哥布林活动有关。",
+      "target_milestone": null,
+      "title": "失踪的车队与古代遗迹",
+      "urgency": "medium"
+    },
+    "dq_ms_frontier_arrival": {
+      "created_at_tick": 8,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "source_milestone": "ms_frontier_arrival",
+        "urgency": "medium"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与guild_girl对话"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "goblin_slayer"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与goblin_slayer对话"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往frontier_town"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_frontier_arrival",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 300,
+        "xp": 600
+      },
+      "rewards_claimed": true,
+      "source": "narrative_planner",
+      "status": "completed",
+      "summary": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+      "target_milestone": "ms_frontier_arrival",
+      "title": "踏入边境",
+      "urgency": "medium"
+    },
+    "dq_temple_herbs": {
+      "created_at_tick": 8,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "key": "herbs_gathered",
+              "value": true
+            },
+            "type": "flag_set"
+          },
+          "description": "在神庙后花园采集圣洁药草"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "priestess"
+            },
+            "type": "npc_talked"
+          },
+          "description": "将药草交给女神官"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_temple_herbs",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 40,
+        "xp": 300
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "女神官需要一些新鲜的圣洁药草来制作伤药。",
+      "target_milestone": null,
+      "title": "地母神的药草请求",
+      "urgency": "medium"
+    },
+    "forest_adventure_start": {
+      "created_at_tick": 0,
+      "delivery_method": "npc",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "giver_npc": "high_elf_archer"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "description": "前往公会二楼东南角布告栏领取“森林边缘草药采集”或“废弃祭坛调查”委托"
+        },
+        {
+          "completed": false,
+          "description": "准备好必要的野外生存物资（火种、口粮、绳索等）"
+        },
+        {
+          "completed": false,
+          "description": "回到大厅与妖精弓手汇合出发"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "forest_adventure_start",
+      "reported": false,
+      "requires_report": false,
+      "rewards": {},
+      "source": "narrative_planner",
+      "status": "available",
+      "summary": "比起阴暗发臭的哥布林洞穴，去森林里进行一场真正的冒险才是上策！妖精弓手自告奋勇要担任你们的顾问。",
+      "target_milestone": null,
+      "title": "拒绝地洞！向着绿意盎然的森林出发！",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_frontier_arrival": {
+      "activated_tick": 8,
+      "completed_tick": null,
+      "state": "COMPLETED"
+    },
+    "ms_growing_darkness": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "AVAILABLE"
+    },
+    "ms_hive_heart": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

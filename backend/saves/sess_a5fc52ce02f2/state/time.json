@@ -1,7 +1,7 @@
 {
-  "accumulated": 0.9166666666666663,
-  "action_count": 5,
+  "accumulated": 0.791666666666665,
+  "action_count": 4,
   "day": 1,
-  "period": "day",
-  "slot": 11
+  "period": "night",
+  "slot": 24
 }

@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable
 
 from app.game_core.content import WorldInstance
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, _profile_get
-from app.game_core.narrative.context_window import ContextWindow, WindowMessage
+from app.game_core.narrative.context_window import ContextWindow, WindowMessage, window_to_history
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.instance_manager import NPCInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
@@ -89,6 +89,7 @@ class PrivateChatResult:
     graphize_candidates: list[WindowMessage] = field(default_factory=list)
     scene_id: str | None = None     # 私聊临时子地点 ID（Phase 2）
     scene_name: str = ""            # 子地点名称（供 SSE 使用）
+    scene_is_new: bool = True       # False = 复用已有场景（不重复发 scene_change SSE）
     gm_result: AgentResult | None = None  # GM 内心旁白（Phase 2b）
 
 
@@ -169,11 +170,12 @@ class PrivateChatCoordinator:
             _pc_dynamic_caps = self._state.narrative_plan.get_capabilities(npc_id)
         system_prompt += _build_capability_boundary_prompt(self._executor, npc_tags, capabilities=_pc_dynamic_caps)
 
-        # Create private scene sub-area
+        # Create (or reuse) private scene sub-area
         area_id = self._state.player.current_area if self._state.has_slice("player") else ""
         scene_result = self._create_private_scene(npc_id, area_id)
         scene_id = scene_result[0] if scene_result else None
         scene_name = scene_result[1] if scene_result else ""
+        scene_is_new = scene_result[2] if scene_result else False
 
         # Record interaction in FlagSlice for EventEngine npc_talked conditions.
         if self._state.has_slice("flags"):
@@ -207,7 +209,7 @@ class PrivateChatCoordinator:
 
         # ---- Step 2: NPC Agent Response ---------------------------
         npc_result: AgentResult | None = None
-        history = _window_to_history(context_window) if context_window is not None else None
+        history = window_to_history(context_window) if context_window is not None else None
         try:
             npc_result = await self._executor.run_agentic(
                 role="npc",
@@ -244,6 +246,7 @@ class PrivateChatCoordinator:
                 error_reason=reason,
                 scene_id=scene_id,
                 scene_name=scene_name,
+                scene_is_new=scene_is_new,
             )
 
         npc_speech = _extract_visible_reply_text(npc_result) if npc_result else ""
@@ -260,6 +263,7 @@ class PrivateChatCoordinator:
                 should2 = context_window.add_message(WindowMessage(
                     role="model", content=npc_speech,
                     token_count=_approx_tokens(npc_speech), metadata={},
+                    parts=npc_result.last_model_parts if npc_result is not None else None,
                 ))
             if should1 or should2:
                 graphize_candidates = context_window.collect_for_graphize()
@@ -303,28 +307,31 @@ class PrivateChatCoordinator:
             graphize_candidates=graphize_candidates,
             scene_id=scene_id,
             scene_name=scene_name,
+            scene_is_new=scene_is_new,
             gm_result=gm_result,
         )
 
 
-    def _create_private_scene(self, npc_id: str, area_id: str) -> tuple[str, str] | None:
-        """创建私聊临时子地点，返回 (sub_area_id, name) 或 None。
+    def _create_private_scene(self, npc_id: str, area_id: str) -> tuple[str, str, bool] | None:
+        """创建私聊临时子地点，返回 (sub_area_id, name, is_new) 或 None。
 
-        幂等：先清除此 NPC 已有的旧私聊场景，再新建。
+        幂等：如果此 NPC 在同一区域已有私聊场景，直接复用；否则新建。
+        返回值第三项 is_new 指示是否新建了场景（True=新建，False=复用已有）。
         """
         if not self._state.has_slice("areas") or not area_id:
             return None
 
-        # 清除旧私聊场景
+        # 复用已有私聊场景（幂等检查）
         area_snap = self._state.areas.snapshot()
         area_data = (area_snap.get("areas") or {}).get(area_id, {})
-        for sa in list(area_data.get("temporary_sub_areas", [])):
+        for sa in area_data.get("temporary_sub_areas", []):
             if (
                 isinstance(sa, dict)
                 and sa.get("source") == "private_chat"
                 and npc_id in sa.get("resident_npcs", [])
             ):
-                self._state.areas.remove_temporary_sub_area(area_id, str(sa.get("id", "")))
+                # 已存在此 NPC 的私聊场景，直接复用，不重复创建
+                return str(sa.get("id", "")), str(sa.get("name", "")), False
 
         # 匹配场景模板
         area_template = (
@@ -357,7 +364,7 @@ class PrivateChatCoordinator:
             "source": "private_chat",
             "expiry": -1,
         })
-        return sub_area_id, template["name"]
+        return sub_area_id, template["name"], True
 
 
 # ------------------------------------------------------------------
@@ -365,16 +372,7 @@ class PrivateChatCoordinator:
 # ------------------------------------------------------------------
 
 
-def _window_to_history(window: ContextWindow) -> list[dict[str, Any]]:
-    """Convert ContextWindow messages to Gemini conversation history format.
-
-    Skips messages already flagged as graphized (compressed into knowledge graph).
-    """
-    return [
-        {"role": msg.role, "parts": [{"text": msg.content}]}
-        for msg in window.messages
-        if not msg.is_graphized
-    ]
+# _window_to_history is provided by context_window.window_to_history
 
 
 def _approx_tokens(text: str) -> int:

@@ -504,9 +504,9 @@ class GameRuntime:
             return
         im = self._instance_manager
         planner_data = dict(windows_data)
-        legacy_history = planner_data.pop("__planner__", None)
-        if legacy_history is not None and "__planner_blackboard__" not in planner_data:
-            planner_data["__planner_blackboard__"] = legacy_history
+        legacy_bb = planner_data.pop("__planner_blackboard__", None)
+        if legacy_bb is not None and "__planner__" not in planner_data:
+            planner_data["__planner__"] = legacy_bb
         if im is not None:
             get_fn = getattr(im, "get_or_create", None)
             if callable(get_fn):

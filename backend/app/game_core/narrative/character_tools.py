@@ -1451,6 +1451,9 @@ def register_npc_tools(registry: RoleToolRegistry) -> None:
     )
     registry.register(UpdateBlackboardTool())
     registry.register(SendNpcMessageTool())
+    # Lazy import: trade_tool imports _CharacterTool from this module.
+    from app.game_core.narrative.trade_tool import SellToPlayerTool  # noqa: PLC0415
+    registry.register(SellToPlayerTool())
 
 
 def register_teammate_tools(registry: RoleToolRegistry) -> None:

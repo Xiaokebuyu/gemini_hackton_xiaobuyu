@@ -277,7 +277,7 @@ class TestEncounterHook:
             "status": "deterministic",
             "provider": "default_detector",
             "branch": "template_probe_window",
-            "probe_threshold": 0.75,
+            "probe_threshold": 0.5,
             "selected_template_id": "forest:ambient",
             "selected_template_source": "encounter",
             "trigger_score": 1.0,
@@ -321,7 +321,8 @@ class TestEncounterHook:
         }
 
     def test_default_detector_skips_below_probe_threshold(self) -> None:
-        context = _make_context(danger_level=0.7, slot=18)
+        # With new _PROBE_THRESHOLD=0.5 and dusk multiplier=1.0: 0.4*1.0=0.4 < 0.5 → noop.
+        context = _make_context(danger_level=0.4, slot=18)
 
         result = asyncio.run(EncounterHook().execute(context))
 

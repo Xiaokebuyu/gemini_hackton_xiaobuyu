@@ -1,0 +1,101 @@
+{
+  "companion_approval": {
+    "high_elf_archer": 10,
+    "priestess": 5
+  },
+  "members": {
+    "high_elf_archer": {
+      "class_id": "ranger",
+      "name": "妖精弓手",
+      "recruited_tick": 12
+    },
+    "priestess": {
+      "class_id": "priest",
+      "name": "女神官",
+      "recruited_tick": 9
+    }
+  },
+  "shared_experiences": [
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess",
+        "high_elf_archer"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess",
+        "high_elf_archer"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    },
+    {
+      "critical_moment": false,
+      "day": 1,
+      "emotion_tags": [
+        "empathy"
+      ],
+      "location": "frontier_town",
+      "participants": [
+        "priestess",
+        "high_elf_archer"
+      ],
+      "summary": "Day 1 meaningful dialogue at frontier_town",
+      "type": "dialogue"
+    }
+  ]
+}

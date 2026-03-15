@@ -53,6 +53,9 @@ class DynamicSubAreaManager:
             "created_at_tick": self._coerce_int(spec.get("created_at_tick"), default=0),
             "expiry": expiry_ticks,
             "status": "active",
+            "locked": bool(spec.get("locked", False)),
+            "parent_location_id": self._coerce_optional_string(spec.get("parent_location_id")),
+            "parent_room_id": self._coerce_optional_string(spec.get("parent_room_id")),
         }
         return self._areas.add_temporary_sub_area(area_id, sub_area)
 

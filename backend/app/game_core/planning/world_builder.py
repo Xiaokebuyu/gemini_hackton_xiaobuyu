@@ -21,6 +21,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_LABEL_FALLBACK_MAX_CHARS = 20
+
+
+def _resolve_sub_area_label(payload: Mapping[str, Any]) -> str:
+    """Return the display label for a plant_environmental sub-area.
+
+    Prefers the explicit ``label`` param; falls back to the first
+    ``_LABEL_FALLBACK_MAX_CHARS`` characters of ``description`` + "…".
+    """
+    explicit = coerce_non_empty_string(payload.get("label"))
+    if explicit is not None:
+        return explicit.strip()
+    description = str(payload.get("description") or "").strip()
+    if not description:
+        return ""
+    if len(description) > _LABEL_FALLBACK_MAX_CHARS:
+        return description[:_LABEL_FALLBACK_MAX_CHARS] + "…"
+    return description
+
 
 class WorldBuilderSubSystem:
     """PlannerSubSystem responsible for environmental/world-building directives."""
@@ -116,7 +135,7 @@ class WorldBuilderSubSystem:
             area_id=coerce_non_empty_string(payload.get("area_id")),
             spec={
                 "id": coerce_non_empty_string(payload.get("clue_id")) or f"clue_{current_tick}",
-                "label": string_or_empty(payload.get("description")),
+                "label": _resolve_sub_area_label(payload),
                 "description": string_or_empty(payload.get("description")),
                 "type": "discovery",
                 "tier": "temporary",
@@ -131,6 +150,32 @@ class WorldBuilderSubSystem:
         )
         params = dict(payload)
         params["current_tick"] = current_tick
+        # C3: propagate location context as parent_location_id / parent_room_id so
+        # the created sub-area knows which location it belongs to, even when Path A
+        # (fill_location translation) was not used. Prefer explicit payload values;
+        # fall back to player position.
+        if coerce_non_empty_string(params.get("parent_location_id")) is None:
+            resolved_location = (
+                coerce_non_empty_string(payload.get("location_id"))
+                or (
+                    coerce_non_empty_string(context.state.player.current_location)
+                    if context.state.has_slice("player")
+                    else None
+                )
+            )
+            if resolved_location is not None:
+                params["parent_location_id"] = resolved_location
+                if coerce_non_empty_string(params.get("parent_room_id")) is None:
+                    resolved_room = (
+                        coerce_non_empty_string(payload.get("room_id"))
+                        or (
+                            coerce_non_empty_string(context.state.player.current_room)
+                            if context.state.has_slice("player")
+                            else None
+                        )
+                    )
+                    if resolved_room is not None:
+                        params["parent_room_id"] = resolved_room
         result = context.execute_command(
             Command(
                 type="planner_plant_environmental",

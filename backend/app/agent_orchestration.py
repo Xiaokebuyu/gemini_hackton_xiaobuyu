@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
 
 from app.game_core.clue_investigation import build_clue_dialogue_options
 from app.game_core.narrative.context_builder import AgentContextBuilder, NpcFullContext, TeammateFull, _profile_get
-from app.game_core.narrative.context_window import ContextWindow, WindowMessage
+from app.game_core.narrative.context_window import ContextWindow, WindowMessage, window_to_history
 from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.instance_manager import InstanceManager, NPCInstance
 from app.game_core.narrative.memory_retriever import MemoryRetriever
@@ -38,6 +38,8 @@ from app.game_core.orchestration.shared_context import SharedContext
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateDelta
 from app.game_core.state.slices.scene import SceneEntry
+from app.interaction_service import build_interaction_view_context
+from app.interaction_views import build_shop_snapshot_payload
 from app.opening_views import build_opening_dialogue_options
 from app.scene_views import build_location_overview
 
@@ -187,6 +189,7 @@ class AgentOrchestrationService:
             result,
             action_dispatcher=session.runtime.action_dispatcher,
         )
+        events = _enrich_offer_trade_events(events, session)
         if not _has_gm_comment_event(events):
             fallback = SSEEvent(
                 event_type="gm_comment",
@@ -362,6 +365,7 @@ class AgentOrchestrationService:
             action_dispatcher=session.runtime.action_dispatcher,
             current_location=session.runtime.state.player.current_location,
         )
+        events = _enrich_offer_trade_events(events, session)
         if not _has_gm_comment_event(events):
             events = _insert_event_before(
                 events,
@@ -523,7 +527,7 @@ class AgentOrchestrationService:
             metadata=npc_metadata,
         )
 
-        history = _window_to_history(context_window) if context_window is not None else None
+        history = window_to_history(context_window) if context_window is not None else None
 
         # Call agentic executor with full 7-layer context (N-7)
         try:
@@ -560,6 +564,7 @@ class AgentOrchestrationService:
                 context_window.add_message(WindowMessage(
                     role="model", content=visible_reply,
                     token_count=_approx_tokens(visible_reply), metadata={},
+                    parts=result.last_model_parts,
                 ))
 
         return _npc_result_to_sse(npc_id, result)
@@ -961,7 +966,7 @@ class AgentOrchestrationService:
                 else None
             )
             context_window = instance.context_window if instance is not None else None
-            history = _window_to_history(context_window) if context_window is not None else None
+            history = window_to_history(context_window) if context_window is not None else None
             tm_layers = await builder.build_teammate_context(member_id)
             tm_context = builder.build_agent_context(
                 "teammate",
@@ -1258,7 +1263,7 @@ class AgentOrchestrationService:
                 else None
             )
             context_window = instance.context_window if instance is not None else None
-            history = _window_to_history(context_window) if context_window is not None else None
+            history = window_to_history(context_window) if context_window is not None else None
             # Build system prompt + 7-layer context in one retriever call (N-7 Phase 2)
             tm_full = await builder.build_teammate_full_context(
                 member_id, memory_retriever=self._memory_retriever,
@@ -1310,6 +1315,7 @@ class AgentOrchestrationService:
                             content=visible_reply,
                             token_count=_approx_tokens(visible_reply),
                             metadata={},
+                            parts=agent_result.last_model_parts,
                         )
                     )
 
@@ -1365,7 +1371,7 @@ class AgentOrchestrationService:
                 else None
             )
             context_window = instance.context_window if instance is not None else None
-            history = _window_to_history(context_window) if context_window is not None else None
+            history = window_to_history(context_window) if context_window is not None else None
             tm_full = await builder.build_teammate_full_context(
                 member_id,
                 memory_retriever=self._memory_retriever,
@@ -1418,6 +1424,7 @@ class AgentOrchestrationService:
                             content=visible_reply,
                             token_count=_approx_tokens(visible_reply),
                             metadata={},
+                            parts=agent_result.last_model_parts,
                         )
                     )
 
@@ -1507,7 +1514,7 @@ class AgentOrchestrationService:
                 execute_command=execute_command,
                 metadata=metadata,
             )
-            history = _window_to_history(context_window) if context_window is not None else None
+            history = window_to_history(context_window) if context_window is not None else None
 
             try:
                 agent_result = await self._executor.run_agentic(
@@ -1552,6 +1559,7 @@ class AgentOrchestrationService:
                             content=visible_reply,
                             token_count=_approx_tokens(visible_reply),
                             metadata={"kind": "post_action_reaction"},
+                            parts=agent_result.last_model_parts,
                         )
                     )
 
@@ -1763,16 +1771,8 @@ class AgentOrchestrationService:
 # ------------------------------------------------------------------
 
 
-def _window_to_history(window: ContextWindow) -> list[dict[str, Any]]:
-    """Convert ContextWindow messages to Gemini conversation history format.
-
-    Skips messages already flagged as graphized.
-    """
-    return [
-        {"role": msg.role, "parts": [{"text": msg.content}]}
-        for msg in window.messages
-        if not msg.is_graphized
-    ]
+# _window_to_history is provided by context_window.window_to_history;
+# callers use the imported window_to_history directly.
 
 
 def _approx_tokens(text: str) -> int:
@@ -1808,6 +1808,18 @@ def _extract_member_speech(
             if evt in ("speech", "emote"):
                 parts.append(tr.message)
     return " ".join(parts)
+
+
+def _extract_member_last_model_parts(
+    ordered_responses: list[tuple[str, AgentResult]],
+    member_id: str,
+) -> list[dict[str, Any]] | None:
+    """Return last_model_parts from the last AgentResult for this member."""
+    result_for_member: AgentResult | None = None
+    for mid, result in ordered_responses:
+        if mid == member_id:
+            result_for_member = result
+    return result_for_member.last_model_parts if result_for_member is not None else None
 
 
 def _write_teammate_context_windows(
@@ -1854,10 +1866,14 @@ def _write_teammate_context_windows(
         # Model message: this teammate's own speech (if any)
         own_speech = _extract_member_speech(result.ordered_responses, member_id)
         if own_speech:
+            member_parts = _extract_member_last_model_parts(
+                result.ordered_responses, member_id
+            )
             instance.context_window.add_message(WindowMessage(
                 role="model",
                 content=own_speech,
                 token_count=_approx_tokens(own_speech),
+                parts=member_parts,
             ))
 
 
@@ -2061,10 +2077,61 @@ def _npc_result_to_sse(npc_id: str, result: AgentResult) -> list[SSEEvent]:
                     "label": tr.metadata.get("label", ""),
                 },
             ))
+        elif event_type == "trade_completed":
+            events.append(SSEEvent(
+                event_type="trade_completed",
+                payload={
+                    "npc_id": tr.metadata.get("character_id", npc_id),
+                    "item_id": tr.metadata.get("item_id", ""),
+                    "item_name": tr.metadata.get("item_name", ""),
+                    "count": tr.metadata.get("count", 1),
+                    "price_paid": tr.metadata.get("price_paid", 0),
+                    "unit_price": tr.metadata.get("unit_price", 0),
+                },
+            ))
+        elif event_type == "offer_trade":
+            events.append(SSEEvent(
+                event_type="offer_trade",
+                payload={
+                    "npc_id": tr.metadata.get("character_id", npc_id),
+                    "shop_raw": tr.metadata.get("shop", {}),
+                },
+            ))
         # Command-based tools (update_feeling, remember, etc.) execute
         # via execute_command callback — no separate SSE needed.
 
     return events
+
+
+def _enrich_offer_trade_events(
+    events: list[SSEEvent],
+    session: ManagedSession,
+) -> list[SSEEvent]:
+    """Replace raw offer_trade events with enriched shop_snapshot.
+
+    When an NPC calls OfferTradeTool, _npc_result_to_sse emits a raw
+    offer_trade event.  This function replaces it with a fully enriched
+    shop_snapshot that the frontend can render directly.
+    """
+    if not any(e.event_type == "offer_trade" for e in events):
+        return events
+    view_ctx = build_interaction_view_context(
+        session.runtime.state, session.runtime.world,
+    )
+    enriched: list[SSEEvent] = []
+    for event in events:
+        if event.event_type == "offer_trade":
+            npc_id = event.payload.get("npc_id", "")
+            if npc_id:
+                enriched.append(SSEEvent(
+                    event_type="shop_snapshot",
+                    payload=build_shop_snapshot_payload(view_ctx, npc_id),
+                ))
+            else:
+                enriched.append(event)
+        else:
+            enriched.append(event)
+    return enriched
 
 
 def _gm_result_to_sse(result: AgentResult) -> list[SSEEvent]:
@@ -2621,27 +2688,23 @@ def _private_chat_result_to_sse(
     Order: scene_change (optional) → NPC response → GM inner monologue
            (optional, introspective) → dialogue options.
 
-    QF-1: Only emit transition:"fade" on the first entry into a private scene.
-    Subsequent messages in the same private scene only emit a scene_change
-    without the transition to avoid repeated black-screen animations.
+    QF-1: Only emit scene_change when a NEW private scene was created.
+    Subsequent messages reuse the existing scene (scene_is_new=False) and
+    do not emit scene_change to avoid duplicate transitions.
     """
     events: list[SSEEvent] = []
-    # Scene change (private sub-area created)
-    # QF-1: skip transition:"fade" if player is already in a private scene
-    already_in_private = (
-        isinstance(current_location, str)
-        and current_location.startswith("_private_")
-    )
-    if result.scene_id:
+    # Scene change: only emitted when a new private sub-area was created
+    # (scene_is_new=True). Reused scenes (scene_is_new=False) do not need
+    # a scene_change event — the player is already in the correct location.
+    if result.scene_id and result.scene_is_new:
         scene_payload: dict[str, Any] = {
             "location_id": result.scene_id,
             "location_name": result.scene_name,
             "background": "private",
             "ambient_preset": None,
             "ambient_override": None,
+            "transition": "fade",
         }
-        if not already_in_private:
-            scene_payload["transition"] = "fade"
         events.append(SSEEvent(
             event_type="scene_change",
             payload=scene_payload,

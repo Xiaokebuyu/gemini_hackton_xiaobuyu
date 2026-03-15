@@ -66,6 +66,7 @@ htmlcov/
 .claude/
 CLAUDE.md
 CODEX_INIT.md
+deploy.md
 
 # Internal development docs
 **/施工记录*/

@@ -1592,3 +1592,65 @@ def test_direct_npc_expires_at_tick_equal_current_tick_preserved() -> None:
     state.apply(result.delta)
     directives = state.narrative_plan.npc_directives
     assert directives[0]["expires_at_tick"] == 15
+
+
+# ---------------------------------------------------------------------------
+# fill_location: dynamic sub_location created by fill_area is accepted
+# ---------------------------------------------------------------------------
+
+
+def test_fill_location_succeeds_for_dynamic_sub_location() -> None:
+    """fill_location should succeed when the location_id was created dynamically by fill_area."""
+    # Setup: world has maps registry but 'forest' area has no static sub-locations
+    world = WorldInstance("test_world")
+    maps = MapRegistry()
+    maps.load({"forest": {"id": "forest", "sub_locations": {}}})
+    world.register(maps)
+
+    state = _make_state_with_area("forest")
+    handler = PlannerWorldHandler()
+
+    # Step 1: create a dynamic sub-location via fill_area
+    fill_area_result = handler.compute(
+        Command(
+            type="planner_fill_area",
+            params={
+                "area_id": "forest",
+                "id": "hidden_grove",
+                "label": "Hidden Grove",
+                "description": "A clearing in the forest.",
+                "current_tick": 3,
+            },
+            source="narrative_planner",
+        ),
+        state,
+        world,
+    )
+    assert fill_area_result.executed is True, fill_area_result.errors
+    state.apply(fill_area_result.delta)
+
+    # Verify the dynamic sub-area exists in state
+    sub_areas = state.areas.list_temporary_sub_areas("forest")
+    assert any(sa.get("id") == "hidden_grove" for sa in sub_areas)
+
+    # Step 2: fill_location pointing at the newly created dynamic sub-location
+    fill_loc_result = handler.compute(
+        Command(
+            type="planner_fill_location",
+            params={
+                "area_id": "forest",
+                "location_id": "hidden_grove",
+                "interactables": [{"id": "ancient_stone", "name": "Ancient Stone", "description": "A mossy rock."}],
+                "current_tick": 4,
+            },
+            source="narrative_planner",
+        ),
+        state,
+        world,
+    )
+    assert fill_loc_result.executed is True, fill_loc_result.errors
+    state.apply(fill_loc_result.delta)
+
+    # Verify the interactable overlay was applied
+    overlays = state.areas.list_scoped_interactable_overlays("forest", "hidden_grove", None)
+    assert any(o.get("id") == "ancient_stone" for o in overlays)

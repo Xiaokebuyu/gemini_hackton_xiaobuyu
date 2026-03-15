@@ -146,6 +146,16 @@ class DirectiveTriggerHook(NoOpSettlementHook):
             npc_name = _get_npc_name(context.world, npc_id)
             npc_colocated = npc_id in colocated_npc_ids
             linked_quest_id = str(directive_entry.get("linked_quest_id", "")).strip() or None
+
+            # Extract topic from the directive entry so the frontend can show
+            # "NPC wants to talk to you about: <topic>" — Phase 3c.
+            directive_inner = directive_entry.get("directive")
+            directive_topic: str | None = None
+            if isinstance(directive_inner, dict):
+                raw_topic = directive_inner.get("topic") or directive_inner.get("npc_goal")
+                if isinstance(raw_topic, str) and raw_topic.strip():
+                    directive_topic = raw_topic.strip()
+
             payload: dict[str, object] = {
                 "npc_id": npc_id,
                 "npc_name": npc_name,
@@ -154,6 +164,8 @@ class DirectiveTriggerHook(NoOpSettlementHook):
             }
             if linked_quest_id is not None:
                 payload["linked_quest_id"] = linked_quest_id
+            if directive_topic is not None:
+                payload["topic"] = directive_topic
             if not npc_colocated:
                 payload["npc_location"] = area_npc_locations.get(npc_id)
                 current_area = str(context.state.player.current_area or "").strip()

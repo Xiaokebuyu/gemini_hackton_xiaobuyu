@@ -453,6 +453,9 @@ class TestNarrativePlannerHook:
         assert result_missing_time.metadata["status"] == "noop"
 
     def test_scene_only_change_respects_cooldown(self) -> None:
+        # With FALLBACK_INTERVAL=1, cooldown fires only when last_run_tick == current_tick.
+        # Context uses day=1, slot=9 → absolute_tick = 1*12+9 = 21.
+        # Set last_run_tick=21 so ticks_since_last_run=0 < 1 → cooldown fires.
         context = _make_context(
             change_log=[
                 StateChange(
@@ -462,7 +465,7 @@ class TestNarrativePlannerHook:
                     value={"source": "gm"},
                 )
             ],
-            narrative_plan_payload={"last_run_tick": 8},
+            narrative_plan_payload={"last_run_tick": 21},
             inject_semantic_seed=False,
         )
 

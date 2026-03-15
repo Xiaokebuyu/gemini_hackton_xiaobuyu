@@ -30,3 +30,11 @@ class AgentResult:
     tool_results: list[ToolResult] = field(default_factory=list)
     turns_used: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    last_model_parts: list[dict[str, Any]] | None = None
+    """Structured Gemini parts from the final model response turn.
+
+    Contains function_call and text parts (thought_signature filtered out).
+    Stored so that callers can persist this in ContextWindow.parts and
+    replay the tool-call structure in subsequent conversation turns.
+    Populated by AgenticExecutor.run_agentic() on every successful return.
+    """

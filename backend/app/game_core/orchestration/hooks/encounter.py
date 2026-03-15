@@ -40,7 +40,7 @@ class NullEncounterDetector:
 
 
 class BasicEncounterDetector:
-    _PROBE_THRESHOLD = 0.75
+    _PROBE_THRESHOLD = 0.5  # P32-10: lowered from 0.75 to increase dynamic encounter frequency
     _PERIOD_MULTIPLIERS: dict[str, float] = {
         "dawn": 0.8,
         "day": 0.5,

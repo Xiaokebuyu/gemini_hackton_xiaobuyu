@@ -270,7 +270,11 @@ app = FastAPI(title="Game Core API", version="0.1.0", lifespan=_lifespan)
 from fastapi.middleware.cors import CORSMiddleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://buyus-isekai-adventure.pages.dev",
+        "https://isekai.xiaobuyu.trade",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )

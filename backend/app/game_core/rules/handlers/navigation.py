@@ -140,6 +140,8 @@ class NavigationHandler(StaticCommandHandler):
         if state.has_slice("areas"):
             for sub_area in state.areas.list_temporary_sub_areas(area_id):
                 if str(sub_area.get("id", "")) == location_id:
+                    if sub_area.get("locked"):
+                        return ValidationResult(ok=False, reason="location_locked")
                     return ValidationResult(ok=True)
         return ValidationResult(
             ok=False,
