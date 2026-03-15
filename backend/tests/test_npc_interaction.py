@@ -230,7 +230,13 @@ class TestNpcInteractionCoordinator:
 
         assert abs(result.time_cost - (1 / 6)) < 1e-9
 
-    def test_active_instance_directive_is_consumed_immediately(self) -> None:
+    def test_interaction_with_instance_containing_directive_completes(self) -> None:
+        """NPC interaction with an NPCInstance that has a directive completes successfully.
+
+        Path A (consume_directive → prompt injection) has been removed.
+        Directives now flow through the blackboard (Path B) via NpcAutonomyHook.
+        The coordinator no longer consumes directives during interaction.
+        """
         world = _world_with_characters()
         state = _state_with_party(world)
         coordinator, llm = _build_coordinator(
@@ -264,10 +270,9 @@ class TestNpcInteractionCoordinator:
         )
 
         assert result.completed is True
-        assert directive["consumed"] is True
-        assert instance.directive_queue == []
-        # 3-C: directive no longer injected into system prompt as a text block
-        # (it was replaced by the blackboard approach); directive is still consumed
+        # Directive is no longer consumed by the coordinator (Path A removed).
+        # It remains in the queue until NpcAutonomyHook processes it via blackboard.
+        assert directive["consumed"] is False
 
     def test_scene_entry_written_for_player_message(self) -> None:
         world = _world_with_characters()

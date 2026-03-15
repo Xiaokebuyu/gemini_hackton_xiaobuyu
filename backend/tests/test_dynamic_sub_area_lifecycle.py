@@ -258,6 +258,7 @@ def test_l3_includes_dynamic_template():
         world=world,
         current_area="forest",
         current_location="camp",
+        current_room=None,
         current_area_state=area_state,
     )
 
@@ -280,6 +281,7 @@ def test_l3_lists_all_dynamic_sub_areas():
         world=world,
         current_area="forest",
         current_location=None,
+        current_room=None,
         current_area_state=area_state,
     )
 

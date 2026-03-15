@@ -14,7 +14,10 @@ from tests._capability_harness import (
 )
 
 
-def test_trade_capability_prompt_and_functional_option_survive_round_trip() -> None:
+def test_trade_capability_prompt_included_and_option_action_preserved() -> None:
+    """GM no longer embeds functional — functional field is dropped silently.
+    The capability instruction still appears in the NPC prompt, and options with
+    an action field survive as-is."""
     coordinator, llm, _ = build_npc_capability_harness(
         llm_responses=[
             npc_speak_response("补给都在这里，看看你要什么。"),
@@ -22,11 +25,9 @@ def test_trade_capability_prompt_and_functional_option_survive_round_trip() -> N
                 [
                     {
                         "text": "看看补给",
+                        "action": "trade",
                         "message": "让我看看你的货物。",
-                        "functional": {
-                            "type": "trade_browse",
-                            "params": {"npc_id": "merchant_tom"},
-                        },
+                        # functional is intentionally omitted — GM no longer uses it
                     }
                 ]
             ),
@@ -52,13 +53,15 @@ def test_trade_capability_prompt_and_functional_option_survive_round_trip() -> N
 
     assert result.completed is True
     assert "展示可用补给并协助购买。" in llm.calls[0]["system_prompt"]
-    assert result.dialogue_options[0]["functional"]["type"] == "trade_browse"
-    assert result.dialogue_options[0]["functional"]["params"] == {
-        "npc_id": "merchant_tom"
-    }
+    assert len(result.dialogue_options) >= 1
+    assert result.dialogue_options[0]["action"] == "trade"
+    assert "functional" not in result.dialogue_options[0]
 
 
-def test_board_capability_prompt_and_gm_board_option_survive_round_trip() -> None:
+def test_board_capability_prompt_included_and_option_action_preserved() -> None:
+    """GM no longer embeds functional — functional field is dropped silently.
+    The capability instruction still appears in the NPC prompt, and options with
+    an action field survive as-is."""
     coordinator, llm, _ = build_npc_capability_harness(
         llm_responses=[
             npc_speak_response("公会委托都在公告板上。"),
@@ -66,11 +69,9 @@ def test_board_capability_prompt_and_gm_board_option_survive_round_trip() -> Non
                 [
                     {
                         "text": "查看委托",
+                        "action": "browse_board",
                         "message": "我想看看公会委托。",
-                        "functional": {
-                            "type": "board_browse",
-                            "params": {"board_id": "guild_board"},
-                        },
+                        # functional is intentionally omitted — GM no longer uses it
                     }
                 ]
             ),
@@ -97,10 +98,9 @@ def test_board_capability_prompt_and_gm_board_option_survive_round_trip() -> Non
 
     assert result.completed is True
     assert "引导玩家查看公会公告板并解释委托流程。" in llm.calls[0]["system_prompt"]
-    assert result.dialogue_options[0]["functional"]["type"] == "board_browse"
-    assert result.dialogue_options[0]["functional"]["params"] == {
-        "board_id": "guild_board"
-    }
+    assert len(result.dialogue_options) >= 1
+    assert result.dialogue_options[0]["action"] == "browse_board"
+    assert "functional" not in result.dialogue_options[0]
 
 
 def test_private_chat_prompt_includes_assigned_capability_instruction() -> None:

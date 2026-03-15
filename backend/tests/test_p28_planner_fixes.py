@@ -152,13 +152,6 @@ class TestCapabilityBoundaryPrompt:
         result = _build_capability_boundary_prompt(executor, [])
         assert "你可以" in result, f"Expected '你可以' in prompt:\n{result}"
 
-    def test_basic_npc_has_cannot_do_section(self) -> None:
-        """Basic NPC without merchant/receptionist traits has '你不可以' section."""
-        from app.game_core.narrative.character_tools import SpeakTool, EmoteTool
-        executor = _make_executor_with_tools([SpeakTool, EmoteTool])
-        result = _build_capability_boundary_prompt(executor, [])
-        assert "你不可以" in result, f"Expected '你不可以' in prompt:\n{result}"
-
     def test_merchant_npc_can_trade(self) -> None:
         """NPC with 'merchant' tag and OfferTradeTool → '展示商品和交易' in can_do."""
         from app.game_core.narrative.character_tools import (
@@ -179,15 +172,6 @@ class TestCapabilityBoundaryPrompt:
         result = _build_capability_boundary_prompt(executor, ["receptionist"])
         assert "发布和介绍任务" in result, (
             f"Expected quest offer capability in prompt:\n{result}"
-        )
-
-    def test_capability_prompt_includes_guidance_line(self) -> None:
-        """Capability boundary prompt ends with player-guidance instruction."""
-        from app.game_core.narrative.character_tools import SpeakTool
-        executor = _make_executor_with_tools([SpeakTool])
-        result = _build_capability_boundary_prompt(executor, [])
-        assert "合适的人" in result, (
-            f"Expected guidance about directing player to others:\n{result}"
         )
 
     def test_capability_prompt_section_header_present(self) -> None:

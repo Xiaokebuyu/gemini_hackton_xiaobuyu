@@ -34,12 +34,17 @@ class KnowledgeGraphMemoryRetriever:
         Returns {"hits": list[dict], "source": "knowledge_graph"}.
         When keywords is empty, returns empty hits immediately without
         touching the graph.
+
+        The caller may embed ``session_id`` inside the context dict to scope
+        the retrieval to a specific session's knowledge overlay.
         """
         if not keywords:
             return {"hits": [], "source": "knowledge_graph"}
+        session_id = str(context.get("session_id") or "")
         hits = await self._graph.query_spread(
             actor_id=actor_id,
             keywords=keywords,
             context=context,
+            session_id=session_id,
         )
         return {"hits": hits, "source": "knowledge_graph"}

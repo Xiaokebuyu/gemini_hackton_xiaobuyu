@@ -14,18 +14,11 @@ from app.game_core.narrative.tools import AgentTool
 # Functional option types
 # ------------------------------------------------------------------
 
-#: Valid functional interaction types that GM can embed in dialogue options.
-#: Each type maps to a front-end UI action that executes alongside the narrative.
-#: NOTE: "quest_accept" is intentionally excluded — GM is a pure narrator and
-#: must not execute game mechanics. Quest acceptance should be routed through
-#: the relevant NPC (e.g. receptionist) who has the accept_quest tool.
-_VALID_FUNCTIONAL_TYPES: frozenset[str] = frozenset({
-    "trade_browse",
-    "board_browse",
-    "navigate",
-    "inspect_item",
-    "rest",
-})
+#: GM does not embed functional UI actions — all such intents are triggered by
+#: NPC tools (offer_trade, offer_quest) or the explore UI.
+#: This set is intentionally empty; any functional field the LLM generates will
+#: be silently dropped during validation.
+_VALID_FUNCTIONAL_TYPES: frozenset[str] = frozenset()
 
 
 # ------------------------------------------------------------------
@@ -284,24 +277,6 @@ class SuggestOptionsTool(_GmTool):
                             "action": {"type": "string"},
                             "npc_id": {"type": "string"},
                             "message": {"type": "string"},
-                            "functional": {
-                                "type": "object",
-                                "description": (
-                                    "Optional UI action to trigger alongside narrative. "
-                                    f"type must be one of: {sorted(_VALID_FUNCTIONAL_TYPES)}"
-                                ),
-                                "properties": {
-                                    "type": {
-                                        "type": "string",
-                                        "description": "Functional interaction type.",
-                                    },
-                                    "params": {
-                                        "type": "object",
-                                        "description": "Type-specific parameters.",
-                                    },
-                                },
-                                "required": ["type"],
-                            },
                         },
                         "required": ["text"],
                     },
@@ -355,7 +330,9 @@ class SuggestOptionsTool(_GmTool):
 
         entry: dict[str, Any] = {"text": text.strip()}
 
-        # Validate and preserve functional field before routing check/action
+        # functional field is silently dropped — _VALID_FUNCTIONAL_TYPES is empty;
+        # GM does not embed UI actions. The option itself remains valid if it has
+        # a check or action field.
         functional = opt.get("functional")
         if functional is not None:
             if isinstance(functional, dict):
@@ -366,7 +343,7 @@ class SuggestOptionsTool(_GmTool):
                         "type": func_type,
                         "params": dict(func_params) if isinstance(func_params, dict) else {},
                     }
-            # Invalid functional is silently dropped — the option itself is still valid
+            # Invalid / all functional types silently dropped — option still valid via check/action
 
         check = opt.get("check")
         if isinstance(check, dict):
@@ -395,17 +372,7 @@ class SuggestOptionsTool(_GmTool):
                 entry["message"] = message.strip()
             return entry
 
-        # option with functional but without check or action: functional is the primary intent
-        if "functional" in entry:
-            npc_id = opt.get("npc_id")
-            if isinstance(npc_id, str) and npc_id.strip():
-                entry["npc_id"] = npc_id.strip()
-            message = opt.get("message")
-            if isinstance(message, str) and message.strip():
-                entry["message"] = message.strip()
-            return entry
-
-        # option has text but neither valid check, action, nor functional
+        # option has text but neither valid check nor action
         npc_id = opt.get("npc_id")
         if isinstance(npc_id, str) and npc_id.strip():
             entry["npc_id"] = npc_id.strip()

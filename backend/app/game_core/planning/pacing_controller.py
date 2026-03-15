@@ -1,6 +1,9 @@
 """PacingController sub-system — narrative pacing directives.
 
-Handles: escalate, adjust_pacing.
+DEPRECATED: escalate and adjust_pacing handlers have been merged into
+NarrativeWeaverSubSystem (D-P20b refactor, Phase 4).
+PacingControllerSubSystem is retained for backward compatibility with
+existing tests and will be removed in a future cleanup pass.
 
 Decision record: D-P20b (narrative.md)
 """

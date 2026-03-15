@@ -1,0 +1,19 @@
+{
+  "flags": {
+    "directive_trigger_cooldown_goblin_slayer": 13,
+    "directive_trigger_cooldown_priestess": 14,
+    "narrative_escalation_level": 2,
+    "talked_to_goblin_slayer": true,
+    "talked_to_guild_girl": true,
+    "talked_to_guild_quartermaster": true,
+    "talked_to_priestess": true,
+    "talked_to_tavern_waitress": true,
+    "talked_to_temple_matron": true,
+    "visited_location_frontier_town__mother_earth_temple": true,
+    "visited_location_frontier_town__tavern": true,
+    "visited_room_frontier_town__adventurer_guild__guild_counter": true,
+    "visited_room_frontier_town__adventurer_guild__guild_hall": true,
+    "visited_room_frontier_town__mother_earth_temple__prayer_hall": true,
+    "visited_room_frontier_town__tavern__main_hall": true
+  }
+}

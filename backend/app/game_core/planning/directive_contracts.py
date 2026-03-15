@@ -70,6 +70,7 @@ SUPPORTED_PLANNER_DIRECTIVE_KINDS = frozenset(
         "schedule_event",
         "create_rumor",
         "modify_location",
+        "set_task_monitor",
     }
 )
 
@@ -649,6 +650,29 @@ def _validate_contract(
         location_id = coerce_non_empty_string(normalized.get("location_id"))
         if location_id is not None:
             normalized["location_id"] = location_id
+        return True, normalized, None
+
+    if kind == "set_task_monitor":
+        # quest_id is required.
+        quest_id = coerce_non_empty_string(normalized.get("quest_id"))
+        if quest_id is None:
+            return False, normalized, "missing_quest_id"
+        normalized["quest_id"] = quest_id
+        # conditions must be a non-empty list.
+        conditions = normalized.get("conditions")
+        if not isinstance(conditions, list) or not conditions:
+            return False, normalized, "missing_conditions"
+        normalized["conditions"] = [
+            dict(c) for c in conditions if isinstance(c, Mapping)
+        ]
+        # on_complete defaults to "auto"; valid values: "auto", "notify".
+        on_complete = coerce_non_empty_string(normalized.get("on_complete"))
+        if on_complete is None:
+            on_complete = "auto"
+        on_complete = on_complete.strip().lower()
+        if on_complete not in {"auto", "notify"}:
+            return False, normalized, "invalid_on_complete"
+        normalized["on_complete"] = on_complete
         return True, normalized, None
 
     return True, normalized, None

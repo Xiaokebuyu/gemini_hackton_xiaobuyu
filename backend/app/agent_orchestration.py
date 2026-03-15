@@ -478,15 +478,11 @@ class AgentOrchestrationService:
         instance = await self._get_or_create_instance(session, npc_id)
         context_window = instance.context_window if instance is not None else None
         memory_writer = self._make_memory_writer(session)
-        active_directive: dict[str, Any] | None = None
-        if instance is not None and state.has_slice("time"):
-            active_directive = instance.consume_directive(state.time.absolute_tick())
 
         # Build system prompt + 7-layer context in one retriever call (N-7)
         npc_full = await builder.build_npc_full_context(
             npc_id,
             memory_retriever=self._memory_retriever,
-            active_directive=active_directive,
         )
         if npc_full is None:
             logger.warning("NPC profile not found: %s", npc_id)
@@ -788,6 +784,7 @@ class AgentOrchestrationService:
             "area_id": str(metadata.get("area_id") or "").strip(),
             "location_id": str(metadata.get("location_id") or "").strip(),
             "room_id": str(metadata.get("room_id") or "").strip(),
+            "outcome_text": str(metadata.get("outcome_text") or "").strip(),
         }
         if not clue_payload["clue_id"]:
             clue_payload["clue_id"] = interactable_id or "scene_clue"
@@ -1474,7 +1471,7 @@ class AgentOrchestrationService:
         )
         scene_entries = _decision_scene_entries(shared.scene_bus)
         events: list[SSEEvent] = []
-        memory_writer = self._make_memory_writer_for_world(world)
+        memory_writer = self._make_memory_writer_for_world(world, session_id=shared.session_id)
 
         for npc_id in nearby_npc_ids:
             if forced_npc_id != npc_id and not _should_character_respond(
@@ -1483,16 +1480,14 @@ class AgentOrchestrationService:
                 scene_entries=scene_entries,
             ):
                 continue
-            instance = await self._get_or_create_instance_for_world(world, state, npc_id)
+            instance = await self._get_or_create_instance_for_world(
+                world, state, npc_id, session_id=shared.session_id
+            )
             context_window = instance.context_window if instance is not None else None
-            active_directive: dict[str, Any] | None = None
-            if instance is not None and state.has_slice("time"):
-                active_directive = instance.consume_directive(state.time.absolute_tick())
 
             npc_full = await builder.build_npc_full_context(
                 npc_id,
                 memory_retriever=self._memory_retriever,
-                active_directive=active_directive,
                 is_passive=True,
             )
             if npc_full is None:
@@ -1584,6 +1579,7 @@ class AgentOrchestrationService:
             session.runtime.world,
             session.runtime.state,
             actor_id,
+            session_id=session.session_id,
         )
 
     async def _get_or_create_instance_for_world(
@@ -1591,6 +1587,7 @@ class AgentOrchestrationService:
         world: Any,
         state: Any,
         actor_id: str,
+        session_id: str = "",
     ) -> NPCInstance | None:
         if self._instance_manager is None:
             return None
@@ -1601,32 +1598,38 @@ class AgentOrchestrationService:
         )
         current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
         instance = self._instance_manager.get_or_create(
+            session_id,
             actor_id,
             npc_directives=npc_directives,
             current_tick=current_tick,
         )
-        await self._flush_pending_writebacks_for_world(world)
+        await self._flush_pending_writebacks_for_world(world, session_id=session_id)
         return instance
 
     async def _flush_pending_writebacks(self, session: ManagedSession) -> None:
         await self._flush_pending_writebacks_for_world(
             session.runtime.world,
             companion_manager=getattr(session.runtime, "companion_manager", None),
+            session_id=session.session_id,
         )
 
     async def _flush_pending_writebacks_for_world(
         self,
         world: Any,
         companion_manager: Any | None = None,
+        session_id: str = "",
     ) -> None:
         if self._instance_manager is None:
             return
-        for pending in self._instance_manager.drain_pending_writebacks():
+        for pending in self._instance_manager.drain_pending_writebacks(
+            session_id=session_id or None
+        ):
             await self._write_episode_for_world(
                 world,
                 pending.actor_id,
                 pending.messages,
                 companion_manager=companion_manager,
+                session_id=session_id,
             )
 
     async def _write_episode(
@@ -1640,6 +1643,7 @@ class AgentOrchestrationService:
             actor_id,
             messages,
             companion_manager=getattr(session.runtime, "companion_manager", None),
+            session_id=session.session_id,
         )
 
     async def _write_episode_for_world(
@@ -1648,6 +1652,7 @@ class AgentOrchestrationService:
         actor_id: str,
         messages: list[WindowMessage],
         companion_manager: Any | None = None,
+        session_id: str = "",
     ) -> None:
         if not messages:
             return
@@ -1670,6 +1675,7 @@ class AgentOrchestrationService:
                 actor_id=actor_id,
                 messages=messages,
                 context={"world": world, "recent_events": recent_events},
+                session_id=session_id,
             )
         except Exception:
             logger.exception("write_episode failed for %s", actor_id)
@@ -1683,6 +1689,8 @@ class AgentOrchestrationService:
         if not callable(remember):
             return None
 
+        _session_id = session.session_id
+
         async def _writer(
             actor_id: str,
             knowledge: str,
@@ -1690,13 +1698,16 @@ class AgentOrchestrationService:
         ) -> dict[str, Any] | None:
             payload = dict(context)
             payload.setdefault("world", session.runtime.world)
-            return await remember(actor_id=actor_id, knowledge=knowledge, context=payload)
+            return await remember(
+                actor_id=actor_id, knowledge=knowledge, context=payload, session_id=_session_id
+            )
 
         return _writer
 
     def _make_memory_writer_for_world(
         self,
         world: Any,
+        session_id: str = "",
     ) -> Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any] | None]] | None:
         graph = getattr(self._memory_retriever, "_graph", None)
         remember = getattr(graph, "remember", None)
@@ -1710,7 +1721,9 @@ class AgentOrchestrationService:
         ) -> dict[str, Any] | None:
             payload = dict(context)
             payload.setdefault("world", world)
-            return await remember(actor_id=actor_id, knowledge=knowledge, context=payload)
+            return await remember(
+                actor_id=actor_id, knowledge=knowledge, context=payload, session_id=session_id
+            )
 
         return _writer
 

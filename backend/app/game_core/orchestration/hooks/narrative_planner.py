@@ -334,40 +334,89 @@ class NarrativePlannerHook(NoOpSettlementHook):
         await self._ensure_milestone_outline(context, current_tick=current_tick)
 
         reason = "trigger" if triggered else "fallback"
-        replay = await self._run_replay(
+
+        # === Deterministic pre-processing (Phase 3d) ===
+        # 1. Directive GC
+        context.execute_command(
+            Command(
+                type="planner_prune_npc_directives",
+                params={"current_tick": current_tick},
+                source="narrative_planner",
+            )
+        )
+        # 2. Temporary NPC despawn
+        self._despawn_expired_quest_npcs(context, current_tick=current_tick)
+
+        # 3. Auto-escalation safety net (cap=10)
+        pre_directives: list[dict[str, Any]] = []
+        escalate_directive = self._check_auto_escalation(context)
+        if escalate_directive is not None:
+            pre_directives.append(escalate_directive)
+
+        # 4. Collect all semantic events (single pass).
+        # Dedup is handled internally by _dedupe_and_sort() in collect_planner_events.
+        # No need for external seen_dedupe_keys tracking in single-pass unified flow.
+        all_pending_events = collect_planner_events(
             context,
-            current_tick=current_tick,
-            reason=reason,
-            allowed_directives=self._SUPPORTED_DIRECTIVES,
-            initial_change_window_start=0,
+            current_tick,
+            change_window_start=0,
+            round_index=0,
             include_action_log=True,
             include_tick_event=True,
         )
-        replay_requested_count = replay["requested_count"]
-        replay_applied_count = replay["applied_count"]
-        replay_skipped_unsupported_count = replay["skipped_unsupported_count"]
-        replay_skipped_invalid_count = replay["skipped_invalid_count"]
-        replay_applied_kinds = replay["applied_kinds"]
-        subsystem_story_fact_count = replay["story_fact_count"]
-        replay_trace = replay["trace"]
-        planner_event_summaries = replay["planner_event_summaries"]
+        for event in all_pending_events:
+            if event.kind == "quest_completed":
+                quest_completed_directives = self._handle_quest_completed_deterministic(
+                    event, context
+                )
+                pre_directives.extend(quest_completed_directives)
+
+        # Apply deterministic pre-processing directives
+        pre_apply_summary = self._empty_apply_summary()
+        if pre_directives:
+            pre_apply_summary = self._apply_directive_batch(
+                pre_directives,
+                context,
+                current_tick=current_tick,
+                allowed_directives=self._SUPPORTED_DIRECTIVES,
+                source="deterministic",
+                subsystem_name="pre_processing",
+                round_index=0,
+            )
+
+        # Build planner event summaries for context
+        planner_event_summaries = [
+            planner_event_snapshot(event) for event in all_pending_events
+        ]
+
+        # Build trace skeleton (simplified — no replay rounds)
+        trace: dict[str, Any] = {
+            "hook_priority": self.HOOK_PRIORITY,
+            "current_tick": current_tick,
+            "reason": reason,
+            "round_count": 0,
+            "stop_reason": "unified",
+            "rounds": [],
+            "directive_audit": list(pre_apply_summary.get("directive_audit", [])),
+            "blackboard_summary": {},
+        }
 
         blackboard_decision = NarrativePlannerDecision()
         blackboard_metadata: dict[str, Any] = {}
         blackboard_apply_summary = self._empty_apply_summary()
         blackboard_story_fact_count = 0
         if self.blackboard is not None:
-            post_dispatch_context = self._build_planner_context(context, current_tick=current_tick)
-            post_dispatch_context["planner_events"] = planner_event_summaries
-            post_dispatch_context["replay_trace"] = replay_trace
-            self._inject_runtime_refs(post_dispatch_context, context)
+            planner_context = self._build_planner_context(context, current_tick=current_tick)
+            planner_context["planner_events"] = planner_event_summaries
+            planner_context["replay_trace"] = trace
+            self._inject_runtime_refs(planner_context, context)
             # QF-4: signal that planner LLM is starting
             self._pending_sse.append(SSEEvent(
                 event_type="ai_processing",
                 payload={"system": "planner", "status": "start"},
             ))
             try:
-                raw_decision = await self.blackboard.plan(post_dispatch_context)
+                raw_decision = await self.blackboard.plan(planner_context)
             except Exception as exc:
                 logger.exception(
                     "hook failed: narrative_planner",
@@ -378,7 +427,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "ticks_since_last_run": ticks_since_last_run,
                     },
                 )
-                replay_trace["blackboard_summary"] = {
+                trace["blackboard_summary"] = {
                     "source": "blackboard",
                     "requested_directive_count": 0,
                     "applied_directive_count": 0,
@@ -392,7 +441,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 }
                 self._commit_runtime_state(
                     context,
-                    last_planner_replay_trace=replay_trace,
+                    last_planner_replay_trace=trace,
                 )
                 return HookResult(
                     sse_events=[
@@ -411,17 +460,17 @@ class NarrativePlannerHook(NoOpSettlementHook):
                         "reason": reason,
                         "current_tick": current_tick,
                         "ticks_since_last_run": ticks_since_last_run,
-                        "requested_count": replay_requested_count,
-                        "applied_count": replay_applied_count,
-                        "skipped_unsupported_count": replay_skipped_unsupported_count,
-                        "skipped_invalid_count": replay_skipped_invalid_count,
-                        "story_fact_count": subsystem_story_fact_count,
-                        "applied_kinds": replay_applied_kinds,
+                        "requested_count": int(pre_apply_summary["requested_count"]),
+                        "applied_count": int(pre_apply_summary["applied_count"]),
+                        "skipped_unsupported_count": int(pre_apply_summary["skipped_unsupported_count"]),
+                        "skipped_invalid_count": int(pre_apply_summary["skipped_invalid_count"]),
+                        "story_fact_count": 0,
+                        "applied_kinds": list(pre_apply_summary["applied_kinds"]),
                         "planner_metadata": {},
-                        "replay_round_count": replay_trace.get("round_count", 0),
-                        "replay_stop_reason": replay_trace.get("stop_reason", "error"),
+                        "replay_round_count": 0,
+                        "replay_stop_reason": "error",
                         "replay_event_count": len(planner_event_summaries),
-                        "replay_applied_directive_count": replay_applied_count,
+                        "replay_applied_directive_count": int(pre_apply_summary["applied_count"]),
                     },
                 )
             # QF-4: signal that planner LLM finished
@@ -437,9 +486,21 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 allowed_directives=self._SUPPORTED_DIRECTIVES,
                 source="blackboard",
                 subsystem_name="blackboard",
-                round_index=int(replay_trace.get("round_count", 0)),
+                round_index=0,
             )
             blackboard_metadata = dict(blackboard_decision.metadata)
+
+        # Inline event check (flag-based event condition triggers)
+        run_inline_event_check(
+            state=context.state,
+            world=context.world,
+            rules_engine=context._rules_engine,
+            apply_delta=context._apply_delta,
+            change_log=context.change_log,
+            scene_bus=context.scene_bus,
+            label="planner_unified",
+            sse_collector=self._pending_sse,
+        )
 
         milestone_progressed = any(
             change.slice == "quests" and change.path.startswith("milestone_states.")
@@ -456,19 +517,21 @@ class NarrativePlannerHook(NoOpSettlementHook):
             blackboard_decision.story_facts,
             context,
         )
-        requested_count = replay_requested_count + int(blackboard_apply_summary["requested_count"])
-        applied_count = replay_applied_count + int(blackboard_apply_summary["applied_count"])
-        skipped_unsupported_count = replay_skipped_unsupported_count + int(
+
+        # Merge counts: pre-processing + blackboard
+        requested_count = int(pre_apply_summary["requested_count"]) + int(blackboard_apply_summary["requested_count"])
+        applied_count = int(pre_apply_summary["applied_count"]) + int(blackboard_apply_summary["applied_count"])
+        skipped_unsupported_count = int(pre_apply_summary["skipped_unsupported_count"]) + int(
             blackboard_apply_summary["skipped_unsupported_count"]
         )
-        skipped_invalid_count = replay_skipped_invalid_count + int(
+        skipped_invalid_count = int(pre_apply_summary["skipped_invalid_count"]) + int(
             blackboard_apply_summary["skipped_invalid_count"]
         )
-        applied_kinds = list(replay_applied_kinds) + list(blackboard_apply_summary["applied_kinds"])
-        story_fact_count = subsystem_story_fact_count + blackboard_story_fact_count
-        replay_trace["directive_audit"] = list(replay_trace.get("directive_audit", []))
-        replay_trace["directive_audit"].extend(blackboard_apply_summary["directive_audit"])
-        replay_trace["blackboard_summary"] = {
+        applied_kinds = list(pre_apply_summary["applied_kinds"]) + list(blackboard_apply_summary["applied_kinds"])
+        story_fact_count = blackboard_story_fact_count
+
+        trace["directive_audit"].extend(blackboard_apply_summary["directive_audit"])
+        trace["blackboard_summary"] = {
             "source": "blackboard",
             "requested_directive_count": int(blackboard_apply_summary["requested_count"]),
             "applied_directive_count": int(blackboard_apply_summary["applied_count"]),
@@ -495,7 +558,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             simulated_behavior_window
         )
         commit_payload: dict[str, Any] = {
-            "last_planner_replay_trace": replay_trace,
+            "last_planner_replay_trace": trace,
             "last_run_tick": current_tick,
             "ticks_since_milestone_progress": progress_value,
             "behavior_entry": behavior_entry,
@@ -556,12 +619,185 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "story_fact_count": story_fact_count,
                 "applied_kinds": applied_kinds,
                 "planner_metadata": dict(blackboard_metadata),
-                "replay_round_count": replay_trace.get("round_count", 0),
-                "replay_stop_reason": replay_trace.get("stop_reason", "steady_state"),
+                "replay_round_count": 0,
+                "replay_stop_reason": "unified",
                 "replay_event_count": len(planner_event_summaries),
                 "replay_applied_directive_count": applied_count,
             },
         )
+
+    # ------------------------------------------------------------------
+    # Deterministic pre-processing helpers (Phase 3d)
+    # These contain logic migrated from NarrativeWeaverSubSystem and
+    # NpcDirectorSubSystem.  Called at the top of execute() before the
+    # single LLM call so that deterministic state changes are reflected
+    # in the context passed to blackboard.plan().
+    # ------------------------------------------------------------------
+
+    _AUTO_ESCALATION_THRESHOLDS: list[int] = [4, 7, 10, 13, 16]
+    _FALLBACK_ESCALATION_INTERVAL: int = 6
+    _MAX_ESCALATION_LEVEL: int = 10
+
+    def _despawn_expired_quest_npcs(
+        self,
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> None:
+        """Despawn temporary quest NPCs whose despawn_tick has passed."""
+        from app.game_core.planning.utils import coerce_non_empty_string
+        for entry in list(context.state.narrative_plan.quest_history):
+            if entry.get("kind") != "spawn_quest_npc":
+                continue
+            raw_despawn_tick = entry.get("despawn_tick")
+            if raw_despawn_tick is None:
+                continue
+            try:
+                despawn_tick = int(raw_despawn_tick)
+            except (TypeError, ValueError):
+                continue
+            if current_tick < despawn_tick:
+                continue
+            npc_id = coerce_non_empty_string(entry.get("npc_id"))
+            if npc_id is None:
+                continue
+            context.execute_command(
+                Command(
+                    type="planner_despawn_quest_npc",
+                    params={"npc_id": npc_id},
+                    source="narrative_planner",
+                )
+            )
+
+    def _check_auto_escalation(
+        self, context: SettlementContext
+    ) -> dict[str, Any] | None:
+        """Return an escalate directive when the auto-escalation safety net fires, else None."""
+        np_state = context.state.narrative_plan
+        if np_state.pacing_frozen:
+            return None
+
+        ticks = np_state.ticks_since_milestone_progress
+        level = np_state.escalation_level
+
+        if level >= self._MAX_ESCALATION_LEVEL:
+            return None
+
+        # Pick threshold for the current escalation level (or fallback interval)
+        if 0 <= level < len(self._AUTO_ESCALATION_THRESHOLDS):
+            threshold = self._AUTO_ESCALATION_THRESHOLDS[level]
+        else:
+            threshold = self._FALLBACK_ESCALATION_INTERVAL
+
+        if ticks >= threshold:
+            return {"kind": "escalate", "payload": {"delta": 1}}
+        return None
+
+    def _handle_quest_completed_deterministic(
+        self,
+        event: "PlannerEvent",
+        context: SettlementContext,
+    ) -> list[dict[str, Any]]:
+        """Generate an assign_service directive for the receptionist NPC when a
+        quest is completed.  Returns [] when graceful degradation is needed."""
+        from app.game_core.planning.utils import coerce_non_empty_string
+
+        quest_id = coerce_non_empty_string(event.payload.get("quest_id"))
+        if quest_id is None:
+            return []
+
+        # Resolve rewards from dynamic quest state or content quest registry.
+        rewards: dict[str, Any] = {}
+        if context.state.has_slice("quests"):
+            quest = context.state.quests.get_dynamic_quest(quest_id)
+            if isinstance(quest, dict):
+                raw = quest.get("rewards")
+                if isinstance(raw, dict) and raw:
+                    rewards = raw
+        if not rewards and context.world.has_registry("quests"):
+            milestone = context.world.quests.get(quest_id)
+            if milestone is not None:
+                raw2 = milestone.rewards
+                if isinstance(raw2, dict) and raw2:
+                    rewards = raw2
+        if not rewards:
+            return []
+
+        # Build effect atoms from rewards dict.
+        effects: list[dict[str, Any]] = []
+        gold = rewards.get("gold", 0)
+        try:
+            gold = int(gold)
+        except (TypeError, ValueError):
+            gold = 0
+        if gold > 0:
+            effects.append({"type": "modify_gold", "amount": gold})
+        xp = rewards.get("xp", 0)
+        try:
+            xp = int(xp)
+        except (TypeError, ValueError):
+            xp = 0
+        if xp > 0:
+            effects.append({"type": "add_xp", "amount": xp})
+        items = rewards.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_id = item.get("item_id", "")
+                if not isinstance(item_id, str) or not item_id.strip():
+                    continue
+                count = item.get("count", 1)
+                try:
+                    count = int(count)
+                except (TypeError, ValueError):
+                    count = 1
+                effects.append({"type": "grant_item", "item_id": item_id.strip(), "count": count})
+        if not effects:
+            return []
+
+        # Find receptionist NPC.
+        receptionist_id: str | None = None
+        if context.world.has_registry("characters"):
+            for template in context.world.characters.list_all():
+                if "receptionist" in (template.tags or []):
+                    receptionist_id = template.id
+                    break
+        if receptionist_id is None:
+            logger.debug(
+                "NarrativePlannerHook: no receptionist NPC found for quest %s; "
+                "skipping reward service assignment",
+                quest_id,
+            )
+            return []
+
+        service_id = f"reward_{quest_id}"
+
+        # Idempotency: do not create a duplicate service if already assigned.
+        if context.state.has_slice("narrative_plan"):
+            existing = context.state.narrative_plan.get_services(receptionist_id)
+            if any(s.get("service_id") == service_id for s in existing):
+                logger.debug(
+                    "NarrativePlannerHook: reward service %s already assigned to %s; skipping",
+                    service_id,
+                    receptionist_id,
+                )
+                return []
+
+        directive = {
+            "kind": "assign_service",
+            "payload": {
+                "npc_id": receptionist_id,
+                "service_id": service_id,
+                "label": "领取任务报酬",
+                "price": 0,
+                "effects": effects,
+                "preconditions": {"quest_completed": quest_id},
+                "one_shot": True,
+                "notes": f"完成任务 {quest_id} 后可领取的报酬",
+            },
+        }
+        return [directive]
 
     async def bootstrap(self, context: SettlementContext) -> HookResult:
         """Seed opening quests without advancing normal planner bookkeeping."""
@@ -2031,6 +2267,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         planner_context["__world__"] = context.world
         planner_context["__state__"] = context.state
         planner_context["__world_id__"] = getattr(context.world, "world_id", "")
+        planner_context["__session_id__"] = context.session_id
 
     async def _run_replay(
         self,
@@ -2334,7 +2571,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
         graph = context.knowledge_graph
         if graph is not None:
             try:
-                graph.inject_story_facts(facts)
+                graph.inject_story_facts(facts, session_id=context.session_id)
             except Exception:
                 logger.exception("failed to inject story_facts into knowledge graph")
         return len(facts)

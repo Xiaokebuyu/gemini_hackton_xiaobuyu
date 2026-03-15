@@ -150,21 +150,21 @@ def test_format_planner_context_omits_area_ids_when_empty() -> None:
 
 
 def test_format_planner_context_renders_current_sub_area_ids() -> None:
-    """current_sub_area_ids in context → 'Sub-areas for ...' line in output."""
+    """current_sub_area_ids in context → 'Existing sub_locations for ...' line in output."""
     ctx = _minimal_ctx(
         current_sub_area_ids=["guild_hall", "tavern", "market"],
         location={"area_id": "frontier_town", "location_id": None},
     )
     result = _format_planner_context(ctx)
 
-    assert "Sub-areas for frontier_town:" in result
+    assert "frontier_town" in result
     assert "guild_hall" in result
     assert "tavern" in result
     assert "market" in result
 
 
 def test_format_planner_context_omits_sub_areas_when_empty() -> None:
-    """No current_sub_area_ids → 'Sub-areas for' line absent."""
+    """No current_sub_area_ids → sub_locations line absent."""
     ctx = _minimal_ctx()
     result = _format_planner_context(ctx)
 

@@ -433,7 +433,6 @@ class TestPurePromptFormatters:
             npc_profile={"name": "Tom", "personality": "Shrewd merchant"},
             disposition={"approval": 30, "trust": 10, "fear": 0, "romance": 0},
             stage="friend",
-            impressions=["Bought a sword", "Kind person"],
         )
         assert "Tom" in prompt
         assert "Shrewd merchant" in prompt
@@ -448,7 +447,6 @@ class TestPurePromptFormatters:
             npc_profile={},
             disposition={},
             stage="stranger",
-            impressions=[],
         )
         assert "Unknown NPC" in prompt
         assert "stranger" in prompt
@@ -460,7 +458,6 @@ class TestPurePromptFormatters:
             npc_profile={"name": "Tom"},
             disposition={},
             stage="stranger",
-            impressions=[],
             is_passive=True,
         )
 
@@ -472,7 +469,6 @@ class TestPurePromptFormatters:
             npc_profile={"name": "Tom"},
             disposition={"approval": 25, "trust": 20},
             stage="acquaintance",
-            impressions=[],
         )
 
         assert "join_party" in prompt
@@ -635,13 +631,11 @@ class TestL6Injection:
         assert "## Relevant world knowledge" not in prompt
 
     def test_build_npc_prompt_text_backward_compatible_no_hits_arg(self) -> None:
-        """_build_npc_prompt_text without knowledge_hits → no error, no knowledge block."""
+        """_build_npc_prompt_text with minimal args → no error, no knowledge block."""
         prompt = _build_npc_prompt_text(
             npc_profile={"name": "Tom", "personality": "A merchant."},
             disposition={"approval": 0, "trust": 0, "fear": 0, "romance": 0},
             stage="stranger",
-            impressions=[],
-            # knowledge_hits deliberately omitted → default None
         )
         assert "Tom" in prompt
         assert "## Relevant world knowledge" not in prompt

@@ -373,7 +373,12 @@ class TestPrivateChatCoordinator:
 
         assert len(result.graphize_candidates) > 0
 
-    def test_private_chat_consumes_active_directive_immediately(self) -> None:
+    def test_private_chat_with_instance_completes_successfully(self) -> None:
+        """Private chat with an NPCInstance (containing a directive) completes correctly.
+
+        Path A (consume_directive → prompt injection) has been removed.
+        Directives now flow through the blackboard (Path B) via NpcAutonomyHook.
+        """
         world = _world_with_characters()
         state = _state_with_relations(world)
         coordinator, llm = _build_coordinator(
@@ -402,10 +407,9 @@ class TestPrivateChatCoordinator:
         ))
 
         assert result.completed is True
-        assert directive["consumed"] is True
-        assert instance.directive_queue == []
-        # 3-C: directive no longer injected into system prompt as a text block
-        # (replaced by blackboard approach); directive is still consumed correctly
+        # Directive is no longer consumed by the coordinator (Path A removed).
+        # It remains in the queue until NpcAutonomyHook processes it via blackboard.
+        assert directive["consumed"] is False
 
     def test_time_cost_is_one_sixth(self) -> None:
         """Private chat time cost must equal 1/6."""

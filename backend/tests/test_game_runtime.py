@@ -123,7 +123,7 @@ def test_game_runtime_binds_graph_and_rehydrates_story_facts_on_resume() -> None
         def __init__(self) -> None:
             self.inject_calls: list[list[dict[str, object]]] = []
 
-        def inject_story_facts(self, facts):
+        def inject_story_facts(self, facts, session_id: str = ""):
             self.inject_calls.append([dict(fact) for fact in facts])
 
     class StubAgentOrchestration:

@@ -1,0 +1,22 @@
+{
+  "active_events": {},
+  "pending_events": [],
+  "rumors": [
+    {
+      "area_id": "frontier_town",
+      "content": "听说那个‘边境的怪人’又在柜台接了一堆报酬极低的哥布林委托。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 9
+      },
+      "metadata": {},
+      "rumor_id": "rumor_b85db662a2b3",
+      "source": "narrative_planner",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "听说那个‘边境的怪人’又在柜台接了一堆报酬极低的哥布林委托。"
+    }
+  ]
+}

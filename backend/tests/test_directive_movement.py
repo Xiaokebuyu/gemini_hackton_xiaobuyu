@@ -30,7 +30,6 @@ def test_blackboard_block_appears_when_provided() -> None:
         npc_profile={"name": "Tom", "personality": "A shrewd merchant."},
         disposition={"approval": 20, "trust": 30, "fear": 0, "romance": 0},
         stage="acquaintance",
-        impressions=[],
         blackboard=bb,
     )
     assert "## 你当前的想法" in prompt
@@ -47,7 +46,6 @@ def test_blackboard_block_absent_when_empty() -> None:
         npc_profile={"name": "Tom", "personality": "A shrewd merchant."},
         disposition={"approval": 0, "trust": 0, "fear": 0, "romance": 0},
         stage="stranger",
-        impressions=[],
         blackboard=None,
     )
     assert "## 你当前的想法" not in prompt
@@ -60,7 +58,6 @@ def test_blackboard_block_absent_when_all_values_empty() -> None:
         npc_profile={"name": "Tom", "personality": "A shrewd merchant."},
         disposition={"approval": 0, "trust": 0, "fear": 0, "romance": 0},
         stage="stranger",
-        impressions=[],
         blackboard=bb,
     )
     assert "## 你当前的想法" not in prompt
@@ -72,7 +69,6 @@ def test_relationship_compact_format_contains_all_dimensions() -> None:
         npc_profile={"name": "Alice", "personality": "Brave warrior."},
         disposition={"approval": 40, "trust": 55, "fear": 10, "romance": 20},
         stage="friend",
-        impressions=["We fought together"],
     )
     assert "好感：40" in prompt
     assert "信任：55" in prompt
@@ -87,7 +83,6 @@ def test_impressions_not_in_prompt() -> None:
         npc_profile={"name": "Bob", "personality": "Grumpy gatekeeper."},
         disposition={"approval": 10, "trust": 5, "fear": 0, "romance": 0},
         stage="acquaintance",
-        impressions=["Tried to bribe the gate guard", "Talks too much"],
     )
     assert "bribe" not in prompt
     assert "Talks too much" not in prompt
@@ -100,7 +95,6 @@ def test_behavior_guides_not_in_prompt() -> None:
         npc_profile={"name": "Enemy", "personality": "Hostile landlord."},
         disposition={"approval": -80, "trust": -50, "fear": 70, "romance": 0},
         stage="hostile",
-        impressions=[],
     )
     assert "## How to behave" not in prompt
     # The numbers are still present in the compact relationship line

@@ -742,7 +742,6 @@ def test_prompt_text_no_role_data_no_constraint_block():
         _minimal_profile(),
         disposition={},
         stage="stranger",
-        impressions=[],
     )
     assert "你的职责" not in prompt
     assert "约束规则" not in prompt
@@ -759,7 +758,6 @@ def test_prompt_text_with_receptionist_role_data_injects_block():
         _minimal_profile(tags=["receptionist"]),
         disposition={},
         stage="stranger",
-        impressions=[],
         role_data=role_data,
     )
     assert "你的职责" in prompt
@@ -778,7 +776,6 @@ def test_prompt_text_role_block_placed_before_tool_rules():
         _minimal_profile(tags=["receptionist"]),
         disposition={},
         stage="stranger",
-        impressions=[],
         role_data=role_data,
     )
     constraint_pos = prompt.find("你的职责")
@@ -793,7 +790,6 @@ def test_prompt_text_with_temple_keeper_role_data_injects_block():
         _minimal_profile(tags=["temple_keeper"]),
         disposition={},
         stage="stranger",
-        impressions=[],
         role_data={
             "role": "temple_keeper",
             "services": [{"service_id": "heal", "label": "治疗祈祷", "price": 25, "notes": ""}],
@@ -809,7 +805,6 @@ def test_prompt_text_with_guard_role_data_injects_block():
         _minimal_profile(tags=["guard"]),
         disposition={},
         stage="stranger",
-        impressions=[],
         role_data={
             "role": "guard",
             "area_id": "frontier_town",
@@ -1037,7 +1032,6 @@ def test_npc_prompt_includes_npc_id():
         _minimal_profile(name="TestNPC"),
         disposition={},
         stage="stranger",
-        impressions=[],
         npc_id="guild_girl_001",
     )
     assert "id: guild_girl_001" in prompt
@@ -1049,7 +1043,6 @@ def test_npc_prompt_without_npc_id_no_id_suffix():
         _minimal_profile(name="AnonNPC"),
         disposition={},
         stage="stranger",
-        impressions=[],
     )
     assert "(id:" not in prompt
 
@@ -1060,7 +1053,6 @@ def test_npc_prompt_fear_hint_injected_when_fear_high():
         _minimal_profile(),
         disposition={"fear": 60},
         stage="acquaintance",
-        impressions=[],
     )
     # fear value is still visible in the relationship one-liner
     assert "恐惧：60" in prompt

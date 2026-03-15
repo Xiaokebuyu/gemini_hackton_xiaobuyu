@@ -1,0 +1,506 @@
+{
+  "faction_standings": {
+    "adventurer_guild": 0,
+    "earth_mother_church": 0,
+    "frontier_merchants": 0,
+    "kingdom": 0
+  },
+  "npc_blackboards": {
+    "dwarf_shaman": {
+      "updated_tick": 9
+    },
+    "goblin_slayer": {
+      "attitude_towards_player": "普通的冒险者。如果不去杀哥布林，就没什么好聊的。",
+      "goals": [
+        "检查破旧的装备"
+      ],
+      "mood": "冷静，专注",
+      "thoughts": "盾牌的边缘磨损得比预想中快，下次得注意。如果这个人能提供哥布林的情报就好了。",
+      "updated_tick": 9
+    },
+    "guild_girl": {
+      "attitude_towards_player": "这位新人看起来很有干劲，希望能在这个小镇顺利开始他的冒险生涯。",
+      "mood": "愉快",
+      "thoughts": "愿意从基础任务做起是件好事，这样的人往往能活得更久。下一步他需要去见见那位特殊的冒险者。",
+      "updated_tick": 8
+    },
+    "guild_quartermaster": {
+      "attitude_towards_player": "总算回归理智了，知道什么才是保命的家伙。",
+      "mood": "平和",
+      "thoughts": "这些基础物资虽然不起眼，但能在关键时刻救命。他能选这些，说明还没被贪婪冲昏头脑。",
+      "updated_tick": 8
+    },
+    "high_elf_archer": {
+      "updated_tick": 9
+    },
+    "lizard_priest": {
+      "updated_tick": 9
+    },
+    "priestess": {
+      "attitude_towards_player": "冒险者看起来很可靠，而且愿意询问我的意见，让我感到很安心。",
+      "goals": [
+        "邀请一起去酒馆吃午饭",
+        "在地母神像前简短祈祷，并提醒玩家之后去酒馆汇合"
+      ],
+      "mood": "极度羞愧和尴尬",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "天呐，我竟然在酒馆门口把这里当成了神殿走廊……太失礼了，地母神大人请原谅我的冒失！冒险者先生一定觉得我是个奇怪的人。",
+      "updated_tick": 10
+    },
+    "tavern_waitress": {
+      "attitude_towards_player": "出手大方，是个懂行的。",
+      "mood": "愉快",
+      "thoughts": "是个新面孔，看起来挺有精神的，得留心一下他是不是要打听什么消息。"
+    },
+    "temple_matron": {
+      "attitude_towards_player": "一个懂得寻求地母神庇佑的稳健旅人。",
+      "mood": "欣慰",
+      "observations": [
+        "[tick 10|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "愿神的力量能在他穿行林道时指引他。",
+      "updated_tick": 10
+    }
+  },
+  "npc_dispositions": {
+    "blacksmith": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 10
+    },
+    "cow_girl": {
+      "approval": 50,
+      "fear": 0,
+      "romance": 70,
+      "trust": 80
+    },
+    "dwarf_shaman": {
+      "approval": 20,
+      "fear": 0,
+      "romance": 0,
+      "trust": 30
+    },
+    "goblin_slayer": {
+      "approval": 0,
+      "fear": 5,
+      "romance": 0,
+      "trust": 10
+    },
+    "guild_girl": {
+      "approval": 10,
+      "fear": 0,
+      "romance": 50,
+      "trust": 20
+    },
+    "guild_quartermaster": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 27
+    },
+    "high_elf_archer": {
+      "approval": 10,
+      "fear": 0,
+      "romance": 5,
+      "trust": 25
+    },
+    "informant": {
+      "approval": -5,
+      "fear": 10,
+      "romance": 0,
+      "trust": 0
+    },
+    "lizard_priest": {
+      "approval": 15,
+      "fear": 0,
+      "romance": 0,
+      "trust": 40
+    },
+    "north_gate_warden": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 8
+    },
+    "priestess": {
+      "approval": 20,
+      "fear": 0,
+      "romance": 25,
+      "trust": 40
+    },
+    "tavern_keeper": {
+      "approval": 5,
+      "fear": 0,
+      "romance": 0,
+      "trust": 15
+    },
+    "tavern_waitress": {
+      "approval": 15,
+      "fear": 0,
+      "romance": 5,
+      "trust": 15
+    },
+    "temple_matron": {
+      "approval": 5,
+      "fear": 0,
+      "romance": 0,
+      "trust": 25
+    },
+    "town_guard": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 5
+    },
+    "traveling_merchant": {
+      "approval": 5,
+      "fear": 0,
+      "romance": 0,
+      "trust": 10
+    }
+  },
+  "npc_impressions": {},
+  "relationship_stages": {
+    "cow_girl": "acquaintance",
+    "dwarf_shaman": "acquaintance",
+    "lizard_priest": "acquaintance",
+    "priestess": "acquaintance"
+  },
+  "shop_states": {
+    "blacksmith": {
+      "current_stock": [
+        {
+          "base_price": 10,
+          "item_id": "cheap_shortsword",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 15,
+          "item_id": "standard_longsword",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 5,
+          "item_id": "scouts_hand_axe",
+          "price_override": null,
+          "remaining": 5,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 20,
+          "item_id": "heavy_war_hammer",
+          "price_override": null,
+          "remaining": 2,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "throwing_dagger",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 4,
+          "item_id": "sturdy_spear",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 6,
+          "item_id": "quilted_gambeson",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 10,
+          "item_id": "leather_armor",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 75,
+          "item_id": "dirty_chain_mail",
+          "price_override": null,
+          "remaining": 2,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 10,
+          "item_id": "round_shield",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "hempen_rope",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "iron_spikes",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 2,
+          "item_id": "adventurers_tinderbox",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 25,
+          "item_id": "basic_antidote",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 50,
+          "item_id": "healing_potion",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "blacksmith",
+      "refresh_on": "daily"
+    },
+    "guild_quartermaster": {
+      "current_stock": [
+        {
+          "base_price": 1,
+          "item_id": "exploration_torch",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 2,
+          "item_id": "adventurers_tinderbox",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "hempen_rope",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "iron_spikes",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "trail_rations",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "waterskin",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "chalk_bundle",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "climbing_hook",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 3,
+          "item_id": "travel_bedroll",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "guild_quartermaster",
+      "refresh_on": "daily"
+    },
+    "tavern_keeper": {
+      "current_stock": [
+        {
+          "base_price": 1,
+          "item_id": "trail_rations",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "waterskin",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "exploration_torch",
+          "price_override": null,
+          "remaining": 8,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "lamp_oil_flask",
+          "price_override": null,
+          "remaining": 6,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "adventurers_tinderbox",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 5,
+          "item_id": "bandage_roll",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "tavern_keeper",
+      "refresh_on": "daily"
+    },
+    "traveling_merchant": {
+      "current_stock": [
+        {
+          "base_price": 50,
+          "item_id": "healing_potion",
+          "price_override": null,
+          "remaining": 5,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 25,
+          "item_id": "basic_antidote",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 1,
+          "item_id": "trail_rations",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "exploration_torch",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "waterskin",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "hempen_rope",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 3,
+          "item_id": "travel_bedroll",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 5,
+          "item_id": "bandage_roll",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "traveling_merchant",
+      "refresh_on": "daily"
+    }
+  }
+}

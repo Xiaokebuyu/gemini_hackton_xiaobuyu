@@ -180,7 +180,7 @@ def _default_disposition(**kwargs):
 def test_npc_prompt_backstory_block() -> None:
     profile = _npc_profile(backstory="曾经是一名雇佣兵，因背叛而逃亡")
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", []
+        profile, _default_disposition(), "stranger"
     )
     assert "## Your background" in prompt
     assert "曾经是一名雇佣兵" in prompt
@@ -189,7 +189,7 @@ def test_npc_prompt_backstory_block() -> None:
 def test_npc_prompt_no_backstory_block() -> None:
     profile = _npc_profile(backstory="")
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", []
+        profile, _default_disposition(), "stranger"
     )
     assert "## Your background" not in prompt
 
@@ -197,7 +197,7 @@ def test_npc_prompt_no_backstory_block() -> None:
 def test_npc_prompt_speech_pattern_block() -> None:
     profile = _npc_profile(speech_pattern="喜欢说「好嘞」")
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", []
+        profile, _default_disposition(), "stranger"
     )
     assert "## Your speech pattern" in prompt
     assert "好嘞" in prompt
@@ -206,7 +206,7 @@ def test_npc_prompt_speech_pattern_block() -> None:
 def test_npc_prompt_identity_block_class_and_faction() -> None:
     profile = _npc_profile(character_class="战士", faction="暗影公会")
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", []
+        profile, _default_disposition(), "stranger"
     )
     assert "## Your identity" in prompt
     assert "战士" in prompt
@@ -216,7 +216,7 @@ def test_npc_prompt_identity_block_class_and_faction() -> None:
 def test_npc_prompt_identity_block_absent_when_empty() -> None:
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", []
+        profile, _default_disposition(), "stranger"
     )
     assert "## Your identity" not in prompt
 
@@ -225,7 +225,7 @@ def test_npc_prompt_behavior_block_from_stage() -> None:
     """3-C: behavior_block removed; stage is now in compact relationship line."""
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "hostile", []
+        profile, _default_disposition(), "hostile"
     )
     # behavior_block with stage guides removed; stage still present in relationship line
     assert "## How to behave" not in prompt
@@ -236,7 +236,7 @@ def test_npc_prompt_time_block_with_slot() -> None:
     """3-C: time now appears as compact Chinese format in relationship line."""
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", [],
+        profile, _default_disposition(), "stranger",
         time_info={"day": 3, "slot": "night"},
     )
     # Chinese format: 第3天 night
@@ -248,7 +248,7 @@ def test_npc_prompt_time_block_no_slot() -> None:
     """3-C: time without slot shows day only."""
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", [],
+        profile, _default_disposition(), "stranger",
         time_info={"day": 5, "slot": ""},
     )
     assert "第5天" in prompt
@@ -257,7 +257,7 @@ def test_npc_prompt_time_block_no_slot() -> None:
 def test_npc_prompt_no_time_block_when_absent() -> None:
     profile = _npc_profile()
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(), "stranger", [],
+        profile, _default_disposition(), "stranger",
         time_info=None,
     )
     assert "当前时间" not in prompt
@@ -268,7 +268,7 @@ def test_npc_prompt_secrets_block_visible() -> None:
     s = SecretEntry(content="知道密道入口", trust_threshold=30)
     profile = _npc_profile(secrets=[s])
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(trust=50), "stranger", []
+        profile, _default_disposition(trust=50), "stranger"
     )
     assert "知道密道入口" in prompt
     assert "haven't told" in prompt
@@ -278,7 +278,7 @@ def test_npc_prompt_secrets_block_hidden_below_threshold() -> None:
     s = SecretEntry(content="高机密", trust_threshold=80)
     profile = _npc_profile(secrets=[s])
     prompt = _build_npc_prompt_text(
-        profile, _default_disposition(trust=50), "stranger", []
+        profile, _default_disposition(trust=50), "stranger"
     )
     assert "高机密" not in prompt
 

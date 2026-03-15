@@ -24,14 +24,14 @@ class RecordingNarrator:
         self.decision = decision
         self.calls: list[dict[str, object]] = []
 
-    async def compose(self, summary, scene_snapshot):
+    async def compose(self, summary, scene_snapshot, session_id: str = ""):
         self.calls.append({"summary": dict(summary), "scene_snapshot": dict(scene_snapshot)})
         return self.decision
 
 
 class ExplodingNarrator:
-    async def compose(self, summary, scene_snapshot):
-        del summary, scene_snapshot
+    async def compose(self, summary, scene_snapshot, session_id: str = ""):
+        del summary, scene_snapshot, session_id
         raise RuntimeError("narrator unavailable")
 
 

@@ -1,0 +1,10 @@
+{
+  "flags": {
+    "directive_trigger_cooldown_priestess": 13,
+    "narrative_escalation_level": 2,
+    "talked_to_guild_girl": true,
+    "talked_to_high_elf_archer": true,
+    "visited_room_frontier_town__adventurer_guild__guild_counter": true,
+    "visited_room_frontier_town__adventurer_guild__guild_hall": true
+  }
+}

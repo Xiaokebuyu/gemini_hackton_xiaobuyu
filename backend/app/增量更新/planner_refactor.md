@@ -1,290 +1,365 @@
-# Planner 系统优化计划
+# Planner 系统重构：合并为单一决策者
 
-记录日期：2026-03-15（修正版，基于 Codex 验证反馈）
+记录日期：2026-03-15（第三版，基于代码实读 + Codex 验证 + 用户方向确认）
 状态：待确认
 
----
+## 设计原则
 
-## 一、问题诊断
+> "除非能带来十分显而易见的效果，否则不要增加架构复杂度增加多个 LLM。"
 
-### 1.1 性能问题
-
-每次结算触发**多轮 replay**，每轮中每个 semantic event 都会分发给多个子系统，每个子系统独立调 LLM。
-
-```
-实际热点：replay_rounds × events_per_round × accepting_subsystems_per_event
-
-例：玩家导航到新区域
-  → 产出 3 个事件（area_entered, sub_location_entered, scene_changed）
-  → 每个事件被 NpcDirector + WorldBuilder 接受（2 个 LLM 调用）
-  → Round 1: 3 × 2 = 6 次 LLM 调用（串行）
-  → 如果产出新指令 → Round 2: 可能又 2-4 次
-  → 最后 Blackboard.plan() 又 1 次
-  → 总计可能 10+ 次 LLM 调用，全部 thinking_level="high"
-```
-
-### 1.2 功能故障
-
-| 问题 | 证据 | 根因 |
-|------|------|------|
-| NpcDirector LLM 输出被拒 | planner_directive_rejected 日志 + parse_failed/invalid_contract | LLM 输出格式不符合 directive_contracts 验证 |
-| 自动升级失控（escalation=68） | narrative_plan.json | NarrativeWeaver 在每轮 replay 中都调 execute_command(prune) + 检查升级，多轮 replay 导致重复升级 |
-| Blackboard 输出 0 directives | narrative_plan.json trace: blackboard=noop | Blackboard prompt 明确要求 directives 为空（设计如此，不是 bug） |
-
-### 1.3 架构现状（基于代码实读确认）
-
-```
-当前分工：
-
-Blackboard（PLANNER_BLACKBOARD_PROMPT）= 纯协调者
-  - prompt 明确："directives 必须是空数组"
-  - 产出：story_facts + strategy_notes + outline_updates + next_scheduled_tick
-  - 没有 design_skill_port
-  - 只有 planner_tools（读写设计模板），但 prompt 禁止产 directives
-
-子系统 Agent = 实际决策者（各自独立 LLM + design_skill + 工具注册表）
-  - QuestManager：可产 create_quest/publish_bulletin/retire_quest/update_quest
-  - NpcDirector：可产 direct_npc/spawn_quest_npc
-  - WorldBuilder：可产 plant_environmental/fill_area/fill_location/fill_room/plant_encounter
-  - NarrativeWeaver：可产 retire_quest/adjust_pacing/escalate
-  - 每个子系统都有"强制要求：先调 read_design_skill 再生成 directive"
-    → 实际是多轮 agent 调用（先 tool call 查模板 → 再输出 JSON）
-
-执行流：
-  _run_replay 多轮循环（子系统各自 LLM 决策 → apply directives → 新事件 → 下一轮）
-  → Blackboard.plan（只产 story_facts + strategy_notes，不产 directives）
-  → 结束
-```
-
-### 1.4 延迟放大因素
-
-每个子系统 LLM 调用实际是多轮 agent：
-1. 系统提示词（~1000 token）
-2. LLM 第 1 轮：调 `read_design_skill` tool（查模板）
-3. Tool 返回模板内容
-4. LLM 第 2 轮：基于模板生成 directives JSON
-→ 每个子系统 ≈ 2 次 LLM roundtrip × thinking_level="high"
-→ 单个子系统一次 evaluate ≈ 15-25 秒
+当前 5 个 LLM（4 子系统 + 1 Blackboard）没有带来显而易见的收益。合并为 1 个 high-thinking LLM，做好做透。
 
 ---
 
-## 二、关键约束（不可打破）
+## 一、当前架构（实读代码确认）
 
-| 约束 | 原因 | 文件 |
-|------|------|------|
-| Opening bootstrap 依赖 quest_manager_agent | `OpeningBootstrapQuestAgent` 确定性种子任务创建 | runtime.py:754, opening_bootstrap.py:129 |
-| PacingController 是 escalate/adjust_pacing 唯一 handler | NarrativeWeaver 只 handle schedule_event | pacing_controller.py:24 |
-| NarrativeWeaver.evaluate() 写状态（GC/despawn） | 必须在其他子系统之前执行 | narrative_weaver.py:83-96 |
-| 子系统 prompt 包含 strategy_notes | 软协调机制，不能随意切断 | narrators.py:1155 |
-| Blackboard 当前不产出 directives | prompt 明确 `directives: []` | narrators.py:1541 |
+```
+deps.py 创建 5 个 LLM 实例：
+  blackboard_llm  → AgenticNarrativePlanner（blackboard_registry，无 design_skill）
+  quest_llm       → AgenticNarrativePlanner（quest_registry + design_skill）
+  npc_llm         → AgenticNarrativePlanner（npc_registry + design_skill）
+  world_llm       → AgenticNarrativePlanner（world_registry + design_skill）
+  weaver_llm      → AgenticNarrativePlanner（weaver_registry + design_skill）
+
+PlannerSystemAssembly:
+  blackboard:             PlannerBlackboardPort（.plan() → story_facts + strategy_notes，directives=[]）
+  quest_manager_agent:    PlannerAgentPort（.evaluate() → directives）
+  npc_director_agent:     PlannerAgentPort（.evaluate() → directives）
+  world_builder_agent:    PlannerAgentPort（.evaluate() → directives）
+  narrative_weaver_agent: PlannerAgentPort（.evaluate() → directives）
+
+bootstrap.py 连接：
+  NarrativePlannerHook(blackboard=assembly.blackboard)
+  QuestManagerSubSystem(agent=assembly.quest_manager_agent)
+  NpcDirectorSubSystem(agent=assembly.npc_director_agent)
+  WorldBuilderSubSystem(agent=assembly.world_builder_agent)
+  NarrativeWeaverSubSystem(agent=assembly.narrative_weaver_agent)
+  PacingControllerSubSystem()  ← 无 agent
+
+每个子系统 agent 有"强制要求先 read_design_skill"→ 每次 evaluate 是 2+ 轮 roundtrip
+Blackboard prompt 明确禁止产 directives（narrators.py:1555）
+```
 
 ---
 
-## 三、分阶段优化方案
+## 二、改造目标
 
-### Phase 1：快速止血（~10 行，立即生效）
-
-**目标**：不改架构，降低延迟和修复失控。
-
-#### 1a. thinking_level 降级
-
-`app/deps.py` 5 处 `thinking_level="high"` → `"low"`
-
-理由：子系统决策是创意性叙事决策，不需要 extended thinking。
-
-#### 1b. replay 轮数限制
-
-`app/game_core/orchestration/hooks/narrative_planner.py`:
-```python
-_MAX_REPLAY_ROUNDS = 5  →  _MAX_REPLAY_ROUNDS = 2
 ```
+改后：1 个 LLM，1 次调用/settlement，thinking_level="high"
 
-理由：实际级联很少超过 2 轮。第 3-5 轮基本空转但每轮都可能触发 LLM。
+UnifiedPlanner（新角色，替代 Blackboard + 4 子系统 agent）：
+  - 拥有 design_skill_port + planner_tools
+  - 可产出所有类型 directives + story_facts + strategy_notes
+  - 输入：完整上下文 + 所有 events 一次性打包
+  - 输出：最多 8 条 directives + story_facts + strategy_notes + outline_updates
 
-#### 1c. escalation 上限
-
-`app/game_core/planning/narrative_weaver.py` 的 `_check_auto_escalation()`:
-```python
-# 新增：
-if level >= 10:
-    return None  # 到达上限，不再升级
+子系统 → 纯 handler（只保留 apply_directive，去掉 agent）
+确定性逻辑 → 搬到 hook 预处理中
 ```
-
-理由：escalation 到 68 说明安全网完全失控。上限 10 已经足够表达"叙事严重停滞"。
-
-**预期效果**：结算从 ~90s 降到 ~20-30s，升级不再无限增长。
 
 ---
 
-### Phase 2：修复子系统功能故障（~100 行）
+## 三、具体改造
 
-**目标**：让子系统 LLM 产出的指令能实际生效。
+### 3a. 新建 UnifiedPlanner Prompt
 
-#### 2a. 诊断 NpcDirector LLM 输出格式问题
+合并 5 个 prompt 的精华为一个 prompt。基础框架是现有的 `_SYSTEM_PROMPT`（narrators.py:225-324），它已经列出了所有 directive 种类和规则。在此基础上补充：
 
-需要进一步调查：
-- 查看 NPC_DIRECTOR_AGENT_PROMPT（narrators.py）的输出格式要求
-- 对比 directive_contracts 的验证规则
-- 找出 LLM 输出哪个字段不符合验证
-- 可能是嵌套结构问题（payload.npc_id vs payload.directive.npc_id）
+```
+追加内容（从子系统 prompt 提取的专业规则）：
 
-修复方向：
-- 调整 prompt 使输出更贴合验证格式
-- 或放宽 directive_contracts 的验证（如果过于严格）
-- 或在 normalize_planner_directive 中增加格式修正逻辑
+# 来自 QUEST_MANAGER_AGENT_PROMPT：
+- create_quest 必须有 objectives（含 condition）和 rewards
+- publish_bulletin 必须有 board_id + metadata.quest_id
+- update_quest 只能对 status=active 的任务
+- objectives 优先用 encounter_cleared/clue_investigated 等条件类型
 
-#### 2b. 修复 auto-escalation 在 replay 中重复触发
+# 来自 NPC_DIRECTOR_AGENT_PROMPT：
+- direct_npc payload 必须是 {npc_id, directive:{kind,..}, priority}
+- directive.kind 只能是 talk/approach/react/inform
+- 不把 behavior/topic/goal 放在 payload 根
 
-问题：NarrativeWeaver.evaluate() 在每轮 replay 中都调 execute_command(prune) + 检查升级。多轮 replay 导致同一个 settlement 中多次升级。
+# 来自 WORLD_BUILDER_AGENT_PROMPT：
+- fill_area/fill_location/fill_room 的必填字段
+- plant_encounter 的 monster_ids/sub_area_id 格式
+- 线索必须用 fill_location + investigate_clue functional type
+- 容量约束（fill_area ≤8，plant_environmental ≤15）
 
-修复：
-```python
-# narrative_weaver.py evaluate() 中：
-# 加一个 "本 settlement 已经升级过" 的 guard
-if event.payload.get("_escalation_already_checked"):
-    return SubSystemResult(directives=directives)
+# 来自 NARRATIVE_WEAVER_AGENT_PROMPT：
+- adjust_pacing 只用 {frozen: bool}
+- escalate 只用 {delta: N}，N 在 [-3, 3]
 ```
 
-或者更简单：将自动升级检查从 evaluate() 搬到 hook.execute() 中只执行一次。
+**注意**：_SYSTEM_PROMPT 包含了大部分规则，但**缺少以下 directive kind**（需要补齐到"可用指令"部分）：
+- `assign_service` / `revoke_service`（NPC 服务分配/移除）
+- `schedule_event`（安排延迟事件）
+- `create_rumor`（传播谣言）
+- `modify_location`（修改 NPC 位置）
+- `spawn_quest_npc`（生成临时任务 NPC）
 
----
+这些在 `directive_contracts.py:48` 的 `SUPPORTED_PLANNER_DIRECTIVE_KINDS` 中已注册，但 _SYSTEM_PROMPT 的"可用指令"列表（334-352 行）未列出。需要补充格式示例和规则说明。
 
-### Phase 3：性能优化（保持架构，~100 行）
+同时删除 `PLANNER_BLACKBOARD_PROMPT` 的"directives 必须为空"限制，改用补全后的 _SYSTEM_PROMPT。
 
-**目标**：在不改架构的前提下最大化并行和减少重复计算。
-
-#### 3a. 子系统 evaluate 并行化
-
-`app/game_core/planning/subsystem.py` 的 `dispatch()` 方法：
+### 3b. deps.py 精简
 
 ```python
-# 当前（串行）：
-for subsystem in self._subsystems:
-    if subsystem.accepts_event(event):
-        result = await self._run_and_drain(subsystem, event, context)
+# 改前：5 个 LLM 实例 + 5 个 registry
+blackboard_llm = GeminiLlmAdapter(thinking_level="high", ...)
+quest_llm = GeminiLlmAdapter(thinking_level="high", ...)
+npc_llm = GeminiLlmAdapter(thinking_level="high", ...)
+world_llm = GeminiLlmAdapter(thinking_level="high", ...)
+weaver_llm = GeminiLlmAdapter(thinking_level="high", ...)
 
-# 改后（安全并行）：
-# NarrativeWeaver 必须先执行（写状态），其余可并行
-weaver_results = []
-parallel_tasks = []
-for subsystem in self._subsystems:
-    if not subsystem.accepts_event(event):
-        continue
-    if subsystem.name == "narrative_weaver":
-        weaver_results = await self._run_and_drain(subsystem, event, context)
-    else:
-        parallel_tasks.append(self._run_and_drain(subsystem, event, context))
+# 改后：1 个 LLM + 1 个 registry（含所有 planner tools）
+unified_llm = GeminiLlmAdapter(thinking_level="high", profile_name="planner")
+unified_registry = RoleToolRegistry()
+register_planner_tools(unified_registry, roles=["planner"])
 
-parallel_results = await asyncio.gather(*parallel_tasks) if parallel_tasks else []
-results = weaver_results + [r for batch in parallel_results for r in batch]
+return PlannerSystemAssembly(
+    blackboard=AgenticNarrativePlanner(
+        llm=unified_llm,
+        executor=AgenticExecutor(tool_registry=unified_registry, llm=unified_llm),
+        design_skill_port=LocalDesignSkillProvider(),
+        world_id="",
+        role="planner",
+        system_prompt=UNIFIED_PLANNER_PROMPT,   # ← 新 prompt
+        provider_name="planner",
+        history_key="__planner__",
+        graphize_callback=graphize_callback,
+        memory_retriever=memory_retriever,
+        allowed_skill_categories=["quests", "npcs", "areas", "environments", "encounters", "narrative", "social"],
+    ),
+    quest_manager_agent=None,      # ← 不再需要
+    npc_director_agent=None,
+    world_builder_agent=None,
+    narrative_weaver_agent=None,
+)
 ```
 
-理由：QuestManager/NpcDirector/WorldBuilder/PacingController 的 evaluate() 不写状态，安全并行。NarrativeWeaver 写状态（GC/despawn），必须先跑。
-
-#### 3b. 上下文缓存（同轮复用）
-
-`app/game_core/orchestration/hooks/narrative_planner.py` 的 _run_replay():
+### 3c. Blackboard prompt 改造
 
 ```python
-# 当前：每个事件重建上下文
-for semantic_event in pending_events:
-    event_context = self._build_planner_context(context, ...)  # 每次重建
+# 改前（PLANNER_BLACKBOARD_PROMPT）：
+# "directives 必须是空数组"
 
-# 改后：同一轮内复用
-round_context = self._build_planner_context(context, ...)  # 每轮只建一次
-for semantic_event in pending_events:
-    event_context = dict(round_context)  # 浅拷贝
-    event_context["planner_events"] = ...
+# 改后（UNIFIED_PLANNER_PROMPT）：
+# 基于 _SYSTEM_PROMPT（已有所有 directive 规则）
+# + 子系统专业规则（3a 中列出的）
+# + 删除"directives 必须为空"限制
+# + max directives 从 3 提高到 8
+# + "强制 read_design_skill" 改为"建议查阅"（减少 roundtrip）
 ```
 
-理由：同一轮内状态不变（指令在批量 apply 后才生效），重复构建完全浪费。
+### 3d. hook execute() 简化
 
-#### 3c. PacingController 合并进 NarrativeWeaver
+```python
+# 改后伪代码（保留所有关键步骤，删除多轮 replay）：
 
-`app/game_core/planning/narrative_weaver.py`:
-- `_HANDLES` 加入 `"escalate"`, `"adjust_pacing"`
-- 新增 `_apply_escalate()`, `_apply_adjust_pacing()`（从 PacingController 搬过来）
+async def execute(self, context):
+    # === 前置检查（不变）===
+    # 冷却检查、触发检查、quiet_rest_slot 检查（原样保留）
 
-`app/game_core/planning/pacing_controller.py`:
-- 保留文件但标记 deprecated，或删除并更新 defaults/bootstrap
+    # === 里程碑大纲（不变，从现有代码保留）===
+    self._auto_select_target_milestone(context)       # 原 330 行
+    await self._ensure_milestone_outline(context, ...) # 原 334 行
 
-`app/game_core/orchestration/defaults.py` + `bootstrap.py`:
-- 移除 PacingController 注册
+    # === 确定性预处理（从 NarrativeWeaver.evaluate 搬出）===
+    context.execute_command(Command(type="planner_prune_npc_directives", ...))
+    self._despawn_expired_quest_npcs(context, ...)
+    escalate = self._check_auto_escalation(context)  # 加 cap=10
+    pre_directives = [escalate] if escalate else []
 
-理由：PacingController evaluate() 为空，合并后减少一个子系统的分发开销。注意 escalate/adjust_pacing 的 handler 方法必须完整搬过去。
+    # === 确定性 quest_completed（从 NpcDirector 搬出）===
+    for event in pending_events:
+        if event.kind == "quest_completed":
+            result = self._handle_quest_completed_deterministic(event, context)
+            if result:
+                pre_directives.extend(result.directives)
+
+    # === 应用预处理 directives ===
+    if pre_directives:
+        self._apply_directive_batch(pre_directives, context, ...)
+
+    # === 收集所有 events（一次性）===
+    all_events = collect_planner_events(context, current_tick, ...)
+    planner_event_summaries = [planner_event_snapshot(e) for e in all_events]
+
+    # === 构建上下文（一次）===
+    planner_context = self._build_planner_context(context, current_tick=current_tick)
+    planner_context["planner_events"] = planner_event_summaries
+    self._inject_runtime_refs(planner_context, context)
+
+    # === UnifiedPlanner.plan() ← 唯一的 LLM 调用 ===
+    decision = await self.blackboard.plan(planner_context)
+
+    # === 应用 LLM directives（走现有 dispatcher）===
+    apply_summary = self._apply_directive_batch(decision["directives"], context, ...)
+
+    # === inline event check（从 _run_replay 保留）===
+    run_inline_event_check(
+        state=context.state, world=context.world,
+        rules_engine=context._rules_engine,
+        apply_delta=context._apply_delta,
+        change_log=context.change_log,
+        scene_bus=context.scene_bus,
+        label="planner_unified",
+        sse_collector=self._pending_sse,
+    )
+
+    # === 应用 story_facts ===
+    self._apply_story_facts(decision.get("story_facts", []), context, ...)
+
+    # === 检测 milestone transitions + cascade ===
+    milestone_sse = _detect_failed_milestones_sse(context) + _detect_completed_milestones_sse(context)
+
+    # === 更新 area_situation ===
+    self._update_area_situation(context)
+
+    # === 状态提交（不变）===
+    # 更新 last_run_tick, strategy_notes, behavior_window, outline_updates 等
+```
+
+**关键保留项**（Codex 验证反馈指出的）：
+- `_auto_select_target_milestone()` + `_ensure_milestone_outline()` — 里程碑大纲主链路
+- `run_inline_event_check()` — 事件条件触发（flag 满足 → 事件激活）
+- replay trace 语义 — 简化为 single-round trace（不再有多轮）
+
+### 3e. bootstrap.py 和 Opening Bootstrap 兼容
+
+**关键澄清**：`build_narrative_planner_hook()` 是一个通用 wiring 函数，Live 和 Bootstrap 用**不同的 PlannerSystemAssembly 实例**调用它。
+
+```python
+# Live planner（deps.py _build_planner_system）：
+PlannerSystemAssembly(
+    blackboard=UnifiedPlanner,     # ← 有 LLM
+    quest_manager_agent=None,      # ← 改为 None
+    npc_director_agent=None,       # ← 改为 None
+    world_builder_agent=None,      # ← 改为 None
+    narrative_weaver_agent=None,   # ← 改为 None
+)
+
+# Bootstrap planner（opening_bootstrap.py:129）：
+PlannerSystemAssembly(
+    blackboard=None,                                # ← 无 LLM
+    quest_manager_agent=OpeningBootstrapQuestAgent(), # ← 确定性 agent，保留不动
+)
+```
+
+**build_narrative_planner_hook() 本身不改**——它只是把传入的 agent 赋给子系统。Live 传 None，Bootstrap 传 OpeningBootstrapQuestAgent，各走各的。
+
+**不需要分支逻辑**——因为两个 assembly 实例在不同代码路径创建，互不影响。
+
+### 3g. PacingController 合并
+
+```python
+# NarrativeWeaver._HANDLES 扩展：
+_HANDLES = frozenset({"schedule_event", "escalate", "adjust_pacing"})
+
+# 新增 apply 方法（从 PacingController 搬过来）：
+def _apply_escalate(self, payload, context, *, current_tick):
+    ...
+def _apply_adjust_pacing(self, payload, context, *, current_tick):
+    ...
+
+# PacingControllerSubSystem 从 defaults + bootstrap 中移除
+```
+
+### 3h. save/load 精简
+
+```python
+# 只保存 1 个 planner 历史（"__planner__"）
+# 旧存档中的 __quest_manager_agent__ 等 key 加载时静默跳过
+# runtime.py 的 _collect_context_windows / _restore_context_windows 精简
+```
 
 ---
 
-### Phase 4：架构升级（可选，视 Phase 1-3 效果决定）
+## 四、不变的部分
 
-如果 Phase 1-3 后仍不满意，有两个方向：
-
-#### 4a. 升级 Blackboard 为唯一决策者（大改）
-
-需要的改造（不是改个 prompt 就行）：
-- 给 Blackboard 注入 design_skill_port（当前只有子系统 agent 有）
-- 给 Blackboard 注册所有 directive 种类对应的 tool declarations
-- 修改 PLANNER_BLACKBOARD_PROMPT 允许产出 directives（当前明确禁止）
-- 合并 4 个子系统 prompt 的专业知识到 Blackboard prompt
-- 子系统 evaluate 逐步退化为空
-- **约束**：不能影响 opening bootstrap（保留 OpeningBootstrapQuestAgent 确定性路径）
-- **约束**：PacingController handler（escalate/adjust_pacing）必须有路由目标
-- **预估**：~300 行改动 + prompt 大改
-
-#### 4b. 子系统合并为 2 个（中改）
-
-- QuestManager + NpcDirector → 一个 "QuestNpcAgent"（任务+NPC 联动决策）
-- WorldBuilder 独立（内容生成是独立领域）
-- NarrativeWeaver 保持确定性（不需要 LLM）
-- 3 个 LLM（包含 Blackboard）代替 5 个
-- 预估：~150 行改动 + 2 个 prompt 合并
-
-#### 4c. 去掉 design_skill 强制查询（小改，高收益）
-
-当前每个子系统 LLM 被强制要求"先 read_design_skill 再生成 directive"，导致每次 evaluate 是 2 轮 agent roundtrip。如果改为"建议但不强制"，可以减少一半的 LLM 交互次数。
-- 修改：4 个子系统 prompt 中删除"强制要求"
-- 风险：directive 质量可能下降（不参考模板）
-- 预估：~10 行 prompt 调整
+| 模块 | 为什么不变 |
+|------|-----------|
+| 所有 apply_directive handler（QuestManager/NpcDirector/WorldBuilder/Weaver 的 apply 方法） | 纯机械执行，不关心指令来源 |
+| PlannerDispatcher 路由 | 指令分发不变 |
+| directive_contracts 验证 | 验证不变 |
+| 跨系统路由（publish_bulletin→direct_npc） | 在 apply 阶段 |
+| InstanceManager 注入 | 在 _apply_direct_npc 中 |
+| NPC 黑板写入 | 在 _apply_direct_npc 中 |
+| SSE 事件产出 | 来源不变 |
+| Opening Bootstrap | 独立路径，不受影响 |
+| No-LLM Fallback | _FallbackBlackboard 仍可用 |
+| NPC Agent/对话系统 | 完全独立于 Planner |
+| 前端代码 | SSE 格式不变 |
 
 ---
 
-## 四、影响面
+## 五、修改文件清单
 
-### Phase 1 影响
+| 文件 | 改动 | 预估行数 |
+|------|------|---------|
+| `app/narrators.py` | 新建 UNIFIED_PLANNER_PROMPT（合并 5 个 prompt），删旧 prompt | ~200 行改动 |
+| `app/deps.py` | 1 个 LLM 替代 5 个，1 个 registry 替代 5 个 | ~100 行删减 |
+| `app/game_core/orchestration/hooks/narrative_planner.py` | execute() 简化（删 _run_replay，改为单次调用） | ~200 行改动 |
+| `app/game_core/bootstrap.py` | 子系统 agent=None，删 PacingController | ~20 行 |
+| `app/game_core/adapters/planner_system.py` | PlannerSystemAssembly 4 个 agent 字段改为可选 | ~5 行 |
+| `app/game_core/planning/narrative_weaver.py` | 吸收 escalate/adjust_pacing handler | ~40 行 |
+| `app/game_core/planning/pacing_controller.py` | 删除 | ~-110 行 |
+| `app/game_core/runtime.py` | save/load 精简为 1 个历史 | ~20 行 |
+| `app/game_core/orchestration/defaults.py` | 移除 PacingController | ~5 行 |
 
-| 文件 | 改动 |
+**净变化**：约 -100 行（删减多于新增）
+
+---
+
+## 六、风险与缓解
+
+| 风险 | 缓解 |
 |------|------|
-| deps.py | 5 处 thinking_level 值 |
-| narrative_planner.py | 1 处 MAX_REPLAY_ROUNDS 值 |
-| narrative_weaver.py | _check_auto_escalation 加上限 |
-
-测试影响：可能有几个测试检查 replay round 数或 escalation 值的断言需要更新。
-
-### Phase 2 影响
-
-取决于具体诊断结果。NpcDirector 格式修复可能涉及 narrators.py prompt 或 directive_contracts.py 验证逻辑。
-
-### Phase 3 影响
-
-| 文件 | 改动 |
-|------|------|
-| subsystem.py | dispatch() 并行化 |
-| narrative_planner.py | _run_replay 上下文缓存 |
-| narrative_weaver.py | 吸收 PacingController handler |
-| pacing_controller.py | 删除或 deprecated |
-| defaults.py + bootstrap.py | 移除 PacingController 注册 |
+| 单 prompt 覆盖 4 个领域，质量可能下降 | _SYSTEM_PROMPT 已包含所有规则；只需补充子系统的细节格式约束 |
+| 单次输出 8 条 directives 可能不精准 | 保留"最多 N 条"限制 + directive_contracts 验证层 |
+| Opening Bootstrap 不兼容 | 独立路径（用 OpeningBootstrapQuestAgent），完全不受影响 |
+| 旧存档加载失败 | 4 个 agent 历史 key 不存在时 restore 已有 .get() 容错 |
+| 回退困难 | 子系统代码只改 agent=None，恢复只需改回 deps + bootstrap |
 
 ---
 
-## 五、预期效果
+## 七、预期效果
 
-| 指标 | 当前 | Phase 1 后 | Phase 3 后 | Phase 4c 后 |
-|------|------|-----------|-----------|------------|
-| 每子系统 LLM roundtrips | 2（查模板+生成） | 2 | 2 | 1（去掉强制查模板） |
-| 单次 roundtrip 延迟 | 10-15s (high) | 3-5s (low) | 3-5s (low) | 3-5s |
-| replay 轮数上限 | 5 | 2 | 2 | 2 |
-| 子系统并行度 | 串行 | 串行 | 4 并行 | 4 并行 |
-| 上下文重建 | 每事件 | 每事件 | 每轮一次 | 每轮一次 |
-| 典型结算延迟 | ~60-90s | ~20-30s | ~8-15s | ~5-10s |
-| escalation_level | 68（失控） | ≤10 | ≤10 | ≤10 |
-| NpcDirector 指令 | parse_failed | 修复后正常 | 正常 | 正常 |
+| 指标 | 当前 | 改后 |
+|------|------|------|
+| LLM 调用次数/settlement | 10-20+（replay×events×subsystems×roundtrips） | **1-2**（UnifiedPlanner 1-2 轮 roundtrip） |
+| thinking_level | high | **high**（保留） |
+| 单次结算延迟 | 60-90s | **10-20s** |
+| escalation_level | 68（失控） | ≤10（cap） |
+| NpcDirector 格式问题 | parse_failed | **消除**（统一 prompt 统一格式） |
+| 代码复杂度 | 5 LLM + 5 registry + 5 prompt | **1 LLM + 1 registry + 1 prompt** |
+| Token 消耗/settlement | 5 × context（重复上下文传递） | **1 × context**（上下文只传一次） |
+
+---
+
+## 八、实施步骤
+
+```
+Phase 1：prompt 合并（~200 行）
+  新建 UNIFIED_PLANNER_PROMPT
+  基于 _SYSTEM_PROMPT + 子系统专业规则
+  删除"directives 必须为空"
+  "强制 read_design_skill" → "建议查阅"
+
+Phase 2：deps + bootstrap 改造（~120 行）
+  deps.py：1 个 LLM + 1 个 registry
+  bootstrap.py：子系统 agent=None
+  planner_system.py：字段标可选
+
+Phase 3：hook execute() 简化（~200 行）
+  删 _run_replay
+  改为：预处理 → 收集 events → 构建上下文 → plan() → apply
+  确定性逻辑搬到预处理
+
+Phase 4：PacingController 合并 + save/load 精简（~60 行）
+  NarrativeWeaver 吸收 handler
+  runtime.py 只存 1 个历史
+
+Phase 5：测试更新
+  更新 planner 相关测试断言
+```

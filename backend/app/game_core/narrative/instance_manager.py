@@ -1,4 +1,4 @@
-"""InstanceManager — per-actor NPCInstance LRU pool."""
+"""InstanceManager — per-actor NPCInstance LRU pool with session isolation."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ class PendingInstanceWriteback:
     actor_id: str
     messages: list[WindowMessage]
     reason: str = "lru_eviction"
+    session_id: str = ""
 
 
 @dataclass(slots=True)
@@ -36,6 +37,7 @@ class NPCInstance:
 
     actor_id: str
     context_window: ContextWindow
+    session_id: str = ""
     directive_queue: list[dict[str, Any]] = field(default_factory=list)
     last_interaction_tick: int = 0
     interaction_count: int = 0
@@ -132,7 +134,11 @@ class NPCInstance:
 
 
 class InstanceManager:
-    """LRU pool of active NPCInstance objects."""
+    """LRU pool of active NPCInstance objects with per-session isolation.
+
+    Pool keys are ``"{session_id}/{actor_id}"`` so different sessions can hold
+    separate instances for the same actor without colliding.
+    """
 
     def __init__(
         self,
@@ -146,101 +152,185 @@ class InstanceManager:
         self._max_tokens = max_tokens_per_instance
         self._overflow_threshold = overflow_threshold
 
+    # ------------------------------------------------------------------
+    # Internal key helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pool_key(session_id: str, actor_id: str) -> str:
+        return f"{session_id}/{actor_id}"
+
+    # ------------------------------------------------------------------
+    # Public API (all methods take session_id as first positional arg)
+    # ------------------------------------------------------------------
+
     def get_or_create(
         self,
+        session_id: str,
         actor_id: str,
         npc_directives: list[dict[str, Any]] | None = None,
         current_tick: int = 0,
     ) -> NPCInstance:
         """Return an active instance, creating it if necessary."""
-        if actor_id in self._pool:
-            instance = self._pool[actor_id]
-            self._pool.move_to_end(actor_id)
+        key = self._pool_key(session_id, actor_id)
+        if key in self._pool:
+            instance = self._pool[key]
+            self._pool.move_to_end(key)
             instance.sync_directives(npc_directives, current_tick=current_tick)
             instance.record_interaction(current_tick)
             return instance
 
         while len(self._pool) >= self._max_instances:
-            victim_id = self._select_eviction_candidate(current_tick=current_tick)
-            self._evict(victim_id, reason="lru_eviction")
+            victim_key = self._select_eviction_candidate(current_tick=current_tick)
+            self._evict_by_key(victim_key, reason="lru_eviction")
 
         context_window = ContextWindow(
             actor_id=actor_id,
             max_tokens=self._max_tokens,
             overflow_threshold=self._overflow_threshold,
         )
-        instance = NPCInstance(actor_id=actor_id, context_window=context_window)
+        instance = NPCInstance(
+            actor_id=actor_id,
+            context_window=context_window,
+            session_id=session_id,
+        )
         instance.sync_directives(npc_directives, current_tick=current_tick)
         instance.record_interaction(current_tick)
-        self._pool[actor_id] = instance
+        self._pool[key] = instance
         return instance
 
-    def get(self, actor_id: str) -> NPCInstance | None:
-        if actor_id in self._pool:
-            self._pool.move_to_end(actor_id)
-            return self._pool[actor_id]
+    def get(self, session_id: str, actor_id: str) -> NPCInstance | None:
+        key = self._pool_key(session_id, actor_id)
+        if key in self._pool:
+            self._pool.move_to_end(key)
+            return self._pool[key]
         return None
 
     def inject_directive(
         self,
+        session_id: str,
         actor_id: str,
         directive: dict[str, Any],
         *,
         current_tick: int = 0,
     ) -> bool:
         """Hot-inject one directive into an already active instance."""
-        instance = self._pool.get(actor_id)
+        key = self._pool_key(session_id, actor_id)
+        instance = self._pool.get(key)
         if instance is None:
             return False
-        self._pool.move_to_end(actor_id)
+        self._pool.move_to_end(key)
         return instance.add_directive(directive, current_tick=current_tick)
 
-    def evict(self, actor_id: str) -> NPCInstance | None:
-        return self._evict(actor_id, reason="manual_evict")
+    def evict(self, session_id: str, actor_id: str) -> NPCInstance | None:
+        key = self._pool_key(session_id, actor_id)
+        return self._evict_by_key(key, reason="manual_evict")
 
-    def get_active_instances(self) -> list[NPCInstance]:
-        return list(self._pool.values())
+    def contains(self, session_id: str, actor_id: str) -> bool:
+        return self._pool_key(session_id, actor_id) in self._pool
 
-    def iter_instances(self) -> Iterator[tuple[str, NPCInstance]]:
-        """Yield (actor_id, instance) pairs for persistence."""
-        yield from self._pool.items()
+    def get_active_instances(
+        self,
+        session_id: str | None = None,
+    ) -> list[NPCInstance]:
+        if session_id is None:
+            return list(self._pool.values())
+        prefix = f"{session_id}/"
+        return [inst for key, inst in self._pool.items() if key.startswith(prefix)]
 
-    def get_instance_stats(self) -> dict[str, Any]:
+    def iter_instances(
+        self,
+        session_id: str | None = None,
+    ) -> Iterator[tuple[str, NPCInstance]]:
+        """Yield (actor_id, instance) pairs for persistence.
+
+        When *session_id* is provided, only instances belonging to that session
+        are yielded and the actor_id (not the compound pool key) is returned.
+        """
+        if session_id is None:
+            for key, instance in self._pool.items():
+                yield instance.actor_id, instance
+        else:
+            prefix = f"{session_id}/"
+            for key, instance in self._pool.items():
+                if key.startswith(prefix):
+                    yield instance.actor_id, instance
+
+    def get_instance_stats(
+        self,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        if session_id is None:
+            return {
+                "count": len(self._pool),
+                "max_instances": self._max_instances,
+                "lru_order": list(self._pool.keys()),
+                "pending_writebacks": len(self._pending_writebacks),
+            }
+        prefix = f"{session_id}/"
+        session_keys = [k for k in self._pool if k.startswith(prefix)]
         return {
-            "count": len(self._pool),
+            "count": len(session_keys),
             "max_instances": self._max_instances,
-            "lru_order": list(self._pool.keys()),
-            "pending_writebacks": len(self._pending_writebacks),
+            "lru_order": session_keys,
+            "pending_writebacks": sum(
+                1 for wb in self._pending_writebacks if wb.session_id == session_id
+            ),
         }
 
-    def drain_pending_writebacks(self) -> list[PendingInstanceWriteback]:
-        pending = list(self._pending_writebacks)
-        self._pending_writebacks = []
+    def drain_pending_writebacks(
+        self,
+        session_id: str | None = None,
+    ) -> list[PendingInstanceWriteback]:
+        if session_id is None:
+            pending = list(self._pending_writebacks)
+            self._pending_writebacks = []
+            return pending
+        pending = [wb for wb in self._pending_writebacks if wb.session_id == session_id]
+        self._pending_writebacks = [
+            wb for wb in self._pending_writebacks if wb.session_id != session_id
+        ]
         return pending
 
-    def contains(self, actor_id: str) -> bool:
-        return actor_id in self._pool
+    def clear_session(self, session_id: str) -> None:
+        """Remove all pool entries and pending writebacks belonging to *session_id*."""
+        prefix = f"{session_id}/"
+        keys_to_remove = [k for k in self._pool if k.startswith(prefix)]
+        for key in keys_to_remove:
+            self._pool.pop(key, None)
+        self._pending_writebacks = [
+            wb for wb in self._pending_writebacks if wb.session_id != session_id
+        ]
 
-    def instance_count(self) -> int:
-        return len(self._pool)
+    def instance_count(self, session_id: str | None = None) -> int:
+        if session_id is None:
+            return len(self._pool)
+        prefix = f"{session_id}/"
+        return sum(1 for k in self._pool if k.startswith(prefix))
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _select_eviction_candidate(self, *, current_tick: int) -> str:
-        for actor_id, instance in self._pool.items():
+        """Return the pool key of the best eviction candidate."""
+        for pool_key, instance in self._pool.items():
             if not instance.has_pending_directives(current_tick):
-                return actor_id
+                return pool_key
         return next(iter(self._pool))
 
-    def _evict(self, actor_id: str, *, reason: str) -> NPCInstance | None:
-        instance = self._pool.pop(actor_id, None)
+    def _evict_by_key(self, pool_key: str, *, reason: str) -> NPCInstance | None:
+        instance = self._pool.pop(pool_key, None)
         if instance is None:
             return None
         messages = instance.context_window.collect_for_graphize()
         if messages:
             self._pending_writebacks.append(
                 PendingInstanceWriteback(
-                    actor_id=actor_id,
+                    actor_id=instance.actor_id,
                     messages=messages,
                     reason=reason,
+                    session_id=instance.session_id,
                 )
             )
         return instance

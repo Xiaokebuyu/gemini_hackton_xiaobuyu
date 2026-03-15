@@ -193,6 +193,8 @@ def test_supported_planner_directives_match_current_hook_surface() -> None:
         "schedule_event",
         "create_rumor",
         "modify_location",
+        # P28: task auto-completion monitor
+        "set_task_monitor",
     }
 
 

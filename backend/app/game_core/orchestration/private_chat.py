@@ -147,16 +147,10 @@ class PrivateChatCoordinator:
         )
 
         # ---- Step 1: Setup ----------------------------------------
-        active_directive: dict[str, Any] | None = None
-        if instance is not None and self._state.has_slice("time"):
-            active_directive = instance.consume_directive(
-                self._state.time.absolute_tick()
-            )
         npc_full = await builder.build_npc_full_context(
             npc_id,
             memory_retriever=self._memory_retriever,
             is_private=True,
-            active_directive=active_directive,
         )
         if npc_full is None:
             logger.warning("PrivateChatCoordinator: NPC not found: %s", npc_id)

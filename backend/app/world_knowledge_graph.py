@@ -7,7 +7,15 @@ quests) on first use for each WorldInstance (lazy + idempotent).
 Spreading activation uses BFS on the undirected view of the graph so that
 activation flows in both directions along each edge.
 
-Decision record: D-N15 (narrative.md)
+Design: static world topology shared across sessions; dynamic game knowledge
+(story_facts, NPC episode memory, actor-private notes) is per-session.
+The graph is split into:
+  - _graph: static base graph seeded from content registries (shared)
+  - _sessions[session_id].overlay: story_facts / add_triple / add_raw_triple
+  - _sessions[session_id].actor_graphs[actor_id]: per-NPC private knowledge
+  - _sessions[session_id].memory_counts[actor_id]: memory node counter
+
+Decision record: D-N15, D-session-isolation (narrative.md)
 """
 
 from __future__ import annotations
@@ -125,6 +133,25 @@ _LORE_ENRICHMENT_PROMPT = (
 )
 
 # ------------------------------------------------------------------
+# Per-session state container
+# ------------------------------------------------------------------
+
+
+@dataclass
+class _SessionState:
+    """Per-session dynamic graph data.
+
+    overlay: story_facts / add_triple / add_raw_triple write here.
+    actor_graphs: per-NPC private knowledge subgraphs.
+    memory_counts: memory node sequence number per actor.
+    """
+
+    overlay: nx.DiGraph = field(default_factory=nx.DiGraph)
+    actor_graphs: dict[str, nx.DiGraph] = field(default_factory=dict)
+    memory_counts: dict[str, int] = field(default_factory=dict)
+
+
+# ------------------------------------------------------------------
 # WorldKnowledgeGraph
 # ------------------------------------------------------------------
 
@@ -143,17 +170,40 @@ class _NodeData:
 class WorldKnowledgeGraph:
     """NetworkX-backed world knowledge graph with BFS spreading activation.
 
+    Architecture:
+    - _graph (shared): static world topology seeded from content registries.
+    - _sessions[session_id]: per-session dynamic data (overlay + actor graphs).
+
     Thread-safety: not thread-safe.  All access is expected within a
     single async event loop without concurrent seeding calls.
     """
 
     def __init__(self, llm: LlmPort | None = None) -> None:
         self._graph: nx.DiGraph = nx.DiGraph()
-        self._actor_graphs: dict[str, nx.DiGraph] = {}
-        self._actor_memory_counts: dict[str, int] = {}
+        self._sessions: dict[str, _SessionState] = {}
         self._seeded: set[str] = set()
         self._lore_graphized: set[str] = set()
         self._llm = llm
+
+    # ------------------------------------------------------------------
+    # Session management
+    # ------------------------------------------------------------------
+
+    def _ensure_session(self, session_id: str) -> _SessionState:
+        """Return the _SessionState for session_id, creating it lazily."""
+        state = self._sessions.get(session_id)
+        if state is None:
+            state = _SessionState()
+            self._sessions[session_id] = state
+        return state
+
+    def clear_session(self, session_id: str) -> None:
+        """Remove all per-session dynamic data for session_id.
+
+        Called when a session is closed / evicted so that the next session
+        with the same id does not inherit stale story facts.
+        """
+        self._sessions.pop(session_id, None)
 
     # ------------------------------------------------------------------
     # Public interface (MemoryGraphPort)
@@ -168,6 +218,7 @@ class WorldKnowledgeGraph:
         max_depth: int = 2,
         decay: float = 0.8,
         top_k: int = 10,
+        session_id: str = "",
     ) -> list[dict[str, Any]]:
         """Spreading activation retrieval.
 
@@ -184,7 +235,7 @@ class WorldKnowledgeGraph:
         if not keywords:
             return []
 
-        query_graph = self._build_query_graph(actor_id)
+        query_graph = self._build_query_graph(actor_id, session_id)
         seeds = self._find_seed_nodes_in_graph(query_graph, keywords)
         if not seeds:
             return []
@@ -216,36 +267,48 @@ class WorldKnowledgeGraph:
         self._seed_from_world(world)
         self._seeded.add(world_id)
 
-    def inject_story_facts(self, facts: list[dict[str, Any]]) -> None:
-        """Inject persisted story facts as dynamic edges into the global graph.
+    def inject_story_facts(
+        self,
+        facts: list[dict[str, Any]],
+        session_id: str = "",
+    ) -> None:
+        """Inject persisted story facts as dynamic edges into the session overlay.
 
         Called once per session load to restore LLM-extracted triples that were
         produced during previous play sessions and persisted via
         NarrativePlanSlice.story_facts.  Idempotent — duplicate edges are
         silently overwritten by NetworkX.
+
+        Args:
+            facts: List of {subject, relation, object, weight} dicts.
+            session_id: Session scope for isolation.  Defaults to "" (legacy).
         """
+        session = self._ensure_session(session_id)
+        overlay = session.overlay
         for fact in facts:
             subj = fact.get("subject", "")
             rel = fact.get("relation", "")
             obj = fact.get("object", "")
             if not (subj and rel and obj):
                 continue
-            if subj not in self._graph:
-                self._graph.add_node(
+            if subj not in overlay:
+                overlay.add_node(
                     subj, label=subj, tags=[], description="", node_type="story_fact",
                 )
-            if obj not in self._graph:
-                self._graph.add_node(
+            if obj not in overlay:
+                overlay.add_node(
                     obj, label=obj, tags=[], description="", node_type="story_fact",
                 )
             weight = float(fact.get("weight", 1.0))
-            self._graph.add_edge(subj, obj, relation=rel, weight=weight, source="story_fact")
+            overlay.add_edge(subj, obj, relation=rel, weight=weight, source="story_fact")
 
     async def ensure_lore_enriched(self, world: WorldInstance) -> None:
         """Lazily enrich the graph with semantic triples extracted from lore text.
 
         Idempotent per world_id.  Requires an LLM — no-op when unavailable.
         Makes a single batched LLM call over the top lore entries (capped at 10).
+        Lore enrichment writes to the static base graph (shared across sessions)
+        because lore is world-level knowledge, not session-specific.
         """
         if world.world_id in self._lore_graphized:
             return
@@ -269,7 +332,7 @@ class WorldKnowledgeGraph:
             return
 
         for triple in triples:
-            self._apply_triple(triple)
+            self._apply_triple_to_base(triple)
 
     def _seed_from_world(self, world: WorldInstance) -> None:
         self._seed_items(world)       # items first — others reference them
@@ -639,11 +702,11 @@ class WorldKnowledgeGraph:
     # ------------------------------------------------------------------
 
     def node_count(self) -> int:
-        """Return total number of nodes in the graph."""
+        """Return total number of nodes in the static base graph."""
         return self._graph.number_of_nodes()
 
     def edge_count(self) -> int:
-        """Return total number of directed edges in the graph."""
+        """Return total number of directed edges in the static base graph."""
         return self._graph.number_of_edges()
 
     def has_node(self, node_id: str) -> bool:
@@ -652,12 +715,22 @@ class WorldKnowledgeGraph:
     def has_edge(self, src: str, dst: str) -> bool:
         return self._graph.has_edge(src, dst)
 
-    def actor_edge_count(self, actor_id: str) -> int:
-        actor_graph = self._actor_graphs.get(actor_id)
+    def actor_edge_count(self, actor_id: str, session_id: str = "") -> int:
+        """Return number of edges in the actor's private graph for the given session."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            return 0
+        actor_graph = session.actor_graphs.get(actor_id)
         return actor_graph.number_of_edges() if actor_graph is not None else 0
 
-    def has_actor_edge(self, actor_id: str, src: str, dst: str) -> bool:
-        actor_graph = self._actor_graphs.get(actor_id)
+    def has_actor_edge(
+        self, actor_id: str, src: str, dst: str, session_id: str = ""
+    ) -> bool:
+        """Check whether actor's private graph has a directed edge src→dst."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            return False
+        actor_graph = session.actor_graphs.get(actor_id)
         if actor_graph is None:
             return False
         return actor_graph.has_edge(src, dst)
@@ -673,21 +746,25 @@ class WorldKnowledgeGraph:
         obj: str,
         *,
         weight: float = 1.0,
+        session_id: str = "",
     ) -> None:
-        """Insert a semantic triple into the global graph by resolving names.
+        """Insert a semantic triple into the session overlay by resolving names.
 
-        Resolves *subject* and *obj* to existing node IDs using keyword search.
-        Silently no-ops when either endpoint cannot be resolved or they map to
-        the same node (self-loop).  Suitable for LLM-extracted triples where
-        entity names come from natural-language text.
+        Resolves *subject* and *obj* to existing node IDs using keyword search
+        against the combined query graph (base + overlay).  Silently no-ops when
+        either endpoint cannot be resolved or they map to the same node (self-loop).
 
         Args:
             subject: Name of the subject entity.
             relation: Relationship type string (e.g. EdgeType.KNOWS_ABOUT).
             obj: Name of the object entity.
             weight: Edge weight 0.0–1.0 (default 1.0).
+            session_id: Session scope for isolation.  Defaults to "" (legacy).
         """
-        self._apply_triple({"subject": subject, "relation": relation, "object": obj, "weight": weight})
+        self._apply_triple(
+            {"subject": subject, "relation": relation, "object": obj, "weight": weight},
+            session_id=session_id,
+        )
 
     def add_raw_triple(
         self,
@@ -697,8 +774,9 @@ class WorldKnowledgeGraph:
         *,
         weight: float = 1.0,
         node_type: str = "memory_note",
+        session_id: str = "",
     ) -> None:
-        """Insert a raw triple, creating nodes if they do not already exist.
+        """Insert a raw triple into the session overlay, creating nodes if needed.
 
         Unlike add_triple(), this bypasses name resolution and creates new
         nodes for any endpoint that does not yet exist.  Suitable for fallback
@@ -710,14 +788,17 @@ class WorldKnowledgeGraph:
             obj: Node ID (or content) of the object entity.
             weight: Edge weight 0.0–1.0 (default 1.0).
             node_type: Node type for newly created nodes (default "memory_note").
+            session_id: Session scope for isolation.  Defaults to "" (legacy).
         """
         if not subject or not obj:
             return
         if subject == obj:
             return
+        session = self._ensure_session(session_id)
+        overlay = session.overlay
         for node_id in (subject, obj):
-            if node_id not in self._graph:
-                self._graph.add_node(
+            if node_id not in self._graph and node_id not in overlay:
+                overlay.add_node(
                     node_id,
                     label=node_id[:80],
                     tags=[],
@@ -725,7 +806,7 @@ class WorldKnowledgeGraph:
                     node_type=node_type,
                     metadata={},
                 )
-        self._graph.add_edge(subject, obj, relation=relation, weight=weight)
+        overlay.add_edge(subject, obj, relation=relation, weight=weight)
 
     # ------------------------------------------------------------------
     # write_episode — Phase 3b: LLM triple extraction
@@ -736,12 +817,19 @@ class WorldKnowledgeGraph:
         actor_id: str,
         messages: list[Any],
         context: dict[str, Any],
+        session_id: str = "",
     ) -> None:
-        """Write a compressed dialogue episode to the graph via LLM triple extraction.
+        """Write a compressed dialogue episode to the actor graph via LLM triple extraction.
 
         Called when a ContextWindow overflows.  Extracts semantic triples from
-        the evicted messages and inserts dynamic edges into the knowledge graph.
-        No-op when LLM is unavailable or messages is empty.
+        the evicted messages and inserts dynamic edges into the actor's private
+        knowledge subgraph for the given session.
+
+        Args:
+            actor_id: NPC / actor identifier.
+            messages: List of WindowMessage objects to extract triples from.
+            context: Context dict (may contain "world" and "recent_events").
+            session_id: Session scope for isolation.  Defaults to "" (legacy).
         """
         if self._llm is None or not messages:
             return
@@ -773,15 +861,23 @@ class WorldKnowledgeGraph:
             return
 
         for triple in triples:
-            self._apply_actor_triple(actor_id, triple)
+            self._apply_actor_triple(actor_id, triple, session_id)
 
     async def remember(
         self,
         actor_id: str,
         knowledge: str,
         context: dict[str, Any],
+        session_id: str = "",
     ) -> dict[str, Any]:
-        """Persist one actor-private memory note."""
+        """Persist one actor-private memory note into the session's actor graph.
+
+        Args:
+            actor_id: NPC / actor identifier.
+            knowledge: Free-text memory content.
+            context: Context dict (may contain "world").
+            session_id: Session scope for isolation.  Defaults to "" (legacy).
+        """
         text = str(knowledge).strip()
         if not text:
             return {"status": "ignored"}
@@ -790,9 +886,10 @@ class WorldKnowledgeGraph:
         if world is not None:
             self.ensure_seeded(world)
 
-        actor_graph = self._ensure_actor_graph(actor_id)
-        next_index = self._actor_memory_counts.get(actor_id, 0) + 1
-        self._actor_memory_counts[actor_id] = next_index
+        actor_graph = self._ensure_actor_graph(session_id, actor_id)
+        session = self._ensure_session(session_id)
+        next_index = session.memory_counts.get(actor_id, 0) + 1
+        session.memory_counts[actor_id] = next_index
         memory_id = f"memory:{actor_id}:{next_index}"
         actor_graph.add_node(
             memory_id,
@@ -806,7 +903,7 @@ class WorldKnowledgeGraph:
             },
         )
         if actor_id in self._graph:
-            self._copy_base_node_to_actor_graph(actor_id, actor_id)
+            self._copy_base_node_to_actor_graph(session_id, actor_id, actor_id)
             actor_graph.add_edge(
                 actor_id,
                 memory_id,
@@ -831,12 +928,44 @@ class WorldKnowledgeGraph:
                 triples.append(tc.get("args", {}))
         return triples
 
-    def _apply_triple(self, triple: dict[str, Any]) -> None:
-        """Map a {subject, relation, object, weight} triple to a graph edge.
+    def _apply_triple(self, triple: dict[str, Any], session_id: str = "") -> None:
+        """Map a {subject, relation, object, weight} triple to a session overlay edge.
 
-        Uses _find_seed_nodes to resolve natural-language names to node IDs.
+        Uses _find_seed_nodes to resolve natural-language names to node IDs
+        against the combined query graph (base + session overlay).
         Silently skips triples where either endpoint cannot be resolved,
         and skips self-loops (subject == object resolved to the same node).
+        """
+        subject_name = str(triple.get("subject", "")).strip()
+        relation = str(triple.get("relation", EdgeType.RELATED_TO)).strip()
+        object_name = str(triple.get("object", "")).strip()
+        weight = float(triple.get("weight", 1.0))
+
+        if not subject_name or not object_name:
+            return
+
+        # Resolve against the combined query graph (base + overlay) for this session
+        # so that newly injected story_fact nodes are also resolvable.
+        query_graph = self._build_query_graph("", session_id)
+        subject_ids = self._find_seed_nodes_in_graph(query_graph, [subject_name])
+        object_ids = self._find_seed_nodes_in_graph(query_graph, [object_name])
+
+        if not subject_ids or not object_ids:
+            return
+
+        src = subject_ids[0]
+        dst = object_ids[0]
+        if src == dst:
+            return
+
+        session = self._ensure_session(session_id)
+        session.overlay.add_edge(src, dst, relation=relation, weight=weight)
+
+    def _apply_triple_to_base(self, triple: dict[str, Any]) -> None:
+        """Map a triple to the static base graph (for lore enrichment only).
+
+        Lore is world-level knowledge shared across all sessions, so it belongs
+        in the base graph.  Resolves names against the base graph only.
         """
         subject_name = str(triple.get("subject", "")).strip()
         relation = str(triple.get("relation", EdgeType.RELATED_TO)).strip()
@@ -857,7 +986,9 @@ class WorldKnowledgeGraph:
         if src != dst:
             self._graph.add_edge(src, dst, relation=relation, weight=weight)
 
-    def _apply_actor_triple(self, actor_id: str, triple: dict[str, Any]) -> None:
+    def _apply_actor_triple(
+        self, actor_id: str, triple: dict[str, Any], session_id: str = ""
+    ) -> None:
         subject_name = str(triple.get("subject", "")).strip()
         relation = str(triple.get("relation", EdgeType.RELATED_TO)).strip()
         object_name = str(triple.get("object", "")).strip()
@@ -866,7 +997,7 @@ class WorldKnowledgeGraph:
         if not subject_name or not object_name:
             return
 
-        query_graph = self._build_query_graph(actor_id)
+        query_graph = self._build_query_graph(actor_id, session_id)
         subject_ids = self._find_seed_nodes_in_graph(query_graph, [subject_name])
         object_ids = self._find_seed_nodes_in_graph(query_graph, [object_name])
         if not subject_ids or not object_ids:
@@ -877,9 +1008,9 @@ class WorldKnowledgeGraph:
         if src == dst:
             return
 
-        actor_graph = self._ensure_actor_graph(actor_id)
-        self._copy_base_node_to_actor_graph(actor_id, src)
-        self._copy_base_node_to_actor_graph(actor_id, dst)
+        actor_graph = self._ensure_actor_graph(session_id, actor_id)
+        self._copy_base_node_to_actor_graph(session_id, actor_id, src)
+        self._copy_base_node_to_actor_graph(session_id, actor_id, dst)
         actor_graph.add_edge(src, dst, relation=relation, weight=weight)
 
     def _collect_lore_texts(self, world: WorldInstance) -> list[str]:
@@ -898,26 +1029,45 @@ class WorldKnowledgeGraph:
                     texts.append(f"[Character: {char.name}]\n{desc}")
         return texts
 
-    def _build_query_graph(self, actor_id: str) -> nx.DiGraph:
-        actor_graph = self._actor_graphs.get(actor_id)
-        if actor_graph is None or actor_graph.number_of_nodes() == 0:
-            return self._graph
+    def _build_query_graph(self, actor_id: str, session_id: str = "") -> nx.DiGraph:
+        """Build a combined query graph: static base + session overlay + actor graph.
+
+        The three layers are merged in priority order (actor data overwrites overlay,
+        overlay overwrites base) using NetworkX's add_node / add_edge which
+        silently overwrites existing attributes.
+        """
         combined = self._graph.copy()
-        for node_id, data in actor_graph.nodes(data=True):
-            combined.add_node(node_id, **dict(data))
-        for src, dst, data in actor_graph.edges(data=True):
-            combined.add_edge(src, dst, **dict(data))
+
+        session = self._sessions.get(session_id)
+        if session is not None:
+            # Merge session overlay
+            for n, d in session.overlay.nodes(data=True):
+                combined.add_node(n, **d)
+            for s, t, d in session.overlay.edges(data=True):
+                combined.add_edge(s, t, **d)
+            # Merge actor-private graph
+            actor_g = session.actor_graphs.get(actor_id)
+            if actor_g is not None:
+                for n, d in actor_g.nodes(data=True):
+                    combined.add_node(n, **d)
+                for s, t, d in actor_g.edges(data=True):
+                    combined.add_edge(s, t, **d)
+
         return combined
 
-    def _ensure_actor_graph(self, actor_id: str) -> nx.DiGraph:
-        actor_graph = self._actor_graphs.get(actor_id)
+    def _ensure_actor_graph(self, session_id: str, actor_id: str) -> nx.DiGraph:
+        """Return (creating if absent) the actor's private DiGraph for session_id."""
+        session = self._ensure_session(session_id)
+        actor_graph = session.actor_graphs.get(actor_id)
         if actor_graph is None:
             actor_graph = nx.DiGraph()
-            self._actor_graphs[actor_id] = actor_graph
+            session.actor_graphs[actor_id] = actor_graph
         return actor_graph
 
-    def _copy_base_node_to_actor_graph(self, actor_id: str, node_id: str) -> None:
-        actor_graph = self._ensure_actor_graph(actor_id)
+    def _copy_base_node_to_actor_graph(
+        self, session_id: str, actor_id: str, node_id: str
+    ) -> None:
+        actor_graph = self._ensure_actor_graph(session_id, actor_id)
         if node_id in actor_graph:
             return
         if node_id in self._graph:
@@ -928,19 +1078,24 @@ class WorldKnowledgeGraph:
         return graph.nodes[node_id].get("node_type") == NODE_MEMORY
 
     # ------------------------------------------------------------------
-    # Phase 4: actor-private graph persistence
+    # Phase 4: actor-private graph persistence (per-session)
     # ------------------------------------------------------------------
 
-    def export_actor_state(self) -> dict[str, Any]:
-        """Export actor-private graphs for persistence.
+    def export_actor_state(self, session_id: str = "") -> dict[str, Any]:
+        """Export actor-private graphs for the given session for persistence.
 
         Returns serializable dict containing all actor graph nodes, edges,
-        and memory counters.  Returns {} when there is nothing to persist.
+        and memory counters for session_id.  Returns {} when there is nothing
+        to persist.
+
+        Args:
+            session_id: Session scope.  Defaults to "" (legacy behaviour).
         """
-        if not self._actor_graphs:
+        session = self._sessions.get(session_id)
+        if session is None or not session.actor_graphs:
             return {}
         actors: dict[str, Any] = {}
-        for actor_id, graph in self._actor_graphs.items():
+        for actor_id, graph in session.actor_graphs.items():
             if graph.number_of_nodes() == 0:
                 continue
             nodes = []
@@ -954,20 +1109,25 @@ class WorldKnowledgeGraph:
             return {}
         return {
             "actors": actors,
-            "memory_counts": dict(self._actor_memory_counts),
+            "memory_counts": dict(session.memory_counts),
         }
 
-    def import_actor_state(self, data: dict[str, Any]) -> None:
-        """Restore actor-private graphs from persisted data.
+    def import_actor_state(self, data: dict[str, Any], session_id: str = "") -> None:
+        """Restore actor-private graphs from persisted data into session_id.
 
         Idempotent — overwrites existing actor graphs for actors present in
         *data*.  Actors absent from *data* are left unchanged.
+
+        Args:
+            data: Dict produced by export_actor_state().
+            session_id: Session scope.  Defaults to "" (legacy behaviour).
         """
         if not data or not isinstance(data, dict):
             return
         actors_raw = data.get("actors")
         if not isinstance(actors_raw, dict):
             return
+        session = self._ensure_session(session_id)
         for actor_id, actor_data in actors_raw.items():
             if not isinstance(actor_data, dict):
                 continue
@@ -991,12 +1151,12 @@ class WorldKnowledgeGraph:
                 if src and dst:
                     graph.add_edge(src, dst, **edge_copy)
             if graph.number_of_nodes() > 0:
-                self._actor_graphs[actor_id] = graph
+                session.actor_graphs[actor_id] = graph
         counts = data.get("memory_counts")
         if isinstance(counts, dict):
             for k, v in counts.items():
                 if isinstance(k, str) and isinstance(v, int):
-                    self._actor_memory_counts[k] = v
+                    session.memory_counts[k] = v
 
 
 # ------------------------------------------------------------------

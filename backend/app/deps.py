@@ -175,12 +175,13 @@ def _build_game_runtime() -> GameRuntime:
         if graph is None:
             return None
 
-        async def _callback(actor_id: str, messages: list) -> None:
+        async def _callback(actor_id: str, messages: list, session_id: str = "") -> None:
             try:
                 await graph.write_episode(
                     actor_id=actor_id,
                     messages=messages,
                     context={},
+                    session_id=session_id,
                 )
             except Exception:
                 pass  # graphize failures must not break planner execution
@@ -198,113 +199,41 @@ def _build_game_runtime() -> GameRuntime:
             from app.design_skill_provider import LocalDesignSkillProvider
             from app.narrators import (
                 AgenticNarrativePlanner,
-                NARRATIVE_WEAVER_AGENT_PROMPT,
-                NPC_DIRECTOR_AGENT_PROMPT,
-                PLANNER_BLACKBOARD_PROMPT,
-                QUEST_MANAGER_AGENT_PROMPT,
-                WORLD_BUILDER_AGENT_PROMPT,
+                UNIFIED_PLANNER_PROMPT,
                 _format_subsystem_context,
             )
 
-            blackboard_registry = RoleToolRegistry()
-            quest_registry = RoleToolRegistry()
-            npc_registry = RoleToolRegistry()
-            world_registry = RoleToolRegistry()
-            weaver_registry = RoleToolRegistry()
+            # Phase 2 refactor: 1 unified LLM + 1 registry replaces the former 5
+            unified_registry = RoleToolRegistry()
             register_planner_tools(
-                quest_registry,
-                roles=["quest_manager"],
-            )
-            register_planner_tools(
-                npc_registry,
-                roles=["npc_director"],
-            )
-            register_planner_tools(
-                world_registry,
-                roles=["world_builder"],
-            )
-            register_planner_tools(
-                weaver_registry,
-                roles=["narrative_weaver"],
+                unified_registry,
+                roles=["planner"],
             )
 
-            blackboard_llm = GeminiLlmAdapter(thinking_level="high", profile_name="planner_blackboard")
-            quest_llm = GeminiLlmAdapter(thinking_level="high", profile_name="quest_manager")
-            npc_llm = GeminiLlmAdapter(thinking_level="high", profile_name="npc_director")
-            world_llm = GeminiLlmAdapter(thinking_level="high", profile_name="world_builder")
-            weaver_llm = GeminiLlmAdapter(thinking_level="high", profile_name="narrative_weaver")
+            unified_llm = GeminiLlmAdapter(thinking_level="high", profile_name="planner")
 
-            # Build shared graphize callback and memory retriever for all planner instances
+            # Build graphize callback for the unified planner instance
             graphize_callback = _make_graphize_callback(knowledge_graph)
 
             return PlannerSystemAssembly(
                 blackboard=AgenticNarrativePlanner(
-                    llm=blackboard_llm,
-                    executor=AgenticExecutor(tool_registry=blackboard_registry, llm=blackboard_llm),
-                    world_id="",
-                    role="planner_blackboard",
-                    system_prompt=PLANNER_BLACKBOARD_PROMPT,
-                    provider_name="planner_blackboard",
-                    history_key="__planner_blackboard__",
-                    graphize_callback=graphize_callback,
-                    memory_retriever=memory_retriever,
-                ),
-                quest_manager_agent=AgenticNarrativePlanner(
-                    llm=quest_llm,
-                    executor=AgenticExecutor(tool_registry=quest_registry, llm=quest_llm),
+                    llm=unified_llm,
+                    executor=AgenticExecutor(tool_registry=unified_registry, llm=unified_llm),
                     design_skill_port=LocalDesignSkillProvider(),
                     world_id="",
-                    role="quest_manager",
-                    system_prompt=QUEST_MANAGER_AGENT_PROMPT,
-                    provider_name="quest_manager_agent",
-                    history_key="__quest_manager_agent__",
+                    role="planner",
+                    system_prompt=UNIFIED_PLANNER_PROMPT,
+                    provider_name="planner",
+                    history_key="__planner__",
                     context_formatter=_format_subsystem_context,
-                    allowed_skill_categories=["quests", "social"],
+                    allowed_skill_categories=["quests", "npcs", "areas", "environments", "encounters", "narrative", "social"],
                     graphize_callback=graphize_callback,
                     memory_retriever=memory_retriever,
                 ),
-                npc_director_agent=AgenticNarrativePlanner(
-                    llm=npc_llm,
-                    executor=AgenticExecutor(tool_registry=npc_registry, llm=npc_llm),
-                    design_skill_port=LocalDesignSkillProvider(),
-                    world_id="",
-                    role="npc_director",
-                    system_prompt=NPC_DIRECTOR_AGENT_PROMPT,
-                    provider_name="npc_director_agent",
-                    history_key="__npc_director_agent__",
-                    context_formatter=_format_subsystem_context,
-                    allowed_skill_categories=["npcs", "social"],
-                    graphize_callback=graphize_callback,
-                    memory_retriever=memory_retriever,
-                ),
-                world_builder_agent=AgenticNarrativePlanner(
-                    llm=world_llm,
-                    executor=AgenticExecutor(tool_registry=world_registry, llm=world_llm),
-                    design_skill_port=LocalDesignSkillProvider(),
-                    world_id="",
-                    role="world_builder",
-                    system_prompt=WORLD_BUILDER_AGENT_PROMPT,
-                    provider_name="world_builder_agent",
-                    history_key="__world_builder_agent__",
-                    context_formatter=_format_subsystem_context,
-                    allowed_skill_categories=["areas", "environments", "encounters"],
-                    graphize_callback=graphize_callback,
-                    memory_retriever=memory_retriever,
-                ),
-                narrative_weaver_agent=AgenticNarrativePlanner(
-                    llm=weaver_llm,
-                    executor=AgenticExecutor(tool_registry=weaver_registry, llm=weaver_llm),
-                    design_skill_port=LocalDesignSkillProvider(),
-                    world_id="",
-                    role="narrative_weaver",
-                    system_prompt=NARRATIVE_WEAVER_AGENT_PROMPT,
-                    provider_name="narrative_weaver_agent",
-                    history_key="__narrative_weaver_agent__",
-                    context_formatter=_format_subsystem_context,
-                    allowed_skill_categories=["narrative"],
-                    graphize_callback=graphize_callback,
-                    memory_retriever=memory_retriever,
-                ),
+                quest_manager_agent=None,
+                npc_director_agent=None,
+                world_builder_agent=None,
+                narrative_weaver_agent=None,
             )
 
         planner_system_factory = _build_planner_system

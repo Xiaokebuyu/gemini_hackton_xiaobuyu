@@ -147,22 +147,14 @@ next actionable player dialogue options.
 - Use `action` only for structured exits or clear non-verbal dialogue actions.
 - Keep every option immediately clickable from the player's perspective.
 
-## Functional option rules
-- The context may include a list of NPC capabilities. Only recommend actions \
-the NPC can actually perform.
-- When an option maps to a concrete game function (trade, quest board, rest, \
-navigation), include a `functional` field: {"type": "<type>", "params": {…}}
-- Valid functional types: trade_browse, board_browse, navigate, inspect_item, rest
-- Accepting a quest is NOT a functional action. If the player wants to accept \
-a quest, generate a dialogue option with `npc_id` set to the receptionist NPC's \
-ID and a suitable `message`. The receptionist will handle the actual acceptance \
-through their own tools.
-- Do NOT invent functional actions for NPCs who lack those capabilities. \
-A merchant NPC should not get board_browse unless they are running a quest board; \
-a guild receptionist should not get trade_browse unless the context shows they \
-have it.
-- If another nearby NPC has the needed capability, suggest going to that NPC \
-instead (no functional field needed — just use text/message).
+## Option rules
+- Dialogue options contain only `text`, optional `check` (skill check), optional \
+`action`, and optional `npc_id` / `message`.
+- Do NOT embed a `functional` field in any option. Trade browsing, quest boards, \
+navigation, and rest are triggered by NPC tools or the explore UI — not by GM \
+dialogue options.
+- If the player wants to interact with a merchant, suggest talking to that NPC \
+(use `npc_id`). If they want to check a board, suggest going to the receptionist.
 
 ## Option style
 - Short, concrete, and specific to the current exchange.
@@ -557,8 +549,6 @@ class AgentContextBuilder:
             profile,
             disposition=l4.get("disposition", {}),
             stage=l4.get("stage", "stranger"),
-            impressions=l4.get("impressions", []),
-            knowledge_hits=l6.get("hits", []),
             time_info=l4.get("time"),
             role_data=role_data,
             npc_id=npc_id,
@@ -572,7 +562,6 @@ class AgentContextBuilder:
         npc_id: str,
         *,
         memory_retriever: MemoryRetriever | None = None,
-        active_directive: dict[str, Any] | None = None,
         is_private: bool = False,
         is_passive: bool = False,
     ) -> NpcFullContext | None:
@@ -583,8 +572,6 @@ class AgentContextBuilder:
         a double retriever.retrieve() invocation.
 
         Args:
-            active_directive: Optional narrative-planner directive to inject
-                into the system prompt (between memories and tool rules).
             is_private: If True, inject private-chat context block and lower
                 secrets trust threshold by 20.
         """
@@ -612,9 +599,6 @@ class AgentContextBuilder:
             profile,
             disposition=l4.get("disposition", {}),
             stage=l4.get("stage", "stranger"),
-            impressions=l4.get("impressions", []),
-            knowledge_hits=l6.get("hits", []),
-            active_directive=active_directive,
             time_info=l4.get("time"),
             is_private=is_private,
             is_passive=is_passive,
@@ -1906,14 +1890,10 @@ def _build_npc_prompt_text(
     npc_profile: Any,
     disposition: Mapping[str, Any],
     stage: str,
-    impressions: list[str],
-    knowledge_hits: list[dict[str, Any]] | None = None,
-    active_directive: dict[str, Any] | None = None,
     time_info: dict[str, Any] | None = None,
     is_private: bool = False,
     is_passive: bool = False,
     role_data: dict[str, Any] | None = None,
-    story_facts: list[dict[str, Any]] | None = None,
     npc_id: str = "",
     area_situation: str = "",
     recent_area_events: list[dict[str, Any]] | None = None,
@@ -2044,9 +2024,9 @@ def _build_npc_prompt_text(
     # Anti-fabrication grounding constraint — injected for all NPCs (3-C)
     grounding_block = (
         "\n\n## 重要行为准则\n"
-        "- 你只能提及当前区域态势和近期事件中描述的真实情况，严禁编造不存在的地点、NPC、事件或物品\n"
-        "- 如果你不确定某件事是否发生过，请如实说「我不太清楚」而不是编造\n"
-        "- 你的对话内容必须与你当前所在的地点和时间一致"
+        "- 基于你所知的事实、目标和观察行动，不编造不存在的地点、NPC、事件或物品\n"
+        "- 如果你不确定某件事，如实说「我不太清楚」\n"
+        "- 你可以主动发起与你目标相关的话题"
     )
 
     # Role constraint block — inject truth-source data for specialized NPCs (P3.5)
@@ -2076,7 +2056,8 @@ def _build_npc_prompt_text(
 - Use `refuse` if asked something you wouldn't agree to.
 - If the player clearly invites you to join the party and you genuinely agree, call `join_party` in the same turn as your visible response.
 - Do not verbally agree to join the party unless you also call `join_party`.
-- Use `offer_quest` / `offer_trade` / `reveal_secret` only when contextually appropriate.
+- If you have goals or important observations, proactively bring them up — don't wait for the player to ask.
+- Use `offer_quest` / `offer_trade` / `reveal_secret` when your goals or the conversation naturally lead there.
 - Do not output plain text outside tool calls.
 - Use at most one visible dialogue tool per turn: exactly one of `speak` or `refuse`. You may also use at most one `emote`.
 - If you need `update_feeling`, `remember`, or other side effects, call them in the same turn before your final visible response.

@@ -329,7 +329,6 @@ class TestPromptBuilders:
             npc_profile={"name": "Tom", "personality": "Shrewd merchant"},
             disposition={"approval": 30, "trust": 10, "fear": 0, "romance": 0},
             stage="friend",
-            impressions=["Bought a sword", "Kind person"],
         )
 
         assert "Tom" in prompt
@@ -345,7 +344,6 @@ class TestPromptBuilders:
             npc_profile={"name": "Tom", "personality": "Shrewd merchant"},
             disposition={"approval": 30, "trust": 10, "fear": 0, "romance": 0},
             stage="stranger",
-            impressions=["Bought a sword"],
             is_passive=True,
         )
 
@@ -357,7 +355,6 @@ class TestPromptBuilders:
             npc_profile={"name": "Tom", "personality": "Shrewd merchant"},
             disposition={"approval": 30, "trust": 10, "fear": 0, "romance": 0},
             stage="stranger",
-            impressions=["Bought a sword"],
             is_passive=False,
         )
 
@@ -368,7 +365,6 @@ class TestPromptBuilders:
             npc_profile={},
             disposition={},
             stage="stranger",
-            impressions=[],
         )
 
         assert "Unknown NPC" in prompt

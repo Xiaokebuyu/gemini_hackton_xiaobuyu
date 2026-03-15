@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class QuestManagerSubSystem:
     """PlannerSubSystem responsible for quest lifecycle directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"create_quest", "publish_bulletin", "retire_quest", "update_quest", "advance_milestone"})
+    _HANDLES: frozenset[str] = frozenset({"create_quest", "publish_bulletin", "retire_quest", "update_quest", "advance_milestone", "set_task_monitor"})
 
     def __init__(
         self,
@@ -89,6 +89,8 @@ class QuestManagerSubSystem:
             return self._apply_update_quest(payload, context, current_tick=current_tick)
         if kind == "advance_milestone":
             return self._apply_advance_milestone(payload, context, current_tick=current_tick)
+        if kind == "set_task_monitor":
+            return self._apply_set_task_monitor(payload, context, current_tick=current_tick)
         return "unsupported_kind"
 
     # ------------------------------------------------------------------
@@ -427,6 +429,31 @@ class QuestManagerSubSystem:
                     "tick": current_tick,
                 },
             ))
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: set_task_monitor
+    # ------------------------------------------------------------------
+
+    def _apply_set_task_monitor(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        """Attach a task_monitor to an active dynamic quest."""
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_set_task_monitor",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
         return True
 
     async def _evaluate_with_agent(

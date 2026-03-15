@@ -1,0 +1,19 @@
+{
+  "character_name": "xiaobuyu",
+  "created_at": 1773581632.4962754,
+  "game_day": 1,
+  "game_slot": 10,
+  "last_played": 1773588241.677602,
+  "phase": "active",
+  "saved_at": 1773588241.677602,
+  "session_id": "sess_f07b9d5a2e24",
+  "summary": {
+    "day": 1,
+    "level": 1,
+    "location": "冒险者公会",
+    "play_time_hours": null,
+    "player_class": "战士",
+    "player_name": "xiaobuyu"
+  },
+  "world_id": "goblin_slayer"
+}

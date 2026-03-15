@@ -1,0 +1,138 @@
+{
+  "chapter_completion": {
+    "ch2": 0.0
+  },
+  "dynamic_quests": {
+    "dq_goblin_threat_01": {
+      "created_at_tick": 8,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "count": 3,
+              "monster_type": "goblin"
+            },
+            "type": "kill_count"
+          },
+          "description": "清理农场附近的哥布林（3只）"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "向柜台小姐交付任务"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_goblin_threat_01",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 60,
+        "xp": 300
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "边境附近的农场遭到了哥布林的骚扰，村民们急需人手帮忙。",
+      "target_milestone": null,
+      "title": "村庄的求救：清理哥布林",
+      "urgency": "medium"
+    },
+    "dq_ms_frontier_arrival": {
+      "created_at_tick": 8,
+      "current_step": "在公会内探索",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "那个一直盯着装备看的男子似乎对哥布林有独特的见解。",
+        "酒馆就在公会附近，是打听消息的好地方。"
+      ],
+      "metadata": {
+        "source_milestone": "ms_frontier_arrival",
+        "urgency": "medium"
+      },
+      "min_level": 1,
+      "next_steps": [
+        "与角落里的破旧盔甲男子交谈",
+        "前往酒馆喝一杯并休息"
+      ],
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与guild_girl对话"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "npc_id": "goblin_slayer"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与goblin_slayer对话"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往frontier_town"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_frontier_arrival",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 300,
+        "xp": 600
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+      "target_milestone": "ms_frontier_arrival",
+      "title": "踏入边境",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_frontier_arrival": {
+      "activated_tick": 8,
+      "completed_tick": null,
+      "state": "ACTIVE"
+    },
+    "ms_growing_darkness": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_hive_heart": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

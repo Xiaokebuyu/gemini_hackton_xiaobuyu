@@ -60,9 +60,9 @@ class TestExportActorState:
     def test_empty_when_actor_graph_has_no_nodes(self) -> None:
         """An actor graph with zero nodes should not appear in the export."""
         wkg = _make_wkg()
-        # Ensure the actor graph exists but is empty
-        wkg._ensure_actor_graph("npc_empty")
-        result = wkg.export_actor_state()
+        # Ensure the actor graph exists but is empty (session_id="test")
+        wkg._ensure_actor_graph("test", "npc_empty")
+        result = wkg.export_actor_state(session_id="test")
         assert result == {}
 
     def test_export_with_actor_triple(self) -> None:
@@ -70,12 +70,12 @@ class TestExportActorState:
         wkg = _make_wkg()
         # Manually insert a triple — bypass LLM
         actor_id = "npc_merchant"
-        ag = wkg._ensure_actor_graph(actor_id)
+        ag = wkg._ensure_actor_graph("test", actor_id)
         ag.add_node("npc_merchant", node_type="character", label="Merchant", tags=[], description="")
         ag.add_node("frontier_town", node_type="area", label="Frontier Town", tags=[], description="")
         ag.add_edge("npc_merchant", "frontier_town", relation=EdgeType.KNOWS_ABOUT, weight=0.9)
 
-        exported = wkg.export_actor_state()
+        exported = wkg.export_actor_state(session_id="test")
 
         assert "actors" in exported
         assert actor_id in exported["actors"]
@@ -92,21 +92,22 @@ class TestExportActorState:
     def test_export_includes_memory_counts(self) -> None:
         """Memory counts must be included in the export alongside actor graphs."""
         wkg = _make_wkg()
-        # remember() increments _actor_memory_counts
-        wkg._actor_memory_counts["npc_a"] = 3
-        ag = wkg._ensure_actor_graph("npc_a")
+        # remember() increments session memory_counts
+        session = wkg._ensure_session("test")
+        session.memory_counts["npc_a"] = 3
+        ag = wkg._ensure_actor_graph("test", "npc_a")
         ag.add_node("mem:npc_a:1", node_type="memory_note", label="x", tags=[], description="")
 
-        exported = wkg.export_actor_state()
+        exported = wkg.export_actor_state(session_id="test")
         assert exported["memory_counts"]["npc_a"] == 3
 
     def test_export_multiple_actors(self) -> None:
         wkg = _make_wkg()
         for actor_id in ("npc_a", "npc_b"):
-            ag = wkg._ensure_actor_graph(actor_id)
+            ag = wkg._ensure_actor_graph("test", actor_id)
             ag.add_node(actor_id, node_type="character", label=actor_id, tags=[], description="")
 
-        exported = wkg.export_actor_state()
+        exported = wkg.export_actor_state(session_id="test")
         assert set(exported["actors"].keys()) == {"npc_a", "npc_b"}
 
 
@@ -149,8 +150,10 @@ class TestImportActorState:
             },
             "memory_counts": {"npc_x": 5},
         }
-        wkg.import_actor_state(data)
-        assert wkg._actor_memory_counts.get("npc_x") == 5
+        wkg.import_actor_state(data, session_id="test")
+        session = wkg._sessions.get("test")
+        assert session is not None
+        assert session.memory_counts.get("npc_x") == 5
 
     def test_import_idempotent(self) -> None:
         """Calling import_actor_state twice with the same data must not duplicate edges."""
@@ -227,19 +230,21 @@ class TestExportImportRoundTrip:
         """export_actor_state → import_actor_state on a fresh WKG → same edges present."""
         wkg_src = _make_wkg()
         actor_id = "npc_healer"
-        ag = wkg_src._ensure_actor_graph(actor_id)
+        ag = wkg_src._ensure_actor_graph("test_sess", actor_id)
         ag.add_node("npc_healer", node_type="character", label="Healer", tags=[], description="")
         ag.add_node("temple", node_type="area", label="Temple", tags=[], description="")
         ag.add_edge("npc_healer", "temple", relation=EdgeType.LOCATED_IN, weight=1.0)
-        wkg_src._actor_memory_counts[actor_id] = 2
+        wkg_src._ensure_session("test_sess").memory_counts[actor_id] = 2
 
-        exported = wkg_src.export_actor_state()
+        exported = wkg_src.export_actor_state(session_id="test_sess")
 
         wkg_dst = _make_wkg()
-        wkg_dst.import_actor_state(exported)
+        wkg_dst.import_actor_state(exported, session_id="test_sess")
 
-        assert wkg_dst.has_actor_edge(actor_id, "npc_healer", "temple")
-        assert wkg_dst._actor_memory_counts.get(actor_id) == 2
+        assert wkg_dst.has_actor_edge(actor_id, "npc_healer", "temple", session_id="test_sess")
+        dst_session = wkg_dst._sessions.get("test_sess")
+        assert dst_session is not None
+        assert dst_session.memory_counts.get(actor_id) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -322,12 +327,13 @@ class TestSyncKnowledgeGraphState:
     def test_sync_populates_slice_when_wkg_has_actors(self) -> None:
         runtime, wkg = _make_runtime_with_wkg()
         actor_id = "npc_sync_test"
-        ag = wkg._ensure_actor_graph(actor_id)
+        # Use session_id="sync_sess" to scope the actor graph
+        ag = wkg._ensure_actor_graph("sync_sess", actor_id)
         ag.add_node("npc_sync_test", node_type="character", label="SyncTest",
                     tags=[], description="")
 
         gr = _game_runtime()
-        gr._sync_knowledge_graph_state(runtime)
+        gr._sync_knowledge_graph_state(runtime, session_id="sync_sess")
 
         np_slice = runtime.state.narrative_plan
         assert np_slice.actor_knowledge != {}
@@ -407,10 +413,13 @@ class TestRestoreKnowledgeGraph:
             {"subject": "goblin_king", "relation": "related_to", "object": "goblin_tribe"}
         ])
 
+        # Call without session_id — facts go into the "" session overlay
         GameRuntime._restore_knowledge_graph(runtime)
 
-        # inject_story_facts creates nodes in the main graph
-        assert wkg.has_node("goblin_king") or wkg.has_node("goblin_tribe")
+        # inject_story_facts now writes to the session overlay (not static base graph)
+        session = wkg._sessions.get("")
+        assert session is not None
+        assert "goblin_king" in session.overlay or "goblin_tribe" in session.overlay
 
     def test_restore_noop_when_no_wkg(self) -> None:
         runtime, _ = _make_runtime_with_wkg()
@@ -442,15 +451,16 @@ class TestFullRoundTrip:
 
         async def _run() -> None:
             gr = _game_runtime()
+            session_id = "sess_rt"
 
             # Create a session and attach a WKG
-            session = await gr.create_session("test_world", world_data={}, session_id="sess_rt")
+            session = await gr.create_session("test_world", world_data={}, session_id=session_id)
             wkg = _make_wkg()
             session.runtime.tick_coordinator.knowledge_graph = wkg
 
-            # Insert an actor-private triple directly (bypass LLM)
+            # Insert an actor-private triple directly (bypass LLM), scoped to session_id
             actor_id = "npc_round_trip"
-            ag = wkg._ensure_actor_graph(actor_id)
+            ag = wkg._ensure_actor_graph(session_id, actor_id)
             ag.add_node("npc_round_trip", node_type="character", label="RoundTrip",
                         tags=[], description="")
             ag.add_node("lost_village", node_type="area", label="Lost Village",
@@ -470,16 +480,17 @@ class TestFullRoundTrip:
             # and then call _restore_knowledge_graph directly to test the restore path.
             world = gr.get_world("test_world", world_data={})
             resumed_runtime_raw, meta = await gr._save_store.load_runtime_record_for_world(
-                world, "sess_rt",
+                world, session_id,
             )
             assert resumed_runtime_raw is not None
 
             new_wkg = _make_wkg()
             resumed_runtime_raw.tick_coordinator.knowledge_graph = new_wkg
-            # Manually restore
-            GameRuntime._restore_knowledge_graph(resumed_runtime_raw)
+            # Manually restore with session_id so actor state lands in right session
+            GameRuntime._restore_knowledge_graph(resumed_runtime_raw, session_id=session_id)
 
             # Actor edge must be present after restore
-            assert new_wkg.has_actor_edge(actor_id, "npc_round_trip", "lost_village")
+            assert new_wkg.has_actor_edge(actor_id, "npc_round_trip", "lost_village",
+                                          session_id=session_id)
 
         asyncio.run(_run())

@@ -14,29 +14,25 @@ from tests.planner_test_utils import (
 )
 
 
-def test_execute_persists_full_replay_trace_with_subsystem_and_blackboard_audit() -> None:
-    planner = RecordingPlanner(
-        NarrativePlannerDecision(
-            directives=[
-                {"kind": "create_quest", "payload": {}},
-                {"kind": "unknown_kind", "payload": {}},
-                {"kind": "create_quest", "payload": {"quest_id": "dq_existing"}},
-            ]
-        )
-    )
+def test_execute_persists_unified_trace_with_blackboard_audit() -> None:
+    """Phase 3d: execute() stores a simplified trace (no replay rounds).
+
+    The unified planner runs a single LLM call (blackboard.plan()), not multi-round
+    replay.  The trace shape is preserved for backward compatibility but round_count==0.
+    Blackboard directives with errors are still recorded in directive_audit.
+    """
     blackboard = StaticBlackboard(
         NarrativePlannerDecision(
-            directives=[{"kind": "adjust_pacing", "payload": {"frozen": True}}],
+            directives=[
+                {"kind": "adjust_pacing", "payload": {"frozen": True}},
+                {"kind": "unknown_kind", "payload": {}},
+                # duplicate dq_existing → command handler rejects → subsystem_rejected
+                {"kind": "create_quest", "payload": {"quest_id": "dq_existing"}},
+            ],
             metadata={"provider": "trace_test"},
         )
     )
-    hook = build_test_hook(
-        blackboard=blackboard,
-        quest_agent=PlannerAgentAdapter(
-            planner,
-            allowed_directives={"create_quest", "unknown_kind"},
-        ),
-    )
+    hook = build_test_hook(blackboard=blackboard)
     context = make_context(
         change_log=[StateChange("flags", "set", "flags.trace", True)],
         narrative_plan_payload={"last_run_tick": 0},
@@ -44,35 +40,22 @@ def test_execute_persists_full_replay_trace_with_subsystem_and_blackboard_audit(
 
     result = asyncio.run(hook.execute(context))
 
+    # adjust_pacing applied; unknown_kind unsupported; dq_existing duplicate → rejected
     assert result.metadata["applied_count"] == 1
     trace = context.state.narrative_plan.last_planner_replay_trace
-    assert trace["round_count"] >= 1
+    # Unified trace: round_count == 0, rounds is empty
+    assert trace["round_count"] == 0
+    assert trace["rounds"] == []
+    assert trace["stop_reason"] == "unified"
     assert isinstance(trace["directive_audit"], list)
     assert trace["blackboard_summary"]["applied_directive_count"] == 1
     assert trace["blackboard_summary"]["planner_metadata"] == {"provider": "trace_test"}
 
     statuses = {entry["status"] for entry in trace["directive_audit"]}
-    assert statuses == {
-        "applied",
-        "unsupported",
-        "invalid_contract",
-        "subsystem_rejected",
-    }
-
-    first_round = trace["rounds"][0]
-    assert first_round["subsystems"]
-    quest_summary = next(
-        summary for summary in first_round["subsystems"] if summary["name"] == "quest_manager"
-    )
-    assert quest_summary["requested_directive_count"] == 3
-    assert quest_summary["applied_directive_count"] == 0
-    assert quest_summary["skipped_unsupported_count"] == 1
-    assert quest_summary["skipped_invalid_count"] == 2
-    assert {entry["status"] for entry in quest_summary["directive_audit"]} == {
-        "unsupported",
-        "invalid_contract",
-        "subsystem_rejected",
-    }
+    assert "applied" in statuses
+    assert "unsupported" in statuses
+    # dq_existing duplicate is rejected by the command handler (subsystem_rejected)
+    assert "subsystem_rejected" in statuses
 
 
 def test_bootstrap_trace_uses_same_shape_as_normal_execute() -> None:

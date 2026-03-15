@@ -30,6 +30,7 @@ class GmNarrator(Protocol):
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
+        session_id: str = "",
     ) -> GmNarrationDecision | Mapping[str, Any]:
         ...
 
@@ -39,8 +40,9 @@ class NullGmNarrator:
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
+        session_id: str = "",
     ) -> GmNarrationDecision:
-        del summary, scene_snapshot
+        del summary, scene_snapshot, session_id
         return GmNarrationDecision(metadata={"status": "noop"})
 
 
@@ -60,8 +62,9 @@ class TemplateGmNarrator:
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
+        session_id: str = "",
     ) -> GmNarrationDecision:
-        del scene_snapshot
+        del scene_snapshot, session_id
         if not isinstance(summary, Mapping):
             return GmNarrationDecision(
                 metadata={"status": "noop", "reason": "invalid_summary"}
@@ -199,7 +202,7 @@ class GmNarrationHook(NoOpSettlementHook):
 
         summary = self._build_summary(context, scene_snapshot)
         try:
-            raw_decision = await self._narrator.compose(summary, scene_snapshot)
+            raw_decision = await self._narrator.compose(summary, scene_snapshot, session_id=context.session_id)
         except Exception as exc:
             logger.exception(
                 "hook failed: gm_narration",

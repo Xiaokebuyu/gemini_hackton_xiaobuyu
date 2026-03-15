@@ -170,8 +170,8 @@ class TestWriteEpisode:
         }])
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "Tom sold the sword.")]
-        asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
+        asyncio.run(g.write_episode("npc_01", msgs, {}, session_id="test"))
+        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword", session_id="test")
 
     def test_skips_unknown_subject(self) -> None:
         """Triple with unresolvable subject → silently skipped, no crash."""
@@ -185,8 +185,8 @@ class TestWriteEpisode:
         }])
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "some dialogue")]
-        asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.actor_edge_count("npc_01") == 0
+        asyncio.run(g.write_episode("npc_01", msgs, {}, session_id="test"))
+        assert g.actor_edge_count("npc_01", session_id="test") == 0
 
     def test_skips_unknown_object(self) -> None:
         """Triple with unresolvable object → silently skipped."""
@@ -200,16 +200,16 @@ class TestWriteEpisode:
         }])
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "dialogue")]
-        asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.actor_edge_count("npc_01") == 0
+        asyncio.run(g.write_episode("npc_01", msgs, {}, session_id="test"))
+        assert g.actor_edge_count("npc_01", session_id="test") == 0
 
     def test_llm_exception_returns_gracefully(self) -> None:
         """LLM raises exception → error is swallowed, no propagation."""
         llm = _StubLlm(raise_on_call=True)
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "dialogue")]
-        asyncio.run(g.write_episode("npc_01", msgs, {}))  # must not raise
-        assert g.actor_edge_count("npc_01") == 0
+        asyncio.run(g.write_episode("npc_01", msgs, {}, session_id="test"))  # must not raise
+        assert g.actor_edge_count("npc_01", session_id="test") == 0
 
     def test_multiple_triples_inserted(self) -> None:
         """Multiple valid tool_calls → multiple actor-private edges inserted."""
@@ -233,9 +233,9 @@ class TestWriteEpisode:
         ])
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "two facts")]
-        asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
-        assert g.has_actor_edge("npc_01", "iron_sword", "merchant_tom")
+        asyncio.run(g.write_episode("npc_01", msgs, {}, session_id="test"))
+        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword", session_id="test")
+        assert g.has_actor_edge("npc_01", "iron_sword", "merchant_tom", session_id="test")
 
     def test_weight_propagated_to_edge(self) -> None:
         """weight field in triple is correctly written to the graph edge."""
@@ -250,9 +250,10 @@ class TestWriteEpisode:
         }])
         g = _make_graph_with_nodes(llm=llm)
         msgs = [_make_msg("user", "opinion")]
-        asyncio.run(g.write_episode("npc_01", msgs, {}))
-        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword")
-        edge_data = g._actor_graphs["npc_01"]["merchant_tom"]["iron_sword"]
+        asyncio.run(g.write_episode("npc_01", msgs, {}, session_id="test"))
+        assert g.has_actor_edge("npc_01", "merchant_tom", "iron_sword", session_id="test")
+        actor_graph = g._sessions["test"].actor_graphs["npc_01"]
+        edge_data = actor_graph["merchant_tom"]["iron_sword"]
         assert abs(edge_data["weight"] - 0.42) < 1e-9
 
     def test_recent_events_context_is_included(self) -> None:
@@ -286,12 +287,12 @@ class TestWriteEpisode:
         g = _make_graph_with_nodes()
 
         result = asyncio.run(
-            g.remember("npc_01", "Player fears the hidden cellar.", {})
+            g.remember("npc_01", "Player fears the hidden cellar.", {}, session_id="test")
         )
 
         assert result["status"] == "ok"
         memory_id = result["memory_id"]
-        actor_graph = g._actor_graphs["npc_01"]
+        actor_graph = g._sessions["test"].actor_graphs["npc_01"]
         assert actor_graph.nodes[memory_id]["node_type"] == "memory_note"
         assert "hidden cellar" in actor_graph.nodes[memory_id]["description"].lower()
 
@@ -356,14 +357,15 @@ class TestEnsureLoreEnriched:
 
 class TestApplyTriple:
     def test_apply_creates_edge_when_both_nodes_exist(self) -> None:
-        """_apply_triple inserts an edge when both endpoints are in the graph."""
+        """_apply_triple inserts an edge into the session overlay when both endpoints exist."""
         g = _make_graph_with_nodes()
         g._apply_triple({
             "subject": "Merchant Tom",
             "relation": "knows_about",
             "object": "Iron Sword",
-        })
-        assert g.has_edge("merchant_tom", "iron_sword")
+        }, session_id="test")
+        # Edge goes into the session overlay, not the static base graph
+        assert g._sessions["test"].overlay.has_edge("merchant_tom", "iron_sword")
 
     def test_apply_skips_when_subject_not_in_graph(self) -> None:
         """_apply_triple silently skips if subject is unresolvable."""
@@ -372,8 +374,11 @@ class TestApplyTriple:
             "subject": "Ghost NPC",
             "relation": "knows_about",
             "object": "Iron Sword",
-        })
+        }, session_id="test")
+        # Base graph unmodified; session overlay has no edges
         assert g.edge_count() == 0
+        session = g._sessions.get("test")
+        assert session is None or session.overlay.number_of_edges() == 0
 
     def test_apply_skips_self_loop(self) -> None:
         """_apply_triple does not create a self-loop when subject == object."""
@@ -382,5 +387,5 @@ class TestApplyTriple:
             "subject": "Merchant Tom",
             "relation": "related_to",
             "object": "Merchant Tom",
-        })
+        }, session_id="test")
         assert not g.has_edge("merchant_tom", "merchant_tom")

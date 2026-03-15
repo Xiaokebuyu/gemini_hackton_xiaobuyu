@@ -61,6 +61,7 @@ class TickCoordinator:
         self.pipeline = pipeline or PipelineOrchestrator()
         self.companion_manager = companion_manager
         self.knowledge_graph: Any | None = None
+        self.session_id: str = ""
         self.change_log: list[StateChange] = []
         self._pending_action_records: list[dict[str, Any]] = []
         self.settlement_hooks: list[SettlementHook] = []
@@ -86,6 +87,7 @@ class TickCoordinator:
             rules_engine=self.rules_engine,
             scene_bus=self.scene_bus,
             companion_manager=self.companion_manager,
+            session_id=self.session_id,
         )
         result = await self.pipeline.process(
             input_payload,
@@ -169,6 +171,7 @@ class TickCoordinator:
             rest_phase=rest_phase,
             companion_manager=self.companion_manager,
             knowledge_graph=self.knowledge_graph,
+            session_id=self.session_id,
         )
         for hook in self.settlement_hooks:
             if hook.should_skip(self.change_log, action_log=context.action_log):

@@ -41,7 +41,7 @@ def test_l2_dynamic_sub_area_counts_correct_values() -> None:
 
 def test_l3_dynamic_sub_areas_present_and_empty_when_no_sub_areas() -> None:
     builder = _builder()
-    result = builder._build_l3("market", None, None)
+    result = builder._build_l3("market", None, None, None)
     assert "dynamic_sub_areas" in result
     assert result["dynamic_sub_areas"] == []
 
@@ -54,7 +54,7 @@ def test_l3_dynamic_sub_areas_returns_copies_of_all_sub_areas() -> None:
             {"id": "ruins_east", "expiry": 48, "label": "Ruins"},
         ]
     }
-    result = builder._build_l3("wilderness", None, area_state)
+    result = builder._build_l3("wilderness", None, None, area_state)
     sub_areas = result["dynamic_sub_areas"]
     assert len(sub_areas) == 2
     assert sub_areas[0]["id"] == "cave_entrance"

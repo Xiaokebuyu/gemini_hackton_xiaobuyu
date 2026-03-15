@@ -188,12 +188,16 @@ class ClueHandler(StaticCommandHandler):
         computed_effect_types = effect_types_for_option(clue, option_id, passed=passed)
         clue_name = str(clue.get("name") or entry.name or clue["clue_id"]).strip()
         option_label = str(option.get("label") or option_id).strip()
-        outcome_text = _derive_outcome_text(
-            clue_name=clue_name,
-            option_label=option_label,
-            effect_types=computed_effect_types,
-            passed=passed,
-        )
+        raw_outcome_text = clue.get("raw_outcome_texts", {}).get(option_id)
+        if isinstance(raw_outcome_text, str) and raw_outcome_text.strip():
+            outcome_text = raw_outcome_text.strip()
+        else:
+            outcome_text = _derive_outcome_text(
+                clue_name=clue_name,
+                option_label=option_label,
+                effect_types=computed_effect_types,
+                passed=passed,
+            )
         effects_applied = [
             str(item.get("type", ""))
             for item in effect_summary.get("applied", [])

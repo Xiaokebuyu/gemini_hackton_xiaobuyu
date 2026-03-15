@@ -63,14 +63,14 @@ def _disp(**kwargs):
 
 def test_npc_prompt_private_block_present_when_is_private() -> None:
     profile = _npc_profile()
-    prompt = _build_npc_prompt_text(profile, _disp(), "stranger", [], is_private=True)
+    prompt = _build_npc_prompt_text(profile, _disp(), "stranger", is_private=True)
     assert "Private conversation context" in prompt
     assert "没有其他人能听到" in prompt
 
 
 def test_npc_prompt_no_private_block_when_not_private() -> None:
     profile = _npc_profile()
-    prompt = _build_npc_prompt_text(profile, _disp(), "stranger", [], is_private=False)
+    prompt = _build_npc_prompt_text(profile, _disp(), "stranger", is_private=False)
     assert "Private conversation context" not in prompt
 
 
@@ -84,7 +84,7 @@ def test_secrets_visible_in_private_with_adjusted_threshold() -> None:
     s = SecretEntry(content="私密秘密", trust_threshold=50)
     profile = _npc_profile(secrets=[s])
     prompt = _build_npc_prompt_text(
-        profile, _disp(trust=40), "stranger", [], is_private=True
+        profile, _disp(trust=40), "stranger", is_private=True
     )
     assert "私密秘密" in prompt
 
@@ -93,7 +93,7 @@ def test_secrets_not_visible_when_not_private_below_threshold() -> None:
     s = SecretEntry(content="隐藏秘密", trust_threshold=50)
     profile = _npc_profile(secrets=[s])
     prompt = _build_npc_prompt_text(
-        profile, _disp(trust=40), "stranger", [], is_private=False
+        profile, _disp(trust=40), "stranger", is_private=False
     )
     assert "隐藏秘密" not in prompt
 
@@ -103,7 +103,7 @@ def test_secrets_still_gated_in_private_if_way_below_threshold() -> None:
     s = SecretEntry(content="高级机密", trust_threshold=80)
     profile = _npc_profile(secrets=[s])
     prompt = _build_npc_prompt_text(
-        profile, _disp(trust=10), "stranger", [], is_private=True
+        profile, _disp(trust=10), "stranger", is_private=True
     )
     assert "高级机密" not in prompt
 

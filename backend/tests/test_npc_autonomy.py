@@ -228,12 +228,12 @@ def test_room_granularity_filters_npcs():
 # 6. Active directive goal appears in NPC blackboard.goals
 # ---------------------------------------------------------------------------
 
-def test_active_directive_goal_written_to_blackboard():
-    """When NPC has an active Planner directive with npc_goal, it is added to goals."""
+def test_active_directive_goal_written_to_blackboard_via_topic():
+    """When NPC has an active Planner directive with 'topic', it is added to goals."""
     directives = [
         {
             "npc_id": "guard_captain",
-            "directive": {"npc_goal": "investigate the abandoned warehouse"},
+            "directive": {"topic": "investigate the abandoned warehouse"},
             "consumed": False,
         }
     ]
@@ -246,6 +246,26 @@ def test_active_directive_goal_written_to_blackboard():
     board = ctx.state.relations.get_blackboard("guard_captain")
     assert "goals" in board
     assert "investigate the abandoned warehouse" in board["goals"]
+
+
+def test_active_directive_goal_written_to_blackboard_via_npc_goal_fallback():
+    """npc_goal field still works as fallback when topic is absent."""
+    directives = [
+        {
+            "npc_id": "guard_captain",
+            "directive": {"npc_goal": "patrol the east corridor"},
+            "consumed": False,
+        }
+    ]
+    ctx = _make_context(
+        npc_locations={"guard_captain": "north_gate"},
+        npc_directives=directives,
+    )
+    asyncio.run(NpcAutonomyHook().execute(ctx))
+
+    board = ctx.state.relations.get_blackboard("guard_captain")
+    assert "goals" in board
+    assert "patrol the east corridor" in board["goals"]
 
 
 # ---------------------------------------------------------------------------

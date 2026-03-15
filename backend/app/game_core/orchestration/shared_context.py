@@ -23,3 +23,4 @@ class SharedContext:
     rules_engine: RulesEngine
     scene_bus: SceneBus
     companion_manager: CompanionRuntimeManager | None = None
+    session_id: str = ""

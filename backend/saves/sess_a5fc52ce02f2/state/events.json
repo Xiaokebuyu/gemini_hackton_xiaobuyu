@@ -1,0 +1,22 @@
+{
+  "active_events": {},
+  "pending_events": [],
+  "rumors": [
+    {
+      "area_id": "frontier_town",
+      "content": "听说最近北边的牧场附近总有奇怪的叫声，不知道是不是又是那些绿皮小鬼。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 9
+      },
+      "metadata": {},
+      "rumor_id": "rumor_f20098f487f6",
+      "source": "narrative_planner",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "听说最近北边的牧场附近总有奇怪的叫声，不知道是不是又是那些绿皮小鬼。"
+    }
+  ]
+}

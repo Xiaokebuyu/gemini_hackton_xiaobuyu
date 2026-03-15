@@ -33,6 +33,7 @@ class _StubGraphPort:
         max_depth: int = 2,
         decay: float = 0.8,
         top_k: int = 10,
+        session_id: str = "",
     ) -> list[dict[str, Any]]:
         self.last_call = {
             "actor_id": actor_id,
@@ -41,6 +42,7 @@ class _StubGraphPort:
             "max_depth": max_depth,
             "decay": decay,
             "top_k": top_k,
+            "session_id": session_id,
         }
         return list(self.preset_hits)
 

@@ -257,36 +257,16 @@ def build_test_hook(
     weaver_agent: Any | None = None,
     instance_manager: InstanceManager | None = None,
 ) -> NarrativePlannerHook:
+    # Phase 3d: In the unified planner architecture, the planner IS the blackboard
+    # and returns directives directly.  No longer wrapped in PlannerBlackboardAdapter.
+    # Sub-system agents (when explicitly provided) are still wired for bootstrap().
+    # When planner is given without explicit agents, no agents are created —
+    # the unified planner handles all directives via blackboard.plan().
     if planner is not None:
         if blackboard is None:
-            blackboard = PlannerBlackboardAdapter(planner)
-        if (
-            quest_agent is None
-            and npc_agent is None
-            and world_agent is None
-            and weaver_agent is None
-        ):
-            quest_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={
-                    "create_quest",
-                    "publish_bulletin",
-                    "retire_quest",
-                    "update_quest",
-                },
-            )
-            npc_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"direct_npc", "spawn_quest_npc"},
-            )
-            world_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"plant_environmental", "fill_area"},
-            )
-            weaver_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"escalate", "adjust_pacing"},
-            )
+            blackboard = planner  # unified planner returns directives directly
+        # Do NOT create agent adapters by default.  If tests need agents (e.g.
+        # for bootstrap testing), pass quest_agent/npc_agent/etc. explicitly.
     if blackboard is None:
         blackboard = StaticBlackboard()
 

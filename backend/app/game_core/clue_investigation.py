@@ -63,12 +63,18 @@ def normalize_clue_definition(
     normalized["options"] = options
 
     outcomes: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    raw_outcome_texts: dict[str, str] = {}
     raw_outcomes = _mapping(params.get("outcomes"))
     for option in options:
         option_id = option["id"]
-        bundle = _normalize_outcome_bundle(raw_outcomes.get(option_id))
+        raw_value = raw_outcomes.get(option_id)
+        if isinstance(raw_value, str) and raw_value.strip():
+            raw_outcome_texts[option_id] = raw_value.strip()
+        bundle = _normalize_outcome_bundle(raw_value)
         outcomes[option_id] = bundle
     normalized["outcomes"] = outcomes
+    if raw_outcome_texts:
+        normalized["raw_outcome_texts"] = raw_outcome_texts
 
     normalized["on_first_inspect"] = _normalize_effect_list(params.get("on_first_inspect"))
     return normalized

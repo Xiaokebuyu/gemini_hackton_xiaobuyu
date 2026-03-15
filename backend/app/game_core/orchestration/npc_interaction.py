@@ -365,18 +365,9 @@ class NpcInteractionCoordinator:
         )
 
         # ---- Step 1: Setup ----------------------------------------
-        # Consume any narrative-planner directive before building the system prompt
-        # so that the directive block can be injected into the NPC's prompt.
-        active_directive: dict[str, Any] | None = None
-        if instance is not None and self._state.has_slice("time"):
-            active_directive = instance.consume_directive(
-                self._state.time.absolute_tick()
-            )
-
         npc_full = await builder.build_npc_full_context(
             npc_id,
             memory_retriever=self._memory_retriever,
-            active_directive=active_directive,
         )
         if npc_full is None:
             logger.warning("NpcInteractionCoordinator: NPC not found: %s", npc_id)
@@ -985,23 +976,10 @@ def _build_capability_boundary_prompt(
         if instruction:
             can_do.append(instruction)
 
-    # Build cannot-do list from defaults not in can_do
-    _DEFAULT_CANNOT_DO: list[str] = ["交易", "接取任务", "传授技能", "治疗", "锻造装备"]
-    can_do_raw = set(can_do)
-    cannot_do = [x for x in _DEFAULT_CANNOT_DO if x not in can_do_raw and x + "和交易" not in can_do_raw]
-    # Suppress items already covered by richer can_do entries
-    if "展示商品和交易" in can_do_raw:
-        cannot_do = [x for x in cannot_do if x != "交易"]
-    if "发布和介绍任务" in can_do_raw:
-        cannot_do = [x for x in cannot_do if x != "接取任务"]
-
     lines = [
         "\n## 你当前的能力",
         f"你可以：{'、'.join(can_do)}。",
     ]
-    if cannot_do:
-        lines.append(f"你不可以：{'、'.join(cannot_do)}。")
-    lines.append("如果玩家要求你做不到的事，请如实说明，并建议他去找合适的人。")
 
     # Append special dynamic capabilities section if any
     if capabilities:

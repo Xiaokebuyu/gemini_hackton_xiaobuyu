@@ -166,12 +166,34 @@ class TestProtocolCompliance:
         event = PlannerEvent(kind="quest_accepted", tick=5)
         assert weaver.accepts_event(event) is False
 
-    def test_apply_directive_always_false(self) -> None:
-        """NarrativeWeaver has no directive namespace; all apply_directive calls return False."""
+    def test_handles_escalate_and_adjust_pacing(self) -> None:
+        """NarrativeWeaver now handles 'escalate' and 'adjust_pacing' (merged from PacingController)."""
+        weaver = NarrativeWeaverSubSystem()
+        assert "escalate" in weaver.handles
+        assert "adjust_pacing" in weaver.handles
+
+    def test_apply_directive_unknown_returns_false(self) -> None:
+        """Unknown directive kinds still return False."""
         weaver = NarrativeWeaverSubSystem()
         ctx = _make_settlement_context()
-        result = weaver.apply_directive("escalate", {"delta": 1}, ctx, current_tick=0)
+        result = weaver.apply_directive("unknown_directive", {}, ctx, current_tick=0)
         assert result is False
+
+    def test_apply_escalate_executes_command(self) -> None:
+        """apply_directive('escalate') executes planner_escalate command."""
+        weaver = NarrativeWeaverSubSystem()
+        ctx = _make_settlement_context(initial_escalation=2)
+        result = weaver.apply_directive("escalate", {"delta": 1}, ctx, current_tick=5)
+        assert result is True
+        assert ctx.state.narrative_plan.escalation_level == 3
+
+    def test_apply_adjust_pacing_executes_command(self) -> None:
+        """apply_directive('adjust_pacing') executes planner_set_pacing_frozen command."""
+        weaver = NarrativeWeaverSubSystem()
+        ctx = _make_settlement_context(pacing_frozen=False)
+        result = weaver.apply_directive("adjust_pacing", {"frozen": True}, ctx, current_tick=0)
+        assert result is True
+        assert ctx.state.narrative_plan.pacing_frozen is True
 
 
 # ---------------------------------------------------------------------------

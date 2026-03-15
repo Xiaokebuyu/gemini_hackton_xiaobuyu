@@ -31,7 +31,7 @@ class NarrativeWeaverSubSystem:
     3. Emits an escalate directive when the auto-escalation safety net fires.
     """
 
-    _HANDLES: ClassVar[frozenset[str]] = frozenset({"schedule_event"})  # evaluate-driven + schedule_event
+    _HANDLES: ClassVar[frozenset[str]] = frozenset({"schedule_event", "escalate", "adjust_pacing"})  # evaluate-driven + pacing handlers
     _AUTO_ESCALATION_THRESHOLDS: ClassVar[list[int]] = [4, 7, 10, 13, 16]
     _FALLBACK_ESCALATION_INTERVAL: ClassVar[int] = 6
 
@@ -121,6 +121,10 @@ class NarrativeWeaverSubSystem:
     ) -> bool | str:
         if kind == "schedule_event":
             return self._apply_schedule_event(payload, context, current_tick=current_tick)
+        if kind == "escalate":
+            return self._apply_escalate(payload, context, current_tick=current_tick)
+        if kind == "adjust_pacing":
+            return self._apply_adjust_pacing(payload, context, current_tick=current_tick)
         # NarrativeWeaver does not handle other directive kinds.
         return False
 
@@ -144,6 +148,49 @@ class NarrativeWeaverSubSystem:
                 source="narrative_planner",
             )
         )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: escalate (merged from PacingControllerSubSystem)
+    # ------------------------------------------------------------------
+
+    def _apply_escalate(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(Command(
+            type="planner_escalate",
+            params=params,
+            source="narrative_planner",
+        ))
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    # ------------------------------------------------------------------
+    # Handler: adjust_pacing (merged from PacingControllerSubSystem)
+    # ------------------------------------------------------------------
+
+    def _apply_adjust_pacing(
+        self,
+        payload: dict[str, Any],
+        context: SettlementContext,
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        del current_tick
+        result = context.execute_command(Command(
+            type="planner_set_pacing_frozen",
+            params=dict(payload),
+            source="narrative_planner",
+        ))
         if not result.executed:
             return "; ".join(result.errors) if result.errors else "command_failed"
         return True

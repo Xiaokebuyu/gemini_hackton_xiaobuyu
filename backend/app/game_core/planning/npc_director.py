@@ -267,24 +267,15 @@ class NpcDirectorSubSystem:
         )
         if not result.executed:
             return "; ".join(result.errors) if result.errors else "command_failed"
-        if self._instance_manager is not None:
-            metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
-            npc_id = coerce_non_empty_string(metadata.get("npc_id"))
-            stored_directive = metadata.get("stored_directive")
-            if npc_id is None or not isinstance(stored_directive, Mapping):
-                return "missing_npc_or_directive_in_metadata"
-            self._instance_manager.inject_directive(
-                npc_id,
-                stored_directive,
-                current_tick=current_tick,
-            )
 
-        # Write npc_goal from directive into the NPC's blackboard goals list.
+        # Write npc_goal/topic from directive into the NPC's blackboard goals list.
         npc_id_for_bb = coerce_non_empty_string(payload.get("npc_id"))
         goal_text = None
         directive_inner = payload.get("directive")
         if isinstance(directive_inner, Mapping):
-            goal_text = coerce_non_empty_string(directive_inner.get("npc_goal"))
+            goal_text = coerce_non_empty_string(
+                directive_inner.get("topic") or directive_inner.get("npc_goal")
+            )
         if goal_text is not None and npc_id_for_bb is not None and context.state.has_slice("relations"):
             bb = context.state.relations.get_blackboard(npc_id_for_bb)
             goals = list(bb.get("goals", []))

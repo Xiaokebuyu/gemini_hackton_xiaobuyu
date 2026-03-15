@@ -561,12 +561,12 @@ def test_a2_legacy_environmental_elements_are_expanded_and_applied() -> None:
                         {
                             "id": "mist",
                             "name": "Morning Mist",
-                            "description": "Thin mist over the undergrowth.",
+                            "description": "晨雾地带",
                             "persistence": 3,
                         },
                         {
                             "id": "birdsong",
-                            "description": "Birdsong echoes between the trees.",
+                            "description": "鸟鸣林间",
                         },
                     ],
                 },
@@ -584,9 +584,9 @@ def test_a2_legacy_environmental_elements_are_expanded_and_applied() -> None:
     assert summary["applied_count"] == 2
     created = state.areas.areas["forest"].temporary_sub_areas
     assert [entry["id"] for entry in created] == ["mist", "birdsong"]
-    assert created[0]["description"] == "Thin mist over the undergrowth."
+    assert created[0]["description"] == "晨雾地带"
     assert created[0]["expiry"] == 3
-    assert created[1]["description"] == "Birdsong echoes between the trees."
+    assert created[1]["description"] == "鸟鸣林间"
     assert not any(e.event_type == "planner_directive_rejected" for e in hook._pending_sse)
 
 
@@ -1048,7 +1048,7 @@ def test_a6_quest_expiry_hook_registered_in_defaults() -> None:
 
 
 def test_a6_empty_subsystem_result_does_not_increment_accepted_event_count() -> None:
-    """Empty subsystem results should not be counted as accepted events."""
+    """Phase 3d: unified execute() has no replay rounds; trace reflects single-shot flow."""
     state = _make_simple_state()
     hook = NarrativePlannerHook(blackboard=_StaticBlackboard())
     dispatcher = PlannerDispatcher()
@@ -1059,7 +1059,10 @@ def test_a6_empty_subsystem_result_does_not_increment_accepted_event_count() -> 
     asyncio.run(hook.execute(context))
 
     trace = context.state.narrative_plan.last_planner_replay_trace
-    assert trace["rounds"][0]["accepted_event_count"] == 0
+    # Phase 3d: dispatcher is NOT called in execute(); unified single-shot trace
+    assert trace["round_count"] == 0
+    assert trace["stop_reason"] == "unified"
+    assert trace["rounds"] == []
 
 
 # ---------------------------------------------------------------------------

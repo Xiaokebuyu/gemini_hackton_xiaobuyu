@@ -3396,3 +3396,107 @@ Phase A-1 完成后端 buy_service 链路（InteractionService + execute_service
 ### 测试
 
 前端无测试框架，不写前端测试。后端 buy_service 链路测试在 D-SvcA1 中完成。
+
+---
+
+### [D-NPC-PATH] 高独立性 NPC 改造：清理 Path A + 修复 Path B + prompt 调整
+
+**背景：**
+
+commit 49fdbff 重构 NPC 系统提示词时，删除了 `directive_block` 等注入段落，但保留了对应的函数参数（`active_directive`、`impressions`、`knowledge_hits`、`story_facts`），导致这些数据被提取、传递但最终被丢弃。
+
+NPC 目标传递存在两条路径：
+- **Path A**（InstanceManager）：`consume_directive()` → `active_directive` 参数 → prompt 注入 — **已断**（代码删了）
+- **Path B**（blackboard）：NarrativePlanSlice → NpcAutonomyHook → blackboard.goals → prompt — **字段名不匹配**（代码找 `npc_goal`，LLM 生成 `topic`）
+
+**改动：移除 Path A，修复 Path B，调整 NPC prompt 引导主动性。**
+
+**变更文件：**
+
+1. `app/game_core/orchestration/hooks/npc_autonomy.py` — `_extract_directive_goals()`：`inner.get("npc_goal")` → `inner.get("topic") or inner.get("npc_goal")`（Path B 字段名兼容修复）
+
+2. `app/game_core/planning/npc_director.py` — blackboard 写入：`directive_inner.get("npc_goal")` → `directive_inner.get("topic") or directive_inner.get("npc_goal")`；删除 `if self._instance_manager is not None: inject_directive(...)` 整块（Path A inject 调用）
+
+3. `app/game_core/orchestration/npc_interaction.py` — 删除 `active_directive` 变量声明、`consume_directive()` 调用、`active_directive=active_directive` 参数传递
+
+4. `app/game_core/orchestration/private_chat.py` — 同上
+
+5. `app/agent_orchestration.py` — 两处同上（NPC 对话 + 场景反应两条路径）
+
+6. `app/game_core/narrative/context_builder.py` — `build_npc_full_context()`：删除 `active_directive` 参数；`_build_npc_prompt_text()`：删除 `impressions`、`knowledge_hits`、`active_directive`、`story_facts` 四个死参数；两处 caller 同步更新；prompt 文本调整：tool_rules 加主动性引导；grounding_block 措辞调整（允许主动发起目标相关话题）
+
+**测试更新（~10 处）：**
+- `test_npc_autonomy.py`：旧测试重命名为 `_via_topic`，新增 `_via_npc_goal_fallback`
+- `test_narrative_planner_hook.py`：`test_direct_npc_hot_injects_into_active_instance` → 重命名 `_stores_in_narrative_plan_path_b`，assert queue 为空
+- `test_npc_interaction.py`：`test_active_instance_directive_is_consumed_immediately` → 重命名，assert `consumed is False`
+- `test_p20_directive_subsystems.py`：`test_direct_npc_injects_to_instance_manager` → 重命名，assert npc_directives 而非 directive_queue
+- `test_private_chat.py`：重命名，assert `consumed is False`
+- 多个测试文件（test_context_builder、test_agent_orchestration、test_35_npc_role_constraints、test_directive_movement、test_prompt_enrichment、test_private_chat_enrichment）：删除 `_build_npc_prompt_text()` 调用中的 `impressions=[]` / `impressions=[...]` 参数
+
+## D-session-isolation: WorldKnowledgeGraph Session 隔离（Phase 1）
+
+**日期**：2026-03-15
+**文件**：`app/world_knowledge_graph.py`
+**计划**：`adaptive-roaming-milner.md`
+
+### 背景
+
+WorldKnowledgeGraph 原来是全局单例，`_actor_graphs` / `_actor_memory_counts` 在 session 之间累积，导致新 session 的 NPC 可以"知道"旧 session 的对话内容和世界事实。
+
+### 设计决策
+
+**静态世界拓扑共享，动态游戏知识 per-session。**
+
+```
+WorldKnowledgeGraph
+├── _graph (nx.DiGraph)         — 静态基图，内容注册表 seed，所有 session 共享
+├── _seeded / _lore_graphized   — 幂等守卫（世界级，不按 session）
+└── _sessions: dict[str, _SessionState]   ← 新增
+    └── _SessionState
+        ├── overlay: nx.DiGraph           — story_facts / add_triple / add_raw_triple 写入
+        ├── actor_graphs: dict[str, nx.DiGraph]  — per-NPC 私有知识图
+        └── memory_counts: dict[str, int]        — memory 节点计数器
+```
+
+查询时三层组合：`base_graph + session_overlay + actor_graph`。
+
+### 变更清单
+
+1. **新增 `_SessionState` dataclass**（非 slots，避免 field default_factory 兼容问题）
+   - `overlay: nx.DiGraph` — session 级动态三元组
+   - `actor_graphs: dict[str, nx.DiGraph]` — NPC 私有子图
+   - `memory_counts: dict[str, int]` — memory 节点序号
+
+2. **`__init__`**：删除 `_actor_graphs` / `_actor_memory_counts`，新增 `_sessions: dict[str, _SessionState] = {}`
+
+3. **新增 `_ensure_session(session_id)` / `clear_session(session_id)`**
+
+4. **写方法加 `session_id: str = ""`**（默认值保持向后兼容）：
+   - `inject_story_facts()` → 写 session.overlay
+   - `add_triple()` → 调 `_apply_triple(triple, session_id)`
+   - `add_raw_triple()` → 写 session.overlay
+   - `write_episode()` → 调 `_apply_actor_triple(..., session_id)`
+   - `remember()` → 写 session.actor_graphs
+
+5. **查询方法加 `session_id: str = ""`**：
+   - `query_spread()` → 传给 `_build_query_graph(actor_id, session_id)`
+
+6. **`_build_query_graph(actor_id, session_id="")` 重构**：三层组合（base copy → overlay merge → actor merge）
+
+7. **辅助方法迁移**：
+   - `_ensure_actor_graph(session_id, actor_id)` — 参数顺序变化
+   - `_copy_base_node_to_actor_graph(session_id, actor_id, node_id)` — 加 session_id
+   - `_apply_triple(triple, session_id="")` — 写 session.overlay
+   - `_apply_triple_to_base(triple)` — 新增，专供 lore enrichment 写基图（世界级）
+   - `_apply_actor_triple(actor_id, triple, session_id="")` — 写 session.actor_graphs
+   - `actor_edge_count(actor_id, session_id="")` / `has_actor_edge(actor_id, src, dst, session_id="")` — 加 session_id
+
+8. **`export_actor_state(session_id="")` / `import_actor_state(data, session_id="")`** — 按 session 隔离导入导出
+
+### 向后兼容性
+
+所有新增参数均有 `session_id: str = ""` 默认值。现有不传 session_id 的调用者（Phase 2 前）会自动写入 `""` session，行为与原来类似（全局共享），不会崩溃。Phase 2 将更新调用者传入真实 session_id。
+
+### Lore Enrichment 特殊处理
+
+`ensure_lore_enriched` 中的 LLM 三元组提取写入**静态基图**（通过 `_apply_triple_to_base()`），因为 lore 是世界级知识，所有 session 共享。只有 story_facts / NPC episode / 玩家触发的动态事实才是 session 级的。

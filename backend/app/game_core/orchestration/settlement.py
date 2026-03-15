@@ -31,6 +31,7 @@ class SettlementContext:
     rest_phase: Any | None = None
     companion_manager: Any | None = None
     knowledge_graph: Any | None = None
+    session_id: str = ""
 
     def execute_command(self, cmd: Command) -> ExecuteResult:
         result = self._rules_engine.execute(cmd, self.state, self.world)

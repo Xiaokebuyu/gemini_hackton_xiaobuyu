@@ -277,6 +277,7 @@ class GameRuntime:
         )
         self._bind_runtime_services(runtime)
         resolved_session_id = session_id or self._new_session_id()
+        runtime.tick_coordinator.session_id = resolved_session_id
         await self._save_store.save_runtime(resolved_session_id, runtime)
         return ManagedSession(
             world_id=world_id,
@@ -414,11 +415,12 @@ class GameRuntime:
         if runtime is None:
             return None
         self._bind_runtime_services(runtime)
+        runtime.tick_coordinator.session_id = session_id
         # 恢复后强制同步队友位置到玩家当前区域
         from app.game_core.orchestration.companion_manager import CompanionManager
         CompanionManager(runtime.state).sync_to_player()
-        self._restore_knowledge_graph(runtime)
-        self._restore_context_windows(runtime)
+        self._restore_knowledge_graph(runtime, session_id)
+        self._restore_context_windows(runtime, session_id)
         phase = str(meta.get("phase", "")).strip() or "character_creation"
         return ManagedSession(
             world_id=world_id,
@@ -431,7 +433,7 @@ class GameRuntime:
         """Persist one managed session through the configured save store."""
         if session.world_id != session.runtime.world.world_id:
             raise ValueError("managed session world_id does not match runtime world")
-        self._sync_knowledge_graph_state(session.runtime)
+        self._sync_knowledge_graph_state(session.runtime, session_id=session.session_id)
         self._save_context_windows(session)
         return await self._save_store.save_runtime(
             session.session_id,
@@ -439,7 +441,7 @@ class GameRuntime:
             phase=session.phase,
         )
 
-    def _sync_knowledge_graph_state(self, runtime: DefaultRuntime) -> None:
+    def _sync_knowledge_graph_state(self, runtime: DefaultRuntime, session_id: str = "") -> None:
         """Export WKG actor-private state into NarrativePlanSlice for persistence."""
         graph = getattr(runtime.tick_coordinator, "knowledge_graph", None)
         if graph is None or not runtime.state.has_slice("narrative_plan"):
@@ -447,7 +449,7 @@ class GameRuntime:
         export_fn = getattr(graph, "export_actor_state", None)
         if not callable(export_fn):
             return
-        actor_state = export_fn()
+        actor_state = export_fn(session_id=session_id)
         if actor_state:
             runtime.state.narrative_plan.set_actor_knowledge(actor_state)
 
@@ -460,7 +462,7 @@ class GameRuntime:
         if im is not None:
             iter_fn = getattr(im, "iter_instances", None)
             if callable(iter_fn):
-                for actor_id, instance in iter_fn():
+                for actor_id, instance in iter_fn(session_id=session.session_id):
                     cw = instance.context_window
                     if cw is not None and cw.messages:
                         windows_data[actor_id] = cw.export_messages()
@@ -489,7 +491,11 @@ class GameRuntime:
         if windows_data:
             session.runtime.state.narrative_plan.set_context_windows_data(windows_data)
 
-    def _restore_context_windows(self, runtime: DefaultRuntime) -> None:
+    def _restore_context_windows(
+        self,
+        runtime: DefaultRuntime,
+        session_id: str = "",
+    ) -> None:
         """Restore ContextWindows and planner history from NarrativePlanSlice."""
         if not runtime.state.has_slice("narrative_plan"):
             return
@@ -508,7 +514,7 @@ class GameRuntime:
                     if actor_id.startswith("__"):
                         continue
                     if isinstance(messages, (list, dict)):
-                        instance = get_fn(actor_id)
+                        instance = get_fn(session_id, actor_id)
                         if instance is not None:
                             instance.context_window.import_messages(messages)
         history_payloads = {
@@ -780,7 +786,10 @@ class GameRuntime:
         )
 
     @staticmethod
-    def _restore_knowledge_graph(runtime: DefaultRuntime) -> None:
+    def _restore_knowledge_graph(
+        runtime: DefaultRuntime,
+        session_id: str = "",
+    ) -> None:
         if not runtime.state.has_slice("narrative_plan"):
             return
         graph = getattr(runtime.tick_coordinator, "knowledge_graph", None)
@@ -789,13 +798,15 @@ class GameRuntime:
         # 1. Restore story facts (existing)
         facts = runtime.state.narrative_plan.story_facts
         if facts:
-            graph.inject_story_facts(facts)
+            inject_fn = getattr(graph, "inject_story_facts", None)
+            if callable(inject_fn):
+                inject_fn(facts, session_id=session_id)
         # 2. Restore actor-private knowledge (new)
         actor_knowledge = runtime.state.narrative_plan.actor_knowledge
         if actor_knowledge:
             import_fn = getattr(graph, "import_actor_state", None)
             if callable(import_fn):
-                import_fn(actor_knowledge)
+                import_fn(actor_knowledge, session_id=session_id)
 
     @staticmethod
     def _find_narrative_planner_hook(

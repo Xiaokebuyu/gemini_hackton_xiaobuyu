@@ -26,6 +26,7 @@ from app.game_core.orchestration.hooks.narrative_planner import (
 from app.game_core.orchestration.models import SSEEvent
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
+from app.game_core.planning.narrative_weaver import NarrativeWeaverSubSystem
 from app.game_core.planning.npc_director import NpcDirectorSubSystem
 from app.game_core.planning.pacing_controller import PacingControllerSubSystem
 from app.game_core.planning.quest_manager import QuestManagerSubSystem
@@ -430,10 +431,14 @@ def test_direct_npc_adds_directive():
     assert directives[0]["consumed"] is False
 
 
-def test_direct_npc_injects_to_instance_manager():
-    """direct_npc calls inject_directive on an active InstanceManager."""
+def test_direct_npc_stores_directive_in_narrative_plan():
+    """direct_npc stores the directive in narrative_plan.npc_directives (Path B).
+
+    Path A (inject_directive → instance directive_queue) has been removed.
+    Directives are now stored in narrative_plan and applied via NpcAutonomyHook blackboard.
+    """
     im = InstanceManager()
-    active = im.get_or_create("npc_scout", current_tick=1)
+    im.get_or_create("test", "npc_scout", current_tick=1)
 
     context = _make_context()
     npc_director = NpcDirectorSubSystem(instance_manager=im)
@@ -448,9 +453,10 @@ def test_direct_npc_injects_to_instance_manager():
         current_tick=2,
     )
 
-    # inject_directive should have placed directive into the instance queue
-    assert len(active.directive_queue) == 1
-    assert active.directive_queue[0]["npc_id"] == "npc_scout"
+    # Directive is stored in narrative_plan (Path B), not in instance queue
+    directives = context.state.narrative_plan.npc_directives
+    assert len(directives) == 1
+    assert directives[0]["npc_id"] == "npc_scout"
 
 
 def test_direct_npc_rejects_missing_directive():
@@ -547,7 +553,7 @@ def test_plant_environmental_creates_discovery():
         {
             "area_id": "frontier_town",
             "clue_id": "blood_smear",
-            "description": "A blood smear on the wall.",
+            "description": "血迹痕迹",
             "dc": 14,
         },
         context,
@@ -569,7 +575,7 @@ def test_plant_environmental_emits_sse():
 
     world_builder.apply_directive(
         "plant_environmental",
-        {"area_id": "frontier_town", "description": "Footprints."},
+        {"area_id": "frontier_town", "description": "脚印区域"},
         context,
         current_tick=2,
     )
@@ -795,7 +801,7 @@ def test_dispatcher_routes_to_correct_subsystem():
     # plant_environmental → WorldBuilder
     assert dispatcher.apply_directive(
         "plant_environmental",
-        {"area_id": "frontier_town", "description": "Scratches on door."},
+        {"area_id": "frontier_town", "description": "门口划痕"},
         context,
         current_tick=1,
     )
@@ -808,50 +814,52 @@ def test_dispatcher_routes_to_correct_subsystem():
 
 
 def test_full_decision_flow_no_legacy():
-    """NarrativePlannerHook + 4 sub-systems end-to-end, no LegacyDirectiveSubSystem."""
-    class _SimpleBlackboard:
-        async def plan(self, ctx):
-            del ctx
-            return {"directives": [], "story_facts": [], "metadata": {"status": "noop"}}
+    """Phase 3d: NarrativePlannerHook unified flow — blackboard handles all directives.
 
-    class _SimpleQuestAgent:
-        async def evaluate(self, ctx):
+    The unified planner (blackboard) returns all directives in a single plan() call.
+    No sub-system agents are called from execute().  replay_round_count == 0.
+    """
+    class _UnifiedBlackboard:
+        async def plan(self, ctx):
             del ctx
             return {
                 "directives": [
                     {"kind": "create_quest", "payload": {"quest_id": "dq_full_flow", "title": "Full Flow"}},
                     {"kind": "adjust_pacing", "payload": {"frozen": False}},
+                    {"kind": "escalate", "payload": {"delta": 1}},
                 ],
                 "story_facts": [],
+                "metadata": {"status": "unified_test"},
             }
 
     async def _run():
-        hook = NarrativePlannerHook(blackboard=_SimpleBlackboard())
+        hook = NarrativePlannerHook(blackboard=_UnifiedBlackboard())
         pending_sse: list[SSEEvent] = hook._pending_sse
         dispatcher = PlannerDispatcher()
-        quest_manager = QuestManagerSubSystem(
-            dispatcher=dispatcher,
-            agent=_SimpleQuestAgent(),
-        )
+        quest_manager = QuestManagerSubSystem(dispatcher=dispatcher, agent=None)
         dispatcher.register(quest_manager)
         dispatcher.register(NpcDirectorSubSystem())
         dispatcher.register(WorldBuilderSubSystem(sse_collector=pending_sse))
         dispatcher.register(PacingControllerSubSystem())
+        dispatcher.register(NarrativeWeaverSubSystem(sse_collector=pending_sse))
         hook._dispatcher = dispatcher
 
         context = _make_context(area_payload={"areas": {"frontier_town": {}}})
-        # Route QuestManager via a semantic event instead of generic flags.
         context.change_log.append(
             StateChange("quests", "set", "milestone_states.ms_1", {"state": "AVAILABLE"})
         )
 
         result = await hook.execute(context)
 
+        # All 3 directives from the blackboard are applied
         assert result.metadata["applied_count"] == 3
         assert "create_quest" in result.metadata["applied_kinds"]
         assert "adjust_pacing" in result.metadata["applied_kinds"]
+        assert "escalate" in result.metadata["applied_kinds"]
         assert context.state.quests.get_dynamic_quest("dq_full_flow") is not None
-        assert result.metadata["replay_round_count"] == 2
+        # Phase 3d: unified flow, no replay rounds
+        assert result.metadata["replay_round_count"] == 0
+        assert result.metadata["replay_stop_reason"] == "unified"
 
     asyncio.run(_run())
 

@@ -393,7 +393,7 @@ class _RecordingKnowledgeGraph:
     def __init__(self) -> None:
         self.inject_calls: list[list[dict[str, Any]]] = []
 
-    def inject_story_facts(self, facts: list[dict[str, Any]]) -> None:
+    def inject_story_facts(self, facts: list[dict[str, Any]], session_id: str = "") -> None:
         self.inject_calls.append([dict(fact) for fact in facts])
 
 
@@ -577,7 +577,7 @@ class TestPlantEnvironmentalEmitsSSE:
         self,
         *,
         area_id: str = "test_area",
-        description: str = "A mysterious rune on the ground",
+        description: str = "神秘符文区",
         clue_id: str = "clue_001",
     ) -> tuple[list[SSEEvent], SettlementContext]:
         ctx = _make_settlement_context(area_id=area_id)
@@ -746,30 +746,32 @@ class TestFillAreaEmitsSSE:
 
 class TestInjectStoryFacts:
     def test_inject_adds_nodes_and_edge(self) -> None:
-        """inject_story_facts creates subject/object nodes and a directed edge."""
+        """inject_story_facts creates subject/object nodes and a directed edge in session overlay."""
         from app.world_knowledge_graph import WorldKnowledgeGraph
 
         graph = WorldKnowledgeGraph()
         facts = [{"subject": "rebel_leader", "relation": "hides_in", "object": "cave_of_shadows"}]
-        graph.inject_story_facts(facts)
+        graph.inject_story_facts(facts, session_id="test")
 
-        assert graph.has_node("rebel_leader")
-        assert graph.has_node("cave_of_shadows")
-        assert graph.has_edge("rebel_leader", "cave_of_shadows")
+        overlay = graph._sessions["test"].overlay
+        assert "rebel_leader" in overlay
+        assert "cave_of_shadows" in overlay
+        assert overlay.has_edge("rebel_leader", "cave_of_shadows")
 
     def test_inject_reuses_existing_nodes(self) -> None:
-        """inject_story_facts does not duplicate existing graph nodes."""
+        """inject_story_facts does not duplicate existing overlay nodes."""
         from app.world_knowledge_graph import WorldKnowledgeGraph
 
         graph = WorldKnowledgeGraph()
-        # Pre-seed a node manually
-        graph._graph.add_node("player", label="Player", tags=[], description="", node_type="character")
+        # Pre-seed a node in the session overlay
+        session = graph._ensure_session("test")
+        session.overlay.add_node("player", label="Player", tags=[], description="", node_type="character")
 
         facts = [{"subject": "player", "relation": "knows_about", "object": "secret_passage"}]
-        graph.inject_story_facts(facts)
+        graph.inject_story_facts(facts, session_id="test")
 
-        # Node count should be 2 (player + secret_passage), not 3
-        assert graph.node_count() == 2
+        # Overlay node count should be 2 (player + secret_passage), not 3
+        assert session.overlay.number_of_nodes() == 2
 
     def test_inject_skips_incomplete_facts(self) -> None:
         """inject_story_facts ignores facts with empty subject, relation, or object."""
@@ -782,9 +784,10 @@ class TestInjectStoryFacts:
             {"subject": "a", "relation": "r", "object": ""},       # empty object
             {"subject": "a", "relation": "r", "object": "b"},      # valid
         ]
-        graph.inject_story_facts(facts)
-        assert graph.node_count() == 2
-        assert graph.edge_count() == 1
+        graph.inject_story_facts(facts, session_id="test")
+        overlay = graph._sessions["test"].overlay
+        assert overlay.number_of_nodes() == 2
+        assert overlay.number_of_edges() == 1
 
     def test_inject_weight_stored_on_edge(self) -> None:
         """inject_story_facts stores the fact's weight on the edge."""
@@ -792,9 +795,10 @@ class TestInjectStoryFacts:
 
         graph = WorldKnowledgeGraph()
         facts = [{"subject": "king", "relation": "fears", "object": "dragon", "weight": 0.7}]
-        graph.inject_story_facts(facts)
+        graph.inject_story_facts(facts, session_id="test")
 
-        edge_data = graph._graph["king"]["dragon"]
+        overlay = graph._sessions["test"].overlay
+        edge_data = overlay["king"]["dragon"]
         assert abs(edge_data.get("weight", 0.0) - 0.7) < 1e-6
 
     def test_inject_default_weight_is_one(self) -> None:
@@ -803,9 +807,10 @@ class TestInjectStoryFacts:
 
         graph = WorldKnowledgeGraph()
         facts = [{"subject": "hero", "relation": "defeated", "object": "orc"}]
-        graph.inject_story_facts(facts)
+        graph.inject_story_facts(facts, session_id="test")
 
-        edge_data = graph._graph["hero"]["orc"]
+        overlay = graph._sessions["test"].overlay
+        edge_data = overlay["hero"]["orc"]
         assert abs(edge_data.get("weight", 0.0) - 1.0) < 1e-6
 
     def test_inject_facts_reachable_via_query_spread(self) -> None:
@@ -818,7 +823,7 @@ class TestInjectStoryFacts:
             # Inject a chain: player_hero → knows_about → ancient_artifact
             graph.inject_story_facts([
                 {"subject": "player_hero", "relation": "knows_about", "object": "ancient_artifact"},
-            ])
+            ], session_id="test")
 
             async def _query():
                 return await graph.query_spread(
@@ -826,6 +831,7 @@ class TestInjectStoryFacts:
                     keywords=["player_hero"],
                     context={},
                     top_k=5,
+                    session_id="test",
                 )
 
             hits = _asyncio.run(_query())
@@ -836,11 +842,12 @@ class TestInjectStoryFacts:
         _run()
 
     def test_inject_empty_list_is_noop(self) -> None:
-        """inject_story_facts with empty list does not change graph."""
+        """inject_story_facts with empty list does not change the session overlay."""
         from app.world_knowledge_graph import WorldKnowledgeGraph
 
         graph = WorldKnowledgeGraph()
-        graph.inject_story_facts([])
+        graph.inject_story_facts([], session_id="test")
+        # Static base graph unchanged; no session created or overlay empty
         assert graph.node_count() == 0
         assert graph.edge_count() == 0
 
@@ -851,9 +858,10 @@ class TestInjectStoryFacts:
         graph = WorldKnowledgeGraph()
         graph.inject_story_facts([
             {"subject": "shadow_guild", "relation": "controls", "object": "black_market"},
-        ])
-        assert graph._graph.nodes["shadow_guild"]["node_type"] == "story_fact"
-        assert graph._graph.nodes["black_market"]["node_type"] == "story_fact"
+        ], session_id="test")
+        overlay = graph._sessions["test"].overlay
+        assert overlay.nodes["shadow_guild"]["node_type"] == "story_fact"
+        assert overlay.nodes["black_market"]["node_type"] == "story_fact"
 
     def test_edge_source_attribute_is_story_fact(self) -> None:
         """Edges created by inject_story_facts are tagged with source='story_fact'."""
@@ -862,8 +870,9 @@ class TestInjectStoryFacts:
         graph = WorldKnowledgeGraph()
         graph.inject_story_facts([
             {"subject": "a", "relation": "r", "object": "b"},
-        ])
-        edge_data = graph._graph["a"]["b"]
+        ], session_id="test")
+        overlay = graph._sessions["test"].overlay
+        edge_data = overlay["a"]["b"]
         assert edge_data.get("source") == "story_fact"
 
 

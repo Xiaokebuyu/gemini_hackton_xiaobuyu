@@ -332,36 +332,19 @@ def _build_test_hook(
     instance_manager: Any | None = None,
     sub_area_manager: Any | None = None,
 ) -> NarrativePlannerHook:
+    # Phase 3d: In the unified planner architecture, the planner IS the blackboard
+    # and returns directives directly.
+    # execute() only calls blackboard.plan() (no sub-system agents).
+    # bootstrap() calls _run_replay (agents) + blackboard.plan().
+    # Setting both planner-as-blackboard AND agents leads to double-application in bootstrap.
+    # Solution: when planner is given, use it as blackboard with NO sub-system agents.
+    # Both execute() and bootstrap() then work through blackboard.plan() alone.
     if planner is not None:
         if blackboard is None:
-            blackboard = PlannerBlackboardAdapter(planner)
-        if (
-            quest_agent is None
-            and npc_agent is None
-            and world_agent is None
-            and weaver_agent is None
-        ):
-            quest_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={
-                    "create_quest",
-                    "publish_bulletin",
-                    "retire_quest",
-                    "update_quest",
-                },
-            )
-            npc_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"direct_npc", "spawn_quest_npc"},
-            )
-            world_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"plant_environmental", "fill_area"},
-            )
-            weaver_agent = PlannerAgentAdapter(
-                planner,
-                allowed_directives={"escalate", "adjust_pacing"},
-            )
+            blackboard = planner  # unified planner returns directives directly
+        # Do NOT create agent adapters — the unified planner handles all directives
+        # via blackboard.plan().  Agents are no longer called from execute(), and
+        # in bootstrap() we let blackboard.plan() handle everything too.
     if blackboard is None:
         blackboard = StaticBlackboard()
 
@@ -727,24 +710,33 @@ class TestNarrativePlannerHook:
 
         assert result.metadata["status"] == "updated"
         assert result.metadata["reason"] == "trigger"
-        assert planner.calls[0]["changed_slices"] == ["quests"]
+        # Phase 3d: pre-processing may add changes to the change_log before building context,
+        # so changed_slices may include pre-processing-modified slices (narrative_plan etc.)
+        assert "quests" in planner.calls[0]["changed_slices"]
         assert context.state.narrative_plan.ticks_since_milestone_progress == 0
 
-    def test_execute_dispatches_semantic_events_before_blackboard(self) -> None:
-        blackboard = StaticBlackboard()
-        quest_agent = RecordingAgent(
-            directives=[
-                {
-                    "kind": "create_quest",
-                    "payload": {
-                        "quest_id": "dq_semantic",
-                        "title": "Semantic Lead",
-                        "summary": "Derived from quest acceptance.",
-                    },
-                }
-            ]
+    def test_execute_calls_blackboard_once_with_all_events(self) -> None:
+        """Phase 3d: execute() calls blackboard.plan() exactly once with all semantic events.
+
+        The unified planner replaces the multi-round replay model:
+        no sub-system agents are called from execute(); instead all events are
+        collected in a single pass and passed to blackboard.plan() in planner_events.
+        """
+        blackboard = StaticBlackboard(
+            NarrativePlannerDecision(
+                directives=[
+                    {
+                        "kind": "create_quest",
+                        "payload": {
+                            "quest_id": "dq_unified",
+                            "title": "Unified Lead",
+                            "summary": "Created by unified planner.",
+                        },
+                    }
+                ],
+                metadata={"status": "unified"},
+            )
         )
-        world_agent = RecordingAgent()
         context = _make_context(
             change_log=[
                 StateChange("quests", "modify", "dynamic_quests.dq_existing", {
@@ -778,35 +770,22 @@ class TestNarrativePlannerHook:
             },
         ]
 
-        hook = _build_test_hook(
-            blackboard=blackboard,
-            quest_agent=quest_agent,
-            world_agent=world_agent,
-        )
+        hook = _build_test_hook(blackboard=blackboard)
         result = asyncio.run(hook.execute(context))
 
         assert result.metadata["status"] == "updated"
-        assert [call["current_event"]["kind"] for call in quest_agent.calls] == [
-            "quest_accepted",
-            "quest_created",
-        ]
-        assert [call["current_event"]["kind"] for call in world_agent.calls] == [
-            "area_entered",
-            "scene_changed",
-            "quest_created",
-        ]
+        # Blackboard is called exactly once
         assert len(blackboard.calls) == 1
-        assert "dq_semantic" in blackboard.calls[0]["quests"]["dynamic_quests"]
-        assert [event["kind"] for event in blackboard.calls[0]["planner_events"]] == [
-            "quest_accepted",
-            "area_entered",
-            "scene_changed",
-            "tick_settlement",
-            "quest_created",
-        ]
-        assert blackboard.calls[0]["replay_trace"]["round_count"] == 2
-        assert result.metadata["replay_round_count"] == 2
-        assert result.metadata["replay_stop_reason"] == "steady_state"
+        # planner_events contains all collected semantic events from the tick
+        event_kinds = [event["kind"] for event in blackboard.calls[0]["planner_events"]]
+        assert "quest_accepted" in event_kinds
+        assert "area_entered" in event_kinds
+        # Unified flow: replay_round_count == 0, stop_reason == "unified"
+        assert result.metadata["replay_round_count"] == 0
+        assert result.metadata["replay_stop_reason"] == "unified"
+        # Directive from blackboard was applied
+        assert "create_quest" in result.metadata["applied_kinds"]
+        assert context.state.quests.get_dynamic_quest("dq_unified") is not None
 
     def test_create_quest_applies_and_duplicate_is_counted_invalid(self) -> None:
         planner = RecordingPlanner(
@@ -1166,7 +1145,12 @@ class TestNarrativePlannerHook:
         assert not any(event.event_type == "dynamic_quest_expired" for event in result.sse_events)
         assert context.state.narrative_plan.quest_history == []
 
-    def test_direct_npc_hot_injects_into_active_instance(self) -> None:
+    def test_direct_npc_stores_in_narrative_plan_path_b(self) -> None:
+        """direct_npc stores directive in narrative_plan (Path B via blackboard).
+
+        Path A (inject_directive → instance directive_queue) has been removed.
+        NpcAutonomyHook reads npc_directives and writes goals to blackboard.
+        """
         planner = RecordingPlanner(
             {
                 "directives": [
@@ -1183,7 +1167,7 @@ class TestNarrativePlannerHook:
         )
         context = _make_context(change_log=[StateChange("player", "set", "current_area", "forest")])
         instance_manager = InstanceManager()
-        active_instance = instance_manager.get_or_create("npc_guard", current_tick=3)
+        active_instance = instance_manager.get_or_create("test", "npc_guard", current_tick=3)
 
         hook = _make_full_hook_with_instance_manager(planner, instance_manager)
         result = asyncio.run(hook.execute(context))
@@ -1193,7 +1177,8 @@ class TestNarrativePlannerHook:
         stored = context.state.narrative_plan.npc_directives[-1]
         assert stored["priority"] == "high"
         assert stored["consumed"] is False
-        assert active_instance.directive_queue == [stored]
+        # Path A removed: directive is NOT injected into instance queue
+        assert active_instance.directive_queue == []
 
     def test_unsupported_directives_are_counted(self) -> None:
         planner = RecordingPlanner(

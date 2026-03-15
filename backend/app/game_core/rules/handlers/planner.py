@@ -140,6 +140,7 @@ class PlannerQuestHandler(StaticCommandHandler):
         "planner_publish_bulletin",
         "planner_retire_quest",
         "planner_update_quest",
+        "planner_set_task_monitor",
     )
 
     def validate(
@@ -198,6 +199,17 @@ class PlannerQuestHandler(StaticCommandHandler):
             if str(quest.get("status", "")).strip().lower() != "active":
                 return ValidationResult(ok=False, reason="planner_update_quest only supports active quests")
             return ValidationResult(ok=True)
+        if cmd.type == "planner_set_task_monitor":
+            quest_id = coerce_non_empty_string(cmd.params.get("quest_id"))
+            if quest_id is None:
+                return ValidationResult(ok=False, reason="quest_id must be a non-empty string")
+            quest = state.quests.dynamic_quests.get(quest_id)
+            if not isinstance(quest, Mapping):
+                return ValidationResult(ok=False, reason=f"dynamic quest not found: {quest_id}")
+            status = str(quest.get("status", "")).strip().lower()
+            if status not in {"active", "in_progress", "accepted"}:
+                return ValidationResult(ok=False, reason="planner_set_task_monitor only supports active quests")
+            return ValidationResult(ok=True)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -217,6 +229,8 @@ class PlannerQuestHandler(StaticCommandHandler):
             return self._compute_retire_quest(cmd, state)
         if cmd.type == "planner_update_quest":
             return self._compute_update_quest(cmd, state)
+        if cmd.type == "planner_set_task_monitor":
+            return self._compute_set_task_monitor(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _compute_create_quest(
@@ -619,6 +633,40 @@ class PlannerQuestHandler(StaticCommandHandler):
                 "next_steps": list(updated.get("next_steps", [])),
                 "hints": list(updated.get("hints", [])),
             },
+        )
+
+    def _compute_set_task_monitor(
+        self,
+        cmd: Command,
+        state: StateContainer,
+    ) -> ExecuteResult:
+        """Attach a task_monitor dict to an active dynamic quest.
+
+        The task_monitor records:
+          - conditions: list of condition dicts (same format as objective conditions)
+          - on_complete: "auto" (complete quest) or "notify" (SSE only)
+        """
+        quest_id = coerce_non_empty_string(cmd.params.get("quest_id")) or ""
+        quest = state.quests.dynamic_quests.get(quest_id)
+        if not isinstance(quest, Mapping):
+            return ExecuteResult.error(f"dynamic quest not found: {quest_id}")
+        conditions = cmd.params.get("conditions")
+        if not isinstance(conditions, list):
+            conditions = []
+        on_complete = coerce_non_empty_string(cmd.params.get("on_complete")) or "auto"
+        if on_complete not in {"auto", "notify"}:
+            on_complete = "auto"
+        updated = dict(quest)
+        updated["task_monitor"] = {
+            "conditions": [dict(c) for c in conditions if isinstance(c, Mapping)],
+            "on_complete": on_complete,
+        }
+        return _planner_success(
+            cmd.type,
+            changes=[
+                StateChange("quests", "modify", f"dynamic_quests.{quest_id}", updated),
+            ],
+            metadata={"quest_id": quest_id, "on_complete": on_complete},
         )
 
     @staticmethod
@@ -1374,6 +1422,15 @@ class PlannerWorldHandler(StaticCommandHandler):
         cmd: Command,
         state: StateContainer,
     ) -> ExecuteResult:
+        # For plant_environmental, "description" is used as the sub-area label
+        # (label_fallback_key="description"). Validate that it looks like a
+        # place name rather than a narrative sentence.
+        label = str(cmd.params.get("label") or cmd.params.get("description") or "").strip()
+        if label:
+            if len(label) > 30:
+                return ExecuteResult.error("label_too_long")
+            if any(ch in label for ch in ("。", "，", "！", ".", ",", "!")):
+                return ExecuteResult.error("label_contains_punctuation")
         return self._compute_sub_area_command(
             cmd,
             state,

@@ -1,10 +1,14 @@
-"""Tests for Phase B of P28 Wave 4 — GM Functional Options.
+"""Tests for Phase B of P28 Wave 4 — GM Functional Options (post-revert).
+
+After the revert, GM no longer embeds functional UI actions.
+_VALID_FUNCTIONAL_TYPES is empty; any functional field in LLM output is silently
+dropped. Options must have a check or action field to be valid.
 
 Coverage:
-- SuggestOptionsTool: functional field schema + validation
-- _validate_option: valid / invalid / missing type / with params / functional-only option
-- GM context NPC capability summary building
-- functional field preserved through validate round-trip
+- _VALID_FUNCTIONAL_TYPES is empty frozenset
+- _validate_option: functional field is always dropped regardless of type
+- Options survive only via check or action; functional-only options are rejected
+- GM context NPC capability summary building (unchanged)
 """
 import asyncio
 
@@ -28,20 +32,18 @@ def _make_tool() -> SuggestOptionsTool:
 
 
 class TestValidFunctionalTypes:
-    def test_expected_types_present(self):
+    def test_is_empty_frozenset(self):
+        """GM no longer supports any functional types."""
+        assert isinstance(_VALID_FUNCTIONAL_TYPES, frozenset)
+        assert len(_VALID_FUNCTIONAL_TYPES) == 0
+
+    def test_known_types_not_present(self):
+        """Previously valid types are now absent."""
         for t in ("trade_browse", "board_browse", "navigate", "inspect_item", "rest"):
-            assert t in _VALID_FUNCTIONAL_TYPES
+            assert t not in _VALID_FUNCTIONAL_TYPES
 
     def test_quest_accept_not_present(self):
-        # GM is a pure narrator — quest_accept is handled by NPC tools, not GM functional options
         assert "quest_accept" not in _VALID_FUNCTIONAL_TYPES
-
-    def test_is_frozenset(self):
-        assert isinstance(_VALID_FUNCTIONAL_TYPES, frozenset)
-
-    def test_empty_string_not_included(self):
-        # GM-generated functional must not be empty string
-        assert "" not in _VALID_FUNCTIONAL_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -50,22 +52,8 @@ class TestValidFunctionalTypes:
 
 
 class TestValidateOptionFunctional:
-    def test_valid_functional_type_preserved(self):
-        opt = {
-            "text": "查看公告板",
-            "message": "我想看任务",
-            "functional": {"type": "board_browse", "params": {"board_id": "frontier_board"}},
-        }
-        result = SuggestOptionsTool._validate_option(opt)
-        # functional-only option (no check or action) should be returned
-        assert result is not None
-        assert result["text"] == "查看公告板"
-        assert result["message"] == "我想看任务"
-        assert "functional" in result
-        assert result["functional"]["type"] == "board_browse"
-        assert result["functional"]["params"] == {"board_id": "frontier_board"}
-
-    def test_valid_functional_with_action(self):
+    def test_functional_with_action_drops_functional_keeps_action(self):
+        """functional field is silently dropped; option is still valid via action."""
         opt = {
             "text": "购买补给品",
             "action": "trade",
@@ -74,7 +62,18 @@ class TestValidateOptionFunctional:
         result = SuggestOptionsTool._validate_option(opt)
         assert result is not None
         assert result["action"] == "trade"
-        assert result["functional"]["type"] == "trade_browse"
+        assert "functional" not in result
+
+    def test_functional_with_check_drops_functional_keeps_check(self):
+        opt = {
+            "text": "说服他",
+            "check": {"skill": "persuasion", "dc": 14},
+            "functional": {"type": "board_browse", "params": {}},
+        }
+        result = SuggestOptionsTool._validate_option(opt)
+        assert result is not None
+        assert "check" in result
+        assert "functional" not in result
 
     def test_invalid_functional_type_dropped_silently(self):
         """Invalid functional type drops the functional field but keeps the option valid."""
@@ -85,9 +84,7 @@ class TestValidateOptionFunctional:
         }
         result = SuggestOptionsTool._validate_option(opt)
         assert result is not None
-        # functional with invalid type is silently dropped
         assert "functional" not in result
-        # but the option itself is still valid via action
         assert result["action"] == "something"
 
     def test_missing_type_in_functional_dropped(self):
@@ -101,16 +98,6 @@ class TestValidateOptionFunctional:
         assert result is not None
         assert "functional" not in result
 
-    def test_functional_with_empty_params(self):
-        opt = {
-            "text": "短休",
-            "functional": {"type": "rest"},
-        }
-        result = SuggestOptionsTool._validate_option(opt)
-        assert result is not None
-        assert result["functional"]["type"] == "rest"
-        assert result["functional"]["params"] == {}
-
     def test_functional_non_dict_dropped(self):
         opt = {
             "text": "说话",
@@ -121,24 +108,25 @@ class TestValidateOptionFunctional:
         assert result is not None
         assert "functional" not in result
 
-    def test_option_with_only_functional_and_text_is_valid(self):
-        """An option with text + valid functional (no check or action) should be accepted."""
+    def test_functional_only_option_rejected(self):
+        """Option with text + functional but no check or action is rejected.
+        Since _VALID_FUNCTIONAL_TYPES is empty, functional is dropped and then
+        there is no check/action → option is None."""
         opt = {
             "text": "查看公告板",
             "functional": {"type": "board_browse", "params": {"board_id": "guild_board"}},
         }
         result = SuggestOptionsTool._validate_option(opt)
-        assert result is not None
-        assert result["functional"]["type"] == "board_browse"
+        assert result is None
 
     def test_quest_accept_functional_dropped_silently(self):
-        """quest_accept is no longer a valid GM functional type — dropped silently."""
+        """quest_accept is not a valid GM functional type — dropped silently."""
         opt = {
             "text": "接受任务",
             "functional": {"type": "quest_accept", "params": {"quest_id": "q1"}},
         }
         result = SuggestOptionsTool._validate_option(opt)
-        # quest_accept is no longer valid → functional dropped; no action/check either → option rejected
+        # functional dropped; no action/check → option rejected
         assert result is None
 
     def test_option_text_only_without_functional_check_action_rejected(self):
@@ -147,15 +135,36 @@ class TestValidateOptionFunctional:
         result = SuggestOptionsTool._validate_option(opt)
         assert result is None
 
-    def test_all_valid_functional_types_accepted(self):
-        for func_type in _VALID_FUNCTIONAL_TYPES:
-            opt = {
-                "text": f"执行 {func_type}",
-                "functional": {"type": func_type, "params": {}},
-            }
-            result = SuggestOptionsTool._validate_option(opt)
-            assert result is not None, f"Expected valid option for type={func_type}"
-            assert result["functional"]["type"] == func_type
+    def test_rest_functional_dropped(self):
+        """rest was formerly valid; now dropped. Option needs action to survive."""
+        opt = {
+            "text": "短休",
+            "functional": {"type": "rest"},
+        }
+        result = SuggestOptionsTool._validate_option(opt)
+        assert result is None
+
+    def test_navigate_functional_dropped(self):
+        opt = {
+            "text": "去镇中心",
+            "functional": {"type": "navigate", "params": {"location_id": "town_center"}},
+        }
+        result = SuggestOptionsTool._validate_option(opt)
+        assert result is None
+
+    def test_npc_id_and_message_preserved_on_valid_action(self):
+        """npc_id and message are preserved alongside action."""
+        opt = {
+            "text": "拜托你了",
+            "action": "talk",
+            "npc_id": "receptionist",
+            "message": "我想接任务",
+        }
+        result = SuggestOptionsTool._validate_option(opt)
+        assert result is not None
+        assert result["npc_id"] == "receptionist"
+        assert result["message"] == "我想接任务"
+        assert "functional" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -164,13 +173,14 @@ class TestValidateOptionFunctional:
 
 
 class TestSuggestOptionsToolExecute:
-    def test_execute_with_functional_options_succeeds(self):
+    def test_execute_functional_options_functional_dropped_action_kept(self):
         async def _run():
             tool = _make_tool()
             params = {
                 "options": [
                     {
                         "text": "看看有什么任务",
+                        "action": "browse_board",
                         "message": "我想接任务",
                         "functional": {"type": "board_browse", "params": {"board_id": "guild_board"}},
                     },
@@ -180,22 +190,39 @@ class TestSuggestOptionsToolExecute:
                     },
                 ]
             }
-            # We don't need a real context for this test — execute only
-            # calls _validate_option which is pure logic
             from unittest.mock import MagicMock
             ctx = MagicMock()
             result = await tool.execute(params, ctx)
             assert result.ok
             validated = result.metadata.get("options", [])
             assert len(validated) == 2
-            # First option should have functional
-            assert validated[0]["functional"]["type"] == "board_browse"
-            # Second option has action only
-            assert "action" in validated[1]
-            assert "functional" not in validated[1]
+            # functional is dropped from first option; action is kept
+            assert "functional" not in validated[0]
+            assert validated[0]["action"] == "browse_board"
+            # Second option unchanged
+            assert validated[1]["action"] == "leave"
         asyncio.run(_run())
 
-    def test_execute_all_invalid_functional_falls_back_to_action(self):
+    def test_execute_all_functional_only_options_rejected(self):
+        """If all options have only functional (no action/check), execute returns failure."""
+        async def _run():
+            tool = _make_tool()
+            params = {
+                "options": [
+                    {
+                        "text": "查看公告板",
+                        "functional": {"type": "board_browse"},
+                    },
+                ]
+            }
+            from unittest.mock import MagicMock
+            ctx = MagicMock()
+            result = await tool.execute(params, ctx)
+            # functional-only options are rejected → no valid options → ok=False
+            assert not result.ok
+        asyncio.run(_run())
+
+    def test_execute_invalid_functional_with_action_succeeds(self):
         """Options with invalid functional type still work if they have action."""
         async def _run():
             tool = _make_tool()

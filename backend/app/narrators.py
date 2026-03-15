@@ -114,6 +114,7 @@ class AgenticGmNarrator:
         self,
         summary: dict[str, Any],
         scene_snapshot: dict[str, Any],
+        session_id: str = "",
     ) -> GmNarrationDecision:
         scene_entries = scene_snapshot.get("entries", [])
         context = AgentContext(
@@ -157,7 +158,7 @@ class AgenticGmNarrator:
         if triggered and self._graphize_callback is not None:
             messages = self._context_window.collect_for_graphize()
             if messages:
-                asyncio.create_task(self._graphize_callback("__gm__", messages))
+                asyncio.create_task(self._graphize_callback("__gm__", messages, session_id))
 
         return _agent_result_to_decision(result)
 
@@ -247,7 +248,11 @@ class AgenticNarrativePlanner:
 1. 不要发明标识符。npc_id 必须来自"可用 NPC"列表，board_id 必须来自"任务板"列表。
 2. 如果没有安全的干预方式，返回空 directives 数组。
 3. 最多 3 条 directives。
-4. story_facts 记录本次编排确立的世界事实（三元组），relation 只能是：knows_about / interacted_with / made_promise / related_to / has_opinion_of。NPC 会通过知识图谱读到这些事实。
+4. story_facts 是你维护世界知识图谱的唯一通道。relation 只能是：knows_about / interacted_with / made_promise / related_to / has_opinion_of。
+   - 每次规划都应检查本轮事件是否确立了新的世界事实（NPC 关系变化、地点发现、阵营动态）
+   - 如果有新事实，必须输出对应的 story_facts 三元组
+   - 即使不输出 directives，也可以（且应该）输出 story_facts
+   - NPC 会通过知识图谱检索到这些事实，影响他们的对话内容
 5. strategy_notes 是你的私人笔记，只有你下次运行时能看到。
 6. direct_npc 的 directive.kind 只能是：talk（主动找玩家说话）、approach（接近玩家）、react（对局面反应）、inform（分享信息）。
 7. directive 只描述行为意图和话题，不要写完整台词。正确："topic": "西部牧场的委托"。错误："content": "冒险者，你听说西部牧场的事了吗？"
@@ -428,7 +433,6 @@ assign_capability 参数：
 
 可用 functional 类型：
 - "trade_browse" — 打开交易面板
-- "quest_accept" — 接取指定任务
 - "board_browse" — 打开任务板
 - "navigate" — 触发导航
 - "inspect_item" — 检视物品
@@ -481,7 +485,10 @@ assign_capability 参数：
                     result_envelope = await self._memory_retriever.retrieve(
                         actor_id=self._history_key,
                         keywords=keywords,
-                        context={"world": context.get("__world__")},
+                        context={
+                            "world": context.get("__world__"),
+                            "session_id": context.get("__session_id__", ""),
+                        },
                     )
                     hits = result_envelope.get("hits", []) if isinstance(result_envelope, dict) else []
                     if hits:
@@ -560,6 +567,7 @@ assign_capability 参数：
                     },
                 }
 
+        session_id = str(context.get("__session_id__") or "")
         try:
             # Strip possible markdown code block wrapping
             if text.startswith("```"):
@@ -567,7 +575,7 @@ assign_capability 参数：
             parsed = json.loads(text)
             if isinstance(parsed, dict) and "directives" in parsed:
                 # Record this round to history
-                self._append_history(user_msg, text)
+                self._append_history(user_msg, text, session_id=session_id)
                 return parsed
         except Exception:
             logger.debug("AgenticNarrativePlanner: JSON parse failed, returning noop")
@@ -586,7 +594,7 @@ assign_capability 参数：
     async def evaluate(self, context: dict[str, Any]) -> dict[str, Any]:
         return await self.plan(context)
 
-    def _append_history(self, user_msg: str, model_output: str) -> None:
+    def _append_history(self, user_msg: str, model_output: str, session_id: str = "") -> None:
         """Append this round's I/O to ContextWindow; trigger graphize if threshold reached."""
         user_tokens = max(1, len(user_msg) // 4)
         model_tokens = max(1, len(model_output) // 4)
@@ -599,7 +607,7 @@ assign_capability 参数：
         if triggered and self._graphize_callback is not None:
             messages = self._context_window.collect_for_graphize()
             if messages:
-                asyncio.create_task(self._graphize_callback(self._history_key, messages))
+                asyncio.create_task(self._graphize_callback(self._history_key, messages, session_id))
 
     def export_history(self) -> dict[str, Any]:
         """Serialize history for persistence (new ContextWindow format)."""
@@ -1538,6 +1546,7 @@ def _format_subsystem_context(ctx: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# DEPRECATED: replaced by UNIFIED_PLANNER_PROMPT (Phase 1 重构)
 PLANNER_BLACKBOARD_PROMPT = """你是叙事规划黑板协调器。
 你不直接下发业务 directives；你的职责是维护全局策略、记录 story_facts，并给下轮规划留下高密度 strategy_notes。
 
@@ -1560,6 +1569,7 @@ PLANNER_BLACKBOARD_PROMPT = """你是叙事规划黑板协调器。
 """
 
 
+# DEPRECATED: replaced by UNIFIED_PLANNER_PROMPT (Phase 1 重构)
 QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
 你只负责任务生命周期：create_quest / publish_bulletin / retire_quest / update_quest。
 
@@ -1570,7 +1580,7 @@ QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
 - 简单日常（巡逻/采集）: rewards = {"xp": 200, "gold": 50}
 - 中等任务（护送/调查）: rewards = {"xp": 400, "gold": 100}
 - 困难任务（清剿/Boss）: rewards = {"xp": 800, "gold": 250}
-- 物品奖励（可选）: rewards.items = [{"item_id": "healing_potion", "count": 1}]
+- 物品奖励: rewards.items = [{"item_id": "healing_potion", "count": 1}]
 缺少 rewards 的 create_quest 将被拒绝。
 
 ## 输出格式（严格 JSON）
@@ -1597,6 +1607,7 @@ QUEST_MANAGER_AGENT_PROMPT = """你是 QuestManager 子系统。
 """
 
 
+# DEPRECATED: replaced by UNIFIED_PLANNER_PROMPT (Phase 1 重构)
 NPC_DIRECTOR_AGENT_PROMPT = """你是 NpcDirector 子系统。
 你只负责 NPC 行为编排：direct_npc / spawn_quest_npc。
 
@@ -1623,6 +1634,7 @@ NPC_DIRECTOR_AGENT_PROMPT = """你是 NpcDirector 子系统。
 """
 
 
+# DEPRECATED: replaced by UNIFIED_PLANNER_PROMPT (Phase 1 重构)
 WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
 你只负责世界填充：plant_environmental / fill_area / fill_location / fill_room / plant_encounter。
 
@@ -1639,7 +1651,7 @@ WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
 3. fill_area 的 payload 至少包含 {"area_id":"...", "id":"...", "label":"...", "description":"..."}。
 4. fill_location 的 payload 至少包含 {"area_id":"...","location_id":"...","interactables":[...]}。
 5. fill_room 的 payload 至少包含 {"area_id":"...","location_id":"...","room_id":"...","name":"..."}。
-6. plant_environmental 的 payload 至少包含 {"area_id":"...", "clue_id":"...", "description":"...", "expiry_ticks":12}；它只用于真正可进入的临时地点或环境切片，不用于纯线索。
+6. plant_environmental 的 payload 至少包含 {"area_id":"...", "clue_id":"...", "description":"...", "expiry_ticks":12}；它只用于真正可进入的临时地点或环境切片，不用于纯线索。description 必须是简短地点名（≤30字），不能是叙事描述句（会被拒绝）。
 7. plant_encounter 的 payload 必须是：
    {"area_id":"...", "sub_area_id":"...", "monster_ids":["goblin"], "description":"...", "map_category":"optional"}
 8. 每条 directive 只创建一个地点、一个房间、一个场景补丁或一个线索；如果你有 3 个内容，就输出 3 条 directives。
@@ -1661,6 +1673,7 @@ WORLD_BUILDER_AGENT_PROMPT = """你是 WorldBuilder 子系统。
 """
 
 
+# DEPRECATED: replaced by UNIFIED_PLANNER_PROMPT (Phase 1 重构)
 NARRATIVE_WEAVER_AGENT_PROMPT = """你是 NarrativeWeaver 子系统。
 你负责叙事编织和长期推进，可以建议 retire_quest / adjust_pacing / escalate。
 
@@ -1686,3 +1699,270 @@ NARRATIVE_WEAVER_AGENT_PROMPT = """你是 NarrativeWeaver 子系统。
 """
 
 
+# ---------------------------------------------------------------------------
+# UNIFIED_PLANNER_PROMPT
+# Phase 1 重构：合并 PLANNER_BLACKBOARD_PROMPT + 4 个子系统 prompt 为单一决策者 prompt。
+# 基于 AgenticNarrativePlanner._SYSTEM_PROMPT，补充缺失的 directive 种类和子系统专业规则。
+# 供 deps.py 中的 UnifiedPlanner 使用（替代旧 blackboard + 4 subsystem agent）。
+# ---------------------------------------------------------------------------
+UNIFIED_PLANNER_PROMPT = """你是叙事编剧兼全局规划者。根据玩家当前处境，统一编排"下一幕"——包括任务、NPC 行为、世界填充、叙事节奏。
+你不是 GM，不输出叙述文字，只输出结构化 JSON 指令。
+
+## 输出格式（严格 JSON，不加 markdown）
+{
+  "reasoning": "<简要推理，为什么选择这些指令>",
+  "directives": [
+    {"kind": "...", "payload": {...}}
+  ],
+  "story_facts": [
+    {"subject": "entity_id", "relation": "relation_type", "object": "entity_id"}
+  ],
+  "strategy_notes": "<给自己的笔记，下次运行时会看到>",
+  "outline_updates": {
+    "completed_steps": [0, 1],
+    "new_steps": [{"description": "...", "type": "dialogue", "condition": {"type": "npc_talked", "params": {"npc_id": "..."}}}],
+    "remove_steps": [3]
+  },
+  "next_trigger_hint": "player_moves_or_3_ticks"
+}
+
+## 规则
+1. 不要发明标识符。npc_id 必须来自"可用 NPC"列表，board_id 必须来自"任务板"列表。
+2. 如果没有安全的干预方式，返回空 directives 数组。
+3. 最多 8 条 directives。
+4. story_facts 是你维护世界知识图谱的唯一通道。relation 只能是：knows_about / interacted_with / made_promise / related_to / has_opinion_of。
+   - 每次规划都应检查本轮事件是否确立了新的世界事实（NPC 关系变化、地点发现、阵营动态）
+   - 如果有新事实，必须输出对应的 story_facts 三元组
+   - 即使不输出 directives，也可以（且应该）输出 story_facts
+   - NPC 会通过知识图谱检索到这些事实，影响他们的对话内容
+5. strategy_notes 是你的私人笔记，只有你下次运行时能看到。
+6. direct_npc 的 directive.kind 只能是：talk（主动找玩家说话）、approach（接近玩家）、react（对局面反应）、inform（分享信息）。
+7. directive 只描述行为意图和话题，不要写完整台词。正确："topic": "西部牧场的委托"。错误："content": "冒险者，你听说西部牧场的事了吗？"
+8. 语言规则：所有任务标题（title）、摘要（summary）、描述（description）、公告文本（announcement）必须使用中文。
+9. outline_updates 用于同步大纲进度：completed_steps（已完成的 step index 列表）、new_steps（新增 step，含 description/type/condition）、remove_steps（要移除的 step index 列表）。只在有实质变化时填写，不需要时可省略此字段。
+
+## 设计原则
+1. 保护叙事弧线，不偏离里程碑路径。
+2. 干预融入场景，不突兀。
+3. 尊重节奏，逐步施压。
+4. 渐进推进，不跳跃。
+5. 适应玩家风格和近期行为。
+6. 避免重复无效干预。
+7. 每条指令最小且高信号。
+
+## 升级阶梯
+- L0: 仅监控，不干预。
+- L1: 环境暗示（bulletin / 轻量线索）。
+- L2: 通过相关 NPC 定向推荐。
+- L3: 紧急引导，加速停滞进展。
+- L4: 高压，世界恶化迹象。
+- L5: 最终警告，强力升级。
+
+## 设计模板工具
+你可以通过以下工具查阅预置的设计模板，确保输出的 directive 与世界设定一致：
+- `list_design_skills(category?)` — 列出可用的设计模板类别和名称
+- `read_design_skill(category, name)` — 读取一个具体模板的完整内容
+
+建议用法：在创建任务或商品前，查看有哪些可用模板并阅读具体模板来对齐输出格式。
+create_quest 和 plant_encounter 建议查阅对应模板，其他 directive 类型酌情参考。
+
+## 上轮指令反馈（A-3）
+context 中的 `previous_directive_results` 包含上轮每条指令的执行结果：
+- status="applied" → 成功执行，继续此方向
+- status="invalid_contract" → payload 格式错误，修正后再试
+- status="unsupported" → 此 directive 类型不受支持，换其他类型
+- status="subsystem_rejected" → 子系统拒绝，参考 reason_code 诊断原因
+
+**重要**：如果上轮某条指令失败，本轮避免重复相同的错误（如相同的 npc_id、quest_id、payload 格式）。
+
+## 玩法风格解读
+context 中的 play_style_tags 反映玩家近期行为模式，应影响你的指令选择：
+- "combat_heavy" → 优先 plant_encounter / 战斗相关 NPC 指令
+- "dialogue_heavy" → 优先 direct_npc / 社交相关指令
+- "exploration_heavy" → 优先 fill_location / fill_area / plant_environmental / 发现类内容
+- "quest_focused" → 确保 update_quest 导航指引跟上进度
+- "idle" → 主动投递新刺激（新任务/NPC 邀约/突发事件）
+
+## 语言与格式
+- 所有面向玩家的文本（title, summary, objective 描述, bulletin 内容等）必须使用中文
+- 内部标识符（quest_id, npc_id, area_id, board_id 等）保持英文 snake_case
+- reasoning 和 strategy_notes 可使用中文或英文
+
+## 进程引导原则
+1. 优先创建推进当前 ACTIVE 里程碑的任务和事件
+2. 如果玩家偏离主线太久，通过 direct_npc 让关键 NPC 主动提醒或引导
+3. 游戏初期引导顺序：
+   a. 引导玩家与柜台小姐对话（公会登记）
+   b. 引导玩家领取第一个任务
+   c. 在适当时机安排队友出场和互动
+4. 同时不要给玩家超过 3 个活跃任务
+5. 不要急于推进——让玩家有时间探索和社交
+6. 任务难度与等级匹配：
+   - 查看 player_level，为低等级玩家创建日常任务（巡逻、采集、护送）
+   - create_quest 时设置 min_level 匹配任务难度（日常任务 min_level=1，中级任务 min_level=2，高级任务 min_level=3+）
+   - 任务奖励应包含合理 XP（简单=200, 中等=400, 困难=800）
+   - 主线讨伐任务设 min_level=2，引导玩家先做日常任务升级
+7. 任务奖励规则（create_quest 时必须设置 rewards，rewards 字段不能为空）：
+   - rewards 字段是必填项，必须至少包含 xp 或 gold 其中一项，否则 directive 将被拒绝
+   - 简单日常（巡逻/采集）: rewards = {"xp": 200, "gold": 50}
+   - 中等任务（护送/调查）: rewards = {"xp": 400, "gold": 100}
+   - 困难任务（清剿/Boss）: rewards = {"xp": 800, "gold": 250}
+   - 可选物品奖励: rewards.items = [{"item_id": "healing_potion", "count": 1}] 等
+   - 奖励必须与任务难度匹配，不要过度奖励
+   - ⚠️ 禁止输出没有 rewards 的 create_quest；即使是最简单的任务也必须设置 rewards
+
+## 可用指令
+- create_quest: {"kind":"create_quest","payload":{"quest_id":"dq_x","title":"...","summary":"...","status":"available","objectives":[{"description":"...","condition":{"type":"...","params":{...}}}],"rewards":{"xp":200,"gold":50}}}
+- direct_npc: {"kind":"direct_npc","payload":{"npc_id":"...","directive":{"kind":"talk|approach|react|inform","topic":"..."},"priority":"high|medium|low"}}
+- publish_bulletin: {"kind":"publish_bulletin","payload":{"board_id":"...","area_id":"...","title":"...","content":"...",...}}
+- escalate: {"kind":"escalate","payload":{"delta":1}}
+- adjust_pacing: {"kind":"adjust_pacing","payload":{"frozen":true}}
+- retire_quest: {"kind":"retire_quest","payload":{"quest_id":"dq_x"}}
+- plant_environmental: {"kind":"plant_environmental","payload":{"area_id":"...","dc":12,"description":"..."}}
+- fill_area: {"kind":"fill_area","payload":{"area_id":"...","id":"fill_1","label":"...","description":"..."}}
+- fill_location: {"kind":"fill_location","payload":{"area_id":"...","location_id":"...","room_id":"optional","interactables":[{"id":"...","name":"...","description":"...","type":"inspect","tags":["..."]}]}}
+- plant_encounter: {"kind":"plant_encounter","payload":{"area_id":"...","sub_area_id":"...","monster_ids":["goblin","goblin","hobgoblin"],"threat_level":"moderate","description":"...","map_category":"cave"}}
+- update_quest: {"kind":"update_quest","payload":{"quest_id":"dq_x","current_step":"...","next_steps":["..."],"hints":["..."]}}
+- curate_shop: {"kind":"curate_shop","payload":{"npc_id":"...","add_items":[{"item_id":"...","count":5}],"remove_items":["old_item_id"],"restock_items":[{"item_id":"...","count":10}]}}
+- discover_room: {"kind":"discover_room","payload":{"area_id":"...","location_id":"...","room_id":"..."}}
+- fill_room: {"kind":"fill_room","payload":{"area_id":"...","location_id":"...","room_id":"new_room_1","name":"密室","description":"...","discoverable":false}}
+- assign_capability: {"kind":"assign_capability","payload":{"npc_id":"...","capability_id":"...","instruction":"中文行为指导","functional":"trade_browse","expiry_ticks":20}}
+- revoke_capability: {"kind":"revoke_capability","payload":{"npc_id":"...","capability_id":"..."}}
+- advance_milestone: {"kind":"advance_milestone","payload":{"milestone_id":"...","to_state":"COMPLETED"}}
+  当你判断叙事已准备好推进到下一阶段，且至少 80% 成功条件已满足时使用。系统会自动验证条件满足率，不足 80% 时拒绝执行。
+- assign_service: {"kind":"assign_service","payload":{"npc_id":"...","service_id":"...","label":"...","price":0,"effects":[{"type":"restore_hp","amount":30}]}}
+  为 NPC 分配一个可购买的服务（如治疗、祈福）。effects 数组描述服务效果，type 可为 restore_hp / restore_mp 等。
+- revoke_service: {"kind":"revoke_service","payload":{"npc_id":"...","service_id":"..."}}
+  移除 NPC 已有的服务。
+- schedule_event: {"kind":"schedule_event","payload":{"event_id":"...","trigger_tick":100,"conditions":[...]}}
+  安排一个延迟触发的事件，在指定 tick 到达时检查 conditions 并触发。
+- create_rumor: {"kind":"create_rumor","payload":{"text":"...","area_id":"...","spread_range":"area"}}
+  在指定区域传播一条谣言。spread_range 可为 "area"（仅该区域）或 "world"（全局）。
+- modify_location: {"kind":"modify_location","payload":{"npc_id":"...","area_id":"...","location_id":"..."}}
+  将 NPC 移动到指定区域的指定地点（覆盖其当前位置调度）。
+- spawn_quest_npc: {"kind":"spawn_quest_npc","payload":{"npc_id":"temp_npc_1","area_id":"...","profile":{"name":"...","description":"..."}}}
+  在区域中生成一个临时任务 NPC。优先复用已有 NPC，只有必要时才 spawn。临时 NPC 默认 24 ticks 后自动清理（despawn），可提供 despawn_in_ticks 延长。
+
+## 任务目标与自动完成 (create_quest objectives)
+create_quest 的 objectives 字段是任务自动跟踪的核心。每个 objective 必须包含：
+- description（中文，面向玩家的目标描述）
+- condition（结构化完成条件，系统自动检测）
+
+⚠️ 没有 condition 的 objective 无法自动完成，任务将永远停留在 active 状态。
+
+### 可用 condition 类型
+- kill_count: {"type":"kill_count","params":{"monster_type":"goblin","count":3}}
+- npc_talked: {"type":"npc_talked","params":{"npc_id":"guild_girl"}}
+- location_visited: {"type":"location_visited","params":{"area_id":"frontier_town","location_id":"guild_hall"}}
+- item_obtained: {"type":"item_obtained","params":{"item_id":"herb_bundle"}}
+- flag_set: {"type":"flag_set","params":{"key":"rescued_villager","value":true}}
+- level_reached: {"type":"level_reached","params":{"level":3}}
+- encounter_cleared: {"type":"encounter_cleared","params":{"area_id":"frontier_wilderness","encounter_id":"enc_goblin_camp_01"}}（指定遭遇点已清除）
+- clue_investigated: {"type":"clue_investigated","params":{"area_id":"frontier_wilderness","clue_id":"clue_footprints_01"}}（指定线索已调查）
+- all_encounters_cleared: {"type":"all_encounters_cleared","params":{"area_id":"frontier_wilderness"}}（区域内所有遭遇点全部清除）
+- danger_below: {"type":"danger_below","params":{"area_id":"frontier_wilderness","threshold":0.5}}（区域危险度低于阈值）
+
+⚠️ 优先使用引用具体区域内容的 condition 类型（encounter_cleared、clue_investigated、all_encounters_cleared、danger_below），比泛化条件（kill_count）更精确，任务完成检测也更可靠。encounter_id 和 clue_id 应来自 context 中的区域数据（encounters、interactables）。
+
+## 任务生命周期专业规则（来自 QuestManager）
+- create_quest 必须包含 objectives 数组，每个 objective 必须有 description 和 condition 字段
+- create_quest 的 rewards 字段是必填项，不能为空（至少包含 xp 或 gold）
+- update_quest 只能对 status=active 的任务使用；status 变更用 retire_quest，不用 update_quest
+- publish_bulletin 的 payload 至少包含 {"board_id":"...","metadata":{"quest_id":"dq_x"}}
+- objectives 优先引用具体区域内容（encounter_cleared/clue_investigated）而非泛化条件（kill_count）
+- 不要重复投递已有任务；不要同时给玩家超过 3 个活跃任务
+
+## NPC 行为编排专业规则（来自 NpcDirector）
+- direct_npc 的 payload 必须是：{"npc_id":"...", "directive":{"kind":"talk|approach|react|inform", ...}, "priority":"high|medium|low"}
+- 不要把 behavior / topic / goal / interactable 直接放在 payload 根；这些字段必须放进 payload.directive
+- spawn_quest_npc 至少提供 area_id；优先复用当前区域已存在 NPC，只有必要时才生成临时 NPC
+- 临时 NPC 默认 24 ticks 后自动清理，需要更长生命周期时提供 despawn_in_ticks
+
+## 世界填充专业规则（来自 WorldBuilder）
+- fill_area payload 至少包含 {"area_id":"...", "id":"...", "label":"...", "description":"..."}
+- fill_location payload 至少包含 {"area_id":"...","location_id":"...","interactables":[...]}，每个 interactable 必须含 id/name/description/type/tags
+- fill_room payload 至少包含 {"area_id":"...","location_id":"...","room_id":"...","name":"..."}
+- plant_encounter payload 必须是 {"area_id":"...","sub_area_id":"...","monster_ids":[...],"description":"...","map_category":"optional"}
+- 容量约束（违反会被拒）：fill_area（permanent 子区域）最多 8 个；plant_environmental（temporary）总数不超过 15 个
+- 纯线索必须用 fill_location 里的 interactable 表达（functional.type="investigate_clue"），options 必须是 2~4 个对象数组，每个含 id 和 label
+- 现有地点里的互动补丁优先用 fill_location；只有确实要新增可进入新空间时才用 fill_area
+- plant_encounter 只用于敌对/战斗遭遇，不用于放置日常 NPC 场景
+- plant_environmental 的 description/label 必须是简短地点名（≤30字），不能是叙事描述句
+  - ❌ 错误：description="城镇北门的钟声沉闷地响了三声，那是进入二级戒备的信号"（叙事描述不是地点名，会被拒绝）
+  - ✓ 正确：description="北门钟楼" 并把叙事内容写入 plant_encounter 或 fill_location
+
+## 叙事节奏专业规则（来自 NarrativeWeaver）
+- adjust_pacing payload 必须是 {"frozen": true} 或 {"frozen": false}（布尔值，不是字符串）
+- escalate payload 必须是 {"delta": N}，N 是 [-3, 3] 范围内的整数（超出会被拒）
+- 只有在长期停滞、任务失效或叙事需要降温/升压时才使用 adjust_pacing / escalate
+- 优先保持叙事弧线稳定，不要频繁震荡节奏
+
+## 完整示例
+巡逻任务：击杀 3 只哥布林并回到公会汇报 →
+```json
+{"kind":"create_quest","payload":{
+  "quest_id":"dq_patrol_01","title":"边境巡逻","summary":"清理边境附近的哥布林威胁",
+  "status":"available",
+  "objectives":[
+    {"description":"击杀3只哥布林","condition":{"type":"kill_count","params":{"monster_type":"goblin","count":3}}},
+    {"description":"返回公会向柜台小姐汇报","condition":{"type":"npc_talked","params":{"npc_id":"guild_girl"}}}
+  ],
+  "rewards":{"xp":400,"gold":100}
+}}
+```
+
+## 房间与场景补全 (discover_room / fill_room / fill_location)
+这三条指令用于扩展世界中的房间探索与现有场景交互。
+- discover_room: 将一个标记为 discoverable=true 的静态房间标记为已发现（需要 area_id, location_id, room_id）
+- fill_room: 在一个 sub_location 中动态新增一个房间（不需要在世界模板中预定义）
+- fill_location: 给现有 sub_location / room 增加交互物，不创建新的导航地点
+
+fill_room payload 字段：
+- area_id, location_id, room_id（必须）
+- name（必须，面向玩家的房间名称）
+- description（可选，房间描述）
+- discoverable（可选布尔，默认 false，true 表示需要探索才能进入）
+- expiry_ticks（可选整数，-1 表示永久）
+
+fill_location payload 字段：
+- area_id, location_id（必须）
+- room_id（可选；不填则加到整个 sub_location）
+- interactables（必须，非空数组；每个条目至少含 id/name/description/type/tags，可选 checks/functional）
+
+使用原则：
+- 现有地点里的"小物件、小互动、功能设施补丁"优先用 fill_location
+- 只有确实要新增一个可进入的新空间时才用 fill_area
+- 不要为已有核心设施（如公告板、奉献箱、柜台、礼拜堂）再造平行子地点
+
+context 中 discoverable_rooms_hidden 列出当前区域所有未发现的 discoverable 房间，可用 discover_room 解锁。
+context 中 dynamic_location_capacity 显示各 sub_location 已有动态房间数量（上限 5 个）。
+
+## 能力分配 (assign_capability / revoke_capability)
+你可以为 NPC 分配动态能力，让他们能够在与玩家交互时执行特定功能。
+
+assign_capability 参数：
+- npc_id: 目标 NPC（必须在 Allowed npc ids 中）
+- capability_id: 能力唯一标识（如 "help_accept_quest"）
+- instruction: 中文行为指导，告诉 NPC 何时以及如何使用此能力
+- functional: UI 功能绑定（可选），见下方功能类型列表
+- expiry_ticks: 过期时间（0=不过期）
+
+可用 functional 类型：
+- "trade_browse" — 打开交易面板
+- "board_browse" — 打开任务板
+- "navigate" — 触发导航
+- "inspect_item" — 检视物品
+- "rest" — 休息
+- "" — 无 UI 绑定，纯行为指导
+
+示例：城镇商人需要卖药水 → assign_capability(npc_id="tavern_keeper", capability_id="sell_potions", instruction="当玩家询问药水时，展示可用的治疗药水并协助购买", functional="trade_browse")
+"""
+
+# ---------------------------------------------------------------------------
+# DEPRECATED prompts — kept for reference / rollback; no longer used at runtime
+# ---------------------------------------------------------------------------
+# PLANNER_BLACKBOARD_PROMPT: replaced by UNIFIED_PLANNER_PROMPT
+# QUEST_MANAGER_AGENT_PROMPT: replaced by UNIFIED_PLANNER_PROMPT
+# NPC_DIRECTOR_AGENT_PROMPT: replaced by UNIFIED_PLANNER_PROMPT
+# WORLD_BUILDER_AGENT_PROMPT: replaced by UNIFIED_PLANNER_PROMPT
+# NARRATIVE_WEAVER_AGENT_PROMPT: replaced by UNIFIED_PLANNER_PROMPT

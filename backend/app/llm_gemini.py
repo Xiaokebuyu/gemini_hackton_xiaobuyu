@@ -51,6 +51,9 @@ class GeminiLlmAdapter:
         config = types.GenerateContentConfig(
             system_instruction=system_prompt or None,
             tools=[gemini_tools] if gemini_tools else None,
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode="AUTO"),
+            ) if gemini_tools else None,
             temperature=self._temperature,
             thinking_config=types.ThinkingConfig(
                 thinking_level=self._thinking_level,

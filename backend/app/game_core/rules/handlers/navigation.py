@@ -72,7 +72,7 @@ class NavigationHandler(StaticCommandHandler):
         if cmd.type == "enter_room":
             return self._compute_enter_room(cmd, state, world)
         if cmd.type == "leave_room":
-            return self._compute_leave_room(state)
+            return self._compute_leave_room(state, world)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _validate_move_area(
@@ -445,19 +445,32 @@ class NavigationHandler(StaticCommandHandler):
             omit_empty_delta=False,
         )
 
-    def _compute_leave_room(self, state: StateContainer) -> ExecuteResult:
+    def _compute_leave_room(self, state: StateContainer, world: WorldInstance) -> ExecuteResult:
+        # Fall back to default_room so the player is never at sub_location
+        # level without a room (which would bypass room-level NPC filtering).
+        target_room: str | None = None
+        area_id = state.player.current_area
+        location_id = state.player.current_location
+        if location_id and world.has_registry("maps"):
+            sub_loc = world.maps.get_sub_location(area_id, location_id)
+            if sub_loc is not None:
+                raw_dr = getattr(sub_loc, "default_room", "")
+                target_room = raw_dr.strip() or None
+        # If target equals current room, player is already at default — set None
+        if target_room == state.player.current_room:
+            target_room = None
         return handler_success(
             "navigation",
             "leave_room",
             changes=[
-                StateChange("player", "set", "current_room", None),
+                StateChange("player", "set", "current_room", target_room),
             ],
             time_cost=0.0,
             metadata={
-                "area_id": state.player.current_area,
-                "sub_location_id": state.player.current_location,
+                "area_id": area_id,
+                "sub_location_id": location_id,
                 "from_room": state.player.current_room,
-                "to_room": None,
+                "to_room": target_room,
             },
             omit_empty_delta=False,
         )

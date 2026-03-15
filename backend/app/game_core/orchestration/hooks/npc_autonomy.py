@@ -401,7 +401,7 @@ class NpcAutonomyHook(NoOpSettlementHook):
             inner = directive.get("directive", {})
             if not isinstance(inner, dict):
                 continue
-            goal = inner.get("npc_goal")
+            goal = inner.get("topic") or inner.get("npc_goal")
             if isinstance(goal, str) and goal.strip():
                 goals.append(goal.strip())
         return goals
@@ -503,10 +503,11 @@ class NpcAutonomyHook(NoOpSettlementHook):
             context.state.relations.update_blackboard(npc_id, {"pending_graphize": []})
             return
 
+        session_id = context.session_id
         if self._llm_provider is not None:
-            await self._graphize_with_llm(npc_id, obs_text, knowledge_graph)
+            await self._graphize_with_llm(npc_id, obs_text, knowledge_graph, session_id=session_id)
         else:
-            self._graphize_fallback(npc_id, pending, knowledge_graph)
+            self._graphize_fallback(npc_id, pending, knowledge_graph, session_id=session_id)
 
         # Clear the buffer regardless of extraction outcome.
         context.state.relations.update_blackboard(npc_id, {"pending_graphize": []})
@@ -517,6 +518,7 @@ class NpcAutonomyHook(NoOpSettlementHook):
         npc_id: str,
         obs_text: str,
         knowledge_graph: Any,
+        session_id: str = "",
     ) -> None:
         """Use LLM to extract semantic triples from observation text."""
         # Inline tool declaration — avoids importing app-layer world_knowledge_graph.
@@ -572,7 +574,7 @@ class NpcAutonomyHook(NoOpSettlementHook):
             weight = float(args.get("weight", 1.0))
             if subj and obj:
                 try:
-                    knowledge_graph.add_triple(subj, rel, obj, weight=weight)
+                    knowledge_graph.add_triple(subj, rel, obj, weight=weight, session_id=session_id)
                 except Exception:  # noqa: BLE001
                     logger.debug(
                         "npc_autonomy: add_triple failed: %s %s %s", subj, rel, obj, exc_info=True
@@ -583,6 +585,7 @@ class NpcAutonomyHook(NoOpSettlementHook):
         npc_id: str,
         pending: list[Any],
         knowledge_graph: Any,
+        session_id: str = "",
     ) -> None:
         """Fallback: write raw (npc_id, "观察到", text) triples without LLM."""
         for obs in pending:
@@ -590,7 +593,7 @@ class NpcAutonomyHook(NoOpSettlementHook):
             if not text:
                 continue
             try:
-                knowledge_graph.add_raw_triple(npc_id, "观察到", text, node_type="memory_note")
+                knowledge_graph.add_raw_triple(npc_id, "观察到", text, node_type="memory_note", session_id=session_id)
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "npc_autonomy: add_raw_triple failed for npc=%s", npc_id, exc_info=True
