@@ -34,7 +34,7 @@ export default function VnPortraitLayer() {
   if (!hasAnyPortrait) return null
 
   return (
-    <div className="absolute inset-0 z-[5] pointer-events-none flex items-end justify-between">
+    <div className="absolute inset-x-0 top-0 bottom-[11rem] z-[11] pointer-events-none flex items-end justify-between">
       {/* Left side: party companions */}
       <div className="flex items-end">
         {leftCharacterIds.map((characterId) => (

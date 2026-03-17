@@ -9,7 +9,8 @@ export default function VnAdvanceIndicator({ visible }: VnAdvanceIndicatorProps)
 
   return (
     <motion.div
-      className="absolute bottom-3 right-4 text-amber-300/80"
+      className="absolute bottom-2 right-3"
+      style={{ color: 'rgba(200, 170, 80, 0.7)' }}
       animate={{ y: [0, 4, 0] }}
       transition={{ repeat: Infinity, duration: 0.8, ease: 'easeInOut' }}
       aria-label="点击继续"

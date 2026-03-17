@@ -153,7 +153,7 @@ class ClueHandler(StaticCommandHandler):
 
         area_id = entry.area_id
         check = option.get("check") if isinstance(option, dict) else None
-        passed: bool | None = None
+        passed: bool | None = None if isinstance(check, dict) else True
         rolls = []
         if isinstance(check, dict):
             skill = str(check.get("skill") or "").strip() or "investigation"

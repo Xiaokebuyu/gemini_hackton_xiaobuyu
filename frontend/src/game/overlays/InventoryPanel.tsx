@@ -108,13 +108,13 @@ export default function InventoryPanel({ sendInteract }: Props) {
     SLOT_LABELS.every(([slot]) => !data.equipment[slot])
 
   return (
-    <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-80 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-amber-400 font-bold">背包</h2>
+    <div className="fixed inset-0 z-20 bg-black/80 backdrop-blur-[2px] flex items-center justify-center">
+      <div className="panel-ornate texture-noise w-80 max-h-[80vh] overflow-y-auto">
+        <div className="panel-header flex items-center justify-between">
+          <h2 className="panel-title">背包</h2>
           <button
             onClick={close}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+            className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
           >
             ×
           </button>
@@ -123,26 +123,27 @@ export default function InventoryPanel({ sendInteract }: Props) {
         {error ? (
           <p className="p-5 text-red-400 text-sm">{error}</p>
         ) : !data ? (
-          <p className="p-5 text-gray-500 text-sm text-center">加载中…</p>
+          <p className="p-5 text-parchment-500 text-sm text-center">加载中…</p>
         ) : (
           <div className="p-5 space-y-4">
-            <p className="text-yellow-400 text-sm">💰 {data.gold}G</p>
+            <p className="text-gold-300 font-display text-sm">💰 {data.gold}G</p>
 
             <div>
-              <p className="text-gray-500 text-xs mb-1.5">── 已装备 ──</p>
-              <div className="grid grid-cols-2 gap-1 text-sm">
+              <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">已装备</p>
+              <hr className="divider-subtle" />
+              <div className="grid grid-cols-2 gap-1 text-sm mt-1.5">
                 {SLOT_LABELS.map(([slot, label]) => {
                   const item = data.equipment[slot]
                   return (
-                    <div key={slot} className="bg-gray-800 rounded px-2 py-1 flex gap-1.5 items-center">
-                      <span className="text-gray-500 text-xs flex-shrink-0">[{label}]</span>
-                      <span className="text-gray-300 truncate text-xs flex-1">
-                        {item ? itemName(item) : '—'}
+                    <div key={slot} className="panel-inset px-2 py-1 flex gap-1.5 items-center">
+                      <span className="text-parchment-500 text-xs flex-shrink-0">[{label}]</span>
+                      <span className="text-parchment-200 truncate text-xs flex-1">
+                        {item ? itemName(item) : <span className="text-parchment-500/50">—</span>}
                       </span>
                       {item && sendInteract && (
                         <button
                           onClick={() => doUnequip(slot)}
-                          className="text-xs text-orange-400 hover:text-orange-300 border border-orange-700/50 rounded px-1.5 py-0.5 flex-shrink-0"
+                          className="btn-fantasy text-xs flex-shrink-0"
                         >
                           卸
                         </button>
@@ -155,24 +156,25 @@ export default function InventoryPanel({ sendInteract }: Props) {
 
             {data.inventory.length > 0 && (
               <div>
-                <p className="text-gray-500 text-xs mb-1.5">── 背包物品 ──</p>
+                <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">背包物品</p>
+                <hr className="divider-subtle" />
                 {data.inventory.map((item, i) => (
                   <div
                     key={item.item_id ?? i}
                     className="flex items-center justify-between py-1"
                   >
-                    <span className="text-gray-300 text-sm">{itemName(item)}</span>
+                    <span className="text-parchment-200 text-sm">{itemName(item)}</span>
                     <div className="flex items-center gap-2">
                       {item.type && (
-                        <span className="text-gray-500 text-xs">{String(item.type)}</span>
+                        <span className="text-parchment-400 text-xs">{String(item.type)}</span>
                       )}
                       {item.count > 1 && (
-                        <span className="text-gray-400 text-xs">x{item.count}</span>
+                        <span className="text-parchment-400 text-xs">x{item.count}</span>
                       )}
                       {isConsumable(item) && sendInteract && (
                         <button
                           onClick={() => { close(); sendInteract({ intent: 'use_item', item_id: item.item_id }) }}
-                          className="text-xs text-green-400 hover:text-green-300 border border-green-700/50 rounded px-1.5 py-0.5"
+                          className="btn-fantasy text-xs"
                         >
                           使用
                         </button>
@@ -180,7 +182,7 @@ export default function InventoryPanel({ sendInteract }: Props) {
                       {isEquippable(item) && sendInteract && (
                         <button
                           onClick={() => doEquip(item)}
-                          className="text-xs text-sky-400 hover:text-sky-300 border border-sky-700/50 rounded px-1.5 py-0.5"
+                          className="btn-fantasy text-xs"
                         >
                           装备
                         </button>
@@ -192,7 +194,7 @@ export default function InventoryPanel({ sendInteract }: Props) {
             )}
 
             {isEmpty && (
-              <p className="text-gray-500 text-sm text-center">背包是空的</p>
+              <p className="text-parchment-500 text-sm text-center">背包是空的</p>
             )}
           </div>
         )}

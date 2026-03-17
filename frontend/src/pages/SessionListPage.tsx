@@ -77,15 +77,15 @@ export default function SessionListPage() {
         <div className="flex items-center justify-between mb-8">
           <button
             onClick={() => navigate('/')}
-            className="text-gray-400 hover:text-gray-200 transition-colors text-sm"
+            className="text-parchment-400 hover:text-parchment-200 transition-colors text-sm"
           >
             ← 返回
           </button>
-          <h1 className="text-2xl font-bold text-amber-400">存档管理</h1>
+          <h1 className="font-display text-gold-300 text-2xl">存档管理</h1>
           <button
             onClick={handleNew}
             disabled={loading}
-            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+            className="btn-fantasy disabled:opacity-50"
           >
             新建游戏
           </button>
@@ -95,26 +95,26 @@ export default function SessionListPage() {
 
         {/* Session list */}
         {sessions === null ? (
-          <div className="text-gray-400 text-center py-16">加载中...</div>
+          <div className="text-parchment-500 text-center py-16">加载中...</div>
         ) : sessions.length === 0 ? (
-          <div className="text-gray-500 text-center py-16">
+          <div className="text-parchment-500 text-center py-16">
             尚无存档，点击「新建游戏」开始冒险
           </div>
         ) : (
           <div className="space-y-4">
             {sessions.map((session) => (
-              <div key={session.session_id} className="bg-gray-800 rounded-lg p-4">
+              <div key={session.session_id} className="panel-fantasy p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2 mb-1">
-                      <span className="font-bold text-amber-300 truncate">
+                      <span className="font-display text-gold-400 truncate">
                         {session.summary.player_name || '无名冒险者'}
                       </span>
-                      <span className="text-gray-400 text-sm flex-shrink-0">
+                      <span className="text-parchment-400 text-sm flex-shrink-0">
                         {session.summary.player_class} · Lv.{session.summary.level}
                       </span>
                     </div>
-                    <div className="text-gray-500 text-xs space-y-0.5">
+                    <div className="text-parchment-500 text-xs space-y-0.5">
                       <div>位置：{session.summary.location || '未知'}</div>
                       {session.summary.day != null && (
                         <div>第 {session.summary.day} 天</div>
@@ -129,7 +129,7 @@ export default function SessionListPage() {
                     <button
                       onClick={() => handleResume(session.session_id)}
                       disabled={loading}
-                      className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded transition-colors"
+                      className="btn-fantasy disabled:opacity-50"
                     >
                       继续
                     </button>
@@ -137,13 +137,13 @@ export default function SessionListPage() {
                       <>
                         <button
                           onClick={() => handleDelete(session.session_id)}
-                          className="bg-red-700 hover:bg-red-600 text-white text-sm px-3 py-1.5 rounded transition-colors"
+                          className="btn-fantasy border-red-700/50 text-red-300 hover:border-red-500/70"
                         >
                           确认删除
                         </button>
                         <button
                           onClick={() => setDeletingId(null)}
-                          className="bg-gray-600 hover:bg-gray-500 text-white text-sm px-3 py-1.5 rounded transition-colors"
+                          className="btn-subtle"
                         >
                           取消
                         </button>
@@ -151,7 +151,7 @@ export default function SessionListPage() {
                     ) : (
                       <button
                         onClick={() => setDeletingId(session.session_id)}
-                        className="bg-gray-600 hover:bg-gray-500 text-white text-sm px-3 py-1.5 rounded transition-colors"
+                        className="btn-subtle"
                       >
                         删除
                       </button>

@@ -86,6 +86,8 @@ export default function VnDialogueLayer({ overviewHandlers, sendInteract }: VnDi
     setText('')
   }
 
+  const isPrivateChat = gameMode === 'private_chat'
+
   return (
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-end pointer-events-none">
       {/* Floating emote — positioned above the relevant portrait */}
@@ -94,39 +96,56 @@ export default function VnDialogueLayer({ overviewHandlers, sendInteract }: VnDi
       {/* GM comment — flex item, naturally sits above options/panel */}
       <VnGmComment />
 
-      {/* Options row — above panel, same width */}
+      {/* Options row — above panel, centered */}
       {isShowingOptions && (
-        <div className="pointer-events-auto mb-2 w-[62%] max-w-[720px] flex flex-wrap gap-2 justify-center">
+        <div className="pointer-events-auto mb-3 w-[56%] max-w-[640px] flex flex-col items-stretch gap-2">
           <VnOptionList sendInteract={sendInteract} />
         </div>
       )}
 
-      {/* ── Persistent centered panel ── */}
+      {/* ── Galgame-style dialogue box ── */}
       <div
-        className="
+        className={`
           pointer-events-auto
-          w-[62%] max-w-[720px]
-          mb-3 rounded-lg
-          bg-stone-950/85 backdrop-blur-sm
-          border border-amber-500/25
-          shadow-[0_0_12px_rgba(245,158,11,0.12)]
+          w-full
           flex flex-col
-          min-h-[8rem]
-        "
+          ${isPrivateChat ? 'vn-box-private' : ''}
+        `}
+        style={{
+          background: isPrivateChat
+            ? 'linear-gradient(180deg, rgba(60, 20, 80, 0.75) 0%, rgba(20, 8, 30, 0.88) 100%)'
+            : 'linear-gradient(180deg, rgba(10, 12, 20, 0.7) 0%, rgba(6, 8, 16, 0.92) 100%)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          borderTop: isPrivateChat
+            ? '1px solid rgba(168, 85, 247, 0.3)'
+            : '1px solid rgba(180, 160, 120, 0.15)',
+          boxShadow: isPrivateChat
+            ? '0 -4px 24px rgba(120, 50, 180, 0.15), inset 0 1px 0 rgba(168, 85, 247, 0.1)'
+            : '0 -4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(200, 180, 120, 0.06)',
+        }}
       >
         {/* Text area — click to advance */}
-        <div className="flex-1 px-5 pt-4 pb-2 cursor-pointer" onClick={advance}>
+        <div
+          className="flex-1 px-[12%] pt-5 pb-2 cursor-pointer min-h-[7rem]"
+          onClick={advance}
+        >
           {queue.length > 0 ? (
             <VnTextBox onAdvance={advance} />
           ) : (
-            <p className="text-gray-500 text-sm italic select-none">
+            <p className="text-parchment-500 text-sm italic select-none animate-breathe">
               {isStreaming ? '对方正在思考...' : '对话已开始，等待回应...'}
             </p>
           )}
         </div>
 
-        {/* Input row — always visible */}
-        <div className="flex items-center gap-2 px-4 py-2.5 border-t border-amber-500/10">
+        {/* Input row */}
+        <div
+          className="flex items-center gap-2 px-[12%] py-2.5"
+          style={{
+            borderTop: '1px solid rgba(180, 160, 120, 0.08)',
+          }}
+        >
           <input
             ref={inputRef}
             type="text"
@@ -135,31 +154,18 @@ export default function VnDialogueLayer({ overviewHandlers, sendInteract }: VnDi
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             disabled={isStreaming}
             placeholder={isStreaming ? '对方正在回应...' : '输入你想说的话...'}
-            className="
-              flex-1
-              bg-stone-900/60 border border-gray-600/50
-              text-gray-100 placeholder-gray-500
-              rounded-lg px-3 py-1.5 text-sm
-              focus:border-amber-500/70 outline-none
-              disabled:opacity-50
-            "
+            className="input-fantasy flex-1 disabled:opacity-50"
           />
           <button
             onClick={handleSend}
             disabled={isStreaming || !text.trim()}
-            className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white px-4 py-1.5 rounded-lg text-sm transition-colors"
+            className="btn-fantasy !bg-gold-700/40 !border-gold-500/40 hover:!bg-gold-600/50 !text-gold-300 disabled:opacity-40"
           >
             发送
           </button>
           <button
             onClick={handleLeave}
-            className="
-              text-xs text-gray-400 hover:text-gray-200
-              bg-stone-950/60 hover:bg-stone-900/70
-              border border-gray-700/50 hover:border-gray-500/50
-              rounded px-3 py-1.5
-              transition-colors duration-150
-            "
+            className="btn-subtle text-parchment-500"
           >
             结束对话
           </button>

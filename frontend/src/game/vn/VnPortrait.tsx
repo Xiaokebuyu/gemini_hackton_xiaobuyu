@@ -33,8 +33,8 @@ export default function VnPortrait({ characterId, worldId, sessionId, isSpeaking
   }, [characterId, worldId, sessionId])
 
   const brightnessClass = isSpeaking
-    ? 'opacity-100 brightness-100'
-    : 'opacity-60 brightness-75'
+    ? 'opacity-100 brightness-110 scale-[1.03]'
+    : 'opacity-40 brightness-[0.55] scale-100'
 
   // Soft edge blur: use a pseudo-overlay with inset box-shadow to blur edges,
   // combined with mask-image for gentle transparency fade on top + outer side.
@@ -56,10 +56,14 @@ export default function VnPortrait({ characterId, worldId, sessionId, isSpeaking
     ? 'inset 20px 0 30px -10px rgba(0,0,0,0.8), inset 0 20px 30px -10px rgba(0,0,0,0.7)'
     : 'inset -20px 0 30px -10px rgba(0,0,0,0.8), inset 0 20px 30px -10px rgba(0,0,0,0.7)'
 
+  const speakingGlow = isSpeaking
+    ? ', 0 0 40px rgba(200, 180, 120, 0.15), 0 0 80px rgba(200, 180, 120, 0.08)'
+    : ''
+
   return (
     <div
-      className={`relative h-[42vh] w-auto flex-shrink-0 overflow-hidden transition-all duration-150 ${brightnessClass}`}
-      style={{ ...maskStyle, boxShadow: shadowSide }}
+      className={`relative h-[42vh] w-auto flex-shrink-0 overflow-hidden transition-all duration-300 ease-out origin-bottom ${brightnessClass}`}
+      style={{ ...maskStyle, boxShadow: shadowSide + speakingGlow }}
     >
       {isLoading ? (
         <div className="h-full w-32 bg-gray-800/60 animate-pulse" />

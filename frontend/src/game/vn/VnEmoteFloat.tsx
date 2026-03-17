@@ -21,14 +21,14 @@ export default function VnEmoteFloat() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4 }}
           transition={{ duration: 0.2, ease: 'easeOut' }}
-          className={`
-            absolute ${horizontalClass}
-            bottom-[44vh]
-            pointer-events-none
-            z-20
-          `}
+          className={`absolute ${horizontalClass} bottom-[44vh] pointer-events-none z-20`}
         >
-          <p className="text-purple-300/80 italic text-sm whitespace-nowrap">
+          <p
+            className="text-purple-300/80 italic text-sm whitespace-nowrap"
+            style={{
+              textShadow: '0 1px 6px rgba(0, 0, 0, 0.7), 0 0 12px rgba(168, 85, 247, 0.2)',
+            }}
+          >
             *{activeEmote.content}*
           </p>
         </motion.div>

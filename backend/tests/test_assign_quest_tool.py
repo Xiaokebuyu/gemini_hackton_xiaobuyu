@@ -71,8 +71,8 @@ def _make_ctx(
 # ---------------------------------------------------------------------------
 
 
-def test_assign_quest_creates_quest() -> None:
-    """AssignQuestTool.execute() constructs and fires a planner_create_quest command."""
+def test_assign_quest_signals_intent() -> None:
+    """AssignQuestTool.execute() writes quest_intent to blackboard, no command."""
 
     async def _run() -> None:
         log, executor = _recording_command_executor()
@@ -82,23 +82,17 @@ def test_assign_quest_creates_quest() -> None:
             execute_command=executor,
         )
         params = {
-            "quest_id": "dq_find_herb",
             "title": "Find the Healing Herb",
             "summary": "The elder needs a rare herb from the forest.",
         }
         result = await AssignQuestTool().execute(params, ctx)
 
         assert result.ok is True, f"Expected ok=True, got: {result.message}"
-        assert len(log) == 1, "Expected exactly one command to be executed"
-
-        cmd = log[0]
-        assert cmd.type == "planner_create_quest"
-        assert cmd.source == "npc"
-        assert cmd.params["quest_id"] == "dq_find_herb"
-        assert cmd.params["title"] == "Find the Healing Herb"
-        assert cmd.params["summary"] == "The elder needs a rare herb from the forest."
-        assert cmd.params["delivery_method"] == "npc"
-        assert cmd.params["metadata"]["giver_npc"] == "village_elder"
+        assert len(log) == 0, "AssignQuestTool should not execute commands"
+        assert result.metadata.get("event_type") == "quest_intent"
+        intent = result.metadata.get("intent", {})
+        assert intent["title"] == "Find the Healing Herb"
+        assert intent["giver_npc"] == "village_elder"
 
     asyncio.run(_run())
 

@@ -31,24 +31,24 @@ export default function DonationOverlay({ sendAction }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-xl border border-amber-700/40 bg-gray-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-700 px-5 py-3">
+    <div className="fixed inset-0 z-20 bg-black/80 backdrop-blur-[2px] flex items-center justify-center px-4">
+      <div className="panel-ornate texture-noise w-full max-w-sm">
+        <div className="panel-header flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-bold text-amber-300">奉献</h2>
-            <p className="text-xs text-gray-500">{sourceName}</p>
+            <h2 className="panel-title">奉献</h2>
+            <p className="text-xs text-parchment-500 mt-0.5">{sourceName}</p>
           </div>
           <button
             onClick={overlay.close}
-            className="text-lg leading-none text-gray-500 hover:text-gray-300"
+            className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
           >
             ×
           </button>
         </div>
 
         <div className="space-y-4 px-5 py-5">
-          <p className="text-sm leading-relaxed text-gray-300">
-            选择要投入的金额。当前持有 <span className="text-amber-300">{gold}G</span>
+          <p className="text-parchment-300 text-sm leading-relaxed">
+            选择要投入的金额。当前持有 <span className="text-gold-400 font-mono">{gold}G</span>
           </p>
 
           <div className="grid grid-cols-3 gap-3">
@@ -59,12 +59,7 @@ export default function DonationOverlay({ sendAction }: Props) {
                   key={amount}
                   onClick={() => donate(amount)}
                   disabled={disabled}
-                  className={[
-                    'rounded-lg border px-3 py-4 text-sm transition',
-                    disabled
-                      ? 'cursor-not-allowed border-gray-800 bg-gray-900 text-gray-600'
-                      : 'border-amber-700/50 bg-amber-950/30 text-amber-200 hover:border-amber-500 hover:bg-amber-900/40',
-                  ].join(' ')}
+                  className={disabled ? 'btn-subtle opacity-40 cursor-not-allowed py-4' : 'btn-fantasy py-4'}
                 >
                   {amount}G
                 </button>
@@ -72,7 +67,7 @@ export default function DonationOverlay({ sendAction }: Props) {
             })}
           </div>
 
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-parchment-500">
             金币不足的选项不可选择。
           </p>
         </div>

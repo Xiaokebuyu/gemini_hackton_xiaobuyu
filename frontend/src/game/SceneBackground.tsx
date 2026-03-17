@@ -80,7 +80,7 @@ export default function SceneBackground() {
   const gradient = getGradient(backgroundKey || currentArea, dangerLevel, areaTags)
 
   return (
-    <div className="absolute inset-0 z-0">
+    <div className="absolute inset-0 z-0 vignette">
       {/* CSS 渐变兜底 */}
       <div className={`absolute inset-0 bg-gradient-to-br ${gradient}`} />
 

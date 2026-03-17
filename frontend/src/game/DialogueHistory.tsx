@@ -12,8 +12,8 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
   switch (msg.type) {
     case 'gm':
       return (
-        <div className="py-1">
-          <p className="italic text-amber-200/90 leading-relaxed">
+        <div className="py-1 border-l-2 border-gold-700/40 pl-3">
+          <p className="italic text-parchment-200 leading-relaxed">
             {msg.content}{cursor}
           </p>
         </div>
@@ -21,11 +21,11 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
 
     case 'gm_comment':
       return (
-        <div className="py-1">
+        <div className="py-1 border-l-2 border-gold-700/40 pl-3">
           <p className={
             isIntrospective
-              ? 'font-serif italic text-amber-100/80 leading-relaxed tracking-[0.01em]'
-              : 'italic text-gray-400/90 text-sm leading-relaxed'
+              ? 'font-serif italic text-parchment-200 leading-relaxed tracking-[0.01em]'
+              : 'italic text-parchment-300/90 text-sm leading-relaxed'
           }>
             {msg.content}{cursor}
           </p>
@@ -35,8 +35,8 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
     case 'npc':
       return (
         <div className="py-1">
-          <span className="text-sky-400 font-bold text-sm mr-2">{msg.speaker}</span>
-          <span className="text-gray-100">
+          <span className="font-display text-sm font-semibold text-sky-300 mr-2">{msg.speaker}</span>
+          <span className="text-parchment-300">
             &ldquo;{msg.content}&rdquo;{cursor}
           </span>
         </div>
@@ -45,45 +45,48 @@ function Message({ msg, showCursor }: { msg: DialogueEntry; showCursor: boolean 
     case 'emote':
       return (
         <div className="py-0.5">
-          <span className="text-purple-300 text-sm italic mr-2">{msg.speaker}</span>
-          <span className="text-purple-200/80 italic text-sm">*{msg.content}*</span>
+          <span className="text-purple-300/90 italic text-sm mr-2">{msg.speaker}</span>
+          <span className="text-purple-300/90 italic text-sm">*{msg.content}*</span>
         </div>
       )
 
     case 'teammate':
       return (
         <div className="py-0.5 pl-3">
-          <span className="text-green-400 text-sm font-medium mr-2">{msg.speaker}</span>
-          <span className="text-gray-300 text-sm">{msg.content}</span>
+          <span className="font-display text-sm font-semibold text-emerald-400 mr-2">{msg.speaker}</span>
+          <span className="text-parchment-300 text-sm">{msg.content}</span>
         </div>
       )
 
     case 'teammate_emote':
       return (
         <div className="py-0.5 pl-3">
-          <span className="text-green-300 text-sm italic mr-2">{msg.speaker}</span>
-          <span className="text-green-100/75 italic text-sm">*{msg.content}*</span>
+          <span className="text-emerald-400 text-sm italic mr-2">{msg.speaker}</span>
+          <span className="text-emerald-300/75 italic text-sm">*{msg.content}*</span>
         </div>
       )
 
     case 'system':
       return (
         <div className="py-1.5 text-center">
-          <span className="text-gray-500 text-xs">── {msg.content} ──</span>
+          <hr className="divider-subtle" />
+          <span className="text-gold-400/80 text-xs">{msg.content}</span>
+          <hr className="divider-subtle" />
         </div>
       )
 
     case 'player':
       return (
         <div className="py-1 text-right">
-          <span className="text-blue-300 text-sm">你：{msg.content}</span>
+          <span className="font-display text-sm font-semibold text-blue-300 mr-1">你</span>
+          <span className="text-parchment-300 text-sm">{msg.content}</span>
         </div>
       )
 
     case 'stream':
       return (
-        <div className="py-1">
-          <p className="text-amber-100/85 leading-relaxed">
+        <div className="py-1 border-l-2 border-gold-700/40 pl-3">
+          <p className="text-parchment-200 leading-relaxed">
             {msg.content}{cursor}
           </p>
         </div>
@@ -104,9 +107,9 @@ export default function DialogueHistory() {
   }, [messages])
 
   return (
-    <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 min-h-0">
+    <div className="panel-inset flex-1 overflow-y-auto px-3 py-2 space-y-2.5 min-h-0">
       {messages.length === 0 ? (
-        <p className="text-gray-600 text-sm italic text-center py-4">世界在等待...</p>
+        <p className="text-parchment-500 text-sm italic text-center py-4">世界在等待...</p>
       ) : (
         messages.map((msg, i) => (
           <Message

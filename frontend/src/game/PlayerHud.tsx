@@ -49,9 +49,9 @@ export default function PlayerHud() {
     : currentArea
 
   return (
-    <div className="absolute top-3 left-3 z-20 min-w-[200px] rounded-xl border border-amber-500/20 bg-stone-950/60 px-4 py-3 text-xs text-stone-200 backdrop-blur-sm shadow-[0_0_8px_rgba(245,158,11,0.1)]">
+    <div className="panel-fantasy texture-noise absolute top-3 left-3 z-20 min-w-[200px] px-4 py-3 text-xs">
       {/* Name row */}
-      <div className="font-semibold text-amber-300">
+      <div className="font-display font-semibold text-gold-400">
         {name || '无名旅者'}
         {characterClass ? ` · ${characterClass}` : ''}
         {level > 0 ? ` Lv.${level}` : ''}
@@ -59,39 +59,42 @@ export default function PlayerHud() {
 
       {/* Location row */}
       {locationDisplay && (
-        <div className="mt-0.5 text-stone-400">
+        <div className="mt-0.5 text-parchment-400">
           {locationDisplay}
         </div>
       )}
 
       {/* HP bar */}
       <div className="mt-1.5">
-        <div className="mb-1 flex items-center justify-between text-stone-400">
+        <div className="mb-1 flex items-center justify-between text-parchment-500">
           <span>HP</span>
-          <span>
+          <span style={{ textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
             {hp}/{maxHp}
           </span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-stone-800">
+        <div className="bar-track h-2 w-full">
           <div
-            className={`h-full rounded-full transition-all duration-300 ${hpBarColor}`}
+            className={`bar-fill-hp h-full ${hpBarColor}`}
             style={{ width: `${hpPct}%` }}
           />
         </div>
       </div>
 
       {/* Stats row */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-stone-400">
-        <span className="text-amber-400/80">💰 {gold}G</span>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-parchment-500">
+        <span className="text-gold-400">💰 {gold}G</span>
         <span>第 {day} 天</span>
         <span>
           {periodIcon} {periodLabel}
         </span>
       </div>
 
+      {/* Ornate divider */}
+      <hr className="divider-ornate" />
+
       {/* AI processing indicator */}
       {aiProcessing && (
-        <div className="mt-1.5 text-xs text-amber-400/60 animate-pulse">
+        <div className="mt-1.5 text-xs text-gold-400 animate-breathe">
           ● 处理中...
         </div>
       )}
@@ -99,13 +102,13 @@ export default function PlayerHud() {
       {/* Mini party portraits */}
       {partyMembers.length > 0 && (
         <div className="mt-2 flex items-center gap-1.5">
-          <span className="text-stone-500 mr-0.5">队伍：</span>
+          <span className="text-parchment-500 mr-0.5">队伍：</span>
           {partyMembers.map((member) => (
             <button
               key={member.id}
               title={member.name || member.id}
               onClick={() => open('party')}
-              className="flex h-6 w-6 items-center justify-center rounded-full border border-stone-600 bg-stone-700 text-[10px] font-semibold uppercase text-stone-300 hover:border-amber-500/50 hover:bg-stone-600 transition-colors"
+              className="flex h-6 w-6 items-center justify-center rounded-full border border-gold-700 bg-gold-900 text-[10px] font-semibold uppercase text-parchment-300 hover:border-gold-400 hover:shadow-fantasy-glow transition-all duration-200"
             >
               {(member.name || member.id).charAt(0)}
             </button>

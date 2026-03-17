@@ -151,7 +151,7 @@ def test_resolve_stores_outcome_text_in_interactable_state() -> None:
 
 
 def test_resolve_stores_check_passed_in_interactable_state() -> None:
-    """When option has no check, check_passed should be None."""
+    """When option has no check, check_passed should be True (auto-pass)."""
     world = _build_world()
     state = _build_state_with_clue(
         options=[{"id": "examine", "label": "仔细检查"}, {"id": "think", "label": "推理"}],
@@ -162,8 +162,8 @@ def test_resolve_stores_check_passed_in_interactable_state() -> None:
     state.apply(resolve.delta)
 
     clue_state = state.areas.get_area("frontier_town").interactable_states["blood_trail_clue"]
-    # No check on this option → check_passed should be None
-    assert clue_state["check_passed"] is None
+    # No check on this option → auto-pass (P32: no check = success)
+    assert clue_state["check_passed"] is True
 
 
 def test_resolve_stores_effects_applied_in_interactable_state() -> None:

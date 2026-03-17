@@ -85,13 +85,13 @@ export default function CharacterPanel({ sendAction }: Props) {
     : 0
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-gray-950/90">
-      <div className="max-h-[80vh] w-96 overflow-y-auto rounded-xl border border-gray-700 bg-gray-900">
-        <div className="flex items-center justify-between border-b border-gray-700 px-5 py-3">
-          <h2 className="font-bold text-amber-400">角色面板</h2>
+    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/80 backdrop-blur-[2px]">
+      <div className="panel-ornate texture-noise max-h-[80vh] w-96 overflow-y-auto">
+        <div className="panel-header flex items-center justify-between">
+          <h2 className="panel-title">角色面板</h2>
           <button
             onClick={close}
-            className="text-lg leading-none text-gray-500 hover:text-gray-300"
+            className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
           >
             ×
           </button>
@@ -100,36 +100,37 @@ export default function CharacterPanel({ sendAction }: Props) {
         {error ? (
           <p className="p-5 text-sm text-red-400">{error}</p>
         ) : loading || !data ? (
-          <p className="p-5 text-center text-sm text-gray-500">加载中…</p>
+          <p className="p-5 text-center text-sm text-parchment-500">加载中…</p>
         ) : (
           <div className="space-y-4 p-5">
             <div>
-              <p className="text-lg font-semibold text-gray-100">{data.character_name}</p>
-              <p className="text-sm text-amber-300">{data.character_class} · Lv.{data.level}</p>
-              <p className="mt-0.5 text-xs text-gray-400">XP: {data.xp}</p>
+              <p className="font-display text-sm text-gold-400">{data.character_name}</p>
+              <p className="text-sm text-parchment-300">{data.character_class} · Lv.{data.level}</p>
+              <p className="mt-0.5 text-xs text-parchment-500">XP: {data.xp}</p>
             </div>
 
             <div className="flex gap-4 text-sm">
               <span className="text-red-400">HP {data.hp}/{data.max_hp}</span>
               <span className="text-blue-300">AC {data.ac}</span>
-              <span className="text-yellow-400">{data.gold}G</span>
+              <span className="text-gold-300 font-display">{data.gold}G</span>
             </div>
 
             {remainingAsiPoints > 0 && (
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+              <div className="panel-inset px-3 py-2">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-amber-300">属性分配</p>
-                  <span className="text-xs text-amber-200">剩余 {remainingAsiPoints} 点</span>
+                  <p className="font-display text-sm text-gold-400">属性分配</p>
+                  <span className="text-xs text-parchment-300">剩余 {remainingAsiPoints} 点</span>
                 </div>
-                <p className="mt-1 text-xs text-gray-300">
+                <p className="mt-1 text-xs text-parchment-300">
                   每项属性上限 20。可拆成两次 `+1`，或一次 `+2`。
                 </p>
               </div>
             )}
 
             <div>
-              <p className="mb-1.5 text-xs text-gray-500">── 属性 ──</p>
-              <div className="space-y-2">
+              <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">属性</p>
+              <hr className="divider-subtle" />
+              <div className="space-y-2 mt-1.5">
                 {STAT_CONFIG.map(({ key, short, label, aliases }) => {
                   const value = getStatValue(data.stats, key, aliases)
                   const canPlusOne = value !== null && value < 20 && remainingAsiPoints >= 1
@@ -137,28 +138,28 @@ export default function CharacterPanel({ sendAction }: Props) {
                   return (
                     <div
                       key={key}
-                      className="flex items-center justify-between rounded bg-gray-800 px-3 py-2"
+                      className="panel-inset flex items-center justify-between px-3 py-2"
                     >
                       <div>
-                        <span className="text-xs text-gray-400">{label}</span>
-                        <span className="ml-2 font-mono text-sm text-gray-100">
+                        <span className="text-parchment-400 text-xs">{label}</span>
+                        <span className="ml-2 font-display font-mono text-sm text-gold-300">
                           {value ?? '—'}
                         </span>
-                        <span className="ml-2 text-[11px] text-gray-500">{short}</span>
+                        <span className="ml-2 text-[11px] text-parchment-500">{short}</span>
                       </div>
                       {remainingAsiPoints > 0 && (
                         <div className="flex gap-2">
                           <button
                             onClick={() => void handleApplyAsi(key, 1)}
                             disabled={!canPlusOne || pendingAsi !== null}
-                            className="rounded border border-amber-600/40 px-2 py-1 text-xs text-amber-300 disabled:cursor-not-allowed disabled:border-gray-700 disabled:text-gray-600"
+                            className="btn-fantasy text-xs"
                           >
                             +1
                           </button>
                           <button
                             onClick={() => void handleApplyAsi(key, 2)}
                             disabled={!canPlusTwo || pendingAsi !== null}
-                            className="rounded border border-amber-600/40 px-2 py-1 text-xs text-amber-300 disabled:cursor-not-allowed disabled:border-gray-700 disabled:text-gray-600"
+                            className="btn-fantasy text-xs"
                           >
                             +2
                           </button>
@@ -172,10 +173,11 @@ export default function CharacterPanel({ sendAction }: Props) {
 
             {data.class_features?.length > 0 && (
               <div>
-                <p className="mb-1.5 text-xs text-gray-500">── 职业特性 ──</p>
-                <ul className="space-y-0.5">
+                <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">职业特性</p>
+                <hr className="divider-subtle" />
+                <ul className="space-y-0.5 mt-1.5">
                   {data.class_features.map((feature, index) => (
-                    <li key={index} className="text-sm text-gray-300">
+                    <li key={index} className="text-sm text-parchment-300">
                       · {featureLabel(feature)}
                     </li>
                   ))}

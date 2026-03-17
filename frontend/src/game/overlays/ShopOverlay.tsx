@@ -19,30 +19,31 @@ export default function ShopOverlay({ sendInteract }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-80 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-amber-400 font-bold">商店</h2>
+    <div className="fixed inset-0 z-20 bg-black/80 backdrop-blur-[2px] flex items-center justify-center">
+      <div className="panel-ornate texture-noise w-80 max-h-[80vh] overflow-y-auto">
+        <div className="panel-header flex items-center justify-between">
+          <h2 className="panel-title">商店</h2>
           <button
             onClick={overlay.close}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+            className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
           >
             ×
           </button>
         </div>
 
         <div className="p-5 space-y-4">
-          <p className="text-yellow-400 text-sm">💰 持有：{data.player_gold}G</p>
+          <p className="text-gold-300 font-display text-sm">💰 持有：{data.player_gold}G</p>
 
           {/* 可购买 */}
           {data.stock.length > 0 && (
             <div>
-              <p className="text-gray-500 text-xs mb-1.5">── 可购买 ──</p>
+              <p className="font-display text-xs text-parchment-500 tracking-wider mb-1.5">可购买</p>
+              <hr className="divider-subtle" />
               {data.stock.map((item) => (
-                <div key={item.item_id} className="flex items-center justify-between py-1">
-                  <span className="text-gray-300 text-sm">{item.name}</span>
+                <div key={item.item_id} className="panel-inset px-3 py-2 mb-1.5 flex items-center justify-between">
+                  <span className="text-parchment-200 text-sm">{item.name}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-yellow-400 text-xs">{item.base_price}G</span>
+                    <span className="text-gold-400 text-xs font-display">{item.base_price}G</span>
                     <button
                       onClick={() =>
                         doInteract({
@@ -54,7 +55,7 @@ export default function ShopOverlay({ sendInteract }: Props) {
                         })
                       }
                       disabled={data.player_gold < item.base_price}
-                      className="text-xs text-sky-400 hover:text-sky-300 disabled:opacity-40 border border-sky-700/50 rounded px-2 py-0.5"
+                      className="btn-fantasy text-xs"
                     >
                       购买
                     </button>
@@ -67,12 +68,13 @@ export default function ShopOverlay({ sendInteract }: Props) {
           {/* 可出售 */}
           {data.player_sellable_items.length > 0 && (
             <div>
-              <p className="text-gray-500 text-xs mb-1.5">── 可出售 ──</p>
+              <p className="font-display text-xs text-parchment-500 tracking-wider mb-1.5">可出售</p>
+              <hr className="divider-subtle" />
               {data.player_sellable_items.map((item) => (
-                <div key={item.item_id} className="flex items-center justify-between py-1">
-                  <span className="text-gray-300 text-sm">{item.name}</span>
+                <div key={item.item_id} className="panel-inset px-3 py-2 mb-1.5 flex items-center justify-between">
+                  <span className="text-parchment-200 text-sm">{item.name}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-yellow-400 text-xs">{item.base_price}G</span>
+                    <span className="text-gold-400 text-xs font-display">{item.base_price}G</span>
                     <button
                       onClick={() =>
                         doInteract({
@@ -83,7 +85,7 @@ export default function ShopOverlay({ sendInteract }: Props) {
                           count: 1,
                         })
                       }
-                      className="text-xs text-green-400 hover:text-green-300 border border-green-700/50 rounded px-2 py-0.5"
+                      className="btn-fantasy text-xs !border-emerald-600/30"
                     >
                       出售
                     </button>
@@ -96,13 +98,14 @@ export default function ShopOverlay({ sendInteract }: Props) {
           {/* 可用服务 */}
           {data.services && data.services.length > 0 && (
             <div>
-              <p className="text-gray-500 text-xs mb-1.5">── 可用服务 ──</p>
+              <p className="font-display text-xs text-parchment-500 tracking-wider mb-1.5">可用服务</p>
+              <hr className="divider-subtle" />
               {data.services.map((service: ShopServiceItem) => (
-                <div key={service.service_id} className="py-1.5 border-b border-gray-800 last:border-0">
+                <div key={service.service_id} className="panel-inset px-3 py-2 mb-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-purple-300 text-sm">✨ {service.label}</span>
+                    <span className="text-parchment-200 text-sm">✨ {service.label}</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-yellow-400 text-xs">{service.price}G</span>
+                      <span className="text-gold-400 text-xs font-display">{service.price}G</span>
                       <button
                         onClick={() =>
                           doInteract({
@@ -113,14 +116,14 @@ export default function ShopOverlay({ sendInteract }: Props) {
                           })
                         }
                         disabled={data.player_gold < service.price}
-                        className="text-xs text-purple-400 hover:text-purple-300 disabled:opacity-40 border border-purple-700/50 rounded px-2 py-0.5"
+                        className="btn-fantasy text-xs !border-purple-500/30"
                       >
                         使用
                       </button>
                     </div>
                   </div>
                   {service.notes && (
-                    <p className="text-gray-500 text-xs mt-0.5 pl-4">{service.notes}</p>
+                    <p className="text-parchment-500 text-xs mt-0.5 pl-4">{service.notes}</p>
                   )}
                   {service.effects_summary && (
                     <p className="text-emerald-600 text-xs mt-0.5 pl-4">{service.effects_summary}</p>
@@ -131,7 +134,7 @@ export default function ShopOverlay({ sendInteract }: Props) {
           )}
 
           {data.stock.length === 0 && data.player_sellable_items.length === 0 && (!data.services || data.services.length === 0) && (
-            <p className="text-gray-500 text-sm text-center">商店暂无商品</p>
+            <p className="text-parchment-500 text-sm text-center">商店暂无商品</p>
           )}
         </div>
       </div>

@@ -8,12 +8,12 @@ import type { VnMessage } from '../../types/game'
 // We accumulate fractional progress to handle non-integer rates cleanly.
 const CHARS_PER_MS = 30 / 1000
 
-// Role-based text color for the content itself
+// Role-based text color — softer, warmer tones for galgame feel
 const CONTENT_COLOR: Record<VnMessage['type'], string> = {
-  npc: 'text-gray-100',
-  gm: 'text-gray-300 italic',
-  gm_comment: 'text-amber-200 italic',
-  teammate: 'text-gray-100',
+  npc: 'text-parchment-100',
+  gm: 'text-parchment-200 italic',
+  gm_comment: 'text-amber-200/90 italic',
+  teammate: 'text-parchment-100',
   player: 'text-blue-200',
 }
 
@@ -86,12 +86,12 @@ export default function VnTextBox({ onAdvance }: VnTextBoxProps) {
   }
 
   const displayedText = current.content.substring(0, displayedCharCount)
-  const contentColorClass = CONTENT_COLOR[current.type] ?? 'text-gray-100'
+  const contentColorClass = CONTENT_COLOR[current.type] ?? 'text-parchment-100'
   const hasMore = currentIndex + 1 < queue.length
 
   return (
     <div
-      className="relative cursor-pointer select-none min-h-[4rem]"
+      className="relative cursor-pointer select-none min-h-[4.5rem]"
       onClick={onAdvance}
       role="button"
       tabIndex={0}
@@ -104,11 +104,17 @@ export default function VnTextBox({ onAdvance }: VnTextBoxProps) {
     >
       <VnNamePlate type={current.type} speakerName={current.speakerName} />
 
-      <p className={`text-base leading-relaxed whitespace-pre-wrap ${contentColorClass}`}>
+      <p
+        className={`text-[1.05rem] leading-[1.85] whitespace-pre-wrap ${contentColorClass}`}
+        style={{ textShadow: '0 1px 4px rgba(0, 0, 0, 0.6)' }}
+      >
         {displayedText}
         {/* Blinking cursor while typing */}
         {!isTypewriterComplete && (
-          <span className="inline-block w-[2px] h-[1em] bg-amber-300 ml-0.5 animate-pulse align-middle" />
+          <span
+            className="inline-block w-[2px] h-[1.1em] ml-0.5 animate-pulse align-middle"
+            style={{ backgroundColor: 'rgba(200, 180, 120, 0.7)' }}
+          />
         )}
       </p>
 

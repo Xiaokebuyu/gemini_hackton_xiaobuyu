@@ -3,18 +3,18 @@ import { useNotificationStore } from '../stores/notificationStore'
 import type { NotificationItem, NotificationCategory } from '../stores/notificationStore'
 
 const TYPE_STYLE: Record<NotificationItem['type'], string> = {
-  success: 'bg-stone-900/90 border-emerald-600/50 text-emerald-200',
-  error: 'bg-stone-900/90 border-red-600/50 text-red-200',
-  info: 'bg-stone-900/90 border-stone-600/50 text-stone-200',
+  success: 'panel-fantasy border-l-4 border-l-emerald-500 text-parchment-200 shadow-fantasy',
+  error: 'panel-fantasy border-l-4 border-l-red-500 text-parchment-200 shadow-fantasy',
+  info: 'panel-fantasy border-l-4 border-l-parchment-400 text-parchment-200 shadow-fantasy',
 }
 
 const CATEGORY_STYLE: Record<NotificationCategory, string> = {
-  milestone: 'bg-amber-950/90 border-amber-500/50 text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.2)]',
-  relationship: 'bg-purple-950/90 border-purple-500/40 text-purple-200',
-  item: 'bg-stone-900/90 border-stone-600/50 text-stone-200',
-  quest: 'bg-amber-900/90 border-amber-600/40 text-amber-100',
-  companion: 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200',
-  default: 'bg-stone-900/90 border-stone-600/50 text-stone-200',
+  milestone: 'panel-fantasy border-l-4 border-l-gold-400 text-parchment-200 shadow-fantasy',
+  relationship: 'panel-fantasy border-l-4 border-l-purple-400 text-parchment-200 shadow-fantasy',
+  item: 'panel-fantasy border-l-4 border-l-parchment-400 text-parchment-200 shadow-fantasy',
+  quest: 'panel-fantasy border-l-4 border-l-amber-400 text-parchment-200 shadow-fantasy',
+  companion: 'panel-fantasy border-l-4 border-l-emerald-400 text-parchment-200 shadow-fantasy',
+  default: 'panel-fantasy border-l-4 border-l-parchment-400 text-parchment-200 shadow-fantasy',
 }
 
 const CATEGORY_ICON: Record<NotificationCategory, string> = {
@@ -61,7 +61,7 @@ export default function NotificationLayer() {
             exit={{ opacity: 0, x: 100 }}
             transition={{ duration: 0.3, ease: 'easeOut' }}
             onClick={() => dismiss(item.id)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm shadow-lg pointer-events-auto border hover:opacity-80 transition-opacity ${getStyle(item)}`}
+            className={`flex items-center gap-2 px-3 py-2 text-sm pointer-events-auto hover:opacity-80 transition-opacity ${getStyle(item)}`}
           >
             <span className="font-bold flex-shrink-0">{getIcon(item)}</span>
             <span>{item.content}</span>

@@ -28,14 +28,14 @@ function getCategoryLabel(cat: string, overview: LocationOverview | null): strin
   }
 }
 
-// Border/hover colors per category
-const CATEGORY_BUTTON_CLASS: Record<string, string> = {
-  talk: 'border-sky-600/30 hover:border-sky-500/50',
-  room: 'border-teal-600/30 hover:border-teal-500/50',
-  location: 'border-amber-600/30 hover:border-amber-500/50',
-  action: 'border-emerald-600/30 hover:border-emerald-500/50',
-  gear: 'border-purple-600/30 hover:border-purple-500/50',
-  leave: 'border-gray-500/30 hover:border-gray-400/50',
+// Left-border accent color per category (3px left border as subtle color coding)
+const CATEGORY_LEFT_BORDER_STYLE: Record<string, React.CSSProperties> = {
+  talk:     { borderLeft: '3px solid rgba(14, 165, 233, 0.5)' },
+  room:     { borderLeft: '3px solid rgba(20, 184, 166, 0.5)' },
+  location: { borderLeft: '3px solid rgba(245, 158, 11, 0.5)' },
+  action:   { borderLeft: '3px solid rgba(16, 185, 129, 0.5)' },
+  gear:     { borderLeft: '3px solid rgba(168, 85, 247, 0.5)' },
+  leave:    { borderLeft: '3px solid rgba(156, 163, 175, 0.5)' },
 }
 
 // Category ordering for display
@@ -44,21 +44,22 @@ const CATEGORY_ORDER: GameOption['category'][] = ['talk', 'room', 'location', 'a
 interface CategorySectionProps {
   label: string
   opts: GameOption[]
-  buttonClass: string
+  category: string
 }
 
-function CategorySection({ label, opts, buttonClass }: CategorySectionProps) {
+function CategorySection({ label, opts, category }: CategorySectionProps) {
   if (opts.length === 0) return null
   return (
     <div className="mb-1.5">
-      <div className="text-xs text-gray-500 px-0.5 mb-1">{label}</div>
+      <div className="text-xs text-parchment-500 px-0.5 mb-1">{label}</div>
       <div className="grid grid-cols-2 gap-2">
         {opts.map((opt) => (
           <button
             key={opt.id}
             onClick={() => { audio.playClick(); opt.action() }}
             disabled={opt.disabled ?? false}
-            className={`text-left bg-stone-900/60 hover:bg-stone-800/60 rounded-lg px-3 py-2 text-sm transition-all border ${buttonClass} text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed`}
+            className="btn-fantasy text-left"
+            style={CATEGORY_LEFT_BORDER_STYLE[category]}
           >
             {opt.icon && <span className="mr-1.5">{opt.icon}</span>}
             {opt.label}
@@ -144,10 +145,10 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
 
   const renderOptions = () => {
     if (isLocked) {
-      return <div className="text-gray-500 text-sm py-1 px-1">思考中...</div>
+      return <div className="text-parchment-500 animate-breathe text-sm py-1 px-1">思考中...</div>
     }
     if (openingInProgress) {
-      return <div className="text-amber-200/80 text-sm py-1 px-1">开场演出中...</div>
+      return <div className="text-gold-400/80 text-sm py-1 px-1">开场演出中...</div>
     }
 
     // VN mode / dialogue mode: flat list with "end dialogue" button (unchanged UX)
@@ -159,7 +160,7 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
               key={opt.id}
               onClick={() => { audio.playClick(); opt.action() }}
               disabled={opt.disabled ?? false}
-              className="text-left px-3 py-1.5 rounded-lg bg-gray-800/80 hover:bg-gray-700 border border-gray-600/50 hover:border-gray-500 text-gray-200 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-fantasy text-left"
             >
               {opt.icon && <span className="mr-1.5">{opt.icon}</span>}
               {opt.label}
@@ -167,7 +168,7 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
           ))}
           <button
             onClick={handleLeaveDialogue}
-            className="text-left px-3 py-1.5 rounded-lg bg-gray-700/60 hover:bg-gray-600 border border-gray-500/50 text-gray-400 hover:text-gray-200 text-sm transition-colors"
+            className="btn-subtle text-parchment-500 text-left"
           >
             <span className="mr-1.5">🚪</span>结束对话
           </button>
@@ -196,7 +197,7 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
       return (
         <div className="mb-2">
           {/* Tab row */}
-          <div className="flex gap-1 mb-2 border-b border-gray-700/40 pb-1">
+          <div className="flex gap-1 mb-2 pb-1">
             {CATEGORY_ORDER.map((cat) => {
               const catKey = cat as string
               const isEmpty = (grouped[catKey]?.length ?? 0) === 0
@@ -208,8 +209,10 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
                   disabled={isEmpty}
                   className={
                     isActive
-                      ? 'text-amber-300 border-b-2 border-amber-500 px-3 py-1 text-sm font-medium'
-                      : 'text-gray-500 hover:text-gray-300 px-3 py-1 text-sm disabled:opacity-30 disabled:cursor-not-allowed'
+                      ? 'btn-subtle !border-gold-500/50 !text-gold-300 !bg-gold-900/30'
+                      : isEmpty
+                        ? 'btn-subtle opacity-25 cursor-not-allowed'
+                        : 'btn-subtle'
                   }
                 >
                   {getCategoryLabel(catKey, lastOverview)}
@@ -217,13 +220,14 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
               )
             })}
           </div>
+          <hr className="divider-ornate" />
 
           {/* Active tab content */}
-          <div className="max-h-32 overflow-y-auto">
+          <div className="max-h-32 overflow-y-auto mt-2">
             <CategorySection
               label=""
               opts={grouped[activeTab as string] ?? []}
-              buttonClass={CATEGORY_BUTTON_CLASS[activeTab as string]}
+              category={activeTab as string}
             />
           </div>
         </div>
@@ -244,20 +248,20 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
           <div className="flex gap-1">
             <button
               onClick={() => { audio.playClick(); setChannelScope('public') }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${
+              className={`btn-subtle ${
                 channelScope === 'public'
-                  ? 'bg-amber-600/90 border-amber-500 text-white'
-                  : 'bg-gray-800/60 border-gray-600/50 text-gray-300 hover:bg-gray-700'
+                  ? '!bg-gold-800/50 !border-gold-500/40 !text-gold-300'
+                  : ''
               }`}
             >
               公开
             </button>
             <button
               onClick={() => { audio.playClick(); setChannelScope('party') }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs border transition-colors ${
+              className={`btn-subtle ${
                 channelScope === 'party'
-                  ? 'bg-amber-600/90 border-amber-500 text-white'
-                  : 'bg-gray-800/60 border-gray-600/50 text-gray-300 hover:bg-gray-700'
+                  ? '!bg-gold-800/50 !border-gold-500/40 !text-gold-300'
+                  : ''
               }`}
             >
               队友
@@ -283,12 +287,12 @@ export default function OptionPanel({ sendInteract, overviewHandlers }: Props) {
                     ? '只让队友听见...'
                     : '对周围的人说点什么...'
           }
-          className="flex-1 bg-gray-800/60 border border-gray-600/50 text-gray-100 placeholder-gray-500 rounded-lg px-3 py-1.5 text-sm focus:border-amber-500/70 outline-none disabled:opacity-50"
+          className="input-fantasy flex-1 disabled:opacity-50"
         />
         <button
           onClick={handleSend}
           disabled={isLocked || openingInProgress || !text.trim()}
-          className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white px-4 py-1.5 rounded-lg text-sm transition-colors"
+          className="btn-fantasy !bg-gold-700/40 !border-gold-500/40 hover:!bg-gold-600/50 !text-gold-300"
         >
           发送
         </button>

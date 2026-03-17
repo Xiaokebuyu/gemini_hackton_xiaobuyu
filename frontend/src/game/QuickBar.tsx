@@ -30,38 +30,41 @@ export default function QuickBar({ worldId, sessionId }: Props) {
   }
 
   return (
-    <div className="flex-shrink-0 flex items-center justify-between pt-1.5 border-t border-stone-700/30">
-      <div className="flex gap-2">
-        <button
-          onClick={() => { audio.playClick(); overlay.open('log') }}
-          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
-        >
-          LOG
-        </button>
-        <button
-          onClick={() => { audio.playClick(); overlay.open('menu') }}
-          className="text-gray-400 hover:text-gray-200 text-xs px-3 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
-        >
-          MENU
-        </button>
-      </div>
+    <div className="flex-shrink-0">
+      <hr className="divider-ornate" />
+      <div className="flex items-center justify-between pt-2">
+        <div className="flex gap-2.5">
+          <button
+            onClick={() => { audio.playClick(); overlay.open('log') }}
+            className="btn-subtle"
+          >
+            LOG
+          </button>
+          <button
+            onClick={() => { audio.playClick(); overlay.open('menu') }}
+            className="btn-subtle"
+          >
+            MENU
+          </button>
+        </div>
 
-      <div className="flex items-center gap-2">
-        {saveMsg && <span className="text-xs text-amber-400">{saveMsg}</span>}
-        <button
-          onClick={toggleMute}
-          title={muted ? '取消静音' : '静音'}
-          className="text-gray-400 hover:text-gray-200 text-xs px-2 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
-        >
-          {muted ? '🔇' : '🔊'}
-        </button>
-        <button
-          onClick={handleSave}
-          disabled={isStreaming}
-          className="text-gray-400 hover:text-gray-200 disabled:opacity-40 text-xs px-3 py-1 rounded border border-stone-700 hover:border-stone-500 transition-colors"
-        >
-          SAVE
-        </button>
+        <div className="flex items-center gap-2.5">
+          {saveMsg && <span className="text-xs text-gold-400">{saveMsg}</span>}
+          <button
+            onClick={toggleMute}
+            title={muted ? '取消静音' : '静音'}
+            className="btn-subtle"
+          >
+            {muted ? '🔇' : '🔊'}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isStreaming}
+            className="btn-subtle disabled:opacity-40"
+          >
+            SAVE
+          </button>
+        </div>
       </div>
     </div>
   )

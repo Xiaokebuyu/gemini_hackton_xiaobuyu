@@ -558,7 +558,12 @@ class AcceptQuestTool(_CharacterTool):
 
 
 class AssignQuestTool(_CharacterTool):
-    """Create and assign a quest to the player directly (non-receptionist NPCs only)."""
+    """Signal quest intent to the Planner (non-receptionist NPCs only).
+
+    The NPC describes what they need help with; the Planner will create the
+    actual quest with proper conditions, rewards, and supporting content on
+    its next planning round.
+    """
 
     @property
     def name(self) -> str:
@@ -567,7 +572,8 @@ class AssignQuestTool(_CharacterTool):
     @property
     def description(self) -> str:
         return (
-            "Create a new quest and assign it to the player directly. "
+            "Request the guild to create a quest on your behalf. "
+            "Describe what you need help with — the guild will handle the details. "
             "Do NOT use this if you are a receptionist — use offer_quest instead."
         )
 
@@ -576,25 +582,21 @@ class AssignQuestTool(_CharacterTool):
         return {
             "type": "object",
             "properties": {
-                "quest_id": {
-                    "type": "string",
-                    "description": "Unique identifier for the quest.",
-                },
                 "title": {
                     "type": "string",
-                    "description": "Short display title for the quest.",
+                    "description": "Short title for the request (e.g. '采集圣洁药草').",
                 },
                 "summary": {
                     "type": "string",
-                    "description": "Brief description of what the quest entails.",
+                    "description": "What you need help with and why.",
                 },
                 "objectives": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional list of objective descriptions.",
+                    "description": "Optional list of specific things to accomplish.",
                 },
             },
-            "required": ["quest_id", "title", "summary"],
+            "required": ["title", "summary"],
         }
 
     @property
@@ -625,14 +627,6 @@ class AssignQuestTool(_CharacterTool):
                 metadata={"status": "wrong_tool"},
             )
 
-        quest_id = self._require_text(params, "quest_id")
-        if not quest_id:
-            return ToolResult(
-                ok=False,
-                message="quest_id is required.",
-                metadata={"status": "invalid_params"},
-            )
-
         title = self._require_text(params, "title")
         if not title:
             return ToolResult(
@@ -650,40 +644,32 @@ class AssignQuestTool(_CharacterTool):
             )
 
         raw_objectives = params.get("objectives", [])
-        objectives: list[dict[str, Any]] = []
-        if isinstance(raw_objectives, list):
-            objectives = [
-                {"description": str(obj), "completed": False}
-                for obj in raw_objectives
-                if obj and isinstance(obj, str)
-            ]
+        objective_texts: list[str] = [
+            str(obj) for obj in raw_objectives
+            if obj and isinstance(obj, str)
+        ] if isinstance(raw_objectives, list) else []
 
-        command = Command(
-            type="planner_create_quest",
-            source="npc",
-            params={
-                "quest_id": quest_id,
-                "title": title,
-                "summary": summary,
-                "objectives": objectives,
-                "delivery_method": "npc",
-                "metadata": {
-                    "giver_npc": character_id,
-                },
-            },
-        )
-        result = context.run_command(command)
-        if not result.executed:
-            return ToolResult(
-                ok=False,
-                message=result.errors[0] if result.errors else "command failed",
-                metadata={"status": "command_failed"},
+        # NPC signals quest intent to the Planner via blackboard.
+        # The Planner will see this on its next run and create a proper quest
+        # with conditions, rewards, and supporting content.
+        quest_intent: dict[str, Any] = {
+            "title": title,
+            "summary": summary,
+            "objectives": objective_texts,
+            "giver_npc": character_id,
+        }
+        if context.state is not None and context.state.has_slice("relations"):
+            context.state.relations.update_blackboard(
+                character_id,
+                {"quest_intent": quest_intent},
             )
         return ToolResult(
             ok=True,
-            message=f"Quest '{title}' assigned to player.",
-            commands=[command],
-            metadata={"status": "ok", "quest_id": quest_id},
+            message=(
+                f"Your request '{title}' has been noted. "
+                f"The adventurer's guild will formalize this commission shortly."
+            ),
+            metadata={"status": "ok", "event_type": "quest_intent", "intent": quest_intent},
         )
 
 

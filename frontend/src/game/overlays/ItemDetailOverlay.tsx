@@ -25,38 +25,55 @@ export default function ItemDetailOverlay() {
   const hasStats = damageDice !== null || acBonus !== null || basePrice !== null
 
   return (
-    <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-72 max-h-[70vh] overflow-y-auto">
-        <div className="flex items-start justify-between gap-2 px-5 py-3 border-b border-gray-700">
-          <h2 className="text-gray-100 font-semibold">{name}</h2>
-          {badge && (
-            <span className="text-amber-400 text-xs flex-shrink-0">[{badge}]</span>
-          )}
-          <button
-            onClick={overlay.close}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none flex-shrink-0"
-          >
-            ×
-          </button>
+    <div className="fixed inset-0 z-20 bg-black/80 backdrop-blur-[2px] flex items-center justify-center">
+      <div className="panel-ornate texture-noise w-72 max-h-[70vh] overflow-y-auto">
+        <div className="panel-header flex items-start justify-between gap-2">
+          <h2 className="font-display text-gold-300 text-lg">{name}</h2>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {badge && (
+              <span className="badge-fantasy">{badge}</span>
+            )}
+            <button
+              onClick={overlay.close}
+              className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="p-5 space-y-2 text-sm">
           {damageDice && (
-            <p className="text-gray-300">
-              伤害：{damageDice}
-              {damageType ? ` ${damageType}` : ''}
+            <p className="text-parchment-400">
+              伤害：<span className="text-gold-400 font-mono">{damageDice}</span>
+              {damageType ? <span className="text-parchment-400"> {damageType}</span> : ''}
             </p>
           )}
-          {acBonus !== null && <p className="text-gray-300">AC 加成：+{acBonus}</p>}
+          {acBonus !== null && (
+            <p className="text-parchment-400">
+              AC 加成：<span className="text-gold-400 font-mono">+{acBonus}</span>
+            </p>
+          )}
           {basePrice !== null && (
-            <p className="text-yellow-400 text-xs">💰 基础价格：{basePrice}G</p>
+            <p className="text-parchment-400 text-xs">
+              基础价格：<span className="text-gold-400 font-mono">{basePrice}G</span>
+            </p>
           )}
           {description && (
-            <p className="text-gray-400 text-xs mt-2 leading-relaxed">{description}</p>
+            <p className="text-parchment-300 text-xs mt-2 leading-relaxed">{description}</p>
           )}
           {!hasStats && !description && (
-            <p className="text-gray-500 text-xs text-center">暂无详细信息</p>
+            <p className="text-parchment-500 text-xs text-center">暂无详细信息</p>
           )}
+        </div>
+
+        <div className="px-5 pb-4">
+          <button
+            onClick={overlay.close}
+            className="btn-subtle w-full"
+          >
+            关闭
+          </button>
         </div>
       </div>
     </div>

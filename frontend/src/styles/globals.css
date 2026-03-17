@@ -2,22 +2,374 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   CRPG Fantasy Design System — "Weathered Grimoire"
+   ═══════════════════════════════════════════════════════════════════════════ */
+
 :root {
   color-scheme: dark;
-  --ui-glow: rgba(245, 158, 11, 0.15);
-  --border-fantasy: rgba(245, 158, 11, 0.25);
+
+  /* ── Core palette ──────────────────────────────────────────────────────── */
+  --bg-deep:             #0a0908;
+  --bg-panel:            rgba(16, 13, 10, 0.92);
+  --bg-panel-light:      rgba(24, 20, 15, 0.88);
+  --bg-panel-hover:      rgba(32, 26, 18, 0.95);
+  --bg-inset:            rgba(8, 6, 4, 0.6);
+
+  /* ── Border / ornament ─────────────────────────────────────────────────── */
+  --border-ornate:       rgba(180, 140, 60, 0.3);
+  --border-ornate-bright:rgba(210, 170, 80, 0.5);
+  --border-subtle:       rgba(120, 100, 70, 0.2);
+
+  /* ── Glow ──────────────────────────────────────────────────────────────── */
+  --ui-glow:             rgba(245, 180, 60, 0.12);
+  --ui-glow-strong:      rgba(245, 180, 60, 0.25);
+  --border-fantasy:      rgba(245, 158, 11, 0.25);
+
+  /* ── Text ──────────────────────────────────────────────────────────────── */
+  --text-gold:           #d4a847;
+  --text-gold-bright:    #e8c35a;
+  --text-parchment:      #c4b899;
+  --text-muted:          #8a7e6a;
+
+  /* ── Misc ──────────────────────────────────────────────────────────────── */
+  --noise-opacity:       0.035;
+  --vignette-opacity:    0.4;
 }
 
-@keyframes fantasy-glow {
-  0%, 100% { box-shadow: 0 0 6px var(--ui-glow); }
-  50% { box-shadow: 0 0 12px var(--ui-glow); }
-}
+/* ── Typography ──────────────────────────────────────────────────────────── */
 
 body {
-  @apply bg-stone-950 text-gray-100 m-0 p-0;
-  font-family: 'Noto Serif SC', 'Source Han Serif', serif;
+  @apply m-0 p-0;
+  background: var(--bg-deep);
+  color: #d6cfc0;
+  font-family: 'Noto Serif SC', 'Source Han Serif', Georgia, serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
   box-sizing: border-box;
+}
+
+.font-display {
+  font-family: 'Cinzel', 'Noto Serif SC', serif;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCROLLBAR — Thin, dark, fantasy-themed
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(10, 8, 6, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 110, 50, 0.35);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(180, 140, 60, 0.5);
+}
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 110, 50, 0.35) transparent;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   KEYFRAMES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes fantasy-glow {
+  0%, 100% { box-shadow: 0 0 6px var(--ui-glow), inset 0 0 4px var(--ui-glow); }
+  50%      { box-shadow: 0 0 14px var(--ui-glow-strong), inset 0 0 8px var(--ui-glow); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes subtle-breathe {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PANEL SYSTEM — Layered fantasy panels
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+
+  /* ── Base panel: dark with warm inner shadow ───────────────────────────── */
+  .panel-fantasy {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-ornate);
+    border-radius: 8px;
+    box-shadow:
+      inset 0 1px 0 rgba(200, 160, 80, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+      0 2px 12px rgba(0, 0, 0, 0.5),
+      0 0 1px rgba(180, 140, 60, 0.2);
+    position: relative;
+  }
+
+  /* ── Ornate panel: stronger border + corner glow ───────────────────────── */
+  .panel-ornate {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-ornate-bright);
+    border-radius: 10px;
+    box-shadow:
+      inset 0 1px 0 rgba(200, 160, 80, 0.12),
+      inset 0 -2px 0 rgba(0, 0, 0, 0.4),
+      0 4px 20px rgba(0, 0, 0, 0.6),
+      0 0 20px var(--ui-glow);
+    position: relative;
+  }
+
+  /* ── Inset area: sunken recessed region ────────────────────────────────── */
+  .panel-inset {
+    background: var(--bg-inset);
+    border: 1px solid rgba(60, 50, 30, 0.3);
+    border-radius: 6px;
+    box-shadow:
+      inset 0 2px 6px rgba(0, 0, 0, 0.4),
+      inset 0 0 1px rgba(0, 0, 0, 0.5);
+  }
+
+  /* ── Panel header bar ──────────────────────────────────────────────────── */
+  .panel-header {
+    background: linear-gradient(
+      180deg,
+      rgba(180, 140, 60, 0.12) 0%,
+      rgba(180, 140, 60, 0.04) 100%
+    );
+    border-bottom: 1px solid var(--border-ornate);
+    padding: 0.75rem 1.25rem;
+  }
+
+  /* ── Panel header title ────────────────────────────────────────────────── */
+  .panel-title {
+    font-family: 'Cinzel', 'Noto Serif SC', serif;
+    color: var(--text-gold);
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-shadow: 0 0 12px rgba(212, 168, 71, 0.3);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     BUTTON SYSTEM
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  /* ── Primary action button ─────────────────────────────────────────────── */
+  .btn-fantasy {
+    background: linear-gradient(
+      180deg,
+      rgba(160, 120, 40, 0.25) 0%,
+      rgba(120, 90, 30, 0.15) 100%
+    );
+    border: 1px solid var(--border-ornate);
+    border-radius: 6px;
+    color: var(--text-parchment);
+    padding: 0.5rem 1rem;
+    font-family: 'Noto Serif SC', serif;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  .btn-fantasy:hover:not(:disabled) {
+    background: linear-gradient(
+      180deg,
+      rgba(180, 140, 50, 0.35) 0%,
+      rgba(140, 110, 40, 0.2) 100%
+    );
+    border-color: var(--border-ornate-bright);
+    color: var(--text-gold-bright);
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.4),
+      0 0 12px var(--ui-glow);
+  }
+  .btn-fantasy:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.3);
+  }
+  .btn-fantasy:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ── Small utility button (QuickBar, tabs) ─────────────────────────────── */
+  .btn-subtle {
+    background: rgba(40, 32, 20, 0.5);
+    border: 1px solid rgba(100, 80, 40, 0.25);
+    border-radius: 4px;
+    color: var(--text-muted);
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .btn-subtle:hover:not(:disabled) {
+    background: rgba(60, 48, 28, 0.6);
+    border-color: var(--border-ornate);
+    color: var(--text-parchment);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     DIVIDERS & DECORATIONS
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .divider-ornate {
+    border: none;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--border-ornate) 20%,
+      var(--border-ornate-bright) 50%,
+      var(--border-ornate) 80%,
+      transparent 100%
+    );
+    margin: 0.5rem 0;
+  }
+
+  .divider-subtle {
+    border: none;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(100, 80, 40, 0.2) 30%,
+      rgba(100, 80, 40, 0.2) 70%,
+      transparent 100%
+    );
+    margin: 0.25rem 0;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     NOISE TEXTURE OVERLAY
+     Applied via ::after on containers that need texture
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .texture-noise::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: var(--noise-opacity);
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    background-size: 128px 128px;
+    mix-blend-mode: overlay;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     VIGNETTE OVERLAY
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .vignette::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(
+      ellipse at center,
+      transparent 50%,
+      rgba(0, 0, 0, var(--vignette-opacity)) 100%
+    );
+    z-index: 1;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     STATUS BARS
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .bar-track {
+    background: rgba(10, 8, 6, 0.7);
+    border: 1px solid rgba(60, 50, 30, 0.3);
+    border-radius: 3px;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+
+  .bar-fill-hp {
+    border-radius: 2px;
+    transition: width 0.4s ease;
+    box-shadow: 0 0 6px currentColor;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     INPUT FIELDS
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .input-fantasy {
+    background: var(--bg-inset);
+    border: 1px solid rgba(100, 80, 40, 0.25);
+    border-radius: 6px;
+    color: var(--text-parchment);
+    padding: 0.5rem 0.75rem;
+    font-family: 'Noto Serif SC', serif;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .input-fantasy::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
+  }
+  .input-fantasy:focus {
+    border-color: var(--border-ornate);
+    box-shadow: 0 0 8px var(--ui-glow);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     TOOLTIP / BADGE
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .badge-fantasy {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: rgba(160, 120, 40, 0.15);
+    border: 1px solid rgba(180, 140, 60, 0.3);
+    border-radius: 4px;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    color: var(--text-gold);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     ANIMATION UTILITIES
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  .animate-fantasy-glow {
+    animation: fantasy-glow 3s ease-in-out infinite;
+  }
+
+  .animate-shimmer {
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.3s ease-out both;
+  }
+
+  .animate-breathe {
+    animation: subtle-breathe 3s ease-in-out infinite;
+  }
 }

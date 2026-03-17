@@ -67,13 +67,13 @@ export default function QuestPanel() {
     Boolean(data && Object.values(grouped).some((g) => g.length > 0))
 
   return (
-    <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-80 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-amber-400 font-bold">任务日志</h2>
+    <div className="fixed inset-0 z-20 bg-black/80 backdrop-blur-[2px] flex items-center justify-center">
+      <div className="panel-ornate texture-noise w-80 max-h-[80vh] overflow-y-auto">
+        <div className="panel-header flex items-center justify-between">
+          <h2 className="panel-title">任务日志</h2>
           <button
             onClick={close}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+            className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
           >
             ×
           </button>
@@ -82,21 +82,22 @@ export default function QuestPanel() {
         {error ? (
           <p className="p-5 text-red-400 text-sm">{error}</p>
         ) : !data ? (
-          <p className="p-5 text-gray-500 text-sm text-center">加载中…</p>
+          <p className="p-5 text-parchment-500 text-sm text-center">加载中…</p>
         ) : (
           <div className="p-5 space-y-4">
             {chapters.length > 0 && (
               <div>
-                <p className="text-gray-500 text-xs mb-1.5">── 主线进度 ──</p>
+                <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">主线进度</p>
+                <hr className="divider-subtle" />
                 {chapters.map(([ch, pct]) => (
-                  <div key={ch} className="mb-1.5">
-                    <div className="flex justify-between text-xs text-gray-400 mb-0.5">
+                  <div key={ch} className="mb-1.5 mt-1.5">
+                    <div className="flex justify-between text-xs text-parchment-400 mb-0.5">
                       <span>{ch}</span>
                       <span>{Math.round((pct as number) * 100)}%</span>
                     </div>
                     <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-amber-500 rounded-full"
+                        className="h-full bg-gold-500 rounded-full"
                         style={{ width: `${Math.round((pct as number) * 100)}%` }}
                       />
                     </div>
@@ -110,17 +111,23 @@ export default function QuestPanel() {
               if (quests.length === 0) return null
               return (
                 <div key={status}>
-                  <p className="text-gray-500 text-xs mb-1.5">── {STATUS_LABELS[status]} ──</p>
+                  <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">
+                    {STATUS_LABELS[status]}
+                  </p>
+                  <hr className="divider-subtle" />
                   {quests.map(([key, q]) => {
                     const summary = questSummary(q)
                     return (
-                      <div key={key} className="mb-2">
-                        <p className="text-gray-200 text-sm">
-                          {STATUS_ICONS[status]}{' '}
-                          {typeof q.title === 'string' && q.title ? q.title : key}
+                      <div key={key} className="mb-2 mt-1.5">
+                        <p className="font-display text-gold-300 text-sm flex items-center gap-1.5">
+                          <span>{STATUS_ICONS[status]}</span>
+                          <span>{typeof q.title === 'string' && q.title ? q.title : key}</span>
+                          <span className="badge-fantasy ml-auto">{STATUS_LABELS[status]}</span>
                         </p>
                         {summary && (
-                          <p className="text-gray-400 text-xs ml-5 mt-0.5">{summary}</p>
+                          <p className="text-parchment-300 text-sm ml-5 mt-0.5 border-l-2 border-gold-700/30 pl-2">
+                            {summary}
+                          </p>
                         )}
                       </div>
                     )
@@ -130,7 +137,7 @@ export default function QuestPanel() {
             })}
 
             {!hasContent && (
-              <p className="text-gray-500 text-sm text-center">暂无任务记录</p>
+              <p className="text-parchment-500 text-sm text-center">暂无任务记录</p>
             )}
           </div>
         )}

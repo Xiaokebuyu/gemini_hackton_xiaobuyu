@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getWorlds } from '../lib/api'
 import type { WorldSummary } from '../types/api'
+import goblinSlayerCover from '../assets/goblin_slayer_cover.png'
+
+const WORLD_COVERS: Record<string, string> = {
+  goblin_slayer: goblinSlayerCover,
+}
 
 export default function WorldSelectPage() {
   const [worlds, setWorlds] = useState<WorldSummary[] | null>(null)
@@ -24,26 +29,26 @@ export default function WorldSelectPage() {
 
   if (!worlds) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center text-parchment-400">
         加载中...
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 p-8">
-      <h1 className="text-3xl font-bold text-center mb-10 text-amber-400">选择世界</h1>
+    <div className="relative min-h-screen bg-gray-950 text-gray-100 p-8 vignette">
+      <h1 className="font-display text-gold-300 text-3xl tracking-wide text-center mb-10">选择世界</h1>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
         {worlds.map((world) => (
           <button
             key={world.world_id}
             onClick={() => navigate(`/${world.world_id}/sessions`)}
-            className="bg-gray-800 hover:bg-gray-700 rounded-lg overflow-hidden text-left transition-colors group"
+            className="panel-fantasy texture-noise hover:shadow-fantasy-glow rounded-lg overflow-hidden text-left transition-all duration-300 group"
           >
             <div className="h-40 bg-gradient-to-br from-gray-700 to-gray-900 relative">
-              {world.cover_image && (
+              {(WORLD_COVERS[world.world_id] || world.cover_image) && (
                 <img
-                  src={world.cover_image}
+                  src={WORLD_COVERS[world.world_id] || world.cover_image}
                   alt={world.name}
                   className="w-full h-full object-cover"
                   onError={(e) => {
@@ -51,15 +56,15 @@ export default function WorldSelectPage() {
                   }}
                 />
               )}
-              <span className="absolute top-2 right-2 bg-amber-700 text-white text-xs px-2 py-0.5 rounded">
+              <span className="absolute top-2 right-2 badge-fantasy">
                 存档 {world.player_count}
               </span>
             </div>
             <div className="p-4">
-              <h2 className="text-lg font-bold text-amber-300 group-hover:text-amber-200 mb-1">
+              <h2 className="font-display text-gold-400 text-lg mb-1">
                 {world.name}
               </h2>
-              <p className="text-gray-400 text-sm line-clamp-3">{world.description}</p>
+              <p className="text-parchment-300 text-sm line-clamp-3">{world.description}</p>
             </div>
           </button>
         ))}

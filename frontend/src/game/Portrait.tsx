@@ -60,7 +60,7 @@ export default function Portrait({ slot, worldId, sessionId }: Props) {
                 {characterId[0]?.toUpperCase() ?? '?'}
               </span>
             </div>
-            <span className="text-gray-500 text-xs text-center px-2 leading-tight">
+            <span className="font-display text-parchment-200 text-xs text-center px-2 leading-tight">
               {characterId}
             </span>
           </div>

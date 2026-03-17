@@ -1,0 +1,83 @@
+{
+  "chapter_completion": {
+    "ch2": 0.0
+  },
+  "dynamic_quests": {
+    "dq_ms_frontier_arrival": {
+      "created_at_tick": 8,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {
+        "source_milestone": "ms_frontier_arrival",
+        "urgency": "medium"
+      },
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "npc_id": "guild_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与guild_girl对话"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "npc_id": "goblin_slayer"
+            },
+            "type": "npc_talked"
+          },
+          "description": "与goblin_slayer对话"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往frontier_town"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_ms_frontier_arrival",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 300,
+        "xp": 600
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "初抵边境小镇，在冒险者公会完成登记，随后走遍这座小镇的每个角落——铁匠的炉火、神殿的烛光、酒馆的温热牛奶酒。公会大厅角落里，一个全身破旧铠甲的沉默身影正在检查装备，身旁是一支个性鲜明的队伍。命运在这里悄然展开。",
+      "target_milestone": "ms_frontier_arrival",
+      "title": "踏入边境",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_frontier_arrival": {
+      "activated_tick": 8,
+      "completed_tick": null,
+      "state": "ACTIVE"
+    },
+    "ms_growing_darkness": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_hive_heart": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

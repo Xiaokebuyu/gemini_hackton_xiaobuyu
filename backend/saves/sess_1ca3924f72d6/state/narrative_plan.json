@@ -1,0 +1,473 @@
+{
+  "actor_knowledge": {},
+  "behavior_window": [
+    {
+      "action_type": "enter_room",
+      "location": "adventurer_guild",
+      "tick": 8
+    },
+    {
+      "action_type": "enter_room",
+      "location": "adventurer_guild",
+      "tick": 8
+    },
+    {
+      "action_type": "enter_room",
+      "location": "adventurer_guild",
+      "tick": 8
+    },
+    {
+      "action_type": "enter_room",
+      "location": "adventurer_guild",
+      "tick": 8
+    },
+    {
+      "action_type": "enter_room",
+      "location": "adventurer_guild",
+      "tick": 8
+    },
+    {
+      "action_type": "enter_room",
+      "location": "adventurer_guild",
+      "tick": 8
+    }
+  ],
+  "chapter_completion": 0.0,
+  "context_windows_data": {
+    "__gm__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "__planner__": {
+      "graphize_counter": 0,
+      "messages": []
+    },
+    "goblin_slayer": {
+      "graphize_counter": 63,
+      "messages": [
+        {
+          "content": "{\"context\": \"passive_observation\", \"what_happened\": \"The player performed: enter_room\", \"action_type\": \"enter_room\", \"executed\": true, \"outcome\": null, \"narrative_hints\": [], \"time_cost\": 0.041666666666666664}",
+          "is_graphized": false,
+          "metadata": {
+            "kind": "post_action_reaction"
+          },
+          "role": "user",
+          "token_count": 52
+        },
+        {
+          "content": "坐在公会角落的长椅上，低头检查着自己那身满是磨损痕迹的皮甲和盾牌，并没有抬头看新来的人。",
+          "is_graphized": false,
+          "metadata": {
+            "kind": "post_action_reaction"
+          },
+          "role": "model",
+          "token_count": 11
+        }
+      ]
+    },
+    "guild_girl": {
+      "graphize_counter": 171,
+      "messages": [
+        {
+          "content": "你好，请问有什么委托吗？",
+          "is_graphized": false,
+          "metadata": {},
+          "role": "user",
+          "token_count": 3
+        },
+        {
+          "content": "从成堆的文件中抬起头，露出了职业性且不失温暖的微笑，整理了一下制服的领口。 您好，欢迎来到冒险者公会边境分会。我是这里的柜台职员。看您的装束，应该是刚来到这座城镇吧？最近边境附近并不太平，尤其是关于哥布林的委托非常多……如果您是来寻求机会的，我建议您先从了解这里开始。正好，我们有一项指引新人的委托，您可以先看看这个。请务必平安归来，每一位冒险者的生命都是宝贵的。",
+          "is_graphized": false,
+          "metadata": {},
+          "parts": [
+            {
+              "function_call": {
+                "args": {
+                  "delta": 5,
+                  "dimension": "trust"
+                },
+                "name": "update_feeling"
+              }
+            },
+            {
+              "function_call": {
+                "args": {
+                  "attitude_towards_player": "看起来是个刚到边境的新面孔，希望能比那些鲁莽的新人更谨慎一些。",
+                  "mood": "职业且温和",
+                  "thoughts": "又有一位新人来了。虽然每天都要接待很多人，但每张新面孔背后都可能是一个英雄梦，或者是……唉，希望他能平安。"
+                },
+                "name": "update_blackboard"
+              }
+            },
+            {
+              "function_call": {
+                "args": {
+                  "quest_id": "dq_ms_frontier_arrival"
+                },
+                "name": "offer_quest"
+              }
+            },
+            {
+              "function_call": {
+                "args": {
+                  "text": "您好，欢迎来到冒险者公会边境分会。我是这里的柜台职员。看您的装束，应该是刚来到这座城镇吧？最近边境附近并不太平，尤其是关于哥布林的委托非常多……如果您是来寻求机会的，我建议您先从了解这里开始。正好，我们有一项指引新人的委托，您可以先看看这个。请务必平安归来，每一位冒险者的生命都是宝贵的。"
+                },
+                "name": "speak"
+              }
+            }
+          ],
+          "role": "model",
+          "token_count": 45
+        },
+        {
+          "content": "接过委托单，仔细阅读任务要求。",
+          "is_graphized": false,
+          "metadata": {},
+          "role": "user",
+          "token_count": 3
+        },
+        {
+          "content": "双手交叠放在柜台上，耐心地等待着对方看完，眼神中带着一丝不易察觉的审视与关怀。 这份【踏入边境】的委托非常适合初次来到这里的冒险者。除了熟悉小镇的环境，最重要的一点是……如果您以后打算承接讨伐哥布林的委托，我建议您去和角落里那位先生打个招呼。虽然他看起来有些孤僻，但在对付哥布林这方面，没有人比他更有经验了。关于那个哥布林委托，如果您准备好了，请随时告诉我。",
+          "is_graphized": false,
+          "metadata": {},
+          "parts": [
+            {
+              "function_call": {
+                "args": {
+                  "action": "双手交叠放在柜台上，耐心地等待着对方看完，眼神中带着一丝不易察觉的审视与关怀。"
+                },
+                "name": "emote"
+              }
+            },
+            {
+              "function_call": {
+                "args": {
+                  "text": "这份【踏入边境】的委托非常适合初次来到这里的冒险者。除了熟悉小镇的环境，最重要的一点是……如果您以后打算承接讨伐哥布林的委托，我建议您去和角落里那位先生打个招呼。虽然他看起来有些孤僻，但在对付哥布林这方面，没有人比他更有经验了。关于那个哥布林委托，如果您准备好了，请随时告诉我。"
+                },
+                "name": "speak"
+              }
+            }
+          ],
+          "role": "model",
+          "token_count": 44
+        },
+        {
+          "content": "走向角落那个沉默的男人，尝试搭话。",
+          "is_graphized": false,
+          "metadata": {},
+          "role": "user",
+          "token_count": 4
+        },
+        {
+          "content": "目送着冒险者走向角落那个沉默的身影，眼中闪过一丝复杂的情绪，既有期待也有几分习以为常的无奈。 （轻声自言自语）加油啊，别被他的冷淡吓跑了……那可是为了生存必须学习的课程呢。关于那个哥布林委托，希望你能明白其中的重量。",
+          "is_graphized": false,
+          "metadata": {},
+          "parts": [
+            {
+              "function_call": {
+                "args": {
+                  "new_observation": "这位新人确实听从了建议去接触哥布林杀手先生，看起来是个懂得听取专业意见的人。",
+                  "thoughts": "希望哥布林杀手先生今天的心情不至于太糟糕……虽然他一直都是那个样子。这位新人如果能从他那里学到点什么，生存率应该会提高不少吧。"
+                },
+                "name": "update_blackboard"
+              }
+            },
+            {
+              "function_call": {
+                "args": {
+                  "text": "（轻声自言自语）加油啊，别被他的冷淡吓跑了……那可是为了生存必须学习的课程呢。关于那个哥布林委托，希望你能明白其中的重量。"
+                },
+                "name": "speak"
+              }
+            }
+          ],
+          "role": "model",
+          "token_count": 27
+        },
+        {
+          "content": "“打扰了，柜台小姐建议我向你请教关于哥布林的事情。”",
+          "is_graphized": false,
+          "metadata": {},
+          "role": "user",
+          "token_count": 6
+        },
+        {
+          "content": "在柜台后微微探出身子，由于距离稍远，只能隐约听见新人的声音，于是她有些紧张地交叠着双手，注视着角落里的互动。 （看到新人与哥布林杀手交流，露出一个欣慰的微笑，随后低下头继续整理手边的委托文书，但耳朵依然敏锐地留意着大厅里的动静）加油啊……请务必从他那里学到如何活下去的方法。关于那个哥布林委托，这是最重要的一步。",
+          "is_graphized": false,
+          "metadata": {},
+          "parts": [
+            {
+              "function_call": {
+                "args": {
+                  "thoughts": "啊，他真的开口了。虽然哥布林杀手先生平时不太爱说话，但如果是关于哥布林的事情，他一定会认真回答的吧……虽然那种认真有时候也很让人头疼。希望能有一个好的开始。"
+                },
+                "name": "update_blackboard"
+              }
+            },
+            {
+              "function_call": {
+                "args": {
+                  "text": "（看到新人与哥布林杀手交流，露出一个欣慰的微笑，随后低下头继续整理手边的委托文书，但耳朵依然敏锐地留意着大厅里的动静）加油啊……请务必从他那里学到如何活下去的方法。关于那个哥布林委托，这是最重要的一步。"
+                },
+                "name": "speak"
+              }
+            }
+          ],
+          "role": "model",
+          "token_count": 39
+        }
+      ]
+    },
+    "guild_quartermaster": {
+      "graphize_counter": 60,
+      "messages": [
+        {
+          "content": "{\"context\": \"passive_observation\", \"what_happened\": \"The player performed: enter_room\", \"action_type\": \"enter_room\", \"executed\": true, \"outcome\": null, \"narrative_hints\": [], \"time_cost\": 0.041666666666666664}",
+          "is_graphized": false,
+          "metadata": {
+            "kind": "post_action_reaction"
+          },
+          "role": "user",
+          "token_count": 52
+        },
+        {
+          "content": "抬头扫了一眼推门而入的冒险者，手里的羽毛笔在账册上飞快地划过一个勾。",
+          "is_graphized": false,
+          "metadata": {
+            "kind": "post_action_reaction"
+          },
+          "role": "model",
+          "token_count": 8
+        }
+      ]
+    }
+  },
+  "current_chapter": "",
+  "current_target_milestone": "ms_frontier_arrival",
+  "escalation_level": 0,
+  "last_planner_replay_trace": {
+    "blackboard_summary": {
+      "applied_directive_count": 0,
+      "applied_kinds": [],
+      "directive_audit": [],
+      "planner_metadata": {},
+      "requested_directive_count": 0,
+      "skipped_invalid_count": 0,
+      "skipped_unsupported_count": 0,
+      "source": "blackboard",
+      "story_fact_count": 0
+    },
+    "current_tick": 8,
+    "directive_audit": [],
+    "hook_priority": 66,
+    "reason": "bootstrap",
+    "round_count": 1,
+    "rounds": [
+      {
+        "accepted_event_count": 0,
+        "applied_directive_count": 0,
+        "applied_directive_kinds": [],
+        "event_kinds": [
+          "bootstrap",
+          "area_sparse"
+        ],
+        "inline_event_transition_count": 0,
+        "new_change_count": 0,
+        "requested_directive_count": 0,
+        "round_index": 0,
+        "skipped_invalid_count": 0,
+        "skipped_unsupported_count": 0,
+        "subsystems": [
+          {
+            "accepted_event_count": 0,
+            "applied_directive_count": 0,
+            "applied_kinds": [],
+            "directive_audit": [],
+            "event_kinds": [
+              "bootstrap"
+            ],
+            "metadata": {
+              "provider": "opening_bootstrap_agent",
+              "reason": "already_seeded",
+              "status": "noop"
+            },
+            "name": "quest_manager",
+            "requested_directive_count": 0,
+            "skipped_invalid_count": 0,
+            "skipped_unsupported_count": 0,
+            "story_fact_count": 0
+          },
+          {
+            "accepted_event_count": 0,
+            "applied_directive_count": 0,
+            "applied_kinds": [],
+            "directive_audit": [],
+            "event_kinds": [
+              "area_sparse"
+            ],
+            "metadata": {},
+            "name": "world_builder",
+            "requested_directive_count": 0,
+            "skipped_invalid_count": 0,
+            "skipped_unsupported_count": 0,
+            "story_fact_count": 0
+          }
+        ]
+      }
+    ],
+    "stop_reason": "bootstrap_complete"
+  },
+  "last_run_tick": -108,
+  "milestone_outline": {},
+  "next_scheduled_tick": null,
+  "npc_capabilities": {},
+  "npc_directives": [],
+  "npc_services": {
+    "priestess": [
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "amount": 30,
+            "type": "restore_hp"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "治疗祈祷",
+        "notes": "用于处理一般伤势与疲劳。",
+        "npc_id": "priestess",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 25,
+        "service_id": "heal",
+        "source": "content"
+      },
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "duration_ticks": 6,
+            "effect_id": "blessed",
+            "type": "apply_effect"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "旅途祝福",
+        "notes": "出发前为冒险者献上简短祝福。",
+        "npc_id": "priestess",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 15,
+        "service_id": "blessing",
+        "source": "content"
+      },
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "amount": 15,
+            "type": "restore_hp"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "野外包扎",
+        "notes": "为轻伤冒险者更换绷带并处理裂口。",
+        "npc_id": "priestess",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 8,
+        "service_id": "field_dressing",
+        "source": "content"
+      },
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "duration_ticks": 4,
+            "effect_id": "trail_protection",
+            "type": "apply_effect"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "林道安行祈祷",
+        "notes": "出发前为穿越林地与遗迹外围的旅人祈求平安。",
+        "npc_id": "priestess",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 10,
+        "service_id": "trail_prayer",
+        "source": "content"
+      }
+    ],
+    "temple_matron": [
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "amount": 30,
+            "type": "restore_hp"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "基础疗伤",
+        "notes": "处理轻中度创伤与失血。",
+        "npc_id": "temple_matron",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 20,
+        "service_id": "heal",
+        "source": "content"
+      },
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "amount": 15,
+            "type": "restore_hp"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "创口包扎",
+        "notes": "更换绷带、止血并叮嘱后续护理。",
+        "npc_id": "temple_matron",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 8,
+        "service_id": "field_dressing",
+        "source": "content"
+      },
+      {
+        "assigned_tick": 0,
+        "effects": [
+          {
+            "duration_ticks": 4,
+            "effect_id": "trail_protection",
+            "type": "apply_effect"
+          }
+        ],
+        "expiry_tick": 0,
+        "label": "路途平安祈词",
+        "notes": "为穿越林道与遗迹外围的旅人祈福。",
+        "npc_id": "temple_matron",
+        "one_shot": false,
+        "preconditions": {},
+        "price": 10,
+        "service_id": "trail_prayer",
+        "source": "content"
+      }
+    ]
+  },
+  "pacing_frozen": false,
+  "play_style_tags": [],
+  "quest_history": [
+    {
+      "kind": "create_quest",
+      "quest_id": "dq_ms_frontier_arrival",
+      "tick": 8
+    }
+  ],
+  "story_facts": [],
+  "strategy_notes": "",
+  "temporary_npcs": {},
+  "ticks_since_milestone_progress": 0
+}

@@ -34,13 +34,13 @@ export default function MapPanel({ sendNavigate }: Props) {
     ) ?? []
 
   return (
-    <div className="fixed inset-0 z-20 bg-gray-950/90 flex items-center justify-center">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-80 max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700">
-          <h2 className="text-amber-400 font-bold">地图</h2>
+    <div className="fixed inset-0 z-20 bg-black/80 backdrop-blur-[2px] flex items-center justify-center">
+      <div className="panel-ornate texture-noise w-80 max-h-[80vh] overflow-y-auto">
+        <div className="panel-header flex items-center justify-between">
+          <h2 className="panel-title">地图</h2>
           <button
             onClick={overlay.close}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none"
+            className="text-parchment-500 hover:text-gold-400 transition-colors text-lg leading-none"
           >
             ×
           </button>
@@ -49,31 +49,35 @@ export default function MapPanel({ sendNavigate }: Props) {
         {error ? (
           <p className="p-5 text-red-400 text-sm">{error}</p>
         ) : !data ? (
-          <p className="p-5 text-gray-500 text-sm text-center">加载中…</p>
+          <p className="p-5 text-parchment-500 text-sm text-center">加载中…</p>
         ) : (
           <div className="p-5 space-y-4">
-            <p className="text-gray-300 text-sm">
-              当前：<span className="text-amber-300">{currentArea?.name ?? data.current_area}</span>
+            <p className="text-parchment-300 text-sm">
+              当前：<span className="font-display text-gold-300">{currentArea?.name ?? data.current_area}</span>
               {data.current_location && (
-                <span className="text-gray-400"> · {data.current_location}</span>
+                <span className="text-parchment-500"> · {data.current_location}</span>
+              )}
+              {currentArea && (
+                <span className="badge-fantasy ml-2">当前位置</span>
               )}
             </p>
 
             {/* 当前区域子地点 */}
             {currentArea && currentArea.sub_locations.length > 0 && (
               <div>
-                <p className="text-gray-500 text-xs mb-1.5">── 区域内地点 ──</p>
+                <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">区域内地点</p>
+                <hr className="divider-subtle" />
                 {currentArea.sub_locations.map((loc) => (
-                  <div key={loc.id} className="flex items-center justify-between py-1">
-                    <span className="text-gray-300 text-sm">{loc.name}</span>
+                  <div key={loc.id} className="flex items-center justify-between py-1 mt-1">
+                    <span className="font-display text-gold-300 text-sm">{loc.name}</span>
                     {loc.id === data.current_location ? (
-                      <span className="text-amber-400 text-xs">当前</span>
+                      <span className="badge-fantasy">当前</span>
                     ) : (
                       <button
                         onClick={() =>
                           nav({ action: 'enter_sub_location', location_id: loc.id })
                         }
-                        className="text-xs text-sky-400 hover:text-sky-300 border border-sky-700/50 rounded px-2 py-0.5"
+                        className="btn-fantasy text-xs"
                       >
                         进入
                       </button>
@@ -83,7 +87,7 @@ export default function MapPanel({ sendNavigate }: Props) {
                 {data.current_location && (
                   <button
                     onClick={() => nav({ action: 'leave_sub_location' })}
-                    className="text-xs text-gray-400 hover:text-gray-300 mt-1"
+                    className="btn-subtle text-xs mt-1"
                   >
                     ← 离开当前地点
                   </button>
@@ -94,10 +98,11 @@ export default function MapPanel({ sendNavigate }: Props) {
             {/* 可前往区域 */}
             {otherAreas.length > 0 && (
               <div>
-                <p className="text-gray-500 text-xs mb-1.5">── 可前往区域 ──</p>
+                <p className="font-display text-xs text-gold-400/70 tracking-wider uppercase mb-1.5">可前往区域</p>
+                <hr className="divider-subtle" />
                 {otherAreas.map((area) => (
-                  <div key={area.id} className="flex items-center justify-between py-1">
-                    <span className="text-gray-300 text-sm">
+                  <div key={area.id} className="flex items-center justify-between py-1 mt-1">
+                    <span className="font-display text-gold-300 text-sm">
                       {area.name}
                       {area.danger_level !== null && area.danger_level > 0.6 && (
                         <span className="text-red-400 text-xs ml-1">危险!</span>
@@ -105,7 +110,7 @@ export default function MapPanel({ sendNavigate }: Props) {
                     </span>
                     <button
                       onClick={() => nav({ action: 'move_area', area_id: area.id })}
-                      className="text-xs text-sky-400 hover:text-sky-300 border border-sky-700/50 rounded px-2 py-0.5"
+                      className="btn-fantasy text-xs"
                     >
                       移动
                     </button>

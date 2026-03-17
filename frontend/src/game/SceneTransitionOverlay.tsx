@@ -49,7 +49,8 @@ export default function SceneTransitionOverlay() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.3 }}
-                className="text-white text-2xl font-light tracking-[0.3em] text-center px-8"
+                className="font-display text-gold-300 text-2xl tracking-wider text-center px-8"
+                style={{ textShadow: '0 0 20px rgba(200,160,80,0.3)' }}
               >
                 {locationName}
               </motion.p>

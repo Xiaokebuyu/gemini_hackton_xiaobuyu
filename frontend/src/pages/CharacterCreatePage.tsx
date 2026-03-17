@@ -42,21 +42,21 @@ interface SelectionStepProps {
 function SelectionStep({ label, items, selected, onSelect }: SelectionStepProps) {
   return (
     <div>
-      <h2 className="text-xl font-bold text-amber-400 mb-4">选择{label}</h2>
+      <h2 className="font-display text-gold-300 text-xl mb-4">选择{label}</h2>
       <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
         {items.map((item) => (
           <button
             key={item.id}
             onClick={() => onSelect(item.id)}
-            className={`w-full text-left p-4 rounded-lg border transition-colors ${
+            className={`w-full text-left p-4 transition-all duration-200 panel-inset ${
               selected === item.id
-                ? 'border-amber-500 bg-amber-900/30'
-                : 'border-gray-600 bg-gray-800 hover:border-gray-400'
+                ? 'border-ornate-bright'
+                : 'hover:border-ornate-bright'
             }`}
           >
-            <div className="font-bold text-gray-100 mb-1">{item.name}</div>
+            <div className="font-display text-parchment-200 mb-1">{item.name}</div>
             {item.description && (
-              <div className="text-gray-400 text-sm">{item.description}</div>
+              <div className="text-parchment-400 text-sm">{item.description}</div>
             )}
           </button>
         ))}
@@ -148,7 +148,7 @@ export default function CharacterCreatePage() {
 
   if (!options) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center text-parchment-400">
         {error ?? '加载中...'}
       </div>
     )
@@ -160,8 +160,8 @@ export default function CharacterCreatePage() {
 
   const abilityStepContent = (
     <div>
-      <h2 className="text-xl font-bold text-amber-400 mb-2">分配属性</h2>
-      <p className="text-gray-400 text-sm mb-4">
+      <h2 className="font-display text-gold-300 text-xl mb-2">分配属性</h2>
+      <p className="text-parchment-400 text-sm mb-4">
         标准数组：[15, 14, 13, 12, 10, 8]，每个数值只能使用一次。
       </p>
       <div className="space-y-3">
@@ -171,10 +171,10 @@ export default function CharacterCreatePage() {
             (v) => v === currentVal || !usedValues.includes(v),
           ).sort((a, b) => b - a)
           return (
-            <div key={attr} className="flex items-center gap-4 bg-gray-800 p-3 rounded-lg">
-              <span className="w-24 text-amber-300 font-bold">
+            <div key={attr} className="flex items-center gap-4 panel-inset p-3">
+              <span className="w-24 text-gold-400 font-display">
                 {attr}{' '}
-                <span className="text-gray-500 text-xs font-normal">{ATTR_LABELS[attr]}</span>
+                <span className="text-parchment-400 text-xs font-normal">{ATTR_LABELS[attr]}</span>
               </span>
               <select
                 value={currentVal ?? ''}
@@ -185,7 +185,7 @@ export default function CharacterCreatePage() {
                     abilityScores: { ...f.abilityScores, [attr]: val },
                   }))
                 }}
-                className="flex-1 bg-gray-700 text-gray-100 border border-gray-600 rounded px-3 py-1.5 focus:border-amber-500 outline-none"
+                className="flex-1 input-fantasy"
               >
                 <option value="">— 未分配 —</option>
                 {available.map((v) => (
@@ -195,7 +195,7 @@ export default function CharacterCreatePage() {
                 ))}
               </select>
               {currentVal != null && (
-                <span className="text-amber-400 font-bold w-6 text-center">{currentVal}</span>
+                <span className="text-gold-400 font-bold w-6 text-center">{currentVal}</span>
               )}
             </div>
           )
@@ -212,10 +212,10 @@ export default function CharacterCreatePage() {
 
   const summaryStepContent = (
     <div>
-      <h2 className="text-xl font-bold text-amber-400 mb-4">角色命名与确认</h2>
+      <h2 className="font-display text-gold-300 text-xl mb-4">角色命名与确认</h2>
       <div className="space-y-4">
         <div>
-          <label className="block text-gray-300 text-sm mb-1">
+          <label className="block text-parchment-400 text-sm mb-1">
             角色名 <span className="text-red-400">*</span>
           </label>
           <input
@@ -223,36 +223,36 @@ export default function CharacterCreatePage() {
             value={form.name}
             onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             placeholder="输入角色名..."
-            className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 focus:border-amber-500 outline-none"
+            className="w-full input-fantasy"
           />
         </div>
         <div>
-          <label className="block text-gray-300 text-sm mb-1">背景故事（可选）</label>
+          <label className="block text-parchment-400 text-sm mb-1">背景故事（可选）</label>
           <textarea
             value={form.backstory}
             onChange={(e) => setForm((f) => ({ ...f, backstory: e.target.value }))}
             placeholder="你的角色从何处来..."
             rows={3}
-            className="w-full bg-gray-800 border border-gray-600 text-gray-100 rounded-lg px-4 py-2 focus:border-amber-500 outline-none resize-none"
+            className="w-full input-fantasy resize-none"
           />
         </div>
-        <div className="bg-gray-800 rounded-lg p-4 text-sm">
-          <div className="text-gray-400 mb-2 font-bold">角色摘要</div>
-          <div className="space-y-1 text-gray-300">
+        <div className="panel-inset p-4 text-sm">
+          <div className="text-parchment-400 mb-2 font-display">角色摘要</div>
+          <div className="space-y-1 text-parchment-300">
             <div>
-              种族：<span className="text-amber-300">{raceName}</span>
+              种族：<span className="text-gold-400">{raceName}</span>
             </div>
             <div>
-              职业：<span className="text-amber-300">{className}</span>
+              职业：<span className="text-gold-400">{className}</span>
             </div>
             <div>
-              背景：<span className="text-amber-300">{bgName}</span>
+              背景：<span className="text-gold-400">{bgName}</span>
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
               {ATTRS.map((a) => (
                 <span key={a}>
                   {a}{' '}
-                  <span className="text-amber-300 font-bold">
+                  <span className="text-gold-400 font-bold">
                     {form.abilityScores[a] ?? '?'}
                   </span>
                 </span>
@@ -269,6 +269,9 @@ export default function CharacterCreatePage() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 p-8">
       <div className="max-w-2xl mx-auto">
+        {/* 标题 */}
+        <h1 className="font-display text-gold-300 text-2xl text-center mb-6">创建角色</h1>
+
         {/* 步骤条 */}
         <div className="flex items-center justify-center gap-3 mb-8">
           {[1, 2, 3, 4, 5].map((i) => (
@@ -276,9 +279,9 @@ export default function CharacterCreatePage() {
               key={i}
               className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
                 i === step
-                  ? 'bg-amber-600 text-white'
+                  ? 'bg-gold-500 text-gray-950'
                   : i < step
-                    ? 'bg-amber-900 text-amber-400'
+                    ? 'bg-gold-800 text-gold-400'
                     : 'bg-gray-700 text-gray-500'
               }`}
             >
@@ -288,7 +291,7 @@ export default function CharacterCreatePage() {
         </div>
 
         {/* 步骤内容 */}
-        <div className="mb-6">
+        <div className="panel-ornate texture-noise p-6 mb-6">
           {step === 1 && (
             <SelectionStep
               label="种族"
@@ -324,14 +327,14 @@ export default function CharacterCreatePage() {
           {step > 1 ? (
             <button
               onClick={() => setStep((s) => s - 1)}
-              className="bg-gray-700 hover:bg-gray-600 text-gray-200 px-6 py-2 rounded-lg transition-colors"
+              className="btn-subtle px-6 py-2"
             >
               上一步
             </button>
           ) : (
             <button
               onClick={() => navigate(-1)}
-              className="bg-gray-700 hover:bg-gray-600 text-gray-200 px-6 py-2 rounded-lg transition-colors"
+              className="btn-subtle px-6 py-2"
             >
               返回
             </button>
@@ -341,7 +344,7 @@ export default function CharacterCreatePage() {
             <button
               onClick={() => setStep((s) => s + 1)}
               disabled={!canProceed()}
-              className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white px-6 py-2 rounded-lg transition-colors"
+              className="btn-fantasy disabled:opacity-40 px-6 py-2"
             >
               下一步
             </button>
@@ -349,7 +352,7 @@ export default function CharacterCreatePage() {
             <button
               onClick={handleSubmit}
               disabled={!canProceed() || submitting}
-              className="bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white px-6 py-2 rounded-lg transition-colors"
+              className="btn-fantasy disabled:opacity-40 px-6 py-2"
             >
               {submitting ? '创建中...' : '创建角色'}
             </button>

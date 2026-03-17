@@ -47,25 +47,46 @@ export default function VnOptionList({ sendInteract: _sendInteract }: VnOptionLi
             onClick={() => handleOptionClick(opt)}
             disabled={opt.disabled ?? isLocked}
             className="
-              bg-stone-900/60 hover:bg-stone-800/80
-              border border-amber-500/20 hover:border-amber-400/40
-              rounded-lg px-4 py-2.5
-              transition-all duration-150
-              disabled:opacity-50 disabled:cursor-not-allowed
+              w-full text-left
+              px-5 py-3
+              rounded-md
+              transition-all duration-200
+              disabled:opacity-40 disabled:cursor-not-allowed
               group
             "
+            style={{
+              background: 'rgba(10, 12, 20, 0.65)',
+              backdropFilter: 'blur(6px)',
+              border: '1px solid rgba(180, 160, 120, 0.15)',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
+            }}
+            onMouseEnter={(e) => {
+              const el = e.currentTarget
+              el.style.background = 'rgba(20, 24, 40, 0.8)'
+              el.style.borderColor = 'rgba(200, 180, 120, 0.35)'
+              el.style.boxShadow = '0 2px 12px rgba(0, 0, 0, 0.4), 0 0 8px rgba(200, 180, 120, 0.1)'
+            }}
+            onMouseLeave={(e) => {
+              const el = e.currentTarget
+              el.style.background = 'rgba(10, 12, 20, 0.65)'
+              el.style.borderColor = 'rgba(180, 160, 120, 0.15)'
+              el.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.3)'
+            }}
           >
             <div className="flex items-start gap-2">
               {opt.icon && (
-                <span className="text-base flex-shrink-0">{opt.icon}</span>
+                <span className="text-base flex-shrink-0 opacity-80">{opt.icon}</span>
               )}
-              <div className="flex-1 min-w-0 text-left">
+              <div className="flex-1 min-w-0">
                 {skillTag && (
-                  <span className="inline-block text-amber-400 text-xs mr-1.5 mb-0.5">
-                    [{skillTag}]
+                  <span className="badge-fantasy mr-2 mb-0.5">
+                    {skillTag}
                   </span>
                 )}
-                <span className="text-gray-100 text-sm leading-snug group-hover:text-white transition-colors">
+                <span
+                  className="text-parchment-200 text-sm leading-snug group-hover:text-parchment-50 transition-colors"
+                  style={{ textShadow: '0 1px 3px rgba(0, 0, 0, 0.5)' }}
+                >
                   {baseLabel}
                 </span>
               </div>
