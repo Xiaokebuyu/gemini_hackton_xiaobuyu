@@ -1,0 +1,38 @@
+{
+  "active_events": {},
+  "pending_events": [],
+  "rumors": [
+    {
+      "area_id": "frontier_town",
+      "content": "听说最近西边牧场附近有些不太安分，野狗的数量似乎变多了，甚至有人看到了奇怪的黑影。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 8
+      },
+      "metadata": {},
+      "rumor_id": "rumor_84a8e9c54b82",
+      "source": "narrative_planner",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "听说最近西边牧场附近有些不太安分，野狗的数量似乎变多了，甚至有人看到了奇怪的黑影。"
+    },
+    {
+      "area_id": "frontier_town",
+      "content": "北边关口的守卫说，最近晚上总能听到林子里有窸窸窣窣的声音，不像是野猪，更像是某种有组织的搬运声。",
+      "created_at": {
+        "day": 1,
+        "period": "day",
+        "slot": 15
+      },
+      "metadata": {},
+      "rumor_id": "rumor_f212418a5e44",
+      "source": "narrative_planner",
+      "source_npc_id": null,
+      "spread_to": [],
+      "tags": [],
+      "text": "北边关口的守卫说，最近晚上总能听到林子里有窸窸窣窣的声音，不像是野猪，更像是某种有组织的搬运声。"
+    }
+  ]
+}

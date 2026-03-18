@@ -204,7 +204,6 @@ _TICK_KIND_CONVERSATION = frozenset(
         "public_utterance_turn",
         "party_chat_turn",
         "free_chat_turn",
-        "private_chat_turn",
         "investigate_clue",
         "resolve_clue_option",
     }
@@ -259,7 +258,6 @@ _ACTION_VERBS: dict[str, str] = {
     "public_utterance_turn": "spoke aloud",
     "party_chat_turn": "spoke to the party",
     "free_chat_turn": "spoke to the party",
-    "private_chat_turn": "spoke privately with",
     # Spellcasting
     "cast_spell": "cast", "prepare_spells": "prepared spells",
     "break_concentration": "broke concentration",
@@ -316,7 +314,6 @@ _ACTION_CATEGORY_TAGS: dict[str, list[str]] = {
     "public_utterance_turn": ["DIALOGUE", "PUBLIC_UTTERANCE"],
     "party_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
     "free_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
-    "private_chat_turn": ["DIALOGUE", "PRIVATE_CHAT"],
     # Spellcasting
     "cast_spell": ["SPELLCASTING"], "prepare_spells": ["SPELLCASTING"],
     "break_concentration": ["SPELLCASTING"],

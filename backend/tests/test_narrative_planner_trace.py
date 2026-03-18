@@ -96,9 +96,10 @@ def test_bootstrap_trace_uses_same_shape_as_normal_execute() -> None:
 
 
 def test_blackboard_summary_records_kind_not_allowed_as_unsupported() -> None:
+    """Bootstrap now uses full _SUPPORTED_DIRECTIVES, so use a truly unsupported kind."""
     blackboard = StaticBlackboard(
         NarrativePlannerDecision(
-            directives=[{"kind": "adjust_pacing", "payload": {"frozen": True}}],
+            directives=[{"kind": "nonexistent_kind_xyz", "payload": {}}],
             metadata={"provider": "bootstrap_trace"},
         )
     )
@@ -119,4 +120,4 @@ def test_blackboard_summary_records_kind_not_allowed_as_unsupported() -> None:
     assert summary["applied_directive_count"] == 0
     assert summary["skipped_unsupported_count"] == 1
     assert summary["directive_audit"][0]["status"] == "unsupported"
-    assert summary["directive_audit"][0]["reason_code"] == "kind_not_allowed"
+    assert summary["directive_audit"][0]["reason_code"] == "unsupported_kind"

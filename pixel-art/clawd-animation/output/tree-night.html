@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMGUO AND CLAWD</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{display:flex;justify-content:center;align-items:center;min-height:100vh;background:#020204;overflow:hidden}
+  canvas{image-rendering:pixelated}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="err" style="position:fixed;top:10px;left:10px;color:#f88;font:12px monospace;white-space:pre-wrap;max-width:90vw;z-index:99"></div>
+<script>
+window.onerror = (msg, src, line, col, err) => {
+  document.getElementById('err').textContent = `Error line ${line}: ${msg}\n${err?.stack||''}`;
+};
+</script>
+<script>
+// ================================================================
+// "MMGUO AND CLAWD" — Raw WebGL + Custom Shader Pipeline
+//
+// Render pipeline:
+//   CPU: generate scene pixels → offscreen canvas → texture
+//   GPU Pass 1: scene render (point lights, per-pixel lighting)
+//   GPU Pass 2: bright extraction (threshold)
+//   GPU Pass 3-4: separable gaussian blur (H + V) × 3 mip levels
+//   GPU Pass 5: final composite (scene + bloom + vignette + grade)
+// ================================================================
+
+const W = 210, H = 252;
+const SCALE = Math.min(
+  Math.floor(window.innerHeight * 0.94 / H),
+  Math.floor(window.innerWidth * 0.94 / W)
+);
+const canvas = document.getElementById('c');
+canvas.width = W * SCALE;
+canvas.height = H * SCALE;
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
+if (!gl) { document.body.textContent = 'WebGL2 required'; throw 0; }
+
+// Enable float texture rendering (required for RGBA16F FBOs)
+const extFloat = gl.getExtension('EXT_color_buffer_float');
+const extHalfFloat = gl.getExtension('EXT_color_buffer_half_float');
+const useFloat = !!(extFloat || extHalfFloat);
+console.log('Float FBO support:', useFloat);
+
+// ================================================================
+// SHADER UTILITIES
+// ================================================================
+function compileShader(src, type) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function createProgram(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compileShader(vs, gl.VERTEX_SHADER));
+  gl.attachShader(p, compileShader(fs, gl.FRAGMENT_SHADER));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+function getUniforms(prog, names) {
+  const u = {};
+  for (const n of names) u[n] = gl.getUniformLocation(prog, n);
+  return u;
+}
+
+// Fullscreen quad
+const quadVerts = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+const quadBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+
+function drawQuad(prog, aPos) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  const loc = gl.getAttribLocation(prog, aPos || 'aPos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+// ================================================================
+// FRAMEBUFFER OBJECTS
+// ================================================================
+function createFBO(w, h, filter = gl.NEAREST) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  // Try RGBA16F first, fallback to RGBA8
+  if (useFloat) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+  } else {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  }
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const fb = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  // Verify completeness
+  const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if (status !== gl.FRAMEBUFFER_COMPLETE) {
+    console.warn('FBO incomplete, status:', status, '— retrying with RGBA8');
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return { fb, tex, w, h };
+}
+
+// Scene at full res, bloom at half/quarter res
+const sceneFBO = createFBO(W, H);
+const brightFBO = createFBO(W, H);
+// Blur ping-pong at multiple mip levels
+const blur = [];
+for (let i = 0; i < 3; i++) {
+  const d = 1 << (i + 1); // /2, /4, /8
+  const bw = Math.ceil(W / d), bh = Math.ceil(H / d);
+  blur.push({
+    a: createFBO(bw, bh, gl.LINEAR),
+    b: createFBO(bw, bh, gl.LINEAR),
+    w: bw, h: bh,
+  });
+}
+
+// ================================================================
+// SHADERS
+// ================================================================
+
+// --- Vertex (shared by all passes) ---
+const VS = `#version 300 es
+in vec2 aPos;
+out vec2 vUV;
+void main() {
+  vUV = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0, 1);
+}`;
+
+// --- Pass 1: Scene render with per-pixel lighting ---
+const sceneFS = `#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+
+uniform sampler2D uScene;    // CPU-generated pixel art
+uniform float uTime;
+uniform vec2 uRes;
+
+// Firefly positions (max 30)
+uniform vec4 uFireflies[30]; // xy=pos, z=brightness, w=unused
+uniform int uFireflyCount;
+
+// Canopy center for ambient light
+uniform vec2 uCanopyCenter;
+uniform float uCanopyRadius;
+
+void main() {
+  vec4 pixel = texture(uScene, vUV);
+  vec2 pos = vUV * uRes;
+
+  // --- Per-pixel lighting from canopy glow ---
+  float distToCanopy = distance(pos, uCanopyCenter) / uCanopyRadius;
+  float canopyLight = exp(-distToCanopy * distToCanopy * 1.8) * 0.12;
+  // Pulse
+  canopyLight *= 1.0 + sin(uTime * 0.65) * 0.15;
+
+  // --- Firefly point lights ---
+  float ffLight = 0.0;
+  for (int i = 0; i < 30; i++) {
+    if (i >= uFireflyCount) break;
+    vec2 ffPos = uFireflies[i].xy;
+    float ffBright = uFireflies[i].z;
+    float d = distance(pos, ffPos);
+    // Soft falloff
+    ffLight += ffBright * 0.8 / (1.0 + d * d * 0.008);
+  }
+
+  // Combine: original color + additive lights
+  vec3 color = pixel.rgb;
+  // Canopy glow — green tinted
+  color += vec3(0.15, 0.4, 0.15) * canopyLight;
+  // Firefly light — warm yellow
+  color += vec3(0.35, 0.35, 0.12) * ffLight;
+
+  fragColor = vec4(color, 1.0);
+}`;
+
+// --- Pass 2: Bright extraction ---
+const brightFS = `#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform float uThreshold;
+
+void main() {
+  vec3 c = texture(uTex, vUV).rgb;
+  float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  // Soft knee extraction
+  float knee = 0.1;
+  float soft = lum - uThreshold + knee;
+  soft = clamp(soft / (2.0 * knee), 0.0, 1.0);
+  soft = soft * soft;
+  float contrib = max(soft, step(uThreshold, lum));
+  fragColor = vec4(c * contrib, 1.0);
+}`;
+
+// --- Pass 3: Separable Gaussian Blur ---
+const blurFS = `#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+uniform sampler2D uTex;
+uniform vec2 uDir;      // (1/w, 0) or (0, 1/h)
+
+// 9-tap gaussian weights
+const float weight[5] = float[](0.2270270, 0.1945945, 0.1216216, 0.0540540, 0.0162162);
+
+void main() {
+  vec3 result = texture(uTex, vUV).rgb * weight[0];
+  for (int i = 1; i < 5; i++) {
+    vec2 off = uDir * float(i);
+    result += texture(uTex, vUV + off).rgb * weight[i];
+    result += texture(uTex, vUV - off).rgb * weight[i];
+  }
+  fragColor = vec4(result, 1.0);
+}`;
+
+// --- Pass 4: Final Composite ---
+const compositeFS = `#version 300 es
+precision highp float;
+in vec2 vUV;
+out vec4 fragColor;
+
+uniform sampler2D uScene;
+uniform sampler2D uBloom0;  // half res blur
+uniform sampler2D uBloom1;  // quarter res blur
+uniform sampler2D uBloom2;  // eighth res blur
+uniform float uBloomStrength;
+uniform float uTime;
+uniform vec2 uRes;
+
+// ACE-S tone mapping (simplified)
+vec3 ACESFilm(vec3 x) {
+  float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
+void main() {
+  vec3 scene = texture(uScene, vUV).rgb;
+  vec3 b0 = texture(uBloom0, vUV).rgb;
+  vec3 b1 = texture(uBloom1, vUV).rgb;
+  vec3 b2 = texture(uBloom2, vUV).rgb;
+
+  // Multi-scale bloom composite
+  vec3 bloom = b0 * 0.5 + b1 * 0.3 + b2 * 0.2;
+  vec3 color = scene + bloom * uBloomStrength;
+
+  // --- Vignette ---
+  vec2 uv = vUV;
+  float vig = 1.0 - dot((uv - 0.5) * vec2(1.2, 1.0), (uv - 0.5) * vec2(1.2, 1.0)) * 1.8;
+  vig = clamp(vig, 0.0, 1.0);
+  vig = mix(0.15, 1.0, vig * vig);
+  color *= vig;
+
+  // --- Subtle color grading: slight blue in shadows, warm in highlights ---
+  float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+  vec3 shadowTint = vec3(0.02, 0.03, 0.06);
+  vec3 highTint = vec3(0.02, 0.01, -0.01);
+  color += mix(shadowTint, highTint, smoothstep(0.0, 0.5, lum));
+
+  // --- Tone mapping ---
+  color = ACESFilm(color * 1.1);
+
+  // --- Gamma ---
+  color = pow(color, vec3(1.0 / 2.2));
+
+  fragColor = vec4(color, 1.0);
+}`;
+
+// ================================================================
+// COMPILE ALL PROGRAMS
+// ================================================================
+const sceneProg = createProgram(VS, sceneFS);
+const sceneU = getUniforms(sceneProg, ['uScene','uTime','uRes','uFireflyCount','uCanopyCenter','uCanopyRadius']);
+// Firefly uniform array
+const ffUniforms = [];
+for (let i = 0; i < 30; i++)
+  ffUniforms.push(gl.getUniformLocation(sceneProg, `uFireflies[${i}]`));
+
+const brightProg = createProgram(VS, brightFS);
+const brightU = getUniforms(brightProg, ['uTex','uThreshold']);
+
+const blurProg = createProgram(VS, blurFS);
+const blurU = getUniforms(blurProg, ['uTex','uDir']);
+
+const compProg = createProgram(VS, compositeFS);
+const compU = getUniforms(compProg, ['uScene','uBloom0','uBloom1','uBloom2','uBloomStrength','uTime','uRes']);
+
+// ================================================================
+// SIMPLEX NOISE (same as before)
+// ================================================================
+class SimplexNoise {
+  constructor(seed=42){
+    this.p=new Uint8Array(512);const perm=new Uint8Array(256);
+    for(let i=0;i<256;i++)perm[i]=i;let s=seed;
+    for(let i=255;i>0;i--){s=(s*16807)%2147483647;const j=s%(i+1);[perm[i],perm[j]]=[perm[j],perm[i]];}
+    for(let i=0;i<512;i++)this.p[i]=perm[i&255];
+  }
+  _g(h,x,y){h&=7;const u=h<4?x:y,v=h<4?y:x;return((h&1)?-u:u)+((h&2)?-v:v);}
+  n2(x,y){
+    const F=0.5*(Math.sqrt(3)-1),G=(3-Math.sqrt(3))/6;
+    const s=(x+y)*F,i=Math.floor(x+s),j=Math.floor(y+s),t=(i+j)*G;
+    const x0=x-(i-t),y0=y-(j-t),i1=x0>y0?1:0,j1=x0>y0?0:1;
+    const x1=x0-i1+G,y1=y0-j1+G,x2=x0-1+2*G,y2=y0-1+2*G;
+    const ii=i&255,jj=j&255,p=this.p;let n0=0,n1=0,n2=0;
+    let t0=.5-x0*x0-y0*y0;if(t0>0){t0*=t0;n0=t0*t0*this._g(p[ii+p[jj]],x0,y0);}
+    let t1=.5-x1*x1-y1*y1;if(t1>0){t1*=t1;n1=t1*t1*this._g(p[ii+i1+p[jj+j1]],x1,y1);}
+    let t2=.5-x2*x2-y2*y2;if(t2>0){t2*=t2;n2=t2*t2*this._g(p[ii+1+p[jj+1]],x2,y2);}
+    return 70*(n0+n1+n2);
+  }
+  fbm(x,y,o=4){let v=0,a=.5,f=1;for(let i=0;i<o;i++){v+=a*this.n2(x*f,y*f);a*=.5;f*=2;}return v;}
+}
+const SN=new SimplexNoise(42), SN2=new SimplexNoise(137);
+let _rs=77;function R(){_rs=(_rs*16807)%2147483647;return(_rs&0x7fffffff)/0x7fffffff;}
+
+// ================================================================
+// CPU: GENERATE SCENE PIXELS → OFFSCREEN CANVAS
+// ================================================================
+const offscreen = document.createElement('canvas');
+offscreen.width = W; offscreen.height = H;
+const ctx = offscreen.getContext('2d');
+const imgData = ctx.createImageData(W, H);
+const px = imgData.data;
+
+function setPixel(x, y, r, g, b, a = 255) {
+  x = Math.round(x); y = Math.round(y);
+  if (x < 0 || x >= W || y < 0 || y >= H) return;
+  const i = (y * W + x) * 4;
+  // Alpha blend
+  if (px[i+3] > 0 && a < 255) {
+    const sa = a / 255, da = 1 - sa;
+    px[i]   = Math.round(r * sa + px[i]   * da);
+    px[i+1] = Math.round(g * sa + px[i+1] * da);
+    px[i+2] = Math.round(b * sa + px[i+2] * da);
+    px[i+3] = 255;
+  } else {
+    px[i] = r; px[i+1] = g; px[i+2] = b; px[i+3] = a;
+  }
+}
+
+function hsl2rgb(h,s,l){
+  h/=360;s/=100;l/=100;let r,g,b;
+  if(s===0){r=g=b=l;}else{
+    const q=l<.5?l*(1+s):l+s-l*s,p=2*l-q;
+    const h2r=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<.5)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
+    r=h2r(p,q,h+1/3);g=h2r(p,q,h);b=h2r(p,q,h-1/3);
+  }
+  return [Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+}
+
+function canopyRGB(brightness) {
+  const hue = 118 + (brightness-0.5)*28 + R()*12-6;
+  const sat = 42 + brightness*22 + R()*8-4;
+  const lit = 8 + brightness*44 + R()*5-2.5;
+  return hsl2rgb(hue, sat, lit);
+}
+function barkRGB(n) {
+  return hsl2rgb(22+R()*8, 28+R()*12, 4+n*15+R()*4);
+}
+function highlightRGB() {
+  return hsl2rgb(88+R()*28, 55+R()*20, 52+R()*22);
+}
+
+// --- Sky gradient ---
+for (let y = 0; y < H; y++) {
+  const t = y / H;
+  const r = Math.floor(5+t*10), g = Math.floor(8+t*14), b = Math.floor(20+t*4);
+  for (let x = 0; x < W; x++) setPixel(x, y, r, g, b);
+}
+
+// --- Stars ---
+for (let i = 0; i < 70; i++) {
+  const x = Math.floor(R()*W), y = Math.floor(R()*H*0.48);
+  const bright = 100 + Math.floor(R()*80);
+  setPixel(x, y, bright, bright, bright-15);
+}
+
+// --- Ground ---
+for (let i = 0; i < 600; i++) {
+  const [r,g,b] = hsl2rgb(200+R()*20, 15+R()*10, 4+R()*5);
+  setPixel(Math.floor(R()*W), 190+Math.floor(R()*15), r, g, b);
+}
+for (let i = 0; i < 200; i++) {
+  const [r,g,b] = hsl2rgb(130+R()*20, 25+R()*15, 5+R()*5);
+  setPixel(48+Math.floor(R()*110), 190+Math.floor(R()*8), r, g, b);
+}
+for (let i = 0; i < 80; i++) {
+  const x = Math.floor(R()*W);
+  const [r,g,b] = hsl2rgb(125, 30, 8+R()*4);
+  setPixel(x, 189, r, g, b);
+  setPixel(x, 188, r, g, b);
+}
+
+// --- Tree trunk ---
+const TCX = 105, TTOP = 128, TBOT = 198;
+for (let y = TTOP; y <= TBOT; y++) {
+  const t = (y-TTOP)/(TBOT-TTOP);
+  const hw = 4.5 + t*5.5;
+  for (let x = -hw; x <= hw; x++) {
+    const xi = Math.round(TCX+x);
+    const n = SN.n2(xi*0.25, y*0.12)*0.5+0.5;
+    const [r,g,b] = barkRGB(n);
+    setPixel(xi, y, r, g, b);
+  }
+}
+// Roots
+for (const [dx,len] of [[-13,7],[-8,8],[-4,5],[5,5],[9,8],[14,6]]) {
+  for (let i = 0; i < len; i++) {
+    const rx = TCX+dx+(dx<0?-i:i)*0.85, ry = TBOT+i*0.45;
+    const [r,g,b] = barkRGB(R()*0.25);
+    setPixel(Math.round(rx), Math.round(ry), r, g, b);
+    setPixel(Math.round(rx), Math.round(ry)+1, r, g, b);
+  }
+}
+
+// --- Canopy ---
+const CCX = 104, CCY = 76, CRX = 66, CRY = 56;
+
+function canopyDist(x, y) {
+  const nx=(x-CCX)/CRX, ny=(y-CCY)/CRY;
+  const nyA = ny<0 ? ny*0.76 : ny*1.24;
+  const base = nx*nx+nyA*nyA;
+  const edge = SN.fbm(x*0.055, y*0.055, 5)*0.2;
+  const bump = SN2.n2(x*0.028, y*0.028)*0.1;
+  return base + edge + bump;
+}
+function brightMap(x, y) {
+  const d = canopyDist(x, y);
+  const base = Math.max(0, 1-d*1.05);
+  const light = SN2.fbm(x*0.08, y*0.08, 3)*0.28;
+  const vert = Math.max(0, (CCY-y)/CRY*0.18);
+  return Math.max(0, Math.min(1, base + light + vert));
+}
+
+// Pass 1: Dense dark base
+for (let y = CCY-CRY-8; y <= CCY+CRY+5; y++) {
+  for (let x = CCX-CRX-8; x <= CCX+CRX+8; x++) {
+    const d = canopyDist(x, y);
+    if (d > 1.0) continue;
+    const ef = Math.max(0, 1-d);
+    const n = SN.fbm(x*0.1, y*0.1, 3)*0.5+0.5;
+    if (R() > ef*(0.6+n*0.35)) continue;
+    const [r,g,b] = canopyRGB(brightMap(x,y)*0.3);
+    setPixel(x, y, r, g, b);
+  }
+}
+
+// Pass 2: 350 mid-tone leaf clusters
+for (let i = 0; i < 350; i++) {
+  const a=R()*Math.PI*2, rf=R()*0.93;
+  const clx=CCX+Math.cos(a)*CRX*rf, cly=CCY+Math.sin(a)*CRY*rf*0.83-3;
+  if (canopyDist(clx,cly) > 0.95) continue;
+  const n=SN.n2(clx*0.07,cly*0.07)*0.5+0.5;
+  const cr=1.5+n*4.5;
+  const bm=brightMap(clx,cly);
+  const cnt=Math.floor(cr*cr*3);
+  for (let j=0;j<cnt;j++) {
+    const ca=R()*Math.PI*2, rd=R()*cr;
+    const px2=Math.round(clx+Math.cos(ca)*rd);
+    const py2=Math.round(cly+Math.sin(ca)*rd*0.55);
+    if(canopyDist(px2,py2)>1.03) continue;
+    const pb=Math.max(0,Math.min(1,bm+(R()-0.5)*0.18));
+    const [r,g,b]=canopyRGB(pb);
+    setPixel(px2, py2, r, g, b);
+  }
+}
+
+// Pass 3: 100 bright highlight clusters
+for (let i = 0; i < 100; i++) {
+  const a=R()*Math.PI*2, rf=R()*0.5;
+  const hx=CCX+Math.cos(a)*CRX*rf*0.65;
+  const hy=CCY-10+Math.sin(a)*CRY*rf*0.4;
+  if(canopyDist(hx,hy)>0.6) continue;
+  const cr=1+R()*2.8;
+  for (let j=0;j<Math.floor(cr*cr*2.5);j++) {
+    const ca=R()*Math.PI*2, rd=R()*cr;
+    const px2=Math.round(hx+Math.cos(ca)*rd);
+    const py2=Math.round(hy+Math.sin(ca)*rd*0.5);
+    if(canopyDist(px2,py2)>0.85) continue;
+    const [r,g,b]=canopyRGB(0.65+R()*0.3);
+    setPixel(px2, py2, r, g, b);
+  }
+}
+
+// Pass 4: Shadow crevices
+for (let y=CCY-CRY;y<=CCY+CRY;y++) {
+  for (let x=CCX-CRX;x<=CCX+CRX;x++) {
+    const d=canopyDist(x,y);
+    if(d>0.85||d<0.08) continue;
+    const shadow=SN2.fbm(x*0.14,y*0.14,3);
+    if(shadow>0.12||R()>0.45) continue;
+    const [r,g,b]=canopyRGB(0.03);
+    setPixel(x,y,r,g,b);
+  }
+}
+
+// Pass 5: Yellow-green specular
+for (let i=0;i<80;i++) {
+  const x=Math.round(CCX+(R()-0.5)*CRX*0.9);
+  const y=Math.round(CCY-14+R()*CRY*0.5);
+  if(canopyDist(x,y)>0.55) continue;
+  const [r,g,b]=highlightRGB();
+  setPixel(x,y,r,g,b);
+}
+
+// Pass 6: Lower canopy → trunk
+for (let i=0;i<160;i++) {
+  const x=Math.round(TCX+(R()-0.5)*38);
+  const y=Math.round(TTOP-R()*20);
+  const [r,g,b]=canopyRGB(R()*0.28);
+  setPixel(x,y,r,g,b);
+  if(R()<0.5) setPixel(x+1,y,r,g,b);
+}
+
+// Pass 7: Edge scatter
+for (let i=0;i<250;i++) {
+  const a=R()*Math.PI*2, rf=0.83+R()*0.22;
+  const ex=Math.round(CCX+Math.cos(a)*CRX*rf);
+  const ey=Math.round(CCY+Math.sin(a)*CRY*rf*0.83);
+  const d=canopyDist(ex,ey);
+  if(d<0.78||d>1.18||R()>0.38) continue;
+  const [r,g,b]=canopyRGB(0.12+R()*0.15);
+  setPixel(ex,ey,r,g,b);
+}
+
+// --- Title "MMGUO AND CLAWD" ---
+const FONT={
+  M:[[1,0,0,0,1],[1,1,0,1,1],[1,0,1,0,1],[1,0,0,0,1],[1,0,0,0,1]],
+  G:[[0,1,1,1,0],[1,0,0,0,0],[1,0,0,1,1],[1,0,0,0,1],[0,1,1,1,0]],
+  U:[[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+  O:[[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+  A:[[0,1,1,1,0],[1,0,0,0,1],[1,1,1,1,1],[1,0,0,0,1],[1,0,0,0,1]],
+  N:[[1,0,0,0,1],[1,1,0,0,1],[1,0,1,0,1],[1,0,0,1,1],[1,0,0,0,1]],
+  D:[[1,1,1,0,0],[1,0,0,1,0],[1,0,0,0,1],[1,0,0,1,0],[1,1,1,0,0]],
+  C:[[0,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[0,1,1,1,0]],
+  L:[[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,1]],
+  W:[[1,0,0,0,1],[1,0,0,0,1],[1,0,1,0,1],[1,1,0,1,1],[1,0,0,0,1]],
+  ' ':[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+};
+{
+  const text='MMGUO AND CLAWD';
+  let cx=23;
+  for(const ch of text){
+    const g=FONT[ch];if(!g){cx+=4;continue;}
+    for(let r=0;r<g.length;r++)for(let c=0;c<g[r].length;c++)
+      if(g[r][c]) setPixel(cx+c, 8+r, 60, 100, 85);
+    cx+=g[0].length+1;
+  }
+}
+
+// --- Girl sprite (18×28) ---
+const girlPal={0:null,1:[168,76,48],2:[140,56,32],3:[204,104,64],4:[228,200,160],5:[212,168,128],6:[24,24,24],7:[160,68,48],8:[136,48,36],9:[188,84,56],A:[216,184,136],B:[192,160,120]};
+const girlRows=[
+  '000000000000000000','000000011100000000','000001111110000000','000011111111000000',
+  '000111111111100000','001111111111110000','001113111131110000','001111111111110000',
+  '001111111111110000','000211111111200000','000021144112000000','000021144112000000',
+  '000021464142000000','000021144112000000','000022144120000000','000002211200000000',
+  '000000222000000000','000000077700000000','000000077700000000','000000079700000000',
+  '000000077700000000','000000078700000000','000000077700000000','000000078700000000',
+  '0000000A0A00000000','0000000A0A00000000','0000000B0B00000000','000000000000000000',
+];
+for(let r=0;r<girlRows.length;r++){
+  const row=[...girlRows[r]].map(c=>parseInt(c,16));
+  for(let c=0;c<row.length;c++){
+    const col=girlPal[row[c]];if(!col)continue;
+    setPixel(60+c, 164+r, col[0], col[1], col[2]);
+  }
+}
+
+// --- Clawd sprite (12×10) ---
+const clPal={0:null,1:[192,120,90],2:[160,96,68],3:[212,136,104],4:[24,24,24]};
+const clRows=['001000000100','001000000100','001111111100','001311111300','001411011400',
+  '001111111100','001111111100','001111111100','000200200200','000100100100'];
+for(let r=0;r<clRows.length;r++){
+  const row=[...clRows[r]].map(c=>parseInt(c,16));
+  for(let c=0;c<row.length;c++){
+    const col=clPal[row[c]];if(!col)continue;
+    setPixel(124+c, 184+r, col[0], col[1], col[2]);
+  }
+}
+
+// Upload to canvas then to WebGL texture
+ctx.putImageData(imgData, 0, 0);
+
+const sceneTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, offscreen);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+// ================================================================
+// FIREFLY DATA
+// ================================================================
+const FF_COUNT = 28;
+const fireflies = [];
+for (let i = 0; i < FF_COUNT; i++) {
+  fireflies.push({
+    hx: 15+R()*180, hy: 10+R()*195,
+    phase: R()*Math.PI*2, speed: 0.2+R()*0.6,
+  });
+}
+
+// ================================================================
+// RENDER LOOP
+// ================================================================
+let time = 0;
+
+function bindFBO(fbo) {
+  if (fbo) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
+    gl.viewport(0, 0, fbo.w, fbo.h);
+  } else {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+}
+function bindTex(unit, tex) {
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+}
+
+function frame(t) {
+  const dt = Math.min(t * 0.001 - time, 0.1);
+  time = t * 0.001;
+
+  // Update firefly positions
+  const ffPositions = [];
+  for (const f of fireflies) {
+    f.phase += dt * f.speed;
+    const x = f.hx + Math.sin(f.phase*0.5+f.hx*0.1)*12;
+    const y = f.hy + Math.cos(f.phase*0.35+f.hy*0.1)*8;
+    const glow = Math.sin(f.phase)*0.5+0.5;
+    ffPositions.push(x, y, glow * 0.5 + 0.03, 0);
+  }
+
+  // --- Pass 1: Scene + lighting → sceneFBO ---
+  gl.useProgram(sceneProg);
+  bindFBO(sceneFBO);
+  bindTex(0, sceneTex);
+  gl.uniform1i(sceneU.uScene, 0);
+  gl.uniform1f(sceneU.uTime, time);
+  gl.uniform2f(sceneU.uRes, W, H);
+  gl.uniform1i(sceneU.uFireflyCount, FF_COUNT);
+  gl.uniform2f(sceneU.uCanopyCenter, CCX, CCY - 6);
+  gl.uniform1f(sceneU.uCanopyRadius, 60);
+  for (let i = 0; i < FF_COUNT; i++) {
+    gl.uniform4f(ffUniforms[i],
+      ffPositions[i*4], ffPositions[i*4+1],
+      ffPositions[i*4+2], 0);
+  }
+  drawQuad(sceneProg);
+
+  // --- Pass 2: Bright extraction → brightFBO ---
+  gl.useProgram(brightProg);
+  bindFBO(brightFBO);
+  bindTex(0, sceneFBO.tex);
+  gl.uniform1i(brightU.uTex, 0);
+  gl.uniform1f(brightU.uThreshold, 0.18);
+  drawQuad(brightProg);
+
+  // --- Pass 3: Multi-scale gaussian blur ---
+  gl.useProgram(blurProg);
+  let srcTex = brightFBO.tex;
+  for (let level = 0; level < 3; level++) {
+    const b = blur[level];
+    // Horizontal
+    bindFBO(b.a);
+    bindTex(0, srcTex);
+    gl.uniform1i(blurU.uTex, 0);
+    gl.uniform2f(blurU.uDir, 1.0/b.w, 0);
+    drawQuad(blurProg);
+    // Vertical
+    bindFBO(b.b);
+    bindTex(0, b.a.tex);
+    gl.uniform1i(blurU.uTex, 0);
+    gl.uniform2f(blurU.uDir, 0, 1.0/b.h);
+    drawQuad(blurProg);
+    // Second H+V pass for smoother blur
+    bindFBO(b.a);
+    bindTex(0, b.b.tex);
+    gl.uniform2f(blurU.uDir, 1.0/b.w, 0);
+    drawQuad(blurProg);
+    bindFBO(b.b);
+    bindTex(0, b.a.tex);
+    gl.uniform2f(blurU.uDir, 0, 1.0/b.h);
+    drawQuad(blurProg);
+
+    srcTex = b.b.tex;
+  }
+
+  // --- Pass 4: Final composite → screen ---
+  gl.useProgram(compProg);
+  bindFBO(null);
+  bindTex(0, sceneFBO.tex);
+  bindTex(1, blur[0].b.tex);
+  bindTex(2, blur[1].b.tex);
+  bindTex(3, blur[2].b.tex);
+  gl.uniform1i(compU.uScene, 0);
+  gl.uniform1i(compU.uBloom0, 1);
+  gl.uniform1i(compU.uBloom1, 2);
+  gl.uniform1i(compU.uBloom2, 3);
+  gl.uniform1f(compU.uBloomStrength, 0.85);
+  gl.uniform1f(compU.uTime, time);
+  gl.uniform2f(compU.uRes, W, H);
+  drawQuad(compProg);
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

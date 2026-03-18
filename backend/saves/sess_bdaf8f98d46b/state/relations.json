@@ -1,0 +1,822 @@
+{
+  "faction_standings": {
+    "adventurer_guild": 0,
+    "earth_mother_church": 0,
+    "frontier_merchants": 0,
+    "kingdom": 0
+  },
+  "npc_blackboards": {
+    "blacksmith": {
+      "attitude_towards_player": "...要买什么？",
+      "goals": [
+        "完成今天的订单",
+        "试验新的锻造方法",
+        "正对着一柄卷刃的铁剑摇头叹气，嘟囔着‘现在的年轻人都不懂得保养武器’",
+        "在店铺门口清理炉灰，看到玩家经过时发出一声不置可否的冷哼。",
+        "‘嘿，新人，领完钱记得来我这儿看看你的装备。别等生锈了才后悔。’",
+        "‘嘿！那个领了赏金的新人！别只顾着去酒馆挥霍，你的靴子和披风需要修整了，明早记得过来！’",
+        "‘嘿！如果你要去酒馆，记得顺便告诉老板娘，她订的铁锅修好了！’",
+        "‘嘿，新人！办完手续别忘了去酒馆，帮我跟老板娘问个好，顺便带句话，她订的锅子明天就能去拿了！’",
+        "‘小子，动作快点！酒馆的炖肉可不等磨蹭的人！’",
+        "‘嘿！那边的白瓷新人，等你在酒馆喝饱了，明天一早记得来我这儿修修你那双破烂靴子！’",
+        "‘嘿！新来的，别像个木头人一样站着，赶紧办完手续去喝杯酒吧！’"
+      ],
+      "mood": "专注",
+      "pending_topic": "‘嘿！新来的，别像个木头人一样站着，赶紧办完手续去喝杯酒吧！’",
+      "thoughts": "这批铁的质量一般，得想办法改良淬火工艺。"
+    },
+    "cow_girl": {
+      "attitude_towards_player": "是个很温柔的人，不仅帮我干活，还很体贴。以后要是能经常来帮我就好了。",
+      "goals": [
+        "修好东边围栏",
+        "给鸡舍添稻草",
+        "在牧场等待公会的援手",
+        "阳光灿烂的笑容，欢迎冒险者的到来",
+        "‘你就是公会派来帮忙的吧？太好了，围栏那边就拜托你啦！’",
+        "‘你来得正好！公会的柜台小姐跟我提过会有人来。围栏那边出了点状况，能陪我过去看看吗？’",
+        "‘就是这里，这根主桩断了，但我总觉得断口不太对劲……’",
+        "指着那根断裂的木桩，等待玩家动手修理",
+        "‘我在这儿帮你扶着，你试试能不能把它接好。这种断裂法……真的不像普通野狗能做到的。’",
+        "‘工具都在这儿了，拜托你修好那根主桩。我总觉得……在那之后得请你吃顿好的压压惊。’",
+        "‘辛苦了！虽然这些抓痕让人不安，但围栏总算修好了。走吧，回屋里去，我已经炖好了肉，一定要吃点再走。’",
+        "端上热气腾腾的炖菜，并说起小时候在这片牧场追牛犊的趣事，眼神中闪过一丝怀念。",
+        "‘天色不早了，既然你还要回公会交差，就快出发吧。替我向柜台小姐问好，也请转告她……那些抓痕的事。’",
+        "‘路不好走，天黑前一定要赶回城里啊。下次有空再来吃炖菜！’",
+        "‘那个……冒险者先生，牧场的夕阳真的很好看。我做了很多炖菜，你想顺路来看看吗？’",
+        "‘牧场的夕阳虽好，但大家好像都聚在酒馆了……我也送了一些新鲜牛奶过来。’"
+      ],
+      "mood": "欢快而满足",
+      "observations": [
+        "[tick 8|ai_osiris] 冒险者移动到新区域",
+        "[tick 9|ai_osiris] 冒险者移动到新区域",
+        "冒险者修理围栏的手法很熟练，人也很热心。"
+      ],
+      "pending_topic": "‘牧场的夕阳虽好，但大家好像都聚在酒馆了……我也送了一些新鲜牛奶过来。’",
+      "thoughts": "炖菜的味道应该已经飘出来了，得快点回去盛碗热乎的给他。也许他会喜欢加了奶油的那种？",
+      "updated_tick": 9
+    },
+    "dwarf_shaman": {
+      "attitude_towards_player": "年轻人，来喝一杯？",
+      "goals": [
+        "去酒馆喝一杯",
+        "研究矿石样本",
+        "嘲笑蜥蜴僧侣不懂得品味麦酒的醇厚"
+      ],
+      "mood": "愉快",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "嘲笑蜥蜴僧侣不懂得品味麦酒的醇厚",
+      "thoughts": "昨天发现的那块矿石不错，回头得研究研究。",
+      "updated_tick": 15
+    },
+    "goblin_slayer": {
+      "attitude_towards_player": "......",
+      "goals": [
+        "检查北边区域的哥布林痕迹",
+        "在角落里沉默地检查着一身破旧的铠甲",
+        "在整理那一袋沉重的、散发着血腥味的战利品",
+        "依然坐在那个昏暗的角落，一言不发地磨着手中的短剑",
+        "正仔细地将一瓶绿色的药水塞进腰带上的皮囊，他的动作精确而迅速。",
+        "在阴影中抬起头，红色的复眼光芒在破旧的头盔下一闪而过，他似乎在观察酒馆里这些喧闹的新人。",
+        "在整理那一捆沉重的、散发着刺鼻气味的燃烧瓶，他的目光短暂地在玩家和圣女身上停留了一秒",
+        "在整理那一捆沉重的、散发着刺鼻气味的燃烧瓶，他的目光短暂地在玩家和圣女身上停留了一秒，似乎在权衡着什么。"
+      ],
+      "mood": "警觉",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "在整理那一捆沉重的、散发着刺鼻气味的燃烧瓶，他的目光短暂地在玩家和圣女身上停留了一秒，似乎在权衡着什么。",
+      "thoughts": "今天的巡逻路线要改一下，北边的痕迹增多了。",
+      "updated_tick": 11
+    },
+    "guild_girl": {
+      "attitude_towards_player": "非常有干劲的新人，不仅完成了采集任务，还愿意去酒馆帮忙，这种脚踏实地的态度很让人欣赏。",
+      "goals": [
+        "整理今天的委托",
+        "确认新来的冒险者情况",
+        "欢迎来到公会及办理登记",
+        "向你介绍登记表格的填写方法，并展示公会的徽章",
+        "办理登记并推荐牧场委托",
+        "耐心地指着柜台上的登记表，催促你填写",
+        "‘请在这里签上您的名字，冒险者。登记完成后，您可以直接去牧场帮牧牛妹的忙。’",
+        "‘欢迎回来！看来牧场的工作很顺利。但在汇报之前，请先补办一下之前的注册手续。’",
+        "‘你回来得正好，牧牛妹刚才还来信夸你呢。不过在领赏金之前，请先来柜台补办一下正式的注册。’",
+        "‘别急着汇报，新人。先来柜台把这份表格填了，这样你的第一个任务记录才能录入系统。’",
+        "‘虽然蜥蜴僧侣先生的干酪很重要，但请先在这里签个名，完成您的冒险者登记手续，否则我没法给您结算牧场的报酬。’",
+        "‘签完字后，这就是您的第一份报酬。另外，奔波了一整天，我推荐您去隔壁的酒馆喝一杯，老板娘的牛奶麦酒可是边境一绝。’",
+        "‘请在这里签字。登记完成后，您就可以正式以冒险者的身份去酒馆享受那杯牛奶麦酒了。’",
+        "‘请务必在表格这里签下名字。只有这样，您的身份才会被公会承认，我也才能帮您把刚才汇报的爪痕线索正式建档。’",
+        "‘就是这张表，新人。签完它你就是白瓷级冒险者了。我会为你准备好徽章，然后你就可以和那位一直在等你办完手续的小姐一起去酒馆喝一杯了。’",
+        "‘请务必在这里签上您的名字，冒险者。有了这道手续，您在边境的每一次冒险都会被正式记录。’",
+        "‘报酬已经帮您结算好了。签字后，您的白瓷徽章就正式生效了。快去酒馆找圣女小姐吧，她刚才看起来真的很急切。’",
+        "‘请别看告示板了，新人。先把柜台上这份登记表签了，不然我没法正式承认你的冒险者身份，也没法让你去酒馆领那份‘新人特供’的麦酒。’",
+        "‘别再盯着那些讨伐委托看了，新人！先过来把字签了，那是拿报酬的唯一办法。等你在酒馆喝完麦酒，明天再来接新活儿也不迟。’",
+        "‘请务必在柜台上这份表格这里签下名字。签字完成后，您的身份才会被公会承认。另外，圣女小姐已经在酒馆等您很久了，别让她等太久。’",
+        "‘恭喜你，正式成为公会的一员。拿上这枚白瓷徽章，快去酒馆找圣女小姐吧，她刚才看起来真的很期待和你分享一杯麦酒。’",
+        "‘祝您在酒馆有个愉快的夜晚，冒险者。明天见。’",
+        "‘祝您在酒馆度过一个愉快的夜晚，冒险者。明天请继续努力。’",
+        "‘您来得正好，神殿那边发了个急件，需要人去北门采宁神草。圣女小姐也在这儿，如果您愿意帮这个忙，她会陪您一起去的。’",
+        "‘这里正有一份神殿的急件，采集北边森林的宁神草。报酬虽然一般，但对积累名声很有帮助。’",
+        "‘欢迎回来！看圣女小姐的样子，这一趟并不轻松？快把宁神草给我，顺便跟我说说你们在林子里遇到了什么。’",
+        "‘太感谢了，这些药草帮了大忙。这是您的报酬（50金币）。关于哥布林的情报我已经记下了，之后会转告给守备队。您今天辛苦了。’",
+        "‘神殿那边在催促药草了！如果您已经采集到了，请立刻回公会柜台结算。天黑后的报酬核算流程会复杂很多。’",
+        "‘如果您还在听的话，冒险者先生！请立刻带着宁神草回柜台结算！神殿的医疗队正等着这些药草救命呢！’",
+        "‘欢迎回来！药草采到了吗？看圣女小姐的样子，林子里一定很危险。请快把药草交给我，我这就为您结算报酬。’",
+        "‘辛苦了。这是您的 50 枚金币报酬。药草我会立刻转交给神殿，关于林中怪声的情报非常重要，我会如实记录在档案里。’",
+        "‘今晚加完班，我打算去酒馆坐坐。如果你在那儿帮忙的话，说不定我们能聊聊关于那枚白瓷徽章的事。’"
+      ],
+      "mood": "愉快且期待",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域",
+        "[tick 18|clue_narrative] 圣女指着一种锯齿状边缘的淡紫色小叶子：‘看，这就是宁神草。它们喜欢生长在湿润的树根旁，千万别和毒麻草弄混了。’",
+        "[tick 18|clue_narrative] 你小心翼翼地采下了药草。就在这时，一阵低沉的、不像是人类的嬉笑声从密林深处传来，圣女吓得躲到了你身后。",
+        "[tick 18|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "",
+      "thoughts": "他接受了酒馆的任务，真是个勤快的新人。等我处理完手头这些关于哥布林出没的报告，也许真的可以去酒馆喝一杯，顺便看看他工作的样子。不知道他穿上围裙会是什么样？",
+      "updated_tick": 19
+    },
+    "guild_quartermaster": {
+      "attitude_towards_player": "需要什么装备？",
+      "goals": [
+        "完成库存盘点"
+      ],
+      "mood": "忙碌",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域"
+      ],
+      "thoughts": "库存盘点快完了，火把和绷带需要补货。",
+      "updated_tick": 16
+    },
+    "high_elf_archer": {
+      "attitude_towards_player": "又一个新人？希望不是无聊的家伙。",
+      "goals": [
+        "找点有趣的事做",
+        "探索镇子周边",
+        "正东张西望，似乎在寻找那个穿破烂铠甲的人（哥布林杀手）",
+        "‘哦？这就是那个发现了奇怪爪痕的新人？看起来还挺利落的嘛。’",
+        "‘那个拿白瓷牌子的，听说你在牧场发现了奇怪的东西？哼，希望不是把野兔的脚印看成了怪物。’",
+        "‘哼，采集药草？那可是最无聊的活计了。不过……如果你真的遇到了老板娘说的那种‘影子’，最好别吓得尿裤子。敢跟我比比谁的箭（或者剑）更快吗？’",
+        "‘哦？那个刚才在酒馆很威风的新人，现在敢接这个任务吗？北边林子可不只是有药草哦。’",
+        "‘去商会？倒是懂得未雨绸缪。给，拿好这个。如果你真弄丢了方向，吹响它，说不定会有高贵的精灵去救你。’（递给你一支精致的小哨子）",
+        "‘那个拿白瓷牌子的，哨子拿稳了。如果你在林子里被哥布林追得满地找牙，吹响它，我可能会考虑去救你。’",
+        "‘怎么，被我的提议吓到了？白瓷的新人。如果没胆子比试，至少把那个哨子拿稳了。我们一会儿见。’",
+        "‘快去快回，白瓷的新人。如果采集任务都做不好，就别想加入真正的冒险队伍了。那个哨子可是我族亲手制作的，别弄丢了。’",
+        "‘哦？这副表情……看来是被那里的‘影子’吓到了？白瓷的小子，如果你能把刚才看到的画出来，我就收回之前说你无能的那句话。甚至……如果你敢跟我去更深的地方比划比划，我也不介意指点你几招。’",
+        "‘哼，虽然看起来有点狼狈，但能在哥布林的眼皮底下采到药，勉强算你及格吧。那个哨子先留着，下次可不一定有这么好运。’",
+        "‘哼，虽然看起来有点狼狈，但能在这种时候全副武装地跑回来，说明你还没蠢到家。那个哨子看来你是用不上了？’",
+        "‘哼，虽然样子有点难看，但能带着宁神草全身而退，看来你确实比我想象中要强那么一点点。那个哨子看来你是用不上了？’",
+        "‘既然你已经采完了药，敢不敢正式接受我的比试邀请？如果你输了，就在酒馆给大家表演一个节目如何？’",
+        "‘端盘子？呵，真是适合新人的锻炼。我会在酒馆等你的，别让我等太久，那个比试我可是当真的。’"
+      ],
+      "mood": "无聊中带着期待",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "‘端盘子？呵，真是适合新人的锻炼。我会在酒馆等你的，别让我等太久，那个比试我可是当真的。’",
+      "thoughts": "边境的风景还算凑合，至少不像在森林里那么无聊。",
+      "updated_tick": 15
+    },
+    "informant": {
+      "attitude_towards_player": "嘿，想知道点有意思的事吗？",
+      "goals": [
+        "找到有价值的买家"
+      ],
+      "mood": "狡黠",
+      "thoughts": "最近的消息值不少钱，就看谁出得起。"
+    },
+    "lizard_priest": {
+      "attitude_towards_player": "能够如此爽快地答应这种并非战斗的琐碎请求，足见其胸襟与对“甘露”的认同。是一位非常值得结交的伙伴。",
+      "goals": [
+        "品尝新奶酪",
+        "记录边境的风土人情",
+        "与矮人道士争论那种熏制干酪的口感"
+      ],
+      "mood": "欣喜万分",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "",
+      "quest_intent": {
+        "giver_npc": "lizard_priest",
+        "objectives": [
+          "寻找至少三块不同风味的优质熏制干酪",
+          "将其带回公会交给蜥蜴僧侣"
+        ],
+        "summary": "既然阁下亦是同道中人，贫僧便有个不情之请。近期公会附近的补给似乎紧缺，那种色泽金黄、带着橡木芬芳的特制干酪已是千金难求。若阁下在冒险途中能偶遇此类“甘露”，恳请务必为贫僧留下一二，届时定有重谢，并邀阁下共赏。",
+        "title": "寻觅世间的甘露"
+      },
+      "thoughts": "阁下果然是位务实之人。既然要寻找那“甘露”，自然得指明几个可能的去处，否则在大地之上盲目搜寻，未免太过辛苦。",
+      "updated_tick": 15
+    },
+    "north_gate_warden": {
+      "attitude_towards_player": "是个敏锐的新人，也许他能活着回来。",
+      "goals": [
+        "加强夜间巡逻",
+        "向公会汇报边境情况",
+        "‘站住，新人。去采药？动作快点。最近夜里巡逻的弟兄总说林子里有窸窸窣窣的动静，不像是野猪，倒像是有人（或东西）在搬运什么。’",
+        "‘记住，发现不对劲就放信号！如果你们回不来，我也没法向上头交代。’",
+        "‘嘿！新来的！太阳落山前要是没采完就赶紧回来，晚上的林子是属于那些绿皮畜生的！’",
+        "看到两人匆忙跑回，立刻按住了剑柄，紧张地观察森林方向。",
+        "‘怎么还在磨蹭？采完了就快进去！门马上要关了，这时候还在外面晃荡是嫌命长吗？’",
+        "‘走走走，别挡在路口！再不进去你就得在外面和哥布林过夜了！’"
+      ],
+      "mood": "严峻",
+      "observations": [
+        "地母神的小女神官也参与了这次行动。两人的组合看起来需要更多的警惕。",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域",
+        "[tick 17|ai_osiris] 冒险者移动到新区域",
+        "[tick 18|clue_narrative] 圣女指着一种锯齿状边缘的淡紫色小叶子：‘看，这就是宁神草。它们喜欢生长在湿润的树根旁，千万别和毒麻草弄混了。’",
+        "[tick 18|clue_narrative] 你小心翼翼地采下了药草。就在这时，一阵低沉的、不像是人类的嬉笑声从密林深处传来，圣女吓得躲到了你身后。",
+        "[tick 18|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "‘走走走，别挡在路口！再不进去你就得在外面和哥布林过夜了！’",
+      "thoughts": "他察觉到了。与其让他们在林子里撞见那些东西被吓破胆，不如把猜测告诉他们。虽然只是传闻，但那种臭味和拖行声，太像那群绿色的畜生在搬运‘战利品’了。",
+      "updated_tick": 18
+    },
+    "priestess": {
+      "attitude_towards_player": "玩家不仅稳重，还很愿意接受来自教会的请求，这让我觉得他是个很正直的人。",
+      "goals": [
+        "完成今天的祈祷",
+        "去公会看看有没有需要帮忙的人",
+        "正有些不安地握着手中的法杖，似乎在等待着什么",
+        "寻找愿意组队的人",
+        "正有些羡慕地看着你，大概是因为你已经完成了一个委托",
+        "‘那个……请问，你是刚完成委托回来的冒险者吗？’",
+        "在一旁静静等待，似乎想等你办完手续后再和你聊聊",
+        "看到你即将完成注册，露出一个鼓励的微笑",
+        "‘那个……听说登记完后公会会发一枚白瓷等级的牌子，我可以看看吗？’",
+        "‘原来你还没注册吗？那我们要不要等下一起去酒馆？那里的牛奶麦酒听说非常出名。’",
+        "‘那个……既然你要注册完了，等会儿要不要一起去酒馆？我有件事……想商量一下。’",
+        "‘我先去酒馆帮你占个位置，你办完手续一定要快点过来哦！’",
+        "‘我在这儿！快过来，这边的位置可以看到广场的夜景。’",
+        "‘你终于来啦！快坐下，刚才老板娘还在夸你呢。那个……关于刚才说的事……’",
+        "‘那个……如果是采集宁神草的话，我能帮上忙。我们可以一起去！’",
+        "‘别在意高精灵小姐的话，她其实心不坏。冒险者先生，我们先去商会（market_plaza）买点东西吧，林子里很暗的。’",
+        "‘虽然刚才有些害怕，但有你在我身边，我一定能采到药草的。我们先去商会（market_plaza）那边准备一下补给吧。’",
+        "‘这里的备货看起来有些奇怪呢，冒险者先生。我们买好东西后就出发去北门吧。’",
+        "‘搬运声……难道是哥布林在筑巢吗？冒险者先生，我们要多加小心。在正式进入树林前，我先教您怎么在杂草中分辨宁神草吧。’",
+        "‘哥布林……甚至是掳走的村民吗？既然如此，我们快去快回！冒险者先生，林道就在前面，我已经能看到那种淡紫色的叶子了。’",
+        "‘辨认方法就是这样。冒险者先生，林子里的光线快变暗了，我们得赶紧去那边的老树根底下采集真正的宁神草。’",
+        "‘你听到了吗？那声音……太近了！冒险者先生，药草已经采够了，我们快回城去，必须把这件事告诉柜台小姐！’",
+        "‘柜台小姐……那些声音，真的和守备长说的一样，那里肯定发生了什么可怕的事……’",
+        "‘刚才那个嬉笑声真的很近了……冒险者先生，我们快回公会把药草交给柜台小姐吧，这里太危险了。’",
+        "‘冒险者先生，守卫大哥说门真的要关了！我们快回公会吧，别在这里吹冷风了。’",
+        "‘我们得走了，冒险者先生。守卫大哥已经把门关了一半了，要是被锁在外面就糟了。’",
+        "‘柜台小姐，我们真的遇到了……那些东西的声音。冒险者先生一路上都在保护我。’",
+        "‘我们走吧，冒险者先生！酒馆就在隔壁。虽然我也想听情报，但首先得把老板娘交代的工作做好。’"
+      ],
+      "mood": "担忧且警惕",
+      "observations": [
+        "[tick 15|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 麦酒与烤肉的香气 (stew_fragrance)",
+        "teammate notices clue: 冒险者新人指南 (newbie_handbook)",
+        "[tick 17|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 北门的魔法路灯 (gate_lanterns)",
+        "teammate notices clue: 试验用的药草丛 (herb_node_gate)",
+        "[tick 18|clue_narrative] 圣女指着一种锯齿状边缘的淡紫色小叶子：‘看，这就是宁神草。它们喜欢生长在湿润的树根旁，千万别和毒麻草弄混了。’",
+        "[tick 18|clue_narrative] 你小心翼翼地采下了药草。就在这时，一阵低沉的、不像是人类的嬉笑声从密林深处传来，圣女吓得躲到了你身后。",
+        "[tick 18|ai_osiris] 冒险者移动到新区域",
+        "teammate notices clue: 模糊的拖拽痕迹 (clue_drag_marks)"
+      ],
+      "pending_graphize": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "玩家已经完成了公会的注册手续，拿到了等级牌。",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’"
+      ],
+      "pending_topic": "‘我们走吧，冒险者先生！酒馆就在隔壁。虽然我也想听情报，但首先得把老板娘交代的工作做好。’",
+      "thoughts": "哥布林……那种残忍的怪物。如果守备长的直觉是对的，这已经不是普通的采集任务了。我必须保护好冒险者先生，绝不能让悲剧发生。",
+      "updated_tick": 19
+    },
+    "tavern_keeper": {
+      "attitude_towards_player": "新面孔，看看是长期客户还是过客。",
+      "goals": [
+        "盘点今天的库存",
+        "收集最新的小镇八卦",
+        "‘听说牧场那边最近不太太平？希望去帮忙的新人能平安回来……嘿，咱们这儿的麦酒可等不及要招待英雄了。’",
+        "在大厅擦拭杯子，等待今天最后的一批冒险者",
+        "‘今晚有新鲜的麦酒，忙完了就赶紧过来坐坐吧！’",
+        "‘今天的推荐菜是烤肉配麦酒，注册完了一定要来喝一杯，小店就在公会隔壁。’",
+        "看到玩家推门而入，爽朗地打招呼：‘欢迎光临！新面孔！听柜台小姐说你今天立了大功？’",
+        "‘欢迎光临！新晋的白瓷级冒险者！这里有刚酿好的牛奶麦酒，快请进！’",
+        "‘嘿！新来的！过来这边，我已经听圣女小姐说了你的事，第一杯牛奶麦酒算我的！’",
+        "‘嘿！新来的白瓷小哥，快进来！大家都在聊你今天在牧场的表现呢！’",
+        "‘嘿！新来的白瓷冒险者，这边请！圣女小姐在那边靠窗的位子等你很久了，第一杯麦酒已经给你满上了！’",
+        "‘欢迎光临！为了庆祝新冒险者的诞生，这第一杯牛奶麦酒算小店请客！圣女小姐，快给你的朋友挪个位子！’"
+      ],
+      "mood": "精明",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "",
+      "thoughts": "昨晚的那批蜂蜜酒卖得不错，得再补一批。",
+      "updated_tick": 15
+    },
+    "tavern_waitress": {
+      "attitude_towards_player": "新客人！要好好招待。",
+      "goals": [
+        "把今天的活干好",
+        "学会老板娘教的新菜式",
+        "‘那个……对不起，你是刚才那位帮了牧牛妹的冒险者吗？酒馆今晚太忙了，老板娘说如果你有空的话……’",
+        "‘打扰一下……请问您就是那位刚从北边回来的冒险者吗？酒馆那边今晚实在忙不过来，老板娘说想请您过去帮帮忙。’"
+      ],
+      "mood": "紧张又期待",
+      "observations": [
+        "[tick 11|ai_osiris] 冒险者移动到新区域",
+        "[tick 14|clue_narrative] 柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+        "[tick 15|ai_osiris] 冒险者移动到新区域"
+      ],
+      "pending_topic": "‘打扰一下……请问您就是那位刚从北边回来的冒险者吗？酒馆那边今晚实在忙不过来，老板娘说想请您过去帮帮忙。’",
+      "thoughts": "今天希望不要再打翻盘子了...",
+      "updated_tick": 15
+    },
+    "temple_matron": {
+      "attitude_towards_player": "愿地母神引领迷途的旅人。",
+      "goals": [
+        "主持早祷",
+        "整理神殿的药草储备"
+      ],
+      "mood": "慈祥",
+      "thoughts": "今天要教女神官新的祈祷仪式。"
+    },
+    "town_guard": {
+      "attitude_towards_player": "冒险者？注意遵守小镇规矩。",
+      "goals": [
+        "按时完成巡逻"
+      ],
+      "mood": "放松",
+      "thoughts": "今天的巡逻没发现异常，倒是挺太平的。"
+    },
+    "traveling_merchant": {
+      "attitude_towards_player": "客官，看看有什么需要的？",
+      "goals": [
+        "卖掉这批货",
+        "收集边境最新情报",
+        "‘嘿！两位，是打算去森林吗？我这儿刚好有上好的驱虫油和防水火柴，现在的林子里可不比从前了。’",
+        "‘嘿！新来的，是去北边吗？我这儿刚进了批防潮的麻绳和高级止血药，现在的森林可不太安宁。’",
+        "‘二位，准备去森林采集吗？我这里刚好有些新鲜的灯油和高级绷带，现在的林子里湿气重，多备点总没错。’"
+      ],
+      "mood": "精明",
+      "pending_topic": "‘二位，准备去森林采集吗？我这里刚好有些新鲜的灯油和高级绷带，现在的林子里湿气重，多备点总没错。’",
+      "thoughts": "这次带的南方香料应该能卖个好价钱。"
+    }
+  },
+  "npc_dispositions": {
+    "blacksmith": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 10
+    },
+    "cow_girl": {
+      "approval": 52,
+      "fear": 0,
+      "romance": 71,
+      "trust": 85
+    },
+    "dwarf_shaman": {
+      "approval": 20,
+      "fear": 0,
+      "romance": 0,
+      "trust": 30
+    },
+    "goblin_slayer": {
+      "approval": 0,
+      "fear": 5,
+      "romance": 0,
+      "trust": 10
+    },
+    "guild_girl": {
+      "approval": 13,
+      "fear": 0,
+      "romance": 52,
+      "trust": 26
+    },
+    "guild_quartermaster": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 10
+    },
+    "high_elf_archer": {
+      "approval": 10,
+      "fear": 0,
+      "romance": 5,
+      "trust": 25
+    },
+    "informant": {
+      "approval": -5,
+      "fear": 10,
+      "romance": 0,
+      "trust": 0
+    },
+    "lizard_priest": {
+      "approval": 19,
+      "fear": 0,
+      "romance": 0,
+      "trust": 44
+    },
+    "north_gate_warden": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 10
+    },
+    "priestess": {
+      "approval": 22,
+      "fear": 0,
+      "romance": 12,
+      "trust": 34
+    },
+    "tavern_keeper": {
+      "approval": 7,
+      "fear": 0,
+      "romance": 0,
+      "trust": 17
+    },
+    "tavern_waitress": {
+      "approval": 10,
+      "fear": 0,
+      "romance": 5,
+      "trust": 15
+    },
+    "temple_matron": {
+      "approval": 5,
+      "fear": 0,
+      "romance": 0,
+      "trust": 20
+    },
+    "town_guard": {
+      "approval": 0,
+      "fear": 0,
+      "romance": 0,
+      "trust": 5
+    },
+    "traveling_merchant": {
+      "approval": 5,
+      "fear": 0,
+      "romance": 0,
+      "trust": 10
+    }
+  },
+  "npc_impressions": {
+    "priestess": [
+      "Revealed: 其实，我真的很害怕哥布林。虽然森林边缘很少见，但我总担心它们会从草丛里钻出来……如果有你在身边，我大概能更有勇气面对它们。"
+    ]
+  },
+  "relationship_stages": {
+    "cow_girl": "acquaintance",
+    "dwarf_shaman": "acquaintance",
+    "guild_girl": "acquaintance",
+    "lizard_priest": "acquaintance",
+    "priestess": "acquaintance"
+  },
+  "shop_states": {
+    "blacksmith": {
+      "current_stock": [
+        {
+          "base_price": 10,
+          "item_id": "cheap_shortsword",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 15,
+          "item_id": "standard_longsword",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 5,
+          "item_id": "scouts_hand_axe",
+          "price_override": null,
+          "remaining": 5,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 20,
+          "item_id": "heavy_war_hammer",
+          "price_override": null,
+          "remaining": 2,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "throwing_dagger",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 4,
+          "item_id": "sturdy_spear",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 6,
+          "item_id": "quilted_gambeson",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 10,
+          "item_id": "leather_armor",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 75,
+          "item_id": "dirty_chain_mail",
+          "price_override": null,
+          "remaining": 2,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 10,
+          "item_id": "round_shield",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "hempen_rope",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "iron_spikes",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 2,
+          "item_id": "adventurers_tinderbox",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 25,
+          "item_id": "basic_antidote",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 50,
+          "item_id": "healing_potion",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "blacksmith",
+      "refresh_on": "daily"
+    },
+    "guild_quartermaster": {
+      "current_stock": [
+        {
+          "base_price": 1,
+          "item_id": "exploration_torch",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 2,
+          "item_id": "adventurers_tinderbox",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "hempen_rope",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "iron_spikes",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "trail_rations",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "waterskin",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "chalk_bundle",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "climbing_hook",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 3,
+          "item_id": "travel_bedroll",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "guild_quartermaster",
+      "refresh_on": "daily"
+    },
+    "tavern_keeper": {
+      "current_stock": [
+        {
+          "base_price": 1,
+          "item_id": "trail_rations",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "waterskin",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "exploration_torch",
+          "price_override": null,
+          "remaining": 8,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "lamp_oil_flask",
+          "price_override": null,
+          "remaining": 6,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 2,
+          "item_id": "adventurers_tinderbox",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 5,
+          "item_id": "bandage_roll",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "tavern_keeper",
+      "refresh_on": "daily"
+    },
+    "traveling_merchant": {
+      "current_stock": [
+        {
+          "base_price": 50,
+          "item_id": "healing_potion",
+          "price_override": null,
+          "remaining": 5,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 25,
+          "item_id": "basic_antidote",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 1,
+          "item_id": "trail_rations",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "exploration_torch",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "waterskin",
+          "price_override": null,
+          "remaining": null,
+          "source": "base",
+          "unlimited": true
+        },
+        {
+          "base_price": 1,
+          "item_id": "hempen_rope",
+          "price_override": null,
+          "remaining": 3,
+          "source": "base",
+          "unlimited": false
+        },
+        {
+          "base_price": 3,
+          "item_id": "travel_bedroll",
+          "price_override": null,
+          "remaining": 2,
+          "source": "rotating",
+          "unlimited": false
+        },
+        {
+          "base_price": 5,
+          "item_id": "bandage_roll",
+          "price_override": null,
+          "remaining": 3,
+          "source": "rotating",
+          "unlimited": false
+        }
+      ],
+      "last_refresh_tick": 8,
+      "npc_id": "traveling_merchant",
+      "refresh_on": "daily"
+    }
+  }
+}

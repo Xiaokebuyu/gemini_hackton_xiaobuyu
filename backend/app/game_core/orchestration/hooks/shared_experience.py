@@ -137,7 +137,6 @@ class SharedExperienceHook(NoOpSettlementHook):
             or "public_utterance_turn" in action_types
             or "party_chat_turn" in action_types
             or "free_chat_turn" in action_types
-            or "private_chat_turn" in action_types
             or any(a in bus_tags for a in ("DIALOGUE", "NPC_INTERACTION"))
         ):
             return _build_experience(

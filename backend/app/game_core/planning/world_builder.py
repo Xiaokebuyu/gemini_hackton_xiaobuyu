@@ -248,6 +248,55 @@ class WorldBuilderSubSystem:
             or _humanize_identifier(clue_id)
         )
         description = string_or_empty(payload.get("description"))
+
+        # Collect tags common to both schema paths
+        tags = [
+            str(item).strip()
+            for item in payload.get("tags", [])
+            if isinstance(item, str) and str(item).strip()
+        ]
+        for tag in ("clue", "party_discussion"):
+            if tag not in tags:
+                tags.append(tag)
+
+        # ── Simplified schema path (base_effects present, no legacy options) ──
+        if "base_effects" in payload and "options" not in payload:
+            raw_hints = payload.get("content_hints", payload.get("hints"))
+            party_prompt_hints = [
+                str(item).strip()
+                for item in raw_hints
+                if isinstance(item, str) and str(item).strip()
+            ] if isinstance(raw_hints, list) else []
+            clue_interactable = {
+                "id": clue_id,
+                "name": name,
+                "description": description,
+                "type": "inspect",
+                "tags": tags,
+                "functional": {
+                    "type": "investigate_clue",
+                    "params": {
+                        "clue_id": clue_id,
+                        "base_effects": list(payload.get("base_effects") or []),
+                        "check": payload.get("check"),
+                        "check_effects": list(payload.get("check_effects") or []),
+                        "narrative": str(payload.get("narrative") or ""),
+                        "topic": coerce_non_empty_string(payload.get("topic")),
+                        "linked_quest_id": coerce_non_empty_string(payload.get("linked_quest_id")),
+                        "linked_milestone": coerce_non_empty_string(payload.get("linked_milestone")),
+                        "party_prompt_hints": party_prompt_hints,
+                        "hide_on_resolve": True,
+                    },
+                },
+            }
+            return {
+                "area_id": area_id,
+                "location_id": location_id,
+                "room_id": room_id,
+                "interactables": [clue_interactable],
+            }
+
+        # ── Legacy schema path (options/outcomes) ──
         raw_options = payload.get("options")
         options = raw_options if isinstance(raw_options, list) and 2 <= len(raw_options) <= 4 else [
             {"id": "examine", "label": "仔细检查"},
@@ -264,14 +313,6 @@ class WorldBuilderSubSystem:
             for item in raw_hints
             if isinstance(item, str) and str(item).strip()
         ] if isinstance(raw_hints, list) else []
-        tags = [
-            str(item).strip()
-            for item in payload.get("tags", [])
-            if isinstance(item, str) and str(item).strip()
-        ]
-        for tag in ("clue", "party_discussion"):
-            if tag not in tags:
-                tags.append(tag)
 
         clue_interactable = {
             "id": clue_id,

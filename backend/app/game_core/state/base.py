@@ -280,6 +280,7 @@ class StateContainer:
     def _initial_relation_payload(cls, world: WorldInstance) -> dict[str, Any]:
         npc_dispositions: dict[str, dict[str, int]] = {}
         faction_standings: dict[str, int] = {}
+        npc_blackboards: dict[str, dict[str, Any]] = {}
 
         if world.has_registry("characters"):
             for item in world.characters.list_all():
@@ -293,6 +294,8 @@ class StateContainer:
                     "fear": cls._as_int(disposition.get("fear"), 0),
                     "romance": cls._as_int(disposition.get("romance"), 0),
                 }
+                if item.initial_blackboard is not None:
+                    npc_blackboards[character_id] = dict(item.initial_blackboard)
 
         if world.has_registry("factions"):
             for faction in world.factions.list_all():
@@ -312,6 +315,7 @@ class StateContainer:
             "faction_standings": faction_standings,
             "npc_impressions": {},
             "shop_states": {},
+            "npc_blackboards": npc_blackboards,
         }
 
     @classmethod

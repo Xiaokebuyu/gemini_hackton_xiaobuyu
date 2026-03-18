@@ -336,11 +336,22 @@ def _make_situation_context(
 
 
 def test_update_area_situation_empty_state_produces_empty_string():
-    """No events, low danger, no hostiles → situation is empty string."""
+    """No events, low danger, no hostiles — only time period atmosphere.
+
+    Since _update_area_situation now adds time period atmosphere when a TimeSlice
+    is present, the result is non-empty even with no danger/events.  The test now
+    verifies that no danger/encounter text appears while period text IS present.
+    """
     ctx = _make_situation_context(danger_level=1.0)
     hook = NarrativePlannerHook()
     hook._update_area_situation(ctx)
-    assert ctx.state.areas.get_area_situation("town") == ""
+    situation = ctx.state.areas.get_area_situation("town")
+    # No danger / encounter content
+    assert "危险等级较高" not in situation
+    assert "已知敌对遭遇" not in situation
+    assert "近期事件" not in situation
+    # Time period atmosphere should be present (TimeSlice has period="day")
+    assert "白天" in situation
 
 
 def test_update_area_situation_high_danger_includes_warning():

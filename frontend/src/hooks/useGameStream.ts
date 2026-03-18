@@ -968,6 +968,17 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       }
 
 
+      case 'quest_hint': {
+        const d = event.data as Record<string, unknown> | undefined
+        const hint = typeof d?.hint === 'string' ? d.hint.trim() : ''
+        if (hint) {
+          dialogue.addMessage({ type: 'system', content: `💡 ${hint}` })
+        }
+        break
+      }
+
+      case 'quest_objective_updated':
+      case 'quest_status_changed':
       case 'ai_osiris_applied':
       case 'narrative_plan_updated':
       case 'npc_schedule_updated':
@@ -975,7 +986,6 @@ export function useGameStream(overviewHandlers: OverviewHandlers, sessionOverrid
       case 'combat_effects_ticked':
       case 'dynamic_quest_expired':
       case 'dynamic_sub_areas_expired':
-      case 'quest_status_changed':
         break
 
       case 'ai_osiris_error':

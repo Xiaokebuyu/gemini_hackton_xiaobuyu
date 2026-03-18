@@ -48,9 +48,9 @@ class CompanionHandler(StaticCommandHandler):
         if cmd.type == "recruit_companion":
             return self._compute_recruit(cmd, state, world)
         if cmd.type == "dismiss_companion":
-            return self._compute_dismiss(cmd, state)
+            return self._compute_dismiss(cmd, state, world)
         if cmd.type == "force_leave_companion":
-            return self._compute_force_leave(cmd, state)
+            return self._compute_dismiss(cmd, state, world)
         if cmd.type == "restore_companion_after_combat":
             return self._compute_restore_after_combat(cmd, state)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
@@ -208,6 +208,7 @@ class CompanionHandler(StaticCommandHandler):
         self,
         cmd: Command,
         state: StateContainer,
+        world: Any = None,
     ) -> ExecuteResult:
         npc_id = self._require_npc_id(cmd.params) or ""
         reason = get_non_empty_string(cmd.params, "reason") or "dismissed"
@@ -216,16 +217,44 @@ class CompanionHandler(StaticCommandHandler):
             for member_id in (state.party.members or {}).keys()
             if member_id != npc_id
         ]
+        changes: list[StateChange] = [
+            StateChange(
+                slice="party",
+                operation="remove",
+                path=f"members.{npc_id}",
+                value=None,
+            )
+        ]
+        # Move NPC back to their home location immediately
+        if world is not None and hasattr(world, "has_registry") and world.has_registry("characters"):
+            template = world.characters.get(npc_id)
+            if template is not None:
+                home_area = getattr(template, "area_id", None)
+                home_loc = getattr(template, "location_id", None)
+                if isinstance(home_area, str) and home_area.strip():
+                    changes.append(
+                        StateChange(
+                            slice="areas",
+                            operation="set",
+                            path=f"npc_presence.{npc_id}",
+                            value={
+                                "area_id": home_area,
+                                "location_id": home_loc,
+                                "source": "schedule",
+                            },
+                        )
+                    )
+        # Clear wants_to_leave from blackboard
+        if state.has_slice("relations"):
+            bb = state.relations.get_blackboard(npc_id)
+            if isinstance(bb, dict) and bb.get("wants_to_leave"):
+                state.relations.update_blackboard(npc_id, {
+                    "wants_to_leave": False,
+                    "pending_topic": "",
+                })
         return self._success(
             cmd,
-            changes=[
-                StateChange(
-                    slice="party",
-                    operation="remove",
-                    path=f"members.{npc_id}",
-                    value=None,
-                )
-            ],
+            changes=changes,
             event_type="companion_dismissed",
             npc_id=npc_id,
             reason=reason,

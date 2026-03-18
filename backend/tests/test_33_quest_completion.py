@@ -679,21 +679,20 @@ class TestQuestsJsonData:
             )
 
     def test_arrival_conditions(self) -> None:
-        """ms_frontier_arrival should have npc_talked conditions for guild_girl and goblin_slayer."""
+        """ms_frontier_arrival should have conditions for guild_girl and cow_girl."""
         reg = self._load_registry()
 
         ms = reg.get_milestone("ms_frontier_arrival")
         assert ms is not None
         cond_types = {c.type for c in ms.success_conditions}
-        assert "npc_talked" in cond_types
-        assert "location_visited" in cond_types
+        assert "npc_talked" in cond_types or "flag_set" in cond_types
         npc_ids = {
             c.params.get("npc_id")
             for c in ms.success_conditions
             if c.type == "npc_talked"
         }
         assert "guild_girl" in npc_ids
-        assert "goblin_slayer" in npc_ids
+        assert "cow_girl" in npc_ids
 
     def test_the_hive_conditions_types(self) -> None:
         """ms_hive_heart should have location_visited and npc_talked conditions."""
@@ -716,28 +715,32 @@ class TestQuestsJsonData:
         assert "location_visited" in cond_types
 
     def test_next_milestones_chain_intact(self) -> None:
-        """3-milestone chain: frontier_arrival → growing_darkness → hive_heart."""
+        """Ch1 chain: arrival → earning_name → belonging → harvest_festival → growing_darkness."""
         reg = self._load_registry()
 
-        assert "ms_growing_darkness" in reg.get_milestone("ms_frontier_arrival").next_milestones
-        assert "ms_hive_heart" in reg.get_milestone("ms_growing_darkness").next_milestones
-        assert reg.get_milestone("ms_hive_heart").next_milestones == []
+        assert "ms_earning_name" in reg.get_milestone("ms_frontier_arrival").next_milestones
+        assert "ms_belonging" in reg.get_milestone("ms_earning_name").next_milestones
+        assert "ms_harvest_festival" in reg.get_milestone("ms_belonging").next_milestones
+        assert "ms_growing_darkness" in reg.get_milestone("ms_harvest_festival").next_milestones
 
     def test_milestone_chain_integrity(self) -> None:
-        """Prerequisites chain is consistent: M1 has none, M2 requires M1, M3 requires M2."""
+        """Prerequisites chain is consistent across ch1 and ch2."""
         reg = self._load_registry()
 
         m1 = reg.get_milestone("ms_frontier_arrival")
-        m2 = reg.get_milestone("ms_growing_darkness")
-        m3 = reg.get_milestone("ms_hive_heart")
+        m2 = reg.get_milestone("ms_earning_name")
+        m3 = reg.get_milestone("ms_belonging")
+        m4 = reg.get_milestone("ms_harvest_festival")
 
         assert m1 is not None
         assert m2 is not None
         assert m3 is not None
+        assert m4 is not None
 
         assert m1.prerequisites == []
         assert "ms_frontier_arrival" in m2.prerequisites
-        assert "ms_growing_darkness" in m3.prerequisites
+        assert "ms_earning_name" in m3.prerequisites
+        assert "ms_belonging" in m4.prerequisites
 
     def test_milestone_conditions_have_valid_types(self) -> None:
         """All success_conditions use types that the event engine recognises."""
@@ -754,14 +757,18 @@ class TestQuestsJsonData:
                 )
 
     def test_milestone_completion_values_ascending(self) -> None:
-        """completion_value must be strictly ascending along the sequence chain."""
+        """completion_value must be strictly ascending within each chapter."""
         reg = self._load_registry()
 
-        ordered = sorted(reg.list_all(), key=lambda m: m.sequence)
-        for i in range(1, len(ordered)):
-            prev = ordered[i - 1]
-            curr = ordered[i]
-            assert curr.completion_value > prev.completion_value, (
-                f"completion_value not ascending: "
-                f"{prev.id}={prev.completion_value} >= {curr.id}={curr.completion_value}"
-            )
+        by_chapter: dict[str, list] = {}
+        for ms in reg.list_all():
+            by_chapter.setdefault(ms.chapter_id, []).append(ms)
+        for chapter_id, milestones in by_chapter.items():
+            ordered = sorted(milestones, key=lambda m: m.sequence)
+            for i in range(1, len(ordered)):
+                prev = ordered[i - 1]
+                curr = ordered[i]
+                assert curr.completion_value > prev.completion_value, (
+                    f"[{chapter_id}] completion_value not ascending: "
+                    f"{prev.id}={prev.completion_value} >= {curr.id}={curr.completion_value}"
+                )

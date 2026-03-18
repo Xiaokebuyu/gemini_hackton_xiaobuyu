@@ -288,7 +288,7 @@ def test_pipeline_no_double_trigger() -> None:
 
 
 # ---------------------------------------------------------------------------
-# finalize_external_turn (interact / private_chat pipeline)
+# finalize_external_turn (interact pipeline)
 # ---------------------------------------------------------------------------
 
 def test_finalize_external_turn_checks_post_external() -> None:

@@ -26,7 +26,7 @@ from app.game_core.state import StateChange, StateContainer
 
 
 class ClueHandler(StaticCommandHandler):
-    COMMAND_TYPES = ("investigate_clue", "resolve_clue_option")
+    COMMAND_TYPES = ("investigate_clue", "resolve_clue_option", "apply_clue_check_result")
 
     def validate(
         self,
@@ -45,6 +45,22 @@ class ClueHandler(StaticCommandHandler):
             option_id = get_non_empty_string(cmd.params, "option_id")
             if option_id is None:
                 return ValidationResult(ok=False, reason="option_id required")
+        if cmd.type == "apply_clue_check_result":
+            grade = get_non_empty_string(cmd.params, "grade")
+            if grade is None:
+                return ValidationResult(ok=False, reason="grade required")
+            if grade not in {"excellent", "good", "poor", "bad"}:
+                return ValidationResult(ok=False, reason=f"invalid grade: {grade}")
+            # Verify pending_check exists in interactable state
+            interactable_id = get_non_empty_string(cmd.params, "interactable_id") or ""
+            if state.has_slice("areas"):
+                area_id = state.player.current_area if state.has_slice("player") else None
+                if area_id:
+                    istate = (
+                        state.areas.get_area(area_id).interactable_states.get(interactable_id, {})
+                    )
+                    if not isinstance(istate, dict) or "pending_check" not in istate:
+                        return ValidationResult(ok=False, reason="no_pending_check")
         return ValidationResult(ok=True)
 
     def compute(
@@ -60,6 +76,8 @@ class ClueHandler(StaticCommandHandler):
             return self._compute_investigate(cmd, state, world)
         if cmd.type == "resolve_clue_option":
             return self._compute_resolve(cmd, state, world)
+        if cmd.type == "apply_clue_check_result":
+            return self._compute_apply_check_result(cmd, state, world)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
 
     def _compute_investigate(
@@ -75,6 +93,10 @@ class ClueHandler(StaticCommandHandler):
 
         if clue_state.get("resolved_option_id"):
             return ExecuteResult.error("clue_already_resolved")
+
+        # Dispatch to simplified-schema handler if appropriate
+        if clue.get("simple"):
+            return self._compute_investigate_simple(entry, clue, clue_state, state, world)
 
         area_id = entry.area_id
         changes: list[StateChange] = []
@@ -129,6 +151,173 @@ class ClueHandler(StaticCommandHandler):
                 "location_id": entry.location_id,
                 "area_id": entry.area_id,
                 "functional_type": CLUE_FUNCTIONAL_TYPE,
+            },
+            omit_empty_delta=False,
+        )
+
+    def _compute_investigate_simple(
+        self,
+        entry: Any,
+        clue: dict[str, Any],
+        clue_state: dict[str, Any],
+        state: StateContainer,
+        world: Any,
+    ) -> ExecuteResult:
+        """Handle investigate_clue for the simplified schema (base_effects + optional check)."""
+        area_id = entry.area_id
+        changes: list[StateChange] = []
+
+        # 1. Apply base_effects unconditionally
+        base_effects = list(clue.get("base_effects", []))
+        effect_changes, effect_summary, error = apply_clue_effects(
+            state,
+            world,
+            base_effects,
+            area_id=area_id,
+            source=entry.source,
+        )
+        if error is not None:
+            return ExecuteResult.error(error)
+        changes.extend(effect_changes)
+
+        # 2. Store pending_check if a check is defined
+        check = clue.get("check")
+        has_check = isinstance(check, dict) and bool(check.get("skill"))
+        updated_state = dict(clue_state)
+        updated_state.update({
+            "area_id": area_id,
+            "clue_id": clue["clue_id"],
+            "first_inspected": True,
+            # Mark as resolved with sentinel so clue_investigated condition works
+            "resolved_option_id": "__simple__",
+        })
+        if has_check:
+            updated_state["pending_check"] = {
+                "skill": check["skill"],
+                "dc": check["dc"],
+                "check_effects": list(clue.get("check_effects", [])),
+            }
+        else:
+            # Clear any stale pending_check
+            updated_state.pop("pending_check", None)
+
+        changes.append(StateChange(
+            "areas",
+            "set",
+            f"interactable_states.{entry.interactable_id}",
+            updated_state,
+        ))
+
+        # 3. Inject narrative into area_events and scene_bus if present
+        narrative = str(clue.get("narrative") or "").strip()
+        current_tick = state.time.absolute_tick() if state.has_slice("time") else 0
+        if narrative:
+            changes.append(StateChange(
+                "areas",
+                "add",
+                f"{area_id}.area_events",
+                {
+                    "tick": current_tick,
+                    "event": narrative[:200],
+                    "source": "clue_narrative",
+                    "severity": "minor",
+                },
+            ))
+
+        return handler_success(
+            "clue",
+            "investigate_clue",
+            changes=changes,
+            time_cost=1.0 / 6.0,
+            metadata={
+                "clue_id": clue["clue_id"],
+                "interactable_id": entry.interactable_id,
+                "clue_name": clue.get("name") or entry.name,
+                "description": clue.get("description") or entry.description,
+                "topic": clue.get("topic"),
+                "narrative": narrative,
+                "has_check": has_check,
+                "check": dict(check) if has_check else None,
+                "base_effects_applied": effect_summary,
+                "party_prompt_hints": list(clue.get("party_prompt_hints", [])),
+                "source": entry.source,
+                "dynamic": entry.dynamic,
+                "overlay": entry.overlay,
+                "room_id": entry.room_id,
+                "location_id": entry.location_id,
+                "area_id": entry.area_id,
+                "functional_type": CLUE_FUNCTIONAL_TYPE,
+                "simple": True,
+            },
+            omit_empty_delta=False,
+        )
+
+    def _compute_apply_check_result(
+        self,
+        cmd: Command,
+        state: StateContainer,
+        world: Any,
+    ) -> ExecuteResult:
+        """Apply check_effects from a previously stored pending_check based on grade."""
+        interactable_id = get_non_empty_string(cmd.params, "interactable_id") or ""
+        grade = get_non_empty_string(cmd.params, "grade") or "bad"
+
+        area_id = state.player.current_area if state.has_slice("player") else None
+        if not area_id:
+            return ExecuteResult.error("no_current_area")
+
+        clue_state = (
+            state.areas.get_area(area_id).interactable_states.get(interactable_id, {})
+            if state.has_slice("areas")
+            else {}
+        )
+        if not isinstance(clue_state, dict):
+            clue_state = {}
+
+        pending_check = clue_state.get("pending_check")
+        if not isinstance(pending_check, dict):
+            return ExecuteResult.error("no_pending_check")
+
+        check_effects = list(pending_check.get("check_effects", []))
+        changes: list[StateChange] = []
+        effect_summary: dict[str, Any] = {"applied": []}
+
+        # Execute check_effects for excellent/good; skip for poor/bad
+        if grade in {"excellent", "good"} and check_effects:
+            effect_changes, effect_summary, error = apply_clue_effects(
+                state,
+                world,
+                check_effects,
+                area_id=area_id,
+                source="system",
+            )
+            if error is not None:
+                return ExecuteResult.error(error)
+            changes.extend(effect_changes)
+
+        # Clear pending_check from interactable state
+        updated_state = dict(clue_state)
+        updated_state.pop("pending_check", None)
+        updated_state["check_grade"] = grade
+        updated_state["check_passed"] = grade in {"excellent", "good"}
+        changes.append(StateChange(
+            "areas",
+            "set",
+            f"interactable_states.{interactable_id}",
+            updated_state,
+        ))
+
+        return handler_success(
+            "clue",
+            "apply_clue_check_result",
+            changes=changes,
+            time_cost=0.0,
+            metadata={
+                "interactable_id": interactable_id,
+                "grade": grade,
+                "passed": grade in {"excellent", "good"},
+                "check_effects_applied": effect_summary,
+                "area_id": area_id,
             },
             omit_empty_delta=False,
         )

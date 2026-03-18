@@ -12,6 +12,9 @@ from app.game_core.rules.models import Command, ExecuteResult, ValidationResult
 from app.game_core.state import StateChange, StateContainer
 
 
+MAX_PLAYER_LEVEL = 5
+
+
 class GrowthHandler(StaticCommandHandler):
     COMMAND_TYPES = (
         "add_xp",
@@ -90,6 +93,8 @@ class GrowthHandler(StaticCommandHandler):
         if identity_check is not None:
             return identity_check
         current_level = max(1, int(state.player.level))
+        if current_level >= MAX_PLAYER_LEVEL:
+            return ValidationResult(ok=False, reason=f"已达最高等级 {MAX_PLAYER_LEVEL}")
         target_level = self._resolve_target_level(cmd.params, current_level)
         if target_level is None:
             return ValidationResult(
@@ -269,6 +274,9 @@ class GrowthHandler(StaticCommandHandler):
     ) -> ExecuteResult:
         current_level = max(1, int(state.player.level))
         target_level = self._resolve_target_level(cmd.params, current_level) or (current_level + 1)
+        target_level = min(target_level, MAX_PLAYER_LEVEL)
+        if target_level <= current_level:
+            return ExecuteResult.error("already_at_max_level")
         class_template = self._get_player_class_template(state, world)
         con_mod = state.player.get_modifier("con")
         steps = max(1, target_level - current_level)

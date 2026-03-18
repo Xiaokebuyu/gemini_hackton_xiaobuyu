@@ -779,7 +779,7 @@ def test_prompt_text_role_block_placed_before_tool_rules():
         role_data=role_data,
     )
     constraint_pos = prompt.find("你的职责")
-    tool_rules_pos = prompt.find("Tool usage rules")
+    tool_rules_pos = prompt.find("工具使用规则")
     assert constraint_pos != -1
     assert tool_rules_pos != -1
     assert constraint_pos < tool_rules_pos

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Maximum observations per blackboard (short-term active window).
-_OBS_CAP = 10
+_OBS_CAP = 20
 # Threshold at which pending_graphize triggers LLM extraction.
 _GRAPHIZE_THRESHOLD = 100
 # System prompt for LLM observation → triple extraction.
@@ -220,16 +220,25 @@ class NpcAutonomyHook(NoOpSettlementHook):
             else:
                 merged_obs = observations
             # 5. Overflow: entries displaced beyond cap → pending_graphize buffer.
+            # Pinned memories are never displaced.
             if len(merged_obs) > _OBS_CAP:
-                overflow = merged_obs[:-_OBS_CAP]
-                existing_pending = existing_board.get("pending_graphize", [])
-                if isinstance(existing_pending, list):
-                    existing_pending = list(existing_pending)
+                pinned = existing_board.get("pinned_memories", [])
+                pinned_set = set(pinned) if isinstance(pinned, list) else set()
+                non_pinned = [o for o in merged_obs if o not in pinned_set]
+                if len(non_pinned) > _OBS_CAP:
+                    overflow = non_pinned[:-_OBS_CAP]
+                    existing_pending = existing_board.get("pending_graphize", [])
+                    if isinstance(existing_pending, list):
+                        existing_pending = list(existing_pending)
+                    else:
+                        existing_pending = []
+                    existing_pending.extend(overflow)
+                    updates["pending_graphize"] = existing_pending
+                    updates["observations"] = (
+                        list(pinned_set & set(merged_obs)) + non_pinned[-_OBS_CAP:]
+                    )
                 else:
-                    existing_pending = []
-                existing_pending.extend(overflow)
-                updates["pending_graphize"] = existing_pending
-                updates["observations"] = merged_obs[-_OBS_CAP:]
+                    updates["observations"] = merged_obs[-_OBS_CAP:]
             else:
                 updates["observations"] = merged_obs
 
@@ -243,6 +252,17 @@ class NpcAutonomyHook(NoOpSettlementHook):
             else:
                 merged_goals = goals
             updates["goals"] = merged_goals
+
+        # Mood derivation from time period (only set if not already assigned by Planner).
+        existing_mood = existing_board.get("mood", "")
+        if not existing_mood:
+            period = ""
+            if context.state.has_slice("time"):
+                period = context.state.time.period
+            mood_map = {"dawn": "精神", "day": "平静", "dusk": "疲惫", "night": "困倦"}
+            derived_mood = mood_map.get(period, "")
+            if derived_mood:
+                updates["mood"] = derived_mood
 
         context.state.relations.update_blackboard(npc_id, updates)
 
@@ -309,16 +329,25 @@ class NpcAutonomyHook(NoOpSettlementHook):
             else:
                 merged_obs = observations
             # Overflow: entries displaced beyond cap → pending_graphize buffer.
+            # Pinned memories are never displaced.
             if len(merged_obs) > _OBS_CAP:
-                overflow = merged_obs[:-_OBS_CAP]
-                existing_pending = existing_board.get("pending_graphize", [])
-                if isinstance(existing_pending, list):
-                    existing_pending = list(existing_pending)
+                pinned = existing_board.get("pinned_memories", [])
+                pinned_set = set(pinned) if isinstance(pinned, list) else set()
+                non_pinned = [o for o in merged_obs if o not in pinned_set]
+                if len(non_pinned) > _OBS_CAP:
+                    overflow = non_pinned[:-_OBS_CAP]
+                    existing_pending = existing_board.get("pending_graphize", [])
+                    if isinstance(existing_pending, list):
+                        existing_pending = list(existing_pending)
+                    else:
+                        existing_pending = []
+                    existing_pending.extend(overflow)
+                    updates["pending_graphize"] = existing_pending
+                    updates["observations"] = (
+                        list(pinned_set & set(merged_obs)) + non_pinned[-_OBS_CAP:]
+                    )
                 else:
-                    existing_pending = []
-                existing_pending.extend(overflow)
-                updates["pending_graphize"] = existing_pending
-                updates["observations"] = merged_obs[-_OBS_CAP:]
+                    updates["observations"] = merged_obs[-_OBS_CAP:]
             else:
                 updates["observations"] = merged_obs
 
@@ -332,6 +361,17 @@ class NpcAutonomyHook(NoOpSettlementHook):
             else:
                 merged_goals = goals
             updates["goals"] = merged_goals
+
+        # Mood derivation from time period (only set if not already assigned by Planner).
+        existing_mood = existing_board.get("mood", "")
+        if not existing_mood:
+            period = ""
+            if context.state.has_slice("time"):
+                period = context.state.time.period
+            mood_map = {"dawn": "精神", "day": "平静", "dusk": "疲惫", "night": "困倦"}
+            derived_mood = mood_map.get(period, "")
+            if derived_mood:
+                updates["mood"] = derived_mood
 
         context.state.relations.update_blackboard(companion_id, updates)
 

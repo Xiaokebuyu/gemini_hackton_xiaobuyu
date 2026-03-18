@@ -17,7 +17,6 @@ from app.game_core.orchestration.hooks import (
     NpcAutonomyHook,
     NpcScheduleHook,
     PassivePerceptionHook,
-    PrivateChatTriggerHook,
     QuestExpiryHook,
     QuestObjectiveTrackingHook,
     RelationshipHook,
@@ -122,7 +121,6 @@ DEFAULT_SETTLEMENT_HOOK_TYPES: tuple[type[SettlementHook], ...] = (
     SharedExperienceHook,   # P62
     CampfireHook,           # NEW (P63)
     RelationshipHook,
-    PrivateChatTriggerHook,
     DirectiveTriggerHook,   # P76 — directive → NPC chat invitation
     TimeAdvanceHook,
     QuestExpiryHook,        # A-6 (S3-02): retire dynamic quests past expiry_ticks

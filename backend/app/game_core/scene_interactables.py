@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any, Mapping
 
@@ -56,8 +57,13 @@ _FRONTIER_TOWN_DUPLICATE_FACILITY_MAP: dict[str, dict[str, str | None]] = {
 
 
 def normalize_functional_binding(raw: Any) -> dict[str, Any]:
-    """Normalize one interactable functional binding."""
+    """Normalize one interactable functional binding. Accepts Mapping or JSON string."""
 
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return {}
     if not isinstance(raw, Mapping):
         return {}
     functional_type = str(raw.get("type", "")).strip()

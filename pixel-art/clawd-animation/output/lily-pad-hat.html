@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clawd — Lily Pad Afternoon</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: #111;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(90vw, 90vh);
+    height: min(90vw, 90vh);
+  }
+  .caption {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="caption">clawd on a lily pad</div>
+
+<script>
+// ============================================================
+// "Clawd on a Lily Pad with Straw Hat"
+// Layers: sky gradient → distant reeds → water ripples →
+//         lily pad → Clawd + hat → water sparkles
+// Loop: ~6s — idle bob → breeze → settle → blink
+// ============================================================
+
+const W = 128, H = 128;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = W; canvas.height = H;
+
+// -- Palette (from palette.json) --
+const P = {
+  0x0: null,
+  0x1: '#c0785a',  // body
+  0x2: '#a0624a',  // body shadow / legs
+  0x3: '#d4956e',  // body highlight
+  0x4: '#8a4a38',  // body dark
+  0x5: '#1a1a1a',  // eye
+  0x6: '#ffffff',  // white / eye highlight
+  0x7: '#7ec877',  // lily pad green
+  0x8: '#5a9e54',  // lily pad dark
+  0x9: '#a8e6a0',  // lily pad light
+  0xA: '#f0c878',  // hat straw
+  0xB: '#d4a050',  // hat shadow
+  0xC: '#c85040',  // hat band
+  0xD: '#e8a0b0',  // flower pink
+  0xE: '#f0d8c0',  // flower light
+  0xF: '#6ab060',  // flower leaf
+};
+
+function ps(rows) { return rows.map(r => [...r].map(c => parseInt(c, 16))); }
+
+function draw(grid, x, y) {
+  for (let r = 0; r < grid.length; r++)
+    for (let c = 0; c < grid[r].length; c++) {
+      const color = P[grid[r][c]];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + c, y + r, 1, 1);
+    }
+}
+
+// ============================================================
+// SPRITES
+// ============================================================
+
+// Clawd with straw hat — standing (16 wide × 18 tall)
+const clawd_hat = [
+  // Frame 0: normal (eyes open)
+  ps([
+    '0000000000000000',
+    '00000AAAAA000000',
+    '0000AAAAAAA00000',
+    '0000AACCCAA00000',  // hat band
+    '000AAAAAAAAAA000',  // hat brim
+    '000BBBBBBBBB0000',  // brim shadow
+    '0000011111100000',  // body
+    '0000011111100000',
+    '0000051115100000',  // eyes
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000022002200000',  // legs
+    '0000010000100000',
+    '0000010000100000',
+    '0000000000000000',
+  ]),
+  // Frame 1: blink (eyes closed)
+  ps([
+    '0000000000000000',
+    '00000AAAAA000000',
+    '0000AAAAAAA00000',
+    '0000AACCCAA00000',
+    '000AAAAAAAAAA000',
+    '000BBBBBBBBB0000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000021112100000',  // eyes closed (body shadow color = squint)
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000022002200000',
+    '0000010000100000',
+    '0000010000100000',
+    '0000000000000000',
+  ]),
+  // Frame 2: hat tilted by breeze (shifted right 1px)
+  ps([
+    '0000000000000000',
+    '000000AAAAA00000',
+    '00000AAAAAAA0000',
+    '00000AACCCAA0000',
+    '0000AAAAAAAAAA00',
+    '0000BBBBBBBBB000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000051115100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000011111100000',
+    '0000022002200000',
+    '0000010000100000',
+    '0000010000100000',
+    '0000000000000000',
+  ]),
+];
+
+// Small lotus flower (6×6)
+const flower = ps([
+  '00DE00',
+  '0DDDD0',
+  'DDDDDD',
+  '0DDDD0',
+  '00FF00',
+  '00FF00',
+]);
+
+// Dragonfly (5×3) — two frames for wing flap
+const dragonfly = [
+  ps([
+    '60600',
+    '06660',
+    '60600',
+  ]),
+  ps([
+    '00000',
+    '66660',
+    '00000',
+  ]),
+];
+
+// ============================================================
+// WATER & LILY PAD (programmatic drawing)
+// ============================================================
+
+function drawSky() {
+  // Soft teal gradient
+  for (let y = 0; y < H; y++) {
+    const t = y / H;
+    const r = Math.floor(140 + t * (-40));  // 140 → 100
+    const g = Math.floor(210 + t * (-30));  // 210 → 180
+    const b = Math.floor(200 + t * (-20));  // 200 → 180
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, y, W, 1);
+  }
+}
+
+function drawWaterRipples(time) {
+  ctx.globalAlpha = 0.08;
+  for (let y = 30; y < H; y += 6) {
+    const wave = Math.sin(time * 0.8 + y * 0.15) * 2;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, y + wave, W, 1);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawDistantReeds(time) {
+  const reeds = [
+    { x: 8, h: 18 }, { x: 12, h: 22 }, { x: 15, h: 16 },
+    { x: 105, h: 20 }, { x: 110, h: 25 }, { x: 114, h: 17 },
+    { x: 118, h: 21 },
+  ];
+  for (const reed of reeds) {
+    const sway = Math.sin(time * 1.2 + reed.x * 0.3) * 1.5;
+    ctx.fillStyle = 'rgba(70,120,70,0.35)';
+    // Draw thin reed stalk
+    for (let i = 0; i < reed.h; i++) {
+      const dx = sway * (i / reed.h) * (i / reed.h); // sway increases toward top
+      ctx.fillRect(Math.round(reed.x + dx), 45 - i, 1, 1);
+      if (i > reed.h - 4) { // fluffy top
+        ctx.fillRect(Math.round(reed.x + dx - 1), 45 - i, 3, 1);
+      }
+    }
+  }
+}
+
+function drawLilyPad(cx, cy, rx, ry, time) {
+  // Organic oval with slight wobble
+  const wobble = Math.sin(time * 0.7) * 0.5;
+
+  // Main pad shape — filled ellipse, pixel by pixel
+  for (let y = -ry; y <= ry; y++) {
+    for (let x = -rx; x <= rx; x++) {
+      const nx = x / rx, ny = y / ry;
+      const dist = nx * nx + ny * ny;
+      if (dist > 1.0) continue;
+
+      // Notch (V-shaped cut) at the top-right
+      const angle = Math.atan2(y, x);
+      if (angle > -0.4 && angle < 0.2 && dist > 0.3) continue;
+
+      // Color: edge highlight, center darker
+      let color;
+      if (dist > 0.85) {
+        color = '#5a9e54'; // edge dark
+      } else if (dist > 0.6) {
+        color = '#7ec877'; // main green
+      } else {
+        color = '#6ab860'; // inner
+      }
+
+      // Subtle vein lines radiating from center
+      const veinAngle = ((angle + Math.PI) / Math.PI * 4) % 1;
+      if (veinAngle < 0.06 && dist > 0.2 && dist < 0.85) {
+        color = '#5a9e54';
+      }
+
+      ctx.fillStyle = color;
+      ctx.fillRect(
+        Math.round(cx + x + wobble * (y / ry)),
+        Math.round(cy + y),
+        1, 1
+      );
+    }
+  }
+
+  // Water shadow around pad
+  ctx.globalAlpha = 0.06;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 2, rx + 2, ry + 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// WATER SPARKLE PARTICLES
+// ============================================================
+const sparkles = [];
+for (let i = 0; i < 25; i++) {
+  sparkles.push({
+    x: Math.random() * W,
+    y: 25 + Math.random() * (H - 25),
+    phase: Math.random() * Math.PI * 2,
+    speed: 0.5 + Math.random() * 1.5,
+    brightness: Math.random(),
+  });
+}
+
+// Dragonfly state
+const dfState = {
+  x: 20, y: 30,
+  targetX: 80, targetY: 25,
+  frame: 0, timer: 0,
+};
+
+// ============================================================
+// ANIMATION TIMELINE — 6 second loop
+// ============================================================
+const LOOP = 6.0;
+const TIMELINE = [
+  { start: 0.0, end: 2.0, state: 'idle' },
+  { start: 2.0, end: 3.2, state: 'breeze' },
+  { start: 3.2, end: 4.5, state: 'settle' },
+  { start: 4.5, end: 6.0, state: 'blink' },
+];
+
+function getState(t) {
+  const lt = t % LOOP;
+  for (const s of TIMELINE)
+    if (lt >= s.start && lt < s.end)
+      return { name: s.state, progress: (lt - s.start) / (s.end - s.start) };
+  return { name: 'idle', progress: 0 };
+}
+
+function easeInOut(t) { return 0.5 - 0.5 * Math.cos(t * Math.PI); }
+
+// ============================================================
+// PIXEL TEXT — "ZzZ" for sleepy mood
+// ============================================================
+const FONT = {
+  'Z': [[1,1,1],[0,0,1],[0,1,0],[1,0,0],[1,1,1]],
+  'z': [[0,0,0],[1,1,1],[0,1,0],[1,0,0],[1,1,1]],
+  '~': [[0,0,0],[0,0,0],[1,0,1],[0,1,0],[0,0,0]],
+  ' ': [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+};
+
+function drawPixelText(text, x, y, color, alpha) {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  let cx = x;
+  for (const ch of text) {
+    const g = FONT[ch];
+    if (!g) { cx += 4; continue; }
+    for (let r = 0; r < g.length; r++)
+      for (let c = 0; c < g[r].length; c++)
+        if (g[r][c]) ctx.fillRect(cx + c, y + r, 1, 1);
+    cx += 4;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// MAIN RENDER
+// ============================================================
+let time = 0, lastT = 0;
+
+function render(dt) {
+  const { name, progress } = getState(time);
+  const breathe = Math.sin(time * 1.8) * 0.6;
+
+  // === Layer 0: Sky + water gradient ===
+  drawSky();
+
+  // === Layer 1: Water ripples (behind everything) ===
+  drawWaterRipples(time);
+
+  // === Layer 2: Distant reeds ===
+  drawDistantReeds(time);
+
+  // === Layer 3: Lily pad shadow on water ===
+  const padCX = 64, padCY = 82;
+  const padRX = 28, padRY = 10;
+  const padWobble = Math.sin(time * 0.7) * 0.3;
+
+  // Water reflection (subtle mirror below pad)
+  ctx.globalAlpha = 0.04;
+  ctx.fillStyle = '#7ec877';
+  ctx.beginPath();
+  ctx.ellipse(padCX, padCY + padRY + 8, padRX - 3, padRY - 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // === Layer 4: Lily pad ===
+  drawLilyPad(padCX, padCY + padWobble, padRX, padRY, time);
+
+  // === Layer 5: Flower on lily pad edge ===
+  const flowerBob = Math.sin(time * 1.5 + 1) * 0.4;
+  draw(flower, padCX + 18, padCY - 7 + padWobble + flowerBob);
+
+  // === Layer 6: Clawd + Hat ===
+  let frameIdx = 0;
+  let hatOffset = 0;
+  let clawdBob = breathe;
+
+  switch (name) {
+    case 'idle':
+      frameIdx = 0;
+      break;
+    case 'breeze':
+      // Hat gets blown slightly, body leans
+      frameIdx = 2; // hat tilted
+      hatOffset = easeInOut(progress) * 0.5; // slight body lean
+      clawdBob = breathe + Math.sin(progress * Math.PI) * 1; // extra sway
+      break;
+    case 'settle':
+      // Return from breeze
+      const settleP = easeInOut(progress);
+      frameIdx = settleP > 0.5 ? 0 : 2;
+      clawdBob = breathe + (1 - settleP) * 0.5;
+      break;
+    case 'blink':
+      // Blink twice
+      const blinkCycle = progress * 2;
+      const inBlink = (blinkCycle % 1) > 0.85;
+      frameIdx = inBlink ? 1 : 0;
+      break;
+  }
+
+  const clawdX = padCX - 8 + hatOffset;
+  const clawdY = padCY - 22 + padWobble + clawdBob;
+
+  // Clawd shadow on lily pad
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  ctx.beginPath();
+  ctx.ellipse(padCX, padCY + padWobble - 1, 8, 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  draw(clawd_hat[frameIdx], Math.round(clawdX), Math.round(clawdY));
+
+  // === Layer 7: Sleepy text "Zz" floating up ===
+  const textPhase = (time * 0.4) % 1;
+  const textAlpha = textPhase < 0.7 ? textPhase / 0.7 * 0.5 : (1 - textPhase) / 0.3 * 0.5;
+  const textY = clawdY - 5 - textPhase * 12;
+  drawPixelText('Zz', Math.round(clawdX + 14), Math.round(textY), '#88aaaa', textAlpha);
+
+  // Second "z" offset
+  const textPhase2 = ((time * 0.4) + 0.5) % 1;
+  const textAlpha2 = textPhase2 < 0.7 ? textPhase2 / 0.7 * 0.35 : (1 - textPhase2) / 0.3 * 0.35;
+  const textY2 = clawdY - 3 - textPhase2 * 14;
+  drawPixelText('z', Math.round(clawdX + 18), Math.round(textY2), '#88aaaa', textAlpha2);
+
+  // === Layer 8: Dragonfly ===
+  dfState.timer += dt;
+  if (dfState.timer > 0.12) {
+    dfState.timer = 0;
+    dfState.frame = 1 - dfState.frame;
+  }
+  // Lazy figure-8 path
+  const dfT = time * 0.5;
+  const dfX = 64 + Math.sin(dfT) * 35;
+  const dfY = 28 + Math.sin(dfT * 2) * 8 + Math.sin(time * 1.2) * 3;
+  draw(dragonfly[dfState.frame], Math.round(dfX), Math.round(dfY));
+
+  // === Layer 9: Water sparkles (foreground) ===
+  for (const sp of sparkles) {
+    sp.phase += dt * sp.speed;
+    const alpha = Math.max(0, Math.sin(sp.phase) * 0.3);
+    if (alpha < 0.02) continue;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(Math.round(sp.x), Math.round(sp.y), 1, 1);
+  }
+  ctx.globalAlpha = 1;
+
+  // === Layer 10: Foreground water ripple overlay ===
+  ctx.globalAlpha = 0.03;
+  for (let y = H - 15; y < H; y += 3) {
+    const wave = Math.sin(time * 1.0 + y * 0.2) * 3;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, y + wave, W, 1);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function loop(t) {
+  const dt = Math.min((t - lastT) / 1000, 0.1);
+  lastT = t;
+  time += dt;
+  render(dt);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

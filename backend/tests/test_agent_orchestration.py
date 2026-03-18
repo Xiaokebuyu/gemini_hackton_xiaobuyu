@@ -347,7 +347,7 @@ class TestPromptBuilders:
             is_passive=True,
         )
 
-        assert "You are NOT being spoken to directly" in prompt
+        assert "没有人在和你说话" in prompt
         assert "pass_turn" not in prompt
 
     def test_npc_prompt_default_mode_forces_direct_response(self) -> None:
@@ -358,7 +358,7 @@ class TestPromptBuilders:
             is_passive=False,
         )
 
-        assert "You MUST respond when spoken to" in prompt
+        assert "被对话时你必须回应" in prompt
 
     def test_npc_prompt_handles_empty_profile(self) -> None:
         prompt = _build_npc_prompt_text(
@@ -1697,7 +1697,7 @@ class TestInteractionResultToSSE:
                     "system_prompt": system_prompt,
                 })
                 if role == "gm":
-                    if "next actionable player dialogue options" in system_prompt:
+                    if "对话选项" in system_prompt or "dialogue options" in system_prompt.lower():
                         return AgentResult(
                             tool_results=[
                                 ToolResult(
@@ -2164,43 +2164,6 @@ class TestRunPublicUtterance:
         gm_events = [event for event in events if event.event_type == "gm_comment"]
         assert len(gm_events) == 1
         assert gm_events[0].payload["content"] == "你的话落进空气里，而空气通常比措辞更诚实。"
-
-
-class TestRunPrivateChat:
-    def test_run_private_chat_text_only_is_gracefully_handled(self) -> None:
-        """P29-A1: Text-only NPC response in private chat succeeds gracefully."""
-        service, _ = _build_service([
-            _stop_response("I should have used speak."),
-        ])
-        session = _session_with_npc()
-
-        events = asyncio.run(service.run_private_chat(
-            session=session,
-            npc_id="merchant_tom",
-            player_message="Can we speak in private?",
-        ))
-
-        npc_events = [e for e in events if e.event_type == "npc_response"]
-        assert len(npc_events) >= 1
-        assert npc_events[0].payload["npc_id"] == "merchant_tom"
-        assert npc_events[0].payload["content"] == "I should have used speak."
-
-    def test_run_private_chat_adds_introspective_fallback_comment(self) -> None:
-        service, _ = _build_service([
-            _npc_speak_response("Keep your voice down."),
-            _gm_pass_turn_response(),
-        ])
-        session = _session_with_npc()
-
-        events = asyncio.run(service.run_private_chat(
-            session=session,
-            npc_id="merchant_tom",
-            player_message="那我们私下聊。",
-        ))
-
-        gm_events = [event for event in events if event.event_type == "gm_comment"]
-        assert len(gm_events) == 1
-        assert gm_events[0].payload["tone"] == "introspective"
 
 
 class TestRunFreeChat:

@@ -12,7 +12,6 @@ from app.game_core.narrative.executor import AgenticExecutor
 from app.game_core.narrative.gm_tools import register_gm_tools
 from app.game_core.narrative.registry import RoleToolRegistry
 from app.game_core.orchestration.npc_interaction import NpcInteractionCoordinator
-from app.game_core.orchestration.private_chat import PrivateChatCoordinator
 from app.game_core.rules.models import Command, ExecuteResult
 from app.game_core.state import StateContainer
 
@@ -193,21 +192,3 @@ def build_npc_capability_harness(
     register_teammate_tools(registry)
     executor = AgenticExecutor(tool_registry=registry, llm=llm)
     return NpcInteractionCoordinator(executor, world, state), llm, state
-
-
-def build_private_capability_harness(
-    *,
-    llm_responses: list[dict[str, Any]],
-    capabilities: list[dict[str, Any]] | None = None,
-) -> tuple[PrivateChatCoordinator, RecordingLlmProvider, StateContainer]:
-    world = build_capability_world()
-    state = build_capability_state(world)
-    for cap in capabilities or []:
-        assign_capability(state, **cap)
-    llm = RecordingLlmProvider(llm_responses)
-    registry = RoleToolRegistry()
-    register_gm_tools(registry)
-    register_npc_tools(registry)
-    register_teammate_tools(registry)
-    executor = AgenticExecutor(tool_registry=registry, llm=llm)
-    return PrivateChatCoordinator(executor, world, state), llm, state

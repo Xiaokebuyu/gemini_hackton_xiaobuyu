@@ -321,3 +321,16 @@ class TestGrowthHandler:
         assert state.player.subclass == "champion"
         assert "Improved Critical" in state.player.class_features
         assert "Remarkable Athlete" in state.player.class_features
+
+    def test_level_up_rejected_when_already_at_max_level(self) -> None:
+        from app.game_core.rules.handlers.growth import MAX_PLAYER_LEVEL
+
+        state = _make_state(level=MAX_PLAYER_LEVEL, xp=9999)
+        result = _make_engine().execute(
+            Command(type="level_up"),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is False
+        assert f"已达最高等级 {MAX_PLAYER_LEVEL}" in (result.errors or [])

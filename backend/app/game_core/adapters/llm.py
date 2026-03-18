@@ -33,6 +33,7 @@ class LlmPort(Protocol):
         system_prompt: str,
         history: list[dict[str, Any]],
         tool_declarations: list[dict[str, Any]],
+        response_json_schema: dict[str, Any] | None = None,
     ) -> LlmResponse: ...
 
     async def generate_stream(
@@ -51,6 +52,7 @@ class NullLlmProvider:
         system_prompt: str,
         history: list[dict[str, Any]],
         tool_declarations: list[dict[str, Any]],
+        response_json_schema: dict[str, Any] | None = None,
     ) -> LlmResponse:
         return LlmResponse()
 

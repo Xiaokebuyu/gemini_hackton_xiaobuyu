@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel Creature Studio</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 {
+    font-size: 16px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: #c0785a;
+    margin-bottom: 20px;
+  }
+  .stage {
+    background: #e8e0d8;
+    border: 2px solid #333;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    image-rendering: pixelated;
+  }
+  .controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 16px;
+  }
+  button {
+    background: #2a2a4a;
+    color: #c0785a;
+    border: 1px solid #c0785a;
+    padding: 6px 16px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 2px;
+    transition: all 0.15s;
+  }
+  button:hover { background: #c0785a; color: #1a1a2e; }
+  button.active { background: #c0785a; color: #1a1a2e; }
+  .info {
+    font-size: 12px;
+    color: #888;
+    text-align: center;
+    max-width: 500px;
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h1>Pixel Creature Studio</h1>
+<canvas class="stage" id="stage" width="320" height="320"></canvas>
+<div class="controls">
+  <button onclick="setAnim('idle')" id="btn-idle" class="active">Idle</button>
+  <button onclick="setAnim('walk')" id="btn-walk">Walk</button>
+  <button onclick="setAnim('jump')" id="btn-jump">Jump</button>
+  <button onclick="setAnim('wave')" id="btn-wave">Wave</button>
+  <button onclick="setAnim('blink')" id="btn-blink">Blink</button>
+</div>
+<div class="info">
+  A reusable pixel-art sprite system.<br>
+  Each creature is defined as a grid of color indices — easy to edit and extend.
+</div>
+
+<script>
+// ============================================================
+// PIXEL CREATURE ENGINE — reusable sprite + animation system
+// ============================================================
+
+// -- Color palette (index → hex) --
+const PALETTE = {
+  0: null,           // transparent
+  1: '#c0785a',      // body (terracotta)
+  2: '#a0624a',      // body shadow
+  3: '#e8e0d8',      // eyes (white / same as bg)
+  4: '#d08868',      // body highlight
+  5: '#8a4a38',      // dark accent
+};
+
+// -- Sprite definition: 16×16 grid of palette indices --
+// Each row is a string of hex chars for readability
+function parseSprite(rows) {
+  return rows.map(row =>
+    row.split('').map(c => parseInt(c, 16))
+  );
+}
+
+const SPRITES = {
+  // Main body — standing pose
+  body: parseSprite([
+    '0000000000000000',
+    '0000000000000000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000131111310000',
+    '0000131111310000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000022002200000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000000000000000',
+  ]),
+
+  // Walk frame 2 — legs shifted
+  walk2: parseSprite([
+    '0000000000000000',
+    '0000000000000000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000131111310000',
+    '0000131111310000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000002200220000',
+    '0000000100010000',
+    '0000000100010000',
+    '0000000000000000',
+  ]),
+
+  // Jump — squashed before launch
+  jumpSquash: parseSprite([
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000010000010000',
+    '0000011111110000',
+    '0000111111110000',
+    '0000131111310000',
+    '0000131111310000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000022002200000',
+    '0000011001100000',
+    '0000000000000000',
+  ]),
+
+  // Jump — airborne (legs tucked)
+  jumpAir: parseSprite([
+    '0000000000000000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000131111310000',
+    '0000131111310000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000022002200000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+    '0000000000000000',
+  ]),
+
+  // Wave — one ear/arm raised
+  wave1: parseSprite([
+    '0000000000000000',
+    '0000000000010000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000131111310000',
+    '0000131111310000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000022002200000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000000000000000',
+  ]),
+
+  wave2: parseSprite([
+    '0000000000010000',
+    '0000000000010000',
+    '0000010000000000',
+    '0000010000000000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000131111310000',
+    '0000131111310000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000022002200000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000000000000000',
+  ]),
+
+  // Blink frame — eyes closed
+  blink: parseSprite([
+    '0000000000000000',
+    '0000000000000000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000121111210000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000111111110000',
+    '0000022002200000',
+    '0000010000010000',
+    '0000010000010000',
+    '0000000000000000',
+  ]),
+};
+
+// -- Animation sequences --
+// Each frame: { sprite, duration (ms), offsetY (px) }
+const ANIMATIONS = {
+  idle: {
+    loop: true,
+    frames: [
+      { sprite: 'body',  duration: 600, offsetY: 0 },
+      { sprite: 'body',  duration: 600, offsetY: -2 },
+    ]
+  },
+  walk: {
+    loop: true,
+    frames: [
+      { sprite: 'body',  duration: 180, offsetY: 0 },
+      { sprite: 'walk2', duration: 180, offsetY: -1 },
+      { sprite: 'body',  duration: 180, offsetY: 0 },
+      { sprite: 'walk2', duration: 180, offsetY: -1 },
+    ]
+  },
+  jump: {
+    loop: true,
+    frames: [
+      { sprite: 'body',      duration: 300, offsetY: 0 },
+      { sprite: 'jumpSquash', duration: 150, offsetY: 4 },
+      { sprite: 'jumpAir',   duration: 120, offsetY: -20 },
+      { sprite: 'jumpAir',   duration: 100, offsetY: -32 },
+      { sprite: 'jumpAir',   duration: 100, offsetY: -28 },
+      { sprite: 'jumpAir',   duration: 120, offsetY: -12 },
+      { sprite: 'body',      duration: 150, offsetY: 2 },
+      { sprite: 'body',      duration: 200, offsetY: 0 },
+    ]
+  },
+  wave: {
+    loop: true,
+    frames: [
+      { sprite: 'body',  duration: 400, offsetY: 0 },
+      { sprite: 'wave1', duration: 300, offsetY: 0 },
+      { sprite: 'wave2', duration: 300, offsetY: 0 },
+      { sprite: 'wave1', duration: 300, offsetY: 0 },
+      { sprite: 'wave2', duration: 300, offsetY: 0 },
+      { sprite: 'body',  duration: 400, offsetY: 0 },
+    ]
+  },
+  blink: {
+    loop: true,
+    frames: [
+      { sprite: 'body',  duration: 2500, offsetY: 0 },
+      { sprite: 'blink', duration: 100,  offsetY: 0 },
+      { sprite: 'body',  duration: 200,  offsetY: 0 },
+      { sprite: 'blink', duration: 100,  offsetY: 0 },
+      { sprite: 'body',  duration: 3000, offsetY: 0 },
+    ]
+  },
+};
+
+// -- Renderer --
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const PIXEL = 16;          // each sprite pixel = 16 screen pixels
+const GRID = 16;           // sprite grid size
+const CX = (canvas.width - GRID * PIXEL) / 2;
+const CY = (canvas.height - GRID * PIXEL) / 2 + 10;
+
+let currentAnim = 'idle';
+let frameIndex = 0;
+let frameTimer = 0;
+let lastTime = 0;
+
+function drawSprite(grid, ox, oy) {
+  for (let y = 0; y < grid.length; y++) {
+    for (let x = 0; x < grid[y].length; x++) {
+      const colorIdx = grid[y][x];
+      const color = PALETTE[colorIdx];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(
+        CX + x * PIXEL + ox,
+        CY + y * PIXEL + oy,
+        PIXEL, PIXEL
+      );
+    }
+  }
+}
+
+// Optional: draw a tiny shadow
+function drawShadow() {
+  ctx.fillStyle = 'rgba(0,0,0,0.10)';
+  const sw = 10 * PIXEL;
+  const sh = 3;
+  ctx.beginPath();
+  ctx.ellipse(
+    CX + 8 * PIXEL,
+    CY + 15 * PIXEL + 4,
+    sw / 2, sh,
+    0, 0, Math.PI * 2
+  );
+  ctx.fill();
+}
+
+function tick(time) {
+  const dt = time - lastTime;
+  lastTime = time;
+
+  const anim = ANIMATIONS[currentAnim];
+  const frame = anim.frames[frameIndex];
+
+  frameTimer += dt;
+  if (frameTimer >= frame.duration) {
+    frameTimer = 0;
+    frameIndex++;
+    if (frameIndex >= anim.frames.length) {
+      frameIndex = anim.loop ? 0 : anim.frames.length - 1;
+    }
+  }
+
+  const cur = anim.frames[frameIndex];
+  const sprite = SPRITES[cur.sprite];
+
+  // Clear
+  ctx.fillStyle = '#e8e0d8';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawShadow();
+  drawSprite(sprite, 0, cur.offsetY * (PIXEL / 4));
+
+  requestAnimationFrame(tick);
+}
+
+function setAnim(name) {
+  if (currentAnim === name) return;
+  currentAnim = name;
+  frameIndex = 0;
+  frameTimer = 0;
+  document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + name)?.classList.add('active');
+}
+
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

@@ -164,6 +164,14 @@ class QuestPanelResponse(BaseModel):
         ),
     )
     chapter_completion: dict[str, float] = Field(default_factory=dict)
+    pending_npc_invites: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="High/medium priority NPC invites (max 3).",
+    )
+    ambient_chatter: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Low priority NPC chatter/gossip (max 5).",
+    )
 
 
 class PlayerLocationBody(BaseModel):
@@ -227,13 +235,7 @@ class InteractRequest(BaseModel):
     message: str | None = None
     check_skill: str | None = None
     check_dc: int | None = None
-
-
-class PrivateChatRequest(BaseModel):
-    """Request body for the private chat stream."""
-
-    npc_id: str
-    message: str
+    clue_id: str | None = None
 
 
 class CompanionRequest(BaseModel):

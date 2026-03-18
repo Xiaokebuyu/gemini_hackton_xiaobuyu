@@ -100,8 +100,8 @@ def test_update_blackboard_new_observation_appends() -> None:
 
 
 def test_update_blackboard_observations_capped_at_ten() -> None:
-    # Fill observations to 10 already; adding one more should truncate oldest.
-    existing = [f"obs_{i}" for i in range(10)]
+    # Fill observations to 20 already; adding one more should truncate oldest.
+    existing = [f"obs_{i}" for i in range(20)]
     ctx = _ctx(blackboards={"npc_alice": {"observations": existing}})
     result = asyncio.run(
         UpdateBlackboardTool().execute({"new_observation": "obs_new"}, ctx)
@@ -110,7 +110,7 @@ def test_update_blackboard_observations_capped_at_ten() -> None:
     assert result.ok is True
     board = ctx.state.relations.get_blackboard("npc_alice")
     observations = board["observations"]
-    assert len(observations) == 10
+    assert len(observations) == 20
     assert observations[-1] == "obs_new"
     # Oldest entry was dropped.
     assert "obs_0" not in observations
@@ -223,8 +223,8 @@ def test_send_npc_message_missing_message() -> None:
 
 
 def test_send_npc_message_target_observations_capped() -> None:
-    # Target has 9 existing observations; sending 1 more should not exceed 10.
-    existing = [f"obs_{i}" for i in range(9)]
+    # Target has 19 existing observations; sending 1 more should not exceed 20.
+    existing = [f"obs_{i}" for i in range(19)]
     ctx = _ctx(
         character_id="npc_alice",
         blackboards={"npc_bob": {"observations": existing}},
@@ -239,4 +239,4 @@ def test_send_npc_message_target_observations_capped() -> None:
 
     target_board = ctx.state.relations.get_blackboard("npc_bob")
     obs = target_board.get("observations", [])
-    assert len(obs) == 10
+    assert len(obs) == 20

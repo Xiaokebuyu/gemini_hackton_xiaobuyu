@@ -469,7 +469,7 @@ class BasicEventConditionEvaluator:
         """Check if the player has talked to a specific NPC.
 
         Reads the ``talked_to_{npc_id}`` flag written by NpcInteractionCoordinator
-        and PrivateChatCoordinator at the start of each interaction.
+        at the start of each interaction.
 
         params:
             npc_id: str — NPC identifier

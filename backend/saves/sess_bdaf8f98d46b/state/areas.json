@@ -1,0 +1,696 @@
+{
+  "areas": {
+    "ancient_ruins": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 1.2,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "dungeon",
+        "hostile",
+        "ruins"
+      ],
+      "temporary_sub_areas": []
+    },
+    "cow_girl_farm": {
+      "area_events": [
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 8
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 9
+        },
+        {
+          "event": "这些工具虽然简陋，但被保养得很好。看得出牧牛妹平时一个人维持这个牧场很不容易。",
+          "severity": "minor",
+          "source": "clue_narrative",
+          "tick": 10
+        },
+        {
+          "event": "当你吃力地扶起木桩并加固时，在原本隐藏的内侧发现了三道惊心的爪痕。这不是自然的断裂，而是某种生物生生抓断的。牧牛妹看到后脸色变得煞白。",
+          "severity": "minor",
+          "source": "clue_narrative",
+          "tick": 10
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 10
+        }
+      ],
+      "area_situation": "近期事件：这些工具虽然简陋，但被保养得很好。看得出牧牛妹平时一个人维持这个牧场很不容易。；当你吃力地扶起木桩并加固时，在原本隐藏的内侧发现了三道惊心的爪痕。这不是自然的断裂，而是某种生物生生抓断的。牧牛妹看到后脸色变得煞白。；冒险者移动到新区域。当前区域NPC：牧牛妹在fence_perimeter。白天，小镇正常运转中。",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.6,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {
+        "broken_fence_post": {
+          "area_id": "cow_girl_farm",
+          "clue_id": "broken_fence_post",
+          "first_inspected": true,
+          "pending_check": {
+            "check_effects": [
+              {
+                "params": {
+                  "key": "clue_claw_marks_found",
+                  "value": true
+                },
+                "type": "set_flag"
+              }
+            ],
+            "dc": 10,
+            "skill": "perception"
+          },
+          "resolved_option_id": "__simple__"
+        },
+        "fence_tools": {
+          "area_id": "cow_girl_farm",
+          "clue_id": "fence_tools",
+          "first_inspected": true,
+          "resolved_option_id": "__simple__"
+        }
+      },
+      "npc_locations": {
+        "goblin_slayer": "gs_warehouse"
+      },
+      "npc_presence_sources": {
+        "goblin_slayer": "schedule"
+      },
+      "npc_rooms": {
+        "goblin_slayer": "workbench"
+      },
+      "permanent_hostile_slots": {
+        "cow_girl_farm": {
+          "active_ids": [],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
+      "properties": {},
+      "scoped_interactable_overlays": {
+        "fence_perimeter": [
+          {
+            "description": "这是围栏的主桩，断裂处显得非常狰狞。",
+            "functional": {
+              "params": {
+                "base_effects": [
+                  {
+                    "params": {
+                      "key": "fence_repaired",
+                      "value": true
+                    },
+                    "type": "set_flag"
+                  }
+                ],
+                "check": {
+                  "dc": 10,
+                  "skill": "perception"
+                },
+                "check_effects": [
+                  {
+                    "params": {
+                      "key": "clue_claw_marks_found",
+                      "value": true
+                    },
+                    "type": "set_flag"
+                  }
+                ],
+                "clue_id": "broken_fence_post",
+                "narrative": "当你吃力地扶起木桩并加固时，在原本隐藏的内侧发现了三道惊心的爪痕。这不是自然的断裂，而是某种生物生生抓断的。牧牛妹看到后脸色变得煞白。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "broken_fence_post",
+            "name": "断裂的木桩",
+            "tags": [
+              "clue"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "一把锤子和几根粗铁钉，还有一些浸过油的麻绳。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "fence_tools",
+                "narrative": "这些工具虽然简陋，但被保养得很好。看得出牧牛妹平时一个人维持这个牧场很不容易。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "fence_tools",
+            "name": "简陋的修缮工具",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "main_house": [
+          {
+            "description": "大锅里正炖着浓郁的肉汤，散发着诱人的香味。这是牧牛妹最擅长的料理。",
+            "id": "farm_stew_pot",
+            "name": "冒热气的炖菜锅",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "main_house__dining_area": [
+          {
+            "description": "罐子里装着刚挤出来的牛奶，还带着一点奶腥气和温热。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "farm_milk_jug",
+                "narrative": "你抿了一口，纯正的奶香让你精神一振。牧场的日常虽然辛苦，但这些馈赠总是很慷慨。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "farm_milk_jug",
+            "name": "新鲜的牛奶罐",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          }
+        ]
+      },
+      "tags": [
+        "safe_zone",
+        "home"
+      ],
+      "temporary_sub_areas": [
+        {
+          "created_at_tick": 8,
+          "description": "环绕着麦田和畜栏的木制围栏，部分地段显得有些年久失修。",
+          "discovery_dc": 0,
+          "discovery_mode": "auto",
+          "expiry": -1,
+          "hostile_config": null,
+          "id": "fence_perimeter",
+          "interactables": [],
+          "label": "牧场围栏区",
+          "linked_milestone": null,
+          "linked_quest_id": null,
+          "locked": false,
+          "parent_location_id": null,
+          "parent_room_id": null,
+          "resident_npcs": [],
+          "source": "narrative_planner",
+          "status": "active",
+          "tags": [],
+          "tier": "permanent",
+          "type": "visit"
+        }
+      ]
+    },
+    "frontier_town": {
+      "area_events": [
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 11
+        },
+        {
+          "event": "柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’",
+          "severity": "minor",
+          "source": "clue_narrative",
+          "tick": 14
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 15
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 17
+        },
+        {
+          "event": "圣女指着一种锯齿状边缘的淡紫色小叶子：‘看，这就是宁神草。它们喜欢生长在湿润的树根旁，千万别和毒麻草弄混了。’",
+          "severity": "minor",
+          "source": "clue_narrative",
+          "tick": 18
+        },
+        {
+          "event": "你小心翼翼地采下了药草。就在这时，一阵低沉的、不像是人类的嬉笑声从密林深处传来，圣女吓得躲到了你身后。",
+          "severity": "minor",
+          "source": "clue_narrative",
+          "tick": 18
+        },
+        {
+          "event": "冒险者移动到新区域",
+          "severity": "minor",
+          "source": "ai_osiris",
+          "tick": 18
+        }
+      ],
+      "area_situation": "近期事件：圣女指着一种锯齿状边缘的淡紫色小叶子：‘看，这就是宁神草。它们喜欢生长在湿润的树根旁，千万别和毒麻草弄混了。’；你小心翼翼地采下了药草。就在这时，一阵低沉的、不像是人类的嬉笑声从密林深处传来，圣女吓得躲到了你身后。；冒险者移动到新区域。当前区域NPC：柜台小姐在adventurer_guild、情报贩子在back_alley、蜥蜴僧侣在adventurer_guild、北门守备长在north_gate、女神官在adventurer_guild。傍晚，冒险者们陆续回城。",
+      "board_bulletins": {
+        "notice_board": [
+          {
+            "board_id": "notice_board",
+            "content": "牧场的围栏最近损坏严重，急需人手修理。牧牛妹会为帮忙的冒险者准备丰盛的炖菜。报酬虽然微薄，但非常适合新人磨练。——冒险者公会",
+            "published_at_tick": 8,
+            "quest_id": "dq_frontier_start",
+            "source": "narrative_planner",
+            "title": "【委托】牧场围栏修缮"
+          },
+          {
+            "board_id": "notice_board",
+            "content": "恭喜新晋白瓷级冒险者完成了牧场修缮任务！酒馆老板娘宣布今晚所有麦酒九折优惠！",
+            "published_at_tick": 15,
+            "quest_id": "",
+            "source": "narrative_planner",
+            "title": "【酒馆快讯】今日之星"
+          },
+          {
+            "board_id": "notice_board",
+            "content": "宁神草库存不足。欢迎愿意帮忙的冒险者。圣女小姐会同行指引。——地母神教会",
+            "published_at_tick": 15,
+            "quest_id": "dq_temple_herbs",
+            "source": "narrative_planner",
+            "title": "【委托】神殿草药招募"
+          },
+          {
+            "board_id": "notice_board",
+            "content": "今晚人手不足！欢迎手脚勤快的冒险者。报酬包含一份热腾腾的晚饭！",
+            "published_at_tick": 19,
+            "quest_id": "dq_tavern_help",
+            "source": "narrative_planner",
+            "title": "【急招】酒馆临时帮工"
+          }
+        ],
+        "quest_board": [
+          {
+            "board_id": "quest_board",
+            "content": "在公会柜台登记成为冒险者，并领取你的第一个委托：帮牧牛妹修理围栏。",
+            "published_at_tick": 8,
+            "quest_id": "dq_frontier_start",
+            "source": "narrative_planner",
+            "title": "边境的新面孔"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "神殿的药品告罄，需要前往城镇北部的森林边缘采集新鲜的宁神草。圣女会协助你辨认药草。",
+            "published_at_tick": 15,
+            "quest_id": "dq_temple_herbs",
+            "source": "narrative_planner",
+            "title": "神殿的委托：宁神草采集"
+          },
+          {
+            "board_id": "quest_board",
+            "content": "酒馆服务员肚子疼请假了，老板娘急需帮手。去酒馆帮忙端盘子、擦桌子，或者听听客人的八卦。",
+            "published_at_tick": 19,
+            "quest_id": "dq_tavern_help",
+            "source": "narrative_planner",
+            "title": "酒馆的忙碌之夜"
+          }
+        ]
+      },
+      "container_states": {},
+      "danger_level": 0.39999999999999997,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "discovered",
+      "hostile_tracking": {},
+      "interactable_states": {
+        "herb_node_forest": {
+          "area_id": "frontier_town",
+          "clue_id": "herb_node_forest",
+          "first_inspected": true,
+          "pending_check": {
+            "check_effects": [
+              {
+                "params": {
+                  "text": "在采集时，你注意到附近的灌木丛有被暴力折断的痕迹，空气中飘来一股腐败的臭味。"
+                },
+                "type": "add_knowledge"
+              }
+            ],
+            "dc": 12,
+            "skill": "perception"
+          },
+          "resolved_option_id": "__simple__"
+        },
+        "herb_node_gate": {
+          "area_id": "frontier_town",
+          "clue_id": "herb_node_gate",
+          "first_inspected": true,
+          "resolved_option_id": "__simple__"
+        },
+        "registration_form": {
+          "area_id": "frontier_town",
+          "clue_id": "registration_form",
+          "first_inspected": true,
+          "resolved_option_id": "__simple__"
+        }
+      },
+      "npc_locations": {
+        "blacksmith": "tavern",
+        "cow_girl": "tavern",
+        "dwarf_shaman": "adventurer_guild",
+        "guild_girl": "adventurer_guild",
+        "guild_quartermaster": "tavern",
+        "high_elf_archer": "tavern",
+        "informant": "back_alley",
+        "lizard_priest": "adventurer_guild",
+        "north_gate_warden": "north_gate",
+        "priestess": "adventurer_guild",
+        "tavern_keeper": "tavern",
+        "tavern_waitress": "tavern",
+        "temple_matron": "mother_earth_temple",
+        "town_guard": "town_square",
+        "traveling_merchant": "tavern"
+      },
+      "npc_presence_sources": {
+        "blacksmith": "schedule",
+        "cow_girl": "planner",
+        "dwarf_shaman": "schedule",
+        "guild_girl": "planner",
+        "guild_quartermaster": "schedule",
+        "high_elf_archer": "schedule",
+        "lizard_priest": "schedule",
+        "priestess": "companion",
+        "tavern_waitress": "schedule",
+        "traveling_merchant": "schedule"
+      },
+      "npc_rooms": {
+        "blacksmith": "main_hall",
+        "cow_girl": "main_hall",
+        "dwarf_shaman": "guild_hall",
+        "guild_girl": "guild_counter",
+        "guild_quartermaster": "main_hall",
+        "high_elf_archer": "main_hall",
+        "informant": "dead_end",
+        "lizard_priest": "guild_hall",
+        "north_gate_warden": "guard_post",
+        "priestess": "guild_counter",
+        "tavern_keeper": "main_hall",
+        "tavern_waitress": "main_hall",
+        "temple_matron": "prayer_hall",
+        "town_guard": "fountain_plaza",
+        "traveling_merchant": "main_hall"
+      },
+      "permanent_hostile_slots": {
+        "frontier_town": {
+          "active_ids": [],
+          "max_slots": 1,
+          "refresh_queue": []
+        }
+      },
+      "properties": {},
+      "scoped_interactable_overlays": {
+        "adventurer_guild__guild_counter": [
+          {
+            "description": "一份略显粗糙的羊皮纸表格，上面需要填写姓名、出身和擅长的技能。",
+            "functional": {
+              "params": {
+                "base_effects": [
+                  {
+                    "params": {
+                      "key": "guild_registered",
+                      "value": true
+                    },
+                    "type": "set_flag"
+                  },
+                  {
+                    "params": {
+                      "delta": 2,
+                      "dimension": "approval",
+                      "npc_id": "guild_girl"
+                    },
+                    "type": "modify_disposition"
+                  }
+                ],
+                "clue_id": "registration_form",
+                "narrative": "柜台小姐微笑着指导你填好了表格。‘好了，从今天起，你就是公会正式登记在册的一级冒险者了。请多指教！’"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "registration_form",
+            "name": "冒险者登记表",
+            "tags": [
+              "quest_item"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "adventurer_guild__guild_hall": [
+          {
+            "description": "一本边角磨损的手册，记录了小镇的基本设施和公会规章。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "newbie_handbook",
+                "narrative": "手册里写着：‘登记是第一步。完成后，牧牛妹的牧场通常是新人们赚取第一桶金的好地方。’"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "newbie_handbook",
+            "name": "冒险者新人指南",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "market_plaza": [
+          {
+            "description": "一张被风吹到角落的羊皮纸，上面记录着近期的物资调动。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "supplies_check_list",
+                "narrative": "你注意到清单上，止血草和火油的调货量在这一周突然翻了几倍。商会的人似乎在为某种长期骚乱做准备。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "supplies_check_list",
+            "name": "商会的物资清单",
+            "tags": [
+              "clue"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "north_gate": [
+          {
+            "description": "随着夜幕降临，路灯散发出稳定的淡蓝色光芒，指引着回城的路。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "gate_lanterns",
+                "narrative": "守卫向你点了点头：‘辛苦了，新人。这个时间回来正好，酒馆那边正热闹呢。’"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "gate_lanterns",
+            "name": "北门的魔法路灯",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "长在树根下的淡紫色小草，散发着安详的香气。",
+            "functional": {
+              "params": {
+                "base_effects": [
+                  {
+                    "params": {
+                      "key": "herbs_collected",
+                      "value": true
+                    },
+                    "type": "set_flag"
+                  }
+                ],
+                "check": {
+                  "dc": 10,
+                  "skill": "nature"
+                },
+                "clue_id": "herb_node_forest",
+                "narrative": "圣女耐心地教你如何剥开叶片而不伤到根部。在采集时，你隐约听到树林深处传来一阵不自然的低吼。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "herb_node_forest",
+            "name": "茂密的宁神草丛",
+            "tags": [
+              "quest_target"
+            ],
+            "type": "use"
+          }
+        ],
+        "north_gate__guard_post": [
+          {
+            "description": "圣女用来演示辨认技巧的一丛杂草，其中夹杂着几株宁神草。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "herb_node_gate",
+                "narrative": "圣女指着一种锯齿状边缘的淡紫色小叶子：‘看，这就是宁神草。它们喜欢生长在湿润的树根旁，千万别和毒麻草弄混了。’"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "herb_node_gate",
+            "name": "试验用的药草丛",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "松软的土层上有一道明显的划痕，泥土还很湿润。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "check": {
+                  "dc": 10,
+                  "skill": "investigation"
+                },
+                "clue_id": "clue_drag_marks",
+                "narrative": "你蹲下检查痕迹，闻到了一股淡淡的、类似腐肉和酸液的刺鼻气味。这正是守备长警告过的臭味。痕迹一直延伸到了树林深处。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "clue_drag_marks",
+            "name": "模糊的拖拽痕迹",
+            "tags": [
+              "clue"
+            ],
+            "type": "inspect"
+          },
+          {
+            "description": "生长在古老树根阴影下的紫色小草，在黄昏中透着一股幽光。",
+            "functional": {
+              "params": {
+                "base_effects": [
+                  {
+                    "params": {
+                      "key": "herbs_collected",
+                      "value": true
+                    },
+                    "type": "set_flag"
+                  }
+                ],
+                "check": {
+                  "dc": 12,
+                  "skill": "perception"
+                },
+                "check_effects": [
+                  {
+                    "params": {
+                      "text": "在采集时，你注意到附近的灌木丛有被暴力折断的痕迹，空气中飘来一股腐败的臭味。"
+                    },
+                    "type": "add_knowledge"
+                  }
+                ],
+                "clue_id": "herb_node_forest",
+                "narrative": "你小心翼翼地采下了药草。就在这时，一阵低沉的、不像是人类的嬉笑声从密林深处传来，圣女吓得躲到了你身后。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "herb_node_forest",
+            "name": "森林边缘的宁神草丛",
+            "tags": [
+              "quest_target"
+            ],
+            "type": "use"
+          }
+        ],
+        "tavern__main_hall": [
+          {
+            "description": "虽然刚吃过炖菜，但酒馆里这种热闹的气息依然让人放松。",
+            "id": "stew_fragrance",
+            "name": "麦酒与烤肉的香气",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          }
+        ],
+        "town_square__notice_board": [
+          {
+            "description": "告示牌下角有一张刚贴上去的小纸条。",
+            "functional": {
+              "params": {
+                "base_effects": [],
+                "clue_id": "evening_guild_notice",
+                "narrative": "纸条上写着：‘今日未完成登记的新人，请务必在闭馆前回柜台找柜台小姐。’看来就是在说你。"
+              },
+              "type": "investigate_clue"
+            },
+            "id": "evening_guild_notice",
+            "name": "公会晚间告示",
+            "tags": [
+              "flavor"
+            ],
+            "type": "inspect"
+          }
+        ]
+      },
+      "tags": [
+        "hub",
+        "safe_zone",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    },
+    "water_capital": {
+      "area_events": [],
+      "area_situation": "",
+      "board_bulletins": {},
+      "container_states": {},
+      "danger_level": 0.6,
+      "discovered_items": [],
+      "discovered_rooms": [],
+      "dynamic_rooms": [],
+      "exploration": "undiscovered",
+      "hostile_tracking": {},
+      "interactable_states": {},
+      "npc_locations": {},
+      "npc_presence_sources": {},
+      "npc_rooms": {},
+      "permanent_hostile_slots": {},
+      "properties": {},
+      "scoped_interactable_overlays": {},
+      "tags": [
+        "capital",
+        "religious",
+        "trade"
+      ],
+      "temporary_sub_areas": []
+    }
+  }
+}

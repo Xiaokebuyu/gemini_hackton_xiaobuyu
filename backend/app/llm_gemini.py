@@ -37,6 +37,7 @@ class GeminiLlmAdapter:
         system_prompt: str,
         history: list[dict[str, Any]],
         tool_declarations: list[dict[str, Any]],
+        response_json_schema: dict[str, Any] | None = None,
     ) -> LlmResponse:
         contents = [self._to_content(msg) for msg in history]
 
@@ -48,17 +49,22 @@ class GeminiLlmAdapter:
             else None
         )
 
-        config = types.GenerateContentConfig(
-            system_instruction=system_prompt or None,
-            tools=[gemini_tools] if gemini_tools else None,
-            tool_config=types.ToolConfig(
+        config_kwargs: dict[str, Any] = {
+            "system_instruction": system_prompt or None,
+            "tools": [gemini_tools] if gemini_tools else None,
+            "tool_config": types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO"),
             ) if gemini_tools else None,
-            temperature=self._temperature,
-            thinking_config=types.ThinkingConfig(
+            "temperature": self._temperature,
+            "thinking_config": types.ThinkingConfig(
                 thinking_level=self._thinking_level,
             ),
-        )
+        }
+        if response_json_schema:
+            config_kwargs["response_mime_type"] = "application/json"
+            config_kwargs["response_json_schema"] = response_json_schema
+
+        config = types.GenerateContentConfig(**config_kwargs)
 
         response = await self._client.aio.models.generate_content(
             model=self._model,
@@ -224,6 +230,8 @@ class GeminiLlmAdapter:
         if isinstance(raw, types.ThinkingLevel):
             return raw
         normalized = str(raw).strip().lower()
+        if normalized == "minimal":
+            return types.ThinkingLevel.MINIMAL
         if normalized == "medium":
             return types.ThinkingLevel.MEDIUM
         if normalized == "high":

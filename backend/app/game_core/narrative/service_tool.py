@@ -332,6 +332,19 @@ class ExecuteServiceTool(_CharacterTool):
                 metadata={"status": exec_result.status, **exec_result.extra},
             )
 
+        # 5b. If service has quest_ready_to_report precondition, complete the quest.
+        preconditions = service.get("preconditions")
+        if isinstance(preconditions, dict):
+            rtr_quest_id = preconditions.get("quest_ready_to_report")
+            if isinstance(rtr_quest_id, str) and rtr_quest_id.strip() and context.state.has_slice("quests"):
+                rtr_quest_id = rtr_quest_id.strip()
+                dq = context.state.quests.get_dynamic_quest(rtr_quest_id)
+                if isinstance(dq, dict) and dq.get("status") in {"ready_to_report", "active"}:
+                    dq["status"] = "completed"
+                    dq["reported"] = True
+                    dq["rewards_claimed"] = True
+                    context.state.quests._dirty = True
+
         # 6. Write to SceneBus.
         label = str(service.get("label", service_id))
         self._add_scene_entry(
@@ -383,12 +396,12 @@ class ExecuteServiceTool(_CharacterTool):
     ) -> ToolResult | None:
         """Return an error ToolResult if any service precondition is not met.
 
-        Currently supported precondition keys:
+        Supported precondition keys:
 
-        - ``quest_completed``: the referenced quest_id must have status
-          ``"completed"`` or ``"reported"`` in the dynamic_quests slice.
-          If the quest is not in dynamic_quests, also accepts milestone state
-          ``COMPLETED``.
+        - ``quest_completed``: quest status must be "completed" or "reported".
+        - ``quest_ready_to_report``: quest status must be "ready_to_report",
+          "completed", or "reported". Used for reward services assigned when
+          objectives are all done but quest awaits NPC turn-in.
 
         Returns None when all preconditions pass.
         """
@@ -396,44 +409,61 @@ class ExecuteServiceTool(_CharacterTool):
         if not isinstance(preconditions, dict) or not preconditions:
             return None
 
+        # quest_completed: strict — only completed/reported
         quest_id = preconditions.get("quest_completed")
         if quest_id is not None and isinstance(quest_id, str) and quest_id.strip():
-            quest_id = quest_id.strip()
-            if not context.state.has_slice("quests"):
+            err = self._check_quest_status(
+                quest_id.strip(), {"completed", "reported"}, context,
+            )
+            if err is not None:
+                return err
+
+        # quest_ready_to_report: lenient — ready_to_report also accepted
+        quest_id_rtr = preconditions.get("quest_ready_to_report")
+        if quest_id_rtr is not None and isinstance(quest_id_rtr, str) and quest_id_rtr.strip():
+            err = self._check_quest_status(
+                quest_id_rtr.strip(),
+                {"ready_to_report", "completed", "reported"},
+                context,
+            )
+            if err is not None:
+                return err
+
+        return None  # all preconditions satisfied
+
+    @staticmethod
+    def _check_quest_status(
+        quest_id: str,
+        allowed: set[str],
+        context: AgentContext,
+    ) -> ToolResult | None:
+        """Return error if quest status is not in *allowed*, else None."""
+        if not context.state.has_slice("quests"):
+            return ToolResult(
+                ok=False,
+                message="任务尚未完成（无法验证任务状态）。",
+                metadata={"status": "quest_not_completed", "quest_id": quest_id},
+            )
+        dq = context.state.quests.get_dynamic_quest(quest_id)
+        if isinstance(dq, dict):
+            status = dq.get("status", "")
+            if status not in allowed:
                 return ToolResult(
                     ok=False,
-                    message="任务尚未完成（无法验证任务状态）。",
+                    message="任务尚未完成，无法领取报酬。",
                     metadata={
                         "status": "quest_not_completed",
                         "quest_id": quest_id,
+                        "quest_status": status,
                     },
                 )
-            # Check dynamic quest status
-            dq = context.state.quests.get_dynamic_quest(quest_id)
-            if isinstance(dq, dict):
-                status = dq.get("status", "")
-                if status not in {"completed", "reported"}:
-                    return ToolResult(
-                        ok=False,
-                        message="任务尚未完成，无法领取报酬。",
-                        metadata={
-                            "status": "quest_not_completed",
-                            "quest_id": quest_id,
-                            "quest_status": status,
-                        },
-                    )
-            else:
-                # Not in dynamic_quests — check milestone state
-                ms_state = context.state.quests.get_milestone_state(quest_id)
-                if ms_state != "COMPLETED":
-                    return ToolResult(
-                        ok=False,
-                        message="任务尚未完成，无法领取报酬。",
-                        metadata={
-                            "status": "quest_not_completed",
-                            "quest_id": quest_id,
-                        },
-                    )
-
-        return None  # all preconditions satisfied
+        else:
+            ms_state = context.state.quests.get_milestone_state(quest_id)
+            if ms_state != "COMPLETED":
+                return ToolResult(
+                    ok=False,
+                    message="任务尚未完成，无法领取报酬。",
+                    metadata={"status": "quest_not_completed", "quest_id": quest_id},
+                )
+        return None
 

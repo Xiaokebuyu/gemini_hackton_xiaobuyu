@@ -411,6 +411,29 @@ class NpcScheduleHook(NoOpSettlementHook):
             moved_npc_ids.append(npc_id)
             updated_areas.add(normalized_move.area_id or "")
 
+        # Notify party members whose schedule says they should be elsewhere
+        if context.state.has_slice("party") and context.state.has_slice("relations"):
+            party_ids = set(context.state.party.members.keys())
+            valid_areas = set(context.state.areas.areas.keys())
+            npc_directives = (
+                context.state.narrative_plan.npc_directives
+                if context.state.has_slice("narrative_plan")
+                else []
+            )
+            for member_id in party_ids:
+                char_data = candidate_templates.get(member_id)
+                if char_data is None:
+                    continue
+                sched_area, sched_loc, _ = self._provider._scheduled_destination(
+                    char_data, next_period, valid_areas, npc_directives=npc_directives,
+                )
+                if sched_area or sched_loc:
+                    dest_name = sched_loc or sched_area or "住处"
+                    context.state.relations.update_blackboard(member_id, {
+                        "pending_topic": f"时候不早了，{dest_name}那边还有事，我得回去了。",
+                        "wants_to_leave": True,
+                    })
+
         sse_events: list[SSEEvent] = []
         if moved_npc_ids:
             sse_events.append(

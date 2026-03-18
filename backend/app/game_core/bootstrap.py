@@ -110,7 +110,9 @@ def build_narrative_planner_hook(
     instance_manager: InstanceManager | None = None,
 ) -> NarrativePlannerHook:
     """Wire one planner-system assembly into the canonical planner hook stack."""
-    planner_hook = NarrativePlannerHook(blackboard=planner_system.blackboard)
+    planner_hook = NarrativePlannerHook(
+        blackboard=planner_system.blackboard,
+    )
     dispatcher = PlannerDispatcher()
     sub_area_manager = DynamicSubAreaManager(state.areas)
     quest_manager = QuestManagerSubSystem(
@@ -250,6 +252,11 @@ def build_runtime_for_world(
             )
         )
     register_default_settlement_hooks(tick_coordinator)
+    # Register planner as post-action hook so it runs after every player action
+    for hook in tick_coordinator.settlement_hooks:
+        if isinstance(hook, NarrativePlannerHook):
+            tick_coordinator.register_post_action_hook(hook)
+            break
     return DefaultRuntime(
         world=world,
         state=state,
@@ -313,6 +320,11 @@ def build_restored_runtime_for_world(
             )
         )
     register_default_settlement_hooks(tick_coordinator)
+    # Register planner as post-action hook so it runs after every player action
+    for hook in tick_coordinator.settlement_hooks:
+        if isinstance(hook, NarrativePlannerHook):
+            tick_coordinator.register_post_action_hook(hook)
+            break
     return DefaultRuntime(
         world=world,
         state=state,

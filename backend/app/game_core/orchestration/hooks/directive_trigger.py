@@ -14,7 +14,6 @@ per tick to avoid overwhelming the player.
 Priority 76 — runs after:
   - NarrativePlannerHook (35) — directives already written
   - NpcScheduleHook      (60) — NPCs are in their scheduled locations
-  - PrivateChatTriggerHook (75) — relationship-driven invitations already emitted
 
 Decision record: D-P19a (narrative.md)
 """
@@ -61,8 +60,7 @@ class DirectiveTriggerHook(NoOpSettlementHook):
 
     When the NPC is not truly co-located with the player (same sub-location and
     room where applicable), the payload includes ``colocated=false`` and
-    location hints so the UI can degrade to a non-interrupting reminder instead
-    of a direct private-chat invitation.
+    location hints so the UI can degrade to a non-interrupting reminder.
 
     At most **one** invitation is emitted per tick to avoid flooding the player.
     """
@@ -76,11 +74,6 @@ class DirectiveTriggerHook(NoOpSettlementHook):
             return HookResult(metadata={"skipped": "no_narrative_plan"})
         if not context.state.has_slice("player"):
             return HookResult(metadata={"skipped": "no_player_slice"})
-
-        # Guard: player must not already be inside a private chat location
-        current_loc = context.state.player.current_location
-        if current_loc and current_loc.startswith("_private_"):
-            return HookResult(metadata={"skipped": "already_in_private_chat"})
 
         current_tick: int = (
             context.state.time.absolute_tick()

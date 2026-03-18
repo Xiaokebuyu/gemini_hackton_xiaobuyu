@@ -295,6 +295,23 @@ class PlannerQuestHandler(StaticCommandHandler):
                             entry.setdefault("metadata_warnings", []).append(
                                 f"unknown objective type for auto-condition: {obj_type}"
                             )
+                # A8d: infer condition from raw params field when no condition/type present
+                if "condition" not in entry:
+                    raw_params = obj.get("params")
+                    if raw_params is not None:
+                        import json as _json
+                        params_dict: dict[str, Any] | None = None
+                        if isinstance(raw_params, str):
+                            try:
+                                params_dict = _json.loads(raw_params)
+                            except (ValueError, TypeError):
+                                params_dict = None
+                        elif isinstance(raw_params, dict):
+                            params_dict = raw_params
+                        if isinstance(params_dict, dict):
+                            inferred = self._infer_condition_from_params(params_dict)
+                            if inferred is not None:
+                                entry["condition"] = inferred
                 normalized_objectives.append(entry)
             else:
                 normalized_objectives.append({"description": str(obj), "completed": False})
@@ -827,6 +844,27 @@ class PlannerQuestHandler(StaticCommandHandler):
             return {"area_id": target}
         return None
 
+    @staticmethod
+    def _infer_condition_from_params(params: dict[str, Any]) -> dict[str, Any] | None:
+        """Infer a structured condition from a raw params dict.
+
+        Handles LLM outputs that provide params without a condition wrapper,
+        e.g. {"npc_id": "cow_girl"} → {"type": "npc_talked", "params": {"npc_id": "cow_girl"}}.
+        """
+        if "npc_id" in params and "key" not in params:
+            return {"type": "npc_talked", "params": params}
+        if "key" in params and "value" in params:
+            return {"type": "flag_set", "params": params}
+        if "item_id" in params:
+            return {"type": "item_obtained", "params": params}
+        if "area_id" in params and "clue_id" in params:
+            return {"type": "clue_investigated", "params": params}
+        if "area_id" in params and "location_id" in params:
+            return {"type": "location_visited", "params": params}
+        if "area_id" in params:
+            return {"type": "location_visited", "params": params}
+        return None
+
 
 class PlannerNpcHandler(StaticCommandHandler):
     COMMAND_TYPES = (
@@ -838,6 +876,7 @@ class PlannerNpcHandler(StaticCommandHandler):
         "planner_revoke_capability",
         "planner_assign_service",
         "planner_revoke_service",
+        "planner_move_npc",
     )
 
     def validate(
@@ -851,7 +890,7 @@ class PlannerNpcHandler(StaticCommandHandler):
             return source_gate
         if not state.has_slice("narrative_plan"):
             return ValidationResult(ok=False, reason="narrative_plan slice is required")
-        if cmd.type in {"planner_spawn_quest_npc", "planner_despawn_quest_npc"} and not state.has_slice("areas"):
+        if cmd.type in {"planner_spawn_quest_npc", "planner_despawn_quest_npc", "planner_move_npc"} and not state.has_slice("areas"):
             return ValidationResult(ok=False, reason="areas slice is required")
         if cmd.type == "planner_direct_npc":
             npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
@@ -927,6 +966,16 @@ class PlannerNpcHandler(StaticCommandHandler):
             if service_id is None:
                 return ValidationResult(ok=False, reason="service_id must be a non-empty string")
             return ValidationResult(ok=True)
+        if cmd.type == "planner_move_npc":
+            npc_id = coerce_non_empty_string(cmd.params.get("npc_id"))
+            if npc_id is None:
+                return ValidationResult(ok=False, reason="npc_id must be a non-empty string")
+            area_id = coerce_non_empty_string(cmd.params.get("area_id"))
+            if area_id is None:
+                return ValidationResult(ok=False, reason="area_id must be a non-empty string")
+            if area_id not in state.areas.areas:
+                return ValidationResult(ok=False, reason=f"unknown area_id: {area_id}")
+            return ValidationResult(ok=True)
         return ValidationResult(ok=False, reason=f"unsupported command: {cmd.type}")
 
     def compute(
@@ -954,7 +1003,32 @@ class PlannerNpcHandler(StaticCommandHandler):
             return self._compute_assign_service(cmd)
         if cmd.type == "planner_revoke_service":
             return self._compute_revoke_service(cmd)
+        if cmd.type == "planner_move_npc":
+            return self._compute_move_npc(cmd)
         return ExecuteResult.error(f"unsupported command: {cmd.type}")
+
+    def _compute_move_npc(self, cmd: Command) -> ExecuteResult:
+        npc_id = coerce_non_empty_string(cmd.params.get("npc_id")) or ""
+        area_id = coerce_non_empty_string(cmd.params.get("area_id")) or ""
+        location_id = coerce_non_empty_string(cmd.params.get("location_id"))
+        room_id = coerce_non_empty_string(cmd.params.get("room_id"))
+        return _planner_success(
+            cmd.type,
+            changes=[
+                StateChange(
+                    "areas",
+                    "set",
+                    f"npc_presence.{npc_id}",
+                    {
+                        "area_id": area_id,
+                        "location_id": location_id,
+                        "room_id": room_id,
+                        "source": "planner",
+                    },
+                ),
+            ],
+            metadata={"npc_id": npc_id, "area_id": area_id, "location_id": location_id, "room_id": room_id},
+        )
 
     def _compute_direct_npc(self, cmd: Command) -> ExecuteResult:
         current_tick = coerce_int(cmd.params.get("current_tick")) or 0

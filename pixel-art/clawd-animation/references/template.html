@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clawd — {{SCENE_TITLE}}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: #111;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    /* Scale up: the canvas logical size is small (e.g. 128x128),
+       CSS scales it to display size while keeping pixels sharp */
+    width: min(90vw, 90vh);
+    height: min(90vw, 90vh);
+  }
+  .caption {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!--
+  TEMPLATE INSTRUCTIONS (delete this comment block when using):
+
+  1. Set CANVAS_SIZE to your scene's logical pixel dimensions (64, 96, 128…)
+  2. Define your palette in PALETTE object (index → hex string, 0 = transparent)
+  3. Define sprites using parseSprite() — each row is a string of hex palette indices
+  4. Build animation timeline in TIMELINE array
+  5. Implement the render() function for your scene
+  6. Add particle systems, parallax, or camera movement as needed
+
+  QUALITY CHECKLIST:
+  ☐ Clawd's body uses palette index 1 (#c0785a) as primary color
+  ☐ Eyes are 2x2 black squares with optional 1px highlight
+  ☐ Ears are 2px-wide vertical protrusions, 2-3px tall
+  ☐ Animation has easing (not linear) — use Math.sin for breathe/bob
+  ☐ Scene has depth: background layer + subject layer + optional foreground
+  ☐ At least one ambient detail (particles, gentle sway, light flicker)
+  ☐ Total animation loop is 3-8 seconds
+-->
+
+<canvas id="c"></canvas>
+<div class="caption">{{scene_caption}}</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const CANVAS_SIZE = 128;   // logical pixels (square)
+const BG_COLOR = '#e8ddd0'; // warm default — change per scene
+
+// ============================================================
+// PALETTE — import from palette.json or define inline
+// ============================================================
+const PALETTE = {
+  0x0: null,           // transparent
+  0x1: '#c0785a',      // body
+  0x2: '#a0624a',      // body shadow
+  0x3: '#d4956e',      // body highlight
+  0x4: '#8a4a38',      // body dark
+  0x5: '#1a1a1a',      // eye
+  0x6: '#ffffff',      // eye highlight
+  // ... add scene-specific colors here
+};
+
+// ============================================================
+// SPRITE HELPERS
+// ============================================================
+
+/** Parse a sprite from array of hex-char strings → 2D array of ints */
+function parseSprite(rows) {
+  return rows.map(r => [...r].map(c => parseInt(c, 16)));
+}
+
+/** Draw a sprite grid onto the canvas context at (x, y) with given pixel scale */
+function drawSprite(ctx, grid, x, y, scale = 1) {
+  for (let row = 0; row < grid.length; row++) {
+    for (let col = 0; col < grid[row].length; col++) {
+      const idx = grid[row][col];
+      const color = PALETTE[idx];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + col * scale, y + row * scale, scale, scale);
+    }
+  }
+}
+
+/** Horizontally flip a sprite grid */
+function flipH(grid) {
+  return grid.map(row => [...row].reverse());
+}
+
+// ============================================================
+// SPRITES — define your Clawd + scene elements here
+// ============================================================
+
+const SPRITES = {
+  // Example: 12x14 Clawd standing (customize per scene)
+  clawd_stand: parseSprite([
+    '000010000100',
+    '000010000100',
+    '000111111100',
+    '000111111100',
+    '000151115100',
+    '000151115100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000022002200',
+    '000010000100',
+    '000010000100',
+    '000000000000',
+  ]),
+  // Add more sprites: clawd_walk, props, scenery...
+};
+
+// ============================================================
+// PARTICLES (optional — snowflakes, fireflies, sparkles)
+// ============================================================
+class Particle {
+  constructor(x, y, color, life) {
+    this.x = x;
+    this.y = y;
+    this.color = color;
+    this.life = life;
+    this.maxLife = life;
+    this.vx = (Math.random() - 0.5) * 0.3;
+    this.vy = -Math.random() * 0.2 - 0.1;
+  }
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.life -= dt;
+  }
+  draw(ctx) {
+    const alpha = Math.max(0, this.life / this.maxLife);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = this.color;
+    ctx.fillRect(Math.round(this.x), Math.round(this.y), 1, 1);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ============================================================
+// ANIMATION ENGINE
+// ============================================================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = CANVAS_SIZE;
+canvas.height = CANVAS_SIZE;
+
+let time = 0;
+const particles = [];
+
+function easeInOut(t) {
+  return 0.5 - 0.5 * Math.cos(t * Math.PI * 2);
+}
+
+function render(dt) {
+  // -- Clear --
+  ctx.fillStyle = BG_COLOR;
+  ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+  // -- Background layer --
+  // (draw distant scenery here)
+
+  // -- Clawd --
+  const breathe = Math.sin(time * 2) * 0.8;  // gentle bob
+  const cx = (CANVAS_SIZE - 12) / 2;
+  const cy = (CANVAS_SIZE - 14) / 2 + 10 + breathe;
+  drawSprite(ctx, SPRITES.clawd_stand, cx, cy);
+
+  // -- Shadow --
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  ctx.beginPath();
+  ctx.ellipse(cx + 6, cy + 14 + 1, 7, 1.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // -- Foreground / particles --
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update(dt);
+    particles[i].draw(ctx);
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+}
+
+let lastT = 0;
+function loop(t) {
+  const dt = Math.min((t - lastT) / 1000, 0.1); // seconds, capped
+  lastT = t;
+  time += dt;
+  render(dt);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

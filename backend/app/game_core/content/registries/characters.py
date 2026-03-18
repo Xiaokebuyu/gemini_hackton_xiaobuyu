@@ -102,6 +102,12 @@ class CharacterTemplate:
     secrets: list[SecretEntry] = field(default_factory=list)
     # 战斗 AI 个性：aggressive / defensive / protective / tactical
     ai_personality: str | None = None
+    # 日常叙事：角色喜好（段一预留，内容层手写后生效）
+    values: list[str] = field(default_factory=list)
+    likes: list[str] = field(default_factory=list)
+    dislikes: list[str] = field(default_factory=list)
+    # 日常叙事：NPC 初始内心状态（开场写入 blackboard）
+    initial_blackboard: dict[str, Any] | None = None
 
 
 # ------------------------------------------------------------------
@@ -294,6 +300,26 @@ class CharacterRegistry(ContentRegistry):
             else:
                 self._load_issues.append(f"character '{char_id}' has invalid ai_personality")
 
+        # -- 角色喜好 (values / likes / dislikes) --
+        def _load_str_list(field_key: str) -> list[str]:
+            raw_list = raw.get(field_key)
+            if raw_list is None:
+                return []
+            if not isinstance(raw_list, list):
+                self._load_issues.append(f"character '{char_id}' has invalid {field_key}")
+                return []
+            return [str(item) for item in raw_list if str(item).strip()]
+
+        values = _load_str_list("values")
+        likes = _load_str_list("likes")
+        dislikes = _load_str_list("dislikes")
+
+        # -- initial_blackboard (NPC 开场内心状态) --
+        initial_blackboard: dict[str, Any] | None = None
+        raw_initial_bb = raw.get("initial_blackboard")
+        if raw_initial_bb is not None and isinstance(raw_initial_bb, dict):
+            initial_blackboard = dict(raw_initial_bb)
+
         return CharacterTemplate(
             id=str(raw_id or char_id),
             name=name,
@@ -329,6 +355,10 @@ class CharacterRegistry(ContentRegistry):
             skills=skills,
             secrets=secrets,
             ai_personality=ai_personality,
+            values=values,
+            likes=likes,
+            dislikes=dislikes,
+            initial_blackboard=initial_blackboard,
         )
 
     def _build_npc_attacks(self, char_id: str, raw: dict[str, Any]) -> list[NpcAttack]:

@@ -16,10 +16,6 @@ from app.game_core.content.registries import MapRegistry
 from app.game_core.orchestration.hooks.directive_trigger import DirectiveTriggerHook
 from app.game_core.orchestration.hooks.event_condition import EventConditionHook
 from app.game_core.orchestration.hooks.npc_schedule import NpcScheduleHook
-from app.game_core.orchestration.hooks.private_chat_trigger import (
-    COOLDOWN_TICKS,
-    PrivateChatTriggerHook,
-)
 from app.game_core.orchestration.hooks.relationship import RelationshipHook
 from app.game_core.orchestration.scene_bus import SceneBus
 from app.game_core.orchestration.settlement import SettlementContext
@@ -434,9 +430,8 @@ class TestHookCompliance:
     def test_set_flag_and_remove_flag_commands_work_via_context(self) -> None:
         """set_flag and remove_flag commands must work via execute_command in SettlementContext.
 
-        This is the contract that PrivateChatTriggerHook and DirectiveTriggerHook rely on
-        for cooldown management. The full hook integration is tested in
-        test_private_chat_trigger.py::test_cooldown_set_after_trigger.
+        This is the contract that DirectiveTriggerHook relies on
+        for cooldown management.
         """
         state = StateContainer()
         scene_sl = SceneSlice()

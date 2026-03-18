@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class NpcDirectorSubSystem:
     """PlannerSubSystem responsible for NPC directive and spawn directives."""
 
-    _HANDLES: frozenset[str] = frozenset({"direct_npc", "spawn_quest_npc", "assign_capability", "revoke_capability", "assign_service", "revoke_service", "curate_shop", "create_rumor", "modify_location"})
+    _HANDLES: frozenset[str] = frozenset({"direct_npc", "spawn_quest_npc", "assign_capability", "revoke_capability", "assign_service", "revoke_service", "curate_shop", "create_rumor", "modify_location", "move_npc"})
 
     def __init__(
         self,
@@ -243,6 +243,8 @@ class NpcDirectorSubSystem:
             return self._apply_create_rumor(payload, context, current_tick=current_tick)
         if kind == "modify_location":
             return self._apply_modify_location(payload, context, current_tick=current_tick)
+        if kind == "move_npc":
+            return self._apply_move_npc(payload, context, current_tick=current_tick)
         return "unsupported_kind"
 
     # ------------------------------------------------------------------
@@ -478,6 +480,26 @@ class NpcDirectorSubSystem:
         result = context.execute_command(
             Command(
                 type="modify_location",
+                params=params,
+                source="narrative_planner",
+            )
+        )
+        if not result.executed:
+            return "; ".join(result.errors) if result.errors else "command_failed"
+        return True
+
+    def _apply_move_npc(
+        self,
+        payload: dict[str, Any],
+        context: "SettlementContext",
+        *,
+        current_tick: int,
+    ) -> bool | str:
+        params = dict(payload)
+        params["current_tick"] = current_tick
+        result = context.execute_command(
+            Command(
+                type="planner_move_npc",
                 params=params,
                 source="narrative_planner",
             )

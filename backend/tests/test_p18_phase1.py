@@ -877,8 +877,7 @@ class TestInjectStoryFacts:
 
 
 # ------------------------------------------------------------------
-# §1.2  _collect_npc_interaction_exchange / _collect_private_chat_exchange
-# NOTE: These functions were removed in P19-C4.  Tests kept for history but skipped.
+# §1.2  _collect_npc_interaction_exchange (removed in P19-C4, tests skipped)
 # ------------------------------------------------------------------
 
 
@@ -957,78 +956,3 @@ class TestCollectNpcInteractionExchange:
         assert len(messages) == 2
         assert messages[0].content == "First player msg"
         assert messages[1].content == "First NPC reply"
-
-
-@pytest.mark.skip(reason="P19-C4: _collect_private_chat_exchange removed (proactive path deleted)")
-class TestCollectPrivateChatExchange:
-    def _make_npc_result_with_speech(self, text: str):
-        """Build a minimal AgentResult that _extract_visible_reply_text will return text from."""
-        from app.game_core.narrative.models import AgentResult, ToolResult
-
-        tool_result = ToolResult(
-            ok=True,
-            message=text,
-            commands=[],
-            metadata={"event_type": "speech"},
-        )
-        return AgentResult(tool_results=[tool_result], metadata={})
-
-    def test_returns_two_messages_for_normal_exchange(self) -> None:
-        from app.game_core.orchestration.private_chat import PrivateChatResult
-        from app.agent_orchestration import _collect_private_chat_exchange
-
-        npc_result = self._make_npc_result_with_speech("I've been waiting for you.")
-        result = PrivateChatResult(
-            completed=True,
-            npc_id="npc_rogue",
-            npc_result=npc_result,
-        )
-        messages = _collect_private_chat_exchange("A private word?", result)
-        assert len(messages) == 2
-        assert messages[0].role == "user"
-        assert messages[0].content == "A private word?"
-        assert messages[1].role == "model"
-        assert messages[1].content == "I've been waiting for you."
-
-    def test_returns_empty_when_no_npc_speech(self) -> None:
-        from app.game_core.narrative.models import AgentResult
-        from app.game_core.orchestration.private_chat import PrivateChatResult
-        from app.agent_orchestration import _collect_private_chat_exchange
-
-        # npc_result has no speech tool call
-        npc_result = AgentResult(tool_results=[], metadata={})
-        result = PrivateChatResult(
-            completed=True,
-            npc_id="npc_silent",
-            npc_result=npc_result,
-        )
-        messages = _collect_private_chat_exchange("Hello?", result)
-        assert messages == []
-
-    def test_returns_empty_when_npc_result_is_none(self) -> None:
-        from app.game_core.orchestration.private_chat import PrivateChatResult
-        from app.agent_orchestration import _collect_private_chat_exchange
-
-        result = PrivateChatResult(
-            completed=True,
-            npc_id="npc_none",
-            npc_result=None,
-        )
-        messages = _collect_private_chat_exchange("Any reply?", result)
-        assert messages == []
-
-    def test_empty_player_message_still_returns_npc_message(self) -> None:
-        from app.game_core.orchestration.private_chat import PrivateChatResult
-        from app.agent_orchestration import _collect_private_chat_exchange
-
-        npc_result = self._make_npc_result_with_speech("I speak regardless.")
-        result = PrivateChatResult(
-            completed=True,
-            npc_id="npc_solo",
-            npc_result=npc_result,
-        )
-        messages = _collect_private_chat_exchange("", result)
-        # Empty player_message skips the user WindowMessage
-        assert len(messages) == 1
-        assert messages[0].role == "model"
-        assert messages[0].content == "I speak regardless."

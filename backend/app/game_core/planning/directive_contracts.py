@@ -71,6 +71,7 @@ SUPPORTED_PLANNER_DIRECTIVE_KINDS = frozenset(
         "create_rumor",
         "modify_location",
         "set_task_monitor",
+        "move_npc",
     }
 )
 
@@ -515,6 +516,10 @@ def _validate_contract(
         for interactable in normalized["interactables"]:
             functional = normalize_mapping(interactable.get("functional"))
             if coerce_non_empty_string(functional.get("type")) != CLUE_FUNCTIONAL_TYPE:
+                tags = interactable.get("tags", [])
+                if isinstance(tags, list) and "clue" in tags:
+                    logger.warning("stripping clue interactable with missing functional: %s", interactable.get("id"))
+                    continue
                 valid_interactables.append(interactable)
                 continue
             clue = normalize_clue_definition(
@@ -710,6 +715,29 @@ def _validate_contract(
         if on_complete not in {"auto", "notify"}:
             return False, normalized, "invalid_on_complete"
         normalized["on_complete"] = on_complete
+        return True, normalized, None
+
+    if kind == "move_npc":
+        npc_id = coerce_non_empty_string(normalized.get("npc_id"))
+        if npc_id is None:
+            return False, normalized, "missing_npc_id"
+        normalized["npc_id"] = npc_id
+        area_id = coerce_non_empty_string(normalized.get("area_id"))
+        if area_id is None:
+            return False, normalized, "missing_area_id"
+        normalized["area_id"] = area_id
+        location_id = coerce_non_empty_string(normalized.get("location_id"))
+        if location_id is not None:
+            normalized["location_id"] = location_id
+        else:
+            normalized.pop("location_id", None)
+        room_id = coerce_non_empty_string(normalized.get("room_id"))
+        if room_id is not None and location_id is None:
+            return False, normalized, "room_id_requires_location_id"
+        if room_id is not None:
+            normalized["room_id"] = room_id
+        else:
+            normalized.pop("room_id", None)
         return True, normalized, None
 
     return True, normalized, None

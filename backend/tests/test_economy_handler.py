@@ -235,3 +235,66 @@ class TestEconomyHandler:
         assert state.player.gold == 5
         assert state.player.inventory == []
         assert "plain_vendor" not in state.relations.shop_states
+
+    def test_trade_sell_applies_approval_sell_bonus(self) -> None:
+        """High approval (>=80) should give 30% sell bonus over base sell price."""
+        state = StateContainer()
+
+        player = PlayerSlice()
+        player.restore(
+            {
+                "character_id": "pc_1",
+                "gold": 0,
+                "inventory": [{"item_id": "sword", "count": 1, "tags": []}],
+            }
+        )
+        state.register(player)
+
+        relations = RelationSlice()
+        relations.restore(
+            {
+                "npc_dispositions": {
+                    "merchant": {"approval": 80},
+                }
+            }
+        )
+        state.register(relations)
+
+        from app.game_core.state.slices import TimeSlice
+        time_slice = TimeSlice()
+        time_slice.restore({"day": 1, "slot": 9})
+        state.register(time_slice)
+
+        result = _make_engine().execute(
+            Command(
+                type="trade_sell",
+                params={"buyer_npc": "merchant", "item_id": "sword", "count": 1},
+            ),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is True
+        # base_price=100, buy_rate=0.4, sell_bonus=1.30 → round(100 * 0.4 * 1.30) = 52
+        assert result.metadata["unit_price"] == 52
+        _apply(result, state)
+        assert state.player.gold == 52
+
+    def test_trade_sell_no_approval_bonus_when_approval_is_zero(self) -> None:
+        """approval=0 → sell_bonus=1.0 → price is unchanged from base calculation."""
+        state = _make_state(
+            gold=0,
+            inventory=[{"item_id": "sword", "count": 1, "tags": []}],
+        )
+        result = _make_engine().execute(
+            Command(
+                type="trade_sell",
+                params={"buyer_npc": "merchant", "item_id": "sword", "count": 1},
+            ),
+            state,
+            _make_world(),
+        )
+
+        assert result.executed is True
+        # base_price=100, buy_rate=0.4, sell_bonus=1.0 → round(100 * 0.4 * 1.0) = 40
+        assert result.metadata["unit_price"] == 40

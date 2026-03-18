@@ -761,10 +761,14 @@ class GameRuntime:
         self,
         session: ManagedSession,
     ) -> NarrativePlannerHook | None:
-        # Opening seed must remain deterministic. Reusing the live runtime
-        # planner hook lets agentic blackboard/subsystems participate during
-        # bootstrap, which can produce unrelated invalid-contract noise before
-        # normal play even starts.
+        # Use the live runtime planner hook (with LLM blackboard) so the
+        # Planner can do a full run at bootstrap: generate outline, create
+        # quests, direct NPCs, and set up the opening scene.
+        # Falls back to deterministic-only if no planner_system_factory.
+        for hook in session.runtime.tick_coordinator.settlement_hooks:
+            if isinstance(hook, NarrativePlannerHook):
+                return hook
+        # Fallback: deterministic bootstrap if live hook not found
         return build_narrative_planner_hook(
             build_opening_bootstrap_planner_system(),
             state=session.runtime.state,

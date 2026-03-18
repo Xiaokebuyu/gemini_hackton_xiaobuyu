@@ -67,7 +67,6 @@ _TICK_KIND_CONVERSATION = frozenset(
         "public_utterance_turn",
         "party_chat_turn",
         "free_chat_turn",
-        "private_chat_turn",
     }
 )
 _TICK_KIND_COMBAT = frozenset(
@@ -95,6 +94,8 @@ class NarrativePlannerDecision:
     next_scheduled_tick: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     outline_updates: dict[str, Any] = field(default_factory=dict)
+    outline: dict[str, Any] | None = field(default=None)
+    player_hint: str | None = field(default=None)
 
 
 class NarrativePlannerProvider(Protocol):
@@ -258,8 +259,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
     ) -> None:
         self.blackboard = blackboard if blackboard is not None else planner
         self._dispatcher = dispatcher
-        # Injectable outline generator (A9c) — None means deterministic fallback
-        # inside NarrativePlanSlice.set_milestone_outline (A9f behavior).
+        # outline_generator is kept for API compatibility but no longer used:
+        # LLM outline generation now happens via Planner.plan() (needs_outline signal).
         self._outline_generator = outline_generator
         # Scratch buffer for SSE events; written by WorldBuilderSubSystem (via reference),
         # drained by execute() at the end of each planning cycle.
@@ -573,8 +574,23 @@ class NarrativePlannerHook(NoOpSettlementHook):
             commit_payload["next_scheduled_tick"] = blackboard_decision.next_scheduled_tick
         self._commit_runtime_state(context, **commit_payload)
 
+        # Apply outline from the planner's response (new full outline takes precedence)
+        if (
+            blackboard_decision.outline
+            and isinstance(blackboard_decision.outline.get("steps"), list)
+            and blackboard_decision.outline["steps"]
+            and context.state.has_slice("narrative_plan")
+        ):
+            outline = dict(blackboard_decision.outline)
+            outline.setdefault(
+                "target_milestone_id",
+                context.state.narrative_plan.current_target_milestone or "",
+            )
+            outline.setdefault("computed_at_tick", current_tick)
+            context.state.narrative_plan.set_milestone_outline(outline)
+
         # Apply outline_updates from the planner's response
-        if blackboard_decision.outline_updates and context.state.has_slice("narrative_plan"):
+        elif blackboard_decision.outline_updates and context.state.has_slice("narrative_plan"):
             context.state.narrative_plan.update_milestone_outline(
                 blackboard_decision.outline_updates
             )
@@ -593,6 +609,15 @@ class NarrativePlannerHook(NoOpSettlementHook):
                     },
                 )
             )
+        # Emit quest_hint SSE if planner provided a player hint
+        if blackboard_decision.player_hint:
+            sse_events.append(
+                SSEEvent(
+                    event_type="quest_hint",
+                    payload={"hint": blackboard_decision.player_hint, "tick": current_tick},
+                )
+            )
+
         # Detect FAILED and COMPLETED milestone transitions
         sse_events.extend(_detect_failed_milestones_sse(context))
         sse_events.extend(_detect_completed_milestones_sse(context))
@@ -815,7 +840,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
             context,
             current_tick=current_tick,
             reason="bootstrap",
-            allowed_directives=self._BOOTSTRAP_DIRECTIVES,
+            allowed_directives=self._SUPPORTED_DIRECTIVES,
             initial_change_window_start=len(context.change_log),
             include_action_log=False,
             include_tick_event=False,
@@ -913,7 +938,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 blackboard_decision.directives,
                 context,
                 current_tick=current_tick,
-                allowed_directives=self._BOOTSTRAP_DIRECTIVES,
+                allowed_directives=self._SUPPORTED_DIRECTIVES,
                 source="blackboard",
                 subsystem_name="blackboard",
                 round_index=int(replay_trace.get("round_count", 0)),
@@ -961,6 +986,16 @@ class NarrativePlannerHook(NoOpSettlementHook):
         ):
             bootstrap_commit_payload["next_scheduled_tick"] = blackboard_decision.next_scheduled_tick
         self._commit_runtime_state(context, **bootstrap_commit_payload)
+
+        # Apply outline from Planner's bootstrap response (full generation)
+        if blackboard_decision.outline and context.state.has_slice("narrative_plan"):
+            outline = dict(blackboard_decision.outline)
+            outline.setdefault(
+                "target_milestone_id",
+                context.state.narrative_plan.current_target_milestone or "",
+            )
+            outline.setdefault("computed_at_tick", current_tick)
+            context.state.narrative_plan.set_milestone_outline(outline)
 
         # Apply outline_updates from the planner's bootstrap response
         if blackboard_decision.outline_updates and context.state.has_slice("narrative_plan"):
@@ -1084,6 +1119,31 @@ class NarrativePlannerHook(NoOpSettlementHook):
             ]
             if event_texts:
                 parts.append("近期事件：" + "；".join(event_texts))
+
+        # NPC location descriptions
+        if context.world.has_registry("characters"):
+            npc_locs = area_state.npc_locations  # {npc_id: location_id}
+            npc_descs: list[str] = []
+            for npc_id, loc_id in npc_locs.items():
+                tmpl = context.world.characters.get(npc_id)
+                if tmpl is not None:
+                    name = tmpl.name or npc_id
+                    npc_descs.append(f"{name}在{loc_id or '附近'}")
+            if npc_descs:
+                parts.append("当前区域NPC：" + "、".join(npc_descs[:5]))
+
+        # Time period atmosphere
+        if context.state.has_slice("time"):
+            period = context.state.time.period
+            period_desc = {
+                "dawn": "清晨时分，一切刚刚苏醒",
+                "day": "白天，小镇正常运转中",
+                "dusk": "傍晚，冒险者们陆续回城",
+                "night": "夜晚，小镇安静下来",
+            }
+            desc = period_desc.get(period)
+            if desc:
+                parts.append(desc)
 
         situation = "。".join(parts) + "。" if parts else ""
         context.state.areas.set_area_situation(area_id, situation)
@@ -1545,6 +1605,7 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 "state_change_count": len(scene_snapshot.get("state_changes", [])),
                 "system_entries_digest": system_entries_digest,
                 "visible_command_types": visible_command_types,
+                "recent_dialogue": self._build_recent_dialogue(scene_snapshot),
             },
             "events": {
                 "pending_events_digest": pending_events_digest,
@@ -1572,6 +1633,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 if context.state.has_slice("player")
                 else 0
             ),
+            # Available items for grant_item / item_obtained (daily/misc only)
+            "available_items": self._build_available_items(context),
             # B-5 (P28): discoverable rooms hidden from player + dynamic room capacity
             "discoverable_rooms_hidden": self._build_discoverable_rooms_hidden(context),
             "dynamic_location_capacity": self._build_dynamic_location_capacity(context),
@@ -1621,6 +1684,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
             "planner_feedback": self._build_planner_feedback(
                 context, current_tick=current_tick,
             ),
+            # Outline generation signal: when True, Planner must output an "outline" field
+            **self._build_outline_signal(context),
         }
 
     async def _ensure_milestone_outline(
@@ -1629,11 +1694,13 @@ class NarrativePlannerHook(NoOpSettlementHook):
         *,
         current_tick: int,
     ) -> None:
-        """A9c: Generate (or skip) a new milestone outline when the target changes.
+        """A9c: Set a deterministic fallback outline when target milestone changes.
 
-        Calls the injectable ``_outline_generator`` if present; otherwise builds
-        a deterministic fallback from key_elements (A9f).
-        Errors are caught and logged — they must not derail the planning cycle.
+        LLM-quality outline generation is now handled by Planner.plan() via the
+        ``needs_outline`` signal injected in ``_build_planner_context()``.
+        This method only writes the deterministic fallback so there is always
+        *something* in NarrativePlanSlice.milestone_outline before plan() runs.
+        The Planner's richer outline will overwrite it in execute() if produced.
         """
         if not context.state.has_slice("narrative_plan"):
             return
@@ -1653,39 +1720,54 @@ class NarrativePlannerHook(NoOpSettlementHook):
             # No template data — cannot build meaningful outline
             return
 
-        if self._outline_generator is not None:
-            try:
-                new_outline = await self._outline_generator.generate(
-                    milestone_template=outline_ctx["milestone_template"],
-                    target_milestone_id=current_ms,
-                    chapter_id=outline_ctx["chapter_id"],
-                    current_tick=current_tick,
-                    game_state_summary=outline_ctx.get("game_state_summary"),
-                    supported_condition_types=outline_ctx.get("supported_condition_types"),
-                )
-                context.state.narrative_plan.set_milestone_outline(new_outline)
-            except Exception:
-                logger.exception(
-                    "narrative_planner: failed to generate milestone outline (milestone_id=%s)",
-                    current_ms,
-                )
-                # Fall through to deterministic fallback
-                fallback = self._build_fallback_outline_from_template(
-                    milestone_template=outline_ctx["milestone_template"],
-                    target_milestone_id=current_ms,
-                    chapter_id=outline_ctx["chapter_id"],
-                    current_tick=current_tick,
-                )
-                context.state.narrative_plan.set_milestone_outline(fallback)
-        else:
-            # A9f: No LLM — build deterministic fallback from key_elements
-            fallback = self._build_fallback_outline_from_template(
-                milestone_template=outline_ctx["milestone_template"],
-                target_milestone_id=current_ms,
-                chapter_id=outline_ctx["chapter_id"],
-                current_tick=current_tick,
-            )
-            context.state.narrative_plan.set_milestone_outline(fallback)
+        # A9f: Always use deterministic fallback here; LLM outline arrives later via plan()
+        fallback = self._build_fallback_outline_from_template(
+            milestone_template=outline_ctx["milestone_template"],
+            target_milestone_id=current_ms,
+            chapter_id=outline_ctx["chapter_id"],
+            current_tick=current_tick,
+        )
+        context.state.narrative_plan.set_milestone_outline(fallback)
+
+    def _check_needs_outline(self, context: "SettlementContext") -> bool:
+        """Return True when the current milestone lacks a valid LLM outline."""
+        if not context.state.has_slice("narrative_plan"):
+            return False
+        current_ms = context.state.narrative_plan.current_target_milestone
+        if not current_ms:
+            return False
+        existing = context.state.narrative_plan.milestone_outline
+        if isinstance(existing, Mapping) and existing.get("target_milestone_id") == current_ms:
+            return False
+        return True
+
+    def _get_milestone_template(self, context: "SettlementContext") -> dict[str, Any]:
+        """Return milestone template data for the current target milestone."""
+        current_ms = context.state.narrative_plan.current_target_milestone
+        if not current_ms:
+            return {}
+        if not context.world.has_registry("quests"):
+            return {}
+        tmpl = context.world.quests.get_milestone(current_ms)
+        if tmpl is None:
+            return {}
+        return {
+            "key_elements": list(tmpl.key_elements),
+            "involved_npcs": list(tmpl.involved_npcs),
+            "involved_locations": list(tmpl.involved_locations),
+            "narrative_context": tmpl.narrative_context,
+            "success_conditions": list(getattr(tmpl, "success_conditions", None) or []),
+        }
+
+    def _build_outline_signal(self, context: "SettlementContext") -> dict[str, Any]:
+        """Build the needs_outline + milestone_template_for_outline entries for planner context."""
+        needs = self._check_needs_outline(context)
+        return {
+            "needs_outline": needs,
+            "milestone_template_for_outline": (
+                self._get_milestone_template(context) if needs else None
+            ),
+        }
 
     def _build_outline_context(
         self,
@@ -1699,6 +1781,9 @@ class NarrativePlannerHook(NoOpSettlementHook):
         if context.world.has_registry("quests"):
             tmpl = context.world.quests.get_milestone(target_milestone_id)
             if tmpl is not None:
+                # Prefer chapter_id from milestone template over runtime state
+                if not chapter_id and hasattr(tmpl, "chapter_id") and tmpl.chapter_id:
+                    chapter_id = str(tmpl.chapter_id)
                 milestone_template = {
                     "key_elements": list(tmpl.key_elements),
                     "involved_npcs": list(tmpl.involved_npcs),
@@ -1815,6 +1900,37 @@ class NarrativePlannerHook(NoOpSettlementHook):
         if action_types & _TICK_KIND_COMBAT:
             return "combat_resolution"
         return "normal"
+
+    @staticmethod
+    def _build_recent_dialogue(scene_snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Extract recent public dialogue entries for planner awareness.
+
+        Returns up to 8 recent public scene entries so the planner knows what
+        players and NPCs said, enabling context-aware follow-up directives
+        (e.g. moving an NPC after they promised to go somewhere).
+        """
+        raw_entries = scene_snapshot.get("entries", [])
+        if not isinstance(raw_entries, list):
+            return []
+        dialogue: list[dict[str, Any]] = []
+        for entry in raw_entries:
+            if not isinstance(entry, Mapping):
+                continue
+            if str(entry.get("visibility", "")).strip() != "public":
+                continue
+            source = str(entry.get("source", "")).strip()
+            content = str(entry.get("content", "")).strip()
+            if not content:
+                continue
+            tags = entry.get("tags", [])
+            if not isinstance(tags, list):
+                tags = []
+            dialogue.append({
+                "source": source,
+                "content": content[:200],  # cap length
+                "tags": [str(t) for t in tags[:5] if isinstance(t, str)],
+            })
+        return dialogue[-8:]  # last 8 entries
 
     @staticmethod
     def _build_system_entries_digest(scene_snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -2765,6 +2881,29 @@ class NarrativePlannerHook(NoOpSettlementHook):
         return result
 
     @staticmethod
+    @staticmethod
+    def _build_available_items(context: SettlementContext) -> list[dict[str, Any]]:
+        """Extract daily/misc items from ItemRegistry for planner context."""
+        if not context.world.has_registry("items"):
+            return []
+        _DAILY_TAGS = {"material", "herbs", "daily", "gift", "food", "misc", "giftable"}
+        items: list[dict[str, Any]] = []
+        for template in context.world.items.list_all():
+            if not template.id:
+                continue
+            tags = set(template.tags or [])
+            if not tags.intersection(_DAILY_TAGS):
+                continue
+            items.append({
+                "id": template.id,
+                "name": getattr(template, "name", template.id),
+                "tags": list(tags),
+            })
+            if len(items) >= 50:
+                break
+        return items
+
+    @staticmethod
     def _get_area_danger(context: SettlementContext) -> float:
         if not context.state.has_slice("areas") or not context.state.has_slice("player"):
             return 0.0
@@ -2944,6 +3083,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
                 next_scheduled_tick=raw.next_scheduled_tick,
                 metadata=_normalize_mapping(raw.metadata),
                 outline_updates=dict(raw.outline_updates) if isinstance(raw.outline_updates, Mapping) else {},
+                outline=raw.outline,
+                player_hint=raw.player_hint,
             )
         if isinstance(raw, list):
             return NarrativePlannerDecision(directives=list(raw))
@@ -2962,6 +3103,14 @@ class NarrativePlannerHook(NoOpSettlementHook):
             if isinstance(raw_outline_updates, Mapping)
             else {}
         )
+        raw_outline = raw.get("outline")
+        outline = (
+            dict(raw_outline)
+            if isinstance(raw_outline, Mapping) and raw_outline.get("steps")
+            else None
+        )
+        raw_hint = raw.get("player_hint")
+        player_hint = str(raw_hint).strip() if isinstance(raw_hint, str) and raw_hint.strip() else None
         return NarrativePlannerDecision(
             directives=directives,
             story_facts=cls._normalize_story_facts(raw.get("story_facts")),
@@ -2969,6 +3118,8 @@ class NarrativePlannerHook(NoOpSettlementHook):
             next_scheduled_tick=next_tick,
             metadata=_normalize_mapping(raw.get("metadata")),
             outline_updates=outline_updates,
+            outline=outline,
+            player_hint=player_hint,
         )
 
     @classmethod

@@ -21,7 +21,7 @@ from app.game_core.narrative.models import ToolResult
 logger = logging.getLogger(__name__)
 
 # Maximum observations kept per blackboard before overflow (task 3 territory).
-_OBS_HARD_CAP = 10
+_OBS_HARD_CAP = 20
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,6 @@ _SEMANTIC_TAGS: dict[str, list[str]] = {
     "public_utterance_turn": ["DIALOGUE", "PUBLIC_UTTERANCE"],
     "party_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
     "free_chat_turn": ["DIALOGUE", "PARTY_CHAT"],
-    "private_chat_turn": ["DIALOGUE", "PRIVATE_CHAT"],
     "start_combat":  ["COMBAT"],
     "end_combat":    ["COMBAT_END"],
     "navigate":      ["NAVIGATION"],
@@ -62,18 +61,37 @@ class TickCoordinator:
         self.companion_manager = companion_manager
         self.knowledge_graph: Any | None = None
         self.session_id: str = ""
+        # Wire location provider so scene_bus entries get auto-stamped
+        scene_bus.set_location_provider(self._current_player_location)
         self.change_log: list[StateChange] = []
         self._pending_action_records: list[dict[str, Any]] = []
         self.settlement_hooks: list[SettlementHook] = []
+        self.post_action_hooks: list[SettlementHook] = []
 
     @property
     def action_log(self) -> list[dict[str, Any]]:
         """Current settlement-window action semantics exposed to hooks/tests."""
         return self._peek_pending_action_window()
 
+    def _current_player_location(self) -> dict[str, str | None]:
+        """Return player's current location for scene_bus auto-stamping."""
+        if not self.state.has_slice("player"):
+            return {"area_id": None, "location_id": None, "room_id": None}
+        p = self.state.player
+        return {
+            "area_id": p.current_area or None,
+            "location_id": p.current_location or None,
+            "room_id": getattr(p, "current_room", None) or None,
+        }
+
     def register_settlement_hook(self, hook: SettlementHook) -> None:
         self.settlement_hooks.append(hook)
         self.settlement_hooks.sort(key=lambda item: item.priority)
+
+    def register_post_action_hook(self, hook: SettlementHook) -> None:
+        """Register a hook to run after every non-noop player action."""
+        self.post_action_hooks.append(hook)
+        self.post_action_hooks.sort(key=lambda item: item.priority)
 
     async def process(
         self,
@@ -123,6 +141,10 @@ class TickCoordinator:
         # Phase 9: immediate combat SSE events
         combat_events = extract_combat_sse(result.action_type, result.metadata)
         result.sse_events.extend(combat_events)
+        # Phase 10: post-action hooks (e.g. planner runs after every action)
+        if result.action_type != "noop" and self.post_action_hooks:
+            post_events = await self._run_post_action_hooks(event_sink)
+            result.sse_events.extend(post_events)
         self.accumulate(result.time_cost)
         while self.check_settlement():
             before_accumulated = self.state.time.accumulated
@@ -198,6 +220,72 @@ class TickCoordinator:
                     context.execute_command(command)
                 except Exception as exc:
                     logger.exception("hook command failed: %s", hook_name)
+                    cmd_error = SSEEvent(
+                        event_type="command_error",
+                        payload={
+                            "hook": hook_name,
+                            "error_type": type(exc).__name__,
+                            "message": str(exc),
+                        },
+                    )
+                    collected_events.append(cmd_error)
+                    if event_sink is not None:
+                        await event_sink(cmd_error)
+            for event in result.sse_events:
+                collected_events.append(event)
+                if event_sink is not None:
+                    await event_sink(event)
+        return collected_events
+
+    async def _run_post_action_hooks(
+        self,
+        event_sink: Callable[[SSEEvent], Awaitable[None]] | None = None,
+    ) -> list[SSEEvent]:
+        """Run post-action hooks (e.g. planner) after every player action."""
+        collected_events: list[SSEEvent] = []
+        action_log = self._peek_pending_action_window()
+        rest_phase = build_rest_phase(
+            action_log=action_log,
+            current_time=self.state.time if self.state.has_slice("time") else None,
+        )
+        context = SettlementContext(
+            change_log=self.change_log,
+            state=self.state,
+            world=self.world,
+            scene_bus=self.scene_bus,
+            _rules_engine=self.rules_engine,
+            _apply_delta=self._apply_delta,
+            action_log=action_log,
+            rest_phase=rest_phase,
+            companion_manager=self.companion_manager,
+            knowledge_graph=self.knowledge_graph,
+            session_id=self.session_id,
+        )
+        for hook in self.post_action_hooks:
+            if hook.should_skip(self.change_log, action_log=context.action_log):
+                continue
+            hook_name = getattr(hook, "HOOK_NAME", type(hook).__name__)
+            try:
+                result = await hook.execute(context)
+            except Exception as exc:
+                logger.exception("post-action hook failed: %s", hook_name)
+                error_event = SSEEvent(
+                    event_type="hook_error",
+                    payload={
+                        "hook": hook_name,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                )
+                collected_events.append(error_event)
+                if event_sink is not None:
+                    await event_sink(error_event)
+                continue
+            for command in result.commands:
+                try:
+                    context.execute_command(command)
+                except Exception as exc:
+                    logger.exception("post-action hook command failed: %s", hook_name)
                     cmd_error = SSEEvent(
                         event_type="command_error",
                         payload={

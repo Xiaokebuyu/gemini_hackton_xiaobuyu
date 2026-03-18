@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 _DISPOSITION_DIMENSIONS = frozenset({"approval", "trust", "fear", "romance"})
 
+_DELTA_BOUNDS: dict[str, tuple[int, int]] = {
+    "approval": (-3, 3),
+    "trust": (-2, 2),
+    "romance": (-1, 2),
+    "fear": (-3, 3),
+}
+
 
 # ------------------------------------------------------------------
 # Base
@@ -221,7 +228,7 @@ class UpdateFeelingTool(_CharacterTool):
                 },
                 "delta": {
                     "type": "integer",
-                    "description": "Amount to change (-50 to 50).",
+                    "description": "Amount to change. Bounds depend on dimension: approval ±3, trust ±2, romance -1 to +2, fear ±3.",
                 },
             },
             "required": ["dimension", "delta"],
@@ -254,11 +261,13 @@ class UpdateFeelingTool(_CharacterTool):
                 metadata={"status": "invalid_params"},
             )
         delta = int(delta)
-        if not -50 <= delta <= 50:
-            return ToolResult(
-                ok=False,
-                message="delta must be in [-50, 50].",
-                metadata={"status": "invalid_params"},
+        lo, hi = _DELTA_BOUNDS.get(dimension, (-3, 3))
+        if delta < lo or delta > hi:
+            original = delta
+            delta = max(lo, min(hi, delta))
+            logger.warning(
+                "UpdateFeelingTool: clamped %s delta %d -> %d for %s",
+                dimension, original, delta, character_id,
             )
 
         command = Command(

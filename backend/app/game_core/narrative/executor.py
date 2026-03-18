@@ -94,6 +94,7 @@ class AgenticExecutor:
         context_layers: dict[str, Any] | None = None,
         text_chunk_sink: Callable[[str], Awaitable[None]] | None = None,
         traits: list[str] | None = None,
+        response_json_schema: dict[str, Any] | None = None,
     ) -> AgentResult:
         """Multi-turn agentic loop driven by an LLM.
 
@@ -229,6 +230,7 @@ class AgenticExecutor:
                     role == "gm"
                     and text_chunk_sink is not None
                     and hasattr(self._llm, "generate_stream")
+                    and response_json_schema is None
                 ):
                     streamed = ""
                     async for chunk in self._llm.generate_stream(

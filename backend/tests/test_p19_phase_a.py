@@ -276,20 +276,6 @@ class TestDirectiveTriggerHookGuards:
         result = _run()
         assert result.metadata.get("skipped") == "no_player_slice"
 
-    def test_skips_private_chat_location(self) -> None:
-        """Hook skips when player is already in a private chat location."""
-        ctx = _make_settlement_context(player_location="_private_npc_alice")
-        _add_directive(ctx, "npc_alice")
-
-        def _run() -> Any:
-            async def _body() -> Any:
-                hook = DirectiveTriggerHook()
-                return await hook.execute(ctx)
-            return asyncio.run(_body())
-
-        result = _run()
-        assert result.metadata.get("skipped") == "already_in_private_chat"
-
     def test_skips_no_pending_directives(self) -> None:
         """Hook skips when there are no pending directives."""
         ctx = _make_settlement_context(npc_in_area="npc_alice")

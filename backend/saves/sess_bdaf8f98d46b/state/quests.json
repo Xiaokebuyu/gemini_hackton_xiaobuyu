@@ -1,0 +1,215 @@
+{
+  "chapter_completion": {
+    "ch1": 0.3,
+    "ch2": 0.0
+  },
+  "dynamic_quests": {
+    "dq_frontier_start": {
+      "created_at_tick": 8,
+      "current_step": "正式注册手续已完成。现在离开公会，进入旁边的酒馆（tavern），享受属于你的庆功时刻。",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "酒馆的灯火已经在窗外闪烁了。",
+        "圣女和你的白银级前辈们都在那里等你。"
+      ],
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "key": "guild_registered",
+              "value": true
+            },
+            "type": "flag_set"
+          },
+          "description": "与柜台小姐交谈并完成登记"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "npc_id": "cow_girl"
+            },
+            "type": "npc_talked"
+          },
+          "description": "前往牧牛妹的牧场并与她交谈"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "cow_girl_farm",
+              "clue_id": "broken_fence_post"
+            },
+            "type": "clue_investigated"
+          },
+          "description": "检查并修好牧场损坏的围栏"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_frontier_start",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 50,
+        "xp": 200
+      },
+      "rewards_claimed": true,
+      "source": "narrative_planner",
+      "status": "completed",
+      "summary": "在公会柜台登记成为冒险者，并领取你的第一个委托：帮牧牛妹修理围栏。",
+      "target_milestone": null,
+      "task_monitor": {
+        "conditions": [
+          {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          }
+        ],
+        "on_complete": "auto"
+      },
+      "title": "边境的新面孔",
+      "urgency": "medium"
+    },
+    "dq_tavern_help": {
+      "created_at_tick": 19,
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "tavern"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往酒馆（tavern）并向老板娘报到"
+        },
+        {
+          "completed": false,
+          "condition": {
+            "params": {
+              "key": "tavern_work_done",
+              "value": true
+            },
+            "type": "flag_set"
+          },
+          "description": "完成一次帮工互动"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_tavern_help",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 30,
+        "xp": 200
+      },
+      "source": "narrative_planner",
+      "status": "active",
+      "summary": "酒馆服务员肚子疼请假了，老板娘急需帮手。去酒馆帮忙端盘子、擦桌子，或者听听客人的八卦。",
+      "target_milestone": null,
+      "title": "酒馆的忙碌之夜",
+      "urgency": "medium"
+    },
+    "dq_temple_herbs": {
+      "created_at_tick": 15,
+      "current_step": "带着宁神草返回公会（adventurer_guild）向柜台小姐汇报，并领取报酬。",
+      "delivery_method": "board",
+      "expiry_ticks": null,
+      "generated_by_escalation": 0,
+      "hints": [
+        "圣女正不安地看着身后的树林。",
+        "柜台小姐还在等着你们带回药草。"
+      ],
+      "metadata": {},
+      "min_level": 1,
+      "objectives": [
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "area_id": "frontier_town",
+              "location_id": "north_gate"
+            },
+            "type": "location_visited"
+          },
+          "description": "前往城镇北部的森林边缘（north_gate附近）"
+        },
+        {
+          "completed": true,
+          "condition": {
+            "params": {
+              "key": "herbs_collected",
+              "value": true
+            },
+            "type": "flag_set"
+          },
+          "description": "采集3株宁神草"
+        }
+      ],
+      "on_expire": "ignore",
+      "planner_reasoning": "",
+      "quest_id": "dq_temple_herbs",
+      "reported": false,
+      "requires_report": true,
+      "rewards": {
+        "gold": 50,
+        "xp": 200
+      },
+      "rewards_claimed": true,
+      "source": "narrative_planner",
+      "status": "completed",
+      "summary": "神殿的药品告罄，需要前往城镇北部的森林边缘采集新鲜的宁神草。圣女会协助你辨认药草。",
+      "target_milestone": null,
+      "title": "神殿的委托：宁神草采集",
+      "urgency": "medium"
+    }
+  },
+  "milestone_states": {
+    "ms_belonging": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_earning_name": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "AVAILABLE"
+    },
+    "ms_frontier_arrival": {
+      "activated_tick": null,
+      "completed_tick": 15,
+      "state": "COMPLETED"
+    },
+    "ms_growing_darkness": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_harvest_festival": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    },
+    "ms_hive_heart": {
+      "activated_tick": null,
+      "completed_tick": null,
+      "state": "LOCKED"
+    }
+  }
+}

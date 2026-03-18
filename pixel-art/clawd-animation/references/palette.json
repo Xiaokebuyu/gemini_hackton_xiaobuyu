@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "name": "Clawd Default Palette",
+    "description": "Core color palette for Clawd pixel art. All sprites MUST use these indices.",
+    "version": "1.0"
+  },
+  "colors": {
+    "0":  { "hex": null,      "name": "transparent" },
+    "1":  { "hex": "#c0785a", "name": "body-main",        "note": "Clawd's signature terracotta" },
+    "2":  { "hex": "#a0624a", "name": "body-shadow",      "note": "Used for legs, underside shading" },
+    "3":  { "hex": "#d4956e", "name": "body-highlight",   "note": "Top edges, light-facing surfaces" },
+    "4":  { "hex": "#8a4a38", "name": "body-dark",        "note": "Deep shadow, outlines when needed" },
+    "5":  { "hex": "#1a1a1a", "name": "eye-pupil",        "note": "2x2 px eyes, always square" },
+    "6":  { "hex": "#ffffff", "name": "eye-highlight",    "note": "1px shine dot, top-right of each eye" },
+    "7":  { "hex": "#e8ddd0", "name": "bg-warm",          "note": "Default warm background" },
+    "8":  { "hex": "#0d1117", "name": "bg-night",         "note": "Night scene background" },
+    "9":  { "hex": "#7ec877", "name": "nature-green",     "note": "Leaves, grass, lily pads" },
+    "A":  { "hex": "#5a9e54", "name": "nature-green-dark","note": "Shadow side of foliage" },
+    "B":  { "hex": "#a8e6a0", "name": "nature-green-light","note": "Highlighted leaves" },
+    "C":  { "hex": "#f0c878", "name": "accent-warm",      "note": "Straw hat, golden items" },
+    "D":  { "hex": "#d4a050", "name": "accent-warm-dark", "note": "Hat shadow, warm accent shadow" },
+    "E":  { "hex": "#e8a0b0", "name": "accent-pink",      "note": "Flowers, blush, strawberry ice cream" },
+    "F":  { "hex": "#a0d8e8", "name": "accent-cool",      "note": "Sky, water, mint ice cream" }
+  },
+  "extended": {
+    "10": { "hex": "#f8e8a0", "name": "cream-yellow",     "note": "Vanilla ice cream, warm glow" },
+    "11": { "hex": "#c85040", "name": "accent-red",       "note": "Hat band, cherry, warm accents" },
+    "12": { "hex": "#f8f0e0", "name": "snow-particle",    "note": "Snowflakes, sparkles" },
+    "13": { "hex": "#90b868", "name": "nature-olive",     "note": "Muted foliage, distant trees" },
+    "14": { "hex": "#c87850", "name": "hair-auburn",      "note": "Companion character hair" },
+    "15": { "hex": "#f0d8a0", "name": "skin-light",       "note": "Companion character skin" },
+    "16": { "hex": "#4080a0", "name": "water-deep",       "note": "Pond, river" },
+    "17": { "hex": "#68b8d0", "name": "water-surface",    "note": "Water highlights, ripples" }
+  }
+}

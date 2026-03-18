@@ -14,7 +14,6 @@ from app.game_core.orchestration.hooks.narrative_planner import NarrativePlanner
 from app.game_core.orchestration.hooks.npc_autonomy import NpcAutonomyHook
 from app.game_core.orchestration.hooks.npc_schedule import NpcScheduleHook
 from app.game_core.orchestration.hooks.passive_perception import PassivePerceptionHook
-from app.game_core.orchestration.hooks.private_chat_trigger import PrivateChatTriggerHook
 from app.game_core.orchestration.hooks.quest_expiry import QuestExpiryHook
 from app.game_core.orchestration.hooks.quest_objective_tracking import QuestObjectiveTrackingHook
 from app.game_core.orchestration.hooks.relationship import RelationshipHook
@@ -40,7 +39,6 @@ __all__ = [
     "NpcAutonomyHook",
     "NpcScheduleHook",
     "PassivePerceptionHook",
-    "PrivateChatTriggerHook",
     "QuestExpiryHook",
     "QuestObjectiveTrackingHook",
     "RelationshipHook",

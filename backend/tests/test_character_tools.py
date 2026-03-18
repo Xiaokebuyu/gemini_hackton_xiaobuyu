@@ -165,18 +165,18 @@ def test_update_feeling_constructs_disposition_command() -> None:
 
     result = asyncio.run(
         UpdateFeelingTool().execute(
-            {"dimension": "trust", "delta": 10}, context,
+            {"dimension": "trust", "delta": 2}, context,
         )
     )
 
     assert result.ok is True
     assert result.metadata["dimension"] == "trust"
-    assert result.metadata["delta"] == 10
+    assert result.metadata["delta"] == 2
     assert len(log) == 1
     assert log[0].type == "modify_disposition"
     assert log[0].params["npc_id"] == "npc_alice"
     assert log[0].params["dimension"] == "trust"
-    assert log[0].params["delta"] == 10
+    assert log[0].params["delta"] == 2
     assert log[0].source == "ai_osiris"
 
 
@@ -446,3 +446,56 @@ def test_register_teammate_tools_registers_seven() -> None:
         "leave_party", "discover_clue", "share_discovery", "offer_help",
         "update_blackboard", "send_npc_message",
     }
+
+
+# ------------------------------------------------------------------
+# UpdateFeelingTool: delta clamping
+# ------------------------------------------------------------------
+
+
+def test_update_feeling_clamps_approval_above_max() -> None:
+    log, executor = _recording_executor()
+    context = _ctx(character_id="npc_alice", execute_command=executor)
+
+    result = asyncio.run(
+        UpdateFeelingTool().execute(
+            {"dimension": "approval", "delta": 20}, context,
+        )
+    )
+
+    assert result.ok is True
+    assert result.metadata["delta"] == 3
+    assert len(log) == 1
+    assert log[0].params["delta"] == 3
+
+
+def test_update_feeling_clamps_romance_below_min() -> None:
+    log, executor = _recording_executor()
+    context = _ctx(character_id="npc_alice", execute_command=executor)
+
+    result = asyncio.run(
+        UpdateFeelingTool().execute(
+            {"dimension": "romance", "delta": -5}, context,
+        )
+    )
+
+    assert result.ok is True
+    assert result.metadata["delta"] == -1
+    assert len(log) == 1
+    assert log[0].params["delta"] == -1
+
+
+def test_update_feeling_within_bounds_no_clamp() -> None:
+    log, executor = _recording_executor()
+    context = _ctx(character_id="npc_alice", execute_command=executor)
+
+    result = asyncio.run(
+        UpdateFeelingTool().execute(
+            {"dimension": "approval", "delta": 2}, context,
+        )
+    )
+
+    assert result.ok is True
+    assert result.metadata["delta"] == 2
+    assert len(log) == 1
+    assert log[0].params["delta"] == 2

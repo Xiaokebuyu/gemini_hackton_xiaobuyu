@@ -133,7 +133,7 @@ def _make_mock_kg() -> Any:
 def test_overflow_goes_into_pending_graphize() -> None:
     """When merged_obs exceeds 10, displaced entries go to pending_graphize."""
     # NPC starts with 9 observations; area has 3 events → merged=12, overflow=2.
-    existing_obs = [f"obs_{i}" for i in range(9)]
+    existing_obs = [f"obs_{i}" for i in range(19)]
     area_events = [
         {"event": "event_A", "tick": 1},
         {"event": "event_B", "tick": 2},
@@ -151,8 +151,8 @@ def test_overflow_goes_into_pending_graphize() -> None:
     obs = board.get("observations", [])
     pending = board.get("pending_graphize", [])
 
-    # Observations capped at 10.
-    assert len(obs) == 10
+    # Observations capped at 20.
+    assert len(obs) == 20
     # Overflow entries entered pending_graphize.
     assert len(pending) > 0
 
@@ -188,7 +188,7 @@ def test_no_overflow_no_pending_graphize() -> None:
 def test_pending_below_threshold_no_graphize() -> None:
     """If pending_graphize has fewer than 100 entries, no graphize call is made."""
     # 9 existing obs + 3 events = 12 → 2 overflow.  pending_graphize will have 2 entries.
-    existing_obs = [f"obs_{i}" for i in range(9)]
+    existing_obs = [f"obs_{i}" for i in range(19)]
     area_events = [
         {"event": "e1", "tick": 1},
         {"event": "e2", "tick": 2},
@@ -223,7 +223,7 @@ def test_pending_at_threshold_triggers_graphize_fallback() -> None:
     """When pending_graphize reaches 100 entries, fallback graphize fires."""
     # Start with 100 pending_graphize entries + enough to trigger overflow this tick.
     pending_100 = [f"old_obs_{i}" for i in range(100)]
-    existing_obs = [f"obs_{i}" for i in range(9)]
+    existing_obs = [f"obs_{i}" for i in range(19)]
     area_events = [
         {"event": "new_event", "tick": 99},
         {"event": "new_event_2", "tick": 100},
@@ -262,7 +262,7 @@ def test_pending_at_threshold_triggers_graphize_fallback() -> None:
 def test_graphize_with_llm_calls_add_triple() -> None:
     """When LLM is provided, extracted triples are written via knowledge_graph.add_triple."""
     pending_100 = [f"old_obs_{i}" for i in range(100)]
-    existing_obs = [f"obs_{i}" for i in range(9)]
+    existing_obs = [f"obs_{i}" for i in range(19)]
     area_events = [
         {"event": "e1", "tick": 1},
         {"event": "e2", "tick": 2},
@@ -334,7 +334,7 @@ def test_graphize_with_llm_calls_add_triple() -> None:
 def test_graphize_clears_pending() -> None:
     """After graphize (LLM or fallback), pending_graphize is reset to []."""
     pending_100 = [f"item_{i}" for i in range(100)]
-    existing_obs = [f"obs_{i}" for i in range(9)]
+    existing_obs = [f"obs_{i}" for i in range(19)]
     area_events = [{"event": "ev", "tick": 1}, {"event": "ev2", "tick": 2}, {"event": "ev3", "tick": 3}]
 
     mock_kg = _make_mock_kg()
@@ -365,7 +365,7 @@ def test_graphize_clears_pending() -> None:
 def test_graphize_without_knowledge_graph_clears_pending() -> None:
     """When no knowledge_graph is on context, pending_graphize is still cleared."""
     pending_100 = [f"item_{i}" for i in range(100)]
-    existing_obs = [f"obs_{i}" for i in range(9)]
+    existing_obs = [f"obs_{i}" for i in range(19)]
     area_events = [{"event": "ev", "tick": 1}, {"event": "ev2", "tick": 2}, {"event": "ev3", "tick": 3}]
 
     ctx = _make_context(
@@ -395,7 +395,7 @@ def test_graphize_without_knowledge_graph_clears_pending() -> None:
 def test_send_npc_message_overflow_goes_to_pending_graphize() -> None:
     """When SendNpcMessageTool appends message causing >10 obs, overflow → pending_graphize."""
     # Target already has 10 observations; adding one more overflows.
-    existing_target_obs = [f"t_obs_{i}" for i in range(10)]
+    existing_target_obs = [f"t_obs_{i}" for i in range(20)]
     state = StateContainer()
     rel_slice = RelationSlice()
     rel_slice.restore({
@@ -425,7 +425,7 @@ def test_send_npc_message_overflow_goes_to_pending_graphize() -> None:
     obs = target_board.get("observations", [])
     pending = target_board.get("pending_graphize", [])
 
-    # Observations capped at 10.
-    assert len(obs) == 10
+    # Observations capped at 20.
+    assert len(obs) == 20
     # One entry overflowed into pending_graphize.
     assert len(pending) == 1

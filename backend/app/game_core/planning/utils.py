@@ -1,6 +1,7 @@
 """Shared utility functions for planner sub-systems."""
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 
@@ -18,7 +19,12 @@ def string_or_empty(value: Any) -> str:
 
 
 def normalize_mapping(value: Any) -> dict[str, Any]:
-    """Return a copy of *value* if it is a Mapping, else an empty dict."""
+    """Normalize a value to a dict. Accepts Mapping or JSON string."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return {}
     if isinstance(value, Mapping):
         return {str(key): val for key, val in value.items()}
     return {}

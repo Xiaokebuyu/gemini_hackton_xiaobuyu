@@ -232,7 +232,7 @@ class EconomyHandler(StaticCommandHandler):
 
         inventory = self._player_inventory_snapshot(state)
         updated_inventory = self._remove_from_inventory_snapshot(inventory, item_id, count)
-        unit_price = self._resolve_sell_unit_price(item_id, merchant, world)
+        unit_price = self._resolve_sell_unit_price(item_id, merchant, world, state, buyer_npc)
         total_price = unit_price * count
 
         shop_state, initialized = self._resolve_or_initialize_shop_state(
@@ -558,6 +558,8 @@ class EconomyHandler(StaticCommandHandler):
         item_id: str,
         merchant: Any,
         world: WorldInstance,
+        state: StateContainer,
+        buyer_npc: str,
     ) -> int:
         base_price = self._base_price_for_item(item_id, None, world)
         shop_inventory = self._merchant_shop_inventory(merchant)
@@ -566,7 +568,9 @@ class EconomyHandler(StaticCommandHandler):
             buy_rate = coerce_float(shop_inventory.buy_rate)
         if buy_rate is None:
             buy_rate = 0.5
-        return max(1, int(round(base_price * buy_rate)))
+        approval = int(state.relations.npc_dispositions.get(buyer_npc, {}).get("approval", 0))
+        sell_bonus = self._approval_sell_bonus(approval)
+        return max(1, int(round(base_price * buy_rate * sell_bonus)))
 
     def _merge_buyback_row(
         self,
@@ -757,6 +761,16 @@ class EconomyHandler(StaticCommandHandler):
             return 0.80
         if approval >= 20:
             return 0.90
+        return 1.00
+
+    @staticmethod
+    def _approval_sell_bonus(approval: int) -> float:
+        if approval >= 80:
+            return 1.30
+        if approval >= 50:
+            return 1.20
+        if approval >= 20:
+            return 1.10
         return 1.00
 
     @staticmethod

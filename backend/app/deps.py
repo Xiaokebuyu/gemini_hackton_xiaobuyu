@@ -196,6 +196,7 @@ def _build_game_runtime() -> GameRuntime:
             from app.game_core.narrative.registry import RoleToolRegistry
             from app.game_core.narrative.planner_tools import register_planner_tools
             from app.llm_gemini import GeminiLlmAdapter
+            from pathlib import Path
             from app.design_skill_provider import LocalDesignSkillProvider
             from app.narrators import (
                 AgenticNarrativePlanner,
@@ -219,7 +220,10 @@ def _build_game_runtime() -> GameRuntime:
                 blackboard=AgenticNarrativePlanner(
                     llm=unified_llm,
                     executor=AgenticExecutor(tool_registry=unified_registry, llm=unified_llm),
-                    design_skill_port=LocalDesignSkillProvider(),
+                    design_skill_port=LocalDesignSkillProvider(
+                        base_dir=Path(__file__).resolve().parent.parent / "data" / "goblin_slayer" / "v2",
+                        world_id_in_path=False,
+                    ),
                     world_id="",
                     role="planner",
                     system_prompt=UNIFIED_PLANNER_PROMPT,

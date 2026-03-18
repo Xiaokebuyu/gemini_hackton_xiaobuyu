@@ -162,13 +162,6 @@ def test_detect_dialogue_turn_via_action_log() -> None:
     assert exp["type"] == "dialogue"
 
 
-def test_detect_private_chat_turn_via_action_log() -> None:
-    hook = SharedExperienceHook()
-    ctx, _ = _make_context(action_log=[{"type": "private_chat_turn"}])
-    exp = hook._detect_experience(ctx)
-    assert exp is not None
-    assert exp["type"] == "dialogue"
-
 
 def test_detect_betrayal_from_tag() -> None:
     hook = SharedExperienceHook()

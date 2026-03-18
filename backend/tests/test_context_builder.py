@@ -140,11 +140,12 @@ class TestLayerBuilders:
         ctx = asyncio.run(builder.build_npc_context("merchant_tom"))
 
         l4 = ctx["l4_dynamic_state"]
-        assert {"disposition", "stage", "impressions"}.issubset(l4.keys())
+        assert {"disposition", "stage"}.issubset(l4.keys())
         assert l4["disposition"]["approval"] == 25
         assert l4["disposition"]["trust"] == 15
         assert l4["stage"] == "acquaintance"
-        assert "Bought a sword last time" in l4["impressions"]
+        # impressions removed from l4 (NpcAutonomyHook seed is separate)
+        assert "impressions" not in l4
         # Must not expose other NPCs or global party data
         assert "party" not in l4
         assert "player" not in l4
@@ -200,7 +201,7 @@ class TestLayerBuilders:
         l4 = ctx["l4_dynamic_state"]
         assert l4["disposition"] == {"approval": 0, "trust": 0, "fear": 0, "romance": 0}
         assert l4["stage"] == "stranger"
-        assert l4["impressions"] == []
+        assert "impressions" not in l4
 
 
 # ------------------------------------------------------------------
@@ -461,8 +462,9 @@ class TestPurePromptFormatters:
             is_passive=True,
         )
 
-        assert "You just witnessed a player action. You are NOT being spoken to directly." in prompt
-        assert "MUST respond when spoken to" not in prompt
+        assert "你刚目睹了玩家的行动" in prompt
+        assert "没有人在和你说话" in prompt
+        assert "被对话时你必须回应" not in prompt
 
     def test_npc_prompt_mentions_join_party_tool_for_clear_invites(self) -> None:
         prompt = _build_npc_prompt_text(
@@ -472,7 +474,7 @@ class TestPurePromptFormatters:
         )
 
         assert "join_party" in prompt
-        assert "Do not verbally agree to join the party unless you also call `join_party`." in prompt
+        assert "不要口头同意入队却不调用" in prompt
 
     def test_teammate_prompt_text_includes_personality(self) -> None:
         prompt = _build_teammate_prompt_text(
@@ -823,8 +825,9 @@ class TestNpcFullContext:
         ))
 
         assert npc_full is not None
-        assert "You just witnessed a player action. You are NOT being spoken to directly." in npc_full.system_prompt
-        assert "You MUST respond when spoken to" not in npc_full.system_prompt
+        assert "你刚目睹了玩家的行动" in npc_full.system_prompt
+        assert "没有人在和你说话" in npc_full.system_prompt
+        assert "被对话时你必须回应" not in npc_full.system_prompt
 
 
 # ------------------------------------------------------------------

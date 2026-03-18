@@ -24,12 +24,45 @@ def _inventory_response(session: ManagedSession) -> InventoryPanelResponse:
     """Build the inventory panel payload from the player slice."""
 
     player_payload = session.runtime.state.player.snapshot()
-    inventory = player_payload.get("inventory", [])
-    equipment = player_payload.get("equipment", {})
+    raw_inventory = player_payload.get("inventory", [])
+    raw_equipment = player_payload.get("equipment", {})
+
+    has_items = session.runtime.world.has_registry("items")
+    items_reg = session.runtime.world.items if has_items else None
+
+    def _enrich_item(item: dict[str, Any]) -> dict[str, Any]:
+        """Add name/type/base_price from ItemRegistry if available."""
+        enriched = dict(item)
+        item_id = str(item.get("item_id", "")).strip()
+        if items_reg and item_id:
+            template = items_reg.get(item_id)
+            if template is not None:
+                enriched.setdefault("name", getattr(template, "name", item_id))
+                enriched.setdefault("type", getattr(template, "type", ""))
+                enriched.setdefault("base_price", getattr(template, "base_price", 0))
+                desc = getattr(template, "description", "")
+                if desc:
+                    enriched.setdefault("description", desc)
+        return enriched
+
+    inventory = [
+        _enrich_item(item) for item in (raw_inventory if isinstance(raw_inventory, list) else [])
+        if isinstance(item, Mapping)
+    ]
+    equipment: dict[str, Any] = {}
+    if isinstance(raw_equipment, Mapping):
+        for slot, item in raw_equipment.items():
+            if item is None:
+                equipment[slot] = None
+            elif isinstance(item, Mapping):
+                equipment[slot] = _enrich_item(dict(item))
+            else:
+                equipment[slot] = item
+
     return InventoryPanelResponse(
         gold=int(player_payload.get("gold", 0)),
-        inventory=list(inventory) if isinstance(inventory, list) else [],
-        equipment=dict(equipment) if isinstance(equipment, Mapping) else {},
+        inventory=inventory,
+        equipment=equipment,
     )
 
 
@@ -117,9 +150,44 @@ def _quest_response(session: ManagedSession) -> QuestPanelResponse:
             continue
         visible_quests[qid] = quest
 
+    # Build pending NPC invites + ambient chatter from unconsumed directives
+    pending_invites: list[dict[str, Any]] = []
+    ambient_chatter: list[dict[str, Any]] = []
+    if session.runtime.state.has_slice("narrative_plan"):
+        _INVITE_PRIORITIES = {"high", "medium"}
+        for directive in session.runtime.state.narrative_plan.npc_directives:
+            if not isinstance(directive, Mapping):
+                continue
+            if directive.get("consumed"):
+                continue
+            npc_id = str(directive.get("npc_id", "")).strip()
+            if not npc_id:
+                continue
+            inner = directive.get("directive", {})
+            topic = ""
+            if isinstance(inner, Mapping):
+                topic = str(inner.get("topic", "")).strip()
+            npc_name = npc_id
+            if session.runtime.world.has_registry("characters"):
+                tmpl = session.runtime.world.characters.get(npc_id)
+                if tmpl is not None:
+                    npc_name = getattr(tmpl, "name", npc_id) or npc_id
+            entry = {
+                "npc_id": npc_id,
+                "npc_name": str(npc_name),
+                "topic": topic[:50],
+            }
+            priority = str(directive.get("priority", "low")).strip().lower()
+            if priority in _INVITE_PRIORITIES and len(pending_invites) < 3:
+                pending_invites.append(entry)
+            elif len(ambient_chatter) < 5:
+                ambient_chatter.append(entry)
+
     return QuestPanelResponse(
         dynamic_quests=normalize_dynamic_quest_panel(visible_quests),
         chapter_completion=dict(quest_payload.get("chapter_completion", {})),
+        pending_npc_invites=pending_invites,
+        ambient_chatter=ambient_chatter,
     )
 
 

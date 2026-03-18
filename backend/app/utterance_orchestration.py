@@ -15,7 +15,7 @@ from app.game_core.result_semantics import outcome_passed
 from app.game_core.rules.models import Command
 
 
-UtteranceScope = Literal["public", "private", "party"]
+UtteranceScope = Literal["public", "party"]
 _UTTERANCE_INTENTS = {"talk", "greet", "ask", "chat"}
 
 
@@ -45,15 +45,6 @@ class _UtteranceAgentOrchestration(Protocol):
         self,
         session: ManagedSession,
         player_message: str,
-    ) -> list[SSEEvent]:
-        ...
-
-    async def run_private_chat(
-        self,
-        session: ManagedSession,
-        npc_id: str,
-        player_message: str,
-        text_chunk_sink: Callable[[str], Awaitable[None]] | None = None,
     ) -> list[SSEEvent]:
         ...
 
@@ -113,11 +104,9 @@ def build_utterance_request(payload: Mapping[str, Any]) -> UtteranceRequest | No
         else:
             return None
 
-    if scope == "private" and focus_target is None:
-        return None
     if scope == "party" and focus_target is not None:
         return None
-    if scope != "private" and not text:
+    if not text:
         return None
 
     check_skill = str(payload.get("check_skill") or "").strip() or None
@@ -213,46 +202,6 @@ class UtteranceOrchestrator:
             )
             if not completed:
                 reason = "dialogue_failed"
-        elif utterance.scope == "private" and utterance.focus_target is not None:
-            # Validate co-location before entering private chat: the NPC must be
-            # in the same sub-location (and room, if applicable) as the player.
-            issue = validate_presence(
-                build_interaction_policy_context(session.runtime.state, session.runtime.world),
-                "npc",
-                utterance.focus_target.id,
-                utterance.intent,
-            )
-            if issue is not None:
-                return UtteranceExecutionResult(
-                    completed=False,
-                    reason="interaction_rejected",
-                    events=[*events, _interaction_rejected_event(utterance, issue)],
-                )
-            turn_kind = "private_chat_turn"
-            turn_npc_id = utterance.focus_target.id
-            agent_events = await self._agent_orchestration.run_private_chat(
-                session=session,
-                npc_id=utterance.focus_target.id,
-                player_message=utterance.text,
-                text_chunk_sink=text_chunk_sink,
-            )
-            if not agent_events:
-                reason = "npc_not_found"
-                events.append(SSEEvent(
-                    "npc_error",
-                    {"npc_id": utterance.focus_target.id, "code": "npc_not_found"},
-                ))
-                return UtteranceExecutionResult(
-                    completed=False,
-                    reason=reason,
-                    events=events,
-                )
-            completed = not any(
-                event.event_type in {"npc_error", "npc_response_error", "stream_error"}
-                for event in agent_events
-            )
-            if not completed:
-                reason = "private_chat_failed"
         elif utterance.scope == "party":
             turn_kind = "party_chat_turn"
             agent_events = await self._agent_orchestration.run_free_chat(
@@ -294,7 +243,7 @@ class UtteranceOrchestrator:
 
 def _normalize_scope(raw_scope: Any) -> UtteranceScope | None:
     normalized = str(raw_scope or "").strip().casefold()
-    if normalized in {"public", "private", "party"}:
+    if normalized in {"public", "party"}:
         return normalized  # type: ignore[return-value]
     return None
 

@@ -15,7 +15,6 @@ from app.api_models import (
     CompanionRequest,
     InteractRequest,
     NavigateRequest,
-    PrivateChatRequest,
     StructuredActionRequest,
     TextInputRequest,
 )
@@ -942,10 +941,29 @@ async def interact_stream(
                 "total": exec_result.rolls[0].total if exec_result.rolls else 0,
                 "narrative_hints": list(exec_result.narrative_hints),
                 "outcome": dict(outcome) if isinstance(outcome, Mapping) else None,
+                "grade": str(exec_result.metadata.get("grade") or ("good" if passed else "bad")),
+                "margin": int(exec_result.metadata.get("margin", 0)),
             }
             if not bool(exec_result.executed):
                 stream_completed = False
                 stream_reason = exec_result.errors[0] if exec_result.errors else "check_execution_failed"
+
+        # Apply clue check result if this skill check was for a simplified clue
+        if check_result and request.clue_id:
+            clue_check_cmd = Command(
+                type="apply_clue_check_result",
+                params={
+                    "interactable_id": request.clue_id,
+                    "passed": check_result["passed"],
+                    "grade": check_result.get("grade", "good" if check_result["passed"] else "bad"),
+                    "margin": check_result.get("margin", 0),
+                },
+                source="player",
+            )
+            clue_exec = session.runtime.rules_engine.execute(
+                clue_check_cmd, session.runtime.state, session.runtime.world,
+            )
+            session.runtime.tick_coordinator.apply_external_result(clue_exec)
 
         # Full 6-step NPC interaction (Steps 2-6)
         agent_svc = get_agent_orchestration()
@@ -1029,55 +1047,6 @@ async def interact_stream(
         await queue.put(SSEEvent("stream_end", {
             "reason": stream_reason,
             "completed": stream_completed,
-        }))
-
-    return await _stream_with_lock(world_id, session_id, _execute)
-
-
-@router.post("/api/game/{world_id}/sessions/{session_id}/private_chat/stream")
-async def private_chat_stream(
-    world_id: str,
-    session_id: str,
-    request: PrivateChatRequest,
-) -> StreamingResponse:
-    """Initiate a private conversation with an NPC (no GM/teammate observation)."""
-
-    async def _execute(session: ManagedSession, queue: asyncio.Queue[SSEEvent | None]) -> None:
-        async def _text_chunk_sink_private(chunk: str) -> None:
-            await queue.put(SSEEvent("text_chunk", {"text": chunk}))
-
-        utterance = UtteranceRequest(
-            text=request.message,
-            scope="private",
-            intent="talk",
-            focus_target=UtteranceTarget(kind="npc", id=request.npc_id),
-        )
-        result = await UtteranceOrchestrator(
-            get_agent_orchestration(),
-        ).execute(
-            session=session,
-            text_chunk_sink=_text_chunk_sink_private,
-            utterance=utterance,
-        )
-        for evt in result.events:
-            await queue.put(evt)
-        if result.completed and result.turn_kind is not None:
-            await _finalize_dialogue_turn(
-                session,
-                time_cost=result.time_cost,
-                event_sink=queue.put,
-                turn_action_record=_build_dialogue_turn_record(
-                    kind=result.turn_kind,
-                    npc_id=result.turn_npc_id,
-                    intent="private_chat",
-                    scope=result.turn_scope,
-                ),
-            )
-        await queue.put(SSEEvent("status_update", build_opening_status_snapshot(session)))
-        await queue.put(SSEEvent("location_overview", build_location_overview(session)))
-        await queue.put(SSEEvent("stream_end", {
-            "reason": result.reason,
-            "completed": result.completed,
         }))
 
     return await _stream_with_lock(world_id, session_id, _execute)

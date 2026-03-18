@@ -29,10 +29,6 @@ from app.game_core.orchestration.npc_interaction import (
     _resolve_dialogue_options,
     _should_teammate_respond,
 )
-from app.game_core.orchestration.private_chat import (
-    PrivateChatCoordinator,
-    PrivateChatResult,
-)
 from app.game_core.orchestration.presence import get_area_npcs, is_colocated
 from app.game_core.orchestration.shared_context import SharedContext
 from app.game_core.rules.models import Command, ExecuteResult
@@ -292,93 +288,7 @@ class AgentOrchestrationService:
             events.append(comment_event)
         return events
 
-    # ---- Private 4-step chat (no GM/teammate observation) ----
-
-    async def run_private_chat(
-        self,
-        session: ManagedSession,
-        npc_id: str,
-        player_message: str,
-        text_chunk_sink: Callable[[str], Awaitable[None]] | None = None,
-    ) -> list[SSEEvent]:
-        """Private chat 4-step pipeline (no GM/teammate observation) → SSE events."""
-        instance = await self._get_or_create_instance(session, npc_id)
-        coordinator = PrivateChatCoordinator(
-            executor=self._executor,
-            world=session.runtime.world,
-            state=session.runtime.state,
-            memory_retriever=self._memory_retriever,
-            memory_writer=self._make_memory_writer(session),
-        )
-        try:
-            result = await coordinator.execute(
-                npc_id=npc_id,
-                player_message=player_message,
-                execute_command=_make_command_executor(session),
-                instance=instance,
-                text_chunk_sink=text_chunk_sink,
-            )
-        except Exception:
-            logger.exception("Private chat pipeline failed: %s", npc_id)
-            return [SSEEvent(
-                event_type="npc_response_error",
-                payload={"npc_id": npc_id, "error": "private_chat_failed"},
-            )]
-
-        if not result.completed:
-            if result.error == "npc_not_found":
-                logger.warning("NPC not found in private chat: %s", npc_id)
-                return []
-            if result.error == "invalid_agent_response":
-                logger.warning(
-                    "Private chat returned invalid agent response: %s reason=%s",
-                    npc_id,
-                    result.error_reason or "unknown_protocol_error",
-                )
-                return [
-                    _npc_protocol_error_event(
-                        npc_id,
-                        result.error_reason or "unknown_protocol_error",
-                    )
-                ]
-            logger.warning("Private chat agent failed: %s error=%s", npc_id, result.error)
-            return [SSEEvent(
-                event_type="npc_error",
-                payload={"npc_id": npc_id, "code": result.error or "agent_failed"},
-            )]
-
-        # Graphize path: triggered by graphize_counter reaching threshold in FIFO window
-        instance_for_graphize_pc = await self._get_or_create_instance(session, npc_id)
-        cw_for_graphize_pc = (
-            instance_for_graphize_pc.context_window if instance_for_graphize_pc is not None else None
-        )
-        if cw_for_graphize_pc is not None and cw_for_graphize_pc.should_graphize:
-            messages_to_graphize_pc = cw_for_graphize_pc.collect_for_graphize()
-            if messages_to_graphize_pc:
-                await self._write_episode(session, npc_id, messages_to_graphize_pc)
-        elif result.graphize_candidates:
-            # Legacy overflow path
-            await self._write_episode(session, npc_id, result.graphize_candidates)
-
-        events = _private_chat_result_to_sse(
-            result,
-            action_dispatcher=session.runtime.action_dispatcher,
-            current_location=session.runtime.state.player.current_location,
-        )
-        events = _enrich_offer_trade_events(events, session)
-        if not _has_gm_comment_event(events):
-            events = _insert_event_before(
-                events,
-                SSEEvent(
-                    event_type="gm_comment",
-                    payload={
-                        "content": "你听见心里那点回声，比嘴上那句话更先承认了分量。",
-                        "tone": "introspective",
-                    },
-                ),
-                before_event_types={"dialogue_options"},
-            )
-        return events
+    # Private chat removed — all conversations go through NpcInteractionCoordinator.
 
     async def _build_party_comment_event(
         self,
@@ -675,6 +585,9 @@ class AgentOrchestrationService:
     ) -> list[SSEEvent]:
         metadata = result.metadata if isinstance(result.metadata, Mapping) else {}
         interactable_id = str(metadata.get("interactable_id") or "").strip()
+        # Detect simplified schema: handler sets simple=True and has_check
+        is_simple = bool(metadata.get("simple", False))
+        has_check = bool(metadata.get("has_check", False))
         clue_payload = {
             "clue_id": str(metadata.get("clue_id") or interactable_id).strip(),
             "interactable_id": interactable_id,
@@ -693,6 +606,10 @@ class AgentOrchestrationService:
             "area_id": str(metadata.get("area_id") or "").strip(),
             "location_id": str(metadata.get("location_id") or "").strip(),
             "room_id": str(metadata.get("room_id") or "").strip(),
+            # Simplified schema extras — GM uses these to decide whether to suggest_options
+            "simple": is_simple,
+            "has_check": has_check,
+            "check": dict(metadata["check"]) if has_check and isinstance(metadata.get("check"), Mapping) else None,
         }
         if not clue_payload["clue_id"]:
             clue_payload["clue_id"] = interactable_id or "scene_clue"
@@ -740,7 +657,10 @@ class AgentOrchestrationService:
                 )
             events.append(event)
 
-        if interactable_id:
+        # For simplified schema: no legacy dialogue_options panel.
+        # GM prompt will use suggest_options if has_check is True.
+        # For legacy schema: emit the clickable clue-option panel as before.
+        if not is_simple and interactable_id:
             options = build_clue_dialogue_options(interactable_id, clue_payload)
             if options:
                 events.append(
@@ -2675,64 +2595,6 @@ def _build_gm_npc_capability_context(
         lines.extend(nearby_lines)
 
     return "\n".join(lines) if lines else ""
-
-
-def _private_chat_result_to_sse(
-    result: PrivateChatResult,
-    *,
-    action_dispatcher: Any = None,
-    current_location: str | None = None,
-) -> list[SSEEvent]:
-    """Convert 4-step private chat result → ordered SSE events.
-
-    Order: scene_change (optional) → NPC response → GM inner monologue
-           (optional, introspective) → dialogue options.
-
-    QF-1: Only emit scene_change when a NEW private scene was created.
-    Subsequent messages reuse the existing scene (scene_is_new=False) and
-    do not emit scene_change to avoid duplicate transitions.
-    """
-    events: list[SSEEvent] = []
-    # Scene change: only emitted when a new private sub-area was created
-    # (scene_is_new=True). Reused scenes (scene_is_new=False) do not need
-    # a scene_change event — the player is already in the correct location.
-    if result.scene_id and result.scene_is_new:
-        scene_payload: dict[str, Any] = {
-            "location_id": result.scene_id,
-            "location_name": result.scene_name,
-            "background": "private",
-            "ambient_preset": None,
-            "ambient_override": None,
-            "transition": "fade",
-        }
-        events.append(SSEEvent(
-            event_type="scene_change",
-            payload=scene_payload,
-        ))
-    if result.npc_result is not None:
-        events.extend(_npc_result_to_sse(result.npc_id, result.npc_result))
-    # GM inner monologue (player's inner voice, not third-party narration)
-    if result.gm_result is not None:
-        for tr in result.gm_result.tool_results:
-            if tr.ok and tr.metadata.get("event_type") == "gm_comment" and tr.message:
-                events.append(SSEEvent(
-                    event_type="gm_comment",
-                    payload={"content": tr.message, "tone": "introspective"},
-                ))
-    if result.dialogue_options:
-        events.append(SSEEvent(
-            event_type="dialogue_options",
-            payload={
-                "npc_id": result.npc_id,
-                "options": _serialize_dialogue_options(
-                    result.npc_id,
-                    result.dialogue_options,
-                    scope="private",
-                    action_dispatcher=action_dispatcher,
-                ),
-            },
-        ))
-    return events
 
 
 def _interaction_result_to_sse(

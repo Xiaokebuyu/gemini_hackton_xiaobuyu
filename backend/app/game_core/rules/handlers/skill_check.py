@@ -165,6 +165,13 @@ class SkillCheckHandler(StaticCommandHandler):
         )
         modifier = state.player.get_skill_bonus(skill)
         total = roll_result + modifier
+        margin = total - dc
+        grade = (
+            "excellent" if margin >= 5 else
+            "good" if margin >= 0 else
+            "poor" if margin >= -5 else
+            "bad"
+        )
         return ExecuteResult(
             executed=True,
             rolls=[
@@ -189,6 +196,8 @@ class SkillCheckHandler(StaticCommandHandler):
                 "all_rolls": list(all_rolls),
                 "modifier": modifier,
                 "total": total,
+                "margin": margin,
+                "grade": grade,
                 "auto_disadvantage": explicit_dis and not bool(cmd.params.get("disadvantage", False)),
             },
         )

@@ -266,7 +266,7 @@ def _make_world_with_resources() -> WorldInstance:
                             "recovery": "short_rest",
                         },
                         "action_surge": {
-                            "max_at_level": {"2": 1, "17": 2},
+                            "max_at_level": {"2": 1, "4": 2},
                             "recovery": "short_rest",
                         },
                     },
@@ -331,23 +331,23 @@ def test_growth_level_up_initializes_class_resources() -> None:
 
 
 def test_growth_level_up_increments_resource_max() -> None:
-    """Level-up to level 17 must increase action_surge max from 1 to 2."""
+    """Level-up to level 4 must increase action_surge max from 1 to 2."""
     engine = RulesEngine()
     engine.register(GrowthHandler())
     world = _make_world_with_resources()
 
-    # Setup: fighter at level 16, action_surge already unlocked at max=1
+    # Setup: fighter at level 3, action_surge already unlocked at max=1
     state = StateContainer()
     player = PlayerSlice()
     player.restore(
         {
             "character_id": "pc_1",
             "character_class": "fighter",
-            "level": 16,
+            "level": 3,
             "xp": 100000,  # enough for any level
             "hp": 100,
             "max_hp": 100,
-            "proficiency_bonus": 5,
+            "proficiency_bonus": 3,
             "class_features": ["Second Wind", "Action Surge"],
             "class_resources": {
                 "second_wind": {"current": 0, "max": 1, "recovery": "short_rest"},
@@ -362,14 +362,14 @@ def test_growth_level_up_increments_resource_max() -> None:
     state.register(player)
 
     results = engine.batch_execute(
-        [Command(type="level_up", params={"character_id": "pc_1", "target_level": 17})],
+        [Command(type="level_up", params={"character_id": "pc_1", "target_level": 4})],
         state,
         world,
     )
     result = results[0]
 
     assert result.executed, f"level_up failed: {result.errors}"
-    assert state.player.level == 17
+    assert state.player.level == 4
 
     action_surge = state.player.get_resource("action_surge")
     assert action_surge["max"] == 2

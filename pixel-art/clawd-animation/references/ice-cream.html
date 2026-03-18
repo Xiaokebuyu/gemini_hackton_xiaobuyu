@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clawd Eats Ice Cream</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: #111;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(90vw, 90vh);
+    height: min(90vw, 90vh);
+  }
+  .caption {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="caption">clawd eats ice cream</div>
+
+<script>
+// ============================================================
+// QUALITY REFERENCE — "Clawd Eats Ice Cream"
+// Demonstrates: multi-sprite scene, frame animation, particles,
+// text bubble, ambient snow, eased movement
+// ============================================================
+
+const W = 128, H = 128;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = W; canvas.height = H;
+
+// -- Palette --
+const P = {
+  0: null,
+  1: '#c0785a',  // body
+  2: '#a0624a',  // body shadow / legs
+  3: '#d4956e',  // body highlight
+  4: '#8a4a38',  // dark
+  5: '#1a1a1a',  // eye
+  6: '#ffffff',  // white
+  7: '#e8ddd0',  // bg
+  8: '#a0d8e8',  // mint
+  9: '#e8a0b0',  // strawberry
+  A: '#f8e8a0',  // vanilla / cone
+  B: '#d4a050',  // cone dark
+  C: '#c85040',  // cherry
+  D: '#7ec877',  // mint dark
+};
+
+function ps(rows) { return rows.map(r => [...r].map(c => parseInt(c, 16))); }
+
+function draw(grid, x, y) {
+  for (let r = 0; r < grid.length; r++)
+    for (let c = 0; c < grid[r].length; c++) {
+      const color = P[grid[r][c]];
+      if (!color) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(x + c, y + r, 1, 1);
+    }
+}
+
+// -- Clawd sprites (12 wide x 14 tall) --
+const clawd = [
+  ps([ // frame 0: standing, mouth closed
+    '000010000100',
+    '000010000100',
+    '000111111100',
+    '000111111100',
+    '000151115100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000022002200',
+    '000010000100',
+    '000010000100',
+    '000000000000',
+  ]),
+  ps([ // frame 1: mouth open (eating), slight lean right
+    '000010000100',
+    '000010000100',
+    '000111111100',
+    '000111111100',
+    '000151115100',
+    '000111411100',
+    '000114411100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000022002200',
+    '000010000100',
+    '000010000100',
+    '000000000000',
+  ]),
+  ps([ // frame 2: happy (eyes closed, satisfied)
+    '000010000100',
+    '000010000100',
+    '000111111100',
+    '000111111100',
+    '000121112100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000111111100',
+    '000022002200',
+    '000010000100',
+    '000010000100',
+    '000000000000',
+  ]),
+];
+
+// -- Ice cream (8 wide x 18 tall) --
+const iceCream = ps([
+  '00000000',
+  '000CC000',
+  '00CCCC00',
+  '00088000',
+  '00888800',
+  '08888880',
+  '88888888',
+  '00999900',
+  '09999990',
+  '99999999',
+  '00AAAA00',
+  '0AAAAAA0',
+  'AAAAAAAA',
+  '0AABBAA0',
+  '00ABBA00',
+  '000BB000',
+  '000BB000',
+  '000AA000',
+]);
+
+// -- Snowflake particles --
+const flakes = [];
+for (let i = 0; i < 35; i++) {
+  flakes.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    speed: 0.2 + Math.random() * 0.4,
+    drift: (Math.random() - 0.5) * 0.15,
+    size: Math.random() > 0.7 ? 2 : 1,
+    twinkle: Math.random() * Math.PI * 2,
+  });
+}
+
+// -- Text bubble --
+function drawBubble(x, y, text) {
+  ctx.fillStyle = '#fff';
+  const tw = text.length * 4 + 4;
+  // bubble body
+  ctx.fillRect(x, y, tw, 7);
+  ctx.fillRect(x - 1, y + 1, tw + 2, 5);
+  // tail
+  ctx.fillRect(x + 3, y + 7, 2, 2);
+  ctx.fillRect(x + 2, y + 9, 1, 1);
+  // text
+  drawPixelText(ctx, text, x + 2, y + 1, '#4a4a4a');
+}
+
+// Tiny 3x5 pixel font (subset)
+const FONT = {
+  'N': [[1,0,1],[1,1,1],[1,1,1],[1,0,1],[1,0,1]],
+  'O': [[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+  'M': [[1,0,1],[1,1,1],[1,1,1],[1,0,1],[1,0,1]],
+  '!': [[0,1,0],[0,1,0],[0,1,0],[0,0,0],[0,1,0]],
+  ' ': [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+};
+
+function drawPixelText(ctx, text, x, y, color) {
+  ctx.fillStyle = color;
+  let cx = x;
+  for (const ch of text) {
+    const glyph = FONT[ch.toUpperCase()];
+    if (!glyph) { cx += 4; continue; }
+    for (let row = 0; row < glyph.length; row++)
+      for (let col = 0; col < glyph[row].length; col++)
+        if (glyph[row][col]) ctx.fillRect(cx + col, y + row, 1, 1);
+    cx += 4;
+  }
+}
+
+// -- Animation timeline --
+// Total loop: ~5 seconds
+const LOOP_DURATION = 5.0;
+const TIMELINE = [
+  { start: 0.0, end: 1.5, state: 'approach' },  // walk toward ice cream
+  { start: 1.5, end: 2.2, state: 'eat' },        // nom!
+  { start: 2.2, end: 3.5, state: 'happy' },      // satisfied
+  { start: 3.5, end: 5.0, state: 'idle' },        // breathe, loop back
+];
+
+let time = 0, lastT = 0;
+
+function getState(t) {
+  const lt = t % LOOP_DURATION;
+  for (const seg of TIMELINE)
+    if (lt >= seg.start && lt < seg.end) return { name: seg.state, progress: (lt - seg.start) / (seg.end - seg.start) };
+  return { name: 'idle', progress: 0 };
+}
+
+function easeInOut(t) { return 0.5 - 0.5 * Math.cos(t * Math.PI); }
+
+function render(dt) {
+  const { name, progress } = getState(time);
+
+  // -- Background --
+  ctx.fillStyle = '#f0ece4';
+  ctx.fillRect(0, 0, W, H);
+
+  // -- Ground hint --
+  ctx.fillStyle = '#e8e0d8';
+  ctx.fillRect(0, 100, W, 28);
+
+  // -- Snowflakes (behind) --
+  for (const f of flakes) {
+    f.y += f.speed * dt * 30;
+    f.x += f.drift * dt * 30;
+    f.twinkle += dt * 2;
+    if (f.y > H + 2) { f.y = -2; f.x = Math.random() * W; }
+    if (f.x > W + 2) f.x = -2;
+    if (f.x < -2) f.x = W + 2;
+    const alpha = 0.25 + 0.15 * Math.sin(f.twinkle);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#888';
+    ctx.fillRect(Math.round(f.x), Math.round(f.y), f.size, f.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // -- Ice cream position (fixed) --
+  const iceX = 72, iceY = 58;
+  draw(iceCream, iceX, iceY);
+
+  // -- Clawd position + animation --
+  let clawdX, clawdY, frameIdx;
+  const breathe = Math.sin(time * 2.5) * 0.5;
+
+  switch (name) {
+    case 'approach': {
+      // Walk from left to center
+      const startX = 20, endX = 48;
+      const easedP = easeInOut(progress);
+      clawdX = startX + (endX - startX) * easedP;
+      clawdY = 78 + breathe + Math.abs(Math.sin(progress * Math.PI * 4)) * -2; // hop
+      frameIdx = Math.floor(time * 4) % 2 === 0 ? 0 : 0; // subtle walk
+      break;
+    }
+    case 'eat': {
+      clawdX = 48;
+      clawdY = 78 + (progress < 0.3 ? -2 * easeInOut(progress / 0.3) : 0); // lean in
+      frameIdx = 1; // mouth open
+      break;
+    }
+    case 'happy': {
+      clawdX = 48;
+      clawdY = 78 + breathe;
+      frameIdx = 2; // eyes closed, happy
+      break;
+    }
+    default: {
+      clawdX = 48;
+      clawdY = 78 + breathe;
+      frameIdx = 0;
+      break;
+    }
+  }
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  ctx.beginPath();
+  ctx.ellipse(Math.round(clawdX) + 6, 92, 7, 1.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  draw(clawd[frameIdx], Math.round(clawdX), Math.round(clawdY));
+
+  // -- Text bubble during eat phase --
+  if (name === 'eat' && progress > 0.3) {
+    const bAlpha = Math.min(1, (progress - 0.3) * 3);
+    ctx.globalAlpha = bAlpha;
+    drawBubble(58, 66, 'NOM!');
+    ctx.globalAlpha = 1;
+  }
+
+  // -- Foreground snowflakes --
+  for (const f of flakes) {
+    if (f.size < 2) continue;
+    const alpha = 0.12 + 0.08 * Math.sin(f.twinkle + 1);
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#aaa';
+    ctx.fillRect(Math.round(f.x) + 1, Math.round(f.y) + 1, 1, 1);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function loop(t) {
+  const dt = Math.min((t - lastT) / 1000, 0.1);
+  lastT = t;
+  time += dt;
+  render(dt);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

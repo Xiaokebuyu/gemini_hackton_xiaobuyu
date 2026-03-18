@@ -170,9 +170,17 @@ export interface MapPanelData {
   areas: MapAreaSummary[]
 }
 
+export interface NpcInvite {
+  npc_id: string
+  npc_name: string
+  topic: string
+}
+
 export interface QuestPanelData {
   dynamic_quests: Record<string, unknown>
   chapter_completion: Record<string, number>
+  pending_npc_invites?: NpcInvite[]
+  ambient_chatter?: NpcInvite[]
 }
 
 export interface InventoryItem {

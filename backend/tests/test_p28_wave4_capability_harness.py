@@ -6,7 +6,6 @@ import asyncio
 
 from tests._capability_harness import (
     build_npc_capability_harness,
-    build_private_capability_harness,
     gm_suggest_options_response,
     noop_executor,
     npc_speak_response,
@@ -101,33 +100,6 @@ def test_board_capability_prompt_included_and_option_action_preserved() -> None:
     assert len(result.dialogue_options) >= 1
     assert result.dialogue_options[0]["action"] == "browse_board"
     assert "functional" not in result.dialogue_options[0]
-
-
-def test_private_chat_prompt_includes_assigned_capability_instruction() -> None:
-    coordinator, llm, _ = build_private_capability_harness(
-        llm_responses=[
-            npc_speak_response("我只私下告诉你，遗迹入口最近有人巡逻。"),
-            stop_response(),
-        ],
-        capabilities=[
-            {
-                "npc_id": "lore_keeper",
-                "capability_id": "share_ruins_hint",
-                "instruction": "在私聊中透露遗迹外围的最新情报。",
-            }
-        ],
-    )
-
-    result = asyncio.run(
-        coordinator.execute(
-            npc_id="lore_keeper",
-            player_message="私下告诉我遗迹的情况。",
-            execute_command=noop_executor,
-        )
-    )
-
-    assert result.completed is True
-    assert "在私聊中透露遗迹外围的最新情报。" in llm.calls[0]["system_prompt"]
 
 
 def test_unassigned_prompt_omits_dynamic_capability_block() -> None:

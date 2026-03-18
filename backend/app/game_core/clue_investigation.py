@@ -19,8 +19,33 @@ CLUE_EFFECT_TYPES = frozenset({
     "advance_quest",
     "add_knowledge",
     "modify_approval",
+    "modify_disposition",
     "unlock_sub_location",
+    "grant_item",
+    "create_rumor",
 })
+
+
+def _is_simple_clue(params: dict[str, Any]) -> bool:
+    """Return True if params describe a simplified clue schema (base_effects without options)."""
+    return "base_effects" in params and "options" not in params
+
+
+def _normalize_check(raw: Any) -> dict[str, Any] | None:
+    """Normalize a {skill, dc} check specification; return None if invalid or absent."""
+    if raw is None:
+        return None
+    mapping = _mapping(raw)
+    skill = coerce_non_empty_string(mapping.get("skill"))
+    if skill is None:
+        return None
+    try:
+        dc = int(mapping.get("dc"))
+    except (TypeError, ValueError):
+        return None
+    if dc < 0:
+        return None
+    return {"skill": skill, "dc": dc}
 
 
 def normalize_clue_definition(
@@ -40,6 +65,7 @@ def normalize_clue_definition(
     if clue_id is None:
         return {}
 
+    # Common header fields shared by both schemas
     normalized: dict[str, Any] = {
         "clue_id": clue_id,
         "name": coerce_non_empty_string(params.get("name")) or name or clue_id,
@@ -55,6 +81,18 @@ def normalize_clue_definition(
     if prompt_hints:
         normalized["party_prompt_hints"] = prompt_hints
 
+    # --- Simplified schema branch ---
+    if _is_simple_clue(params):
+        normalized["simple"] = True
+        normalized["base_effects"] = _normalize_effect_list(params.get("base_effects"))
+        check = _normalize_check(params.get("check"))
+        if check is not None:
+            normalized["check"] = check
+        normalized["check_effects"] = _normalize_effect_list(params.get("check_effects"))
+        normalized["narrative"] = str(params.get("narrative") or "").strip()
+        return normalized
+
+    # --- Legacy schema branch ---
     options = []
     for raw_option in params.get("options", []):
         option = _normalize_clue_option(raw_option)
@@ -84,6 +122,26 @@ def validate_clue_definition(clue: Mapping[str, Any]) -> str | None:
     clue_id = coerce_non_empty_string(clue.get("clue_id"))
     if clue_id is None:
         return "missing_clue_id"
+
+    # --- Simplified schema validation ---
+    if clue.get("simple"):
+        base_effects = clue.get("base_effects", [])
+        if not isinstance(base_effects, list):
+            return "invalid_base_effects"
+        for effect in base_effects:
+            effect_type = coerce_non_empty_string(effect.get("type")) if isinstance(effect, Mapping) else None
+            if effect_type not in CLUE_EFFECT_TYPES:
+                return "invalid_effect_type"
+        check_effects = clue.get("check_effects", [])
+        if not isinstance(check_effects, list):
+            return "invalid_check_effects"
+        for effect in check_effects:
+            effect_type = coerce_non_empty_string(effect.get("type")) if isinstance(effect, Mapping) else None
+            if effect_type not in CLUE_EFFECT_TYPES:
+                return "invalid_effect_type"
+        return None
+
+    # --- Legacy schema validation ---
     options = clue.get("options")
     if not isinstance(options, list):
         return "missing_options"
@@ -367,7 +425,10 @@ def _expand_effect_commands(
     if effect_type in {"set_flag", "remove_flag", "advance_quest"}:
         return [Command(type=effect_type, params=dict(params), source="system")]
 
-    if effect_type in {"add_knowledge", "modify_approval"}:
+    if effect_type == "grant_item":
+        return [Command(type="pick_up", params=dict(params), source="system")]
+
+    if effect_type in {"add_knowledge", "modify_approval", "modify_disposition"}:
         scope = coerce_non_empty_string(params.get("scope"))
         if scope == "party" and state.has_slice("party"):
             commands: list[Command] = []

@@ -34,13 +34,28 @@ class LocalDesignSkillProvider:
     The *base_dir* defaults to the ``data/`` directory at the project root.
     """
 
-    def __init__(self, base_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        base_dir: Path | None = None,
+        *,
+        world_id_in_path: bool = True,
+    ) -> None:
         # Resolve to an absolute path so cwd changes never matter
         if base_dir is not None:
             self._base_dir = base_dir.resolve()
         else:
             # __file__ is app/design_skill_provider.py → parent is app/ → parent is backend/
             self._base_dir = Path(__file__).resolve().parent.parent / "data"
+        self._world_id_in_path = world_id_in_path
+
+    def _skills_root(self, world_id: str) -> Path | None:
+        """Return the planner_skills directory, or None if world_id is invalid."""
+        if self._world_id_in_path:
+            safe_world = _safe_segment(world_id)
+            if safe_world is None:
+                return None
+            return self._base_dir / safe_world / "planner_skills"
+        return self._base_dir / "planner_skills"
 
     async def read_skill(
         self,
@@ -49,18 +64,12 @@ class LocalDesignSkillProvider:
         name: str,
     ) -> str | None:
         """Read one template file; returns content or None if not found."""
-        safe_world = _safe_segment(world_id)
         safe_category = _safe_segment(category)
         safe_name = _safe_segment(name)
-        if safe_world is None or safe_category is None or safe_name is None:
+        root = self._skills_root(world_id)
+        if root is None or safe_category is None or safe_name is None:
             return None
-        path = (
-            self._base_dir
-            / safe_world
-            / "planner_skills"
-            / safe_category
-            / f"{safe_name}.md"
-        )
+        path = root / safe_category / f"{safe_name}.md"
         if not path.is_file():
             return None
         return path.read_text(encoding="utf-8")
@@ -71,11 +80,8 @@ class LocalDesignSkillProvider:
         category: str | None = None,
     ) -> list[dict[str, str]]:
         """List available templates under *world_id*, optionally filtered by *category*."""
-        safe_world = _safe_segment(world_id)
-        if safe_world is None:
-            return []
-        skills_dir = self._base_dir / safe_world / "planner_skills"
-        if not skills_dir.is_dir():
+        skills_dir = self._skills_root(world_id)
+        if skills_dir is None or not skills_dir.is_dir():
             return []
 
         results: list[dict[str, str]] = []
